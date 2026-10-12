@@ -169,6 +169,7 @@ export function ScoringSheet(
 }
 
 function SheetContent({
+  visible = true,
   compact = false,
   placement = 'bottom',
   title,
@@ -187,6 +188,7 @@ function SheetContent({
   onClose,
   children
 }: {
+  visible?: boolean
   compact?: boolean
   placement?: 'top' | 'bottom' | 'center'
   title: string
@@ -258,13 +260,16 @@ function SheetContent({
   )
   return (
     <Modal
+      visible={visible}
       transparent={!fullScreen}
       animationType="slide"
       supportedOrientations={MODAL_ORIENTATIONS}
       onShow={onShow}
       onRequestClose={onClose}
     >
-      {(fullScreen || tall) && <StatusBar barStyle="light-content" />}
+      {visible && (fullScreen || tall) && (
+        <StatusBar barStyle="light-content" />
+      )}
       <SafeAreaProvider
         initialMetrics={
           initialWindowMetrics ?? {

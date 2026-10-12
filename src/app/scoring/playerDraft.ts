@@ -1,5 +1,5 @@
 import { addDevelopmentPlayer } from './developmentSession'
-import type { ScoringSessionState, Side } from './scoringTypes'
+import type { ScoringPlayer, ScoringSessionState, Side } from './scoringTypes'
 
 export const PLAYER_POSITIONS = [
   'P',
@@ -19,7 +19,7 @@ export interface PlayerDraft {
   lastName: string
   jersey: string
   bats: 'left' | 'switch' | 'right'
-  throws: 'left' | 'right'
+  throws: 'left' | 'right' | null
   positions: string[]
 }
 export const emptyPlayerDraft = (): PlayerDraft => ({
@@ -61,4 +61,50 @@ export function addPlayerDraft(
     )
   })
   return id
+}
+
+export function draftOfLocalPlayer(player: ScoringPlayer): PlayerDraft {
+  const [first, ...last] = player.fullName.trim().split(/\s+/)
+  const hasParts =
+    `${player.firstName ?? ''}${player.lastName ?? ''}`.trim() !== ''
+  return {
+    firstName: hasParts ? (player.firstName ?? '') : first,
+    lastName: hasParts ? (player.lastName ?? '') : last.join(' '),
+    jersey: player.jersey,
+    bats: player.bats,
+    throws: player.throws,
+    positions: [...player.positions]
+  }
+}
+
+/** Correct a game-only identity in place; Save Rosters persists its setup. */
+export function editLocalPlayerDraft(
+  session: ScoringSessionState,
+  side: Side,
+  id: number,
+  draft: PlayerDraft
+): void {
+  const player = session.gameData.players[id]
+  if (
+    player == null ||
+    player.userId != null ||
+    !session.liveData.boxscore.teams[side].players.includes(id)
+  ) {
+    throw new Error('This game-only player is not on the roster.')
+  }
+  const error = playerDraftError(draft)
+  if (error != null) throw new Error(error)
+  const firstName = draft.firstName.trim()
+  const lastName = draft.lastName.trim()
+  Object.assign(player, {
+    firstName,
+    lastName,
+    fullName: [firstName, lastName].filter(Boolean).join(' '),
+    jersey: draft.jersey.trim(),
+    bats: draft.bats,
+    throws: draft.throws,
+    positions: PLAYER_POSITIONS.filter(position =>
+      draft.positions.includes(position)
+    )
+  })
 }

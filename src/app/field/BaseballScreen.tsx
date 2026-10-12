@@ -44,6 +44,7 @@ export const PITCH_CONTROLS = [
   { kind: 'play', label: 'Ball in Play' }
 ] as const
 export interface BaseballScreenProps {
+  suspended?: boolean
   setupToast?: SetupToast
   field: FieldCanvasProps
   onMenu: () => void
@@ -103,7 +104,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
     onHistoryClose?.()
   }, [onHistoryClose])
   useMenuEscape(
-    historyBounds != null,
+    historyBounds != null && props.suspended !== true,
     closeHistory,
     `Undo ${props.historyLabel ?? ''}`
   )
@@ -152,14 +153,16 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         />
       )}
       <View style={{ flex: 1 }}>
-        <FieldCanvas
-          {...props.field}
-          zoom={1.25}
-          bottomExtension={112}
-          cameraTilt={(-11 * Math.PI) / 180}
-          cameraHeight={33}
-          onScoreboardBounds={setBounds}
-        />
+        {props.suspended !== true && (
+          <FieldCanvas
+            {...props.field}
+            zoom={1.25}
+            bottomExtension={112}
+            cameraTilt={(-11 * Math.PI) / 180}
+            cameraHeight={33}
+            onScoreboardBounds={setBounds}
+          />
+        )}
       </View>
       <View
         pointerEvents="box-none"

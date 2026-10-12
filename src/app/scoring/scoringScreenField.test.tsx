@@ -2049,6 +2049,10 @@ describe('scoring screen field wiring', function () {
   })
   for (const [cover, title] of [
     [
+      'hidden scorer',
+      'holds the walk-up songs notice while the scorer is retained behind Settings'
+    ],
+    [
       'defensive roster',
       'holds the walk-up songs notice while the defensive roster is open'
     ],
@@ -2152,6 +2156,16 @@ describe('scoring screen field wiring', function () {
             .querySelector<HTMLElement>(`[aria-label="${label}"]`)!
             .click()
         })
+      }
+      if (cover === 'hidden scorer') {
+        await rerender({ active: false })
+        await settle()
+        expect(document.body.textContent).not.includes(notice)
+        await rerender({ active: true })
+        await settle()
+        expect(document.body.textContent).includes(notice)
+        expect(field().presentationPaused).equals(true)
+        return
       }
       if (cover === 'tiebreaker setup' || cover === 'tiebreaker runner') {
         await press('More')

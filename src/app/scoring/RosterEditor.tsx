@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react'
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Platform,
   Pressable,
@@ -12,11 +12,17 @@ import type { RosterEntry } from '../../common/api'
 import { rosterError } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
 import { Button } from '../components/Button'
+import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { withRosterDetails } from './currentSetup'
 import { DefensiveField } from './DefensiveField'
+import { EditRosterList } from './EditRosterList'
 import { addPlaceholderPlayers } from './placeholderPlayers'
-import { addPlayerDraft } from './playerDraft'
+import {
+  addPlayerDraft,
+  draftOfLocalPlayer,
+  editLocalPlayerDraft
+} from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
 import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
 import { byJersey } from './rosterOrder'
@@ -24,6 +30,7 @@ import { RosterRemoveButton } from './RosterRemoveButton'
 import { RosterSelector } from './RosterSelector'
 import { copyState } from './scoringMachine'
 import { ScoringPlayerCard, scoringPlayerCardStyle } from './ScoringPlayerCard'
+import { editRosterRows } from './scoringRosterEdit'
 import { baseIds, battingSide } from './scoringSelectors'
 import { ScoringError, ScoringSheetHeight } from './ScoringSheet'
 import type {
@@ -33,10 +40,12 @@ import type {
   Side
 } from './scoringTypes'
 
+export type RosterMode = 'editRoster' | 'lineup' | 'defense'
 export interface RosterEditorDraft {
   draft: ScoringSessionState
   side: Side
-  defense: boolean
+  mode: RosterMode
+  scrollOffsets?: Partial<Record<Side, number>>
   nextBatter?: number
 }
 /**
@@ -69,17 +78,29 @@ export function defenseRosterMinimum(
 export function RosterEditor({
   state,
   initialDraft,
+  defaultSide,
   rosters,
   onDraftChange,
+  onEditPlayer,
+  rosterLoading,
+  rosterError: editError,
+  onRetryRoster,
+  canEditTeams,
   onCancel,
   onSave
 }: {
   state: ScoringState
   onCancel?: () => void
   initialDraft?: RosterEditorDraft
+  defaultSide?: Side
   /** Current labels only; roster edits retain the game's saved player details. */
   rosters?: Readonly<Record<string, readonly RosterEntry[]>>
   onDraftChange?: (draft: RosterEditorDraft) => void
+  onEditPlayer?: (userId: number, name: string, teamId: string) => void
+  rosterLoading?: boolean
+  rosterError?: string
+  onRetryRoster?: () => void
+  canEditTeams?: Readonly<Record<string, boolean>>
   onSave: (draft: ScoringSessionState, nextBatter?: number) => void
 }): React.ReactElement {
   const theme = useTheme()
@@ -91,21 +112,32 @@ export function RosterEditor({
     copyState(initialDraft?.draft ?? state.session)
   )
   const [side, setSide] = useState<Side>(
-    initialDraft?.side ?? battingSide(state.session)
+    initialDraft?.side ?? defaultSide ?? battingSide(state.session)
   )
-  const [defense, setDefense] = useState(initialDraft?.defense ?? false)
+  const sideChosen = useRef(initialDraft != null || rosterLoading !== true)
+  useEffect(() => {
+    if (sideChosen.current || rosterLoading === true) return
+    sideChosen.current = true
+    if (defaultSide != null) setSide(defaultSide)
+  }, [defaultSide, rosterLoading])
+  const [mode, setMode] = useState<RosterMode>(initialDraft?.mode ?? 'lineup')
+  const [scrollOffsets, setScrollOffsets] = useState(
+    initialDraft?.scrollOffsets ?? {}
+  )
+  const defense = mode === 'defense'
   const dense = availableHeight > 0 && availableHeight < (defense ? 440 : 330)
   const narrowDefense = dense && defense && width < 600
   const inlineValidation = dense && defense && !narrowDefense
   const [areaHeight, setAreaHeight] = useState(0)
   const rosterMinimum = defense ? defenseRosterMinimum(areaHeight, dense) : 0
   const [adding, setAdding] = useState(false)
+  const [editingLocal, setEditingLocal] = useState<number>()
   const [nextBatter, setNextBatter] = useState<number | undefined>(
     initialDraft?.nextBatter
   )
   useEffect(() => {
-    onDraftChange?.({ draft, side, defense, nextBatter })
-  }, [draft, side, defense, nextBatter, onDraftChange])
+    onDraftChange?.({ draft, side, mode, nextBatter, scrollOffsets })
+  }, [draft, side, mode, nextBatter, scrollOffsets, onDraftChange])
   const edit = (change: (next: ScoringSessionState) => void): void => {
     setDraft(previous => {
       const next = copyState(previous)
@@ -114,6 +146,9 @@ export function RosterEditor({
     })
   }
   const team = draft.liveData.boxscore.teams[side]
+  // Game-only players belong to this game's setup, including the opponent's
+  // placeholders. Their edits use scoring permission, like Create Player.
+  const canEditLocal = rosterLoading !== true && state.readOnly !== true
   const names = useMemo(
     () =>
       rosters == null
@@ -188,6 +223,7 @@ export function RosterEditor({
               accessibilityLabels={['Away Team', 'Home Team']}
               value={side === 'away' ? 0 : 1}
               onChange={index => {
+                sideChosen.current = true
                 setSide(index === 0 ? 'away' : 'home')
               }}
             />
@@ -196,23 +232,31 @@ export function RosterEditor({
             <RosterSelector
               fitContent={!narrowDefense}
               compact={narrowDefense}
-              labels={
-                narrowDefense
-                  ? ['Lineup', 'Defense']
-                  : ['Set Lineup', 'Set Defense']
-              }
-              accessibilityLabels={['Set Lineup', 'Set Defense']}
-              value={defense ? 1 : 0}
+              labels={[
+                lstrings.scoring_edit_roster,
+                'Set Lineup',
+                'Set Defense'
+              ]}
+              accessibilityLabels={['Edit Roster', 'Set Lineup', 'Set Defense']}
+              value={mode === 'editRoster' ? 0 : defense ? 2 : 1}
               onChange={index => {
-                setDefense(index === 1)
+                setMode(
+                  index === 0
+                    ? 'editRoster'
+                    : index === 2
+                      ? 'defense'
+                      : 'lineup'
+                )
               }}
             />
           </View>
         </View>
         <Text numberOfLines={defense ? 1 : undefined} style={text}>
-          {defense
-            ? 'Drag player into position. On touch, hold briefly first.'
-            : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
+          {mode === 'editRoster'
+            ? lstrings.scoring_edit_roster_instruction
+            : defense
+              ? 'Drag player into position. On touch, hold briefly first.'
+              : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
         </Text>
         {state.phase === 'awaitingBatter' && (
           <View style={{ gap: 6 }}>
@@ -234,183 +278,242 @@ export function RosterEditor({
           </View>
         )}
       </ScrollView>
-      <RosterDragGroup key={`${side}:${defense}`}>
-        <View
-          onLayout={event => {
-            setAreaHeight(event.nativeEvent.layout.height)
+      <View
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: mode === 'editRoster' ? 'flex' : 'none'
+        }}
+      >
+        <EditRosterList
+          key={side}
+          visible={mode === 'editRoster'}
+          initialScrollOffset={scrollOffsets[side]}
+          onScrollOffset={offset => {
+            setScrollOffsets(held =>
+              held[side] === offset ? held : { ...held, [side]: offset }
+            )
           }}
-          style={{
-            flex: 1,
-            minHeight: 0,
-            flexDirection: defense ? 'column' : 'row',
-            gap: dense && defense ? 2 : 8
-          }}
-        >
-          {defense && (
-            <DefensiveField
-              defense={team.defense}
-              compact={height < 500}
-              display={display}
-              onPlace={(player, position) => {
-                if (!team.players.includes(player) || assigned.includes(player))
-                  return
-                edit(next => {
-                  next.liveData.boxscore.teams[side].defense[position] = player
-                })
-              }}
-              onClear={(position: Position) => {
-                edit(next => {
-                  next.liveData.boxscore.teams[side].defense[position] = null
-                })
-              }}
-            />
+          rows={editRosterRows(
+            rosters?.[draft.gameData.teams[side].id] ?? [],
+            draft,
+            side
           )}
+          loading={rosterLoading}
+          error={editError}
+          onRetry={onRetryRoster}
+          onEditLocal={
+            canEditLocal
+              ? id => {
+                  setEditingLocal(id)
+                }
+              : undefined
+          }
+          onEdit={
+            onEditPlayer == null ||
+            (canEditTeams != null &&
+              !canEditTeams[draft.gameData.teams[side].id]) ||
+            rosterLoading === true
+              ? undefined
+              : (userId, name) => {
+                  onEditPlayer(userId, name, draft.gameData.teams[side].id)
+                }
+          }
+        />
+      </View>
+      <View
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: mode === 'editRoster' ? 'none' : 'flex'
+        }}
+      >
+        <RosterDragGroup key={`${side}:${mode}`}>
           <View
+            onLayout={event => {
+              setAreaHeight(event.nativeEvent.layout.height)
+            }}
             style={{
               flex: 1,
-              minHeight: rosterMinimum,
-              gap: 6
+              minHeight: 0,
+              flexDirection: defense ? 'column' : 'row',
+              gap: dense && defense ? 2 : 8
             }}
           >
-            {!dense && (
-              <Text style={{ ...text, fontWeight: '700' }}>Roster</Text>
+            {defense && (
+              <DefensiveField
+                defense={team.defense}
+                compact={height < 500}
+                display={display}
+                onPlace={(player, position) => {
+                  if (
+                    !team.players.includes(player) ||
+                    assigned.includes(player)
+                  )
+                    return
+                  edit(next => {
+                    next.liveData.boxscore.teams[side].defense[position] =
+                      player
+                  })
+                }}
+                onClear={(position: Position) => {
+                  edit(next => {
+                    next.liveData.boxscore.teams[side].defense[position] = null
+                  })
+                }}
+              />
             )}
-            <RosterScrollArea name="Roster players">
-              <RosterDrag
-                targetId="roster"
-                onDropPlayer={defense ? undefined : remove}
-              >
-                <View
-                  testID={defense ? 'Defense roster grid' : undefined}
-                  style={
-                    defense
-                      ? { flexDirection: 'row', flexWrap: 'wrap', gap: 16 }
-                      : { gap: 16 }
-                  }
-                >
-                  {byJersey(team.players, names)
-                    .filter(id => !assigned.includes(id))
-                    .map(id => {
-                      const card = (
-                        <RosterDrag
-                          key={id}
-                          playerId={id}
-                          immediateMouseDrag={defense}
-                          label={
-                            defense
-                              ? names[id].fullName
-                              : `Add ${names[id].fullName} to Lineup`
-                          }
-                          onTap={
-                            defense
-                              ? undefined
-                              : () => {
-                                  place(id, team.battingOrder.length)
-                                }
-                          }
-                        >
-                          <View style={row}>
-                            <Text
-                              selectable={false}
-                              {...nameProps}
-                              style={{ ...text, flex: 1 }}
-                            >
-                              {display(id)}
-                            </Text>
-                          </View>
-                        </RosterDrag>
-                      )
-                      return defense ? (
-                        <View key={id} style={{ width: '47%' }}>
-                          {card}
-                        </View>
-                      ) : (
-                        card
-                      )
-                    })}
-                </View>
-                {!defense && (
-                  <Text
-                    style={{
-                      ...text,
-                      color: theme.secondaryTextColor,
-                      padding: 12
-                    }}
-                  >
-                    Drop here to remove
-                  </Text>
-                )}
-              </RosterDrag>
-            </RosterScrollArea>
-          </View>
-          {!defense && (
-            <View style={{ flex: 1, minHeight: 0, gap: 6 }}>
+            <View
+              style={{
+                flex: 1,
+                minHeight: rosterMinimum,
+                gap: 6
+              }}
+            >
               {!dense && (
-                <Text style={{ ...text, fontWeight: '700' }}>Lineup</Text>
+                <Text style={{ ...text, fontWeight: '700' }}>Roster</Text>
               )}
-              <RosterScrollArea name="Batting lineup">
-                <>
-                  {team.battingOrder.map((id, index) => (
-                    <RosterDrag
-                      key={id}
-                      playerId={id}
-                      label={`Reorder ${names[id].fullName}`}
-                      targetId={`lineup-${index}`}
-                      insertion="row"
-                      onDropPlayer={(player, edge) => {
-                        place(player, index + (edge === 'after' ? 1 : 0), true)
-                      }}
-                      onReorder={delta => {
-                        place(id, index + delta)
-                      }}
-                    >
-                      <View style={row}>
-                        <Text
-                          selectable={false}
-                          accessibilityLabel={`Drag ${names[id].fullName}`}
-                          style={{ ...text, fontSize: 24 }}
-                        >
-                          ≡
-                        </Text>
-                        <Text
-                          selectable={false}
-                          {...nameProps}
-                          style={{ ...text, flex: 1 }}
-                        >
-                          {index + 1}. {display(id)}
-                        </Text>
-                        <RosterRemoveButton
-                          label={`Remove ${names[id].fullName}`}
-                          onPress={() => {
-                            remove(id)
-                          }}
-                        />
-                      </View>
-                    </RosterDrag>
-                  ))}
-                  <RosterDrag
-                    targetId="lineup-end"
-                    insertion="end"
-                    onDropPlayer={id => {
-                      place(id, team.battingOrder.length, true)
-                    }}
+              <RosterScrollArea name="Roster players">
+                <RosterDrag
+                  targetId="roster"
+                  onDropPlayer={defense ? undefined : remove}
+                >
+                  <View
+                    testID={defense ? 'Defense roster grid' : undefined}
+                    style={
+                      defense
+                        ? { flexDirection: 'row', flexWrap: 'wrap', gap: 16 }
+                        : { gap: 16 }
+                    }
                   >
+                    {byJersey(team.players, names)
+                      .filter(id => !assigned.includes(id))
+                      .map(id => {
+                        const card = (
+                          <RosterDrag
+                            key={id}
+                            playerId={id}
+                            immediateMouseDrag={defense}
+                            label={
+                              defense
+                                ? names[id].fullName
+                                : `Add ${names[id].fullName} to Lineup`
+                            }
+                            onTap={
+                              defense
+                                ? undefined
+                                : () => {
+                                    place(id, team.battingOrder.length)
+                                  }
+                            }
+                          >
+                            <View style={row}>
+                              <Text
+                                selectable={false}
+                                {...nameProps}
+                                style={{ ...text, flex: 1 }}
+                              >
+                                {display(id)}
+                              </Text>
+                            </View>
+                          </RosterDrag>
+                        )
+                        return defense ? (
+                          <View key={id} style={{ width: '47%' }}>
+                            {card}
+                          </View>
+                        ) : (
+                          card
+                        )
+                      })}
+                  </View>
+                  {!defense && (
                     <Text
                       style={{
                         ...text,
                         color: theme.secondaryTextColor,
-                        padding: 18
+                        padding: 12
                       }}
                     >
-                      Drop at end of lineup
+                      Drop here to remove
                     </Text>
-                  </RosterDrag>
-                </>
+                  )}
+                </RosterDrag>
               </RosterScrollArea>
             </View>
-          )}
-        </View>
-      </RosterDragGroup>
+            {!defense && (
+              <View style={{ flex: 1, minHeight: 0, gap: 6 }}>
+                {!dense && (
+                  <Text style={{ ...text, fontWeight: '700' }}>Lineup</Text>
+                )}
+                <RosterScrollArea name="Batting lineup">
+                  <>
+                    {team.battingOrder.map((id, index) => (
+                      <RosterDrag
+                        key={id}
+                        playerId={id}
+                        label={`Reorder ${names[id].fullName}`}
+                        targetId={`lineup-${index}`}
+                        insertion="row"
+                        onDropPlayer={(player, edge) => {
+                          place(
+                            player,
+                            index + (edge === 'after' ? 1 : 0),
+                            true
+                          )
+                        }}
+                        onReorder={delta => {
+                          place(id, index + delta)
+                        }}
+                      >
+                        <View style={row}>
+                          <Text
+                            selectable={false}
+                            accessibilityLabel={`Drag ${names[id].fullName}`}
+                            style={{ ...text, fontSize: 24 }}
+                          >
+                            ≡
+                          </Text>
+                          <Text
+                            selectable={false}
+                            {...nameProps}
+                            style={{ ...text, flex: 1 }}
+                          >
+                            {index + 1}. {display(id)}
+                          </Text>
+                          <RosterRemoveButton
+                            label={`Remove ${names[id].fullName}`}
+                            onPress={() => {
+                              remove(id)
+                            }}
+                          />
+                        </View>
+                      </RosterDrag>
+                    ))}
+                    <RosterDrag
+                      targetId="lineup-end"
+                      insertion="end"
+                      onDropPlayer={id => {
+                        place(id, team.battingOrder.length, true)
+                      }}
+                    >
+                      <Text
+                        style={{
+                          ...text,
+                          color: theme.secondaryTextColor,
+                          padding: 18
+                        }}
+                      >
+                        Drop at end of lineup
+                      </Text>
+                    </RosterDrag>
+                  </>
+                </RosterScrollArea>
+              </View>
+            )}
+          </View>
+        </RosterDragGroup>
+      </View>
       {adding && (
         <PlayerEntrySheet
           onClose={() => {
@@ -424,6 +527,22 @@ export function RosterEditor({
           onAdd={player => {
             edit(next => {
               addPlayerDraft(next, side, player)
+            })
+          }}
+        />
+      )}
+      {editingLocal != null && state.readOnly !== true && (
+        <PlayerEntrySheet
+          key={`edit:${side}:${editingLocal}`}
+          initialDraft={draftOfLocalPlayer(
+            draft.gameData.players[editingLocal]
+          )}
+          onClose={() => {
+            setEditingLocal(undefined)
+          }}
+          onAdd={player => {
+            edit(next => {
+              editLocalPlayerDraft(next, side, editingLocal, player)
             })
           }}
         />

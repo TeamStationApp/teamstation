@@ -209,6 +209,27 @@ function pcm(bytes: number): ArrayBuffer {
 const text = (label: string): string | null => find(label)?.textContent ?? null
 
 describe('the dictation control', function () {
+  it('stops the microphone and disables hidden keyboard input during a player visit', async function () {
+    const h = harness()
+    await h.render()
+    const socket = await enable(h)
+    expect(h.microphone.opened).equals(1)
+    await h.render({ suspended: true })
+    expect(socket.closed).equals(true)
+    expect(h.microphone.stopped).equals(true)
+    await act(async () => {
+      document.dispatchEvent(
+        new window.KeyboardEvent('keydown', {
+          code: 'Space',
+          key: ' ',
+          bubbles: true
+        })
+      )
+    })
+    expect(h.sockets).has.length(1)
+    await h.render({ suspended: false })
+    expect(h.sockets).has.length(1)
+  })
   it('shows only when the server takes dictation', async function () {
     const off = harness(fresh(), {
       health: async () => ({ ...(await healthy()), dictation: false })

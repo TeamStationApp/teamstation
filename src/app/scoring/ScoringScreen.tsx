@@ -14,8 +14,14 @@ import {
   View
 } from 'react-native'
 
-import type { DictationModel, TeamStationClient } from '../../common/api'
+import type {
+  DictationModel,
+  RosterEntry,
+  TeamStationClient
+} from '../../common/api'
+import { HttpError } from '../../common/errors'
 import type { TagTarget } from '../../common/eventTags'
+import { managesRoster } from '../../common/roles'
 import type { ScoringAction } from '../../common/scoring/actions'
 import {
   awaitingResult,
@@ -36,6 +42,7 @@ import type { BaseProjection } from '../field/fieldTypes'
 import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
 import { useFieldSurface } from '../field/useFieldSurface'
 import { lstrings } from '../locales/strings'
+import type { Route } from '../navigation/routes'
 import { useTheme } from '../theme/ThemeContext'
 import {
   NO_WALK_UP_MUSIC,
@@ -94,6 +101,8 @@ import {
 import { SCORING_MENU, ScoringMenuButton } from './ScoringMenuAppearance'
 import { scoringFieldPlayers } from './scoringMotion'
 import { scoringPreferences } from './scoringPreferences'
+import { withoutPrivateNames } from './scoringRosterCache'
+import { rosterStaffSide } from './scoringRosterEdit'
 import {
   baseIds,
   battingSide,
@@ -125,6 +134,12 @@ import { useScoringExit } from './useScoringExit'
 import { useTiebreakerSetup } from './useTiebreakerSetup'
 
 export interface ScoringScreenProps {
+  active?: boolean
+  onEditPlayer?: (userId: number, name: string, teamId: string) => void
+  onSettingsRefresh?: (refresh: () => void) => () => void
+  onBeforeLeave?: (check: () => Promise<boolean>) => () => void
+  allowNavigation?: (route: Route) => boolean
+  onNavigationApproved?: () => void
   client: TeamStationClient
   gameId: string
   userId?: string | number
@@ -166,9 +181,27 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const [overlay, setOverlay] = useState(false)
   const readiness = useWalkUpReadiness(music, walkUpIds, {
     screen: 'scoring',
-    blocked: overlay,
+    blocked: overlay || props.active === false,
     store: props.readiness
   })
+  const [rosterRights, setRosterRights] = useState<Record<string, boolean>>({})
+  const [rosterDefaultSide, setRosterDefaultSide] = useState<Side>()
+  const [detailsLoading, setDetailsLoading] = useState(false)
+  const [detailsProblem, setDetailsProblem] = useState<string>()
+  const rosterRevision = useRef(0)
+  const authorizationRevision = useRef(0)
+  const authorizationPending = useRef(false)
+  const rightsRef = useRef(rosterRights)
+  const openedContext = useRef<
+    | {
+        client: TeamStationClient
+        gameId: string
+        userId: ScoringScreenProps['userId']
+        source: ScoringSource
+        session: GameSession
+      }
+    | undefined
+  >(undefined)
   const [failed, setFailed] = useState(false)
   const [retry, setRetry] = useState(0)
   const surface = useFieldSurface()
@@ -177,15 +210,56 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   useEffect(() => {
     let live = true
     setOpened(undefined)
+    setRosters({})
+    authorizationPending.current = false
+    rightsRef.current = {}
+    setRosterRights({})
+    setRosterDefaultSide(undefined)
     setFailed(false)
     const load = async (): Promise<void> => {
       const game = await props.client.game(props.gameId)
+      const roles = await props.client.myRoles().catch(() => undefined)
+      const rights = {
+        [game.awayTeamId]: managesRoster(roles, game.awayTeamId),
+        [game.homeTeamId]: managesRoster(roles, game.homeTeamId)
+      }
+      const loadRoster = async (teamId: string): Promise<RosterEntry[]> => {
+        try {
+          return await props.client.roster(teamId, {
+            includeFullNames: rights[teamId]
+          })
+        } catch (caught: unknown) {
+          if (
+            rights[teamId] &&
+            caught instanceof HttpError &&
+            ['unauthorized', 'forbidden', 'notFound'].includes(caught.code)
+          ) {
+            rights[teamId] = false
+            return withoutPrivateNames(
+              await props.client.roster(teamId).catch(() => [])
+            )
+          }
+          return []
+        }
+      }
       const [away, home] = await Promise.all([
-        props.client.roster(game.awayTeamId).catch(() => []),
-        props.client.roster(game.homeTeamId).catch(() => [])
+        loadRoster(game.awayTeamId),
+        loadRoster(game.homeTeamId)
       ])
       const value = await source.open(game, away, home)
       if (!live) return
+      rightsRef.current = rights
+      setRosterRights(rights)
+      setRosterDefaultSide(
+        rosterStaffSide(roles, game.awayTeamId, game.homeTeamId)
+      )
+      openedContext.current = {
+        client: props.client,
+        gameId: props.gameId,
+        userId: props.userId,
+        source,
+        session: value
+      }
       setRosters({ [game.awayTeamId]: away, [game.homeTeamId]: home })
       setOpened(value)
     }
@@ -195,8 +269,154 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [props.client, props.gameId, source, retry])
-  if (opened == null)
+  }, [props.client, props.gameId, props.userId, source, retry])
+  const refreshDetails = useCallback(async (): Promise<void> => {
+    if (opened == null) return
+    let revision = ++rosterRevision.current
+    const authorization = ++authorizationRevision.current
+    const teams = Object.values(opened.resumable().state.gameData.teams).map(
+      team => team.id
+    )
+    setDetailsLoading(true)
+    setDetailsProblem(undefined)
+    authorizationPending.current = true
+    rightsRef.current = {}
+    setRosterRights({})
+    setRosterDefaultSide(undefined)
+    let rolesRead = false
+    try {
+      const roles = await props.client.myRoles()
+      rolesRead = true
+      if (authorization !== authorizationRevision.current) return
+      authorizationPending.current = false
+      const rights = Object.fromEntries(
+        teams.map(id => [id, managesRoster(roles, id)])
+      )
+      rightsRef.current = rights
+      setRosterRights(rights)
+      const { away, home } = opened.resumable().state.gameData.teams
+      setRosterDefaultSide(rosterStaffSide(roles, away.id, home.id))
+      setRosters(held =>
+        Object.fromEntries(
+          Object.entries(held).map(([id, rows]) => [
+            id,
+            rights[id] ? rows : withoutPrivateNames(rows)
+          ])
+        )
+      )
+      // A save may finish while roles are pending. Start this data read after
+      // that acknowledgment, without discarding the current permission proof.
+      revision = rosterRevision.current
+      const entries = await Promise.allSettled(
+        teams.map(
+          async id =>
+            await props.client.roster(id, { includeFullNames: rights[id] })
+        )
+      )
+      if (authorization !== authorizationRevision.current) return
+      if (revision === rosterRevision.current) {
+        const refused = entries.map(
+          entry =>
+            entry.status === 'rejected' &&
+            entry.reason instanceof HttpError &&
+            ['unauthorized', 'forbidden', 'notFound'].includes(
+              entry.reason.code
+            )
+        )
+        const currentRights = Object.fromEntries(
+          teams.map((id, index) => [id, rights[id] && !refused[index]])
+        )
+        rightsRef.current = currentRights
+        setRosterRights(currentRights)
+        setRosters(held =>
+          Object.fromEntries(
+            teams.map((id, index) => {
+              const entry = entries[index]
+              const rows =
+                entry.status === 'fulfilled' ? entry.value : (held[id] ?? [])
+              return [id, currentRights[id] ? rows : withoutPrivateNames(rows)]
+            })
+          )
+        )
+        if (
+          entries.some(
+            (entry, index) =>
+              entry.status === 'rejected' &&
+              (!refused[index] || rights[teams[index]])
+          )
+        )
+          setDetailsProblem('Unable to refresh the roster. Please try again.')
+      } else {
+        // A successful save invalidated this captured read. Reconcile fresh
+        // data so every team's authorized names return with the current values.
+        await refreshDetails()
+      }
+    } catch (caught: unknown) {
+      if (authorization === authorizationRevision.current) {
+        if (
+          !rolesRead ||
+          (caught instanceof HttpError &&
+            ['unauthorized', 'forbidden', 'notFound'].includes(caught.code))
+        ) {
+          rightsRef.current = {}
+          setRosterRights({})
+          setRosters(held =>
+            Object.fromEntries(
+              Object.entries(held).map(([id, rows]) => [
+                id,
+                withoutPrivateNames(rows)
+              ])
+            )
+          )
+        }
+        if (rolesRead && revision !== rosterRevision.current) {
+          await refreshDetails()
+        } else {
+          setDetailsProblem('Unable to refresh the roster. Please try again.')
+        }
+      }
+    } finally {
+      if (authorization === authorizationRevision.current) {
+        authorizationPending.current = false
+        setDetailsLoading(false)
+      }
+    }
+  }, [opened, props.client])
+  const wasActive = useRef(props.active !== false)
+  const returning = props.active !== false && !wasActive.current
+  const { onSettingsRefresh } = props
+  useEffect(() => {
+    const active = props.active !== false
+    if (active && !wasActive.current) refreshDetails().catch(() => undefined)
+    wasActive.current = active
+  }, [props.active, refreshDetails])
+  useEffect(() => {
+    let live = true
+    const remove = onSettingsRefresh?.(() => {
+      // Replies do not establish commit order. Fetch current server values;
+      // refresh revisions prevent a captured older read from replacing them.
+      if (live) refreshDetails().catch(() => undefined)
+    })
+    return () => {
+      live = false
+      remove?.()
+    }
+  }, [onSettingsRefresh, refreshDetails])
+  useEffect(
+    () => () => {
+      ++rosterRevision.current
+      ++authorizationRevision.current
+    },
+    [props.client, props.gameId, props.userId, source, retry]
+  )
+  if (
+    opened == null ||
+    openedContext.current?.client !== props.client ||
+    openedContext.current.gameId !== props.gameId ||
+    openedContext.current.userId !== props.userId ||
+    openedContext.current.source !== source ||
+    openedContext.current.session !== opened
+  )
     return (
       <View
         style={[
@@ -256,14 +476,37 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         source={source}
         onExit={props.onExit}
         userId={String(props.userId ?? 'local-scorer')}
-        rosters={rosters}
+        rosters={
+          returning || authorizationPending.current
+            ? Object.fromEntries(
+                Object.entries(rosters).map(([id, rows]) => [
+                  id,
+                  withoutPrivateNames(rows)
+                ])
+              )
+            : rosters
+        }
+        active={props.active !== false}
+        onEditPlayer={props.onEditPlayer}
+        onBeforeLeave={props.onBeforeLeave}
+        allowNavigation={props.allowNavigation}
+        onNavigationApproved={props.onNavigationApproved}
+        rosterRights={returning ? {} : rosterRights}
+        rosterDefaultSide={rosterDefaultSide}
+        detailsLoading={returning || detailsLoading}
+        detailsProblem={detailsProblem}
+        onRefreshDetails={() => {
+          refreshDetails().catch(() => undefined)
+        }}
         music={music}
         resolveSong={props.resolveSong}
         fadeAppleMusic={props.fadeAppleMusic}
         onOverlay={setOverlay}
         walkUpOpen={readiness.covering}
       />
-      <WalkUpReadinessModals readiness={readiness} />
+      {props.active !== false && (
+        <WalkUpReadinessModals readiness={readiness} />
+      )}
     </>
   )
 }
@@ -323,6 +566,16 @@ function entryId(entry: HistoryEntry): number {
   return id
 }
 function ScoringPanel(props: {
+  active: boolean
+  onEditPlayer?: ScoringScreenProps['onEditPlayer']
+  onBeforeLeave?: ScoringScreenProps['onBeforeLeave']
+  allowNavigation?: ScoringScreenProps['allowNavigation']
+  onNavigationApproved?: ScoringScreenProps['onNavigationApproved']
+  rosterRights: Record<string, boolean>
+  rosterDefaultSide?: Side
+  detailsLoading: boolean
+  detailsProblem?: string
+  onRefreshDetails: () => void
   game: GameSession
   client: TeamStationClient
   gameId: string
@@ -532,19 +785,24 @@ function ScoringPanel(props: {
   const [acceptedLineup, setAcceptedLineup] = useState<string>()
   const defensiveOpen = defensiveSlot != null
   const confirmation = useRef<((value: boolean) => void) | null>(null)
+  const confirmationReturn = useRef<typeof sheet>(undefined)
+  const currentSheet = useRef(sheet)
+  currentSheet.current = sheet
   const requestConfirmation = useCallback(
     async () =>
       await new Promise<boolean>(resolve => {
         confirmation.current = resolve
+        confirmationReturn.current = currentSheet.current
         setMenu(false)
         setSheet('exit')
       }),
     []
   )
   const closeSheet = (): void => {
+    const returning = confirmation.current != null
     confirmation.current?.(false)
     confirmation.current = null
-    setSheet(undefined)
+    setSheet(returning ? confirmationReturn.current : undefined)
   }
   useEffect(
     () => () => {
@@ -553,7 +811,7 @@ function ScoringPanel(props: {
     []
   )
   useMenuEscape(
-    menu,
+    menu && props.active,
     () => {
       setMenu(false)
     },
@@ -581,6 +839,7 @@ function ScoringPanel(props: {
     awaitingResult(session)
   const setupReady = hasActivePlay || (missing.length === 0 && lineupAccepted)
   const actionsAllowed =
+    props.active &&
     bottomActionsAllowed(state) &&
     !status.readOnly &&
     !rosterLoading &&
@@ -618,7 +877,8 @@ function ScoringPanel(props: {
   }, [onOverlay, overlaid])
   const pauseClock = useScoringClock(
     state,
-    menu ||
+    !props.active ||
+      menu ||
       historyActive ||
       tagTarget != null ||
       sheet != null ||
@@ -640,6 +900,7 @@ function ScoringPanel(props: {
     [pauseClock]
   )
   const canEditDefense =
+    props.active &&
     setupEditable(state) &&
     !status.readOnly &&
     !menu &&
@@ -851,6 +1112,7 @@ function ScoringPanel(props: {
   // The log's line for a dictated undo; `id` changes per undo.
   const [undone, setUndone] = useState<{ id: number; line: string }>()
   const dictation = useDictationControls({
+    suspended: !props.active,
     health: props.persistent ? health : noDictation,
     url: socketUrl,
     token: props.client.token,
@@ -863,6 +1125,7 @@ function ScoringPanel(props: {
     played,
     onAnswer: answer => {
       if (
+        !props.active ||
         tiebreaker.active ||
         rosterLoading ||
         (!lineupAccepted && !hasActivePlay)
@@ -879,6 +1142,7 @@ function ScoringPanel(props: {
     },
     // While a play is drawn or a player dragged, Space is the field's.
     spaceTalks:
+      props.active &&
       (atRest(state) || state.reel != null) &&
       !gestureActive &&
       !tiebreaker.active &&
@@ -886,7 +1150,7 @@ function ScoringPanel(props: {
       (lineupAccepted || hasActivePlay),
     undone,
     onActions: (transcript, actions, undo) => {
-      if (rosterLoading || tiebreaker.active) return
+      if (!props.active || rosterLoading || tiebreaker.active) return
       if (undo === true) {
         // Undone now, before the rest of the sentence is applied. With a
         // question open, what is taken back is the unanswered sentence.
@@ -920,27 +1184,42 @@ function ScoringPanel(props: {
   // Leaving first saves what the server has not acknowledged, and asks only
   // about changes that still did not reach it. A server that does not answer
   // holds the scorer back three seconds at most.
+  const leaving = useRef<Promise<boolean> | null>(null)
   const leave = useCallback(async (): Promise<boolean> => {
-    stopWalkUp.current()
-    if (props.persistent) {
-      await Promise.race([
-        props.game.flush().catch(() => undefined),
-        new Promise<void>(resolve => {
-          setTimeout(() => {
-            resolve()
-          }, 3000)
-        })
-      ])
-      if (props.game.pending === 0) return true
-    } else if (scoredHere.current === 0) return true
-    return await requestConfirmation()
+    if (leaving.current != null) return await leaving.current
+    const decision = (async (): Promise<boolean> => {
+      stopWalkUp.current()
+      if (props.persistent) {
+        await Promise.race([
+          props.game.flush().catch(() => undefined),
+          new Promise<void>(resolve => {
+            setTimeout(() => {
+              resolve()
+            }, 3000)
+          })
+        ])
+        if (props.game.pending === 0) return true
+      } else if (scoredHere.current === 0) return true
+      return await requestConfirmation()
+    })()
+    leaving.current = decision
+    try {
+      return await decision
+    } finally {
+      if (leaving.current === decision) leaving.current = null
+    }
   }, [props.game, props.persistent, requestConfirmation])
   const exit = useScoringExit(
     session.gamePk,
     props.persistent ? status.pending > 0 : state.past.length > 0,
     props.onExit,
-    leave
+    leave,
+    true,
+    props.allowNavigation,
+    props.onNavigationApproved
   )
+  const { onBeforeLeave } = props
+  useEffect(() => onBeforeLeave?.(leave), [onBeforeLeave, leave])
   // The rosters are read from the server on the way in, so another scorer's
   // saved change is what the scorer edits; saving them posts at once. The
   // last one saved wins.
@@ -1012,6 +1291,7 @@ function ScoringPanel(props: {
     }
   }
   const openRosters = (lineup = false): void => {
+    props.onRefreshDetails()
     setRosterInitial(undefined)
     setSheet('rosters')
     refreshSetup()
@@ -1019,7 +1299,7 @@ function ScoringPanel(props: {
         if (fresh == null) return
         setRosterInitial(
           lineup
-            ? { draft: fresh, side: battingSide(fresh), defense: false }
+            ? { draft: fresh, side: battingSide(fresh), mode: 'lineup' }
             : undefined
         )
         setRosterRead(value => value + 1)
@@ -1161,6 +1441,10 @@ function ScoringPanel(props: {
     fadeAppleMusic: props.fadeAppleMusic
   })
   stopWalkUp.current = note.stop
+  const { stop: stopNote } = note
+  useEffect(() => {
+    if (!props.active) stopNote()
+  }, [props.active, stopNote])
   const batterId = line.offense.batter?.id
   const shownAppearances = useRef(new Set<string>())
   const appearance = session.liveData.plays.currentPlay?.about.atBatIndex
@@ -1285,6 +1569,7 @@ function ScoringPanel(props: {
             : `Resolve ${session.gameData.players[unresolvedRunner?.playerId ?? 0]?.fullName ?? 'runner'}: drag to a base, or hold to mark Out`
           : undefined))
   const celebrationPaused =
+    !props.active ||
     menu ||
     sheet != null ||
     defensiveOpen ||
@@ -1349,6 +1634,7 @@ function ScoringPanel(props: {
       : players
   return (
     <BaseballScreen
+      suspended={!props.active}
       setupToast={
         setupInstruction === 'Insufficient batting lineup.'
           ? {
@@ -1971,6 +2257,7 @@ function ScoringPanel(props: {
       )}
       {sheet != null && (
         <ScoringSheet
+          visible={props.active || sheet === 'exit'}
           headerless={sheet === 'rosters'}
           textCancel
           fullScreen={sheet === 'rosters'}
@@ -2044,8 +2331,15 @@ function ScoringPanel(props: {
               <RosterEditor
                 key={rosterRead}
                 initialDraft={rosterInitial}
+                defaultSide={props.rosterDefaultSide}
                 state={state}
                 rosters={props.rosters}
+                onDraftChange={setRosterInitial}
+                onEditPlayer={props.onEditPlayer}
+                canEditTeams={props.rosterRights}
+                rosterLoading={props.detailsLoading}
+                rosterError={props.detailsProblem}
+                onRetryRoster={props.onRefreshDetails}
                 onCancel={closeSheet}
                 onSave={(draft, nextBatter) => {
                   dispatch({ type: 'ROSTER', draft, nextBatter })

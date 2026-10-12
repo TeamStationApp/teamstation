@@ -13,7 +13,7 @@ import {
 import { asTeamSummary } from '../common/api'
 import { GameSocket } from '../common/gameSocket'
 import type { GroupRef } from '../common/groupCreation'
-import { coachesTeam, keepsSongs } from '../common/roles'
+import { keepsSongs, managesRoster } from '../common/roles'
 import type { WalkUpSong } from '../common/walkUpSong'
 import { tsLogoSource } from './assets'
 import {
@@ -37,6 +37,11 @@ import {
   routePath,
   type When
 } from './navigation/routes'
+import {
+  isScoringPlayerChild,
+  isScoringPlayerReturn,
+  type ScoringPlayerOrigin
+} from './navigation/scoringPlayerReturn'
 import { seasonParticipantDestination } from './navigation/seasonParticipant'
 import {
   filtersForRoute,
@@ -46,13 +51,16 @@ import {
 } from './navigation/tabFilters'
 import { stacksAfterTabPress } from './navigation/tabPress'
 import {
+  backFromScoringPlayer,
   currentRoute,
   popRoute,
+  scoringOriginHistory,
   showRoute,
   useBrowserBack
 } from './navigation/useAddressBar'
 import { passwordKdf } from './platform/passwordKdf'
 import { ScoreboardOverrideScreen } from './scoreboard/ScoreboardOverrideScreen'
+import { ScoringPlayerSettingsFlow } from './scoring/ScoringPlayerSettingsFlow'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
@@ -123,6 +131,8 @@ export interface AppProps {
    */
   onToken?: (token: string | undefined) => void
 }
+
+type ScoringSettingsRefresh = () => void
 
 /** A screen pushed on top of a tab, rather than one of the tabs itself. */
 type Pushed =
@@ -344,6 +354,73 @@ function Shell(props: AppProps): React.ReactElement {
   })
   const settingsVisitId = useRef(0)
   const [settingsVisit, setSettingsVisit] = useState(0)
+  const scoringVisit = useRef<
+    | (ScoringPlayerOrigin & {
+        actor?: string | number
+        history: number
+        tab: NavTabId
+        frames: Pushed[]
+        child: Extract<Pushed, { name: 'player' }>
+        refresh?: ScoringSettingsRefresh
+      })
+    | undefined
+  >(undefined)
+  const scoringApproved = useRef(false)
+  const markScoringApproved = useCallback((): void => {
+    scoringApproved.current = true
+  }, [])
+  const clearScoringVisit = useCallback(
+    (held: NonNullable<typeof scoringVisit.current>): void => {
+      if (scoringVisit.current !== held) return
+      scoringVisit.current = undefined
+      scoringApproved.current = false
+      setStacks(current => ({
+        ...current,
+        [held.tab]: held.frames.slice(0, -1)
+      }))
+    },
+    []
+  )
+  const scoringLeave = useRef<(() => Promise<boolean>) | undefined>(undefined)
+  const scoringRefresh = useRef<ScoringSettingsRefresh | undefined>(undefined)
+  const registerScoringLeave = useCallback((check: () => Promise<boolean>) => {
+    scoringLeave.current = check
+    return () => {
+      if (scoringLeave.current === check) scoringLeave.current = undefined
+    }
+  }, [])
+  const registerScoringRefresh = useCallback(
+    (refresh: ScoringSettingsRefresh) => {
+      scoringRefresh.current = refresh
+      return () => {
+        if (scoringRefresh.current === refresh)
+          scoringRefresh.current = undefined
+      }
+    },
+    []
+  )
+  const allowScoringChild = useCallback(
+    (route: Route): boolean =>
+      isScoringPlayerChild(route, scoringVisit.current) ||
+      isScoringPlayerReturn(route, scoringVisit.current),
+    []
+  )
+  const afterScoringLeave = (move: () => void): void => {
+    const visit = scoringVisit.current
+    if (visit == null) {
+      move()
+      return
+    }
+    scoringLeave
+      .current?.()
+      .then(accepted => {
+        if (accepted && scoringVisit.current === visit) {
+          clearScoringVisit(visit)
+          move()
+        }
+      })
+      .catch(() => undefined)
+  }
 
   const needsSession = props.fieldPreview !== true
 
@@ -355,8 +432,26 @@ function Shell(props: AppProps): React.ReactElement {
    * decided again on the server. A failure reads as no roles, so the worst it
    * can do is hide a tab.
    */
-  const [myRoles, setMyRoles] = useState<MyRoles | undefined>(undefined)
   const signedInAs = session?.user.id
+  const [roleSnapshot, setRoleSnapshot] = useState<{
+    actor: string | number
+    client: TeamStationClient
+    revision: number
+    roles: MyRoles
+  }>()
+  const myRoles =
+    roleSnapshot != null &&
+    roleSnapshot.actor === signedInAs &&
+    roleSnapshot.client === client &&
+    roleSnapshot.revision === roleRevision
+      ? roleSnapshot.roles
+      : undefined
+  useEffect(() => {
+    const visit = scoringVisit.current
+    if (visit != null && visit.actor !== signedInAs) {
+      scoringVisit.current = undefined
+    }
+  }, [signedInAs])
   const isAdmin = session?.user.isAdmin === true
   useSentryUser(signedInAs)
 
@@ -378,16 +473,28 @@ function Shell(props: AppProps): React.ReactElement {
     [gameSocket]
   )
   useEffect(() => {
-    setMyRoles(undefined)
+    setRoleSnapshot(undefined)
     if (signedInAs == null) return
     let live = true
     client
       .myRoles()
       .then(roles => {
-        if (live) setMyRoles(roles)
+        if (live)
+          setRoleSnapshot({
+            actor: signedInAs,
+            client,
+            revision: roleRevision,
+            roles
+          })
       })
       .catch(() => {
-        if (live) setMyRoles({ teams: {} })
+        if (live)
+          setRoleSnapshot({
+            actor: signedInAs,
+            client,
+            revision: roleRevision,
+            roles: { teams: {} }
+          })
       })
     return () => {
       live = false
@@ -542,42 +649,92 @@ function Shell(props: AppProps): React.ReactElement {
     inPlace.current = false
   }, [joining, session, tab, top, filters, route.name])
 
-  const goToRoute = useCallback((route: Route): void => {
-    setSettingsVisit(++settingsVisitId.current)
-    setRoute(route)
-    setJoining(route.name === 'join' ? route.code : undefined)
-    const next = tabOf(route)
-    setTab(next)
-    setStacks(current => {
-      const held = current[next]
-      // Browser Back from a team management flow returns to its settings
-      // frame, retaining the team and its selected section underneath.
-      const at =
-        route.name === 'groupSettings' && route.kind === 'team'
-          ? held.findLastIndex(
-              item =>
-                item.name === 'groupSettings' &&
-                item.kind === 'team' &&
-                item.id === route.id &&
-                item.teamReturn?.id === route.teamReturn?.id &&
-                item.teamReturn?.address === route.teamReturn?.address &&
-                item.teamReturn?.tab === route.teamReturn?.tab
-            )
-          : -1
-      return {
-        ...current,
-        [next]: at >= 0 ? held.slice(0, at + 1) : (stackFor(route)[next] ?? [])
+  const goToRoute = useCallback(
+    (route: Route, onHandled?: (accepted: boolean) => void): void => {
+      let visit = scoringVisit.current
+      if (visit != null && scoringApproved.current) {
+        clearScoringVisit(visit)
+        visit = undefined
       }
-    })
-    // The shell writes the address from these filters. Leaving them stale
-    // replaces the route just parsed — a sign-in `?next=/schedule?when=past`
-    // would open Upcoming.
-    setFilters(current => filtersForRoute(current, route))
-  }, [])
+      if (
+        visit != null &&
+        !isScoringPlayerChild(route, visit) &&
+        !isScoringPlayerReturn(route, visit)
+      ) {
+        const check = scoringLeave.current
+        if (check == null) {
+          onHandled?.(false)
+          return
+        }
+        check()
+          .then(accepted => {
+            if (!accepted || scoringVisit.current !== visit) {
+              onHandled?.(false)
+              return
+            }
+            clearScoringVisit(visit)
+            goToRoute(route)
+            onHandled?.(true)
+          })
+          .catch(() => onHandled?.(false))
+        return
+      }
+      setSettingsVisit(++settingsVisitId.current)
+      setRoute(route)
+      setJoining(route.name === 'join' ? route.code : undefined)
+      const next = visit?.tab ?? tabOf(route)
+      setTab(next)
+      setStacks(current => {
+        if (visit != null && isScoringPlayerReturn(route, visit))
+          return { ...current, [next]: visit.frames }
+        if (
+          visit != null &&
+          route.name === 'player' &&
+          isScoringPlayerChild(route, visit)
+        )
+          return {
+            ...current,
+            [next]: [...visit.frames, { ...visit.child, ...route }]
+          }
+        const held = current[next]
+        // Browser Back from a team management flow returns to its settings
+        // frame, retaining the team and its selected section underneath.
+        const at =
+          route.name === 'groupSettings' && route.kind === 'team'
+            ? held.findLastIndex(
+                item =>
+                  item.name === 'groupSettings' &&
+                  item.kind === 'team' &&
+                  item.id === route.id &&
+                  item.teamReturn?.id === route.teamReturn?.id &&
+                  item.teamReturn?.address === route.teamReturn?.address &&
+                  item.teamReturn?.tab === route.teamReturn?.tab
+              )
+            : -1
+        return {
+          ...current,
+          [next]:
+            at >= 0 ? held.slice(0, at + 1) : (stackFor(route)[next] ?? [])
+        }
+      })
+      // The shell writes the address from these filters. Leaving them stale
+      // replaces the route just parsed — a sign-in `?next=/schedule?when=past`
+      // would open Upcoming.
+      setFilters(current => filtersForRoute(current, route))
+      onHandled?.(true)
+    },
+    [clearScoringVisit]
+  )
   useBrowserBack(goToRoute)
 
   /** The tab, or — pressed on the tab you are already on — a step out of it. */
   const selectTab = (next: NavTabId): void => {
+    if (scoringVisit.current != null) {
+      afterScoringLeave(() => {
+        selectTab(next)
+      })
+      return
+    }
     setTab(next)
     setStacks(current => stacksAfterTabPress(current, tab, next))
     if (session == null || props.fieldPreview === true) {
@@ -590,6 +747,12 @@ function Shell(props: AppProps): React.ReactElement {
   }
 
   const push = (next: Pushed): void => {
+    if (scoringVisit.current != null) {
+      afterScoringLeave(() => {
+        push(next)
+      })
+      return
+    }
     setStacks(current => ({ ...current, [tab]: [...current[tab], next] }))
   }
   const openGroup = useCallback(
@@ -619,6 +782,21 @@ function Shell(props: AppProps): React.ReactElement {
     }
   }
   const pop = (): void => {
+    if (
+      top?.name === 'player' &&
+      isScoringPlayerChild({ ...top, name: 'player' }, scoringVisit.current)
+    ) {
+      const synchronous = backFromScoringPlayer(scoringVisit.current?.history)
+      // Native history has no popstate callback for the header chevron.
+      if (synchronous) {
+        setStacks(current => ({
+          ...current,
+          [tab]: scoringVisit.current?.frames ?? current[tab].slice(0, -1)
+        }))
+        inPlace.current = true
+      }
+      return
+    }
     // The address goes back with the screen. On the web the browser owns the
     // history and this does nothing; on a phone the two are kept by hand, and
     // a chevron that left a step behind would make the next press of the
@@ -644,6 +822,14 @@ function Shell(props: AppProps): React.ReactElement {
   /** A section change on the team or season screen, into the address. */
   const setTopTab = (next: string, correcting = false): void => {
     if (correcting) inPlace.current = true
+    const frame = stacks[tab].at(-1)
+    if (frame?.name === 'player' && frame.tab !== next) {
+      if (next === 'settings') setSettingsVisit(++settingsVisitId.current)
+      if (
+        isScoringPlayerChild(routeOf(tab, frame, filters), scoringVisit.current)
+      )
+        inPlace.current = true
+    }
     setStacks(current => {
       const held = current[tab]
       const last = held[held.length - 1]
@@ -973,6 +1159,72 @@ function Shell(props: AppProps): React.ReactElement {
     )
   }
 
+  const visit = scoringVisit.current
+  const retainedFrame =
+    visit != null &&
+    visit.actor === signedInAs &&
+    (top?.name === 'player' || top?.name === 'scoreGame')
+      ? visit.frames.at(-1)
+      : undefined
+  const scoringFrame =
+    props.fieldPreview === true
+      ? undefined
+      : top?.name === 'scoreGame'
+        ? top
+        : retainedFrame?.name === 'scoreGame'
+          ? retainedFrame
+          : undefined
+  const scoringActive = scoringFrame != null && top?.name === 'scoreGame'
+  const scoringBody =
+    scoringFrame == null ? undefined : (
+      <ScoringScreen
+        key={`${signedInAs ?? 'local'}:${scoringFrame.gameId}`}
+        userId={signedInAs}
+        client={client}
+        source={scoringSource}
+        gameId={scoringFrame.gameId}
+        active={scoringActive}
+        onBeforeLeave={registerScoringLeave}
+        onSettingsRefresh={registerScoringRefresh}
+        allowNavigation={allowScoringChild}
+        onNavigationApproved={markScoringApproved}
+        music={walkUpMusic}
+        resolveSong={resolveDjSong}
+        fadeAppleMusic={walkUpSettings.fadeAppleMusic}
+        onEditPlayer={(userId, title, teamId) => {
+          refreshRoles()
+          scoringApproved.current = false
+          // Each Settings form gets a fresh player view, so an earlier
+          // form cannot change its header after it has been replaced.
+          setSettingsVisit(++settingsVisitId.current)
+          const child: Extract<Pushed, { name: 'player' }> = {
+            name: 'player',
+            userId: String(userId),
+            title,
+            tab: 'settings',
+            onTeam: teamId
+          }
+          scoringVisit.current = {
+            gameId: scoringFrame.gameId,
+            actor: signedInAs,
+            userId: child.userId,
+            teamId,
+            history: scoringOriginHistory(),
+            tab,
+            frames: stack,
+            child,
+            refresh: scoringRefresh.current
+          }
+          setStacks(current => ({ ...current, [tab]: [...stack, child] }))
+        }}
+        onExit={() => {
+          scoringVisit.current = undefined
+          inPlace.current = true
+          setStacks(current => ({ ...current, [tab]: [] }))
+          goToRoute({ name: 'game', gameId: scoringFrame.gameId })
+        }}
+      />
+    )
   const body =
     props.fieldPreview === true ? (
       <StandaloneField
@@ -1267,6 +1519,7 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'player' ? (
       <PlayerScreen
+        key={`${signedInAs ?? 'signed-out'}:${top.userId}:${top.onTeam ?? ''}:${visit == null ? '' : settingsVisit}`}
         client={client}
         userId={top.userId}
         title={top.title}
@@ -1278,12 +1531,22 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onTab={setTopTab}
         forTeam={top.onTeam}
-        canCoach={
+        onSettingsSaved={() => {
+          if (
+            top.onTeam != null &&
+            visit != null &&
+            scoringVisit.current?.gameId === visit.gameId &&
+            scoringVisit.current.actor === visit.actor &&
+            scoringRefresh.current === visit.refresh
+          )
+            scoringRefresh.current?.()
+        }}
+        canManageRoster={
           top.onTeam == null
             ? false
             : myRoles == null
               ? undefined
-              : coachesTeam(myRoles, top.onTeam)
+              : managesRoster(myRoles, top.onTeam)
         }
         walkUp={{
           canEdit:
@@ -1471,25 +1734,7 @@ function Shell(props: AppProps): React.ReactElement {
           showRoute(signIn)
         }}
       />
-    ) : top.name === 'scoreGame' ? (
-      <ScoringScreen
-        key={top.gameId}
-        userId={session?.user.id}
-        client={client}
-        source={scoringSource}
-        gameId={top.gameId}
-        music={walkUpMusic}
-        resolveSong={resolveDjSong}
-        fadeAppleMusic={walkUpSettings.fadeAppleMusic}
-        onExit={() => {
-          inPlace.current = true
-          // The game opens under Home. Clear the tab we are leaving so its
-          // next visit cannot restore the scorer that was just exited.
-          setStacks(current => ({ ...current, [tab]: [] }))
-          goToRoute({ name: 'game', gameId: top.gameId })
-        }}
-      />
-    ) : top.name === 'game' ? (
+    ) : top.name === 'scoreGame' ? null : top.name === 'game' ? (
       <GameScreen
         client={client}
         gameId={top.gameId}
@@ -1596,7 +1841,14 @@ function Shell(props: AppProps): React.ReactElement {
       // where the chevron and what scrolled up into the header say where you
       // are.
       showMark={top == null}
-      handoff={handoff}
+      handoff={
+        visit != null &&
+        top?.name === 'player' &&
+        isScoringPlayerChild(top, visit) &&
+        (visit.actor !== signedInAs || !managesRoster(myRoles, visit.teamId))
+          ? undefined
+          : handoff
+      }
       onHeight={setHeaderHeight}
       nav={
         isWide ? (
@@ -1610,14 +1862,8 @@ function Shell(props: AppProps): React.ReactElement {
           : {
               pending: hasPending,
               onPress: () => {
-                setStacks(current => {
-                  const held = current[tab]
-                  if (held.at(-1)?.name === 'notifications') return current
-                  return {
-                    ...current,
-                    [tab]: [...held, { name: 'notifications' }]
-                  }
-                })
+                if (top?.name !== 'notifications')
+                  push({ name: 'notifications' })
               }
             }
       }
@@ -1657,7 +1903,14 @@ function Shell(props: AppProps): React.ReactElement {
             onHandoff={setHandoff}
             onBackOverride={setBack}
           >
-            <View style={styles.body}>{body}</View>
+            <View style={styles.body}>
+              <ScoringPlayerSettingsFlow
+                scoring={scoringBody}
+                active={scoringActive}
+              >
+                {body}
+              </ScoringPlayerSettingsFlow>
+            </View>
           </HeaderSlotProvider>
           {!immersiveField && <View style={styles.headerLayer}>{header}</View>}
         </View>

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import type { RosterEntry, TeamStationClient } from '../../common/api'
+import { rosterFullName } from '../../common/names'
 import {
   PLAYER_POSITIONS,
   type PlayerPosition,
@@ -24,6 +25,7 @@ type Bats = NonNullable<RosterEntry['bats']>
 type Throws = NonNullable<RosterEntry['throws']>
 
 interface Draft {
+  name?: PlayerSettings['name']
   jersey: string
   positions: PlayerPosition[]
   bats: RosterEntry['bats']
@@ -41,8 +43,8 @@ const THROWS: Array<{ id: Throws; label: string }> = [
 ]
 
 /**
- * What a coach sets for one player on one team: the jersey number and the
- * positions they play here, and how they bat and throw everywhere.
+ * A roster manager edits the player's name and hands everywhere, and their
+ * jersey number and positions on this team.
  *
  * The form starts from the player's roster entry on this team. Save is
  * offered only once something differs from it, and sends only what differs,
@@ -70,7 +72,7 @@ export function PlayerSettingsTab(
     setDraft(undefined)
     setLoadError(undefined)
     client
-      .roster(teamId)
+      .roster(teamId, { includeFullNames: true })
       .then(roster => {
         if (cancelled) return
         const entry = roster.find(
@@ -109,6 +111,7 @@ export function PlayerSettingsTab(
   const changes = changesOf(saved, draft)
   const changed = Object.keys(changes).length > 0
   const edit = (next: Partial<Draft>): void => {
+    if (busy) return
     setDraft({ ...draft, ...next })
     setDone(false)
   }
@@ -138,6 +141,24 @@ export function PlayerSettingsTab(
 
   return (
     <Card style={styles.form}>
+      {draft.name != null && (
+        <View pointerEvents={busy ? 'none' : 'auto'} style={{ gap: 16 }}>
+          <TextField
+            label={lstrings.player_settings_first_name}
+            value={draft.name.firstName}
+            onChangeText={firstName => {
+              edit({ name: { ...draft.name!, firstName } })
+            }}
+          />
+          <TextField
+            label={lstrings.player_settings_last_name}
+            value={draft.name.lastName}
+            onChangeText={lastName => {
+              edit({ name: { ...draft.name!, lastName } })
+            }}
+          />
+        </View>
+      )}
       <TextField
         label={lstrings.player_settings_jersey}
         value={draft.jersey}
@@ -242,7 +263,26 @@ export function PlayerSettingsTab(
 
 /** The form's starting point: what the roster says now. */
 function draftOf(entry: RosterEntry): Draft {
+  const details = entry.nameDetails
+  let name: PlayerSettings['name']
+  if (details != null) {
+    const first = details.firstName?.trim() ?? ''
+    const last = details.lastName?.trim() ?? ''
+    const full = rosterFullName({ id: entry.userId, ...details })
+    // Legacy imports sometimes stored only one part. Preserve the full label
+    // when constructing the two edit fields instead of dropping its surname.
+    if (first !== '' && last !== '') name = { firstName: first, lastName: last }
+    else if (first !== '' && (full === first || full.startsWith(first + ' '))) {
+      name = { firstName: first, lastName: full.slice(first.length).trim() }
+    } else if (last !== '' && (full === last || full.endsWith(' ' + last))) {
+      name = { firstName: full.slice(0, -last.length).trim(), lastName: last }
+    } else {
+      const [firstName, ...rest] = full.split(/\s+/)
+      name = { firstName, lastName: rest.join(' ') }
+    }
+  }
   return {
+    name,
     jersey: entry.jersey ?? '',
     positions: PLAYER_POSITIONS.filter(position =>
       entry.positions.includes(position)
@@ -258,6 +298,18 @@ function draftOf(entry: RosterEntry): Draft {
  */
 export function changesOf(saved: RosterEntry, draft: Draft): PlayerSettings {
   const changes: PlayerSettings = {}
+  const previousName = draftOf(saved).name
+  if (draft.name != null && previousName != null) {
+    const name = {
+      firstName: draft.name.firstName.trim(),
+      lastName: draft.name.lastName.trim()
+    }
+    if (
+      name.firstName !== previousName.firstName ||
+      name.lastName !== previousName.lastName
+    )
+      changes.name = name
+  }
   const jersey = draft.jersey.trim() === '' ? null : draft.jersey.trim()
   if (jersey !== saved.jersey) changes.jersey = jersey
   const before = draftOf(saved).positions

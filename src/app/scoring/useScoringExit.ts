@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect } from 'react'
 
+import type { Route } from '../navigation/routes'
 import { setNavigationGuard } from '../navigation/useAddressBar'
 
 /**
@@ -13,15 +14,26 @@ export function useScoringExit(
   gameId: string,
   saveFailed: boolean,
   onExit: () => void,
-  flush?: () => Promise<boolean>
+  flush?: () => Promise<boolean>,
+  active = true,
+  allow?: (route: Route) => boolean,
+  onNavigationApproved?: () => void
 ): () => void {
   const save = useCallback(
     async () => flush == null || (await flush()),
     [flush]
   )
   useLayoutEffect(
-    () => setNavigationGuard(save, { name: 'game', gameId, tab: 'score' }),
-    [save, gameId]
+    () =>
+      active
+        ? setNavigationGuard(
+            save,
+            { name: 'game', gameId, tab: 'score' },
+            allow,
+            onNavigationApproved
+          )
+        : undefined,
+    [save, gameId, active, allow, onNavigationApproved]
   )
   useEffect(() => {
     const pagehide = (): void => {

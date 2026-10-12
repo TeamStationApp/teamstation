@@ -2,14 +2,23 @@ import { useEffect } from 'react'
 
 import { parseRoute, type Route, routePath } from './routes'
 
-let guard: { check: () => Promise<boolean>; destination: Route } | undefined
+let guard:
+  | {
+      check: () => Promise<boolean>
+      destination: Route
+      allow?: (route: Route) => boolean
+      onAccepted?: () => void
+    }
+  | undefined
 let position = 0
 
 export function setNavigationGuard(
   check: () => Promise<boolean>,
-  destination: Route
+  destination: Route,
+  allow?: (route: Route) => boolean,
+  onAccepted?: () => void
 ): () => void {
-  const held = { check, destination }
+  const held = { check, destination, allow, onAccepted }
   guard = held
   return () => {
     if (guard === held) guard = undefined
@@ -86,6 +95,18 @@ export function popRoute(): void {
   // The browser is the history.
 }
 
+/** A scoring child uses a real Back step so Forward can reopen the visit. */
+export function scoringOriginHistory(): number {
+  initializeHistory()
+  return position
+}
+export function backFromScoringPlayer(origin?: number): boolean {
+  const steps =
+    origin == null ? 1 : Math.max(1, (indexOfHistory() ?? position) - origin)
+  window.history.go(-steps)
+  return false
+}
+
 /** Calls back when the reader presses Back or Forward. */
 export function useBrowserBack(onRoute: (route: Route) => void): void {
   useEffect(() => {
@@ -106,7 +127,7 @@ export function useBrowserBack(onRoute: (route: Route) => void): void {
         return
       }
       const held = guard
-      if (held == null) {
+      if (held == null || held.allow?.(currentRoute()) === true) {
         position = indexOfHistory() ?? position
         onRoute(currentRoute())
         return
@@ -124,6 +145,7 @@ export function useBrowserBack(onRoute: (route: Route) => void): void {
             const finish = (): void => {
               position = nextPosition
               showRoute(held.destination, true)
+              held.onAccepted?.()
               onRoute(held.destination)
             }
             if (delta !== 0) {

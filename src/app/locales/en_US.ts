@@ -194,6 +194,8 @@ export const enUs = {
 
   // A player's settings, for a coach of the team the page was opened for
   player_settings: 'Settings',
+  player_settings_first_name: 'First name',
+  player_settings_last_name: 'Last name',
   player_settings_jersey: 'Jersey number',
   player_settings_positions: 'Positions',
   player_settings_bats: 'Bats',
@@ -472,6 +474,12 @@ export const enUs = {
   scoring_history_hint: 'Your last action appears here',
   scoring_undo_hint: 'Undo last action',
   scoring_place_runner: 'Place a Runner',
+  scoring_edit_roster: 'Edit Roster',
+  scoring_edit_roster_instruction: 'Tap a player to edit settings.',
+  scoring_roster_empty: 'No players on this team.',
+  scoring_game_only_player: 'Game-only player',
+  scoring_roster_edit_unavailable:
+    'Player settings are unavailable for this team.',
   scoring_tiebreaker: '(Tiebreaker)',
   scoring_out_type: 'OUT TYPE',
   scoring_submenu: 'SUB-MENU',
