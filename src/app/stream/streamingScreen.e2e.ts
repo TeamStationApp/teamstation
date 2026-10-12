@@ -499,8 +499,21 @@ async function main(): Promise<void> {
 
     // E12: the outage.
     if (outageIp != null) {
-      const segmentsAt = async (): Promise<number> =>
-        (await playlist(row.videoId!)).segments
+      // The writer for the new connection appends after a discontinuity; the
+      // segment the old writer flushes as its stream ends does not count.
+      const joins = async (): Promise<{ joins: number; after: number }> => {
+        const text = await readFile(
+          (await playlist(row.videoId!)).file,
+          'utf8'
+        ).catch(() => '')
+        const parts = text.split('#EXT-X-DISCONTINUITY')
+        return {
+          joins: parts.length - 1,
+          after: (parts.at(-1) ?? '')
+            .split('\n')
+            .filter(line => line.startsWith('#EXTINF')).length
+        }
+      }
       const cutAt = new Date()
       say(`cut: 100% loss on the phone for 20 s`)
       await shape([{ ip: outageIp, lossPct: 100 }])
@@ -509,7 +522,7 @@ async function main(): Promise<void> {
         seen.add(await pill())
         await sleep(1000)
       }
-      const segmentsAtRestore = await segmentsAt()
+      const joinsAtRestore = (await joins()).joins
       await shape([{ ip: outageIp }])
       const restoredAt = Date.now()
       say(`restored; the pill read ${[...seen].join(', ')} during the cut`)
@@ -527,13 +540,14 @@ async function main(): Promise<void> {
           if ((await pill()) === 'Broadcasting')
             publishing = (Date.now() - restoredAt) / 1000
         }
-        if (resumed == null && (await segmentsAt()) > segmentsAtRestore)
+        const now = await joins()
+        if (resumed == null && now.joins > joinsAtRestore && now.after > 0)
           resumed = (Date.now() - restoredAt) / 1000
         await sleep(500)
       }
       const pillAfter = await pill()
       results.push(
-        `E12 cut ${cutAt.toISOString()}: pill during the cut ${[...seen].join(' → ')}; after the restore ${pillAfter} at ${publishing?.toFixed(1) ?? 'never'} s; first new HLS segment ${resumed?.toFixed(1) ?? 'never'} s after the restore`
+        `E12 cut ${cutAt.toISOString()}: pill during the cut ${[...seen].join(' → ')}; after the restore ${pillAfter} at ${publishing?.toFixed(1) ?? 'never'} s; first segment of the new connection in the HLS ${resumed?.toFixed(1) ?? 'never'} s after the restore`
       )
       await writeFile(
         path.join(artifacts ?? '.', 'e12-times.json'),
