@@ -32,6 +32,24 @@ struct TakeGameIndexTests {
     #expect(take.gameTitle == "2026-09-20 Titan at Ravens")
   }
 
+  @Test("A take names the live stream it is the local recording of, and only when told")
+  func keepsTheLiveStream() throws {
+    let root = try scratch()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let index = try ArchiveIndex(url: root.appendingPathComponent("index.sqlite"))
+    let id = try index.beginRecording(at: WallClock(seconds: 1_000))
+    #expect(try index.recordings().first?.liveStreamId == nil)
+
+    try index.setLiveStreamId("lst_1", for: id)
+    #expect(try index.recordings().first?.liveStreamId == "lst_1")
+
+    try index.setLiveStreamId(nil, for: id)
+    #expect(try index.recordings().first?.liveStreamId == nil)
+    // An index opened again keeps the column it already has.
+    let again = try ArchiveIndex(url: root.appendingPathComponent("index.sqlite"))
+    #expect(try again.recordings().first?.liveStreamId == nil)
+  }
+
   @Test("A take recorded with no stream names no game")
   func namesNothingWithoutAStream() throws {
     let root = try scratch()
