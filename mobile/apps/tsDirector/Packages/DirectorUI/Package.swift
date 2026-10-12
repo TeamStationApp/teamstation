@@ -17,7 +17,7 @@ let package = Package(
     .package(path: "../../common/CameramanRemote"),
     .package(path: "../DirectorPipeline"),
     .package(path: "../DirectorDVR"),
-    .package(path: "../DirectorRTMP"),
+    .package(path: "../../../common/DirectorRTMP"),
     .package(path: "../DirectorTestHarness"),
     .package(path: "../DirectorLink"),
     .package(path: "../../../common/DistributorWire"),

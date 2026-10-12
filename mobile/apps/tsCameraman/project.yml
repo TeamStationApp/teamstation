@@ -31,7 +31,7 @@ packages:
   CameramanControlUI:
     path: ../common/CameramanControlUI
   CameramanCapture:
-    path: Packages/CameramanCapture
+    path: ../common/CameramanCapture
   CameramanEncode:
     path: Packages/CameramanEncode
   CameramanRTSP:

@@ -53,7 +53,7 @@ packages:
   CameramanRemote:
     path: ../common/CameramanRemote
   DirectorRTMP:
-    path: Packages/DirectorRTMP
+    path: ../common/DirectorRTMP
   TeamStationKit:
     path: ../common/TeamStationKit
   # Device event control: the protocol "Set event on nearby devices" speaks to them.
