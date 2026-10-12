@@ -1,6 +1,6 @@
 package app.teamstation.cameraman.rtsp
 
-import app.teamstation.cameraman.core.EncodedVideoFrame
+import app.teamstation.streamcore.core.EncodedVideoFrame
 import kotlin.math.min
 
 /**

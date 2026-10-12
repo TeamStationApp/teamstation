@@ -6,7 +6,7 @@ import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.Rect
 import android.view.Surface
-import app.teamstation.cameraman.core.StreamSettings
+import app.teamstation.streamcore.core.StreamSettings
 import kotlin.math.roundToLong
 
 /**

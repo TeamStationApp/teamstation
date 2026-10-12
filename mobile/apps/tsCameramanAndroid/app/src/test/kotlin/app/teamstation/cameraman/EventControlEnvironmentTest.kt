@@ -1,7 +1,7 @@
 package app.teamstation.cameraman
 
 import app.teamstation.cameraman.core.InMemoryIdentityStore
-import app.teamstation.cameraman.core.InMemorySettingsStore
+import app.teamstation.streamcore.core.InMemorySettingsStore
 import app.teamstation.cameraman.engine.AppEnvironment
 import app.teamstation.cameraman.eventcontrol.EventControlHost
 import org.json.JSONObject

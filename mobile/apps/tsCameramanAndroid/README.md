@@ -130,20 +130,30 @@ a frame-rate problem with no upside.
 
 ```
 app/src/main/kotlin/app/teamstation/cameraman/
-  core/       identity, stream settings, zoom mapping, frame types, port probe, process load
-  capture/    Camera2 session, format catalogue, microphone
-  gl/         EGL context, texture program, the camera-to-encoder renderer
-  encode/     MediaCodec H.264/HEVC and AAC, NAL and parameter-set handling
+  core/       identity, camera parameters, broadcast policy, frame delivery, port probe
   rtsp/       RTSP server, packetizers, SDP, RTCP, interleaved framing, NSD advertising
+  radar/      scoreboard target, foreground service types
   ui/         Compose screens
   harness/    launch arguments, control channel, synthetic camera, recorders
   service/    the foreground service that owns all of it
   engine/     AppEnvironment — the wiring
-app/src/test/kotlin/   231 JVM tests
+app/src/test/kotlin/   JVM tests of the above
 docs/                  measured capability set, testing, interop
 scripts/               build, install, launch, verify
 maestro/flows/         on-device UI flows
+
+../common/android/streamcore/   the `:streamcore` library, shared with the TeamStation app
+  src/main/kotlin/app/teamstation/streamcore/
+    core/       stream settings, zoom mapping, lenses, capture formats, frame types, process load
+    capture/    Camera2 session, lens discovery, format catalogue, microphone
+    gl/         EGL context, texture program, the camera-to-encoders renderer
+    encode/     MediaCodec H.264/HEVC and AAC, NAL and parameter-set handling
+    bitrate/    adaptive bitrate controller and loop, congestion samples
+    radar/      radar link, protocol, handshake, GATT radio, pairing store
+  src/test/kotlin/      JVM tests of the above
 ```
+
+`scripts/test-unit.sh` runs both modules' suites.
 
 ## Why the packages split this way
 

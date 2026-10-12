@@ -1,6 +1,13 @@
 package app.teamstation.cameraman.core
 
-import app.teamstation.cameraman.capture.FormatCatalogue
+import app.teamstation.streamcore.capture.FormatCatalogue
+import app.teamstation.streamcore.core.BatteryStatus
+import app.teamstation.streamcore.core.CameraLens
+import app.teamstation.streamcore.core.CameraPosition
+import app.teamstation.streamcore.core.LensSelection
+import app.teamstation.streamcore.core.StreamCodec
+import app.teamstation.streamcore.core.StreamSettings
+import app.teamstation.streamcore.core.ZoomMapping
 import java.net.URI
 import java.util.Locale
 import kotlin.math.abs
