@@ -324,6 +324,14 @@ export interface DirectorUploadsTable {
    * moved for four minutes.
    */
   step: string | null
+  /**
+   * The phone stream whose live copy this upload replaces, when the app named
+   * one it may replace. Null for Director and Distributor uploads, which the
+   * coverage rule places.
+   */
+  live_stream_id: string | null
+  /** The recording ran for every moment that stream published. */
+  whole_stream: Generated<boolean>
   created_at: Timestamp
   updated_at: Timestamp
 }
@@ -589,6 +597,16 @@ export interface LiveStreamsTable {
   last_published_at: Timestamp | null
   ended_at: Timestamp | null
   created_by: number | null
+  /** The install that holds this stream. Null for a browser or software. */
+  device_id: string | null
+  /** What that device is, in words: `iPhone 13 Pro`, `iPad Pro`. */
+  device_model: string | null
+  /** The phone's own recording: `none`, `recorded`, or `uploaded`. */
+  local_recording: Generated<'none' | 'recorded' | 'uploaded'>
+  /** Only the phone's own upload replaces this stream's live copy. */
+  records_locally: Generated<boolean>
+  /** The legacy Director claim route has returned this stream. */
+  director_claimed: Generated<boolean>
   created_at: Timestamp
   updated_at: Timestamp
 }
@@ -732,6 +750,8 @@ export interface NotificationReceiptsTable {
   event_id: string
   user_id: number
   viewed_at: Timestamp
+  /** When the person dismissed a reminder, or its upload landed. */
+  dismissed_at: Timestamp | null
 }
 
 export interface Database {
@@ -781,8 +801,36 @@ export interface Database {
 export function makeDatabase(connectionString: string): Kysely<Database> {
   attachInt8Parser()
   return new Kysely<Database>({
-    dialect: new PostgresDialect({
-      pool: new Pool({ connectionString, max: 10 })
+    dialect: new PostgresDialect({ pool: makePool(connectionString) })
+  })
+}
+
+/**
+ * The pool, with every connection it opens listening for its own `'error'`.
+ *
+ * Postgres can drop a connection at any time: a restart, a full disk, an
+ * administrator's `pg_terminate_backend`. pg raises that as an `'error'` event
+ * on the connection's `Client`, and an event nobody hears takes the whole
+ * process down. The pool listens on a connection only while it sits idle, so a
+ * connection lost while a request has it checked out went unheard. Here each
+ * connection listens from the moment it opens: the query in flight rejects,
+ * the request answers its error, and the pool drops the dead connection and
+ * opens a fresh one for the next query.
+ */
+export function makePool(
+  connectionString: string,
+  log: (message: string) => void = message => {
+    console.error(message)
+  }
+): Pool {
+  const pool = new Pool({ connectionString, max: 10 })
+  pool.on('connect', client => {
+    client.on('error', (error: Error) => {
+      log(`database: connection lost: ${error.message}`)
     })
   })
+  // The pool repeats an idle connection's error here, which the connection's
+  // own listener has already logged. Unheard, the repeat would be fatal too.
+  pool.on('error', () => undefined)
+  return pool
 }

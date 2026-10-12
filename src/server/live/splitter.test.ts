@@ -16,11 +16,14 @@ import {
   keyFromSession,
   type LiveEvent,
   nextSegmentNumber,
+  publishArrivedForTest,
+  publishGoneForTest,
   reopenPlaylist,
   resetForTest,
   restartDelay,
   setLive,
   statusFor,
+  type TestSession,
   tickSamplerForTest
 } from './splitter'
 
@@ -379,6 +382,314 @@ describe('live ingest', function () {
     expect(statusFor(KEY)?.ingress.publishing).equals(true)
     expect(statusFor(OTHER_KEY)?.ingress.publishing).equals(false)
     expect(statusFor(OTHER_KEY)?.liveStreamId).equals('liv_other')
+  })
+})
+
+/** node-media-server's own broadcast: one per path, with one publisher. */
+interface Broadcast {
+  publisher: unknown
+  postPublish: (session: unknown) => string | null
+  donePublish: (session: unknown) => void
+  subscribers: Map<string, { close?: () => void }>
+}
+interface NmsContext {
+  eventEmitter: {
+    on: (event: string, listener: (session: never) => void) => void
+    off: (event: string, listener: (session: never) => void) => void
+  }
+}
+
+describe('a publisher replaced by its own reconnect', function () {
+  /**
+   * An encoder whose network dropped redials the moment it is back, while its
+   * old connection — dead without a FIN — still holds the key. These run the
+   * publish through node-media-server's real broadcast, because what matters
+   * is its order: it reports `postPublish` and only then checks for a
+   * publisher already on the path, so the quiet one has to be gone by the
+   * time the report returns.
+   */
+  const BroadcastServer =
+    require('node-media-server/src/server/broadcast_server.js') as new () => Broadcast
+  const Context = require('node-media-server/src/core/context.js') as NmsContext
+
+  let broadcast: Broadcast
+  let subscriberClosed = 0
+
+  /** A publisher on `KEY`'s path, as an RTMP session presents itself. */
+  function publisher(id: string): TestSession & {
+    closed: number
+    destroyed: number
+  } {
+    const session = {
+      id,
+      streamApp: 'live',
+      streamName: KEY,
+      streamPath: `/live/${KEY}`,
+      inBytes: 0,
+      closed: 0,
+      destroyed: 0,
+      broadcast,
+      close: () => {
+        session.closed += 1
+      },
+      socket: {
+        destroy: () => {
+          session.destroyed += 1
+        }
+      }
+    }
+    return session
+  }
+
+  /** What the RTMP session does when its client asks to publish. */
+  function push(session: TestSession): string | null {
+    return broadcast.postPublish(session)
+  }
+
+  beforeEach(function () {
+    configure()
+    broadcast = new BroadcastServer()
+    subscriberClosed = 0
+    // The HLS writer reading the stream: ours, and the only reader there is.
+    broadcast.subscribers.set('reader', {
+      close: () => {
+        subscriberClosed += 1
+      }
+    })
+    Context.eventEmitter.on('postPublish', publishArrivedForTest)
+    Context.eventEmitter.on('donePublish', publishGoneForTest)
+    setLive(KEY, spec())
+  })
+
+  afterEach(function () {
+    Context.eventEmitter.off('postPublish', publishArrivedForTest)
+    Context.eventEmitter.off('donePublish', publishGoneForTest)
+    resetForTest()
+  })
+
+  it('lets a new publish replace one whose socket died, at once', function () {
+    const dead = publisher('dead')
+    expect(push(dead)).equals(null)
+    dead.inBytes = 50_000
+    tickSamplerForTest()
+    // The network goes: nothing more arrives, and the socket never closes.
+    tickSamplerForTest()
+    tickSamplerForTest()
+
+    const back = publisher('back')
+    expect(push(back)).equals(null)
+
+    expect(broadcast.publisher).equals(back)
+    expect(dead.closed).equals(1)
+    expect(dead.destroyed).equals(1)
+    // The writer read the dead one to its end, so it closed its segment.
+    expect(subscriberClosed).equals(1)
+    expect(statusFor(KEY)?.ingress.publishing).equals(true)
+    expect(
+      events.filter(event => event.type !== 'status').map(event => event.type)
+    ).deep.equals(['publishStarted', 'publishEnded', 'publishStarted'])
+    expect(logs.join('\n')).contains(
+      'dead sent nothing for 2s; back replaces it'
+    )
+
+    // The bytes counted now are the new connection's.
+    back.inBytes = 8192
+    tickSamplerForTest()
+    expect(statusFor(KEY)?.ingress.bytesPerSecond).equals(8192)
+    expect(statusFor(KEY)?.ingress.receivingPackets).equals(true)
+  })
+
+  it('keeps the same stream and its one writer across the replacement', function () {
+    const dead = publisher('dead')
+    push(dead)
+    tickSamplerForTest()
+    tickSamplerForTest()
+    push(publisher('back'))
+
+    const status = statusFor(KEY)
+    expect(status?.liveStreamId).equals('liv_test')
+    // Stopped for the old connection and wanted again for the new one: the
+    // same output, not a released one and a second beside it.
+    expect(status?.outputs).length(1)
+    expect(status?.outputs[0].kind).equals('hls')
+    const started = events.filter(event => event.type === 'publishStarted')
+    expect(started.map(event => event.liveStreamId)).deep.equals([
+      'liv_test',
+      'liv_test'
+    ])
+  })
+
+  it('does not hear the replaced connection closing as the stream ending', function () {
+    const dead = publisher('dead')
+    push(dead)
+    tickSamplerForTest()
+    tickSamplerForTest()
+    push(publisher('back'))
+    const before = events.length
+
+    // Its socket finally closes; the broadcast now belongs to the new one.
+    broadcast.donePublish(dead)
+    publishGoneForTest(dead)
+
+    expect(events.length).equals(before)
+    expect(statusFor(KEY)?.ingress.publishing).equals(true)
+  })
+
+  it('keeps today’s one publisher per key while the first is still sending', function () {
+    const live = publisher('live')
+    push(live)
+    live.inBytes = 10_000
+    tickSamplerForTest()
+    live.inBytes = 20_000
+    tickSamplerForTest()
+
+    const second = publisher('second')
+    expect(push(second)).contains('already has a publisher')
+
+    expect(broadcast.publisher).equals(live)
+    expect(live.closed).equals(0)
+    expect(subscriberClosed).equals(0)
+    expect(logs.join('\n')).contains('second publisher ignored')
+  })
+
+  it('does not replace a publisher that sent something since the last tick', function () {
+    const live = publisher('live')
+    push(live)
+    tickSamplerForTest()
+    tickSamplerForTest()
+    // Quiet for two ticks, and then a burst arrives before the third.
+    live.inBytes = 4096
+
+    expect(push(publisher('second'))).contains('already has a publisher')
+    expect(broadcast.publisher).equals(live)
+    expect(live.closed).equals(0)
+  })
+
+  it('does not replace one that has been quiet for less than two ticks', function () {
+    const live = publisher('live')
+    push(live)
+    tickSamplerForTest()
+
+    expect(push(publisher('second'))).contains('already has a publisher')
+    expect(broadcast.publisher).equals(live)
+  })
+
+  it('replaces a quiet publisher before a looked-up key is let through', async function () {
+    let lookups = 0
+    configureIngest({
+      ffmpegPath: FAKE_FFMPEG,
+      bindHost: '127.0.0.1',
+      port: 19_361,
+      app: 'live',
+      segmentSeconds: 4,
+      log: message => {
+        logs.push(message)
+      },
+      onEvent: event => {
+        events.push(event)
+      },
+      resolve: async () => {
+        lookups += 1
+        return spec()
+      }
+    })
+    const dead = publisher('dead')
+    push(dead)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(statusFor(KEY)?.ingress.publishing).equals(true)
+    tickSamplerForTest()
+    tickSamplerForTest()
+
+    const back = publisher('back')
+    // The lookup is asynchronous; the server's check is not. The quiet one is
+    // gone before the check, and the new one is taken on once the key is
+    // confirmed.
+    expect(push(back)).equals(null)
+    expect(dead.closed).equals(1)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(lookups).equals(2)
+    expect(statusFor(KEY)?.ingress.publishing).equals(true)
+    back.inBytes = 2048
+    tickSamplerForTest()
+    expect(statusFor(KEY)?.ingress.bytesPerSecond).equals(2048)
+  })
+
+  it('ends the stream when its publisher disconnects', function () {
+    const leaving = publisher('leaving')
+    push(leaving)
+    broadcast.donePublish(leaving)
+
+    expect(statusFor(KEY)?.ingress.publishing).equals(false)
+    expect(subscriberClosed).equals(1)
+    const ended = events.find(event => event.type === 'publishEnded')
+    expect(ended?.type === 'publishEnded' ? ended.reason : '').equals(
+      'The stream ended'
+    )
+  })
+
+  it('answers each lookup the way the controller answered it', async function () {
+    const answers: Array<Awaited<ReturnType<typeof lookUp>>> = [
+      'there is no room to record',
+      undefined
+    ]
+    async function lookUp(): Promise<
+      ReturnType<typeof spec> | string | undefined
+    > {
+      const next = answers.shift()
+      if (next === 'throw') throw new Error('the database is down')
+      return next
+    }
+    configureIngest({
+      ffmpegPath: FAKE_FFMPEG,
+      bindHost: '127.0.0.1',
+      port: 19_361,
+      app: 'live',
+      segmentSeconds: 4,
+      log: message => {
+        logs.push(message)
+      },
+      onEvent: event => {
+        events.push(event)
+      },
+      resolve: lookUp
+    })
+    answers.push('throw')
+    for (const id of ['full', 'unknown', 'broken']) {
+      const one = publisher(id)
+      push(one)
+      await new Promise(resolve => setImmediate(resolve))
+      expect(one.closed, id).equals(1)
+      broadcast.donePublish(one)
+    }
+    expect(
+      events
+        .filter(event => event.type === 'rejected')
+        .map(event => (event.type === 'rejected' ? event.reason : ''))
+    ).deep.equals(['there is no room to record', 'unknown key', 'unknown key'])
+    expect(logs.join('\n')).contains('could not look a key up')
+  })
+
+  it('ignores a publish under another app, and refuses a key it cannot read', function () {
+    const elsewhere = publisher('elsewhere')
+    elsewhere.streamApp = 'other'
+    expect(push(elsewhere)).equals(null)
+    expect(elsewhere.closed).equals(0)
+    broadcast.donePublish(elsewhere)
+    publishGoneForTest(elsewhere)
+
+    const odd = publisher('odd')
+    odd.streamName = 'not a key'
+    push(odd)
+    expect(odd.closed).equals(1)
+  })
+
+  it('leaves a publish on a key it was not given to the server', function () {
+    clearLive(KEY, 'test')
+    const stranger = publisher('stranger')
+    expect(push(stranger)).equals(null)
+    // No lookup is configured, so an unknown key is closed on arrival.
+    expect(stranger.closed).equals(1)
+    expect(logs.join('\n')).contains('refused a publish')
   })
 })
 

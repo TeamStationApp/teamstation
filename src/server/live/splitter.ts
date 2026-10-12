@@ -274,6 +274,17 @@ const SIGKILL_GRACE_MS = 3000
  */
 const HLS_DRAIN_MS = 10_000
 const STALE_INGRESS_TICKS = 30
+/**
+ * Silent ticks after which a publisher gives way to a new publish on its key.
+ *
+ * An encoder whose network dropped redials the moment it is back, while its
+ * old connection, dead without a FIN, still holds the key. Waiting out
+ * STALE_INGRESS_TICKS for that corpse kept a phone off the air for half a
+ * minute after a twenty-second cut. A publisher that has sent nothing for
+ * this long is not the stream any more, so the newcomer replaces it at once;
+ * one still sending keeps the key, and the newcomer is refused as before.
+ */
+const TAKEOVER_SILENT_TICKS = 2
 
 const entries = new Map<string, LiveEntry>()
 let config: IngestConfig | undefined
@@ -1101,14 +1112,6 @@ function pollSampler(): void {
  */
 
 /**
- * Takes a publisher on.
- *
- * node-media-server fires `postPublish` *before* its own "already has a
- * publisher" check, so a reconnecting encoder lands here even though the new
- * session is about to be rejected. Keeping the first one is what stops two
- * sets of ffmpeg children fighting over one destination key.
- */
-/**
  * Ends the sessions reading a stream. Ours are the ffmpeg children; there is
  * never anybody else on the RTMP side.
  */
@@ -1171,6 +1174,57 @@ function endSubscribers(session: NmsSession): void {
   }
 }
 
+/**
+ * Whether the publisher on a key has stopped being the stream: nothing has
+ * arrived for TAKEOVER_SILENT_TICKS, and nothing since the last tick either.
+ */
+function hasGoneQuiet(ingress: IngressRuntime): boolean {
+  const session = ingress.session
+  if (session == null) return true
+  if ((session.inBytes ?? 0) > ingress.bytesAtLastTick) return false
+  return ingress.zeroByteTicks >= TAKEOVER_SILENT_TICKS
+}
+
+/**
+ * Lets a new publish on a key replace a publisher that has gone quiet.
+ *
+ * Runs inside node-media-server's `postPublish`, which it fires *before* its
+ * own "already has a publisher" check: the quiet publisher is released here,
+ * so that check finds the key free and lets the newcomer through. The outputs
+ * are stopped rather than released, exactly as for a stale publisher, so the
+ * newcomer's accept brings the same HLS writer back and the video goes on in
+ * the same playlist.
+ */
+function replaceQuietPublisher(entry: LiveEntry, session: NmsSession): void {
+  const ingress = entry.ingress
+  const old = ingress.session
+  if (old == null || old === session || !ingress.publishing) return
+  if (!hasGoneQuiet(ingress)) return
+  const { log, onEvent } = requireConfig()
+  log(
+    `[live:${entry.liveStreamId}] publisher ${old.id} sent nothing for ${ingress.zeroByteTicks}s; ${session.id} replaces it`
+  )
+  endSubscribers(old)
+  forceCloseIngress(entry, 'replaced by a new publish')
+  stopOutputs(entry, 'publisher replaced', true)
+  onEvent({
+    type: 'publishEnded',
+    key: entry.key,
+    liveStreamId: entry.liveStreamId,
+    reason: 'The camera reconnected'
+  })
+  report(entry)
+}
+
+/**
+ * Takes a publisher on.
+ *
+ * node-media-server fires `postPublish` *before* its own "already has a
+ * publisher" check, so a second encoder lands here even though the new
+ * session is about to be rejected. Keeping the first one is what stops two
+ * sets of ffmpeg children fighting over one destination key. A first one that
+ * had gone quiet was already replaced by `replaceQuietPublisher`.
+ */
 function accept(entry: LiveEntry, session: NmsSession): void {
   const { log, onEvent } = requireConfig()
   if (entry.ingress.session != null && entry.ingress.publishing) {
@@ -1263,6 +1317,92 @@ export function keyFromSession(
   return name === '' ? streamApp.slice(app.length + 1) : undefined
 }
 
+/**
+ * node-media-server's `postPublish`: a publish has started on some path.
+ *
+ * Synchronous up to the lookup, because the server checks for a publisher
+ * already on the path the moment this returns: a quiet one has to be released
+ * before then for the newcomer to get through.
+ */
+function publishArrived(session: NmsSession): void {
+  const { app, log } = requireConfig()
+  const key = keyFromSession(session, app)
+  if (key == null) return
+  if (!isPublishableKey(key)) {
+    refuse(session, '')
+    return
+  }
+  const entry = entries.get(key)
+  if (entry != null) replaceQuietPublisher(entry, session)
+  const resolve = requireConfig().resolve
+  // Cached keys also need current authority before each new connection.
+  if (entry != null && resolve == null) {
+    accept(entry, session)
+    return
+  }
+  if (resolve == null) {
+    refuse(session, key)
+    return
+  }
+  // Resolve both fresh and cached keys; the controller checks current authority.
+  resolve(key).then(
+    spec => {
+      if (spec == null) {
+        refuse(session, key)
+        return
+      }
+      // A sentence rather than a stream: the key is real and this publish is
+      // still not allowed — no room on the disk, most likely — and the
+      // person holding the encoder is owed the reason.
+      if (typeof spec === 'string') {
+        refuse(session, key, spec)
+        return
+      }
+      setLive(key, spec)
+      const resolved = entries.get(key)
+      if (resolved == null) {
+        refuse(session, key)
+        return
+      }
+      accept(resolved, session)
+    },
+    (error: unknown) => {
+      log(`[live] could not look a key up: ${String(error)}`)
+      refuse(session, key)
+    }
+  )
+}
+
+/** node-media-server's `donePublish`: the publisher on a path has gone. */
+function publishGone(session: NmsSession): void {
+  const { app, log } = requireConfig()
+  const key = keyFromSession(session, app)
+  const entry =
+    key != null && isPublishableKey(key) ? entries.get(key) : undefined
+  if (entry == null) return
+  if (entry.ingress.session !== session) return
+  log(`[live:${entry.liveStreamId}] publisher disconnected`)
+  // The server keeps a reader connected after its publisher has gone, so
+  // ffmpeg would sit waiting for video that is never coming and have to be
+  // killed — losing the segment it was part way through, which is the last
+  // few seconds of the game. Ending the reader gives it the end of the
+  // stream instead, and it closes its own playlist.
+  endSubscribers(session)
+  entry.ingress.publishing = false
+  entry.ingress.receivingPackets = false
+  entry.ingress.bytesPerSecond = 0
+  entry.ingress.zeroByteTicks = 0
+  entry.ingress.session = undefined
+  stopOutputs(entry, 'publisher disconnected', true)
+  requireConfig().onEvent({
+    type: 'publishEnded',
+    key: entry.key,
+    liveStreamId: entry.liveStreamId,
+    reason: 'The stream ended'
+  })
+  report(entry)
+}
+
 export function startIngest(): boolean {
   const { bindHost, port, app, log } = requireConfig()
   if (nmsInstance != null) return true
@@ -1284,80 +1424,8 @@ export function startIngest(): boolean {
     return false
   }
 
-  nmsInstance.on('postPublish', (session: NmsSession) => {
-    const key = keyFromSession(session, app)
-    if (key == null) return
-    if (!isPublishableKey(key)) {
-      refuse(session, '')
-      return
-    }
-    const entry = entries.get(key)
-    const resolve = requireConfig().resolve
-    // Cached keys also need current authority before each new connection.
-    if (entry != null && resolve == null) {
-      accept(entry, session)
-      return
-    }
-    if (resolve == null) {
-      refuse(session, key)
-      return
-    }
-    // Resolve both fresh and cached keys; the controller checks current authority.
-    resolve(key).then(
-      spec => {
-        if (spec == null) {
-          refuse(session, key)
-          return
-        }
-        // A sentence rather than a stream: the key is real and this publish is
-        // still not allowed — no room on the disk, most likely — and the
-        // person holding the encoder is owed the reason.
-        if (typeof spec === 'string') {
-          refuse(session, key, spec)
-          return
-        }
-        setLive(key, spec)
-        const resolved = entries.get(key)
-        if (resolved == null) {
-          refuse(session, key)
-          return
-        }
-        accept(resolved, session)
-      },
-      (error: unknown) => {
-        log(`[live] could not look a key up: ${String(error)}`)
-        refuse(session, key)
-      }
-    )
-  })
-
-  nmsInstance.on('donePublish', (session: NmsSession) => {
-    const key = keyFromSession(session, app)
-    const entry =
-      key != null && isPublishableKey(key) ? entries.get(key) : undefined
-    if (entry == null) return
-    if (entry.ingress.session !== session) return
-    log(`[live:${entry.liveStreamId}] publisher disconnected`)
-    // The server keeps a reader connected after its publisher has gone, so
-    // ffmpeg would sit waiting for video that is never coming and have to be
-    // killed — losing the segment it was part way through, which is the last
-    // few seconds of the game. Ending the reader gives it the end of the
-    // stream instead, and it closes its own playlist.
-    endSubscribers(session)
-    entry.ingress.publishing = false
-    entry.ingress.receivingPackets = false
-    entry.ingress.bytesPerSecond = 0
-    entry.ingress.zeroByteTicks = 0
-    entry.ingress.session = undefined
-    stopOutputs(entry, 'publisher disconnected', true)
-    requireConfig().onEvent({
-      type: 'publishEnded',
-      key: entry.key,
-      liveStreamId: entry.liveStreamId,
-      reason: 'The stream ended'
-    })
-    report(entry)
-  })
+  nmsInstance.on('postPublish', publishArrived)
+  nmsInstance.on('donePublish', publishGone)
 
   try {
     nmsInstance.run()
@@ -1424,6 +1492,31 @@ export function attachSessionForTest(
   const entry = entries.get(key)
   if (entry == null) return
   entry.ingress.session = session
+}
+
+/** A session as node-media-server reports it, for the hooks below. */
+export interface TestSession {
+  id: string
+  streamApp?: string
+  streamName?: string
+  streamPath?: string
+  inBytes?: number
+  close?: () => void
+  socket?: { destroy?: () => void }
+  broadcast?: {
+    donePublish?: (session: never) => void
+    subscribers?: Map<string, { close?: () => void }>
+  }
+}
+
+/** node-media-server's `postPublish`, without the server. */
+export function publishArrivedForTest(session: TestSession): void {
+  publishArrived(session as NmsSession)
+}
+
+/** node-media-server's `donePublish`, without the server. */
+export function publishGoneForTest(session: TestSession): void {
+  publishGone(session as NmsSession)
 }
 
 export function forcePublishForTest(key: string, publishing: boolean): void {
