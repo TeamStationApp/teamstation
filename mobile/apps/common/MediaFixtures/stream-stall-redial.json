@@ -1,0 +1,265 @@
+{
+  "checkSeconds" : 1,
+  "events" : [
+    {
+      "at" : 0,
+      "event" : "live"
+    },
+    {
+      "at" : 1,
+      "bytesSent" : 1000,
+      "event" : "check",
+      "queuedBytes" : 500,
+      "stuck" : false
+    },
+    {
+      "at" : 2,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 500,
+      "stuck" : false
+    },
+    {
+      "at" : 3,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 0,
+      "stuck" : false
+    },
+    {
+      "at" : 4,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 0,
+      "stuck" : false
+    },
+    {
+      "at" : 5,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 0,
+      "stuck" : false
+    },
+    {
+      "at" : 6,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 0,
+      "stuck" : false
+    },
+    {
+      "at" : 7,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 0,
+      "stuck" : false
+    },
+    {
+      "at" : 8,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 0,
+      "stuck" : false
+    },
+    {
+      "at" : 9,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 0,
+      "stuck" : false
+    },
+    {
+      "at" : 10,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 800,
+      "stuck" : false
+    },
+    {
+      "at" : 11,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 800,
+      "stuck" : false
+    },
+    {
+      "at" : 12,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 800,
+      "stuck" : false
+    },
+    {
+      "at" : 13,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 800,
+      "stuck" : false
+    },
+    {
+      "at" : 14,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 800,
+      "stuck" : false
+    },
+    {
+      "at" : 15,
+      "bytesSent" : 2000,
+      "event" : "check",
+      "queuedBytes" : 800,
+      "stuck" : true
+    },
+    {
+      "at" : 20,
+      "event" : "live"
+    },
+    {
+      "at" : 21,
+      "bytesSent" : 21,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 22,
+      "bytesSent" : 22,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 23,
+      "bytesSent" : 23,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 24,
+      "bytesSent" : 24,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 25,
+      "bytesSent" : 25,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 26,
+      "bytesSent" : 26,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 27,
+      "bytesSent" : 27,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 28,
+      "bytesSent" : 28,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 29,
+      "bytesSent" : 29,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 30,
+      "bytesSent" : 30,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 31,
+      "bytesSent" : 30,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 32,
+      "bytesSent" : 30,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 33,
+      "bytesSent" : 30,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 34,
+      "bytesSent" : 30,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 35,
+      "bytesSent" : 30,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : false
+    },
+    {
+      "at" : 36,
+      "bytesSent" : 30,
+      "event" : "check",
+      "queuedBytes" : 5000,
+      "stuck" : true
+    },
+    {
+      "at" : 40,
+      "event" : "live"
+    },
+    {
+      "at" : 46,
+      "bytesSent" : 0,
+      "event" : "check",
+      "queuedBytes" : 100,
+      "stuck" : true
+    }
+  ],
+  "failedDials" : [
+    {
+      "dialledFor" : 0,
+      "waits" : 2
+    },
+    {
+      "dialledFor" : 0.25,
+      "waits" : 1.75
+    },
+    {
+      "dialledFor" : 1.5,
+      "waits" : 0.5
+    },
+    {
+      "dialledFor" : 2,
+      "waits" : 0
+    },
+    {
+      "dialledFor" : 3.5,
+      "waits" : 0
+    }
+  ],
+  "redialSeconds" : 6,
+  "retrySeconds" : 2
+}

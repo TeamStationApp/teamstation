@@ -4,6 +4,7 @@ import DirectorCore
 import DirectorSources
 import Foundation
 import Testing
+@testable import DirectorMedia
 @testable import DirectorPipeline
 
 /// The stream end to end: the programme streamer publishing to a stand-in RTMP server.
@@ -24,7 +25,7 @@ struct ProgramStreamerSinkTests {
     let url = try #require(ProcessInfo.processInfo.environment["RTMP_SINK_URL"])
     let config = AppConfig.default
     let streamer = ProgramStreamer(telemetry: PipelineTelemetry(), converter: PixelConverter())
-    try await streamer.start(urlString: url, config: config, onFailure: nil)
+    try await streamer.start(urlString: url, settings: StreamSettings(config: config), onFailure: nil)
     #expect(streamer.running)
 
     // A bar that moves across a grey picture, so each frame costs the encoder something.

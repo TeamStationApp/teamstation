@@ -1,5 +1,6 @@
 import CoreMedia
 import DirectorCore
+@testable import DirectorMedia
 @testable import DirectorPipeline
 import DirectorSources
 import Foundation

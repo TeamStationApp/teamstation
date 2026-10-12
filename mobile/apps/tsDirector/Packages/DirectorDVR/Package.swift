@@ -8,15 +8,16 @@ let package = Package(
     .library(name: "DirectorDVR", targets: [ "DirectorDVR" ])
   ],
   dependencies: [
-    .package(path: "../../common/DirectorCore"),
+    .package(path: "../../../common/DirectorCore"),
     .package(path: "../../../common/DirectorExport"),
-    .package(path: "../../common/DirectorSources"),
+    .package(path: "../../../common/DirectorMedia"),
+    .package(path: "../../../common/DirectorSources"),
     .package(path: "../DirectorPipeline")
   ],
   targets: [
     .target(
       name: "DirectorDVR",
-      dependencies: [ "DirectorCore", "DirectorExport", "DirectorSources", "DirectorPipeline" ],
+      dependencies: [ "DirectorCore", "DirectorExport", "DirectorMedia", "DirectorSources", "DirectorPipeline" ],
       swiftSettings: [ .swiftLanguageMode(.v6) ]
     )
   ]
