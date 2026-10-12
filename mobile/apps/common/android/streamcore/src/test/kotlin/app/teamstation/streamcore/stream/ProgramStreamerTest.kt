@@ -13,6 +13,9 @@ import app.teamstation.streamcore.rtmp.RTMPClientError
 import app.teamstation.streamcore.rtmp.RTMPMessageType
 import app.teamstation.streamcore.rtmp.RTMPURL
 import app.teamstation.streamcore.rtmp.RTMPVideoCodec
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
@@ -29,6 +32,10 @@ import java.net.StandardSocketOptions
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.util.Collections
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /** [ProgramStreamer] with fake encoders, publishing to an in-process ingest. */
 class ProgramStreamerTest {
@@ -39,7 +46,11 @@ class ProgramStreamerTest {
         val bitrates = Collections.synchronizedList(mutableListOf<Int>())
         var closed = false
 
+        /** Runs inside [open]: a refusal, or a stop that lands while the session opens. */
+        var onOpen: () -> Unit = {}
+
         override fun open(config: StreamEncoderConfig, output: StreamVideoEncoding.Output): Surface? {
+            onOpen()
             this.config = config
             this.output = output
             return null
@@ -66,8 +77,17 @@ class ProgramStreamerTest {
         private var count = 0
         var resets = 0
         var closed = false
+        var encodes = 0
+
+        /** Makes the next [encode] throw, as a codec that has failed does. */
+        var failNext = false
 
         override fun encode(samples: ShortArray): List<ByteArray> {
+            if (failNext) {
+                failNext = false
+                throw IllegalStateException("codec failed")
+            }
+            encodes += 1
             leftover += samples.size / 2
             val packets = mutableListOf<ByteArray>()
             while (leftover >= 1024) {
@@ -115,6 +135,9 @@ class ProgramStreamerTest {
     private val closers = mutableListOf<AutoCloseable>()
     private var wall = 1_000.0
     private val videos = mutableListOf<FakeVideoEncoder>()
+
+    /** Runs inside the next video session's open. */
+    private var nextOpen: () -> Unit = {}
     private val audio = FakeAudioEncoder()
     private val telemetry = CountingTelemetry()
 
@@ -125,7 +148,13 @@ class ProgramStreamerTest {
 
     private fun streamer() = ProgramStreamer(
         telemetry = telemetry,
-        videoEncoderFactory = { FakeVideoEncoder().also { videos += it } },
+        videoEncoderFactory = {
+            FakeVideoEncoder().also {
+                it.onOpen = nextOpen
+                nextOpen = {}
+                videos += it
+            }
+        },
         audioEncoderFactory = { audio },
         wallClock = { wall },
         pictureWall = { wall }
@@ -178,10 +207,14 @@ class ProgramStreamerTest {
         assertEquals(4, streamer.pendingEncodesForTesting)
 
         val start = wall
+        assertNull(streamer.liveTimelineStart)
         encoder.output!!.onFrame(frame(true))
         wall += 1.0 / 30
         encoder.output!!.onFrame(frame(false))
         assertEquals(2, streamer.pendingEncodesForTesting)
+        // The first picture sent was captured at the stream clock's start plus its stamp, and later
+        // pictures leave that alone.
+        assertEquals(start, streamer.liveTimelineStart!!, 1e-9)
 
         // Sound that began half a second after the stream: two packets, counted from its epoch.
         streamer.append(AudioFrame(ShortArray(2048 * 2), wallClock = start + 0.5))
@@ -215,6 +248,7 @@ class ProgramStreamerTest {
         assertEquals(2, encoder.syncRequests)
         streamer.stop()
         assertFalse(streamer.running)
+        assertNull(streamer.liveTimelineStart)
         assertTrue(encoder.closed)
         assertTrue(audio.closed)
         assertEquals(2, surfaces)
@@ -302,6 +336,125 @@ class ProgramStreamerTest {
         Thread.sleep(400)
         video.output!!.onFrame(big(false))
         assertEquals(1, video.syncRequests)
+    }
+
+    /** A client live on a peer that reads nothing, with no RTMP server. */
+    private fun liveClient(): RTMPClient {
+        val listener = ServerSocketChannel.open().apply { bind(InetSocketAddress(InetAddress.getLoopbackAddress(), 0)) }
+        val sender = SocketChannel.open().apply { connect(listener.localAddress) }
+        val receiver = listener.accept()
+        closers += AutoCloseable { receiver.close(); sender.close(); listener.close() }
+        return RTMPClient().also {
+            closers += AutoCloseable { it.stop() }
+            it.attachForTesting(ChannelRTMPTransport.wrap(sender, sendTimeoutSeconds = 0.05), budgetBytes = 64 * 1024 * 1024)
+        }
+    }
+
+    @Test
+    fun aFailingSoundEncoderLosesARunOfSoundAndNotTheCaller() {
+        val streamer = streamer()
+        streamer.goLiveForTesting(liveClient(), StreamSettings(codec = StreamCodec.H264), startWall = wall)
+        streamer.append(AudioFrame(ShortArray(4096), wallClock = wall))
+        assertEquals(1, audio.encodes)
+        // The codec throws: the run is lost and the encoder starts again, and the mix's other
+        // outputs, which the caller feeds next, are not starved by an exception from here.
+        audio.failNext = true
+        streamer.append(AudioFrame(ShortArray(4096), wallClock = wall + 0.0427))
+        assertEquals(1, audio.resets)
+        streamer.append(AudioFrame(ShortArray(4096), wallClock = wall + 0.0854))
+        assertEquals(2, audio.encodes)
+    }
+
+    @Test
+    fun anEncoderThatFailsToOpenLeavesNothingRunning() {
+        val streamer = streamer()
+        nextOpen = { throw IllegalStateException("no encoder") }
+        try {
+            runBlocking { streamer.start("rtmp://127.0.0.1:1/live/key", StreamSettings(), null) }
+            fail("started")
+        } catch (error: IllegalStateException) {
+            assertEquals("no encoder", error.message)
+        }
+        assertFalse(streamer.running)
+        assertTrue(audio.closed)
+    }
+
+    @Test
+    fun aSessionRebuiltWhileTheStreamerStopsIsNotInstalled() {
+        val streamer = streamer()
+        streamer.goLiveForTesting(RTMPClient().also { closers += AutoCloseable { it.stop() } }, StreamSettings())
+        val surfaces = Collections.synchronizedList(mutableListOf<Surface?>())
+        streamer.onInputSurface { surfaces += it }
+        videos.single().output!!.onFrame(frame(true))
+        assertTrue(streamer.append(wall))
+        wall += 4.1
+        // The watchdog rebuilds the wedged session, and a stop lands while the new one opens.
+        nextOpen = { streamer.stop() }
+        streamer.gopWatchdogTick()
+        assertEquals(2, videos.size)
+        assertTrue(videos[1].closed)
+        assertFalse(streamer.running)
+        assertNull(streamer.inputSurface)
+        assertFalse(streamer.append(wall))
+    }
+
+    @Test
+    fun aStaleStartsFailureDoesNotStopANewerStart() {
+        // The first start dials a port that accepts and never answers, so it waits in its publish.
+        val silent = ServerSocket(0).also { closers += it }
+        val dialled = CountDownLatch(1)
+        Thread {
+            runCatching { silent.accept().also { closers += it } }
+            dialled.countDown()
+        }.apply { isDaemon = true }.start()
+        val server = FakeRtmpServer().also { closers += it }
+        val streamer = streamer()
+        val executor = Executors.newSingleThreadExecutor()
+        closers += AutoCloseable { executor.shutdownNow() }
+        val first = CompletableFuture<Throwable?>()
+        CoroutineScope(executor.asCoroutineDispatcher()).launch {
+            first.complete(
+                runCatching { streamer.start("rtmp://127.0.0.1:${silent.localPort}/live/key", StreamSettings(), null) }
+                    .exceptionOrNull()
+            )
+        }
+        assertTrue(dialled.await(5, TimeUnit.SECONDS))
+        // Its failure is held until a newer start is live.
+        val gate = CountDownLatch(1)
+        executor.execute { gate.await() }
+        streamer.stop()
+        runBlocking { streamer.start(server.url, StreamSettings(codec = StreamCodec.H264), null) }
+        assertTrue(streamer.running)
+        gate.countDown()
+        assertTrue("${first.get(5, TimeUnit.SECONDS)}", first.get(5, TimeUnit.SECONDS) is RTMPClientError)
+        assertTrue(streamer.running)
+    }
+
+    @Test
+    fun aPublishOnAStoppedClientIsCancelledRatherThanLeftWaiting() {
+        val client = RTMPClient()
+        client.stop()
+        Thread.sleep(100)
+        try {
+            runBlocking { client.publish(RTMPURL.require("rtmp://127.0.0.1:1/live/key"), 1.0) }
+            fail("published")
+        } catch (error: RTMPClientError) {
+            assertEquals(RTMPClientError.Cancelled, error)
+        }
+    }
+
+    @Test
+    fun aStartStoppedWhileItOpensIsCancelled() {
+        val streamer = streamer()
+        nextOpen = { streamer.stop() }
+        try {
+            runBlocking { streamer.start("rtmp://127.0.0.1:1/live/key", StreamSettings(), null) }
+            fail("started")
+        } catch (error: RTMPClientError) {
+            assertEquals(RTMPClientError.Cancelled, error)
+        }
+        assertFalse(streamer.running)
+        assertTrue(videos.single().closed)
     }
 
     @Test

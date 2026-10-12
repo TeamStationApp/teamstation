@@ -12,10 +12,14 @@ import app.teamstation.streamcore.stream.ProgramStreamer
 import app.teamstation.streamcore.stream.StreamAudioEncoding
 import app.teamstation.streamcore.stream.roundedHalfAwayFromZero
 import java.io.File
+import java.io.FileDescriptor
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import kotlin.math.abs
@@ -67,7 +71,13 @@ class ProgramEncoder(
     /** Host uptime in seconds, which the grid is checked against. */
     private val uptime: () -> Double = SteadyWall::elapsedRealtime,
     /** The AAC encoder each part's sound track is coded with. */
-    private val audioEncoderFactory: () -> StreamAudioEncoding = { MediaCodecAacEncoder(bitrate = 192_000) }
+    private val audioEncoderFactory: () -> StreamAudioEncoding = { MediaCodecAacEncoder(bitrate = 192_000) },
+    /**
+     * Where each part's fragments are forced to storage: a thread of their own, so a slow fsync on a
+     * busy flash holds up neither the codec's output thread nor the phone's sound thread, which feeds
+     * the stream's sound too.
+     */
+    private val syncExecutor: Executor = sharedSyncExecutor
 ) {
     /** Called as the programme is written: which recording, which part, where, and when. */
     fun interface AnchorSink {
@@ -125,6 +135,29 @@ class ProgramEncoder(
     private var resumedAwaitingPicture = false
     private var lastProgramFinishDetail = ""
 
+    /** The wall start each of this part's anchors implied, as the export will read them back. */
+    private val partAnchorStarts = mutableListOf<Double>()
+
+    /**
+     * The part's file could not be written (storage full, an I/O error): nothing more goes into it,
+     * and [onWriterFailure] has been told. What it already holds stays.
+     */
+    private var writerFailed = false
+    private var failureToReport: String? = null
+
+    /** The AAC configuration and priming a probe encoder reported for this part; see [probeAudio]. */
+    private var probedAudio: Pair<ByteArray, Int>? = null
+
+    /**
+     * Told, once per part and outside the lock, when the part's file stops taking writes. The part is
+     * over: the host finishes it, which keeps every fragment already written.
+     */
+    @Volatile
+    var onWriterFailure: ((String) -> Unit)? = null
+
+    /** How each part's file is forced to storage; a test makes it refuse. */
+    internal var forceToStorage: (FileDescriptor) -> Unit = FileDescriptor::sync
+
     /** Overridden by tests; otherwise the part's own sound track. */
     internal var soundSinkOverride: SoundSink? = null
 
@@ -153,9 +186,13 @@ class ProgramEncoder(
         lock.withLock { anchorRecordingID = recordingID }
     }
 
+    /**
+     * Opens part 1 of a take. Refused while a part is running: a part left running by a stop that
+     * failed would otherwise take the next take's pictures and sound into its own file.
+     */
     fun start(wall: Double) {
         lock.withLock {
-            if (isRunning) return
+            if (isRunning) throw IllegalStateException("program writer is already running")
             resumedAwaitingPicture = false
             part = 1
             partRecordingID = null
@@ -203,7 +240,12 @@ class ProgramEncoder(
         }
         // The file is claimed now, so a resume after a crash before the first picture steps over it.
         file.writeBytes(ByteArray(0))
+        val probed = probeAudio()
         lock.withLock {
+            probedAudio = probed
+            writerFailed = false
+            failureToReport = null
+            partAnchorStarts.clear()
             part = sequence
             writer = null
             aac?.close()
@@ -272,11 +314,15 @@ class ProgramEncoder(
                 contentLagSeconds = nowWall - captureWall
             }
             val contentWall = nowWall - (contentLagSeconds ?: 0.0)
-            soundOrigin.offer(contentWall - time, time)
+            // A picture on the programme clock's grid that is a repeat (no capture time) says
+            // nothing new about the content's age. Below 30 fps the repeats follow the freshest
+            // pictures, so offering them would tilt the median toward those and put the sound early.
+            if (captureWall != null || !onClockGrid) soundOrigin.offer(contentWall - time, time)
             val recording = anchorRecordingID
             anchor = if (recording != null && time - lastAnchorSeconds >= anchorIntervalSeconds) {
                 lastAnchorSeconds = time
                 partRecordingID = recording
+                partAnchorStarts += contentWall - time
                 Triple(recording, part, time to contentWall)
             } else {
                 null
@@ -297,17 +343,82 @@ class ProgramEncoder(
      */
     fun appendEncoded(frame: EncodedVideoFrame) {
         lock.withLock {
-            if (!isRunning || frame.nalUnits.isEmpty()) return
-            if (writer == null) {
-                if (!frame.isKeyframe || frame.parameterSets.isEmpty()) return
-                val opened = openWriter(frame.parameterSets) ?: return
-                writer = opened
-            }
-            if (writer?.writeVideo(ProgramStreamer.lengthPrefixed(frame.nalUnits), frame.presentationTime, frame.isKeyframe) == true) {
-                writtenFrames += 1
+            if (!isRunning || writerFailed || frame.nalUnits.isEmpty()) return
+            try {
+                if (writer == null) {
+                    if (!frame.isKeyframe || frame.parameterSets.isEmpty()) return
+                    val opened = openWriter(frame.parameterSets) ?: return
+                    writer = opened
+                }
+                if (writer?.writeVideo(ProgramStreamer.lengthPrefixed(frame.nalUnits), frame.presentationTime, frame.isKeyframe) == true) {
+                    writtenFrames += 1
+                }
+            } catch (error: Exception) {
+                // Storage refusing, or the sound track's codec failing as the file opens.
+                failWriterLocked(error)
             }
         }
+        deliverWriterFailure()
         drainAudio(limit = 2)
+    }
+
+    /** A force is waiting on [syncExecutor]; fragments written meanwhile ride on it. */
+    private val syncQueued = AtomicBoolean(false)
+
+    /** A fragment reached the part's file: [syncWriter] forces it on [syncExecutor]. */
+    private fun requestSync() {
+        if (syncQueued.compareAndSet(false, true)) syncExecutor.execute(::syncWriter)
+    }
+
+    /**
+     * Forces what the part's writer has written to storage, on [syncExecutor] and outside [lock]: a
+     * slow fsync under the lock held up the render tick and the sound, and one on the writing thread
+     * held up the codec and the sound. A force storage refuses fails the part, as a refused write
+     * does: its fragments are not reaching storage.
+     */
+    private fun syncWriter() {
+        syncQueued.set(false)
+        val target = lock.withLock { writer } ?: return
+        if (target.syncPending()) return
+        lock.withLock { if (writer === target) failWriterLocked(IOException("the part could not be forced to storage")) }
+        deliverWriterFailure()
+    }
+
+    /** The part's file stopped taking writes: it is closed where it got to. Called with [lock] held. */
+    private fun failWriterLocked(error: Exception) {
+        if (writerFailed) return
+        writerFailed = true
+        writer?.abandon()
+        writer = null
+        val message = "program writer failed: ${error.message ?: error.javaClass.simpleName}"
+        telemetry.recordError(message)
+        failureToReport = message
+    }
+
+    /** Tells [onWriterFailure] of a failure [failWriterLocked] noted, outside the lock. */
+    private fun deliverWriterFailure() {
+        val message = lock.withLock { failureToReport.also { failureToReport = null } } ?: return
+        onWriterFailure?.invoke(message)
+    }
+
+    /**
+     * What this device's AAC encoder says its configuration and priming are, from a probe that has
+     * encoded a few frames to the end: a codec reports both only once it has produced output, so the
+     * track's own encoder, asked before its first packet, answered the defaults. Null when the probe
+     * fails, and the track's encoder is asked instead.
+     */
+    private fun probeAudio(): Pair<ByteArray, Int>? = try {
+        val probe = audioEncoderFactory()
+        try {
+            probe.encode(ShortArray(PROBE_FRAMES * 1024 * 2))
+            probe.finish()
+            probe.audioSpecificConfig.takeIf { it.isNotEmpty() }?.let { it.copyOf() to probe.primingSamples }
+        } finally {
+            probe.close()
+        }
+    } catch (error: Exception) {
+        telemetry.recordError("AAC probe failed: ${error.message ?: error.javaClass.simpleName}")
+        null
     }
 
     private fun openWriter(parameterSets: List<ByteArray>): FragmentedMp4Writer? {
@@ -322,12 +433,14 @@ class ProgramEncoder(
         } ?: return null
         val encoder = audioEncoderFactory()
         aac = encoder
-        // Encoded once so the codec says its configuration and priming before the track is written.
-        encoder.encode(ShortArray(0))
+        val (config, priming) = probedAudio ?: (encoder.audioSpecificConfig to encoder.primingSamples)
         return FragmentedMp4Writer(
             file,
             FragmentedMp4Writer.VideoTrack(settings.codec, settings.width, settings.height, record),
-            FragmentedMp4Writer.AudioTrack(encoder.audioSpecificConfig, primingSamples = encoder.primingSamples)
+            FragmentedMp4Writer.AudioTrack(config, primingSamples = priming),
+            syncEachFragment = false,
+            forceToStorage = forceToStorage,
+            onFragmentWritten = ::requestSync
         )
     }
 
@@ -460,7 +573,15 @@ class ProgramEncoder(
                     } else {
                         return
                     }
-                    if (!sink.appendSound(samples)) {
+                    val accepted = try {
+                        sink.appendSound(samples)
+                    } catch (error: Exception) {
+                        // Storage refusing, or the AAC codec failing (`IllegalStateException`,
+                        // `CodecException`): either way the part takes no more sound.
+                        failWriterLocked(error)
+                        return
+                    }
+                    if (!accepted) {
                         // The head stays queued: a refusal costs latency, never position.
                         audioAppendFailures += 1
                         return
@@ -477,6 +598,7 @@ class ProgramEncoder(
             }
         } finally {
             lock.withLock { isDraining = false }
+            deliverWriterFailure()
         }
     }
 
@@ -507,6 +629,8 @@ class ProgramEncoder(
     }
 
     internal val writtenSoundEndForTesting: Double get() = lock.withLock { writtenAudioEnd }
+    internal val writerHasPendingSyncForTesting: Boolean get() = lock.withLock { writer?.hasPendingSync ?: false }
+    internal val soundOriginForTesting: Double? get() = lock.withLock { soundOrigin.partStartWall }
     internal val acceptedSoundCountForTesting: Int get() = lock.withLock { acceptedAudioCount }
     internal val audioBehindTrackForTesting: Int get() = lock.withLock { audioBehindTrack }
 
@@ -515,7 +639,8 @@ class ProgramEncoder(
         val deadline = System.nanoTime() + (seconds * 1e9).toLong()
         while (true) {
             drainAudio(limit = 512)
-            if (lock.withLock { pendingAudio.isEmpty() } || System.nanoTime() >= deadline) return
+            // A part whose file failed takes nothing more: there is nothing to wait for.
+            if (lock.withLock { pendingAudio.isEmpty() || writerFailed } || System.nanoTime() >= deadline) return
             Thread.sleep(20)
         }
     }
@@ -527,22 +652,12 @@ class ProgramEncoder(
      */
     fun finish(until: Double? = null): File? {
         val (finishedRecordingID, finishedPart) = lock.withLock { partRecordingID to part }
-        drainAudioUntilEmpty(2.0)
-        val started = lock.withLock { startedAt }
-        var heldPicture: Double? = null
-        if (until != null && started != null) {
-            val target = maxOf(0.0, until - started - lock.withLock { previousPartsDuration })
-            val (pictureAt, soundAt) = lock.withLock { (if (lastTime.isNumeric) lastTime.seconds else -1.0) to writtenAudioEnd }
-            heldPicture = fillHold(target)
-            drainAudioUntilEmpty(10.0)
-            lastProgramFinishDetail = lock.withLock {
-                "target %.3f picture %.3f sound %.3f->%.3f queued %d refused %d dropped %d accepted %d behind %d silence %d offered %d unseeded %d beforePart %d origin %.3f first %.3f".format(
-                    Locale.US, target, pictureAt, soundAt, writtenAudioEnd, pendingAudio.size, audioAppendFailures,
-                    audioQueueDrops, acceptedAudioCount, audioBehindTrack, silenceQueued, audioOffered, audioUnseeded,
-                    audioBeforePart, soundOrigin.partStartWall ?: -1.0, audioFirstTarget
-                )
-            }
-            telemetry.recordProgramFinish(lastProgramFinishDetail)
+        val heldPicture = try {
+            finishSoundAndHold(until)
+        } catch (error: RuntimeException) {
+            // The part is closed below whatever went wrong here, so a failed stop leaves nothing running.
+            telemetry.recordError("program finish failed: ${error.message ?: error.javaClass.simpleName}")
+            null
         }
         val stranded = lock.withLock { pendingAudio.size }
         if (stranded > 0) telemetry.recordError("program finish left $stranded audio buffers unwritten")
@@ -551,14 +666,22 @@ class ProgramEncoder(
             if (!isRunning) return null
             isRunning = false
             val current = writer
-            soundSink.finishSound()
-            current?.finish(heldPicture)
-            writer = null
-            aac?.close()
-            aac = null
-            soundOrigin.reset()
-            pendingAudio.clear()
-            heldSound.clear()
+            try {
+                soundSink.finishSound()
+                current?.finish(heldPicture)
+            } catch (error: Exception) {
+                // What is already in the file stays; the part ends where it got to.
+                telemetry.recordError("program finish failed: ${error.message ?: error.javaClass.simpleName}")
+                current?.abandon()
+            } finally {
+                writer = null
+                runCatching { aac?.close() }
+                aac = null
+                soundOrigin.reset()
+                pendingAudio.clear()
+                heldSound.clear()
+                failureToReport = null
+            }
             outputFile
         }
 
@@ -584,6 +707,35 @@ class ProgramEncoder(
         if (check.isShort) telemetry.recordError("program master sound %.3f s short of its picture".format(Locale.US, check.shortfall))
         telemetry.recordEncodeSessionChange(-1)
         return finished
+    }
+
+    /**
+     * The sound queued, then the hold out to [until] and the sound after it. Answers how long the last
+     * picture lasts, or null with no hold to write.
+     */
+    private fun finishSoundAndHold(until: Double?): Double? {
+        drainAudioUntilEmpty(2.0)
+        val started = lock.withLock { startedAt }
+        if (until == null || started == null) return null
+        // Out to the take's end on the wall clock, from where the part's timeline really starts:
+        // a phone's first picture was captured a picture delay before Record, so a fill counted
+        // from the take's start ended that much short of the take, and every ordinary take was
+        // rebuilt instead of copied for ending early.
+        val byTake = until - started - lock.withLock { previousPartsDuration }
+        val byAnchors = lock.withLock { RecordingCatalog.partStart(partAnchorStarts.toList())?.first }?.let { until - it }
+        val target = maxOf(0.0, byTake, byAnchors ?: 0.0)
+        val (pictureAt, soundAt) = lock.withLock { (if (lastTime.isNumeric) lastTime.seconds else -1.0) to writtenAudioEnd }
+        val held = fillHold(target)
+        drainAudioUntilEmpty(10.0)
+        lastProgramFinishDetail = lock.withLock {
+            "target %.3f picture %.3f sound %.3f->%.3f queued %d refused %d dropped %d accepted %d behind %d silence %d offered %d unseeded %d beforePart %d origin %.3f first %.3f".format(
+                Locale.US, target, pictureAt, soundAt, writtenAudioEnd, pendingAudio.size, audioAppendFailures,
+                audioQueueDrops, acceptedAudioCount, audioBehindTrack, silenceQueued, audioOffered, audioUnseeded,
+                audioBeforePart, soundOrigin.partStartWall ?: -1.0, audioFirstTarget
+            )
+        }
+        telemetry.recordProgramFinish(lastProgramFinishDetail)
+        return held
     }
 
     /**
@@ -620,7 +772,7 @@ class ProgramEncoder(
      */
     private fun appendHoldSilence(end: Double) {
         // A part whose file never opened (no picture ever came) has no track to fill.
-        if (end <= 0 || lock.withLock { soundSinkOverride == null && writer == null }) return
+        if (end <= 0 || lock.withLock { writerFailed || (soundSinkOverride == null && writer == null) }) return
         val gap = HoldFill.silenceSeconds(end, lock.withLock { writtenAudioEnd })
         if (gap <= 0) return
         if (HoldFill.exceedsSilenceCap(gap)) {
@@ -725,6 +877,14 @@ class ProgramEncoder(
 
         /** Longest the tail at Stop keeps trying. */
         const val holdSilenceDeadlineSeconds = 8.0
+
+        /** The process's one thread that forces parts to storage, made when the first part needs it. */
+        val sharedSyncExecutor: Executor by lazy {
+            Executors.newSingleThreadExecutor { Thread(it, "program-sync").apply { isDaemon = true } }
+        }
+
+        /** How many AAC frames of silence the probe encodes before it reads the codec's configuration. */
+        const val PROBE_FRAMES = 4
 
         private val silence = ShortArray(1024 * 2)
 
