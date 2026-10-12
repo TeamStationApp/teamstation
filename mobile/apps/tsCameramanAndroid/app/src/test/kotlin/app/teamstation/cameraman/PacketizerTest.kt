@@ -1,7 +1,7 @@
 package app.teamstation.cameraman
 
-import app.teamstation.cameraman.core.EncodedAudioFrame
-import app.teamstation.cameraman.core.EncodedVideoFrame
+import app.teamstation.streamcore.core.EncodedAudioFrame
+import app.teamstation.streamcore.core.EncodedVideoFrame
 import app.teamstation.cameraman.rtsp.AACPacketizer
 import app.teamstation.cameraman.rtsp.H264Packetizer
 import app.teamstation.cameraman.rtsp.HEVCPacketizer

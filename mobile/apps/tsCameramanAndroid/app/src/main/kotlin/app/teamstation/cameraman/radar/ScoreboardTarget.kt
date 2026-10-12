@@ -1,6 +1,6 @@
 package app.teamstation.cameraman.radar
 
-import app.teamstation.cameraman.core.SettingsStore
+import app.teamstation.streamcore.core.SettingsStore
 import java.net.URLEncoder
 import java.time.DayOfWeek
 import java.time.Instant

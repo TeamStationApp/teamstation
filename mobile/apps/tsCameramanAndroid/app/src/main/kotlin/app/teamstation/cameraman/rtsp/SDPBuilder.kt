@@ -1,9 +1,9 @@
 package app.teamstation.cameraman.rtsp
 
 import app.teamstation.cameraman.core.DeviceIdentity
-import app.teamstation.cameraman.core.StreamCodec
-import app.teamstation.cameraman.encode.AudioSpecificConfigBuilder
-import app.teamstation.cameraman.encode.ParameterSets
+import app.teamstation.streamcore.core.StreamCodec
+import app.teamstation.streamcore.encode.AudioSpecificConfigBuilder
+import app.teamstation.streamcore.encode.ParameterSets
 
 /**
  * Builds the session description returned by `DESCRIBE`.
