@@ -32,6 +32,9 @@ class RadarLink(
     private val mutable = MutableStateFlow(RadarUiState())
     val state: StateFlow<RadarUiState> = mutable.asStateFlow()
 
+    /** After every change of [state], on the thread that made it. [RadarFleet] listens here. */
+    var onState: ((RadarUiState) -> Unit)? = null
+
     private var serial: String? = null
     private var gatt = GattState.Down
     private var scanning = false
@@ -68,12 +71,12 @@ class RadarLink(
     }
 
     fun openPicker() {
-        mutable.value = mutable.value.copy(pickerOpen = true, pickerNames = emptyList())
+        emit(mutable.value.copy(pickerOpen = true, pickerNames = emptyList()))
         refresh()
     }
 
     fun dismissPicker() {
-        mutable.value = mutable.value.copy(pickerOpen = false)
+        emit(mutable.value.copy(pickerOpen = false))
         refresh()
     }
 
@@ -83,7 +86,7 @@ class RadarLink(
         serial = saved
         store.write(saved)
         suppressed = false
-        mutable.value = mutable.value.copy(pickerOpen = false, serial = saved, linkSuppressed = false)
+        emit(mutable.value.copy(pickerOpen = false, serial = saved, linkSuppressed = false))
         refresh()
     }
 
@@ -95,7 +98,7 @@ class RadarLink(
         gatt = GattState.Down
         radio.disconnect()
         stopScan()
-        mutable.value = RadarUiState(enabled = enabled)
+        emit(RadarUiState(enabled = enabled))
         noteIdle()
     }
 
@@ -103,19 +106,19 @@ class RadarLink(
         session += 1
         suppressed = true
         stopScan()
-        mutable.value = mutable.value.copy(
+        emit(mutable.value.copy(
             serial = command.serial,
             phase = command.phase,
             connectingStep = command.step,
             linkSuppressed = true,
             pickerOpen = false,
             statusText = statusFor(command.phase)
-        )
+        ))
     }
 
     fun setStep(step: Int) {
         if (suppressed) return
-        mutable.value = mutable.value.copy(connectingStep = step)
+        emit(mutable.value.copy(connectingStep = step))
     }
 
     fun feed(command: RadarCommand.Feed) {
@@ -123,7 +126,7 @@ class RadarLink(
         suppressed = true
         stopScan()
         val board = mutable.value.board.receive(command.pitch, command.exit, command.now)
-        mutable.value = mutable.value.copy(board = board, linkSuppressed = true)
+        emit(mutable.value.copy(board = board, linkSuppressed = true))
         reportSpeeds(command.pitch, command.exit)
     }
 
@@ -131,7 +134,7 @@ class RadarLink(
         if (!TAG_NAME.containsMatchIn(name)) return
         val names = mutable.value.pickerNames
         if (mutable.value.pickerOpen && names.none { it.equals(name, ignoreCase = true) }) {
-            mutable.value = mutable.value.copy(pickerNames = names + name)
+            emit(mutable.value.copy(pickerNames = names + name))
         }
         if (LinkPolicy.acceptsScanResult(serial, name) && gatt == GattState.Down) {
             gatt = GattState.Connecting
@@ -172,7 +175,7 @@ class RadarLink(
         if (suppressed) return
         val battery = RadarProtocol.batteryPercent(value)
         if (battery != null) {
-            mutable.value = mutable.value.copy(batteryPercent = battery)
+            emit(mutable.value.copy(batteryPercent = battery))
             return
         }
         val frame = RadarProtocol.parseRadar(value)
@@ -180,7 +183,7 @@ class RadarLink(
             val speeds = RadarProtocol.pitchExit(frame.signedCms, frame.extraCms)
             val now = System.currentTimeMillis()
             val board = mutable.value.board.receive(speeds.pitchMph, speeds.exitMph, now)
-            mutable.value = mutable.value.copy(board = board)
+            emit(mutable.value.copy(board = board))
             reportSpeeds(speeds.pitchMph, speeds.exitMph)
         }
     }
@@ -220,13 +223,13 @@ class RadarLink(
             serial != null && decision.action != LinkAction.Idle -> RadarPhase.connecting
             else -> RadarPhase.idle
         }
-        mutable.value = mutable.value.copy(
+        emit(mutable.value.copy(
             serial = serial,
             phase = phase,
             linkSuppressed = false,
             enabled = enabled,
             statusText = decision.status ?: statusFor(phase)
-        )
+        ))
     }
 
     private fun apply(effect: HandshakeEffect, token: Int) {
@@ -272,6 +275,11 @@ class RadarLink(
         scanning = false
         radio.stopScan()
         log("RADAR_SCAN_STOP")
+    }
+
+    private fun emit(next: RadarUiState) {
+        mutable.value = next
+        onState?.invoke(next)
     }
 
     private fun noteIdle() {
