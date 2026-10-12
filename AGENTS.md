@@ -2,9 +2,8 @@
 
 ## Push your work
 
-**Do not leave code on the local machine, committed or uncommitted.** There is no backup of a
-local commit, and Paul drives Claude from a different workstation and cannot easily see local
-files. Work that is not pushed is work he cannot review.
+**Do not leave code on the local machine, committed or uncommitted.** Local commits are not
+backed up remotely. Push changes so maintainers can review them from any workstation.
 
 - Commit and `git push` as soon as a change is coherent. Do not wait to be asked.
 - Feature branches only. Never push directly to `master`.
@@ -12,7 +11,7 @@ files. Work that is not pushed is work he cannot review.
   fixups or rebase it, needs no say-so: use `--force-with-lease`, after pushing a backup
   branch of what it replaces.
 - Anything else genuinely destructive — deleting someone else's branch, rewriting history
-  someone else's work builds on, discarding someone else's commits — is Paul's call, not yours.
+  someone else's work builds on, discarding someone else's commits — requires explicit user approval.
 
 If a change is not ready to push, it is not finished; say so rather than leaving it on disk.
 
@@ -27,7 +26,7 @@ reviewed it for what follows and fixed what you found.
 - **Real people's names**: players (most of them children), parents, guardians, coaches,
   scorekeepers, users. Nor anything that identifies them indirectly: their teams, clubs, leagues,
   fields, schools or neighbourhoods, real game dates and scores, screenshots or photos of rosters.
-  The project's developers' own names and emails are fine.
+  Keep author attribution in `package.json`; use neutral roles in documentation.
 - **Credentials of any kind**: API keys, tokens, passwords, private keys, session or signing
   secrets, invite codes, stream keys, including "test" values copied from a real system.
 - **How the servers are laid out or run**: hostnames other than the public product domains,
@@ -71,7 +70,7 @@ reviewed it for what follows and fixed what you found.
 6. Optionally, check for credentials with gitleaks:
    `gitleaks git --log-opts="origin/master..HEAD"`. It is a second opinion, not the review.
 7. When you hand the branch back or open the PR, say that you did this review and what you changed,
-   by kind, without quoting what you removed. Tell Paul at once about anything that may already have
+   by kind, without quoting what you removed. Tell the user at once about anything that may already have
    leaked: a credential has to be rotated and an invite code revoked, whatever the history says.
 
 ## API design
@@ -81,19 +80,19 @@ or a search is a query parameter on the collection that already exists, never a 
 
 ## TS Director: pass the device UDID
 
-Whenever Paul asks to **fix, change, or finish** TS Director (`mobile/apps/tsDirector`), treat
+Whenever asked to **fix, change, or finish** TS Director (`mobile/apps/tsDirector`), treat
 verification as part of the work — not an optional follow-up.
 
 ### Device
 
 - Do **not** hard-code a simulator or hardware UDID in scripts, tests, docs defaults, or agent
   rules.
-- Paul names the target for the run. Pass it as `DIRECTOR_DEVICE_UDID` (or
+- The user specifies the target for the run. Pass it as `DIRECTOR_DEVICE_UDID` (or
   `DIRECTOR_SIMULATOR_UDID` for a simulator). Fail if it is missing.
 - A test must not name a device; it reads the UDID from the environment and passes it to
   maestro-d as `device:`, so the same test can hit different iPads.
 - Do not boot or shut down simulators. Target an already-running instance.
-- Do not use the 2018 A12X unless Paul named it.
+- Do not use the 2018 A12X unless the user explicitly selected it.
 
 ### How much testing
 
