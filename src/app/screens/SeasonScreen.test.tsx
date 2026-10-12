@@ -1234,7 +1234,7 @@ describe('the season screen', function () {
       {
         gameId: 'gam_played',
         title: 'Alta Hawks @ Bay Stars',
-        options: { autoPlay: true }
+        options: { autoPlay: false }
       },
       {
         gameId: 'gam_ahead',

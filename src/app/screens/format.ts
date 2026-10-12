@@ -192,9 +192,13 @@ export function matchupLines(
     awayTeamId: string
     homeTeamName: string
     awayTeamName: string
+    eventKind?: 'game' | 'event'
+    title?: string | null
   },
   fromTeamId?: string
 ): { first: string; second: string } {
+  if (game.eventKind === 'event')
+    return { first: game.title ?? 'Team event', second: '' }
   if (fromTeamId === game.homeTeamId) {
     return { first: game.homeTeamName, second: `vs ${game.awayTeamName}` }
   }

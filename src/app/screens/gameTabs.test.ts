@@ -40,6 +40,7 @@ describe('the pills across a game', function () {
     const input = { game, music, onDjGame, onSettings, canManage: true }
     const pills = gameTabs(input)
     expect(ids(pills)).deep.equals([
+      'info',
       'boxScore',
       'watch',
       'score',
@@ -60,8 +61,8 @@ describe('the pills across a game', function () {
   })
   it('offers Score Game to a scorer of an unscored game', function () {
     const pills = gameTabs({ game: gameWith({ canScore: true }) })
-    expect(ids(pills)).deep.equals(['boxScore', 'watch', 'score'])
-    expect(pills[2].label).equals('Score Game')
+    expect(ids(pills)).deep.equals(['info', 'boxScore', 'watch', 'score'])
+    expect(pills[3].label).equals('Score Game')
   })
 
   it('offers it while only the scoreboard is open', function () {
@@ -94,7 +95,7 @@ describe('the pills across a game', function () {
       awayScore: 4,
       scoreboard: { open: false, mayOverride: true }
     })
-    expect(ids(gameTabs({ game }))).deep.equals(['boxScore', 'watch'])
+    expect(ids(gameTabs({ game }))).deep.equals(['boxScore', 'watch', 'info'])
   })
 
   it('leaves it out for somebody who may not score', function () {
@@ -103,6 +104,7 @@ describe('the pills across a game', function () {
       scoreboard: { open: true, mayOverride: false }
     })
     expect(ids(gameTabs({ game, music, onDjGame }))).deep.equals([
+      'info',
       'boxScore',
       'watch'
     ])
@@ -114,9 +116,9 @@ describe('the pills across a game', function () {
       music,
       onDjGame
     })
-    expect(ids(pills)).deep.equals(['boxScore', 'watch', 'dj'])
-    expect(pills[2].role).equals('button')
-    expect(pills[2].label).equals('DJ Game')
+    expect(ids(pills)).deep.equals(['info', 'boxScore', 'watch', 'dj'])
+    expect(pills[3].role).equals('button')
+    expect(pills[3].label).equals('DJ Game')
   })
 
   it('puts Score Game immediately before DJ Game', function () {
@@ -125,12 +127,13 @@ describe('the pills across a game', function () {
       music,
       onDjGame
     })
-    expect(ids(pills)).deep.equals(['boxScore', 'watch', 'score', 'dj'])
+    expect(ids(pills)).deep.equals(['info', 'boxScore', 'watch', 'score', 'dj'])
   })
 
   it('leaves DJ Game out without an iPhone’s music or a way to open it', function () {
     const game = gameWith({ canScore: true, canDj: true })
     expect(ids(gameTabs({ game, onDjGame }))).deep.equals([
+      'info',
       'boxScore',
       'watch',
       'score'

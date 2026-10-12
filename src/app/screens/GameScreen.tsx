@@ -22,9 +22,11 @@ import type {
   TeamSummary,
   VideoSummary
 } from '../../common/api'
+import type { GameSocket } from '../../common/gameSocket'
 import {
   AnglePickerModal,
   AnglesUnavailableModal,
+  Card,
   FLOATING_BOTTOM_REM,
   GameHeroCard,
   GlassView,
@@ -44,6 +46,7 @@ import {
 import { ContentInsetContext, NO_INSET } from '../components/contentInset'
 import { EventTagText } from '../components/EventTagText'
 import { navClearanceAboveInset } from '../components/navClearance'
+import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { highlightColumnsFor } from '../layout/grid'
 import { watchLayout, type WatchMode } from '../layout/watch'
 import { lstrings } from '../locales/strings'
@@ -62,6 +65,8 @@ import { windowOf } from '../player/wallClock'
 import { ScoreGameOptions } from '../scoreboard/ScoreGameScreen'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
+import { EventInfoTab } from './EventInfoTab'
+import { defaultEventTab, eventEndTime } from './eventTabPolicy'
 import { gameStatusLine, shortDate, winnerOf } from './format'
 import { gameTabs } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
@@ -75,13 +80,13 @@ import {
 export interface GameScreenProps {
   client: TeamStationClient
   gameId: string
+  socket?: Pick<GameSocket, 'subscribe'>
   /** Opens the full scorer from the Score Game tab. */
   onFullScoring?: () => void
   /** Opens the simplified scoreboard from the Score Game tab. */
   onScoreboard?: () => void
   /**
-   * Which section to open on. A bare address is Videos. Box score and Score
-   * Game are the other two pills.
+   * An explicit section. Bare addresses use the event's current default.
    */
   /** Opens DJ Game, for a songkeeper of either team. */
   onDjGame?: () => void
@@ -154,7 +159,7 @@ export interface GameScreenProps {
   ) => void
 }
 
-type Tab = 'boxScore' | 'watch' | 'score'
+type Tab = 'info' | 'boxScore' | 'watch' | 'score'
 
 /**
  * What each of a game's videos is called on the strip under the picture.
@@ -306,27 +311,113 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // it with padding and the pegged player sticks below it.
   const { headerHeight } = useHeaderSlot()
 
-  const [tab, setTab] = useState<Tab>(initialTab ?? 'watch')
-  /**
-   * The address is allowed to change this, not only to start it.
-   *
-   * Seeded once, the two disagreed the moment anything but a tap moved the
-   * address: Back from the box score wrote `/games/g1` and left the box score
-   * on the screen — on a phone, where Back is how people leave things, a
-   * button that does nothing reads as a hang. Both ends of the app gain the
-   * same thing, because it is the same code.
-   *
-   * The default is repeated rather than guarded against. An address that names
-   * no section means **Videos**, which is what `parseRoute` says and what the
-   * initialiser above says; treating it as "leave things alone" is how Back
-   * from the box score went on showing the box score even once the address
-   * had been put right.
-   */
+  const requestedTab =
+    initialTab ??
+    (autoPlay ||
+    initialVideoId != null ||
+    startAtSec != null ||
+    (angles?.length ?? 0) > 0
+      ? 'watch'
+      : undefined)
+  const [tab, setTab] = useState<Tab>(requestedTab ?? 'info')
+  const explicitSelection = useRef(requestedTab != null)
   useEffect(() => {
-    setTab(initialTab ?? 'watch')
-  }, [initialTab])
+    explicitSelection.current = requestedTab != null
+    setTab(requestedTab ?? 'info')
+  }, [requestedTab, gameId])
 
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
+  const [clockNow, setClockNow] = useState(Date.now)
+  const live = useRef(true)
+  const currentGameId = useRef(gameId)
+  currentGameId.current = gameId
+  useEffect(() => {
+    live.current = true
+    return () => {
+      live.current = false
+    }
+  }, [])
+  const gameRequest = useRef(0)
+  const videoHints = useRef({ onTitle, initialVideoId })
+  videoHints.current = { onTitle, initialVideoId }
+  const refreshGame = useCallback(async (): Promise<void> => {
+    const request = ++gameRequest.current
+    try {
+      const found = await client.game(gameId)
+      if (
+        !live.current ||
+        currentGameId.current !== gameId ||
+        request !== gameRequest.current
+      )
+        return
+      setGame(found)
+      setError(undefined)
+      videoHints.current.onTitle?.(
+        found.eventKind === 'event'
+          ? (found.title ?? 'Team event')
+          : `${found.awayTeamName} @ ${found.homeTeamName}`
+      )
+      setVideo(current =>
+        current != null && found.videos.some(item => item.id === current.id)
+          ? current
+          : (found.videos.find(
+              item => item.id === videoHints.current.initialVideoId
+            ) ??
+            found.videos.find(item => item.status === 'live') ??
+            found.videos.find(item => item.status === 'ready') ??
+            found.videos[0])
+      )
+    } catch (error) {
+      if (
+        live.current &&
+        currentGameId.current === gameId &&
+        request === gameRequest.current
+      )
+        throw error
+    }
+  }, [client, gameId])
+  useForegroundRefresh(refreshGame)
+  useEffect(() => {
+    if (game == null) return
+    if (game.eventKind === 'event') setTab('info')
+    else if (!explicitSelection.current) setTab(defaultEventTab(game, clockNow))
+  }, [game, clockNow])
+  useEffect(() => {
+    if (game == null) return
+    const end = eventEndTime(game)
+    if (end == null) return
+    if (end <= Date.now()) {
+      if (clockNow < end) setClockNow(Date.now())
+      return
+    }
+    const timer = setTimeout(
+      () => {
+        setClockNow(Date.now())
+      },
+      Math.min(2147483647, end - Date.now() + 1)
+    )
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [game, clockNow])
+  useEffect(() => {
+    if (props.socket == null || game?.eventKind === 'event') return
+    try {
+      return props.socket.subscribe(gameId, event => {
+        if (
+          event.type === 'resync' ||
+          (event.type === 'change' &&
+            (event.kind === 'plays' || event.kind === 'game'))
+        ) {
+          refreshGame().catch(() => undefined)
+          setBox(undefined)
+        }
+      })
+    } catch {
+      // A host without a socket transport still receives foreground REST updates.
+      return undefined
+    }
+  }, [props.socket, gameId, game?.eventKind, refreshGame])
   const [canManageSchedule, setCanManageSchedule] = useState(false)
   useEffect(() => {
     let active = true
@@ -451,7 +542,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }, [handoff, progress])
   const headerScore = useMemo(
     () =>
-      game == null ? null : (
+      game == null ? null : game.eventKind === 'event' ? (
+        <HandoffView progress={progress}>
+          <Text style={styles.eventHeaderTitle}>{game.title}</Text>
+        </HandoffView>
+      ) : (
         <HandoffView progress={progress} style={styles.headerScore}>
           <ScoreRow
             name={game.awayTeamName}
@@ -465,7 +560,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           />
         </HandoffView>
       ),
-    [game, progress, styles.headerScore, theme]
+    [game, progress, styles.headerScore, styles.eventHeaderTitle, theme]
   )
   useHeaderHandoff(headerScore)
 
@@ -554,36 +649,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const startedFromLink = useRef(false)
 
   useEffect(() => {
-    let live = true
-    client
-      .game(gameId)
-      .then(found => {
-        if (!live) return
-        setGame(found)
-        // A video whose file has gone is still listed — it is part of the
-        // game's record and saying so is better than pretending it never
-        // existed — but it is never the one opened by default.
-        onTitle?.(`${found.awayTeamName} @ ${found.homeTeamName}`)
-        setVideo(
-          // The address names one, when somebody followed a link to a moment.
-          found.videos.find(item => item.id === initialVideoId) ??
-            // A game being played right now opens on the game being played
-            // right now, ahead of anything already recorded of it.
-            found.videos.find(item => item.status === 'live') ??
-            found.videos.find(item => item.status === 'ready') ??
-            found.videos[0]
-        )
-      })
-      .catch(() => {
-        if (live) setError(lstrings.common_not_found)
-      })
+    let active = true
+    setGame(undefined)
+    setVideo(undefined)
+    setBox(undefined)
+    setError(undefined)
+    startedFromLink.current = false
+    refreshGame().catch(() => {
+      if (active) setError(lstrings.common_not_found)
+    })
     return () => {
-      live = false
+      active = false
+      gameRequest.current++
     }
-    // `onTitle` is a fresh closure on each render of the shell, so including
-    // it here would refetch the game in a loop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, gameId])
+  }, [refreshGame])
 
   const seasonId = game?.seasonId
   const awayTeamId = game?.awayTeamId
@@ -925,34 +1004,46 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }
 
-  const scoreboard = (
-    <GameHeroCard
-      awayName={game.awayTeamName}
-      homeName={game.homeTeamName}
-      awayScore={game.awayScore}
-      homeScore={game.homeScore}
-      status={gameStatusLine(game)}
-      live={game.status === 'inProgress'}
-      winner={winnerOf(game)}
-      compact
-      awayRecord={game.awayRecord}
-      homeRecord={game.homeRecord}
-      awayLogoUrl={game.awayLogoUrl}
-      homeLogoUrl={game.homeLogoUrl}
-      awayTeamId={game.awayTeamId}
-      homeTeamId={game.homeTeamId}
-      date={shortDate(game.startAt)}
-      venue={game.venue ?? undefined}
-      teamStats={teamStatsOf(game.linescore)}
-      onOpenAwayTeam={openSide(game.awayTeamId)}
-      onOpenHomeTeam={openSide(game.homeTeamId)}
-    />
-  )
+  const scoreboard =
+    game.eventKind === 'event' ? (
+      <Card style={styles.eventHero}>
+        <Text accessibilityRole="header" style={styles.eventTitle}>
+          {game.title}
+        </Text>
+        <Text style={styles.eventHeaderTitle}>{game.homeTeamName}</Text>
+        <Text style={styles.eventHeaderTitle}>
+          {game.status === 'cancelled' ? 'Canceled' : shortDate(game.startAt)}
+        </Text>
+      </Card>
+    ) : (
+      <GameHeroCard
+        awayName={game.awayTeamName}
+        homeName={game.homeTeamName}
+        awayScore={game.awayScore}
+        homeScore={game.homeScore}
+        status={gameStatusLine(game)}
+        live={game.status === 'inProgress'}
+        winner={winnerOf(game)}
+        compact
+        awayRecord={game.awayRecord}
+        homeRecord={game.homeRecord}
+        awayLogoUrl={game.awayLogoUrl}
+        homeLogoUrl={game.homeLogoUrl}
+        awayTeamId={game.awayTeamId}
+        homeTeamId={game.homeTeamId}
+        date={shortDate(game.startAt)}
+        venue={game.venue ?? undefined}
+        teamStats={teamStatsOf(game.linescore)}
+        onOpenAwayTeam={openSide(game.awayTeamId)}
+        onOpenHomeTeam={openSide(game.homeTeamId)}
+      />
+    )
 
   const tabs = (
     <PillTabs
       tabs={gameTabs({
         game,
+        now: clockNow,
         music: props.music,
         onDjGame: props.onDjGame,
         canManage: canManageSchedule,
@@ -980,6 +1071,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             playing: !player.paused
           })
         }
+        explicitSelection.current = true
         setTab(next)
         onTab?.(next)
       }}
@@ -1268,7 +1360,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   const below = (
     <View style={styles.tabBody}>
-      {tab === 'score' ? (
+      {tab === 'info' ? (
+        <EventInfoTab
+          key={gameId}
+          client={client}
+          eventId={gameId}
+          onUpdated={() => {
+            refreshGame().catch(() => undefined)
+          }}
+        />
+      ) : tab === 'score' ? (
         <ScoreGameOptions
           game={game}
           onFullScoring={props.onFullScoring}
@@ -2068,6 +2169,17 @@ const getStyles = cacheStyles((theme: Theme) =>
     cellStrong: {
       fontFamily: theme.boldTextFont,
       fontWeight: '700',
+      color: theme.primaryTextColor
+    },
+    eventHero: { padding: theme.rem(1.25), gap: theme.rem(0.5) },
+    eventTitle: {
+      fontFamily: theme.semiBoldTextFont,
+      fontSize: theme.rem(1.75),
+      color: theme.primaryTextColor
+    },
+    eventHeaderTitle: {
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(0.875),
       color: theme.primaryTextColor
     },
     boxScore: {

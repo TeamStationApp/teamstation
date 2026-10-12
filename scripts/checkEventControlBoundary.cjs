@@ -26,10 +26,7 @@ const FORBIDDEN = [
   }
 ]
 
-const NEUTRAL_TREES = [
-  'mobile/apps/common/EventControl',
-  'tools/eventControl'
-]
+const NEUTRAL_TREES = ['mobile/apps/common/EventControl', 'tools/eventControl']
 // Android's neutral package directory, wherever under the app it sits.
 const NEUTRAL_DIRECTORY_NAME = 'eventcontrol'
 const ANDROID_APP = 'mobile/apps/tsCameramanAndroid'

@@ -419,7 +419,8 @@ function swiftCheck(
         `${reports}/DD/Build/Products/Debug-iphonesimulator/Vendored.framework`
       ].join('\n')
     // A vendored binary framework ships for two architectures; what the build compiled, for one.
-    if (file === 'lipo') return args[1].endsWith('Vendored') ? 'x86_64 arm64\n' : 'arm64\n'
+    if (file === 'lipo')
+      return args[1].endsWith('Vendored') ? 'x86_64 arm64\n' : 'arm64\n'
     return ''
   }
   const code = swift.main(argv, {

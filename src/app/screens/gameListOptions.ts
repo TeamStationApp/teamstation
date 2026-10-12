@@ -1,6 +1,6 @@
 /** A request ID is supplied only when the server permits opening its terms. */
 export interface GameListOpenOptions {
-  tab?: 'watch' | 'boxScore'
+  tab?: 'info' | 'watch' | 'boxScore'
   autoPlay?: boolean
   pendingRequestId?: string | null
 }
@@ -21,5 +21,8 @@ export function gameListOptions(
   // Unpublished projected events have no recordings. A Videos control opens
   // the retained published recording even while a scheduling change is pending.
   if (mode === 'videos' && (game.videoCount ?? 0) === 0) return undefined
-  return { autoPlay: (game.videoCount ?? 0) > 0 }
+  return {
+    ...(mode === 'videos' ? { tab: 'watch' as const } : {}),
+    autoPlay: mode === 'videos' && (game.videoCount ?? 0) > 0
+  }
 }

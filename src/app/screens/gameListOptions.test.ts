@@ -28,7 +28,7 @@ describe('schedule and published recording destinations', () => {
         },
         'videos'
       )
-    ).deep.equals({ autoPlay: true })
+    ).deep.equals({ tab: 'watch', autoPlay: true })
     expect(
       gameListOptions(
         { pendingApproval: true, pendingRequestId: null, videoCount: 0 },
@@ -44,7 +44,7 @@ describe('schedule and published recording destinations', () => {
       )
     ).deep.equals({ autoPlay: false })
     expect(gameListOptions({ videoCount: 2 }, 'schedule')).deep.equals({
-      autoPlay: true
+      autoPlay: false
     })
   })
 })
