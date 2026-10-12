@@ -1,7 +1,7 @@
 package app.teamstation.cameraman.eventcontrol
 
 import android.content.Context
-import app.teamstation.cameraman.core.InMemorySettingsStore
+import app.teamstation.streamcore.core.InMemorySettingsStore
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
