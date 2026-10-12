@@ -11,7 +11,13 @@ data class StreamEncoderConfig(
     val height: Int,
     val frameRate: Int,
     val bitrate: Int,
-    val gopSeconds: Double
+    val gopSeconds: Double,
+    /**
+     * A live stream's session, which re-encodes its last picture when no new one comes and holds
+     * itself to the frame rate. False for a recording's session: the recording is drawn on its own
+     * frame grid, and a picture it did not draw must not reach its file.
+     */
+    val live: Boolean = true
 )
 
 /**
@@ -35,6 +41,12 @@ interface StreamVideoEncoding {
 
     /** The rate for the next pictures, on the running session. */
     fun setBitrate(bitrate: Int)
+
+    /**
+     * No more pictures: whatever the session still holds comes out through [Output.onFrame] before
+     * this returns, or within [timeoutMillis]. A recording's last pictures are its end.
+     */
+    fun finishInput(timeoutMillis: Long) = Unit
 
     fun close()
 }
