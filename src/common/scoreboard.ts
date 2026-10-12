@@ -195,7 +195,8 @@ export interface ScoreboardBaseline {
   awayScore: number | null
 }
 
-const DEFAULTS: ScoreboardState = {
+/** What a board shows for each field no source has set. */
+export const SCOREBOARD_DEFAULTS: ScoreboardState = {
   inGame: false,
   pitcherName: '',
   batterName: '',
@@ -235,7 +236,7 @@ export function composeScoreboard(input: {
   overrides?: DashboardOverrides
 }): { automated: ScoreboardState; final: ScoreboardState } {
   const { baseline, game, watcher } = input
-  let automated = mergeScoreboard(DEFAULTS, {
+  let automated = mergeScoreboard(SCOREBOARD_DEFAULTS, {
     homeTeam: baseline.homeTeam,
     awayTeam: baseline.awayTeam,
     homeScore: baseline.homeScore ?? 0,
