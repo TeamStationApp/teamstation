@@ -20,6 +20,11 @@ export const asErrorCode = asLiteral(
   'forbidden',
   'notFound',
   'conflict',
+  /**
+   * What was asked for existed and has been ended for good: a camera whose
+   * stream somebody ended. Asking again will not bring it back.
+   */
+  'gone',
   'tooLarge',
   'unsupportedMedia',
   'rateLimited',
@@ -65,6 +70,7 @@ export const errorStatus: Record<ErrorCode, number> = {
   forbidden: 403,
   notFound: 404,
   conflict: 409,
+  gone: 410,
   tooLarge: 413,
   unsupportedMedia: 415,
   rateLimited: 429,
@@ -119,6 +125,10 @@ export const notFound = (message = 'Not found'): HttpError =>
 
 export const conflict = (message: string, details?: unknown): HttpError =>
   new HttpError('conflict', message, details)
+
+/** Ended for good: asking again will not bring it back. */
+export const gone = (message: string): HttpError =>
+  new HttpError('gone', message)
 
 /**
  * Too many attempts. `retryAfterSec` is carried in `details` so a client can
