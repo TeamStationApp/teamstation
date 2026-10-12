@@ -4030,6 +4030,50 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games/{gameId}/scoreboard-timeline': {
+        get: {
+          summary: "A game's scoreboard at every moment",
+          description:
+            '`{ version, steps }`. Each step is `{ at, state }`: `state` is ' +
+            'the board as it was drawn, `ScoreState` with every override ' +
+            'applied, from `at` (epoch ms, on the server clock) until the next ' +
+            "step. It is rebuilt from the game's stored plays, each scoring " +
+            'action at the time it was taken (a play scored before actions ' +
+            'carried times puts its actions at its own end), the score of the ' +
+            'last play that had ended, and the scoreboard log of every other ' +
+            'change: the publisher, the pitch-speed hold and the override ' +
+            'dashboard. `version` changes whenever any of those does. A game ' +
+            'with nothing on its board has no steps. 404 when there is no such ' +
+            'game; 403 `membersOnly` for somebody who cannot see it. Read ' +
+            'from the database alone, so it answers long after the live ' +
+            'scoreboard has closed.',
+          security: [{ bearer: [] }],
+          parameters: [
+            gameIdParam,
+            {
+              name: 'from',
+              in: 'query',
+              schema: { type: 'integer', minimum: 0 },
+              description:
+                'Epoch ms. Steps before it are left out, except the one in effect at it. Omitted, from the first step.'
+            },
+            {
+              name: 'to',
+              in: 'query',
+              schema: { type: 'integer', minimum: 0 },
+              description:
+                'Epoch ms. Steps after it are left out. Omitted, to the last step. 400 when it is before `from`.'
+            }
+          ],
+          responses: {
+            200: { description: '`{ version, steps: [{ at, state }] }`' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/games/{gameId}/halves': {
         get: {
           summary: 'One outcome per half inning',
@@ -5888,8 +5932,21 @@ export function openApiDocument(version: string): OpenApiDocument {
             'on open and after every change from any source. Inbound ' +
             'messages are ignored. Closes with 4404 when there is no such ' +
             'game or its scoreboard is closed, and 1011 while the store is ' +
-            'unreachable.',
-          parameters: [gameIdParam],
+            'unreachable. With `timeline=1` it sends no boards: it sends ' +
+            "`{ type: 'changed' }` each time the game's board timeline " +
+            '(`GET /games/{gameId}/scoreboard-timeline`) changes, once the ' +
+            'change has been stored, and it stays open for as long as the ' +
+            'game exists, whether or not its scoreboard is open.',
+          parameters: [
+            gameIdParam,
+            {
+              name: 'timeline',
+              in: 'query',
+              schema: { type: 'string', enum: ['1'] },
+              description:
+                '`1` for change notices instead of boards. Omitted, the socket sends the board as before.'
+            }
+          ],
           responses: { 101: { description: 'The viewer socket' } }
         }
       },

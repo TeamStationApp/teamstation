@@ -210,6 +210,10 @@ export interface Replayed {
  * there every play's actions are applied in order, the current play's last.
  * A completed play at the current play's index was reopened by an undo, so
  * only the current play's actions count for it.
+ *
+ * `onAction`, when given, sees the game after each action it applies, with
+ * the play's index and the action's time where its record holds one: the
+ * board timeline reads the board after every action from it.
  */
 export function replayPlays(
   stored: { plays: GumboPlay[]; currentPlay: CurrentPlay | null },
@@ -218,7 +222,12 @@ export function replayPlays(
     teams: Record<Side, GameTeam>
     setup: GameSetup
     fenceDistanceFt?: number
-  }
+  },
+  onAction?: (
+    state: GameState,
+    atBatIndex: number,
+    actionTime: string | undefined
+  ) => void
 ): Replayed {
   const reopened = stored.currentPlay?.about.atBatIndex
   const plays = [...stored.plays]
@@ -271,6 +280,7 @@ export function replayPlays(
       state = applied.state
       kept.push(action)
       times.push(record.actionTimes?.[i])
+      onAction?.(state, atBatIndex, record.actionTimes?.[i])
     }
     segments.push({ atBatIndex, actions: kept, actionTimes: times })
   }

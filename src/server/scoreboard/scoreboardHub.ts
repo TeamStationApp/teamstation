@@ -2,6 +2,7 @@ import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 
 import { captureException } from '@sentry/node'
+import { asObject, asString } from 'cleaners'
 import type { Kysely } from 'kysely'
 import { type RawData, WebSocket, WebSocketServer } from 'ws'
 
@@ -34,6 +35,7 @@ import {
  * A game's scoreboard over WebSockets, on one worker.
  *
  *   /api/v1/scoreboard/<gameId>/socket     anybody: the board as drawn
+ *   …/socket?timeline=1                    anybody: notice of each change
  *   /api/v1/scoreboard/<gameId>/publish    TS Watcher: partial states in
  *   /api/v1/scoreboard/<gameId>/dashboard  the override dashboard
  *
@@ -47,6 +49,16 @@ import {
  *
  * Every write the hub makes, which is everything but the game's own scoring,
  * is also logged in Postgres (`scoreboardLog.ts`) by the worker that made it.
+ *
+ * A `timeline=1` socket is sent no boards. It is a player that draws the
+ * board from `GET /games/:gameId/scoreboard-timeline`, and it is sent
+ * `{"type":"changed"}` each time that timeline changes, on any worker, so it
+ * fetches again. That notice is announced on a channel of its own once
+ * everything the timeline reads has committed: by the play post's hook for a
+ * game's scoring, and here after the log for every other write. The timeline
+ * is read from Postgres and outlives the board in Redis, so such a socket is
+ * admitted and kept for as long as the game exists, whether or not its live
+ * board is open.
  */
 
 type Kind = 'viewer' | 'publisher' | 'dashboard'
@@ -58,6 +70,8 @@ interface Member {
   lastVersion: number
   /** Answered the last ping. */
   alive: boolean
+  /** A `timeline=1` viewer: sent change notices, never boards. */
+  timeline: boolean
   token?: string
   userId?: number
 }
@@ -106,6 +120,7 @@ const KIND_OF: Record<string, Kind> = {
 const UNAVAILABLE = 1011
 const GOING_AWAY = 1001
 const BAD_REQUEST = 'HTTP/1.1 400 Bad Request\r\n\r\n'
+const CHANGED = JSON.stringify({ type: 'changed' })
 
 export function makeScoreboardHub(
   options: ScoreboardHubOptions
@@ -178,6 +193,15 @@ export function makeScoreboardHub(
     } catch (error) {
       log(`scoreboard ${gameId}: scoreboard log: ${describe(error)}`)
       captureException(error)
+      return
+    }
+    // The row has committed, or was not needed: either way a timeline read
+    // from now on holds this write.
+    try {
+      await store.announceTimeline(gameId)
+    } catch (error) {
+      if (!(error instanceof ScoreboardUnavailable))
+        log(`scoreboard ${gameId}: timeline notice: ${describe(error)}`)
     }
   }
 
@@ -214,7 +238,7 @@ export function makeScoreboardHub(
       watcherAt: hash.watcher?.receivedAt ?? null
     })
     for (const member of only == null ? room.members : [only]) {
-      if (member.kind === 'publisher') continue
+      if (member.kind === 'publisher' || member.timeline) continue
       if (hash.version <= member.lastVersion) continue
       if (member.socket.readyState !== WebSocket.OPEN) continue
       member.lastVersion = hash.version
@@ -254,6 +278,24 @@ export function makeScoreboardHub(
     })
   }
 
+  /** A game's timeline changed: each of its `timeline=1` sockets is told. */
+  function onTimeline(text: string): void {
+    let gameId: string
+    try {
+      gameId = asTimelineNotice(JSON.parse(text)).gameId
+    } catch (error) {
+      log(`scoreboard: unreadable timeline notice: ${describe(error)}`)
+      return
+    }
+    const room = rooms.get(gameId)
+    if (room == null) return
+    for (const member of room.members) {
+      if (!member.timeline) continue
+      if (member.socket.readyState !== WebSocket.OPEN) continue
+      member.socket.send(CHANGED)
+    }
+  }
+
   /**
    * Messages published while a connection was down are lost, so each game
    * with sockets is read once whenever either connection is ready again.
@@ -269,10 +311,18 @@ export function makeScoreboardHub(
   subscriber.subscribe(store.channel, onMessage).catch((error: unknown) => {
     log(`scoreboard: subscribe: ${describe(error)}`)
   })
+  subscriber
+    .subscribe(store.timelineChannel, onTimeline)
+    .catch((error: unknown) => {
+      log(`scoreboard: subscribe: ${describe(error)}`)
+    })
   subscriber.on('ready', resync)
   store.onReady(resync)
 
-  /** Every 60 s: a game whose board has closed loses its sockets, 4404. */
+  /**
+   * Every 60 s: a game whose board has closed loses its sockets, 4404, but
+   * for its `timeline=1` sockets, which stay until the game is gone.
+   */
   const checker = setInterval(() => {
     for (const room of rooms.values()) {
       enqueue(room, async () => {
@@ -285,6 +335,7 @@ export function makeScoreboardHub(
           return
         }
         for (const member of room.members) {
+          if (member.timeline && record != null) continue
           shut(
             member.socket,
             SCOREBOARD_CLOSE.closed,
@@ -361,8 +412,14 @@ export function makeScoreboardHub(
         member.userId = runner.userId
       }
       const record = await gameRecord(db, gameId)
-      const keyExists = record == null ? false : await store.exists(gameId)
-      if (record == null || !scoreboardOpen(record, keyExists, now())) {
+      const open = member.timeline
+        ? record != null
+        : scoreboardOpen(
+            record,
+            record == null ? false : await store.exists(gameId),
+            now()
+          )
+      if (record == null || !open) {
         shut(socket, SCOREBOARD_CLOSE.closed, 'The scoreboard is closed')
         return undefined
       }
@@ -383,7 +440,7 @@ export function makeScoreboardHub(
         return { gameId, record, members: new Set(), chain: Promise.resolve() }
       }
       const room = join(gameId, record, member)
-      if (kind !== 'publisher') {
+      if (kind !== 'publisher' && !member.timeline) {
         enqueue(room, async () => {
           try {
             await catchUp(room, member)
@@ -521,9 +578,16 @@ export function makeScoreboardHub(
     socket: WebSocket,
     req: IncomingMessage,
     gameId: string,
-    kind: Kind
+    kind: Kind,
+    timeline: boolean
   ): void {
-    const member: Member = { socket, kind, lastVersion: -1, alive: true }
+    const member: Member = {
+      socket,
+      kind,
+      lastVersion: -1,
+      alive: true,
+      timeline
+    }
     everyone.add(member)
     socket.on('pong', () => {
       member.alive = true
@@ -561,9 +625,8 @@ export function makeScoreboardHub(
     // and costs only this one socket.
     handleUpgrade: (req, socket, head) => {
       try {
-        const match = SOCKET_PATH.exec(
-          new URL(req.url ?? '/', 'http://localhost').pathname
-        )
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const match = SOCKET_PATH.exec(url.pathname)
         if (match == null || closing) {
           socket.destroy()
           return
@@ -576,9 +639,11 @@ export function makeScoreboardHub(
           return
         }
         const kind = KIND_OF[match[2]]
+        const timeline =
+          kind === 'viewer' && url.searchParams.get('timeline') === '1'
         wss.handleUpgrade(req, socket, head, ws => {
           try {
-            connected(ws, req, gameId, kind)
+            connected(ws, req, gameId, kind, timeline)
           } catch (error) {
             log(`scoreboard ${gameId}: connecting a socket: ${describe(error)}`)
             ws.terminate()
@@ -614,6 +679,8 @@ function refuseUpgrade(socket: Duplex, response: string): void {
   socket.once('finish', () => socket.destroy())
   socket.end(response)
 }
+
+const asTimelineNotice = asObject({ gameId: asString })
 
 function shut(socket: WebSocket, code: number, reason: string): void {
   if (
