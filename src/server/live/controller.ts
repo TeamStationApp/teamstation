@@ -109,6 +109,8 @@ interface Tracked {
 let timer: NodeJS.Timeout | undefined
 let sweepTimer: NodeJS.Timeout | undefined
 let options: LiveControllerOptions | undefined
+/** The sync still running, so a slow one is never overlapped by the next tick. */
+let syncing: Promise<void> | undefined
 /** Live stream id → what the ingest was last told, so it can be untold. */
 const tracked = new Map<string, Tracked>()
 const lastStatusWrite = new Map<string, number>()
@@ -157,9 +159,7 @@ export function startLiveController(next: LiveControllerOptions): boolean {
     })
 
   timer = setInterval(() => {
-    sync().catch((error: unknown) => {
-      log(`live: ${String(error)}`)
-    })
+    syncOnce(log).catch(() => {})
   }, SYNC_INTERVAL_MS)
   timer.unref?.()
 
@@ -176,6 +176,28 @@ export function startLiveController(next: LiveControllerOptions): boolean {
   }, SWEEP_INTERVAL_MS)
   sweepTimer.unref?.()
   return true
+}
+
+/**
+ * One tick of the controller's timer: a sync, unless the last one is still
+ * running. Under load a sync can take longer than the tick, and two at once
+ * each read the ingest before the other wrote — the second then took a stream
+ * the first had just opened for one that was no longer open, and dropped its
+ * first publisher. Skipping the tick lets the next one see the settled state.
+ */
+export async function syncOnce(
+  log: (message: string) => void,
+  run: () => Promise<void> = sync
+): Promise<void> {
+  if (syncing != null) return
+  syncing = run()
+    .catch((error: unknown) => {
+      log(`live: ${String(error)}`)
+    })
+    .finally(() => {
+      syncing = undefined
+    })
+  await syncing
 }
 
 /**
