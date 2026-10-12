@@ -487,8 +487,6 @@ export const enUs = {
   profile_admin: 'Admin',
   profile_member: 'Member',
   profile_follower: 'Follower',
-  profile_add: 'Add',
-  profile_remove: 'Remove',
   profile_held: 'Yes',
   profile_not_held: '\u2014',
   profile_with: 'With %s',

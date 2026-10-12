@@ -54,7 +54,7 @@ async function render(element: React.ReactElement): Promise<void> {
 function find(label: string): HTMLElement | undefined {
   return [
     ...document.querySelectorAll<HTMLElement>(
-      '[role="button"], [role="tab"], [role="radio"], [role="checkbox"]'
+      '[role="button"], [role="tab"], [role="radio"], [role="checkbox"], [role="switch"]'
     )
   ].find(
     node =>
@@ -1725,7 +1725,7 @@ describe('a player’s Team roles on Settings', function () {
     })
   }
 
-  it('lists the team’s roles at the very bottom for a coach, with Add and Remove, team level only', async function () {
+  it('lists the team’s roles at the very bottom for a coach, with toggles, team level only', async function () {
     const asked: unknown[] = []
     await render(
       <PlayerScreen
@@ -1746,30 +1746,30 @@ describe('a player’s Team roles on Settings', function () {
     expect(text()).not.includes('SEASON ROLES')
     // A coach changes everything but Admin.
     expect(
-      section!.querySelector('[data-testid="role-team-admin"] [role="button"]')
+      section!.querySelector('[data-testid="role-team-admin"] [role="switch"]')
     ).equals(null)
     expect(
-      section!.querySelector(
-        '[data-testid="role-team-scorekeeper"] [role="button"]'
-      )?.textContent
-    ).equals('Remove')
+      section!
+        .querySelector('[data-testid="role-team-scorekeeper"] [role="switch"]')
+        ?.getAttribute('aria-checked')
+    ).equals('true')
     // Songkeeper comes with Scorekeeper; nothing to add.
     const songkeeper = section!.querySelector(
       '[data-testid="role-team-songkeeper"]'
     )
-    expect(songkeeper?.querySelector('[role="button"]')).equals(null)
+    expect(songkeeper?.querySelector('[role="switch"]')).equals(null)
     expect(songkeeper?.textContent).includes('With Scorekeeper')
     // Their place on the team is the roster's: Member reads Player.
     const member = section!.querySelector('[data-testid="role-team-member"]')
-    expect(member?.querySelector('[role="button"]')).equals(null)
+    expect(member?.querySelector('[role="switch"]')).equals(null)
     expect(member?.textContent).equals('MemberPlayer')
-    await press('Add Assistant')
+    await press('Assistant')
     expect(asked).deep.include(['add', 'team', 't1', 7, 'assistant'])
     expect(
-      section!.querySelector(
-        '[data-testid="role-team-assistant"] [role="button"]'
-      )?.textContent
-    ).equals('Remove')
+      section!
+        .querySelector('[data-testid="role-team-assistant"] [role="switch"]')
+        ?.getAttribute('aria-checked')
+    ).equals('true')
   })
 
   it('reads Member as Player for the team’s administrator too, and every staff role with Admin', async function () {
@@ -1785,16 +1785,17 @@ describe('a player’s Team roles on Settings', function () {
     )
     const section = document.querySelector('[data-testid="playerTeamRoles"]')
     expect(
-      section!.querySelector('[data-testid="role-team-admin"] [role="button"]')
-        ?.textContent
-    ).equals('Remove')
+      section!
+        .querySelector('[data-testid="role-team-admin"] [role="switch"]')
+        ?.getAttribute('aria-checked')
+    ).equals('true')
     for (const role of ['coach', 'assistant', 'scorekeeper', 'songkeeper']) {
       const row = section!.querySelector(`[data-testid="role-team-${role}"]`)
-      expect(row?.querySelector('[role="button"]'), role).equals(null)
+      expect(row?.querySelector('[role="switch"]'), role).equals(null)
       expect(row?.textContent, role).includes('With Admin')
     }
     const member = section!.querySelector('[data-testid="role-team-member"]')
-    expect(member?.querySelector('[role="button"]')).equals(null)
+    expect(member?.querySelector('[role="switch"]')).equals(null)
     expect(member?.textContent).includes('Player')
   })
 
@@ -1812,7 +1813,9 @@ describe('a player’s Team roles on Settings', function () {
       '[data-testid="playerTeamRoles"] [data-testid="role-team-member"]'
     )
     expect(member?.textContent).not.includes('Player')
-    expect(member?.querySelector('[role="button"]')?.textContent).equals('Add')
+    expect(
+      member?.querySelector('[role="switch"]')?.getAttribute('aria-checked')
+    ).equals('false')
   })
 
   it('shows no roles for a player who cannot sign in, nor to anybody but the team’s staff', async function () {

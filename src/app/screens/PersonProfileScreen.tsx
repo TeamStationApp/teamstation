@@ -42,11 +42,11 @@ export interface PersonProfileScreenProps {
  *
  * A hero card with their photo, their name (the whole of it for whoever
  * manages the level's people) and the level the profile is for, which is
- * the one its buttons change. Then the players they are a parent or guardian
+ * the one its switches change. Then the players they are a parent or guardian
  * of there, each opening that player's page. Then what they hold, a section
  * per level: Team, Season (every season the team is in, as one) and League
  * roles from a team; Season and League from a season; League from a league.
- * Only the level the profile was opened from has buttons; the levels above
+ * Only the level the profile was opened from has switches; the levels above
  * are for reading, whoever is looking, and are changed on their own pages.
  */
 export function PersonProfileScreen(

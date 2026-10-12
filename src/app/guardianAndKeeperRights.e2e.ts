@@ -512,10 +512,10 @@ async function roster(run: Run): Promise<void> {
     `/teams/${f.teamA}/people/${people.teamCoach}`
   )
   expect(await heldRows(admin, 'team')).deep.include({
-    coach: 'Remove',
-    scorekeeper: 'Add',
-    songkeeper: 'Add',
-    admin: 'Add',
+    coach: 'On',
+    scorekeeper: 'Off',
+    songkeeper: 'Off',
+    admin: 'Off',
     follower: 'Not following'
   })
   await pressRole(admin, 'team', 'scorekeeper')
@@ -524,9 +524,10 @@ async function roster(run: Run): Promise<void> {
       const row = document.querySelector(
         '[data-testid="role-team-scorekeeper"]'
       )
-      const words = row === null ? null : row.textContent
-      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
-      return words !== null && words.includes('Remove')
+      return (
+        row !== null &&
+        row.querySelector('[role="switch"][aria-checked="true"]') !== null
+      )
     },
     { timeout: 15000 }
   )
@@ -617,9 +618,9 @@ async function people(run: Run): Promise<void> {
   await contains(admin.page, 'Grace Hill')
   await contains(admin.page, 'Team · Demo Hawks')
   expect(await heldRows(admin, 'team')).deep.include({
-    admin: 'Add',
-    coach: 'Add',
-    member: 'Add',
+    admin: 'Off',
+    coach: 'Off',
+    member: 'Off',
     follower: 'Following'
   })
   await pressRole(admin, 'team', 'coach')
@@ -627,15 +628,16 @@ async function people(run: Run): Promise<void> {
   await admin.page.waitForFunction(
     () => {
       const row = document.querySelector('[data-testid="role-team-member"]')
-      const words = row === null ? null : row.textContent
-      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
-      return words !== null && words.includes('Remove')
+      return (
+        row !== null &&
+        row.querySelector('[role="switch"][aria-checked="true"]') !== null
+      )
     },
     { timeout: 15000 }
   )
   expect(await heldRows(admin, 'team')).deep.include({
-    coach: 'Remove',
-    member: 'Remove'
+    coach: 'On',
+    member: 'On'
   })
   await pressRole(admin, 'team', 'coach')
   await until(async () => (await roleRows(people.follower)).length === 0)
@@ -651,11 +653,11 @@ async function people(run: Run): Promise<void> {
   await contains(coach.page, 'Avery S')
   const coachView = await heldRows(coach, 'team')
   expect(coachView.admin).equals('—')
-  expect(coachView.coach).equals('Add')
+  expect(coachView.coach).equals('Off')
   for (const level of ['season', 'league'])
     expect(
       Object.values(await heldRows(coach, level)).some(
-        value => value === 'Add' || value === 'Remove'
+        value => value === 'On' || value === 'Off'
       ),
       level
     ).equals(false)
@@ -679,7 +681,7 @@ async function people(run: Run): Promise<void> {
   expect(page).includes('SEASON ROLES')
   expect(page).includes('LEAGUE ROLES')
   expect(page).not.includes('TEAM ROLES')
-  expect((await heldRows(admin, 'season')).admin).equals('Add')
+  expect((await heldRows(admin, 'season')).admin).equals('Off')
   expect((await heldRows(admin, 'league')).admin).equals('—')
   await run.shot(admin, 'person-profile-season.png', { fit: true })
 
@@ -694,9 +696,10 @@ async function people(run: Run): Promise<void> {
   await admin.page.waitForFunction(
     () => {
       const row = document.querySelector('[data-testid="role-team-songkeeper"]')
-      const words = row === null ? null : row.textContent
-      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
-      return words !== null && words.includes('Remove')
+      return (
+        row !== null &&
+        row.querySelector('[role="switch"][aria-checked="true"]') !== null
+      )
     },
     { timeout: 15000 }
   )
@@ -2475,8 +2478,8 @@ async function runStage(
 }
 
 /**
- * What each row of a person's roles at `level` offers: its button's word
- * (`Add`, `Remove`) or, with none, its status (`Yes`, `—`, `Following`).
+ * What each row of a person's roles at `level` offers: its toggle (`On`,
+ * `Off`) or, with none, its status (`Yes`, `—`, `Following`).
  */
 async function heldRows(
   session: BrowserSession,
@@ -2490,11 +2493,13 @@ async function heldRows(
     return Object.fromEntries(
       rows.map(row => {
         const id = row.getAttribute('data-testid')
-        const button = row.querySelector('[role="button"]')
+        const toggle = row.querySelector('[role="switch"]')
         const label = row.children.length > 1 ? row.children[1] : null
         const shown =
-          button !== null
-            ? button.textContent
+          toggle !== null
+            ? toggle.getAttribute('aria-checked') === 'true'
+              ? 'On'
+              : 'Off'
             : label === null
               ? ''
               : label.textContent
@@ -2519,13 +2524,13 @@ async function scrollTo(session: BrowserSession, css: string): Promise<void> {
   await settle(session)
 }
 
-/** Presses the button of one role's row, scrolled clear of the bottom bar. */
+/** Presses the switch of one role's row, scrolled clear of the bottom bar. */
 async function pressRole(
   session: BrowserSession,
   level: string,
   role: string
 ): Promise<void> {
-  const css = `[data-testid="role-${level}-${role}"] [role="button"]`
+  const css = `[data-testid="role-${level}-${role}"] [role="switch"]`
   await scrollTo(session, css)
   await session.m.tapOn({ css, timeout: 15000 })
 }

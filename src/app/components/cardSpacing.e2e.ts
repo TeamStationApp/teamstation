@@ -154,8 +154,13 @@ async function main(): Promise<void> {
     await scrollTo('Form action')
     await tap('Form action')
     await visible('Light / Normal / Action')
-    await scrollTo('Add Admin')
-    await tap('^Add Admin$')
+    await m.scrollUntilVisible({
+      element: { id: 'role-team-admin-switch' },
+      direction: 'DOWN',
+      timeout: 20000
+    })
+    await m.tapOn({ id: 'role-team-admin-switch', timeout: 10000 })
+    steps.push('Tapped: the Admin switch')
     await visible('Light / Normal / Add role')
     await shot('roles')
     await writeFile(

@@ -1,11 +1,10 @@
 import React from 'react'
-import { Text, View } from 'react-native'
+import { Animated, Pressable, Text, View } from 'react-native'
 
 import type { ProfileSection } from '../../common/api'
 import { impliedRoles, type Role, ROLES } from '../../common/roles'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { Button } from './Button'
 import { ListCard } from './ListCard'
 import { flagLabel } from './RolesModal'
 
@@ -19,7 +18,7 @@ export interface RoleRowsProps {
   viewer: { manages: boolean; admin: boolean }
   /**
    * A player's own rows, on their Settings: while they are on the team, the
-   * Member row reads Player with no button, as a player's place on the team
+   * Member row reads Player with no toggle, as a player's place on the team
    * is the roster's to change.
    */
   player?: boolean
@@ -39,14 +38,14 @@ const ROWS: ReadonlyArray<RoleRowKind | 'follower'> = [
  * One level of what a person holds: Admin, the five staff roles, Member and
  * Follower, a row each.
  *
- * On the level being managed, a role they hold has a red **Remove** and one
- * they lack a green **Add**, for a viewer who manages its people; the Admin
- * row only for an administrator, and Remove on Member (which takes every role
- * here with it) not for an administrator's membership unless the viewer is
- * one. Follower is only ever a status: following is the person's own. A
- * role another of theirs brings with it at this level (`impliedRoles`: every
- * staff role with Admin, Songkeeper with Scorekeeper) reads "With Admin" or
- * "With Scorekeeper", with no button. Any other level, and any viewer who
+ * On the level being managed, each role has a toggle, on (green) for one they
+ * hold and off (red) for one they lack, for a viewer who manages its people;
+ * the Admin row only for an administrator, and turning off Member (which takes
+ * every role here with it) not for an administrator's membership unless the
+ * viewer is one. Follower is only ever a status: following is the person's
+ * own. A role another of theirs brings with it at this level (`impliedRoles`:
+ * every staff role with Admin, Songkeeper with Scorekeeper) reads "With Admin"
+ * or "With Scorekeeper", with no toggle. Any other level, and any viewer who
  * does not manage, reads the rows only.
  */
 export function RoleRows(props: RoleRowsProps): React.ReactElement {
@@ -96,12 +95,10 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
           >
             <Text style={styles.label}>{label}</Text>
             {changeable && row !== 'follower' ? (
-              <Button
-                compact
-                label={held ? lstrings.profile_remove : lstrings.profile_add}
-                accessibilityLabel={`${held ? lstrings.profile_remove : lstrings.profile_add} ${label}`}
-                color={held ? theme.dangerColor : theme.successColor}
-                textColor={theme.buttonTextColor}
+              <RoleToggle
+                testID={`role-${section.level}-${row}-switch`}
+                on={held}
+                label={label}
                 disabled={busy}
                 onPress={() => {
                   if (held) onRemove(row)
@@ -136,6 +133,79 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
   )
 }
 
+/**
+ * An iOS-style switch: a cream thumb inside a track of constant height, green
+ * with the thumb to the right, red with it to the left. The pressable area
+ * reaches past the track, which `hitSlop` does not do on the web.
+ */
+function RoleToggle(props: {
+  testID: string
+  on: boolean
+  label: string
+  disabled: boolean
+  onPress: () => void
+}): React.ReactElement {
+  const { testID, on, label, disabled, onPress } = props
+  const theme = useTheme()
+  const styles = getStyles(theme)
+  const [position] = React.useState(() => new Animated.Value(on ? 1 : 0))
+  React.useEffect(() => {
+    const slide = Animated.timing(position, {
+      toValue: on ? 1 : 0,
+      duration: 150,
+      useNativeDriver: false
+    })
+    slide.start()
+    return () => {
+      slide.stop()
+    }
+  }, [on, position])
+  return (
+    <Pressable
+      testID={testID}
+      accessibilityRole="switch"
+      accessibilityLabel={label}
+      accessibilityState={{ checked: on, disabled }}
+      // react-native-web does not render `aria-checked` from the state above.
+      aria-checked={on}
+      disabled={disabled}
+      onPress={onPress}
+      style={[styles.toggle, disabled && styles.disabled]}
+    >
+      <View
+        style={[
+          styles.track,
+          { backgroundColor: on ? theme.successColor : theme.dangerColor }
+        ]}
+      >
+        <Animated.View
+          style={[
+            styles.thumb,
+            {
+              transform: [
+                {
+                  translateX: position.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, TRACK_WIDTH - THUMB_SIZE - 2 * THUMB_INSET]
+                  })
+                }
+              ]
+            }
+          ]}
+        />
+      </View>
+    </Pressable>
+  )
+}
+
+const TRACK_WIDTH = 51
+const TRACK_HEIGHT = 31
+const THUMB_INSET = 2
+const THUMB_SIZE = TRACK_HEIGHT - 2 * THUMB_INSET
+const THUMB_CREAM = '#FBF6E9'
+/** How far the pressable area reaches past the track on every side. */
+const TOGGLE_SLOP = 8
+
 function labelOf(row: RoleRowKind | 'follower'): string {
   if (row === 'admin') return lstrings.profile_admin
   if (row === 'member') return lstrings.profile_member
@@ -164,6 +234,26 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontWeight: '600',
     color: theme.successColor
   },
+  toggle: { padding: TOGGLE_SLOP, margin: -TOGGLE_SLOP },
+  track: {
+    width: TRACK_WIDTH,
+    height: TRACK_HEIGHT,
+    borderRadius: TRACK_HEIGHT / 2,
+    padding: THUMB_INSET,
+    justifyContent: 'center'
+  },
+  thumb: {
+    width: THUMB_SIZE,
+    height: THUMB_SIZE,
+    borderRadius: THUMB_SIZE / 2,
+    backgroundColor: THUMB_CREAM,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.25,
+    shadowRadius: 2,
+    elevation: 2
+  },
+  disabled: { opacity: 0.5 },
   notHeld: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875),
