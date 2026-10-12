@@ -93,6 +93,8 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var lastCallbackWall: CFAbsoluteTime = 0
   private var lastProgramFrameWall: CFAbsoluteTime = 0
   private var lastResetWall: CFAbsoluteTime = 0
+  /// When this publish's first picture was captured, in `CFAbsoluteTime`; see `liveTimelineStart`.
+  private var timelineStart = StreamTimelineStart()
 
   /// `clock` is the one the mixes and the programme tick read (the steady wall clock in the app):
   /// the stream's video stamps and its sound's epoch are both taken from it, so a step of the
@@ -114,6 +116,15 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return isRunning
+  }
+
+  /// When the first picture this publish sent was captured, on `clock`: where the server's copy of
+  /// the stream begins. Nil until a picture has gone out. A picture appended without its capture
+  /// time is taken to have been captured as it was sent.
+  public var liveTimelineStart: WallClock? {
+    lock.lock()
+    defer { lock.unlock() }
+    return timelineStart.captured.map { WallClock(seconds: $0 + kCFAbsoluteTimeIntervalSince1970) }
   }
 
   public var metrics: Metrics {
@@ -203,6 +214,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     streamStartWall = absoluteNow()
     lastOutputWall = 0
     pendingEncodes = 0
+    timelineStart = StreamTimelineStart()
     return true
   }
 
@@ -213,7 +225,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     codec = Self.rtmpCodec(settings.codec)
     bitrateLow = settings.bitrateLow
     bitrateHigh = settings.bitrateHigh
-    bitrate = settings.bitrateHigh
+    bitrate = settings.openingBitrate
     frameRate = max(1, settings.frameRate)
     gopSeconds = settings.gopSeconds
   }
@@ -232,12 +244,13 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.unlock()
   }
 
-  /// Starts the controller at the high bitrate, which is where the session already is. Until the
+  /// Starts the controller at the opening bitrate, which is where the session already is. Until the
   /// publish is live there is no link to judge, and the controller holds.
   private func startRateLoop(client: RTMPClient) {
     lock.lock()
     let high = bitrateHigh
     let low = bitrateLow
+    let opening = bitrate
     lock.unlock()
     let loop = AdaptiveBitrateLoop(
       ceiling: high,
@@ -255,7 +268,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     lock.lock()
     rateLoop = loop
     lock.unlock()
-    loop.configure(ceiling: high, floor: low, enabled: true)
+    loop.configure(ceiling: high, floor: low, start: opening, enabled: true)
   }
 
   /// A rate from the controller, onto the live session: the next frame is coded at it. A session
@@ -294,6 +307,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     let loop = rateLoop
     rateLoop = nil
     pendingEncodes = 0
+    timelineStart = StreamTimelineStart()
     lock.unlock()
     timer?.cancel()
     loop?.stop()
@@ -305,12 +319,14 @@ public final class ProgramStreamer: @unchecked Sendable {
     if running { telemetry.recordEncodeSessionChange(delta: -1) }
   }
 
-  public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+  /// A programme picture. `captureWall` is when it was captured, on `clock`, for a picture new to
+  /// the stream; nil for a repeat, which is taken to be as old as the last picture that said.
+  public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, captureWall: WallClock? = nil) {
     lock.lock()
     let admitted = pacer.admit(now: absoluteNow())
     lock.unlock()
     guard admitted else { return }
-    encode(pixelBuffer, sourceTime: presentationTime, forceKey: nil, isIdle: false)
+    encode(pixelBuffer, sourceTime: presentationTime, forceKey: nil, isIdle: false, captureWall: captureWall)
   }
 
   /// What `start` would configure the stream as, without opening an encoder or a socket.
@@ -377,7 +393,8 @@ public final class ProgramStreamer: @unchecked Sendable {
     _ pixelBuffer: CVPixelBuffer,
     sourceTime: CMTime,
     forceKey: Bool?,
-    isIdle: Bool
+    isIdle: Bool,
+    captureWall: WallClock? = nil
   ) {
     // Frames reach the encoder in the order they are stamped; see `submitLock`.
     submitLock.lock()
@@ -393,6 +410,11 @@ public final class ProgramStreamer: @unchecked Sendable {
       telemetry.recordProgramFrameAge(0)
     }
     let time = clock.nextPresentationTime(source: sourceTime, now: now)
+    timelineStart.submitted(
+      time: time,
+      now: now,
+      captureWall: captureWall.map { $0.seconds - kCFAbsoluteTimeIntervalSince1970 }
+    )
     let mustKey = forceKey ?? (clock.shouldForceKey(at: time, now: now) || !sentVideoConfig || isIdle)
     telemetry.recordStreamKeyframeAge(clock.keyframeAgeSeconds(now: now))
     let cap = mustKey ? Self.idleIDRPendingCap : Self.maximumPendingEncodes
@@ -855,6 +877,7 @@ public final class ProgramStreamer: @unchecked Sendable {
         return
       }
       sentVideoConfig = true
+      timelineStart.sent(time: CMSampleBufferGetPresentationTimeStamp(encoded), startWall: clock.startWall)
       lock.unlock()
       client.sendVideo(timestampMs: timestamp, tag: FLVTag.videoSequenceHeader(codec: codec, record: record))
     } else {

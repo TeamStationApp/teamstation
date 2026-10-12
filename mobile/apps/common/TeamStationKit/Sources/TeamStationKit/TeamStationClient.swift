@@ -229,15 +229,19 @@ public struct TeamStationClient: Sendable {
     try await send("director/uploads/\(escape(uploadId))", method: "GET")
   }
 
-  /// One part of the recording.
+  /// One part of the recording. `onSent` is told how many of its bytes have gone so far, as the
+  /// system hands them to the network: a part is minutes on a field's uplink, and a bar that moves
+  /// only between parts looks stuck.
   public func sendPart(
     uploadId: String,
     index: Int,
-    bytes: Data
+    bytes: Data,
+    onSent: (@Sendable (Int) -> Void)? = nil
   ) async throws -> TeamStationPartTaken {
     try await sendBytes(
       "director/uploads/\(escape(uploadId))/parts/\(index)",
-      bytes: bytes
+      bytes: bytes,
+      onSent: onSent
     )
   }
 
@@ -327,6 +331,54 @@ public struct TeamStationClient: Sendable {
     )
   }
 
+  /// Says when the first picture of a stream's first publish was captured, on this device's wall
+  /// clock: TeamStation places the stream's live video there, where the angle grid lines it up with
+  /// the game's other cameras, instead of at the moment the publish reached it. The first account
+  /// holds; one of a later publish is ignored.
+  @discardableResult
+  public func reportLiveStart(
+    gameId: String,
+    streamId: String,
+    startedAt: Date
+  ) async throws -> TeamStationDeviceStream {
+    let instant = ISO8601DateFormatter()
+    instant.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
+    return try await send(
+      "games/\(escape(gameId))/live-streams/\(escape(streamId))",
+      method: "PATCH",
+      body: [ "liveStartedAt": instant.string(from: startedAt) ],
+      goneIsEnded: true
+    )
+  }
+
+  private struct ServerTime: Decodable {
+    let serverTime: Double
+  }
+
+  /// What to add to `now` to read TeamStation's clock (`ServerClock`), from `samples` round trips
+  /// to `GET /time`. `now` is the clock the caller's instants are on. Throws only when no round trip
+  /// came back.
+  public func serverClockOffset(
+    samples: Int = ServerClock.samples,
+    now: @Sendable () -> Double = { Date().timeIntervalSince1970 }
+  ) async throws -> Double {
+    var taken: [ServerClock.Sample] = []
+    var failure: (any Error)?
+    for _ in 0 ..< max(1, samples) {
+      let sent = now()
+      do {
+        let reply: ServerTime = try await send("time", method: "GET", timeout: 5)
+        taken.append(ServerClock.Sample(sent: sent, server: reply.serverTime / 1_000, received: now()))
+      } catch {
+        failure = error
+      }
+    }
+    guard let offset = ServerClock.offset(from: taken) else {
+      throw failure ?? TeamStationError.server("no answer from the server's clock")
+    }
+    return offset
+  }
+
   // MARK: - The wire
 
   private func escape(_ value: String) -> String {
@@ -353,7 +405,8 @@ public struct TeamStationClient: Sendable {
   /// question deserves — a part on a field's uplink is not a question.
   private func sendBytes<Reply: Decodable>(
     _ path: String,
-    bytes: Data
+    bytes: Data,
+    onSent: (@Sendable (Int) -> Void)? = nil
   ) async throws -> Reply {
     var request = URLRequest(url: Self.apiBase(baseURL).appending(path: path))
     request.httpMethod = "PUT"
@@ -367,7 +420,11 @@ public struct TeamStationClient: Sendable {
     let data: Data
     let response: URLResponse
     do {
-      (data, response) = try await session.upload(for: request, from: bytes)
+      (data, response) = try await session.upload(
+        for: request,
+        from: bytes,
+        delegate: onSent.map(BodySentDelegate.init)
+      )
     } catch {
       throw TeamStationError.offline
     }
@@ -475,4 +532,23 @@ public struct TeamStationClient: Sendable {
     includingFractionalSeconds: true
   )
   private static let whole = Date.ISO8601FormatStyle()
+}
+
+/// Hands on how much of one request's body has gone, from the task's own delegate.
+final class BodySentDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+  private let onSent: @Sendable (Int) -> Void
+
+  init(_ onSent: @escaping @Sendable (Int) -> Void) {
+    self.onSent = onSent
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    didSendBodyData bytesSent: Int64,
+    totalBytesSent: Int64,
+    totalBytesExpectedToSend: Int64
+  ) {
+    onSent(Int(totalBytesSent))
+  }
 }

@@ -158,6 +158,15 @@ public final class EventCoordinator {
     await events.renameStream(label: name)
   }
 
+  /// The stream's first picture went out, captured at `startedAt`: TeamStation
+  /// places the event's live video there, in step with the game's other
+  /// cameras, rather than where the publish reached it. Only the event's own
+  /// stream is TeamStation's to place.
+  public func liveStarted(at startedAt: Date, destination: StreamDestination) async {
+    guard destination == .event else { return }
+    await events.reportLiveStart(startedAt: startedAt)
+  }
+
   /// A take has started. With an event chosen it is filed under it — which
   /// includes a take started by streaming, so this is the one place a take is
   /// linked.
