@@ -5,6 +5,7 @@ import Foundation
 import os
 import Testing
 
+@testable import DirectorMedia
 @testable import DirectorPipeline
 
 @Suite("Replay file reader")

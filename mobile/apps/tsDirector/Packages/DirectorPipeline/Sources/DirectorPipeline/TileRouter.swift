@@ -755,13 +755,14 @@ public final class TileRouter: @unchecked Sendable {
     let now = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
     let wallNow = clock.now.seconds
     lock.lock()
-    guard let tick = programmeClock.tick(at: now) else {
+    // The compositor's output is the programme's picture source; see `ProgrammePictureSource`.
+    guard let (tick, due) = programmeClock.tick(at: now, wallNow: wallNow, from: &programPictures) else {
       lock.unlock()
       return
     }
     tickLatenessMax = max(tickLatenessMax, tick.lateness)
     missedTicks &+= UInt64(max(0, tick.ticksMissed))
-    guard let entry = programPictures.pick(at: wallNow, period: 1 / Double(programmeClock.rate)) else {
+    guard let entry = due else {
       lock.unlock()
       return
     }

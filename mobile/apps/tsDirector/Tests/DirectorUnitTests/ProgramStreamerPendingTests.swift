@@ -2,6 +2,7 @@ import CoreMedia
 import Foundation
 import VideoToolbox
 import Testing
+@testable import DirectorMedia
 @testable import DirectorPipeline
 
 @Suite("Program streamer pending encodes")
