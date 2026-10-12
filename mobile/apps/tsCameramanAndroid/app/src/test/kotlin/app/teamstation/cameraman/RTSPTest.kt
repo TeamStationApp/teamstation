@@ -5,7 +5,7 @@ import app.teamstation.cameraman.core.CameraParameters
 import app.teamstation.cameraman.core.CameraSnapshot
 import app.teamstation.cameraman.core.DeviceIdentity
 import app.teamstation.cameraman.core.ParameterOutcome
-import app.teamstation.cameraman.core.StreamCodec
+import app.teamstation.streamcore.core.StreamCodec
 import app.teamstation.cameraman.rtsp.RTCPWriter
 import app.teamstation.cameraman.rtsp.RTSPResponder
 import app.teamstation.cameraman.rtsp.RTSPServer

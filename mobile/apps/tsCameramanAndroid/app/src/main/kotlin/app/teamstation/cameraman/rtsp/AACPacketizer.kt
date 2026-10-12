@@ -1,6 +1,6 @@
 package app.teamstation.cameraman.rtsp
 
-import app.teamstation.cameraman.core.EncodedAudioFrame
+import app.teamstation.streamcore.core.EncodedAudioFrame
 
 /**
  * RFC 3640 `mpeg4-generic` in AAC-hbr mode: a 16-bit AU-headers-length in **bits**, then one

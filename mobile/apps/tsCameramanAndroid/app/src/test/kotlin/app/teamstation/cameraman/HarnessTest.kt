@@ -1,16 +1,16 @@
 package app.teamstation.cameraman
 
-import app.teamstation.cameraman.core.CaptureFormatDescriptor
+import app.teamstation.streamcore.core.CaptureFormatDescriptor
 import app.teamstation.cameraman.core.DeviceIdentity
 import app.teamstation.cameraman.core.DeviceIdentityProvider
 import app.teamstation.cameraman.core.IdentityStore
 import app.teamstation.cameraman.core.InMemoryIdentityStore
-import app.teamstation.cameraman.core.StreamCodec
-import app.teamstation.cameraman.core.StreamSettings
-import app.teamstation.cameraman.capture.CameraSession
-import app.teamstation.cameraman.capture.FormatCatalogue
+import app.teamstation.streamcore.core.StreamCodec
+import app.teamstation.streamcore.core.StreamSettings
+import app.teamstation.streamcore.capture.CameraSession
+import app.teamstation.streamcore.capture.FormatCatalogue
 import app.teamstation.cameraman.harness.ControlChannel
-import app.teamstation.cameraman.radar.RadarPhase
+import app.teamstation.streamcore.radar.RadarPhase
 import app.teamstation.cameraman.harness.ControlCommand
 import app.teamstation.cameraman.harness.ControlServer
 import app.teamstation.cameraman.harness.LaunchConfiguration
