@@ -1,8 +1,8 @@
 package app.teamstation.cameraman.harness
 
-import app.teamstation.cameraman.core.EncodedAudioFrame
-import app.teamstation.cameraman.core.EncodedVideoFrame
-import app.teamstation.cameraman.encode.ADTSHeader
+import app.teamstation.streamcore.core.EncodedAudioFrame
+import app.teamstation.streamcore.core.EncodedVideoFrame
+import app.teamstation.streamcore.encode.ADTSHeader
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.locks.ReentrantLock
