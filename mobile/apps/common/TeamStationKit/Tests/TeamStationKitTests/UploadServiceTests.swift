@@ -247,6 +247,29 @@ struct UploadServiceTests {
     #expect(abs(when.timeIntervalSince(Self.began)) < 0.001)
   }
 
+  @Test func namesTheLiveStreamItReplacesOnlyWhenTold() async throws {
+    finishesAtOnce()
+    FlakyServer.failuresLeft = [:]
+    FlakyServer.seen = []
+    FlakyServer.opened = []
+    let file = try aFile()
+    defer { try? FileManager.default.removeItem(at: file) }
+
+    _ = try await service().send(
+      file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began
+    )
+    _ = try await service().send(
+      file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began,
+      liveStreamId: "lst_1", wholeStream: true
+    )
+
+    #expect(FlakyServer.opened.count == 2)
+    #expect(FlakyServer.opened[0]["liveStreamId"] == nil)
+    #expect(FlakyServer.opened[0]["wholeStream"] == nil)
+    #expect(FlakyServer.opened[1]["liveStreamId"] as? String == "lst_1")
+    #expect(FlakyServer.opened[1]["wholeStream"] as? Bool == true)
+  }
+
   @Test func saysSoWhenTheServerCouldNotFinishIt() async throws {
     FlakyServer.failuresLeft = [:]
     FlakyServer.seen = []
