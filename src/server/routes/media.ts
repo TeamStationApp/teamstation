@@ -37,6 +37,7 @@ import {
   stillSpaceUrl,
   stillSubject
 } from '../media/stills'
+import { readWallTimeline } from '../media/wallTimeline'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -132,6 +133,45 @@ export function mediaRoutes(
         durationSec: video.durationSec,
         unavailable: false
       })
+    })
+  )
+
+  /**
+   * Where each moment of a video falls on the server's clock, so a player can
+   * show the scoreboard as it was at the frame on screen. The same access as
+   * the video itself: a player that may not have the picture has no use for
+   * its clock.
+   */
+  router.get(
+    '/videos/:videoId/wall-timeline',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const videoId = pathParam(req.params.videoId)
+      const afterMs = afterMsParam(req.query.afterMs)
+      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+
+      const video = await db
+        .selectFrom('videos')
+        .innerJoin('games', 'games.id', 'videos.game_id')
+        .select([
+          'videos.id as id',
+          'videos.status as status',
+          'videos.start_at as startAt',
+          'videos.sync_offset_sec as syncOffsetSec',
+          'videos.start_at_clock_offset_ms as clockOffsetMs',
+          'videos.hidden as hidden',
+          'games.home_team_id as homeTeamId',
+          'games.away_team_id as awayTeamId',
+          'games.season_id as seasonId'
+        ])
+        .where('videos.id', '=', videoId)
+        .executeTakeFirst()
+      if (video == null || video.hidden) throw notFound()
+      if (!canSeeGame(scopes, video)) throw membersOnly()
+
+      res.json(await readWallTimeline(db, video, afterMs))
     })
   )
 
@@ -462,6 +502,17 @@ function secondsParam(value: unknown): number {
   const seconds = Number(value)
   if (!Number.isFinite(seconds) || seconds < 0) return 0
   return seconds
+}
+
+/** `afterMs`: a whole number of ms into the video, or absent. */
+function afterMsParam(value: unknown): number | undefined {
+  if (value == null) return undefined
+  const ms =
+    typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN
+  if (!Number.isSafeInteger(ms)) {
+    throw badRequest('afterMs must be a whole number of milliseconds.')
+  }
+  return ms
 }
 
 function pathParam(value: string | string[] | undefined): string {

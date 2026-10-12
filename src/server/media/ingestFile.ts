@@ -283,6 +283,12 @@ export interface IngestOptions {
    */
   startAt: Date
   startAtSource: NonNullable<VideosTable['start_at_source']>
+  /**
+   * The measured offset `startAt` was moved onto the server's clock by, in
+   * ms, when it was. Recorded so a player knows the start is on the server's
+   * clock and not only the recording app's.
+   */
+  startAtClockOffsetMs?: number | null
   /** Given where the caller minted one already, so it can be reported first. */
   videoId?: string
   numCameras?: number
@@ -309,6 +315,7 @@ export async function ingestVideoFile(
     title,
     startAt,
     startAtSource,
+    startAtClockOffsetMs = null,
     videoId = makeId('video'),
     numCameras = 1,
     onStep
@@ -397,6 +404,7 @@ export async function ingestVideoFile(
           status: 'ready',
           start_at: firstFrameAt,
           start_at_source: startAtSource,
+          start_at_clock_offset_ms: startAtClockOffsetMs,
           duration_sec: durationSec,
           width: probed.width,
           height: probed.height,

@@ -488,6 +488,13 @@ const streamIdParam = {
   schema: { type: 'string' }
 }
 
+const uploadIdParam = {
+  name: 'uploadId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+
 const videoIdParam = {
   name: 'videoId',
   in: 'path',
@@ -5640,6 +5647,50 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/videos/{videoId}/wall-timeline': {
+        get: {
+          summary: "Where each moment of a video falls on the server's clock",
+          description:
+            '`{ anchors, source, confidence, live, startAt }`. `anchors` are ' +
+            '`[mediaMs, wallMs]` pairs in media order: `mediaMs` is a ' +
+            "position as a player's `currentTime` reports it, `wallMs` the " +
+            'server-clock instant (epoch ms) of the frame there. A position ' +
+            'falls at the last anchor at or before it, plus the media time ' +
+            'since, at 1×. `source` is `sei` (a wall clock in every frame), ' +
+            '`arrival` (when the server took each live segment in; any such ' +
+            'anchor makes the whole video `arrival`) or `start` (no anchors ' +
+            'stored: one at media time zero from `startAt` less the ' +
+            "video's sync offset, none without a `startAt`). `confidence` " +
+            'is `frame` for `sei` stamped on the server clock throughout, ' +
+            '`clock` for a start moved onto the server clock by a measured ' +
+            'offset, and `approximate` for everything else. `live` is true ' +
+            'while the video is still streaming and more anchors may come. ' +
+            '404 for no such video or a hidden one; 403 `membersOnly` for ' +
+            'somebody who cannot see its game.',
+          security: [{ bearer: [] }],
+          parameters: [
+            videoIdParam,
+            {
+              name: 'afterMs',
+              in: 'query',
+              schema: { type: 'integer', minimum: 0 },
+              description:
+                'Only the anchors after this media time, for a live player ' +
+                'that holds the rest. `source` and `confidence` still ' +
+                'describe the whole video. Omitted, every anchor.'
+            }
+          ],
+          responses: {
+            200: {
+              description: '`{ anchors, source, confidence, live, startAt }`'
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/videos/{videoId}': {
         delete: {
           summary: 'Delete a recording, its files, and its copy in the Space',
@@ -5982,6 +6033,153 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'The URL with its key, which the operator never sees or types'
             },
             400: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/director/uploads': {
+        post: {
+          summary: 'Open an upload of a finished recording',
+          description:
+            'TS Director and TS Distributor send a take in parts, so an ' +
+            'upload cut off half way carries on rather than starting again. ' +
+            'For a videographer of either team of the game, which every ' +
+            'admin of it is; anybody else gets 404. 400 when the server has ' +
+            'nowhere to put a recording, or the recording is empty. The ' +
+            'answer says how big each part is and how many to send.',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['gameId', 'title', 'filename', 'sizeBytes'],
+                  properties: {
+                    gameId: { type: 'string' },
+                    title: { type: 'string' },
+                    kind: {
+                      type: 'string',
+                      description:
+                        '`program` (the default) for the programme output, ' +
+                        "or the camera's own name"
+                    },
+                    filename: { type: 'string' },
+                    sizeBytes: { type: 'integer', minimum: 1 },
+                    startAt: {
+                      type: 'string',
+                      format: 'date-time',
+                      description:
+                        "When the recording began, on the app's clock. The " +
+                        'video starts here. Left out, or more than a year ' +
+                        "from now, the game's own start is used instead"
+                    },
+                    serverClockOffsetMs: {
+                      type: 'integer',
+                      description:
+                        "The server's clock less the app's while it " +
+                        'recorded, in ms, as the app measured it from ' +
+                        '`GET /time`. Added to `startAt`, so the video ' +
+                        "starts on the server's clock and its wall " +
+                        'timeline says `clock`. Left out, `startAt` is used ' +
+                        'as it is. 400 beyond a day either way'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description: '`{ uploadId, partSize, parts, received: [] }`'
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/director/uploads/{uploadId}': {
+        get: {
+          summary: 'What of an upload has arrived, and what is left',
+          description:
+            '`{ uploadId, state, step, partSize, parts, received, missing, ' +
+            'receivedBytes, videoId, message }`. `state` is `open`, ' +
+            '`assembling` (with `step` saying which part of taking it in), ' +
+            '`ready` (with `videoId`), `failed` (with `message`) or ' +
+            '`abandoned`. Somebody else’s upload is 404.',
+          security: [{ bearer: [] }],
+          parameters: [uploadIdParam],
+          responses: {
+            200: { description: 'The upload as it stands' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        },
+        delete: {
+          summary: 'Give an upload up, and its parts with it',
+          security: [{ bearer: [] }],
+          parameters: [uploadIdParam],
+          responses: {
+            204: { description: 'Abandoned' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/director/uploads/{uploadId}/parts/{index}': {
+        put: {
+          summary: 'One part of an upload',
+          description:
+            'The raw bytes of part `index`, counting from zero, exactly as ' +
+            'long as the open said. Sending a part again replaces it. 400 ' +
+            'for a part of the wrong length or not in the recording, and ' +
+            'once the upload is past taking parts.',
+          security: [{ bearer: [] }],
+          parameters: [
+            uploadIdParam,
+            {
+              name: 'index',
+              in: 'path',
+              required: true,
+              schema: { type: 'integer', minimum: 0 }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/octet-stream': {
+                schema: { type: 'string', format: 'binary' }
+              }
+            }
+          },
+          responses: {
+            200: { description: '`{ received, parts, missing }`' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/director/uploads/{uploadId}/finish': {
+        post: {
+          summary: 'Make a complete upload a video',
+          description:
+            'Answered at once with 202 `{ state: "assembling" }` while the ' +
+            'parts are joined, remuxed and copied to the Space; `GET ' +
+            '/director/uploads/{uploadId}` says when it is `ready` and its ' +
+            '`videoId`. The video starts at the open’s `startAt` plus its ' +
+            '`serverClockOffsetMs`, less any pre-roll the file holds. The ' +
+            'live recording of the game it replaces is hidden. Asked again ' +
+            'once ready, the same `videoId`; a failed upload can be asked ' +
+            'again. 400 while parts are missing.',
+          security: [{ bearer: [] }],
+          parameters: [uploadIdParam],
+          responses: {
+            200: { description: '`{ videoId, state: "ready" }`, already done' },
+            202: { description: '`{ state: "assembling", step }`' },
+            400: errorResponse,
+            401: errorResponse,
             404: errorResponse
           }
         }

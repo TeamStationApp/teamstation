@@ -76,8 +76,27 @@ const asNewUpload = asObject({
    * angles on it, so two cameras of one take must arrive saying the same
    * instant however far apart they were sent.
    */
-  startAt: asOptional(asString)
+  startAt: asOptional(asString),
+  /**
+   * The server's clock less the app's while it recorded, in ms, from
+   * `GET /time`. `startAt` is on the app's clock; this is what moves the
+   * video onto the server's, where the scoring and the scoreboard are. An app
+   * that did not measure it leaves it out, and the start stays as it said.
+   */
+  serverClockOffsetMs: asOptional(asNumber)
 })
+
+/** A day either way: further than that is not a clock, it is a mistake. */
+const OFFSET_LIMIT_MS = 24 * 3_600_000
+
+/** The offset as stored, or null without one; refused when it is not a clock's. */
+export function clockOffsetOf(value: number | undefined): number | null {
+  if (value == null) return null
+  if (!Number.isFinite(value) || Math.abs(value) > OFFSET_LIMIT_MS) {
+    throw badRequest('serverClockOffsetMs is not a clock offset.')
+  }
+  return Math.round(value)
+}
 
 /** The largest single part this will take, with room over `PART_SIZE`. */
 const PART_LIMIT = PART_SIZE + 1024 * 1024
@@ -196,6 +215,7 @@ export function directorUploadRoutes(
       if (actor == null) throw unauthorized()
       const body = asNewUpload(req.body)
       if (body.sizeBytes <= 0) throw badRequest('That recording is empty.')
+      const serverClockOffsetMs = clockOffsetOf(body.serverClockOffsetMs)
       theSpace()
       const game = await gameIRun(body.gameId, actor.userId, actor.isAdmin)
 
@@ -212,7 +232,8 @@ export function directorUploadRoutes(
           filename: body.filename,
           size_bytes: String(Math.round(body.sizeBytes)),
           part_size: PART_SIZE,
-          started_at: recordingStart(body.startAt)
+          started_at: recordingStart(body.startAt),
+          server_clock_offset_ms: serverClockOffsetMs
         })
         .execute()
       setAudit(res.locals, { entityType: 'directorUpload', entityId: uploadId })
@@ -228,12 +249,12 @@ export function directorUploadRoutes(
 
   /** What has landed, so the app knows what to send next. */
   router.get(
-    '/director/uploads/:id',
+    '/director/uploads/:uploadId',
     requireActor,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
-      const row = await mine(String(req.params.id), actor.userId)
+      const row = await mine(String(req.params.uploadId), actor.userId)
       res.json(await state(row))
     })
   )
@@ -246,13 +267,13 @@ export function directorUploadRoutes(
    * repeat would strand the upload.
    */
   router.put(
-    '/director/uploads/:id/parts/:index',
+    '/director/uploads/:uploadId/parts/:index',
     requireActor,
     express.raw({ type: '*/*', limit: PART_LIMIT }),
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
-      const row = await mine(String(req.params.id), actor.userId)
+      const row = await mine(String(req.params.uploadId), actor.userId)
       // `failed` takes parts again: what failed is the conversion, and an
       // operator whose recording was refused for being short a part must be
       // able to send that part rather than the whole nine gigabytes again.
@@ -311,12 +332,12 @@ export function directorUploadRoutes(
    * endpoint exists for: the live recording of that game steps aside.
    */
   router.post(
-    '/director/uploads/:id/finish',
+    '/director/uploads/:uploadId/finish',
     requireActor,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
-      const row = await mine(String(req.params.id), actor.userId)
+      const row = await mine(String(req.params.uploadId), actor.userId)
       const space = theSpace()
       if (row.state === 'ready' && row.video_id != null) {
         // Asked twice: the same answer, not a second video.
@@ -396,6 +417,12 @@ export function directorUploadRoutes(
         .where('id', '=', row.id)
         .execute()
     }
+    // The app's clock moved onto the server's, by the offset the app measured
+    // while it recorded. Only a start the app gave is on the app's clock: the
+    // game's own time, the fallback, is not, and moving it would only make a
+    // guess look measured.
+    const offsetMs = row.started_at == null ? null : row.server_clock_offset_ms
+    const recorded = startOf(row.started_at, game.startAt)
     try {
       await assembleParts({ dir, total, into: whole })
       const ingested = await ingestVideoFile({
@@ -410,7 +437,9 @@ export function directorUploadRoutes(
         // game's own time. Never when the upload happened to be opened —
         // that is a property of the network, and using it put a take's two
         // cameras thirty-four minutes apart in the multi-camera view.
-        startAt: startOf(row.started_at, game.startAt),
+        startAt:
+          offsetMs == null ? recorded : new Date(recorded.getTime() + offsetMs),
+        startAtClockOffsetMs: offsetMs,
         // How the start was *worked out*, not which program sent it. Every
         // value in this column is a method — a filename, a live session, a
         // publish date, somebody typing — and `distributor` is "the
@@ -463,12 +492,12 @@ export function directorUploadRoutes(
 
   /** Given up on, with the parts. */
   router.delete(
-    '/director/uploads/:id',
+    '/director/uploads/:uploadId',
     requireActor,
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
-      const row = await mine(String(req.params.id), actor.userId)
+      const row = await mine(String(req.params.uploadId), actor.userId)
       await rm(uploadDir(options.uploadsDir, row.id), {
         recursive: true,
         force: true
