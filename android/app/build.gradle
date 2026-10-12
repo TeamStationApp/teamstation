@@ -152,6 +152,8 @@ androidComponents {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    // Camera capture, lenses, encoders and radar, shared with TS Cameraman for Android.
+    implementation project(':streamcore')
 
     // Walk-up songs play through ExoPlayer, at the version react-native-video
     // already brings (RNVideo_media3Version), so the app carries one copy.

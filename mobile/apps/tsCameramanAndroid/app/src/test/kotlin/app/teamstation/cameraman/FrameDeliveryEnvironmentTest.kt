@@ -4,7 +4,7 @@ import app.teamstation.cameraman.core.CameraParameterSet
 import app.teamstation.cameraman.core.FrameDelivery
 import app.teamstation.cameraman.core.FrameRateSwing
 import app.teamstation.cameraman.core.InMemoryIdentityStore
-import app.teamstation.cameraman.core.InMemorySettingsStore
+import app.teamstation.streamcore.core.InMemorySettingsStore
 import app.teamstation.cameraman.engine.AppEnvironment
 import app.teamstation.cameraman.harness.ControlCommand
 import app.teamstation.cameraman.rtsp.RTSPResponder

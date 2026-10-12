@@ -2,10 +2,10 @@ package app.teamstation.cameraman
 
 import android.media.MediaFormat
 import app.teamstation.cameraman.core.DeviceIdentity
-import app.teamstation.cameraman.core.EncodedAudioFrame
-import app.teamstation.cameraman.core.EncodedVideoFrame
-import app.teamstation.cameraman.core.StreamCodec
-import app.teamstation.cameraman.encode.AudioEncoder
+import app.teamstation.streamcore.core.EncodedAudioFrame
+import app.teamstation.streamcore.core.EncodedVideoFrame
+import app.teamstation.streamcore.core.StreamCodec
+import app.teamstation.streamcore.encode.AudioEncoder
 import app.teamstation.cameraman.rtsp.AudioStampClock
 import app.teamstation.cameraman.rtsp.RTSPClientConnection
 import app.teamstation.cameraman.rtsp.SDPBuilder
