@@ -6,6 +6,7 @@
   "src/app/screens/GameScreen.tsx",
   "src/app/screens/BoxScore.tsx",
   "src/app/screens/CoachGameScreen.tsx",
+  "src/app/screens/NotificationsScreen.tsx",
   "src/app/navigation/routes.ts",
   "src/app/navigation/useAddressBar.ts",
   "src/app/components/AppNav.tsx",
