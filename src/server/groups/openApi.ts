@@ -397,7 +397,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
           }
         ],
         description:
-          'hasPending counts actionable requests across every page, and every `grant` notification (somebody added you to a team, season or league) not yet viewed. The default list holds both; history holds resolved requests and every piece of information, grants included. A grant carries `leave`, the level it gave, while you are still in it. Viewing an item does not resolve it. Eligibility is recomputed from current roles.',
+          'hasPending counts actionable requests across every page, every `grant` notification (somebody added you to a team, season or league) not yet viewed, and every `recordingUpload` reminder not yet dismissed. The default list holds all three, reminders first; a reminder is `pending` with `canAct` and carries `gameId` and `liveStreamId`; history holds resolved requests and every piece of information, grants included. A grant carries `leave`, the level it gave, while you are still in it. Viewing an item does not resolve it. Eligibility is recomputed from current roles.',
         responses
       }
     },
@@ -423,6 +423,20 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
         security: [{ bearer: [] }],
         parameters: [parameter('id')],
         responses
+      }
+    },
+    '/me/notifications/{id}/dismissed': {
+      put: {
+        summary: 'Dismiss a reminder: it leaves Pending and stays in History',
+        description:
+          'Records viewing and dismissal for the caller, making the receipt when the notification was never opened. Answers 204. Another person\u2019s notification is 404.',
+        security: [{ bearer: [] }],
+        parameters: [parameter('id')],
+        responses: {
+          204: { description: 'Dismissed' },
+          401: errorResponse,
+          404: errorResponse
+        }
       }
     }
   }
