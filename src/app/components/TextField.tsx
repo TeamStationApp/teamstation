@@ -22,6 +22,11 @@ export interface TextFieldProps {
   disabled?: boolean
   multiline?: boolean
   maxLength?: number
+  /**
+   * Android: edit in the field itself, never in the keyboard's full-screen
+   * editor, which a phone held sideways opens over the whole screen.
+   */
+  disableFullscreenUI?: boolean
 }
 
 /**
@@ -48,7 +53,8 @@ export function TextField(props: TextFieldProps): React.ReactElement {
     autoComplete = 'off',
     action,
     error,
-    onSubmitEditing
+    onSubmitEditing,
+    disableFullscreenUI
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -101,6 +107,7 @@ export function TextField(props: TextFieldProps): React.ReactElement {
           // will add a line to a single-line field.
           returnKeyType={onSubmitEditing == null ? 'done' : 'go'}
           onSubmitEditing={onSubmitEditing}
+          disableFullscreenUI={disableFullscreenUI}
           onFocus={() => {
             setFocused(true)
             props.onFocus?.()
