@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreMedia
 import DirectorCore
+@testable import DirectorMedia
 @testable import DirectorPipeline
 import DirectorSources
 import Foundation
@@ -200,5 +201,108 @@ struct ProgramSoundSinkTests {
     #expect(sink.refusals > 0)
     #expect(encoder.writtenSoundEndForTesting == 0, "the cursor moved on a refusal")
     _ = await encoder.finish(until: WallClock(seconds: origin + 11))
+  }
+
+  /// A phone's recording mix waits one second against an opening sampled for one and a half, so
+  /// the start of its part reaches the encoder before the origin is known. Dropped, it left the
+  /// first 1.5 s of every phone take coded silence; held, the track starts with it.
+  @Test("Sound that arrives before the origin settles is placed when it does, so the track starts with real sound")
+  func soundBeforeTheOriginIsHeld() async throws {
+    let root = try staging()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let encoder = encoder(root)
+    let sink = FakeSoundSink()
+    encoder.soundSinkOverride = sink
+
+    // Captured five seconds ago, so each picture's age reads as its content lag and the part's
+    // origin is `origin` exactly.
+    let origin = Date().timeIntervalSince1970 - 5
+    try encoder.start(at: WallClock(seconds: origin))
+    let factory = try #require(
+      PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA)
+    )
+    let picture = try #require(factory.makeBuffer())
+    func pictures(_ range: Range<Int>) {
+      for index in range {
+        encoder.append(
+          picture,
+          presentationTime: CMTime(value: CMTimeValue(index), timescale: 30),
+          captureWall: WallClock(seconds: origin + Double(index) / 30),
+          onClockGrid: true
+        )
+      }
+    }
+    func sound(_ range: Range<Int>) {
+      for index in range {
+        encoder.append(
+          audio: RecordingSoundTests.frame(
+            RecordingSoundTests.tone(8_000, seconds: 0.02),
+            at: origin + Double(index) * 0.02
+          )
+        )
+      }
+    }
+
+    // A third of a second of picture, then the part's first second of sound, all before the
+    // origin has had its 1.5 s: none of it can be placed yet, and none of it is written.
+    pictures(0 ..< 10)
+    sound(0 ..< 50)
+    #expect(encoder.soundDiagnosticsForTesting.origin < 0, "the origin settled early")
+    #expect(sink.timestamps.isEmpty)
+    // The opening settles, and the held second goes in at the head of the track, ahead of what
+    // follows.
+    pictures(10 ..< 60)
+    sound(50 ..< 100)
+
+    let d = encoder.soundDiagnosticsForTesting
+    #expect(abs(d.origin - origin) < 0.001, "origin \(d.origin)")
+    #expect(d.unseeded == 50)
+    #expect(d.beforePart == 0)
+    #expect(d.silence == 0, "\(d.silence) chunks of silence ahead of the sound")
+    #expect(abs(d.first) < 0.001, "first sound at \(d.first)")
+    #expect(sink.timestamps.first == 0)
+    #expect(sink.isStrictlyIncreasing)
+    #expect(encoder.acceptedSoundCountForTesting == 100)
+    _ = await encoder.finish(until: WallClock(seconds: origin + 2))
+  }
+
+  /// Director's mix waits far longer than the opening, so what reaches it that early was captured
+  /// before the part began: held, it is still left out once the origin says so.
+  @Test("Sound held before the origin settles that belongs before the part is left out")
+  func heldSoundBeforeThePartIsLeftOut() async throws {
+    let root = try staging()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let encoder = encoder(root)
+    let sink = FakeSoundSink()
+    encoder.soundSinkOverride = sink
+    let origin = Date().timeIntervalSince1970 - 5
+    try encoder.start(at: WallClock(seconds: origin))
+    let factory = try #require(
+      PixelBufferFactory(width: 160, height: 120, pixelFormat: kCVPixelFormatType_32BGRA)
+    )
+    let picture = try #require(factory.makeBuffer())
+    encoder.append(picture, presentationTime: .zero, captureWall: WallClock(seconds: origin), onClockGrid: true)
+    // Captured four seconds before the part began.
+    for index in 0 ..< 50 {
+      encoder.append(
+        audio: RecordingSoundTests.frame(
+          RecordingSoundTests.tone(8_000, seconds: 0.02),
+          at: origin - 4 + Double(index) * 0.02
+        )
+      )
+    }
+    for index in 1 ..< 60 {
+      encoder.append(
+        picture,
+        presentationTime: CMTime(value: CMTimeValue(index), timescale: 30),
+        captureWall: WallClock(seconds: origin + Double(index) / 30),
+        onClockGrid: true
+      )
+    }
+    let d = encoder.soundDiagnosticsForTesting
+    #expect(d.unseeded == 50)
+    #expect(d.beforePart == 50)
+    #expect(encoder.acceptedSoundCountForTesting == 0)
+    _ = await encoder.finish(until: WallClock(seconds: origin + 2))
   }
 }

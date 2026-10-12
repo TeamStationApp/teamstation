@@ -37,9 +37,9 @@ struct ProgrammeSoundOrigin {
   /// How long the opening is sampled before the origin is fixed.
   ///
   /// One frame would do arithmetically, and inherit that frame's ±0.1 s of jitter as a fixed error
-  /// for the whole part for nothing. A median over the opening costs nothing and removes it. The
-  /// recording's mix runs seconds behind the live edge, so the first sound that belongs to this
-  /// part does not arrive until well after this has settled; nothing is waiting on it.
+  /// for the whole part for nothing. A median over the opening costs nothing and removes it. Sound
+  /// that reaches the encoder before this has settled is held there and placed once it has (a
+  /// phone's mix waits only a second), so the wait costs latency and never sound.
   ///
   /// `ArchiveIndex.partStart(implied:)` does the same job retrospectively, over the whole take's
   /// anchors, and the export already trusts it.

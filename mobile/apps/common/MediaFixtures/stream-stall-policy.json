@@ -1,0 +1,138 @@
+{
+  "cases" : [
+    {
+      "action" : "none",
+      "hasLastFrame" : true,
+      "lastCallbackWall" : 99.97,
+      "lastKeyframeWall" : 99.5,
+      "lastOutputWall" : 99.97,
+      "lastResetWall" : 0,
+      "name" : "healthy",
+      "now" : 100,
+      "pendingEncodes" : 1,
+      "startedWall" : 50
+    },
+    {
+      "action" : "encodeIdleIDR",
+      "hasLastFrame" : true,
+      "lastCallbackWall" : 99.97,
+      "lastKeyframeWall" : 97,
+      "lastOutputWall" : 99.97,
+      "lastResetWall" : 0,
+      "name" : "keyframe overdue by half a GOP",
+      "now" : 100,
+      "pendingEncodes" : 0,
+      "startedWall" : 50
+    },
+    {
+      "action" : "none",
+      "hasLastFrame" : true,
+      "lastCallbackWall" : 99.97,
+      "lastKeyframeWall" : 98,
+      "lastOutputWall" : 99.97,
+      "lastResetWall" : 0,
+      "name" : "keyframe due but not yet overdue",
+      "now" : 100,
+      "pendingEncodes" : 0,
+      "startedWall" : 50
+    },
+    {
+      "action" : "none",
+      "hasLastFrame" : false,
+      "lastCallbackWall" : 99.97,
+      "lastKeyframeWall" : 97,
+      "lastOutputWall" : 99.97,
+      "lastResetWall" : 0,
+      "name" : "overdue with no picture to repeat",
+      "now" : 100,
+      "pendingEncodes" : 0,
+      "startedWall" : 50
+    },
+    {
+      "action" : "resetSession",
+      "hasLastFrame" : true,
+      "lastCallbackWall" : 95,
+      "lastKeyframeWall" : 99,
+      "lastOutputWall" : 95,
+      "lastResetWall" : 0,
+      "name" : "callbacks silent with encodes pending",
+      "now" : 100,
+      "pendingEncodes" : 3,
+      "startedWall" : 50
+    },
+    {
+      "action" : "none",
+      "hasLastFrame" : true,
+      "lastCallbackWall" : 95,
+      "lastKeyframeWall" : 99,
+      "lastOutputWall" : 95,
+      "lastResetWall" : 95,
+      "name" : "callbacks silent inside the reset cooldown",
+      "now" : 100,
+      "pendingEncodes" : 3,
+      "startedWall" : 50
+    },
+    {
+      "action" : "resetSession",
+      "hasLastFrame" : true,
+      "lastCallbackWall" : 95,
+      "lastKeyframeWall" : 99,
+      "lastOutputWall" : 95,
+      "lastResetWall" : 89,
+      "name" : "callbacks silent after the cooldown",
+      "now" : 100,
+      "pendingEncodes" : 3,
+      "startedWall" : 50
+    },
+    {
+      "action" : "resetSession",
+      "hasLastFrame" : true,
+      "lastCallbackWall" : 99.98,
+      "lastKeyframeWall" : 99,
+      "lastOutputWall" : 96,
+      "lastResetWall" : 0,
+      "name" : "errors only, no picture for two GOPs",
+      "now" : 100,
+      "pendingEncodes" : 1,
+      "startedWall" : 50
+    },
+    {
+      "action" : "resetSession",
+      "hasLastFrame" : true,
+      "lastCallbackWall" : 0,
+      "lastKeyframeWall" : 0,
+      "lastOutputWall" : 0,
+      "lastResetWall" : 0,
+      "name" : "never a callback, three GOPs in",
+      "now" : 100,
+      "pendingEncodes" : 2,
+      "startedWall" : 94
+    },
+    {
+      "action" : "encodeIdleIDR",
+      "hasLastFrame" : true,
+      "lastCallbackWall" : 0,
+      "lastKeyframeWall" : 0,
+      "lastOutputWall" : 0,
+      "lastResetWall" : 0,
+      "name" : "never a callback, two GOPs in",
+      "now" : 100,
+      "pendingEncodes" : 2,
+      "startedWall" : 96
+    },
+    {
+      "action" : "encodeIdleIDR",
+      "hasLastFrame" : true,
+      "lastCallbackWall" : 99.9,
+      "lastKeyframeWall" : 0,
+      "lastOutputWall" : 99.9,
+      "lastResetWall" : 0,
+      "name" : "no keyframe yet, overdue from the start",
+      "now" : 100,
+      "pendingEncodes" : 0,
+      "startedWall" : 97
+    }
+  ],
+  "gopSeconds" : 2,
+  "resetCooldown" : 10
+}

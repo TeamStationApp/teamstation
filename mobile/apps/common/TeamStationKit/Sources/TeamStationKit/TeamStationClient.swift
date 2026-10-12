@@ -185,26 +185,32 @@ public struct TeamStationClient: Sendable {
   /// game's wall clock, and the multi-camera view lays a take's angles side by
   /// side on it. Sent with every file of a take, the same instant each time,
   /// however long the one before took to go up.
+  ///
+  /// `liveStreamId` names the live stream this recording is the local copy of, and `wholeStream`
+  /// says the recording ran for every moment that stream published: the server then replaces
+  /// exactly that stream's live copy with it. Both are left out unless given, which is every
+  /// upload but a phone's own recording.
   public func openUpload(
     gameId: String,
     title: String,
     kind: String,
     filename: String,
     sizeBytes: Int,
-    startedAt: Date
+    startedAt: Date,
+    liveStreamId: String? = nil,
+    wholeStream: Bool? = nil
   ) async throws -> TeamStationUpload {
-    try await send(
-      "director/uploads",
-      method: "POST",
-      body: [
-        "gameId": gameId,
-        "title": title,
-        "kind": kind,
-        "filename": filename,
-        "sizeBytes": sizeBytes,
-        "startAt": Self.instant(startedAt)
-      ]
-    )
+    var body: [String: any Sendable] = [
+      "gameId": gameId,
+      "title": title,
+      "kind": kind,
+      "filename": filename,
+      "sizeBytes": sizeBytes,
+      "startAt": Self.instant(startedAt)
+    ]
+    if let liveStreamId { body["liveStreamId"] = liveStreamId }
+    if let wholeStream { body["wholeStream"] = wholeStream }
+    return try await send("director/uploads", method: "POST", body: body)
   }
 
   /// ISO 8601 with fractional seconds, which is what the server reads.
@@ -269,26 +275,56 @@ public struct TeamStationClient: Sendable {
     _ = try? await session.data(for: request)
   }
 
-  /// Takes a game, and gets the URL to publish it to.
+  /// This device's camera on a game, and the URL to publish it to.
   ///
-  /// `cameraName` is always sent, including when it is empty. The server treats
-  /// an empty name as "leave the stored name alone".
-  public func claim(gameId: String, cameraName: String) async throws -> TeamStationClaim {
-    try await send(
-      "director/events/\(escape(gameId))/claim",
+  /// `POST /games/:gameId/live-streams` with the device's install id: the stream this device
+  /// already has under `label` on the game comes back, or one it may take over, or a new one in the
+  /// caller's lowest free slot. `heldStreamId` names the stream the device holds, which a redial
+  /// sends: if that stream has been ended the server answers 410, thrown as
+  /// `TeamStationError.streamEnded`, and makes nothing — only a request without it can start a
+  /// fresh stream.
+  public func requestLiveStream(
+    gameId: String,
+    label: String,
+    deviceId: String,
+    deviceModel: String,
+    heldStreamId: String? = nil
+  ) async throws -> TeamStationDeviceStream {
+    var body: [String: any Sendable] = [
+      "label": label,
+      "deviceId": deviceId,
+      "deviceModel": deviceModel
+    ]
+    if let heldStreamId { body["heldStreamId"] = heldStreamId }
+    return try await send(
+      "games/\(escape(gameId))/live-streams",
       method: "POST",
-      body: [ "cameraName": cameraName ]
+      body: body,
+      goneIsEnded: true
     )
   }
 
-  /// What TeamStation says about a game's stream.
+  /// Every camera on a game: this person's own, with their state and why the ingest last refused
+  /// them, and everybody else's.
   ///
-  /// Asked when a publish will not start: the socket says `connection
-  /// refused`, and the server says *why* — the key was rotated, somebody else
-  /// is already streaming this game, the window has not opened yet.
-  /// What this Director's camera on a game is doing, and why it is not.
-  public func liveStream(gameId: String) async throws -> TeamStationLiveStream {
-    try await send("director/events/\(escape(gameId))/stream", method: "GET")
+  /// Asked when a publish will not start: the socket says `connection refused`, and the server
+  /// says *why* — the key was rotated, the window has not opened yet.
+  public func liveStreams(gameId: String) async throws -> TeamStationGameStreams {
+    try await send("games/\(escape(gameId))/live-streams", method: "GET")
+  }
+
+  /// Renames one of this person's cameras, keeping its stream and key.
+  public func updateLiveStream(
+    gameId: String,
+    streamId: String,
+    label: String
+  ) async throws -> TeamStationDeviceStream {
+    try await send(
+      "games/\(escape(gameId))/live-streams/\(escape(streamId))",
+      method: "PATCH",
+      body: [ "label": label ],
+      goneIsEnded: true
+    )
   }
 
   // MARK: - The wire
@@ -354,6 +390,7 @@ public struct TeamStationClient: Sendable {
     query: [URLQueryItem] = [],
     waitingIsNil: Bool = false,
     unavailableStatuses: Set<Int> = [],
+    goneIsEnded: Bool = false,
     timeout: TimeInterval = 20
   ) async throws -> Reply {
     var request = URLRequest(url: Self.url(baseURL, path, query))
@@ -390,6 +427,7 @@ public struct TeamStationClient: Sendable {
     if status == 401 || status == 403, token != nil {
       throw TeamStationError.notSignedIn
     }
+    if status == 410, goneIsEnded { throw TeamStationError.streamEnded }
     if unavailableStatuses.contains(status) {
       throw TeamStationError.unavailable(Self.message(from: data, status: status))
     }
