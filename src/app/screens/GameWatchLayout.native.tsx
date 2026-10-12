@@ -7,6 +7,7 @@ import Animated, {
   useSharedValue
 } from 'react-native-reanimated'
 
+import { useScreenBottom } from '../components/Screen'
 import { PHONE_MARGIN } from '../layout/watch'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
@@ -66,6 +67,9 @@ export function GameWatchLayout(
   // corner on the other, and this is the screen people hold sideways. Without
   // this the picture runs under the island.
   const insets = useInsets()
+  // What every other screen leaves under its last row: the floating capsule's
+  // clearance and the hardware inset under it.
+  const screenBottom = useScreenBottom()
 
   const scrollY = useSharedValue(0)
   /** Where the pegged block sits in the content, and how tall it is. */
@@ -113,6 +117,10 @@ export function GameWatchLayout(
   return (
     <Animated.ScrollView
       style={style}
+      // A tap on a button in a dialog opened from this tab (Record video's
+      // camera angle prompt) acts while the keyboard is up, rather than only
+      // putting the keyboard away.
+      keyboardShouldPersistTaps="handled"
       onScroll={handleScroll}
       scrollEventThrottle={16}
       onContentSizeChange={(_width, contentY) => {
@@ -129,9 +137,10 @@ export function GameWatchLayout(
           paddingRight: insets.right,
           // The watch tab is the one screen that does not go through
           // `Screen`, so it is also the one that has to ask for this itself:
-          // without it the last highlight sits under the home indicator on a
-          // phone and under the floating nav capsule on both.
-          paddingBottom: insets.bottom
+          // without it the last thing on the tab (a phone's Record video)
+          // sits under the floating nav capsule, which on Android stands
+          // well above the navigation inset, and only its ends can be tapped.
+          paddingBottom: screenBottom
         }
       ]}
     >
@@ -188,6 +197,7 @@ export function GameWatchLayout(
       */}
       <Animated.ScrollView
         scrollEnabled={sideBySide}
+        keyboardShouldPersistTaps="handled"
         // Without this an inner vertical scroller on Android takes the gesture
         // and the outer one never moves again.
         nestedScrollEnabled
