@@ -32,9 +32,14 @@ static NSString *const TSPhoneStreamPreviewSessionChanged = @"TSPhoneStreamPrevi
 @interface TSPhoneStreamPreviewComponentView : RCTViewComponentView <RCTTSPhoneStreamPreviewViewProtocol>
 @end
 
+/** The scene's geometry, watched so the picture turns when the interface does. */
+static void *TSPhoneStreamPreviewGeometryContext = &TSPhoneStreamPreviewGeometryContext;
+
 @implementation TSPhoneStreamPreviewComponentView {
   AVCaptureVideoPreviewLayer *_previewLayer;
   BOOL _mirrored;
+  /** The scene whose `effectiveGeometry` this view observes, while it is in a window. */
+  UIWindowScene *_observedScene;
 }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider
@@ -63,6 +68,7 @@ static NSString *const TSPhoneStreamPreviewSessionChanged = @"TSPhoneStreamPrevi
 
 - (void)dealloc
 {
+  [self stopObservingScene];
   [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
@@ -102,7 +108,42 @@ static NSString *const TSPhoneStreamPreviewSessionChanged = @"TSPhoneStreamPrevi
 - (void)didMoveToWindow
 {
   [super didMoveToWindow];
+  // A modal that only turns sideways is presented before its scene has turned: the preview is laid
+  // out once, while the interface still reads upright. Watching the scene's geometry turns the
+  // picture when the interface itself turns.
+  [self stopObservingScene];
+  UIWindowScene *scene = self.window.windowScene;
+  if (scene != nil) {
+    [scene addObserver:self
+            forKeyPath:@"effectiveGeometry"
+               options:NSKeyValueObservingOptionNew
+               context:TSPhoneStreamPreviewGeometryContext];
+    _observedScene = scene;
+  }
   [self applyConnection];
+}
+
+- (void)stopObservingScene
+{
+  UIWindowScene *scene = _observedScene;
+  if (scene != nil) {
+    [scene removeObserver:self forKeyPath:@"effectiveGeometry" context:TSPhoneStreamPreviewGeometryContext];
+  }
+  _observedScene = nil;
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary<NSKeyValueChangeKey, id> *)change
+                       context:(void *)context
+{
+  if (context != TSPhoneStreamPreviewGeometryContext) {
+    [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+    return;
+  }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self applyConnection];
+  });
 }
 
 /** Turns the picture to the interface, and mirrors it when asked. */
@@ -127,12 +168,18 @@ static NSString *const TSPhoneStreamPreviewSessionChanged = @"TSPhoneStreamPrevi
       angle = 90;
       break;
   }
-  if ([connection isVideoRotationAngleSupported:angle]) {
+  // Only what has changed: a connection's settings are the session's configuration, and setting
+  // them again on every layout pass and geometry report reconfigures a running session for nothing.
+  if (connection.videoRotationAngle != angle && [connection isVideoRotationAngleSupported:angle]) {
     connection.videoRotationAngle = angle;
   }
   if (connection.isVideoMirroringSupported) {
-    connection.automaticallyAdjustsVideoMirroring = NO;
-    connection.videoMirrored = _mirrored;
+    if (connection.automaticallyAdjustsVideoMirroring) {
+      connection.automaticallyAdjustsVideoMirroring = NO;
+    }
+    if (connection.isVideoMirrored != _mirrored) {
+      connection.videoMirrored = _mirrored;
+    }
   }
 }
 
