@@ -45,6 +45,7 @@ import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
+import { timeRoutes } from './routes/time'
 import { userRoutes } from './routes/users'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
 import type { ScoreboardStore } from './scoreboard/scoreboardStore'
@@ -144,6 +145,7 @@ describe('the API document', function () {
     const mounted = [
       ...oauthRoutes(),
       ...routesOf(healthRoutes(db, '0.0.0')),
+      ...routesOf(timeRoutes()),
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(
         accountRoutes(db, { ...media, sendCode: async () => undefined })
@@ -196,6 +198,7 @@ describe('the API document', function () {
     const mounted = new Set([
       ...oauthRoutes(),
       ...routesOf(healthRoutes(db, '0.0.0')),
+      ...routesOf(timeRoutes()),
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(
         accountRoutes(db, { ...media, sendCode: async () => undefined })

@@ -508,7 +508,8 @@ describe('reading a game back', function () {
         actions: [
           { type: 'pitch', call: 'B' },
           { type: 'result', eventType: 'double' }
-        ]
+        ],
+        actionTimes: [undefined, undefined]
       }
     ])
   })

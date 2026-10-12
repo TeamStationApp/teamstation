@@ -1429,6 +1429,60 @@ describe('a scoring session', function () {
       expect(session.holdsPlays((await store.load()).playsDigest!)).equals(true)
     })
 
+    it('keeps the time an unsaved pitch was taken when it puts the pitch back on the lineups', async function () {
+      const store = new LineupStore()
+      const clock = new Clock()
+      let at = '2026-09-25T12:00:00.000Z'
+      clock.options.now = () => new Date(at)
+      const { session } = await open(store, clock)
+      session.apply(ball)
+      await session.flush()
+      await coachSaves(store, swapLeadoff)
+      at = '2026-09-25T12:00:20.000Z'
+      session.apply(strike)
+      // The save, its refusal and the rebase all come later than the pitch.
+      at = '2026-09-25T12:00:45.000Z'
+      await session.flush()
+      expect(session.rebases).equals(1)
+      const stored = (await store.load()).currentPlay as unknown as {
+        teamStation: { actions: ScoringAction[]; actionTimes: string[] }
+      }
+      expect(stored.teamStation.actions.at(-1)).deep.equals(strike)
+      expect(stored.teamStation.actionTimes[0]).equals(
+        '2026-09-25T12:00:00.000Z'
+      )
+      expect(stored.teamStation.actionTimes.at(-1)).equals(
+        '2026-09-25T12:00:20.000Z'
+      )
+      expect(stored.teamStation.actionTimes).length(
+        stored.teamStation.actions.length
+      )
+    })
+
+    it('leaves a server action that had no time without one when it puts it back', async function () {
+      const store = new LineupStore()
+      const clock = new Clock()
+      const { session } = await open(store, clock)
+      session.apply(ball)
+      await session.flush()
+      // Undone here, while another device saves a lineup after the ball.
+      session.undo()
+      await coachSaves(store, swapLeadoff)
+      // That device's app is older: its actions carry no times.
+      const current = store.current as unknown as {
+        teamStation: { actionTimes?: string[] }
+      }
+      delete current.teamStation.actionTimes
+      clock.options.now = () => new Date('2026-09-25T12:05:00.000Z')
+      await session.flush()
+      expect(session.rebases).equals(1)
+      const stored = (await store.load()).currentPlay as unknown as {
+        teamStation: { actions: ScoringAction[]; actionTimes?: string[] }
+      }
+      expect(stored.teamStation.actions).length.greaterThan(0)
+      expect(stored.teamStation.actionTimes).equals(undefined)
+    })
+
     it('reads the lineups again under its unsaved pitch, and saves the pitch on top', async function () {
       const store = new LineupStore()
       const { session } = await open(store)

@@ -23,6 +23,7 @@ import { CORRECTION_INSTRUCTION } from './InstructionToast'
 import { gameFixture } from './isUnscoredGame.test'
 import { scoringPreferences } from './scoringPreferences'
 import { scoringPreferences as nativePreferences } from './scoringPreferences.native'
+import type { PreferenceStorage } from './scoringPreferenceStore'
 import { saveStatusText, ScoringScreen } from './ScoringScreen'
 import {
   DevelopmentScoringSource,
@@ -30,8 +31,23 @@ import {
   type ScoringSource,
   ServerScoringSource
 } from './scoringSource'
+import { ServerClock } from './serverClock'
 
 let root: Root | undefined
+/** The action times on a stored play's record. */
+function actionTimesOf(play: unknown): string[] | undefined {
+  return (play as { teamStation?: { actionTimes?: string[] } } | null)
+    ?.teamStation?.actionTimes
+}
+function memoryStorage(): PreferenceStorage {
+  const held = new Map<string, string>()
+  return {
+    getItem: async key => held.get(key) ?? null,
+    setItem: async (key, value) => {
+      held.set(key, value)
+    }
+  }
+}
 // Host replacement is limited to WebGL; controls, state and preferences are real.
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
@@ -527,6 +543,54 @@ describe('saving from the scoring screen', function () {
       'pitch'
     ])
     expect(saved.state.liveData.plays.allPlays.length).equals(1)
+  })
+
+  it('keeps the server clock while it is open, stamps each action on it, and stops when it closes (U43)', async function () {
+    const client = clientForSwitchHitter('right')
+    const store = memoryStore()
+    const timers = new Set<unknown>()
+    // The server's clock is 90 s ahead of this device's.
+    const clock = new ServerClock(
+      async () => Date.now() + 90_000,
+      memoryStorage(),
+      {
+        setInterval: () => {
+          const timer = {}
+          timers.add(timer)
+          return timer
+        },
+        clearInterval: timer => timers.delete(timer)
+      }
+    )
+    const source: ScoringSource = {
+      persistent: true,
+      keepTime: () => clock.keepTime(),
+      open: async (game, away, home) =>
+        await GameSession.open(
+          store,
+          game.id,
+          {
+            gamePk: game.id,
+            teams: teamsOf(game),
+            setup: startingSetup(game, away, home)
+          },
+          { now: () => clock.now() }
+        )
+    }
+    await mount(client, source)
+    expect(timers.size).equals(1)
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(clock.offset).within(89_000, 91_000)
+    await click('Ball')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    const [time] = actionTimesOf(store.games.get('g1')?.currentPlay) ?? []
+    expect(Date.parse(time) - Date.now()).within(88_000, 91_000)
+    await unmount()
+    expect(timers.size).equals(0)
   })
 
   it('plays the game to the fence the server gives it, 200 feet when it gives none', async function () {

@@ -1154,12 +1154,23 @@ const gumboSchemas = {
       'estimates (trajectory, launch angle). Replay and undo read it; ' +
       '`npm run refold-scored-games` rebuilds the rest of the play from it.' +
       ' `version` is 1; a post whose record has any other version is ' +
-      'refused with 400.',
+      'refused with 400. The server stores the record as it is sent.',
     required: ['version', 'setupBefore', 'actions'],
     properties: {
       version: { type: 'integer', enum: [1] },
       setupBefore: { type: 'object' },
       actions: { type: 'array', items: { type: 'object' } },
+      actionTimes: {
+        type: 'array',
+        items: { type: 'string', format: 'date-time' },
+        description:
+          "When each action was taken, on the server's clock (`GET /time`): " +
+          'one ISO time per action, in the order of `actions`. Left out of a ' +
+          'play scored before actions carried times, or holding an action ' +
+          'with no time; such a play has only its `about.startTime` and ' +
+          '`about.endTime`. A list that does not match `actions` in length ' +
+          'is ignored when the play is read back.'
+      },
       detail: { type: 'object' }
     }
   }
@@ -2444,6 +2455,37 @@ export function openApiDocument(version: string): OpenApiDocument {
               content: {
                 'application/json': {
                   schema: { $ref: '#/components/schemas/Health' }
+                }
+              }
+            }
+          }
+        }
+      },
+      '/time': {
+        get: {
+          summary: "The server's clock",
+          description:
+            'Needs no sign-in, and answers with `Cache-Control: no-store`. ' +
+            "A device measures how far its clock is from the server's with " +
+            'it — from the reading that comes back quickest, taking `now` as ' +
+            'read halfway through — and stamps each scoring action with its ' +
+            "own clock plus that offset, so every device's moments are on one " +
+            'clock.',
+          responses: {
+            200: {
+              description: "The server's clock",
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['now'],
+                    properties: {
+                      now: {
+                        type: 'integer',
+                        description: 'Milliseconds since the epoch.'
+                      }
+                    }
+                  }
                 }
               }
             }
