@@ -1,0 +1,255 @@
+// E15: two phones and a Director on one game, three angles, each listed on
+// the phones with the device filming it. Through maestro-d's JavaScript
+// client. The shared environment is in phoneStreamRig.e2e.ts; besides it:
+//
+//   TS_STREAM_IOS_UDID=<the iPhone 13 Pro, or its simulator>
+//   [TS_STREAM_ANDROID_SERIAL=<the Pixel 10>]
+//   [DIRECTOR_DEVICE_UDID=<the iPad Pro M4 running Director>]
+//   [TS_STREAM_DIRECTOR_WAIT=<seconds to wait for Director, 300>]
+//   [TS_STREAM_RECORD_SECONDS=<with no Pixel, how long the iPhone's take runs>]
+//     node -r sucrase/register src/app/stream/twoDevices.e2e.ts
+//
+//   1. The iPhone: Record video "Home Plate", on the air.
+//   2. The Pixel: its list reads "Home Plate" · "iPhone 13 Pro" · "Live";
+//      then Record video "First Base", on the air. With no Pixel, a stand-in
+//      device B (`curl` as the same account, `deviceModel` "Pixel 10",
+//      `recordsLocally`) makes "First Base" and ffmpeg publishes to it.
+//   3. Director streams as "Center Field": started by hand on the iPad,
+//      which this waits for. With no iPad, a stand-in device C ("iPad Pro",
+//      not recording locally) does.
+//   4. Every phone lists all three angles with their models; the game has a
+//      live video for each, which is what its angle pills are drawn from.
+//      With no Pixel, the iPhone stops and closes its camera to read its
+//      list (the camera covers it while live), and the stand-in device B
+//      reports its recording as not uploaded, which the iPhone shows.
+//
+// Screenshots: two-devices-angle-list.png (the list on the device that is
+// not filming), videos-tab-native-after.png (the Videos tab framed as
+// videos-tab-native-before.png).
+import assert from 'node:assert/strict'
+
+import {
+  apiToken,
+  cameras,
+  clearAngles,
+  game,
+  optional,
+  Phone,
+  request,
+  required,
+  say,
+  sleep,
+  type StandIn,
+  standIn,
+  type StreamRow,
+  waitPublishing
+} from './phoneStreamRig.e2e'
+
+const HOME = 'Home Plate'
+const FIRST = 'First Base'
+const CENTER = 'Center Field'
+const DEVICE_B = '00000000-0000-4000-8000-00000000000b'
+const DEVICE_C = '00000000-0000-4000-8000-00000000000c'
+
+/** The angle row's words on a phone, waiting for them to read as `want` says. */
+async function rowReads(
+  phone: Phone,
+  row: StreamRow,
+  want: string[],
+  wait = 20000
+): Promise<string> {
+  let words = ''
+  for (const until = Date.now() + wait; Date.now() < until;) {
+    words = await phone.textsOf(`angle-row-${row.id}`)
+    if (want.every(word => words.includes(word))) return words
+    await sleep(1000)
+  }
+  throw new Error(`${row.label}'s row reads “${words}”, not ${want.join(', ')}`)
+}
+
+async function main(): Promise<void> {
+  const email = required('TS_STREAM_EMAIL')
+  const token = await apiToken(email)
+  const pixelSerial = optional('TS_STREAM_ANDROID_SERIAL')
+  const director = optional('DIRECTOR_DEVICE_UDID')
+  const results: string[] = []
+  const standIns: StandIn[] = []
+  await clearAngles(token, [HOME, FIRST, ...(director == null ? [CENTER] : [])])
+
+  const iphone = await Phone.attach(required('TS_STREAM_IOS_UDID'), 'ios')
+  let pixel: Phone | undefined
+  try {
+    // 1. Home Plate on the iPhone.
+    await iphone.launch()
+    await iphone.signInIfAsked(email)
+    await iphone.openGame()
+    await iphone.recordAngle(HOME)
+    const recordedAt = Date.now()
+    const home = (await cameras(token)).mine.find(row => row.label === HOME)
+    assert(home != null, 'Home Plate is on the game')
+    await waitPublishing(token, home.id)
+    results.push(`1 ${HOME} live from ${home.deviceModel ?? '?'}`)
+
+    // 2. First Base on the Pixel, or a stand-in.
+    let first: StreamRow
+    if (pixelSerial != null) {
+      pixel = await Phone.attach(pixelSerial, 'android')
+      await pixel.launch()
+      await pixel.signInIfAsked(email)
+      await pixel.openGame()
+      await pixel.scrollTo({ id: `angle-row-${home.id}` })
+      const words = await rowReads(pixel, home, [HOME, 'iPhone 13 Pro', 'Live'])
+      say(`$ assertVisible ${words}`)
+      await pixel.recordAngle(FIRST)
+      const found = (await cameras(token)).mine.find(row => row.label === FIRST)
+      assert(found != null, 'First Base is on the game')
+      first = found
+      results.push(`2 the Pixel lists “${words}”, then records ${FIRST}`)
+    } else {
+      const b = await standIn(token, {
+        label: FIRST,
+        deviceId: DEVICE_B,
+        deviceModel: 'Pixel 10',
+        recordsLocally: true,
+        publish: true
+      })
+      standIns.push(b)
+      first = b.stream
+      results.push(
+        `2 no Pixel: stand-in device B made ${FIRST} (Pixel 10) and ffmpeg publishes to it`
+      )
+    }
+    await waitPublishing(token, first.id)
+
+    // 3. Center Field from Director, or a stand-in.
+    let center: StreamRow | undefined
+    if (director != null) {
+      say(`waiting for Director on the iPad to stream as “${CENTER}”`)
+      const wait = Number(optional('TS_STREAM_DIRECTOR_WAIT') ?? '300') * 1000
+      for (const until = Date.now() + wait; Date.now() < until;) {
+        center = (await cameras(token)).mine.find(
+          row => row.label === CENTER && row.state === 'publishing'
+        )
+        if (center != null) break
+        await sleep(2000)
+      }
+      assert(center != null, 'Director streams as Center Field')
+      results.push(
+        `3 Director streams ${CENTER} (${center.deviceModel ?? '?'})`
+      )
+    } else {
+      const c = await standIn(token, {
+        label: CENTER,
+        deviceId: DEVICE_C,
+        deviceModel: 'iPad Pro',
+        recordsLocally: false,
+        publish: true
+      })
+      standIns.push(c)
+      center = c.stream
+      await waitPublishing(token, center.id)
+      results.push(
+        `3 no iPad: stand-in device C made ${CENTER} (iPad Pro) and ffmpeg publishes to it`
+      )
+    }
+
+    // 4. The lists, and the game's live videos.
+    const models = new Map([
+      [HOME, 'iPhone 13 Pro'],
+      [FIRST, 'Pixel 10'],
+      [CENTER, 'iPad Pro']
+    ])
+    const all = await cameras(token)
+    const rows = [home, first, center].map(
+      one => all.mine.find(row => row.id === one.id) ?? one
+    )
+    for (const row of rows)
+      say(`server: ${row.label} · ${row.deviceModel ?? '-'} · ${row.state}`)
+    const listing = pixel ?? iphone
+    if (pixel == null) {
+      // The camera covers the list while it is live: stop and close it, and
+      // the stand-in Pixel says its own recording is not uploaded. The take
+      // runs for TS_STREAM_RECORD_SECONDS first, so E16 has an upload long
+      // enough to cut off part way.
+      const hold =
+        Number(optional('TS_STREAM_RECORD_SECONDS') ?? '0') * 1000 -
+        (Date.now() - recordedAt)
+      if (hold > 0) {
+        say(`recording ${Math.round(hold / 1000)} s more`)
+        await sleep(hold)
+      }
+      await iphone.stopAndClose()
+      say(
+        `$ curl -X PATCH …/live-streams/${first.id} -d '{"localRecording":"recorded"}'`
+      )
+      const patched = await request(
+        'PATCH',
+        `/games/${game()}/live-streams/${first.id}`,
+        { localRecording: 'recorded' },
+        token
+      )
+      assert(patched.ok, `device B reports its recording: ${patched.status}`)
+    }
+    const lines: string[] = []
+    for (const row of rows) {
+      await listing.scrollTo({ id: `angle-row-${row.id}` })
+      const live = !(pixel == null && row.id === home.id)
+      lines.push(
+        await rowReads(listing, row, [
+          row.label,
+          models.get(row.label) ?? '',
+          live ? 'Live' : 'Idle'
+        ])
+      )
+    }
+    if (pixel == null)
+      lines.push(
+        await rowReads(listing, first, ['Recording on Pixel 10 not uploaded'])
+      )
+    for (const line of lines) say(`$ assertVisible ${line}`)
+    await listing.scrollTo({ id: `angle-row-${first.id}` })
+    await listing.shot('two-devices-angle-list.png')
+    results.push(
+      `4 ${listing.platform === 'ios' ? 'the iPhone' : 'the Pixel'} lists: ${lines.join(' | ')}`
+    )
+    if (pixel != null) {
+      // The iPhone, still filming, is checked through the server's list:
+      // its own screen is the camera.
+      assert.deepEqual(
+        rows.map(row => row.deviceModel),
+        [models.get(HOME), models.get(FIRST), rows[2].deviceModel],
+        'the server names every device'
+      )
+    }
+
+    const answer = await request('GET', `/games/${game()}`, undefined, token)
+    const titles = (
+      (await answer.json()) as { videos?: Array<{ title: string }> }
+    ).videos?.map(video => video.title)
+    const pills = [HOME, FIRST, CENTER].filter(
+      angle => titles?.some(title => title.endsWith(` — ${angle}`)) === true
+    )
+    assert.deepEqual(pills, [HOME, FIRST, CENTER], 'a live video per angle')
+    results.push(`5 the game has a live video for ${pills.join(', ')}`)
+
+    // The Videos tab, framed as videos-tab-native-before.png. The game's
+    // videos are read when its screen mounts: start the app again so the
+    // live videos are there above the cameras.
+    await listing.launch()
+    await listing.openGame()
+    await listing.scrollTo({ text: 'CAMERAS' })
+    await listing.m.swipe({ start: '50%, 70%', end: '50%, 45%', duration: 600 })
+    await sleep(1500)
+    await listing.shot('videos-tab-native-after.png')
+  } finally {
+    for (const one of standIns) await one.stop()
+    await iphone.detach()
+    await pixel?.detach()
+  }
+  for (const line of results) say(`PASS ${line}`)
+}
+
+main().catch((error: unknown) => {
+  console.error(error)
+  process.exit(1)
+})
