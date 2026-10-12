@@ -13,6 +13,7 @@ import {
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
+import { teamEventSchedule } from '../events/eventInfo'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import {
@@ -249,6 +250,8 @@ export interface ScheduleRow extends Omit<
 
 export interface ScheduleFilter {
   actor?: Actor
+  /** Public game previews never include private titled team events. */
+  gamesOnly?: boolean
   publishedOnly?: boolean
   teamId?: string
   seasonIds?: string[]
@@ -324,6 +327,10 @@ export async function scheduleOf(
       'games.season_id as seasonId',
       'games.start_at as startAt',
       'games.venue as venue',
+      'games.end_at as endAt',
+      'games.address as address',
+      'games.latitude as latitude',
+      'games.longitude as longitude',
       'games.exhibition as exhibition',
       'games.timezone as timezone',
       'games.cancellation_reason as cancellationReason',
@@ -474,6 +481,10 @@ export async function scheduleOf(
       seasonId: game.seasonId,
       startAt: toIso(game.startAt),
       venue: game.venue,
+      endAt: toIso(game.endAt),
+      address: game.address,
+      latitude: game.latitude,
+      longitude: game.longitude,
       exhibition: game.exhibition,
       timezone: game.timezone,
       cancellationReason: game.cancellationReason,
@@ -561,42 +572,75 @@ export async function scheduleOf(
               externalIds: []
             })
           )
+  const nonGames: ScheduleRow[] = []
+  if (
+    filter.gamesOnly !== true &&
+    teamScope == null &&
+    filter.played !== true &&
+    filter.externalIds == null &&
+    filter.publishedOnly !== true &&
+    (filter.seasonIds == null || filter.seasonIds.length > 0) &&
+    (filter.visible == null ||
+      filter.visible.isAdmin ||
+      filter.visible.teamIds.size > 0)
+  ) {
+    let eventQuery = db
+      .selectFrom('team_events')
+      .innerJoin('teams', 'teams.id', 'team_events.team_id')
+      .selectAll('team_events')
+      .select(['teams.name as teamName', 'teams.logo_path as logoPath'])
+    if (filter.teamId != null)
+      eventQuery = eventQuery.where('team_events.team_id', '=', filter.teamId)
+    if (filter.seasonIds != null)
+      eventQuery = eventQuery.where('team_events.team_id', 'in', eb =>
+        eb
+          .selectFrom('season_teams')
+          .select('team_id')
+          .where('active', '=', true)
+          .where('season_id', 'in', filter.seasonIds!)
+      )
+    if (filter.visible != null && !filter.visible.isAdmin)
+      eventQuery = eventQuery.where('team_events.team_id', 'in', [
+        ...filter.visible.teamIds
+      ])
+    for (const row of await eventQuery.execute())
+      nonGames.push(teamEventSchedule(row, row.teamName, row.logoPath))
+  }
   const nowMs = effectiveNow.getTime()
-  let combined = [...annotatePending(answer, pending), ...projected].filter(
-    row => {
-      const when = row.startAt == null ? null : Date.parse(row.startAt)
-      if (filter.played === true && row.homeScore == null) return false
-      if (filter.omitCancelled === true && row.status === 'cancelled')
-        return false
-      if (
-        filter.since != null &&
-        (when == null || when < filter.since.getTime())
-      )
-        return false
-      if (
-        filter.until != null &&
-        (when == null ||
-          (filter.untilInclusive === true
-            ? when > filter.until.getTime()
-            : when >= filter.until.getTime()))
-      )
-        return false
-      if (
-        (filter.future === true || filter.upcoming === true) &&
-        (when == null || when <= nowMs)
-      )
-        return false
-      if (filter.upcoming === true && row.awayScore != null) return false
-      if (
-        filter.past === true &&
-        when != null &&
-        when > nowMs &&
-        row.awayScore == null
-      )
-        return false
-      return true
-    }
-  )
+  let combined = [
+    ...annotatePending(answer, pending),
+    ...projected,
+    ...nonGames
+  ].filter(row => {
+    const when = row.startAt == null ? null : Date.parse(row.startAt)
+    if (filter.played === true && row.homeScore == null) return false
+    if (filter.omitCancelled === true && row.status === 'cancelled')
+      return false
+    if (filter.since != null && (when == null || when < filter.since.getTime()))
+      return false
+    if (
+      filter.until != null &&
+      (when == null ||
+        (filter.untilInclusive === true
+          ? when > filter.until.getTime()
+          : when >= filter.until.getTime()))
+    )
+      return false
+    if (
+      (filter.future === true || filter.upcoming === true) &&
+      (when == null || when <= nowMs)
+    )
+      return false
+    if (filter.upcoming === true && row.awayScore != null) return false
+    if (
+      filter.past === true &&
+      when != null &&
+      when > nowMs &&
+      row.awayScore == null
+    )
+      return false
+    return true
+  })
   combined.sort((a, b) => {
     const order = filter.order === 'asc' ? 1 : -1
     if (a.startAt == null || b.startAt == null) {

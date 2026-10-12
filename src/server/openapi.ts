@@ -15,6 +15,7 @@ import {
   CLIP_MIN_MS,
   WALK_UP_PROVIDERS
 } from '../common/walkUpSong'
+import { createEventOperation, eventInfoPaths } from './events/eventInfoOpenApi'
 import { creationPaths } from './groups/openApi'
 import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
 
@@ -2048,6 +2049,7 @@ export function openApiDocument(version: string): OpenApiDocument {
     paths: {
       ...creationPaths(errorResponse),
       ...gameApprovalPaths(errorResponse),
+      ...eventInfoPaths(errorResponse),
       ...accountPaths,
       '/me/builds': {
         get: {
@@ -5676,8 +5678,9 @@ export function openApiDocument(version: string): OpenApiDocument {
         }
       },
       '/events': {
+        post: createEventOperation(errorResponse),
         get: {
-          summary: 'Games, filtered by the query string',
+          summary: 'Games and team events, filtered by the query string',
           description:
             'The one list. `scope=visible` (the default) is every game you ' +
             'may see: your teams, and every game of a season opened to you. ' +

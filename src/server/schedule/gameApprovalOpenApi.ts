@@ -1,3 +1,4 @@
+import { eventLocationProperties } from '../events/eventInfoOpenApi'
 export function gameApprovalPaths(
   errorResponse: unknown
 ): Record<string, unknown> {
@@ -43,6 +44,7 @@ export function gameApprovalPaths(
               type: 'object',
               required: ['homeTeamId', 'awayTeamId', 'seasonId', 'startAt'],
               properties: {
+                ...eventLocationProperties,
                 homeTeamId: { type: 'string' },
                 awayTeamId: { type: 'string' },
                 seasonId: { type: ['string', 'null'] },

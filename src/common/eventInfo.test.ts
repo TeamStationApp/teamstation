@@ -1,0 +1,188 @@
+import { expect } from 'chai'
+import { describe, it } from 'mocha'
+
+import {
+  asEventInfo,
+  asEventLocation,
+  asEventLocationFields,
+  asRsvp,
+  asTeamEventInput,
+  eventDate,
+  eventText,
+  sortedAttendees,
+  withEventMetadata
+} from './eventInfo'
+
+const body = {
+  teamId: 'tem_demo',
+  title: 'Team dinner',
+  startAt: '2027-04-10T18:00:00Z',
+  idempotencyKey: 'demo-event-key'
+}
+describe('event information contracts', () => {
+  it('normalizes titles/dates and preserves omitted update fields', () => {
+    expect(
+      asTeamEventInput({
+        ...body,
+        title: ' Team dinner ',
+        endAt: '2027-04-10T20:00:00Z',
+        address: ' 1 Demo Way ',
+        latitude: 0,
+        longitude: 0
+      })
+    ).includes({
+      title: 'Team dinner',
+      address: '1 Demo Way',
+      latitude: 0,
+      longitude: 0,
+      timezone: 'UTC',
+      status: 'scheduled'
+    })
+    expect(asEventLocationFields({})).deep.equals({})
+    expect(
+      asEventLocationFields({
+        address: '',
+        endAt: null,
+        latitude: null,
+        longitude: null
+      })
+    ).deep.equals({
+      address: null,
+      endAt: null,
+      latitude: null,
+      longitude: null
+    })
+    expect(eventText(null, 'Venue', 200)).equals(null)
+    expect(eventText('  ', 'Venue', 200)).equals(null)
+    expect(eventDate('2027-04-10T18:00:00-07:00', 'Start')).equals(
+      '2027-04-11T01:00:00.000Z'
+    )
+    expect(
+      asTeamEventInput({
+        ...body,
+        status: 'cancelled',
+        venue: 'Demo Park',
+        timezone: 'America/Los_Angeles'
+      })
+    ).includes({ status: 'cancelled', venue: 'Demo Park' })
+  })
+  it('rejects invalid times, required fields, coordinates and choices', () => {
+    for (const change of [
+      null,
+      [],
+      { ...body, title: '' },
+      { ...body, title: ' ' },
+      { ...body, title: 42 },
+      { ...body, title: 'x'.repeat(201) },
+      { ...body, teamId: '' },
+      { ...body, teamId: 3 },
+      { ...body, teamId: 'x'.repeat(101) },
+      { ...body, startAt: '2027-04-10' },
+      { ...body, startAt: '2027-02-31T18:00:00Z' },
+      { ...body, startAt: 'x' },
+      { ...body, endAt: body.startAt },
+      { ...body, endAt: '2027-04-09T18:00:00Z' },
+      { ...body, endAt: 'invalid' },
+      { ...body, address: 'x'.repeat(501) },
+      { ...body, venue: 0 },
+      { ...body, latitude: 91, longitude: 0 },
+      { ...body, latitude: 0, longitude: 181 },
+      { ...body, latitude: NaN, longitude: 0 },
+      { ...body, latitude: 3 },
+      { ...body, longitude: 0 },
+      { ...body, timezone: 3 },
+      { ...body, timezone: 'x'.repeat(101) },
+      { ...body, timezone: 'invalid' },
+      { ...body, status: 'final' },
+      { ...body, idempotencyKey: '' },
+      { ...body, idempotencyKey: 'x'.repeat(121) }
+    ]) {
+      expect(() => asTeamEventInput(change)).throws()
+    }
+    for (const response of ['noReply', null, 'YES', 1])
+      expect(() => asRsvp(response)).throws()
+    expect(() => eventText(undefined, 'Title', 200, true)).throws()
+  })
+  it('preserves old answer shapes and decodes event metadata', () => {
+    const decode = withEventMetadata((raw: unknown) => ({
+      id: (raw as { id: string }).id
+    }))
+    expect(decode({ id: 'g' })).deep.equals({ id: 'g' })
+    expect(
+      decode({
+        id: 'g',
+        eventKind: 'event',
+        title: 'Dinner',
+        endAt: null,
+        address: null,
+        latitude: 0,
+        longitude: 0,
+        hasScoringEvents: false
+      })
+    ).deep.equals({
+      id: 'g',
+      eventKind: 'event',
+      title: 'Dinner',
+      endAt: null,
+      address: null,
+      latitude: 0,
+      longitude: 0,
+      hasScoringEvents: false
+    })
+    expect(() => decode({ id: 'g', eventKind: 'practice' })).throws()
+    expect(
+      asEventLocation({
+        latitude: null,
+        longitude: null,
+        tileUrl: 'https://example.test/{z}/{x}/{y}'
+      })
+    ).property('latitude', null)
+    expect(
+      asEventInfo({
+        id: 'e',
+        eventKind: 'event',
+        title: 'Dinner',
+        teamId: 't',
+        teamName: 'Owls',
+        startAt: null,
+        endAt: null,
+        timezone: 'UTC',
+        venue: null,
+        address: null,
+        latitude: null,
+        longitude: null,
+        status: 'scheduled',
+        canManage: true,
+        replyUserIds: [1],
+        attendees: [
+          {
+            userId: 1,
+            name: 'Babe Ruth',
+            avatarUrl: null,
+            response: null,
+            canReply: true
+          }
+        ]
+      }).attendees[0].response
+    ).equals(null)
+  })
+  it('orders replies yes, maybe, no, then absence without changing its source', () => {
+    const rows = [null, 'no', 'maybe', 'yes', 'yes'].map((response, i) => ({
+      userId: i + 1,
+      name: [
+        'Nolan Ryan',
+        'Lou Gehrig',
+        'Mike Trout',
+        'Babe Ruth',
+        'Babe Ruth'
+      ][i],
+      avatarUrl: null,
+      canReply: false,
+      response: response as 'yes' | 'maybe' | 'no' | null
+    }))
+    expect(sortedAttendees(rows).map(row => row.userId)).deep.equals([
+      4, 5, 3, 2, 1
+    ])
+    expect(rows[0].response).equals(null)
+  })
+})

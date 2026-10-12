@@ -594,6 +594,7 @@ async function updateHeld(
       'away_score',
       'currentPlay',
       'start_at',
+      'end_at',
       'venue',
       'status',
       'cancellation_reason',
@@ -625,6 +626,7 @@ async function updateHeld(
     home_score?: number | null
     away_score?: number | null
     start_at?: Date
+    end_at?: Date
     venue?: string
     status?: 'scheduled' | 'cancelled'
     fence_distance_ft?: number
@@ -649,6 +651,10 @@ async function updateHeld(
   }
   if (new Date(game.start_at).getTime() !== startAt.getTime()) {
     changes.start_at = startAt
+    if (game.end_at != null)
+      changes.end_at = new Date(
+        game.end_at.getTime() + startAt.getTime() - game.start_at.getTime()
+      )
   }
   if (row.venue != null && row.venue !== game.venue) changes.venue = row.venue
   if (row.exhibition != null && row.exhibition !== game.exhibition)

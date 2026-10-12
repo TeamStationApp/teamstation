@@ -20,6 +20,7 @@ import { adminRoutes } from './routes/admin'
 import { authRoutes } from './routes/auth'
 import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { directorRoutes } from './routes/director'
+import { eventInfoRoutes } from './routes/eventInfo'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
 import { gameApprovalRoutes } from './routes/gameApprovals'
@@ -148,6 +149,7 @@ describe('the API document', function () {
         accountRoutes(db, { ...media, sendCode: async () => undefined })
       ),
       ...routesOf(seasonRoutes(db, media)),
+      ...routesOf(eventInfoRoutes(db, media)),
       ...routesOf(eventListRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(scheduleRoutes(db)),
@@ -199,6 +201,7 @@ describe('the API document', function () {
         accountRoutes(db, { ...media, sendCode: async () => undefined })
       ),
       ...routesOf(seasonRoutes(db, media)),
+      ...routesOf(eventInfoRoutes(db, media)),
       ...routesOf(eventListRoutes(db, media)),
       ...routesOf(teamRoutes(db, media)),
       ...routesOf(scheduleRoutes(db)),
