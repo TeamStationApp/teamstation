@@ -23,7 +23,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.teamstation.cameraman.core.BatteryStatus
+import app.teamstation.streamcore.core.BatteryStatus
 import app.teamstation.cameraman.ui.theme.CameramanTokens
 
 /**

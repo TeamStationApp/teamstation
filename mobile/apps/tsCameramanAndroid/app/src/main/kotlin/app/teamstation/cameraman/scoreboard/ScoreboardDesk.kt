@@ -1,7 +1,7 @@
 package app.teamstation.cameraman.scoreboard
 
 import app.teamstation.cameraman.BuildConfig
-import app.teamstation.cameraman.core.SettingsStore
+import app.teamstation.streamcore.core.SettingsStore
 import app.teamstation.cameraman.eventcontrol.EventAssignment
 import app.teamstation.cameraman.eventcontrol.EventControlAccount
 import app.teamstation.cameraman.eventcontrol.EventControlAckStatus

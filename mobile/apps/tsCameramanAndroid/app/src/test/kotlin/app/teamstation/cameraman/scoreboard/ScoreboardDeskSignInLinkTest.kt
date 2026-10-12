@@ -2,7 +2,7 @@ package app.teamstation.cameraman.scoreboard
 
 import android.content.Intent
 import android.net.Uri
-import app.teamstation.cameraman.core.InMemorySettingsStore
+import app.teamstation.streamcore.core.InMemorySettingsStore
 import app.teamstation.cameraman.radar.ScoreboardSocketTarget
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
