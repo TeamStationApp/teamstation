@@ -1,4 +1,5 @@
 import DirectorCore
+@testable import DirectorMedia
 @testable import DirectorPipeline
 @testable import DirectorRTSP
 import DirectorSources

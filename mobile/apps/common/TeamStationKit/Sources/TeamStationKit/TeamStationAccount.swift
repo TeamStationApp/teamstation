@@ -63,17 +63,26 @@ public final class TeamStationAccount: TeamStationEventService {
   private let keychain: KeychainStore
   private let deviceName: String
   private let session: URLSession
+  /// This installation's own id, which the server keys its stream on: the same camera name on
+  /// two devices is two cameras. Kept in the app's preferences.
+  public let installId: String
+  /// What the device is, for every list of the game's cameras ("iPad Pro").
+  public let deviceModel: String
 
   public init(
     serverURL: URL,
     deviceName: String,
     appOrigin: URL? = nil,
+    installId: String = "",
+    deviceModel: String = DeviceModelName.current,
     keychain: KeychainStore = KeychainStore(service: "app.teamstation.director"),
     session: URLSession = .shared
   ) {
     self.serverURL = serverURL
     self.appOrigin = appOrigin
     self.deviceName = deviceName
+    self.installId = installId
+    self.deviceModel = deviceModel
     self.keychain = keychain
     self.session = session
     chosen = keychain.chosenEvent()
@@ -85,22 +94,29 @@ public final class TeamStationAccount: TeamStationEventService {
   ///
   /// `streamURL` is nil until the game has been claimed: a game chosen only to
   /// file recordings under, or to draw its scoreboard, never asks for one.
+  ///
+  /// `streamId` is the stream the address belongs to, which a redial names so
+  /// that a stream ended on TeamStation stays ended. Optional, so a value kept
+  /// by a build from before it decodes; the next refresh fills it in.
   public struct ChosenEvent: Sendable, Codable, Equatable {
     public let gameId: String
     public let title: String
     public let startAt: Date
     public let streamURL: String?
+    public let streamId: String?
 
     public init(
       gameId: String,
       title: String,
       startAt: Date,
-      streamURL: String?
+      streamURL: String?,
+      streamId: String? = nil
     ) {
       self.gameId = gameId
       self.title = title
       self.startAt = startAt
       self.streamURL = streamURL
+      self.streamId = streamId
     }
   }
 
@@ -440,12 +456,13 @@ public final class TeamStationAccount: TeamStationEventService {
   ) async -> Bool {
     guard claim else {
       // Choosing the same game again keeps the address it was given.
-      let kept = chosen?.gameId == event.gameId ? chosen?.streamURL : nil
+      let same = chosen?.gameId == event.gameId
       keep(ChosenEvent(
         gameId: event.gameId,
         title: event.title,
         startAt: event.startAt,
-        streamURL: kept
+        streamURL: same ? chosen?.streamURL : nil,
+        streamId: same ? chosen?.streamId : nil
       ))
       lastError = nil
       return true
@@ -453,7 +470,7 @@ public final class TeamStationAccount: TeamStationEventService {
     isLoading = true
     defer { isLoading = false }
     do {
-      let taken = try await client.claim(gameId: event.gameId, cameraName: cameraName)
+      let taken = try await requestStream(gameId: event.gameId, cameraName: cameraName, held: nil)
       keep(claimed(taken, gameId: event.gameId, title: event.title, startAt: event.startAt))
       lastError = nil
       return true
@@ -479,7 +496,7 @@ public final class TeamStationAccount: TeamStationEventService {
     isLoading = true
     defer { isLoading = false }
     do {
-      let taken = try await client.claim(gameId: current.gameId, cameraName: cameraName)
+      let taken = try await requestStream(gameId: current.gameId, cameraName: cameraName, held: nil)
       // Another game may have been picked while the claim was out.
       guard chosen?.gameId == current.gameId else { return false }
       keep(claimed(taken, gameId: current.gameId, title: current.title, startAt: current.startAt))
@@ -504,7 +521,7 @@ public final class TeamStationAccount: TeamStationEventService {
   }
 
   private func claimed(
-    _ claim: TeamStationClaim,
+    _ stream: TeamStationDeviceStream,
     gameId: String,
     title: String,
     startAt: Date
@@ -513,7 +530,23 @@ public final class TeamStationAccount: TeamStationEventService {
       gameId: gameId,
       title: title,
       startAt: startAt,
-      streamURL: claim.url
+      streamURL: stream.url,
+      streamId: stream.id
+    )
+  }
+
+  /// This device's stream on a game, by its install id and model: `POST …/live-streams`.
+  private func requestStream(
+    gameId: String,
+    cameraName: String,
+    held: String?
+  ) async throws -> TeamStationDeviceStream {
+    try await client.requestLiveStream(
+      gameId: gameId,
+      label: cameraName,
+      deviceId: installId,
+      deviceModel: deviceModel,
+      heldStreamId: held
     )
   }
 
@@ -530,20 +563,58 @@ public final class TeamStationAccount: TeamStationEventService {
    * know of it is a stream that will not start at the first pitch. So it is
    * asked for again at the moment it is about to be used, and only then.
    *
-   * Failure is deliberately quiet. Out at a field with no signal the cached
-   * address is the best thing anybody has, and it is usually still right.
+   * `.start` asks without naming the stream held, so a stream that was ended
+   * is replaced by a fresh one, whose id and address are kept. `.redial` names
+   * the held stream: if it was ended this throws `TeamStationError.streamEnded`
+   * and nothing new is made, so a drop never puts back a camera somebody
+   * ended.
+   *
+   * Every other failure is deliberately quiet. Out at a field with no signal
+   * the cached address is the best thing anybody has, and it is usually still
+   * right.
    */
-  public func refreshChosen(cameraName: String = "") async {
+  public func refreshChosen(
+    cameraName: String = "",
+    reason: LiveStreamRequestReason = .start
+  ) async throws {
     guard let current = chosen else { return }
     do {
-      let taken = try await client.claim(gameId: current.gameId, cameraName: cameraName)
+      let taken = try await requestStream(
+        gameId: current.gameId,
+        cameraName: cameraName,
+        held: reason == .redial ? current.streamId : nil
+      )
       guard chosen?.gameId == current.gameId else { return }
       keep(claimed(taken, gameId: current.gameId, title: current.title, startAt: current.startAt))
       lastError = nil
+    } catch TeamStationError.streamEnded {
+      throw TeamStationError.streamEnded
     } catch {
       // Kept to itself: the cached address is what the Stream button is about
       // to use, and saying "could not reach TeamStation" over a stream that is
       // starting anyway would be noise at the worst moment.
+    }
+  }
+
+  /**
+   * Renames the camera this device holds on the chosen game: `PATCH` on its
+   * stream, which keeps the stream, its key and its video. Nothing is asked
+   * when no stream is held yet; the next request sends the new name.
+   */
+  @discardableResult
+  public func renameStream(label: String) async -> Bool {
+    guard let current = chosen, let streamId = current.streamId else { return false }
+    do {
+      _ = try await client.updateLiveStream(
+        gameId: current.gameId,
+        streamId: streamId,
+        label: label
+      )
+      lastError = nil
+      return true
+    } catch {
+      lastError = error.localizedDescription
+      return false
     }
   }
 
@@ -554,9 +625,8 @@ public final class TeamStationAccount: TeamStationEventService {
    * codec is wrong, there is no room on the disk — and that sentence is worth
    * far more than the socket's, which can only say a connection closed.
    *
-   * It had been asking an endpoint that stopped existing when a key became a
-   * person's rather than a game's, so it has quietly answered nothing ever
-   * since, and every refusal reached the screen as whatever the socket said.
+   * The row read is this device's own among the game's cameras: the one whose
+   * `deviceId` is this installation's.
    *
    * `nil` when it has nothing to add, which includes every case where the
    * network is the problem: then the socket's own message is the true one.
@@ -565,10 +635,11 @@ public final class TeamStationAccount: TeamStationEventService {
     guard let gameId = chosen?.gameId, keychain.token() != nil else {
       return nil
     }
-    guard let stream = try? await client.liveStream(gameId: gameId) else {
+    guard let streams = try? await client.liveStreams(gameId: gameId) else {
       return nil
     }
-    guard let said = stream.lastError, !said.isEmpty else { return nil }
+    let mine = streams.mine.first { $0.deviceId == installId }
+    guard let said = mine?.lastError, !said.isEmpty else { return nil }
     return said
   }
 
@@ -593,7 +664,11 @@ public protocol TeamStationEventService: AnyObject {
   func choose(event: TeamStationEvent, claim: Bool, cameraName: String) async -> Bool
   @discardableResult
   func claimChosen(cameraName: String) async -> Bool
-  func refreshChosen(cameraName: String) async
+  /// Throws `TeamStationError.streamEnded` when a `.redial` finds the held stream ended.
+  func refreshChosen(cameraName: String, reason: LiveStreamRequestReason) async throws
+  /// Renames the held stream's camera on TeamStation.
+  @discardableResult
+  func renameStream(label: String) async -> Bool
   func forgetChosenEvent()
   func scoreboardURL(for gameId: String) -> URL
 }

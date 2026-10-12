@@ -1,5 +1,6 @@
 import Foundation
 import DirectorCore
+import DirectorExport
 
 /// What to do at launch about whatever the app was doing when it last stopped running.
 ///

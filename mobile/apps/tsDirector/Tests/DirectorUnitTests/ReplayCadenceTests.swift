@@ -1,3 +1,4 @@
+@testable import DirectorMedia
 @testable import DirectorPipeline
 import Foundation
 import Testing
