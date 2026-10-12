@@ -52,6 +52,11 @@ import {
   usePhoneStreamStatusOf,
   useRadarStateOf
 } from './phoneStream'
+import {
+  type OpenPublisherSocket,
+  useScoreboardRadarPublisher
+} from './scoreboardRadarPublisher'
+import { StreamSettingsSheet } from './settings/StreamSettingsSheet'
 
 /** The stream this phone holds for one angle, as `POST …/live-streams` gave it. */
 export interface StreamingSession {
@@ -71,12 +76,19 @@ export interface StreamingScreenProps {
   deviceId: string
   deviceModel: string
   onClose: () => void
-  /** The gear. The settings sheet arrives with M12; until then it opens nothing. */
-  onOpenSettings?: () => void
   /** The engine; a test hands in one over a stand-in module. */
   phone?: PhoneStream
-  /** Android's landscape lock; a test hands in its own. */
-  rotation?: { lockLandscape: () => void; restore: () => void }
+  /**
+   * Android's rotation: held sideways while the screen is up, let turn while
+   * the settings sheet is; a test hands in its own.
+   */
+  rotation?: {
+    allow?: () => void
+    lockLandscape: () => void
+    restore: () => void
+  }
+  /** The scoreboard's socket; a test hands in its own. */
+  openScoreboardSocket?: OpenPublisherSocket
 }
 
 /** How many times a one-pill rail is read again while the camera starts. */
@@ -120,14 +132,21 @@ export function describeRefusal(error: unknown, angleName: string): string {
  * vertical drag that starts level with the zoom rail.
  *
  * Record starts the recording and the stream together, on the stream URL the
- * server gave this phone for the angle; stopping takes a slide. The first time
- * a recording stops, the server is told this phone holds it, which starts the
- * upload reminder.
+ * server gave this phone for the angle; stopping takes a slide, and Close and
+ * Android's back are held while either runs. The first time a part ends, the
+ * server is told this phone holds a recording, which starts the upload
+ * reminder. Opened again after a kill on the stream whose take was rolling,
+ * it carries that take on.
+ *
+ * The gear opens the settings sheet (microphone, lenses, the angle's name,
+ * radars). While a radar is paired, its readings go to the game's scoreboard.
  */
 export function StreamingScreen(
   props: StreamingScreenProps
 ): React.ReactElement {
   const { onClose } = props
+  /** Whether the overlay is recording or streaming, which holds Close. */
+  const holding = useRef(false)
   return (
     <Modal
       visible
@@ -138,29 +157,31 @@ export function StreamingScreen(
       navigationBarTranslucent
       onRequestClose={() => {
         // Android's back: the same as Close, and refused the same way while
-        // recording.
-        onClose()
+        // recording or streaming, since closing the engine would stop both.
+        if (!holding.current) onClose()
       }}
     >
       <StatusBar hidden />
       {/* The modal's own safe area: the app's is the upright root's. */}
       <SafeAreaProvider>
-        <StreamingOverlay {...props} />
+        <StreamingOverlay {...props} holding={holding} />
       </SafeAreaProvider>
     </Modal>
   )
 }
 
-function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
+function StreamingOverlay(
+  props: StreamingScreenProps & { holding: React.RefObject<boolean> }
+): React.ReactElement {
   const {
     client,
     session,
     deviceId,
     deviceModel,
     onClose,
-    onOpenSettings,
     phone = phoneStream,
-    rotation = androidRotation
+    rotation = androidRotation,
+    openScoreboardSocket
   } = props
   const insets = useInsets()
   const window = useWindowDimensions()
@@ -172,11 +193,63 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
   const [confirmStop, setConfirmStop] = useState(false)
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | undefined>(undefined)
+  /** The angle's name: Record video's, until the settings sheet renames it. */
+  const [angleName, setAngleName] = useState(session.angleName)
+  /** The microphone, which the settings sheet turns off and on. */
+  const [audioEnabled, setAudioEnabled] = useState(true)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const recording = status?.isRecording ?? recordingHere
+  // The stream can outlive its recording's part — the part stops when the
+  // phone runs low on space and the stream goes on — and Record cannot start
+  // while it does, so the stop control and the hold on Close follow either.
+  const streaming = status != null && status.phase !== 'idle'
+  const holding = recording || streaming
+  props.holding.current = holding
+  // The game's scoreboard hears each radar reading while a radar is paired.
+  useScoreboardRadarPublisher({
+    apiBase: client.baseUrl,
+    gameId: session.gameId,
+    token: client.token,
+    radar,
+    open: openScoreboardSocket
+  })
   // Told once: the server keeps its reminder from the first.
   const reported = useRef(
     session.localRecording === 'recorded' ||
       session.localRecording === 'uploaded'
+  )
+  /** Tells the server this phone holds a recording of the angle, once. */
+  const report = useCallback(() => {
+    if (reported.current) return
+    reported.current = true
+    client
+      .updateLiveStream(session.gameId, session.streamId, {
+        localRecording: 'recorded'
+      })
+      .catch(() => {
+        // Said again when the next part ends.
+        reported.current = false
+      })
+  }, [client, session])
+  // Whenever a part ends — a slide to stop, a low-storage stop, the app
+  // going to the background — the phone holds a recording.
+  const wasRecording = useRef(false)
+  const isRecordingNow = status?.isRecording
+  useEffect(() => {
+    if (isRecordingNow == null) return
+    if (wasRecording.current && !isRecordingNow) report()
+    wasRecording.current = isRecordingNow
+  }, [isRecordingNow, report])
+
+  /** What the engine's redial sends to ask for this device's stream again. */
+  const redialRequest = useMemo(
+    () => ({
+      apiBase: client.baseUrl,
+      token: client.token ?? '',
+      deviceId,
+      deviceModel
+    }),
+    [client, deviceId, deviceModel]
   )
 
   const readScale = useCallback(() => {
@@ -199,27 +272,39 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
   }, [readScale, scale, scaleReads])
 
   // The engine is open while the screen is up, and the phone held sideways.
+  // Opened again after a kill or a crash, within the hour, on the stream
+  // whose take was rolling, the take continues as its next part and the
+  // stream redials.
   useEffect(() => {
     let live = true
     rotation.lockLandscape()
-    closing
+    const opened = closing.then(async () => {
+      await phone.open(session.angleName)
+    })
+    opened
       .then(async () => {
-        await phone.open(session.angleName)
+        if (!live) return
+        readScale()
+        const interrupted = await phone.interruptedSession()
+        if (!live || interrupted?.liveStreamId !== session.streamId) return
+        if (await phone.resumeInterrupted(redialRequest)) setRecordingHere(true)
       })
-      .then(
-        () => {
-          if (live) readScale()
-        },
-        (error: unknown) => {
-          if (live) setProblem(describeRefusal(error, session.angleName))
-        }
-      )
+      .catch((error: unknown) => {
+        if (live) setProblem(describeRefusal(error, session.angleName))
+      })
     return () => {
       live = false
-      closing = phone.close().catch(() => {})
+      // After the open, never before it: a screen gone before the engine
+      // finished opening must not leave the camera running behind it.
+      closing = opened
+        .catch(() => {})
+        .then(async () => {
+          await phone.close()
+        })
+        .catch(() => {})
       rotation.restore()
     }
-    // One engine session per screen: the angle is renamed through it (M12).
+    // One engine session per screen: the settings sheet renames the angle through it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phone])
 
@@ -252,7 +337,7 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
   const railGesture = useMemo(() => zoomRailResponder(zoom), [zoom])
 
   const record = (): void => {
-    if (recording) {
+    if (holding) {
       setConfirmStop(true)
       return
     }
@@ -263,20 +348,15 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
         rtmpUrl: session.url,
         liveStreamId: session.streamId,
         gameId: session.gameId,
-        angleName: session.angleName,
-        request: {
-          apiBase: client.baseUrl,
-          token: client.token ?? '',
-          deviceId,
-          deviceModel
-        }
+        angleName,
+        request: redialRequest
       })
       .then(
         () => {
           setRecordingHere(true)
         },
         (error: unknown) => {
-          setProblem(describeRefusal(error, session.angleName))
+          setProblem(describeRefusal(error, angleName))
         }
       )
       .finally(() => {
@@ -292,25 +372,16 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
       .then(
         () => {
           setRecordingHere(false)
-          if (reported.current) return
-          reported.current = true
-          client
-            .updateLiveStream(session.gameId, session.streamId, {
-              localRecording: 'recorded'
-            })
-            .catch(() => {
-              // Said again at the next stop.
-              reported.current = false
-            })
+          report()
         },
         (error: unknown) => {
-          setProblem(describeRefusal(error, session.angleName))
+          setProblem(describeRefusal(error, angleName))
         }
       )
       .finally(() => {
         setBusy(false)
       })
-  }, [client, phone, session])
+  }, [angleName, phone, report])
 
   const flip = (): void => {
     phone.flip().then(
@@ -320,7 +391,7 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
         readScale()
       },
       (error: unknown) => {
-        setProblem(describeRefusal(error, session.angleName))
+        setProblem(describeRefusal(error, angleName))
       }
     )
   }
@@ -350,9 +421,9 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
           glyph="close"
           testID="camera-close"
           accessibilityLabel={lstrings.stream_close}
-          disabled={recording}
+          disabled={holding}
           onPress={() => {
-            if (!recording) onClose()
+            if (!holding) onClose()
           }}
         />
         <OverlayButton
@@ -360,10 +431,10 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
           testID="settings-button"
           accessibilityLabel={lstrings.stream_settings}
           onPress={() => {
-            onOpenSettings?.()
+            setSettingsOpen(true)
           }}
         />
-        <NameBadge name={session.angleName} />
+        <NameBadge name={angleName} />
       </View>
 
       {problem != null ? (
@@ -438,7 +509,7 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
 
       <RadarReadout radar={radar} bottom={insets.bottom} right={insets.right} />
 
-      {confirmStop && recording ? (
+      {confirmStop && holding ? (
         <Pressable
           testID="slide-to-stop-dismiss"
           style={StyleSheet.absoluteFill}
@@ -448,16 +519,39 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
         />
       ) : null}
       <View pointerEvents="box-none" style={styles.bottom}>
-        {confirmStop && recording ? (
+        {confirmStop && holding ? (
           <SlideToStop onStop={stop} />
         ) : (
-          <RecordButton
-            recording={recording}
-            disabled={busy}
-            onPress={record}
-          />
+          <RecordButton recording={holding} disabled={busy} onPress={record} />
         )}
       </View>
+
+      {settingsOpen ? (
+        <StreamSettingsSheet
+          client={client}
+          gameId={session.gameId}
+          streamId={session.streamId}
+          angleName={angleName}
+          audioEnabled={audioEnabled}
+          phone={phone}
+          radar={radar}
+          rotation={{
+            allow: () => {
+              rotation.allow?.()
+            },
+            lockLandscape: rotation.lockLandscape
+          }}
+          onRenamed={setAngleName}
+          onDone={applied => {
+            setAngleName(applied.angleName)
+            setAudioEnabled(applied.audioEnabled)
+            setSettingsOpen(false)
+          }}
+          onCancel={() => {
+            setSettingsOpen(false)
+          }}
+        />
+      ) : null}
     </View>
   )
 }
