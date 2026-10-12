@@ -174,7 +174,7 @@ class ProgramStreamer(
     private fun applyStreamSettings(settings: StreamSettings) {
         this.settings = settings.copy(frameRate = maxOf(1, settings.frameRate))
         codec = RTMPVideoCodec.of(settings.codec)
-        bitrate = settings.bitrateHigh
+        bitrate = this.settings.openingBitrate
     }
 
     /** The next coded picture must be an IDR. */
@@ -188,11 +188,11 @@ class ProgramStreamer(
     }
 
     /**
-     * Starts the controller at the high bitrate, which is where the session already is. Until the
+     * Starts the controller at the opening bitrate, which is where the session already is. Until the
      * publish is live there is no link to judge, and the controller holds.
      */
     private fun startRateLoop(client: RTMPClient) {
-        val (high, low) = lock.withLock { settings.bitrateHigh to settings.bitrateLow }
+        val (high, low, opening) = lock.withLock { Triple(settings.bitrateHigh, settings.bitrateLow, bitrate) }
         val loop = AdaptiveBitrateLoop(
             ceiling = high,
             floor = low,
@@ -201,7 +201,7 @@ class ProgramStreamer(
             apply = { applyBitrate(it) }
         )
         lock.withLock { rateLoop = loop }
-        loop.configure(high, low, enabled = true)
+        loop.configure(high, low, enabled = true, start = opening)
     }
 
     /** A rate from the controller, onto the live session: the next picture is coded at it. */

@@ -47,6 +47,10 @@ class UploadService(
      * Sends [file], and answers with the video it became. [startedAt] is when the recording began,
      * seconds since 1970. [uploadId] resumes an upload already opened. [liveStreamId] and
      * [wholeStream] say which live stream the recording is the local copy of.
+     *
+     * [onOpened] is told the upload's id as soon as the server has opened it (or as given), before a
+     * byte is sent: a caller that keeps it can resume a killed upload from the parts the server
+     * already has, rather than open a second one.
      */
     suspend fun send(
         file: File,
@@ -57,6 +61,7 @@ class UploadService(
         uploadId: String? = null,
         liveStreamId: String? = null,
         wholeStream: Boolean? = null,
+        onOpened: (String) -> Unit = {},
         onProgress: (Progress) -> Unit = {}
     ): String {
         val size = file.length()
@@ -71,6 +76,7 @@ class UploadService(
             }
         }
 
+        onOpened(opened.uploadId)
         val have = opened.received.toMutableSet()
         onProgress(Progress(have.size, opened.parts, minOf(size, have.size.toLong() * opened.partSize), size))
         RandomAccessFile(file, "r").use { handle ->
