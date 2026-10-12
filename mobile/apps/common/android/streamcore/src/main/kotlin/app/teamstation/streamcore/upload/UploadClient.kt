@@ -108,6 +108,11 @@ class UploadClient(
         return Finished(json.optStringOrNull("videoId"), json.optString("state"), json.optStringOrNull("step"))
     }
 
+    /** Gives the upload up, with the parts the server holds. Nothing is said when that fails. */
+    suspend fun abandonUpload(uploadId: String) {
+        runCatching { request("director/uploads/${escape(uploadId)}", "DELETE", null, null, 20_000) }
+    }
+
     private suspend fun request(path: String, method: String, body: ByteArray?, type: String?, timeoutMillis: Int): JSONObject =
         withContext(Dispatchers.IO) {
             val connection = try {
@@ -132,6 +137,7 @@ class UploadClient(
                     ?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
                 if (status == 401 || status == 403) throw UploadClientError.NotSignedIn
                 if (status !in 200..299) throw UploadClientError.Server(message(text, status))
+                if (status == 204) return@withContext JSONObject()
                 runCatching { JSONObject(text) }.getOrElse { throw UploadClientError.Server("TeamStation sent something unreadable") }
             } catch (error: IOException) {
                 throw UploadClientError.Offline

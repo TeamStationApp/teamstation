@@ -38,15 +38,15 @@ class AdaptiveBitrateLoop(
         private set
 
     /**
-     * A new ceiling or floor, or adaptation switched on or off. Either way the rate goes back to the
-     * ceiling. [floor] is half the ceiling when null.
+     * A new ceiling or floor, or adaptation switched on or off. Either way the rate goes back to
+     * [start], which is the ceiling unless given. [floor] is half the ceiling when null.
      */
-    fun configure(ceiling: Int, floor: Int? = null, enabled: Boolean) {
+    fun configure(ceiling: Int, floor: Int? = null, enabled: Boolean, start: Int? = null) {
         executor.execute {
-            controller.reset(ceiling, floor)
+            controller.reset(ceiling, floor, start)
             this.enabled = enabled
             if (enabled) startTicking() else stopTicking()
-            apply(ceiling)
+            apply(controller.bitrate)
             publish()
         }
     }
