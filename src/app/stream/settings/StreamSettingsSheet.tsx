@@ -16,6 +16,7 @@ import {
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import type { TeamStationClient } from '../../../common/api'
+import { lstrings } from '../../locales/strings'
 import { useInsets } from '../../platform/safeArea'
 import {
   type NativeOrientation,
@@ -27,7 +28,6 @@ import { ALL_ORIENTATIONS, PairDeviceModal } from './PairDeviceModal'
 import { RadarCard } from './RadarCard'
 import { SettingsCard } from './SettingsCard'
 import { cardColumns, settingsColumns } from './settingsLayout'
-import { settingsStrings as words } from './settingsStrings'
 import { SETTINGS } from './settingsTheme'
 
 /** What Done applied, for the streaming screen to keep. */
@@ -200,12 +200,16 @@ function SheetBody(
   }
 
   const audioCard = (
-    <SettingsCard key="audio" title={words.audio} testID="settings-audio-card">
+    <SettingsCard
+      key="audio"
+      title={lstrings.stream_settings_audio}
+      testID="settings-audio-card"
+    >
       <View style={[styles.row, styles.switchRow]}>
-        <Text style={styles.label}>{words.microphone}</Text>
+        <Text style={styles.label}>{lstrings.stream_settings_microphone}</Text>
         <Switch
           testID="settings-audio"
-          accessibilityLabel={words.microphone}
+          accessibilityLabel={lstrings.stream_settings_microphone}
           value={audio}
           onValueChange={setAudio}
         />
@@ -216,11 +220,13 @@ function SheetBody(
   const lensesCard = (
     <SettingsCard
       key="lenses"
-      title={words.lenses}
+      title={lstrings.stream_settings_lenses}
       testID="settings-lenses-card"
     >
       {lenses.length === 0 ? (
-        <Text style={[styles.row, styles.secondary]}>{words.lensesNone}</Text>
+        <Text style={[styles.row, styles.secondary]}>
+          {lstrings.stream_settings_lenses_none}
+        </Text>
       ) : (
         lenses.map((lens, index) => (
           <View key={lens.id}>
@@ -253,11 +259,15 @@ function SheetBody(
   )
 
   const nameCard = (
-    <SettingsCard key="name" title={words.name} testID="settings-name-card">
+    <SettingsCard
+      key="name"
+      title={lstrings.stream_settings_name}
+      testID="settings-name-card"
+    >
       <View style={styles.row}>
         <TextInput
           testID="settings-name"
-          accessibilityLabel={words.nameLabel}
+          accessibilityLabel={lstrings.stream_settings_name_label}
           value={name}
           onChangeText={text => {
             setName(text)
@@ -301,7 +311,9 @@ function SheetBody(
       }
     >
       <View style={[styles.toolbar, { marginTop: insets.top }]}>
-        <Text style={styles.toolbarTitle}>{words.title}</Text>
+        <Text style={styles.toolbarTitle}>
+          {lstrings.stream_settings_title}
+        </Text>
         <Pressable
           testID="settings-done"
           accessibilityRole="button"
@@ -313,7 +325,7 @@ function SheetBody(
             done().catch(() => {})
           }}
         >
-          <Text style={styles.doneText}>{words.done}</Text>
+          <Text style={styles.doneText}>{lstrings.stream_settings_done}</Text>
         </Pressable>
       </View>
       <ScrollView

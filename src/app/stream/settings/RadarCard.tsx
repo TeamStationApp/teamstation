@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native'
 
 import { Icon } from '../../components/Icon'
+import { lstrings } from '../../locales/strings'
 import {
   type PhoneStream,
   PhoneStreamError,
@@ -9,7 +10,6 @@ import {
   type RadarState
 } from '../phoneStreamClient'
 import { SettingsCard } from './SettingsCard'
-import { settingsStrings as words } from './settingsStrings'
 import { SETTINGS, SETTINGS_MONOSPACE } from './settingsTheme'
 
 /** One speed as the row shows it: whole miles an hour, or a dash when there is none. */
@@ -25,11 +25,14 @@ export function radarRowParts(
 ): Array<{ text: string; connected?: boolean }> {
   const parts: Array<{ text: string; connected?: boolean }> = []
   if (device.connection === 'connected')
-    parts.push({ text: ` · ${words.connected}`, connected: true })
+    parts.push({
+      text: ` · ${lstrings.stream_settings_connected}`,
+      connected: true
+    })
   if (device.batteryPercent != null)
     parts.push({ text: ` · ⚡${Math.round(device.batteryPercent)}%` })
   parts.push({
-    text: ` · ${mph(device.pitchMph)} / ${mph(device.exitMph)} ${words.mph}`
+    text: ` · ${mph(device.pitchMph)} / ${mph(device.exitMph)} ${lstrings.stream_settings_mph}`
   })
   return parts
 }
@@ -66,7 +69,7 @@ export function RadarCard(props: RadarCardProps): React.ReactElement {
     } catch (error) {
       setProblem(
         error instanceof PhoneStreamError && error.code === 'permission'
-          ? words.permission
+          ? lstrings.stream_settings_permission
           : error instanceof Error
             ? error.message
             : String(error)
@@ -98,14 +101,19 @@ export function RadarCard(props: RadarCardProps): React.ReactElement {
   }
 
   return (
-    <SettingsCard title={words.radar} testID="settings-radar">
-      <Text style={[styles.row, styles.intro]}>{words.radarIntro}</Text>
+    <SettingsCard
+      title={lstrings.stream_settings_radar}
+      testID="settings-radar"
+    >
+      <Text style={[styles.row, styles.intro]}>
+        {lstrings.stream_settings_radar_intro}
+      </Text>
       <View style={styles.separator} />
       <View style={[styles.row, styles.switchRow]}>
-        <Text style={styles.label}>{words.radarOn}</Text>
+        <Text style={styles.label}>{lstrings.stream_settings_radar_on}</Text>
         <Switch
           testID="settings-radar-enabled"
-          accessibilityLabel={words.radar}
+          accessibilityLabel={lstrings.stream_settings_radar}
           value={shown}
           onValueChange={next => {
             setEnabled(next).catch(() => {})
@@ -113,7 +121,9 @@ export function RadarCard(props: RadarCardProps): React.ReactElement {
         />
       </View>
       {radar?.bluetooth === 'off' && shown ? (
-        <Text style={[styles.row, styles.problem]}>{words.bluetoothOff}</Text>
+        <Text style={[styles.row, styles.problem]}>
+          {lstrings.stream_settings_bluetooth_off}
+        </Text>
       ) : null}
       {problem != null ? (
         <Text
@@ -145,13 +155,15 @@ export function RadarCard(props: RadarCardProps): React.ReactElement {
                 <Pressable
                   testID={`settings-radar-unpair-${device.serial}`}
                   accessibilityRole="button"
-                  accessibilityLabel={`${words.unpair} ${device.serial}`}
+                  accessibilityLabel={`${lstrings.stream_settings_unpair} ${device.serial}`}
                   hitSlop={8}
                   onPress={() => {
                     unpair(device.serial)
                   }}
                 >
-                  <Text style={styles.unpair}>{words.unpair}</Text>
+                  <Text style={styles.unpair}>
+                    {lstrings.stream_settings_unpair}
+                  </Text>
                 </Pressable>
               </View>
             </View>
@@ -164,7 +176,7 @@ export function RadarCard(props: RadarCardProps): React.ReactElement {
         style={[styles.row, styles.pairRow]}
         onPress={pair}
       >
-        <Text style={styles.pair}>{words.pairDevice}</Text>
+        <Text style={styles.pair}>{lstrings.stream_settings_pair_device}</Text>
         <Icon name="chevron_right" size={1.1} color={SETTINGS.blue} />
       </Pressable>
     </SettingsCard>

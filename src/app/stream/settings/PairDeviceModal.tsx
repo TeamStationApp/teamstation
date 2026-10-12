@@ -9,9 +9,8 @@ import {
   View
 } from 'react-native'
 
-import { sprintf } from '../../locales/strings'
+import { lstrings, sprintf } from '../../locales/strings'
 import type { PhoneStream, RadarState } from '../phoneStreamClient'
-import { settingsStrings as words } from './settingsStrings'
 import { SETTINGS, SETTINGS_MONOSPACE } from './settingsTheme'
 
 /** Every orientation: the sheet under it turns with the phone. */
@@ -56,7 +55,7 @@ export function PairDeviceModal(
       paired => {
         setBusy(undefined)
         if (paired) onClose()
-        else setProblem(sprintf(words.pairFailed, serial))
+        else setProblem(sprintf(lstrings.stream_settings_pair_failed, serial))
       },
       (error: unknown) => {
         setBusy(undefined)
@@ -76,12 +75,16 @@ export function PairDeviceModal(
     >
       <View style={styles.scrim}>
         <View style={styles.sheet} testID="pair-device-modal">
-          <Text style={styles.title}>{words.pairTitle}</Text>
+          <Text style={styles.title}>
+            {lstrings.stream_settings_pair_title}
+          </Text>
           <ScrollView style={styles.list}>
             {nearby.length === 0 ? (
               <View style={styles.empty} testID="pair-device-empty">
                 <ActivityIndicator color={SETTINGS.secondaryText} />
-                <Text style={styles.emptyText}>{words.pairNone}</Text>
+                <Text style={styles.emptyText}>
+                  {lstrings.stream_settings_pair_none}
+                </Text>
               </View>
             ) : (
               nearby.map((serial, index) => (
@@ -115,7 +118,9 @@ export function PairDeviceModal(
             style={styles.close}
             onPress={onClose}
           >
-            <Text style={styles.closeText}>{words.close}</Text>
+            <Text style={styles.closeText}>
+              {lstrings.stream_settings_close}
+            </Text>
           </Pressable>
         </View>
       </View>
