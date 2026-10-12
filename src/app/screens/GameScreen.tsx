@@ -32,7 +32,6 @@ import {
   LivePill,
   NAV_CLEARANCE_REM,
   PillTabs,
-  StreamPanel,
   type TeamStatLine,
   useHandoff,
   useHeaderHandoff,
@@ -60,7 +59,7 @@ import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
 import { ScoreGameOptions } from '../scoreboard/ScoreGameScreen'
-import { reportPhoneStreamCapabilities } from '../stream/phoneStream'
+import { StreamFooter } from '../stream/StreamFooter'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { gameStatusLine, shortDate, winnerOf } from './format'
@@ -326,11 +325,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   useEffect(() => {
     setTab(initialTab ?? 'watch')
   }, [initialTab])
-  // Whether this phone can record video, in a development build's log, until
-  // the Videos tab offers Record video from it.
-  useEffect(() => {
-    if (tab === 'watch') reportPhoneStreamCapabilities()
-  }, [tab])
 
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
   const [canManageSchedule, setCanManageSchedule] = useState(false)
@@ -1376,9 +1370,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                   {/*
                     Under the highlights, and only for the people who run the
                     team: everybody else is answered `404` and sees nothing
-                    here at all.
+                    here at all. A browser lists stream URLs; a phone records
+                    with its own camera.
                   */}
-                  <StreamPanel key={gameId} client={client} gameId={gameId} />
+                  <StreamFooter client={client} gameId={gameId} />
                 </>
               }
               layout={layout}
