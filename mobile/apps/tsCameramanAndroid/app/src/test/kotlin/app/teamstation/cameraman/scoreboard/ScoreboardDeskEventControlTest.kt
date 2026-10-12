@@ -1,9 +1,9 @@
 package app.teamstation.cameraman.scoreboard
 
 import android.content.Context
-import app.teamstation.cameraman.core.InMemorySettingsStore
+import app.teamstation.streamcore.core.InMemorySettingsStore
 import app.teamstation.cameraman.core.PreferencesSettingsStore
-import app.teamstation.cameraman.core.SettingsStore
+import app.teamstation.streamcore.core.SettingsStore
 import app.teamstation.cameraman.eventcontrol.ClearSealer
 import app.teamstation.cameraman.eventcontrol.EventControlAckStatus
 import app.teamstation.cameraman.eventcontrol.EventControlBody

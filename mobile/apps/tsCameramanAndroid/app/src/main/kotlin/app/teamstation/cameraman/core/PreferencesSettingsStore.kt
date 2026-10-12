@@ -1,6 +1,7 @@
 package app.teamstation.cameraman.core
 
 import android.content.Context
+import app.teamstation.streamcore.core.SettingsStore
 
 /**
  * Ordinary preferences, in the app's own file.

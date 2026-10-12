@@ -1,5 +1,7 @@
 package app.teamstation.cameraman.core
 
+import app.teamstation.streamcore.core.SettingsStore
+
 /**
  * When the RTSP listener is up, and when the Android service is allowed to outlive the activity.
  *
