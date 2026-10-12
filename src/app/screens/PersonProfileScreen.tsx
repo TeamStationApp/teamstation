@@ -10,6 +10,7 @@ import {
   Card,
   Emblem,
   initialsOf,
+  ListCard,
   ListRow,
   Screen,
   SectionHeader
@@ -135,28 +136,26 @@ export function PersonProfileScreen(
               title={lstrings.profile_guardian_of}
               note={String(guardianOf.length)}
             />
-            <Card>
-              {guardianOf.map((child, index) => (
-                <View key={child.userId}>
-                  {index > 0 && <View style={styles.divider} />}
-                  <ListRow
-                    title={child.shortName}
-                    emblem={initialsOf(child.shortName)}
-                    emblemUri={child.avatarUrl}
-                    emblemShape="circle"
-                    onPress={
-                      onOpenPlayer == null
-                        ? undefined
-                        : () => {
-                            onOpenPlayer(child.userId, child.shortName, {
-                              onTeam: child.teamId
-                            })
-                          }
-                    }
-                  />
-                </View>
+            <ListCard>
+              {guardianOf.map(child => (
+                <ListRow
+                  key={child.userId}
+                  title={child.shortName}
+                  emblem={initialsOf(child.shortName)}
+                  emblemUri={child.avatarUrl}
+                  emblemShape="circle"
+                  onPress={
+                    onOpenPlayer == null
+                      ? undefined
+                      : () => {
+                          onOpenPlayer(child.userId, child.shortName, {
+                            onTeam: child.teamId
+                          })
+                        }
+                  }
+                />
               ))}
-            </Card>
+            </ListCard>
           </View>
         )}
 
@@ -242,7 +241,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.secondaryTextColor
   },
   section: { gap: theme.rem(theme.spaceMdRem) },
-  divider: { height: 1, backgroundColor: theme.defaultBorderColor },
   muted: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875),

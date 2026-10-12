@@ -171,6 +171,9 @@ export interface Theme {
   spaceLgRem: number
   spaceXlRem: number
 
+  /** Content inset from a card edge or either side of a row divider. */
+  cardContentInsetRem: number
+
   /**
    * How wide the content may grow. The designs are all drawn at phone width;
    * on a desktop a line of text that runs the full window is unreadable, so

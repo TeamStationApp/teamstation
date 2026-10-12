@@ -242,8 +242,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     maxWidth: theme.rem(28)
   },
   card: {
-    gap: theme.rem(theme.spaceLgRem),
-    padding: theme.rem(theme.spaceXlRem)
+    gap: theme.rem(theme.spaceLgRem)
   },
   heading: {
     alignItems: 'center',

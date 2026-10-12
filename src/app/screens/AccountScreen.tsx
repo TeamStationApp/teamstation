@@ -11,9 +11,11 @@ import {
 import {
   Button,
   Card,
+  CardContent,
   Emblem,
   Icon,
   initialsOf,
+  ListCard,
   Screen,
   SectionHeader,
   TextField
@@ -495,14 +497,15 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           </View>
           <View style={styles.section}>
             <SectionHeader title="Email addresses" />
-            <Card style={styles.setting}>
-              <Text style={styles.email}>
-                Sign in with any confirmed address. Your primary address appears
-                on your account.
-              </Text>
+            <ListCard>
+              <CardContent>
+                <Text style={styles.email}>
+                  Sign in with any confirmed address. Your primary address
+                  appears on your account.
+                </Text>
+              </CardContent>
               {account.emails.map(address => (
-                <View key={address.id} style={styles.setting}>
-                  <View style={styles.divider} />
+                <CardContent key={address.id} style={styles.setting}>
                   <Text style={styles.settingLabel}>
                     {address.email}
                     {address.isPrimary ? ' · Primary' : ''}
@@ -542,94 +545,96 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                       />
                     )}
                   </View>
-                </View>
+                </CardContent>
               ))}
-              {emailEdit == null ? (
-                <Button
-                  label="Add email address"
-                  kind="secondary"
-                  disabled={busy !== ''}
-                  onPress={() => {
-                    setEmailEdit({})
-                    setNotice(undefined)
-                  }}
-                />
-              ) : pending == null ? (
-                <>
-                  {emailEdit.previous != null && (
-                    <Text style={styles.email}>
-                      Replacing {emailEdit.previous}. It stays active until you
-                      confirm the new address.
-                    </Text>
-                  )}
-                  <TextField
-                    label="New email address"
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoComplete="email"
-                  />
+              <CardContent style={styles.setting}>
+                {emailEdit == null ? (
                   <Button
-                    label="Send confirmation code"
-                    disabled={busy !== '' || email.trim() === ''}
-                    onPress={sendCode}
+                    label="Add email address"
+                    kind="secondary"
+                    disabled={busy !== ''}
+                    onPress={() => {
+                      setEmailEdit({})
+                      setNotice(undefined)
+                    }}
                   />
-                </>
-              ) : (
-                <>
-                  <Text style={styles.email}>
-                    Enter the code sent to {pending.email}. The address is not
-                    active yet.
-                  </Text>
-                  <TextField
-                    label="Confirmation code"
-                    value={code}
-                    onChangeText={setCode}
-                    keyboardType="number-pad"
-                    autoComplete="one-time-code"
-                  />
-                  <View style={styles.actions}>
-                    <Button
-                      label="Confirm email"
-                      disabled={busy !== '' || code.trim() === ''}
-                      onPress={() => {
-                        run('email', async () => {
-                          accept(
-                            await client.confirmAccountEmail(
-                              pending.requestId,
-                              code
-                            )
-                          )
-                          closeEmail()
-                          setNotice({
-                            section: 'email',
-                            message: 'Email address confirmed'
-                          })
-                        })
-                      }}
+                ) : pending == null ? (
+                  <>
+                    {emailEdit.previous != null && (
+                      <Text style={styles.email}>
+                        Replacing {emailEdit.previous}. It stays active until
+                        you confirm the new address.
+                      </Text>
+                    )}
+                    <TextField
+                      label="New email address"
+                      value={email}
+                      onChangeText={setEmail}
+                      keyboardType="email-address"
+                      autoComplete="email"
                     />
                     <Button
-                      label="Resend code"
-                      kind="text"
-                      disabled={busy !== ''}
+                      label="Send confirmation code"
+                      disabled={busy !== '' || email.trim() === ''}
                       onPress={sendCode}
                     />
-                  </View>
-                </>
-              )}
-              {emailEdit != null && (
-                <Button
-                  label="Cancel email change"
-                  kind="text"
-                  disabled={busy !== ''}
-                  onPress={() => {
-                    closeEmail()
-                    setNotice(undefined)
-                  }}
-                />
-              )}
-              {feedback('email')}
-            </Card>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.email}>
+                      Enter the code sent to {pending.email}. The address is not
+                      active yet.
+                    </Text>
+                    <TextField
+                      label="Confirmation code"
+                      value={code}
+                      onChangeText={setCode}
+                      keyboardType="number-pad"
+                      autoComplete="one-time-code"
+                    />
+                    <View style={styles.actions}>
+                      <Button
+                        label="Confirm email"
+                        disabled={busy !== '' || code.trim() === ''}
+                        onPress={() => {
+                          run('email', async () => {
+                            accept(
+                              await client.confirmAccountEmail(
+                                pending.requestId,
+                                code
+                              )
+                            )
+                            closeEmail()
+                            setNotice({
+                              section: 'email',
+                              message: 'Email address confirmed'
+                            })
+                          })
+                        }}
+                      />
+                      <Button
+                        label="Resend code"
+                        kind="text"
+                        disabled={busy !== ''}
+                        onPress={sendCode}
+                      />
+                    </View>
+                  </>
+                )}
+                {emailEdit != null && (
+                  <Button
+                    label="Cancel email change"
+                    kind="text"
+                    disabled={busy !== ''}
+                    onPress={() => {
+                      closeEmail()
+                      setNotice(undefined)
+                    }}
+                  />
+                )}
+                {feedback('email')}
+              </CardContent>
+            </ListCard>
           </View>
         </>
       )}
@@ -641,7 +646,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       {Platform.OS === 'ios' && (
         <View style={styles.section}>
           <SectionHeader title={lstrings.account_walkup} />
-          <Card style={styles.setting}>
+          <ListCard>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={lstrings.account_walkup_apple_music}
@@ -649,7 +654,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                 setAppleMusicSetupUsed(true)
                 setAppleMusicSetup(true)
               }}
-              style={styles.settingRow}
+              style={[styles.settingRow, styles.paddedRow]}
             >
               <Text style={styles.settingLabel}>
                 {lstrings.account_walkup_apple_music}
@@ -660,23 +665,24 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                 color={theme.secondaryTextColor}
               />
             </Pressable>
-            <View style={styles.divider} />
-            <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>
-                {lstrings.account_walkup_fade}
+            <CardContent style={styles.setting}>
+              <View style={styles.settingRow}>
+                <Text style={styles.settingLabel}>
+                  {lstrings.account_walkup_fade}
+                </Text>
+                <Switch
+                  accessibilityLabel={lstrings.account_walkup_fade}
+                  value={walkUp.fadeAppleMusic}
+                  onValueChange={fadeAppleMusic => {
+                    setWalkUp({ ...walkUp, fadeAppleMusic })
+                  }}
+                />
+              </View>
+              <Text style={styles.email}>
+                {lstrings.account_walkup_fade_detail}
               </Text>
-              <Switch
-                accessibilityLabel={lstrings.account_walkup_fade}
-                value={walkUp.fadeAppleMusic}
-                onValueChange={fadeAppleMusic => {
-                  setWalkUp({ ...walkUp, fadeAppleMusic })
-                }}
-              />
-            </View>
-            <Text style={styles.email}>
-              {lstrings.account_walkup_fade_detail}
-            </Text>
-          </Card>
+            </CardContent>
+          </ListCard>
           {appleMusicSetupUsed && (
             <AppleMusicSetup
               visible={appleMusicSetup}
@@ -762,9 +768,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontWeight: '600',
     color: theme.primaryTextColor
   },
-  divider: {
-    height: 1,
-    backgroundColor: theme.defaultBorderColor
+  paddedRow: {
+    padding: theme.rem(theme.cardContentInsetRem)
   },
   footnote: {
     fontFamily: theme.regularTextFont,

@@ -529,5 +529,5 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.secondaryTextColor
   },
   error: { fontSize: theme.rem(0.875), color: theme.dangerColor },
-  card: { padding: theme.rem(1.25), gap: theme.rem(0.75) }
+  card: { gap: theme.rem(0.75) }
 }))

@@ -1,5 +1,10 @@
 import React from 'react'
-import { type StyleProp, View, type ViewStyle } from 'react-native'
+import {
+  type StyleProp,
+  View,
+  type ViewProps,
+  type ViewStyle
+} from 'react-native'
 
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -49,6 +54,21 @@ export function Card(props: CardProps): React.ReactElement {
   )
 }
 
+/** One padded section of a flush card. Its parent must not add another inset. */
+export function CardContent({
+  style,
+  ...props
+}: ViewProps): React.ReactElement {
+  const styles = getStyles(useTheme())
+  return <View {...props} style={[styles.padded, style]} />
+}
+
+/** A list divider has no vertical margin; each adjacent row owns its inset. */
+export function CardDivider(): React.ReactElement {
+  const styles = getStyles(useTheme())
+  return <View style={styles.divider} />
+}
+
 const getStyles = cacheStyles((theme: Theme) => ({
   card: {
     backgroundColor: theme.cardBackgroundColor,
@@ -63,7 +83,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
     elevation: elevationFor(theme.rem(0.375))
   },
   padded: {
-    padding: theme.rem(theme.spaceMdRem)
+    padding: theme.rem(theme.cardContentInsetRem)
+  },
+  divider: {
+    height: 1,
+    marginHorizontal: theme.rem(theme.cardContentInsetRem),
+    backgroundColor: theme.defaultBorderColor
   },
   accent: {
     borderLeftWidth: theme.rem(0.25),

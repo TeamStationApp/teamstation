@@ -275,8 +275,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   result: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
-    gap: theme.rem(1),
-    padding: theme.rem(1)
+    gap: theme.rem(1)
   },
   open: {
     flex: 1,

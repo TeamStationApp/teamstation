@@ -170,7 +170,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(theme.spaceMdRem),
-    padding: theme.rem(theme.spaceMdRem),
+    padding: theme.rem(theme.cardContentInsetRem),
     borderRadius: theme.rem(theme.radiusRem),
     borderWidth: 1,
     borderColor: theme.defaultBorderColor,

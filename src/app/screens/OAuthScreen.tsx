@@ -270,7 +270,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     width: '100%',
     maxWidth: theme.rem(30),
     gap: theme.rem(1),
-    padding: theme.rem(1.5),
+    padding: theme.rem(theme.cardContentInsetRem),
     backgroundColor: theme.cardBackgroundColor,
     borderRadius: theme.rem(theme.radiusRem)
   },

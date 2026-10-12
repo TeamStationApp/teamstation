@@ -6,7 +6,7 @@ import { impliedRoles, type Role, ROLES } from '../../common/roles'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
-import { Card } from './Card'
+import { ListCard } from './ListCard'
 import { flagLabel } from './RolesModal'
 
 /** What a row of a person's roles can be given or lose. */
@@ -64,8 +64,8 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
   const holdsAdmin = section.roles.includes('admin')
   const implied = impliedRoles(section.roles)
   return (
-    <Card style={styles.card}>
-      {ROWS.map((row, index) => {
+    <ListCard>
+      {ROWS.map(row => {
         const held =
           row === 'follower'
             ? section.follower
@@ -92,7 +92,7 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
           <View
             key={row}
             testID={`role-${section.level}-${row}`}
-            style={[styles.row, index > 0 && styles.divided]}
+            style={styles.row}
           >
             <Text style={styles.label}>{label}</Text>
             {changeable && row !== 'follower' ? (
@@ -132,7 +132,7 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
           </View>
         )
       })}
-    </Card>
+    </ListCard>
   )
 }
 
@@ -144,18 +144,12 @@ function labelOf(row: RoleRowKind | 'follower'): string {
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
-  card: { paddingVertical: theme.rem(theme.spaceXsRem) },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: theme.rem(theme.spaceSmRem),
-    minHeight: theme.rem(3),
-    paddingVertical: theme.rem(theme.spaceXsRem)
-  },
-  divided: {
-    borderTopWidth: 1,
-    borderTopColor: theme.defaultBorderColor
+    padding: theme.rem(theme.cardContentInsetRem)
   },
   label: {
     flex: 1,

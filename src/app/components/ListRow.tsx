@@ -112,8 +112,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(theme.spaceMdRem),
-    minHeight: theme.rem(3.5),
-    paddingVertical: theme.rem(theme.spaceSmRem)
+    padding: theme.rem(theme.cardContentInsetRem)
   },
   pressed: {
     backgroundColor: theme.highlightRowActiveBackground
