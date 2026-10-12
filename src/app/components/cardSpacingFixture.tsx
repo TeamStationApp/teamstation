@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react'
-import { Platform, Pressable, ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import {
   asTeamSummary,
@@ -12,7 +12,6 @@ import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
 import { Button } from './Button'
 import { Card, CardContent } from './Card'
-import { CardSpacingEvidence } from './cardSpacingEvidence.fixture'
 import { ChildCard } from './ChildCard'
 import { CreationCard } from './CreationCard'
 import { GameHeroCard } from './GameHeroCard'
@@ -164,45 +163,37 @@ export function CardSpacingFixture(): React.ReactElement {
           backgroundColor: theme.backgroundColor
         }}
       >
-        {/* Leave room for the entire proof card on small Android viewports. */}
-        {!(page === 'Evidence' && Platform.OS === 'android') && (
-          <>
-            <View
+        <View
+          style={{
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            gap: 4,
+            paddingHorizontal: 8
+          }}
+        >
+          {['Home', 'Geometry', 'Cards', 'Dark', 'Large'].map(label => (
+            <Pressable
+              key={label}
+              accessibilityRole="button"
+              accessibilityLabel={label}
+              onPress={() => {
+                setResults({})
+                if (label === 'Dark') setDark(value => !value)
+                else if (label === 'Large') setLarge(value => !value)
+                else setPage(label)
+              }}
               style={{
-                flexDirection: 'row',
-                flexWrap: 'wrap',
-                gap: 4,
-                paddingHorizontal: 8
+                padding: 8,
+                backgroundColor: theme.containerBackgroundColor
               }}
             >
-              {['Home', 'Geometry', 'Cards', 'Dark', 'Large', 'Evidence'].map(
-                label => (
-                  <Pressable
-                    key={label}
-                    accessibilityRole="button"
-                    accessibilityLabel={label}
-                    onPress={() => {
-                      setResults({})
-                      if (label === 'Dark') setDark(value => !value)
-                      else if (label === 'Large') setLarge(value => !value)
-                      else setPage(label)
-                    }}
-                    style={{
-                      padding: 8,
-                      backgroundColor: theme.containerBackgroundColor
-                    }}
-                  >
-                    <Text style={{ ...textStyle, fontSize: 14 }}>{label}</Text>
-                  </Pressable>
-                )
-              )}
-            </View>
-            <Text accessibilityLiveRegion="polite" style={textStyle}>
-              {dark ? 'Dark' : 'Light'} / {large ? 'Large' : 'Normal'} /{' '}
-              {pressed}
-            </Text>
-          </>
-        )}
+              <Text style={{ ...textStyle, fontSize: 14 }}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text accessibilityLiveRegion="polite" style={textStyle}>
+          {dark ? 'Dark' : 'Light'} / {large ? 'Large' : 'Normal'} / {pressed}
+        </Text>
         {page === 'Home' ? (
           <HomeScreen
             client={homeClient}
@@ -219,8 +210,6 @@ export function CardSpacingFixture(): React.ReactElement {
               go('Game')
             }}
           />
-        ) : page === 'Evidence' ? (
-          <CardSpacingEvidence />
         ) : (
           <ScrollView
             key={`${page}-${dark}-${large}`}
