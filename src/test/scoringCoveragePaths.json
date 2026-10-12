@@ -126,5 +126,7 @@
   "src/app/player/controlGeometry.ts",
   "src/app/player/slowMotion.ts",
   "src/app/player/multiCam/useMultiCam.ts",
-  "src/app/player/multiCam/barParts.tsx"
+  "src/app/player/multiCam/barParts.tsx",
+  "src/app/stream/**/*.ts",
+  "src/app/player/multiCam/orientationLock.ts"
 ]

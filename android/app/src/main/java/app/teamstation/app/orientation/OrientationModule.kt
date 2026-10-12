@@ -30,6 +30,15 @@ class OrientationModule(context: ReactApplicationContext) :
     request(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
   }
 
+  /**
+   * The streaming screen records sideways: either landscape, turned by the
+   * sensor, whatever way the phone was held when it opened.
+   */
+  @ReactMethod
+  fun lockLandscape() {
+    request(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE)
+  }
+
   private fun request(orientation: Int) {
     UiThreadUtil.runOnUiThread {
       reactApplicationContext.currentActivity?.requestedOrientation = orientation
