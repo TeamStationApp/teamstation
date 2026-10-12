@@ -1,7 +1,7 @@
 package app.teamstation.cameraman.harness
 
-import app.teamstation.cameraman.radar.RadarControl
-import app.teamstation.cameraman.radar.RadarPhase
+import app.teamstation.streamcore.radar.RadarControl
+import app.teamstation.streamcore.radar.RadarPhase
 import java.net.URI
 import java.net.URLDecoder
 
@@ -152,11 +152,11 @@ object ControlChannel {
             )
 
             "radar-show", "radar-feed", "radar-unpair" -> when (val parsed = RadarControl.parse(action, query)) {
-                is app.teamstation.cameraman.radar.RadarCommand.Show ->
+                is app.teamstation.streamcore.radar.RadarCommand.Show ->
                     ControlCommand.RadarShow(parsed.serial, parsed.phase, parsed.step)
-                is app.teamstation.cameraman.radar.RadarCommand.Feed ->
+                is app.teamstation.streamcore.radar.RadarCommand.Feed ->
                     ControlCommand.RadarFeed(parsed.pitch, parsed.exit, parsed.now)
-                app.teamstation.cameraman.radar.RadarCommand.Unpair -> ControlCommand.RadarUnpair
+                app.teamstation.streamcore.radar.RadarCommand.Unpair -> ControlCommand.RadarUnpair
                 null -> null
             }
 
