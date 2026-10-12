@@ -33,6 +33,10 @@ struct MediaSettingsTests {
     #expect(settings.gopSeconds == config.gopSeconds)
     #expect(settings.encoding == config.programEncoding)
     #expect(ProgrammeSettings(config.programEncoding) == settings)
+    // The sound Director's master has always been written with.
+    #expect(settings.audioBitrate == 192_000)
+    let encoder = ProgramEncoder(telemetry: PipelineTelemetry(), converter: PixelConverter(), config: config)
+    #expect(encoder.audioBitrate == 192_000)
   }
 
   @Test("The stream's settings are the stream group's")
@@ -44,6 +48,10 @@ struct MediaSettingsTests {
     #expect(settings.bitrateLow == config.streamBitrateLow)
     #expect(settings.bitrateHigh == config.streamBitrateHigh)
     #expect(settings.gopSeconds == config.gopSeconds)
+    // The sound Director's stream has always carried, and the streamer opens its encoder at it.
+    #expect(settings.audioBitrate == 128_000)
+    let streamer = ProgramStreamer(telemetry: PipelineTelemetry(), converter: PixelConverter())
+    #expect(streamer.configurationForTesting(settings).audioBitrate == 128_000)
   }
 
   @Test("A take's settings are its programme encoding, its kept encoding and the resume limit")

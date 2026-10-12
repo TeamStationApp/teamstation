@@ -131,6 +131,8 @@ import Testing
     #expect(streams.mine.first?.state == "publishing")
     #expect(streams.mine.first?.lastError == "This event is already being streamed")
     #expect(streams.mine.first?.deviceId == "00000000-0000-4000-8000-000000000001")
+    #expect(streams.mine.first?.opensAt == Date(timeIntervalSince1970: 1_789_676_100))
+    #expect(streams.mine.first?.closesAt == nil)
     #expect(streams.others.first?.deviceModel == "iPhone 13 Pro")
     #expect(streams.others.first?.deviceId == nil)
   }
