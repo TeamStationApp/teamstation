@@ -2,6 +2,7 @@ import AVFoundation
 import CameramanCapture
 import Foundation
 import PhoneStream
+import react_native_video
 import UIKit
 
 /// What every call hands back to `RCTPhoneStream`: a value to resolve with, or an error code (the
@@ -70,7 +71,17 @@ final class TSPhoneStreamBridge: NSObject {
         return
       }
       Self.run(reply) { engine in
-        try engine.open(angleName: angleName, audioEnabled: audioEnabled, disabledLenses: Set(disabledLenses))
+        // The capture owns the audio session while the engine is open. The video player sets it
+        // back to playback whenever its category changes, and the capture session sets it to play
+        // and record each time it rebuilds its graph, as a rotation does: the microphone then fails
+        // the rebuild with a runtime error that stops the camera.
+        PublicAudioSessionManager.setIsAudioSessionManagementDisabled(true)
+        do {
+          try engine.open(angleName: angleName, audioEnabled: audioEnabled, disabledLenses: Set(disabledLenses))
+        } catch {
+          if !engine.isOpen { PublicAudioSessionManager.setIsAudioSessionManagementDisabled(false) }
+          throw error
+        }
         // The streaming screen is up while the engine is open: the phone stays awake for it.
         UIApplication.shared.isIdleTimerDisabled = true
         NotificationCenter.default.post(name: Self.previewSessionChanged, object: nil)
@@ -82,6 +93,7 @@ final class TSPhoneStreamBridge: NSObject {
   @objc func close(_ reply: @escaping PhoneStreamReply) {
     Self.runAsync(reply) { engine in
       await engine.close()
+      PublicAudioSessionManager.setIsAudioSessionManagementDisabled(false)
       UIApplication.shared.isIdleTimerDisabled = false
       NotificationCenter.default.post(name: Self.previewSessionChanged, object: nil)
       return nil
