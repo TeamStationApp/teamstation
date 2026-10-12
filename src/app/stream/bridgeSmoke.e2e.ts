@@ -18,8 +18,7 @@
 // placeholder Apple Music song through the API, so the walk-up screen has a
 // clip to play and a jog wheel to turn.
 //
-//   1. The game's Videos tab: Record video, or until it exists, the
-//      development build's `phoneStream capabilities supported=true` line.
+//   1. The game's Videos tab offers Record video.
 //   2. The walk-up module reports on the song, and its preview is asked to
 //      play; dictation's microphone is asked to start. Each must be answered
 //      by its native module: playing or a refusal in the module's own words.
@@ -286,23 +285,14 @@ async function main(): Promise<void> {
         await tap('signInLinkSignIn')
     }
 
-    // 1. Record video, or the module's capabilities in the development log.
-    const beforeGame = log.since()
+    // 1. Record video, which the Videos tab offers once the module says
+    // this phone can record.
     await openGame()
-    if ((await find('Record video', 3000)) != null) {
-      results.push('1 Videos tab offers Record video')
-    } else {
-      const line = await logLine(
-        log,
-        /phoneStream capabilities supported=(true|false) deviceModel=/,
-        beforeGame
-      )
-      assert(line != null, 'the Videos tab reported the capabilities')
-      assert(line.includes('supported=true'), `this device can record: ${line}`)
-      results.push(
-        `1 Videos tab: ${line.slice(line.indexOf('phoneStream capabilities'))}`
-      )
-    }
+    assert(
+      (await find('Record video', 10000)) != null,
+      'the Videos tab offers Record video'
+    )
+    results.push('1 Videos tab offers Record video')
     await shot('bridge-smoke-videos')
 
     // 2a. The walk-up module: a song to report on, then its preview.

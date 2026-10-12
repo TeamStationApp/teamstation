@@ -6,7 +6,6 @@ import { createRoot } from 'react-dom/client'
 import {
   phoneStream,
   PhoneStreamPreview,
-  reportPhoneStreamCapabilities,
   usePhoneStreamStatus,
   useRadarState,
   useRecordings
@@ -24,7 +23,6 @@ describe('phone streaming in a browser', function () {
     } catch (error) {
       expect(error).to.include({ code: 'unsupported' })
     }
-    reportPhoneStreamCapabilities()
   })
 
   it('draws no preview, and its hooks hold nothing', function () {
