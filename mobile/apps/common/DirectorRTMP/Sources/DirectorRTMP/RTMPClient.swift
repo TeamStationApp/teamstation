@@ -375,6 +375,17 @@ public final class RTMPClient: @unchecked Sendable {
     ])
   }
 
+  /// The `publish` command for a stream key, as a live stream.
+  static func publishPayload(stream: String) -> Data {
+    AMF0.encode([
+      .string("publish"),
+      .number(3),
+      .null,
+      .string(stream),
+      .string("live")
+    ])
+  }
+
   /// The `connect` command. An Enhanced RTMP codec is also named in `fourCcList`, which is how the
   /// spec has a client say what it will send; classic H.264 leaves the object exactly as it was, so
   /// no server that took Director's stream before sees anything new.
@@ -734,13 +745,7 @@ public final class RTMPClient: @unchecked Sendable {
     self.streamID = streamID
     phase = .publishing
     lock.unlock()
-    let payload = AMF0.encode([
-      .string("publish"),
-      .number(3),
-      .null,
-      .string(url.stream),
-      .string("live")
-    ])
+    let payload = Self.publishPayload(stream: url.stream)
     write(
       RTMPChunk.encode(
         RTMPMessage(streamID: streamID, type: .amf0Command, timestamp: 0, payload: payload),
@@ -829,31 +834,68 @@ public final class RTMPClient: @unchecked Sendable {
 
   private func shedOldestLocked() {
     let now = Self.monotonicNow()
-    func overBudget() -> Bool {
-      queuedBytes > sendBudgetBytes || ledger.queueDelay(at: now) > bufferSeconds
-    }
-    guard overBudget() else { return }
-    var shed = false
-    while overBudget(), sendQueue.contains(where: { !$0.isSequenceHeader }) {
-      guard let index = sendQueue.firstIndex(where: { !$0.isSequenceHeader }) else { break }
+    let dropped = Self.shedIndices(
+      sendQueue.map {
+        ShedItem(
+          bytes: $0.data.count,
+          isVideo: $0.isVideo,
+          isKeyframe: $0.isKeyframe,
+          isSequenceHeader: $0.isSequenceHeader
+        )
+      },
+      queuedBytes: queuedBytes,
+      budget: sendBudgetBytes,
+      delayExceeded: ledger.queueDelay(at: now) > bufferSeconds
+    )
+    guard !dropped.isEmpty else { return }
+    for index in dropped {
       queuedBytes = max(0, queuedBytes - sendQueue[index].data.count)
-      sendQueue.remove(at: index)
-      droppedPackets += 1
-      shed = true
     }
-    // Leave the queue starting on a picture the ingest can decode.
-    if shed {
-      while let first = sendQueue.firstIndex(where: { $0.isVideo && !$0.isSequenceHeader }),
-            !sendQueue[first].isKeyframe {
-        queuedBytes = max(0, queuedBytes - sendQueue[first].data.count)
-        sendQueue.remove(at: first)
-        droppedPackets += 1
-      }
-      ledger.resetWaiting(
-        bytes: sendQueue.map { $0.data.count },
-        since: sendQueue.map { $0.submittedAt }
-      )
+    let gone = Set(dropped)
+    sendQueue = sendQueue.enumerated().filter { !gone.contains($0.offset) }.map(\.element)
+    droppedPackets += UInt64(dropped.count)
+    ledger.resetWaiting(
+      bytes: sendQueue.map { $0.data.count },
+      since: sendQueue.map { $0.submittedAt }
+    )
+  }
+
+  /// One waiting message, as the shed policy sees it.
+  struct ShedItem: Equatable, Sendable {
+    let bytes: Int
+    let isVideo: Bool
+    let isKeyframe: Bool
+    let isSequenceHeader: Bool
+  }
+
+  /// Which waiting messages to throw away, oldest first, by their place in `queue`.
+  ///
+  /// While the queue holds more than `budget` bytes, or its oldest has waited longer than the send
+  /// buffer (`delayExceeded`, which throwing messages away does not change until the ledger is reset
+  /// afterwards), the oldest message that is not a sequence header goes. Then, if anything went, the
+  /// pictures at the front that are not keyframes go too, so the queue starts on one the ingest can
+  /// decode.
+  static func shedIndices(
+    _ queue: [ShedItem],
+    queuedBytes: Int,
+    budget: Int,
+    delayExceeded: Bool
+  ) -> [Int] {
+    var bytes = queuedBytes
+    var remaining = Array(queue.indices)
+    var dropped: [Int] = []
+    func overBudget() -> Bool { bytes > budget || delayExceeded }
+    guard overBudget() else { return [] }
+    while overBudget(), let position = remaining.firstIndex(where: { !queue[$0].isSequenceHeader }) {
+      bytes = max(0, bytes - queue[remaining[position]].bytes)
+      dropped.append(remaining.remove(at: position))
     }
+    guard !dropped.isEmpty else { return [] }
+    while let position = remaining.firstIndex(where: { queue[$0].isVideo && !queue[$0].isSequenceHeader }),
+          !queue[remaining[position]].isKeyframe {
+      dropped.append(remaining.remove(at: position))
+    }
+    return dropped
   }
 
   /// Control writes — handshake, acknowledgements, the publish itself — are never shed.
