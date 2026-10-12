@@ -1,7 +1,7 @@
 package app.teamstation.cameraman
 
 import app.teamstation.cameraman.core.CameraParameters
-import app.teamstation.cameraman.core.StreamSettings
+import app.teamstation.streamcore.core.StreamSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

@@ -29,7 +29,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.teamstation.cameraman.core.ThermalBadgeLevel
+import app.teamstation.streamcore.core.ThermalBadgeLevel
 import app.teamstation.cameraman.ui.theme.CameramanTokens
 import kotlin.math.cos
 
