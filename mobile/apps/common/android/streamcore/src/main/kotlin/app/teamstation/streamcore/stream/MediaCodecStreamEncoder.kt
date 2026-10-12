@@ -39,6 +39,9 @@ class MediaCodecStreamEncoder(
     /** Input buffers a buffer-input session has offered, for tests to fill. */
     private val freeInputs = java.util.concurrent.LinkedBlockingQueue<Int>()
 
+    /** Counted down when the session's end of stream comes out, after [finishInput]. */
+    private var ended: java.util.concurrent.CountDownLatch? = null
+
     override fun open(config: StreamEncoderConfig, output: StreamVideoEncoding.Output): Surface? {
         close()
         val handlerThread = HandlerThread("stream-encode").apply { start() }
@@ -65,6 +68,16 @@ class MediaCodecStreamEncoder(
     override fun setBitrate(bitrate: Int) {
         val running = lock.withLock { codec } ?: return
         runCatching { running.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bitrate) }) }
+    }
+
+    override fun finishInput(timeoutMillis: Long) {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val running = lock.withLock {
+            ended = latch
+            codec
+        } ?: return
+        if (runCatching { running.signalEndOfInputStream() }.isFailure) return
+        latch.await(timeoutMillis, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
     override fun close() {
@@ -112,6 +125,7 @@ class MediaCodecStreamEncoder(
                 }
             } finally {
                 runCatching { codec.releaseOutputBuffer(index, false) }
+                if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) lock.withLock { ended }?.countDown()
             }
         }
 
@@ -155,7 +169,11 @@ class MediaCodecStreamEncoder(
         /** How long without a new picture before the encoder codes the last one again. */
         const val repeatPreviousFrameMicros = 100_000L
 
-        /** The session's format: CBR at [StreamEncoderConfig.bitrate], the GOP, no B-frames, real time. */
+        /**
+         * The session's format: CBR at [StreamEncoderConfig.bitrate], the GOP, no B-frames, real time.
+         * A live session also repeats its last picture and holds to its frame rate; a recording's
+         * does neither.
+         */
         fun format(config: StreamEncoderConfig, surfaceInput: Boolean = true): MediaFormat =
             MediaFormat.createVideoFormat(config.codec.mimeType, config.width, config.height).apply {
                 setInteger(
@@ -170,8 +188,10 @@ class MediaCodecStreamEncoder(
                 setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
                 setInteger(MediaFormat.KEY_FRAME_RATE, config.frameRate)
                 setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, config.gopSeconds.toFloat())
-                setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER, config.frameRate.toFloat())
-                setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, repeatPreviousFrameMicros)
+                if (config.live) {
+                    setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER, config.frameRate.toFloat())
+                    setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, repeatPreviousFrameMicros)
+                }
                 setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
                 setInteger(MediaFormat.KEY_LATENCY, 1)
                 setInteger(MediaFormat.KEY_PRIORITY, 0)
