@@ -138,7 +138,7 @@ function rowOf(level: string, role: string): HTMLElement {
   return node!
 }
 function buttonIn(node: HTMLElement): HTMLElement | null {
-  return node.querySelector<HTMLElement>('[role="button"]')
+  return node.querySelector<HTMLElement>('[role="switch"]')
 }
 async function click(node: HTMLElement): Promise<void> {
   await act(async () => {
@@ -171,7 +171,7 @@ describe('the person profile', function () {
     ])
   })
 
-  it('gives an administrator Add and Remove on every team row, Admin included, and none above', async function () {
+  it('gives an administrator a toggle on every team row, Admin included, and none above', async function () {
     const calls = await render([profile()])
     expect(text().indexOf('TEAM ROLES')).lessThan(
       text().indexOf('SEASON ROLES')
@@ -194,8 +194,12 @@ describe('the person profile', function () {
       'member'
     ])
       expect(buttonIn(rowOf('team', role)), role).not.equals(null)
-    expect(buttonIn(rowOf('team', 'coach'))?.textContent).equals('Remove')
-    expect(buttonIn(rowOf('team', 'admin'))?.textContent).equals('Add')
+    expect(
+      buttonIn(rowOf('team', 'coach'))?.getAttribute('aria-checked')
+    ).equals('true')
+    expect(
+      buttonIn(rowOf('team', 'admin'))?.getAttribute('aria-checked')
+    ).equals('false')
     expect(buttonIn(rowOf('team', 'follower'))).equals(null)
     expect(rowOf('team', 'follower').textContent).includes('Not following')
     for (const level of ['season', 'league'])
@@ -264,8 +268,12 @@ describe('the person profile', function () {
     ])
     expect(buttonIn(rowOf('team', 'songkeeper'))).equals(null)
     expect(rowOf('team', 'songkeeper').textContent).includes('With Scorekeeper')
-    expect(buttonIn(rowOf('team', 'scorekeeper'))?.textContent).equals('Remove')
-    expect(buttonIn(rowOf('team', 'coach'))?.textContent).equals('Add')
+    expect(
+      buttonIn(rowOf('team', 'scorekeeper'))?.getAttribute('aria-checked')
+    ).equals('true')
+    expect(
+      buttonIn(rowOf('team', 'coach'))?.getAttribute('aria-checked')
+    ).equals('false')
     // A level above reads the same way: Admin there brings the rest there.
     expect(rowOf('season', 'coach').textContent).includes('With Admin')
     expect(rowOf('season', 'admin').textContent).includes('Yes')
@@ -275,7 +283,9 @@ describe('the person profile', function () {
       ['remove', 'team', 'grp_one', 203, 'scorekeeper']
     ])
     expect(rowOf('team', 'songkeeper').textContent).not.includes('With')
-    expect(buttonIn(rowOf('team', 'songkeeper'))?.textContent).equals('Add')
+    expect(
+      buttonIn(rowOf('team', 'songkeeper'))?.getAttribute('aria-checked')
+    ).equals('false')
   })
 
   it('keeps a Songkeeper given as well as Scorekeeper once Scorekeeper goes', async function () {
@@ -290,7 +300,9 @@ describe('the person profile', function () {
         ]
       })
     ])
-    expect(buttonIn(rowOf('team', 'songkeeper'))?.textContent).equals('Remove')
+    expect(
+      buttonIn(rowOf('team', 'songkeeper'))?.getAttribute('aria-checked')
+    ).equals('true')
   })
 
   it('offers no role to somebody who cannot sign in, only their membership', async function () {
@@ -311,8 +323,12 @@ describe('the person profile', function () {
     expect(buttonIn(rowOf('team', 'admin'))).equals(null)
     expect(buttonIn(rowOf('team', 'songkeeper'))).equals(null)
     // A role they hold can still be taken away.
-    expect(buttonIn(rowOf('team', 'coach'))?.textContent).equals('Remove')
-    expect(buttonIn(rowOf('team', 'member'))?.textContent).equals('Remove')
+    expect(
+      buttonIn(rowOf('team', 'coach'))?.getAttribute('aria-checked')
+    ).equals('true')
+    expect(
+      buttonIn(rowOf('team', 'member'))?.getAttribute('aria-checked')
+    ).equals('true')
   })
 
   it('edits only a season’s own roles from the season, and the league’s are for reading', async function () {
@@ -354,7 +370,7 @@ describe('the person profile', function () {
     )
     expect(text()).includes('League · Demo League')
     expect(
-      document.querySelectorAll('[data-testid^="role-"] [role="button"]')
+      document.querySelectorAll('[data-testid^="role-"] [role="switch"]')
     ).length(0)
     await act(async () => {
       root?.unmount()

@@ -1149,7 +1149,7 @@ export const asPersonProfile = asObject({
   ),
   sections: asArray(asProfileSection),
   viewer: asObject({
-    /** An administrator, coach or assistant of the level: Add and Remove. */
+    /** An administrator, coach or assistant of the level: the role switches. */
     manages: asBoolean,
     /** An administrator of it: the Admin row too. */
     admin: asBoolean

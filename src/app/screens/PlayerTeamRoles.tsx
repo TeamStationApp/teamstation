@@ -17,7 +17,7 @@ export interface PlayerTeamRolesProps {
  * A player's roles on the team their page was opened from, at the bottom of
  * its Settings, for the team's administrators, coaches and assistants: the
  * same rows as a person's profile, the team's level alone, Admin for an
- * administrator only, and Member read as Player with no button: taking a
+ * administrator only, and Member read as Player with no switch: taking a
  * player off the team is the roster's. Nothing for a player whose account
  * cannot sign in, who can hold no role, and nothing when the server will not
  * say.
