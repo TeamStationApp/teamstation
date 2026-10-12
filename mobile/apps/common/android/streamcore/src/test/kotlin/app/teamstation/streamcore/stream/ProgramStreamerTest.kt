@@ -172,10 +172,14 @@ class ProgramStreamerTest {
         assertEquals(4, streamer.pendingEncodesForTesting)
 
         val start = wall
+        assertNull(streamer.liveTimelineStart)
         encoder.output!!.onFrame(frame(true))
         wall += 1.0 / 30
         encoder.output!!.onFrame(frame(false))
         assertEquals(2, streamer.pendingEncodesForTesting)
+        // The first picture sent was captured at the stream clock's start plus its stamp, and later
+        // pictures leave that alone.
+        assertEquals(start, streamer.liveTimelineStart!!, 1e-9)
 
         // Sound that began half a second after the stream: two packets, counted from its epoch.
         streamer.append(AudioFrame(ShortArray(2048 * 2), wallClock = start + 0.5))
@@ -209,6 +213,7 @@ class ProgramStreamerTest {
         assertEquals(2, encoder.syncRequests)
         streamer.stop()
         assertFalse(streamer.running)
+        assertNull(streamer.liveTimelineStart)
         assertTrue(encoder.closed)
         assertTrue(audio.closed)
         assertEquals(2, surfaces)

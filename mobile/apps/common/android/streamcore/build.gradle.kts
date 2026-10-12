@@ -19,6 +19,10 @@ android {
         // Android 11. Anything newer the code calls is guarded with Build.VERSION.SDK_INT, and
         // lint's NewApi check below fails the build on a call that is not.
         minSdk = 30
+
+        // The device suites (`connectedDebugAndroidTest`), PhoneStreamEngineDeviceTest among them,
+        // which take their server and stream from `-Pandroid.testInstrumentationRunnerArguments.*`.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     compileOptions {
@@ -62,9 +66,17 @@ kotlin {
 dependencies {
     // RadarLink publishes its state as a StateFlow.
     api("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // The phone engine's redial asks TeamStation for its held stream through OkHttp, which the React
+    // Native app already carries.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.16.1")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

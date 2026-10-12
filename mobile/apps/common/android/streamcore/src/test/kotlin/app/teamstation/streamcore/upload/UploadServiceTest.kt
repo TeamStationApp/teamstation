@@ -173,4 +173,61 @@ class UploadServiceTest {
         assertEquals("1970-01-01T00:00:00.000Z", UploadClient.instant(0.0))
         assertEquals(0.0, UploadService.Progress(0, 0, 0, 0).fraction, 0.0)
     }
+
+    /** A part's bytes, told as they go: the client writes 100 kB at a time, a clock that moves [step] ms a reading. */
+    private fun sendWithin(step: Long, uploadId: String? = null): List<UploadService.Progress> {
+        var time = 0L
+        val chunked = UploadClient(server.url("/").toString(), token = "token-0000", chunkBytes = 100_000)
+        val paced = UploadService(chunked, sleep = { waits += it }, now = { time += step; time })
+        val progress = mutableListOf<UploadService.Progress>()
+        runBlocking {
+            val take = folder.root.resolve("program-${System.nanoTime()}.mp4").apply { writeBytes(ByteArray(400_000)) }
+            paced.send(take, "game-1", "Game one", "programme", 1_760_000_000.0, uploadId = uploadId, onProgress = progress::add)
+        }
+        return progress
+    }
+
+    @Test
+    fun aPartsBytesAreToldAsTheyGoFourTimesASecondAtMost() {
+        // A part is 32 MB, which a field's uplink takes minutes over: told only as each one landed,
+        // the bar sat still for minutes and then jumped.
+        server.enqueue(json("""{"uploadId":"u7","partSize":300000,"parts":2,"received":[]}"""))
+        repeat(2) { server.enqueue(json("""{"received":${it + 1},"parts":2,"missing":[]}""")) }
+        server.enqueue(json("""{"videoId":"v7","state":"ready"}"""))
+        val progress = sendWithin(step = 300)
+        assertEquals(listOf(0L, 100_000L, 200_000L, 300_000L, 300_000L, 400_000L, 400_000L), progress.map { it.bytesSent })
+        assertEquals(listOf(0, 0, 0, 0, 1, 1, 2), progress.map { it.sent })
+        assertTrue(progress.all { it.bytesTotal == 400_000L && it.step == null })
+        take()
+        assertEquals(300_000L, take().bodySize)
+        assertEquals(100_000L, take().bodySize)
+
+        // A clock that has not moved a quarter of a second tells only the parts' ends.
+        server.enqueue(json("""{"uploadId":"u8","partSize":300000,"parts":2,"received":[]}"""))
+        repeat(2) { server.enqueue(json("""{"received":${it + 1},"parts":2,"missing":[]}""")) }
+        server.enqueue(json("""{"videoId":"v8","state":"ready"}"""))
+        assertEquals(listOf(0L, 300_000L, 400_000L), sendWithin(step = 50).map { it.bytesSent })
+    }
+
+    @Test
+    fun aResumedUploadToldWhatTheServerHasThenCarriesOnWithinThePart() {
+        server.enqueue(json("""{"uploadId":"u9","state":"open","partSize":300000,"parts":2,"received":[0],"missing":[1],"receivedBytes":300000}"""))
+        server.enqueue(json("""{"received":2,"parts":2,"missing":[]}"""))
+        server.enqueue(json("""{"videoId":"v9","state":"ready"}"""))
+        val progress = sendWithin(step = 300, uploadId = "u9")
+        assertEquals(listOf(300_000L, 400_000L, 400_000L), progress.map { it.bytesSent })
+        assertEquals(0.75, progress.first().fraction, 0.0)
+    }
+
+    @Test
+    fun pacingNeverGoesBackAndWaitsItsInterval() {
+        val pacing = ProgressPacing(intervalMillis = 250, startingAt = 10, now = 0)
+        assertFalse(pacing.admits(20, 100))
+        assertTrue(pacing.admits(20, 250))
+        assertFalse(pacing.admits(15, 600))
+        pacing.reached(40, 700)
+        assertFalse(pacing.admits(30, 1_000))
+        assertFalse(pacing.admits(50, 900))
+        assertTrue(pacing.admits(50, 950))
+    }
 }
