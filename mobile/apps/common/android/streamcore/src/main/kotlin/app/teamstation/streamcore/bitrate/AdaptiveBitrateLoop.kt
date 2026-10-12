@@ -16,6 +16,8 @@ class AdaptiveBitrateLoop(
     ceiling: Int,
     /** Half the ceiling when null. */
     floor: Int? = null,
+    /** The controller's tuning, kept across [configure]. */
+    tuning: AdaptiveBitrateController.Tuning = AdaptiveBitrateController.Tuning(),
     /** The worst playing client's link since it was last asked. Must not block. */
     private val sample: () -> CongestionSample?,
     /** Hands a rate to the encoder. Must not block. */
@@ -27,7 +29,7 @@ class AdaptiveBitrateLoop(
         Executors.newSingleThreadScheduledExecutor { Thread(it, "adaptive-bitrate").apply { isDaemon = true } }
 
     // Touched only on `executor`.
-    private val controller = AdaptiveBitrateController(ceiling, floor)
+    private val controller = AdaptiveBitrateController(ceiling, floor, tuning)
     private var enabled = false
     private var tick: ScheduledFuture<*>? = null
 
