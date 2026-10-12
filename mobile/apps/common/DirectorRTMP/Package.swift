@@ -10,7 +10,7 @@ let package = Package(
   dependencies: [
     // The bitrate controller the stream shares with TS Cameraman's RTSP server; the client measures
     // the link it judges by.
-    .package(path: "../../../common/AdaptiveBitrate")
+    .package(path: "../AdaptiveBitrate")
   ],
   targets: [
     .target(
