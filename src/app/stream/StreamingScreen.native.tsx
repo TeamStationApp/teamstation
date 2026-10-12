@@ -43,6 +43,8 @@ import {
 } from './overlay/zoomGestures'
 import { ZoomScale } from './overlay/ZoomScale'
 import {
+  CAMERA_UNAVAILABLE,
+  cameraUnavailable,
   type PhoneStream,
   phoneStream,
   PhoneStreamError,
@@ -113,6 +115,8 @@ export function describeRefusal(error: unknown, angleName: string): string {
       return lstrings.stream_error_storage
     if (error.code === 'uploadInProgress')
       return sprintf(lstrings.stream_error_uploading, angleName)
+    if (error.code === CAMERA_UNAVAILABLE)
+      return lstrings.stream_camera_unavailable
   }
   return sprintf(
     lstrings.stream_error_failed,
@@ -204,6 +208,10 @@ function StreamingOverlay(
   const streaming = status != null && status.phase !== 'idle'
   const holding = recording || streaming
   props.holding.current = holding
+  // The camera is lost (Android says so; iOS may not): the engine refuses
+  // Record until it is back, so Record is not offered meanwhile. A recording
+  // or stream already running can still be stopped.
+  const cameraLost = cameraUnavailable(status)
   // The game's scoreboard hears each radar reading while a radar is paired.
   useScoreboardRadarPublisher({
     apiBase: client.baseUrl,
@@ -226,7 +234,8 @@ function StreamingOverlay(
         localRecording: 'recorded'
       })
       .catch(() => {
-        // Said again when the next part ends.
+        // Said again when the next part ends, and, after the last part, by
+        // `useResumePendingUploads` when the app next opens or comes back.
         reported.current = false
       })
   }, [client, session])
@@ -339,6 +348,7 @@ function StreamingOverlay(
       setConfirmStop(true)
       return
     }
+    if (cameraLost) return
     setBusy(true)
     setProblem(undefined)
     phone
@@ -435,6 +445,18 @@ function StreamingOverlay(
         <NameBadge name={angleName} />
       </View>
 
+      {cameraLost ? (
+        <Text
+          testID="camera-unavailable"
+          style={[
+            styles.unavailable,
+            { top: window.height / 2 - BUTTON_SIZE / 2 }
+          ]}
+        >
+          {lstrings.stream_camera_unavailable}
+        </Text>
+      ) : null}
+
       {problem != null ? (
         <Text
           testID="stream-problem"
@@ -519,7 +541,11 @@ function StreamingOverlay(
         {confirmStop && holding ? (
           <SlideToStop onStop={stop} />
         ) : (
-          <RecordButton recording={holding} disabled={busy} onPress={record} />
+          <RecordButton
+            recording={holding}
+            disabled={busy || (cameraLost && !holding)}
+            onPress={record}
+          />
         )}
       </View>
 
@@ -588,6 +614,18 @@ const styles = StyleSheet.create({
   },
   flip: {
     position: 'absolute'
+  },
+  unavailable: {
+    position: 'absolute',
+    alignSelf: 'center',
+    color: WHITE,
+    fontSize: 17,
+    fontWeight: '700',
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    borderRadius: 10,
+    overflow: 'hidden',
+    paddingHorizontal: 16,
+    paddingVertical: 10
   },
   bottom: {
     position: 'absolute',
