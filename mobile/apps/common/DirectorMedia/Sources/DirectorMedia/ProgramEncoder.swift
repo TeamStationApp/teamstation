@@ -123,6 +123,8 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// Poison is finishing the live writer on the control thread; ingest must not append.
   private var poisonFinishing = false
   private var sessionStarted = false
+  /// Set while `finish` lays the tail: live pictures stop here, so none lands among the fill's.
+  private var fillingTail = false
   private var blackPixelBuffer: CVPixelBuffer?
   /// Wall clock of `start(at:)`, used to fill the program file out to recording end when the
   /// compositor never delivered a frame (otherwise `finishWriting` hangs on an unstarted session).
@@ -455,6 +457,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.soundOrigin.reset()
     self.pendingAudio.removeAll()
     self.isRunning = true
+    self.fillingTail = false
     self.outputURL = url
     self.outputURLs.append(url)
     lock.unlock()
@@ -479,7 +482,11 @@ public final class ProgramEncoder: @unchecked Sendable {
     onClockGrid: Bool = false
   ) {
     lock.lock()
-    if poisonFinishing {
+    // Once the tail is being laid the part's picture is decided: a live frame arriving now would be
+    // stamped by the grid in the middle of the fill's own frames, which the writer refuses as a
+    // timestamp out of order and fails on — the Director stop that crashed when the encoder was
+    // behind.
+    if poisonFinishing || fillingTail {
       lock.unlock()
       return
     }
@@ -637,7 +644,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     // false. That was the crash on stop after a camera reconnected: signal 6, no crash report.
     // Holding the lock across the append means `takeWriterForFinish` waits for it to land.
     lock.lock()
-    guard isRunning, !poisonFinishing, let liveWriter = self.writer, let liveAdaptor = self.adaptor,
+    guard isRunning, !poisonFinishing, !fillingTail, let liveWriter = self.writer, let liveAdaptor = self.adaptor,
       let liveInput = self.videoInput, liveInput.isReadyForMoreMediaData
     else {
       lock.unlock()
@@ -792,6 +799,13 @@ public final class ProgramEncoder: @unchecked Sendable {
       guard let sink = soundSink, sink.isReadyForMoreSound else {
         lock.unlock()
         return
+      }
+      // A continuation writer opened by recovery runs with no session until its first picture, and
+      // sound reaching it first threw "Must start a session" from the input's append. Start it here,
+      // under the lock, as the picture paths do.
+      if let writer, !sessionStarted {
+        writer.startSession(atSourceTime: .zero)
+        sessionStarted = true
       }
 
       // The track is laid contiguously, so its position is wherever the writer has got to. A
@@ -1068,6 +1082,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       let target = max(0, wall.seconds - origin.seconds - previousPartsSeconds())
       let (pictureAt, soundAt) = trackEnds()
       let queuedBefore = pendingAudioCount()
+      beginTailFill()
       fillHold(until: target)
       // `fillHold` queues the tail's silence and drains once. One drain stops at the first refusal,
       // and the tail is hundreds of buffers — the length of the mix's wait for late sound — so a
@@ -1339,6 +1354,13 @@ public final class ProgramEncoder: @unchecked Sendable {
     }
     lock.lock()
     isRecovering = false
+    lock.unlock()
+  }
+
+  /// Closes the live picture path for the rest of the part; `finish` calls it before the tail.
+  private func beginTailFill() {
+    lock.lock()
+    fillingTail = true
     lock.unlock()
   }
 
