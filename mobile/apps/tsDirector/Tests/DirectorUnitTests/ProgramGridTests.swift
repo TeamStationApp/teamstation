@@ -87,13 +87,19 @@ struct ProgramGridTests {
       encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(number), timescale: 30), onClockGrid: true)
       try await Task.sleep(nanoseconds: 33_000_000)
     }
-    // The compositor carries on while the stop asks for two seconds more than it has written.
+    // The compositor carries on while the stop asks for two seconds more than it has written. Like
+    // the programme clock, it hands over every frame number in order, the ones a late wake skipped
+    // included, so a frame left out of the master can only be the encoder's doing.
+    let feederStart = Date()
     let feeder = Task.detached {
       var number = 15
       while !Task.isCancelled {
-        encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(number), timescale: 30), onClockGrid: true)
-        number += 1
-        try? await Task.sleep(nanoseconds: 5_000_000)
+        let due = 15 + Int(Date().timeIntervalSince(feederStart) * 30)
+        while number <= due {
+          encoder.append(buffer, presentationTime: CMTime(value: CMTimeValue(number), timescale: 30), onClockGrid: true)
+          number += 1
+        }
+        try? await Task.sleep(nanoseconds: 33_000_000)
       }
     }
     let url = try #require(await encoder.finish(until: WallClock(seconds: started.seconds + 2.5)))
