@@ -1,0 +1,45 @@
+{
+  "about": "Wall-clock SEI byte vectors. Each vector is the input (wallMs, corrected) and the NAL unit it encodes to, in hex, for H.264 (NAL type 6) and HEVC (prefix SEI, NAL type 39): the NAL header, then one user_data_unregistered SEI message (payloadType 5, payloadSize 26) and the RBSP stop byte 80, with emulation prevention applied after the header. No start code and no length prefix. payloadHex is the 26-byte payload before emulation prevention: the 16-byte UUID, the version byte, the wall ms as a signed 64-bit big-endian integer, and the flags byte (bit 0 set when the clock is the server's). Checked by src/common/wallClockSei.test.ts and by TS Director's WallClockSEI tests.",
+  "uuid": "5e2f0c4a7d1b4b6e9c381f0a6d2e8b71",
+  "version": 1,
+  "payloadType": 5,
+  "payloadSize": 26,
+  "vectors": [
+    {
+      "name": "a frame on the server's clock",
+      "wallMs": 1700000000000,
+      "corrected": true,
+      "wallHex": "0000018bcfe56800",
+      "payloadHex": "5e2f0c4a7d1b4b6e9c381f0a6d2e8b71010000018bcfe5680001",
+      "h264": "06051a5e2f0c4a7d1b4b6e9c381f0a6d2e8b7101000003018bcfe568000180",
+      "hevc": "4e01051a5e2f0c4a7d1b4b6e9c381f0a6d2e8b7101000003018bcfe568000180"
+    },
+    {
+      "name": "a frame on the encoder's own clock, with no measured offset",
+      "wallMs": 1700000000123,
+      "corrected": false,
+      "wallHex": "0000018bcfe5687b",
+      "payloadHex": "5e2f0c4a7d1b4b6e9c381f0a6d2e8b71010000018bcfe5687b00",
+      "h264": "06051a5e2f0c4a7d1b4b6e9c381f0a6d2e8b7101000003018bcfe5687b0080",
+      "hevc": "4e01051a5e2f0c4a7d1b4b6e9c381f0a6d2e8b7101000003018bcfe5687b0080"
+    },
+    {
+      "name": "a wall whose own bytes hold 00 00 03",
+      "wallMs": 1760936592146,
+      "corrected": true,
+      "wallHex": "0000019a00000312",
+      "payloadHex": "5e2f0c4a7d1b4b6e9c381f0a6d2e8b71010000019a0000031201",
+      "h264": "06051a5e2f0c4a7d1b4b6e9c381f0a6d2e8b7101000003019a00000303120180",
+      "hevc": "4e01051a5e2f0c4a7d1b4b6e9c381f0a6d2e8b7101000003019a00000303120180"
+    },
+    {
+      "name": "the epoch: nine zero bytes in a row",
+      "wallMs": 0,
+      "corrected": false,
+      "wallHex": "0000000000000000",
+      "payloadHex": "5e2f0c4a7d1b4b6e9c381f0a6d2e8b7101000000000000000000",
+      "h264": "06051a5e2f0c4a7d1b4b6e9c381f0a6d2e8b71010000030000030000030000030080",
+      "hevc": "4e01051a5e2f0c4a7d1b4b6e9c381f0a6d2e8b71010000030000030000030000030080"
+    }
+  ]
+}

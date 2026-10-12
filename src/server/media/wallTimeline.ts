@@ -137,3 +137,45 @@ export function wallTimelineOf(
     startAt
   }
 }
+
+/** A point to store: a frame's own SEI or a live segment's arrival. */
+export interface StoredWallPoint {
+  mediaMs: number
+  wallMs: number
+  source: 'sei' | 'arrival'
+  corrected: boolean
+}
+
+/** Rows per insert, well inside Postgres's limit on bound parameters. */
+const POINTS_PER_INSERT = 5000
+
+/**
+ * Adds points to a video's timeline. A point already stored at the same
+ * media time stays as it was, so a scan that runs over a segment twice (a
+ * restarted server, two ticks at once) adds nothing the second time.
+ *
+ * A three-hour programme is twenty thousand points, so they go in batches.
+ */
+export async function storeWallPoints(
+  db: Kysely<Database>,
+  videoId: string,
+  points: StoredWallPoint[]
+): Promise<void> {
+  for (let at = 0; at < points.length; at += POINTS_PER_INSERT) {
+    await db
+      .insertInto('video_wall_anchors')
+      .values(
+        points.slice(at, at + POINTS_PER_INSERT).map(point => ({
+          video_id: videoId,
+          media_ms: point.mediaMs,
+          wall: new Date(point.wallMs),
+          source: point.source,
+          corrected: point.corrected
+        }))
+      )
+      .onConflict(conflict =>
+        conflict.columns(['video_id', 'media_ms']).doNothing()
+      )
+      .execute()
+  }
+}
