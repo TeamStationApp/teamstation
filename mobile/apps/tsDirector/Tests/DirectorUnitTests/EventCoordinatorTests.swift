@@ -81,6 +81,13 @@ private final class StubEvents: TeamStationEventService {
     return true
   }
 
+  var liveStarts: [Date] = []
+
+  func reportLiveStart(startedAt: Date) async -> Bool {
+    liveStarts.append(startedAt)
+    return true
+  }
+
   func forgetChosenEvent() {
     asked.append("forget")
     chosen = nil
@@ -453,5 +460,16 @@ struct StreamEndedTests {
     await rig.coordinator.pick(event: event("g1"), destination: .event)
     await rig.coordinator.cameraRenamed(to: "Left Field")
     #expect(rig.events.renamed == [ "Left Field" ])
+  }
+
+  @Test("The first picture's capture places the event's live video, and nothing else's")
+  func liveStartGoesToTheEventOnly() async {
+    let rig = Rig()
+    await rig.coordinator.pick(event: event("g1"), destination: .event)
+    let started = Date(timeIntervalSince1970: 1_790_013_600.25)
+    await rig.coordinator.liveStarted(at: started, destination: .url)
+    #expect(rig.events.liveStarts.isEmpty)
+    await rig.coordinator.liveStarted(at: started, destination: .event)
+    #expect(rig.events.liveStarts == [ started ])
   }
 }
