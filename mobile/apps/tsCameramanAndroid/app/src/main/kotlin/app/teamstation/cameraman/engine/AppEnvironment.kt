@@ -41,9 +41,9 @@ import app.teamstation.streamcore.core.StreamSettingsStore
 import app.teamstation.streamcore.core.ProcessLoad
 import app.teamstation.streamcore.core.StreamCodec
 import app.teamstation.streamcore.core.StreamSettings
-import app.teamstation.streamcore.radar.PreferencesRadarPairingStore
+import app.teamstation.streamcore.radar.PreferencesRadarFleetStore
 import app.teamstation.streamcore.radar.RadarCommand
-import app.teamstation.streamcore.radar.RadarLink
+import app.teamstation.streamcore.radar.RadarFleet
 import app.teamstation.streamcore.radar.RadarPhase
 import app.teamstation.streamcore.radar.RadarSnapshot
 import app.teamstation.streamcore.radar.systemRadarRadio
@@ -146,9 +146,10 @@ class AppEnvironment(
         microphone.keepsSound = { time, duration -> injector.keepsSound(time, duration) }
     }
 
-    private val radarLink = RadarLink(
-        store = PreferencesRadarPairingStore(context),
-        radio = systemRadarRadio(context),
+    /** Cameraman's one radar, through the fleet with a limit of one under its existing keys. */
+    private val radarFleet = RadarFleet(
+        store = PreferencesRadarFleetStore.cameraman(context),
+        newRadio = { systemRadarRadio(context) },
         bluetoothOn = {
             val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             manager?.adapter?.isEnabled == true
@@ -165,16 +166,26 @@ class AppEnvironment(
                 ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
             }
         },
-        log = { Log.i("CameramanRadar", it) }
+        log = { Log.i("CameramanRadar", it) },
+        limit = 1
     )
-    val radarState = radarLink.state
+    val radarState = radarFleet.cameramanState
 
-    fun openRadarPicker() = radarLink.openPicker()
-    fun dismissRadarPicker() = radarLink.dismissPicker()
-    fun pairRadar(serial: String) = radarLink.pair(serial)
-    fun unpairRadar() = radarLink.unpair()
-    fun setRadarStep(step: Int) = radarLink.setStep(step)
-    fun setRadarEnabled(enabled: Boolean) = radarLink.setEnabled(enabled)
+    fun openRadarPicker() = radarFleet.scan()
+    fun dismissRadarPicker() = radarFleet.stopScan()
+
+    /** Choosing a radar closes the picker, as it always has. */
+    fun pairRadar(serial: String) {
+        if (radarFleet.pair(serial)) radarFleet.stopScan()
+    }
+
+    fun unpairRadar() {
+        radarFleet.unpairAll()
+        radarFleet.stopScan()
+    }
+
+    fun setRadarStep(step: Int) = radarFleet.setStep(step)
+    fun setRadarEnabled(enabled: Boolean) = radarFleet.setEnabled(enabled)
 
     internal lateinit var scoreboard: ScoreboardDesk
         private set
@@ -343,7 +354,7 @@ class AppEnvironment(
             main = kotlinx.coroutines.Dispatchers.Main.immediate
         )
         scoreboard = ScoreboardDesk(backing, scope, account = account, eventControl = eventControl)
-        radarLink.onSpeeds = { pitch, exit -> scoreboard.publishSpeeds(pitch, exit) }
+        radarFleet.onSpeeds = { _, pitch, exit -> scoreboard.publishSpeeds(pitch, exit) }
     }
 
     /**
@@ -491,7 +502,7 @@ class AppEnvironment(
         observeThermalState()
         observeBattery()
         statusState.value = "starting"
-        radarLink.start()
+        radarFleet.start()
         // Runs with the service, whatever the broadcast: a Director may set the event of a camera
         // that only sends radar speeds.
         scoreboard.start()
@@ -1102,17 +1113,17 @@ class AppEnvironment(
         }
 
         is ControlCommand.RadarShow -> {
-            radarLink.show(RadarCommand.Show(command.serial, command.phase, command.step))
+            radarFleet.show(RadarCommand.Show(command.serial, command.phase, command.step))
             ok()
         }
 
         is ControlCommand.RadarFeed -> {
-            radarLink.feed(RadarCommand.Feed(command.pitch, command.exit, command.now))
+            radarFleet.feed(RadarCommand.Feed(command.pitch, command.exit, command.now))
             ok()
         }
 
         ControlCommand.RadarUnpair -> {
-            radarLink.unpair()
+            unpairRadar()
             ok()
         }
     }
@@ -1214,7 +1225,7 @@ class AppEnvironment(
             put("wifiLockHeld", wifiLock?.isHeld == true)
             put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
             put("frameDelivery", frameDeliveryJSON())
-            RadarSnapshot.putInto(this, radarLink.state.value)
+            RadarSnapshot.putInto(this, radarFleet.cameramanState.value)
             put("eventControl", eventControlJSON())
         }
     }
