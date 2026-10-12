@@ -48,6 +48,8 @@ public final class ProgramEncoder: @unchecked Sendable {
   private var frameRate: Int
   private var gopSeconds: Double
   private var codec: ProgramCodec
+  /// The sound's AAC rate, from the settings the encoder was made with.
+  let audioBitrate: Int
   private let directory: URL
 
   private let lock = NSLock()
@@ -229,6 +231,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.frameRate = settings.frameRate
     self.gopSeconds = settings.gopSeconds
     self.codec = settings.codec
+    self.audioBitrate = settings.audioBitrate
     self.directory = directory
   }
 
@@ -425,7 +428,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       AVFormatIDKey: kAudioFormatMPEG4AAC,
       AVSampleRateKey: AudioMixer.sampleRate,
       AVNumberOfChannelsKey: AudioMixer.channelCount,
-      AVEncoderBitRateKey: 192_000
+      AVEncoderBitRateKey: audioBitrate
     ])
     audioInput.expectsMediaDataInRealTime = true
     if writer.canAdd(audioInput) { writer.add(audioInput) }

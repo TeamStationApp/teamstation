@@ -68,6 +68,9 @@ public final class TeamStationAccount: TeamStationEventService {
   public let installId: String
   /// What the device is, for every list of the game's cameras ("iPad Pro").
   public let deviceModel: String
+  /// The clock, in seconds since 1970, this account reads the time on: Director's steady wall clock,
+  /// which an NTP step of the device's own clock does not move.
+  private let clock: @Sendable () -> Double
 
   public init(
     serverURL: URL,
@@ -76,8 +79,10 @@ public final class TeamStationAccount: TeamStationEventService {
     installId: String = "",
     deviceModel: String = DeviceModelName.current,
     keychain: KeychainStore = KeychainStore(service: "app.teamstation.director"),
-    session: URLSession = .shared
+    session: URLSession = .shared,
+    clock: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 }
   ) {
+    self.clock = clock
     self.serverURL = serverURL
     self.appOrigin = appOrigin
     self.deviceName = deviceName
@@ -619,6 +624,26 @@ public final class TeamStationAccount: TeamStationEventService {
   }
 
   /**
+   * Says when the first picture of the held stream's first publish was
+   * captured, which is where TeamStation places the stream's live video.
+   * Nothing is asked when no stream is held. A failure is not the operator's
+   * to hear about: the server then places the video by when it heard it.
+   *
+   * `startedAt` is on TeamStation's clock: the caller adds the offset its
+   * `ServerClock` measured against the clock it read the start on.
+   */
+  @discardableResult
+  public func reportLiveStart(startedAt: Date) async -> Bool {
+    guard let current = chosen, let streamId = current.streamId else { return false }
+    do {
+      try await client.reportLiveStart(gameId: current.gameId, streamId: streamId, startedAt: startedAt)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * Why TeamStation refused the publish, in its own words.
    *
    * The ingest writes the reason on the game's row — the key is not open, the
@@ -626,7 +651,10 @@ public final class TeamStationAccount: TeamStationEventService {
    * far more than the socket's, which can only say a connection closed.
    *
    * The row read is this device's own among the game's cameras: the one whose
-   * `deviceId` is this installation's.
+   * `deviceId` is this installation's. Its state and its window come first,
+   * because the ingest refuses those without writing anything: a camera
+   * somebody ended, or a window that has not opened or has closed. After
+   * those, the ingest's own last word.
    *
    * `nil` when it has nothing to add, which includes every case where the
    * network is the problem: then the socket's own message is the true one.
@@ -638,8 +666,23 @@ public final class TeamStationAccount: TeamStationEventService {
     guard let streams = try? await client.liveStreams(gameId: gameId) else {
       return nil
     }
-    let mine = streams.mine.first { $0.deviceId == installId }
-    guard let said = mine?.lastError, !said.isEmpty else { return nil }
+    guard let mine = streams.mine.first(where: { $0.deviceId == installId }) else { return nil }
+    return Self.refusal(of: mine, now: Date(timeIntervalSince1970: clock()))
+  }
+
+  /// Why the ingest would refuse `stream` at `now`, nil when nothing on its row says.
+  static func refusal(of stream: TeamStationDeviceStream, now: Date) -> String? {
+    if stream.state == "ended" || stream.state == "revoked" {
+      return TeamStationError.streamEnded.localizedDescription
+    }
+    let time = Date.FormatStyle(date: .omitted, time: .shortened)
+    if let opensAt = stream.opensAt, now < opensAt {
+      return "This camera can go live from \(opensAt.formatted(time))."
+    }
+    if let closesAt = stream.closesAt, now >= closesAt {
+      return "This camera's streaming window closed at \(closesAt.formatted(time))."
+    }
+    guard let said = stream.lastError, !said.isEmpty else { return nil }
     return said
   }
 
@@ -669,6 +712,9 @@ public protocol TeamStationEventService: AnyObject {
   /// Renames the held stream's camera on TeamStation.
   @discardableResult
   func renameStream(label: String) async -> Bool
+  /// Says when the held stream's first published picture was captured, on TeamStation's clock.
+  @discardableResult
+  func reportLiveStart(startedAt: Date) async -> Bool
   func forgetChosenEvent()
   func scoreboardURL(for gameId: String) -> URL
 }

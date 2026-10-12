@@ -118,6 +118,36 @@ struct ProgramStreamerWallClockTests {
     }
   }
 
+  // MARK: - Where the server's copy begins
+
+  @Test("Nothing sent, no live start; the first picture sets it, and a wedged-encoder reset does not move it")
+  func liveStartSurvivesReset() throws {
+    let wire = try WireHarness(codec: .h264, offsetMs: 0, now: Self.now, encoder: true)
+    defer { wire.close() }
+    #expect(wire.streamer.liveTimelineStart == nil)
+    let picture = try #require(WireHarness.picture(width: 1280, height: 720))
+
+    wire.streamer.append(picture, presentationTime: .zero, captureWall: WallClock(seconds: Self.now - 0.5))
+    wire.waitForEncoder()
+    _ = try wire.videoTags(2)
+    let first = try #require(wire.streamer.liveTimelineStart)
+    #expect(abs(first.seconds - (Self.now - 0.5)) < 0.002)
+
+    // The stall watchdog throws the encoder away mid-publish; the next picture goes out behind a
+    // fresh decoder configuration, seconds later.
+    wire.streamer.resetWedgedSessionForTesting()
+    wire.clock.set(Self.now + 5)
+    wire.streamer.append(
+      picture,
+      presentationTime: CMTime(value: 150, timescale: 30),
+      captureWall: WallClock(seconds: Self.now + 4.5)
+    )
+    wire.waitForEncoder()
+    let tags = try wire.videoTags(4)
+    #expect(FLVTag.isVideoSequenceHeader(tags[2]))
+    #expect(wire.streamer.liveTimelineStart == first)
+  }
+
   // MARK: - S6: no sample, no correction
 
   @Test("Without a measured offset the SEI carries Director's own wall, with bit 0 clear")

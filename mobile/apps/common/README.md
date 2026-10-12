@@ -14,6 +14,7 @@ without reaching into another app's `Packages`.
 | `CameramanCapture` | Cameraman's `AVCaptureSession`: lens discovery and switching, zoom, rotation, capability measurement and the radar session. The TeamStation app captures with the same code |
 | `DirectorRTMP` | TS Director's RTMP client: handshake, chunking, AMF0, FLV tags (Enhanced RTMP `hvc1`), the send ledger. The TeamStation app streams with the same code |
 | `DirectorMedia` | TS Director's programme recorder (`ProgramEncoder`) and streamer (`ProgramStreamer`), their clocks, pacing and stall policy, the sound mixes, recovery after an interruption (`LiveSessionResume`), and the controllers that run them: `StreamSessionController` (dial, redial with backoff, stop on an ended stream) and `RecordingSession` (a take's row, master, resume and heartbeat). It builds without `DirectorPipeline`, which depends on it. The TeamStation app records and streams with the same code |
+| `PhoneStream` | The TeamStation app's streaming and recording engine: TS Director's recorder and streamer (`DirectorMedia`) driven from the phone's camera (`CameramanCapture.CameraSession`), with the take's catalog, low-storage rules, retention, resume after a kill and the recording's upload. No UI. Tested on an iPhone simulator through the test host in `Tests/Host` (`scripts/test-unit.sh`), where a synthetic source stands in for the camera |
 | `MediaFixtures` | Golden vectors of Director's stream and recording paths, written by TS Director's unit tests (`MediaFixtureWriter`) as JSON and `.bin` files. The Android port asserts the same files, so a change here fails its suite until it is ported |
 | `CameramanControlUI` | Cameraman's operating screen, Settings sheet, zoom rail, thermal and battery pills, generic over `CameraControlling` |
 | `LoopbackHTTP` | A small HTTP/1.1 server bound to loopback (`LinkServer`), its request parser and responses, and `JSONEventHub` for newline-delimited event streams. TS Director's link to TS Distributor (`DirectorLink`) is built on it |
@@ -34,6 +35,8 @@ the way `DirectorCore` did.
   on `CameramanControlUI` from `CameramanUI`; its unit tests also compile
   `DirectorRTSP` to round-trip the packetizers
 - **TS Preview** — path-depends for NearStream `/live/substream2` decode
+- **The TeamStation app** — `ios/TeamStation.xcodeproj` references `PhoneStream` as a local package
+  and links its product
 
 App-only work (Director's program encode, DVR and UI; Cameraman's encode,
 server and harness) stays under each app's `Packages`.

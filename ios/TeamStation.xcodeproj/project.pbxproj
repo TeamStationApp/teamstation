@@ -35,6 +35,7 @@
 		DB8130B58995142585D450C9 /* Quicksand-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 5A8D1C865B62BA762B9C3380 /* Quicksand-Medium.ttf */; };
 		E07C464B97F314C57E804944 /* TSGlassView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 12E34856A1585EF3D2DA4C42 /* TSGlassView.mm */; };
 		E9069F64069382B9405F6C85 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
+		F3A7C1D20000000000000002 /* PhoneStream in Frameworks */ = {isa = PBXBuildFile; productRef = F3A7C1D20000000000000003 /* PhoneStream */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -79,6 +80,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0C80B921A6F3F58F76C31292 /* libPods-TeamStation.a in Frameworks */,
+				F3A7C1D20000000000000002 /* PhoneStream in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -222,6 +224,9 @@
 			dependencies = (
 			);
 			name = TeamStation;
+			packageProductDependencies = (
+				F3A7C1D20000000000000003 /* PhoneStream */,
+			);
 			productName = TeamStation;
 			productReference = 13B07F961A680F5B00A75B9A /* TeamStation.app */;
 			productType = "com.apple.product-type.application";
@@ -248,6 +253,9 @@
 				Base,
 			);
 			mainGroup = 83CBB9F61A601CBA00E9B192;
+			packageReferences = (
+				F3A7C1D20000000000000001 /* XCLocalSwiftPackageReference "../mobile/apps/common/PhoneStream" */,
+			);
 			productRefGroup = 83CBBA001A601CBA00E9B192 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -650,6 +658,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		F3A7C1D20000000000000001 /* XCLocalSwiftPackageReference "../mobile/apps/common/PhoneStream" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../mobile/apps/common/PhoneStream;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F3A7C1D20000000000000003 /* PhoneStream */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PhoneStream;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 83CBB9F71A601CBA00E9B192 /* Project object */;
 }
