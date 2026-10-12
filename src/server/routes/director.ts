@@ -4,12 +4,15 @@ import type { Kysely } from 'kysely'
 
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { canFilm, roleScopes } from '../access'
+import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { cleanBody } from '../jsonBody'
 import {
   cameraLabelOf,
   createLiveStream,
+  freeSlot,
   type LiveStreamRow,
+  MAX_CAMERAS,
   myLiveStreams,
   revealKey,
   setCameraName,
@@ -58,6 +61,36 @@ function readKey(sessionSecret: string, row: LiveStreamRow): string {
 }
 
 const asClaim = asObject({ cameraName: asOptional(asString) })
+
+/**
+ * The stream the legacy claim route resolves among this account's streams on
+ * a game, lowest slot first: one it has returned before (`director_claimed`)
+ * or, failing that, a device-less one nobody has published on yet.
+ *
+ * Never a device-less stream somebody has published on that this route did
+ * not return: that is a stream made on the website for streaming software, and
+ * its key is the coach's encoder's. Handed to an installed Director it put two
+ * encoders on one key, and the claimed flag then let a phone adopt it. A
+ * stream nobody has published on has no encoder to collide with, and once it
+ * is returned it is the Director's.
+ */
+async function directorsStream(
+  db: Kysely<Database>,
+  mine: LiveStreamRow[]
+): Promise<LiveStreamRow | undefined> {
+  const deviceLess = mine.filter(row => row.deviceId == null)
+  const claimed = deviceLess.find(row => row.directorClaimed)
+  if (claimed != null || deviceLess.length === 0) return claimed
+  const candidates = deviceLess.map(row => row.id)
+  const unused = await db
+    .selectFrom('live_streams')
+    .select('id')
+    .where('id', 'in', candidates)
+    .where('first_published_at', 'is', null)
+    .execute()
+  const ids = new Set(unused.map(row => row.id))
+  return deviceLess.find(row => ids.has(row.id))
+}
 
 export function directorRoutes(
   db: Kysely<Database>,
@@ -113,59 +146,70 @@ export function directorRoutes(
 
       // Taking a game twice is the ordinary case, not the exception: the same
       // Director claims it again on every redial. It gets **its own account's**
-      // camera — its first one — so a second Director signed in as somebody
-      // else is a second camera on the game rather than a second publisher
-      // turned away from the same key.
-      const mine = await myLiveStreams(db, game.id, actor.userId)
-      const existing = mine.find(row => row.slot === 1) ?? mine[0]
-      let key: string
-      let streamId: string
-      if (existing != null) {
-        key = readKey(options.sessionSecret, existing)
-        streamId = existing.id
-      } else {
-        try {
-          const created = await createLiveStream(db, {
-            gameId: game.id,
-            teamId,
-            startAt: new Date(game.startAt),
-            userId: actor.userId,
-            slot: 1,
-            label: cameraName ?? options.deviceLabel,
-            live: options.live,
-            sessionSecret: options.sessionSecret,
-            videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`
-          })
-          key = created.key
-          streamId = created.id
-        } catch (error) {
-          // Two Directors signed in as the same account, claiming at the same
-          // moment: one of them wins slot one and the other lands here.
-          const raced = (await myLiveStreams(db, game.id, actor.userId)).find(
-            row => row.slot === 1
-          )
-          if (raced == null) throw error
-          key = readKey(options.sessionSecret, raced)
-          streamId = raced.id
+      // camera — its lowest-numbered one that no device holds, and that
+      // streaming software is not using (`directorsStream`) — so a second
+      // Director signed in as somebody else is a second camera on the game
+      // rather than a second publisher turned away from the same key. A
+      // phone's stream, or the new Director build's, is never returned or
+      // renamed here: those are asked for by device.
+      //
+      // Under the game's lock, so a claim and a device's request cannot both
+      // take the same slot.
+      const claimed = await db.transaction().execute(async trx => {
+        await lockKeys(trx, [`liveStreams:${game.id}`])
+        const mine = await myLiveStreams(trx, game.id, actor.userId)
+        const existing = await directorsStream(trx, mine)
+        if (existing != null) {
+          return {
+            row: existing,
+            key: readKey(options.sessionSecret, existing)
+          }
         }
+        const slot = freeSlot(mine)
+        if (slot == null) {
+          throw badRequest(
+            `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
+          )
+        }
+        const created = await createLiveStream(trx, {
+          gameId: game.id,
+          teamId,
+          startAt: new Date(game.startAt),
+          userId: actor.userId,
+          slot,
+          label: cameraName ?? options.deviceLabel,
+          live: options.live,
+          sessionSecret: options.sessionSecret,
+          videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`,
+          directorClaimed: true
+        })
+        const { key, ...row } = created
+        return { row, key }
+      })
+      // Every stream this route returns is one an installed Director holds,
+      // which is what lets a device updating mid-game adopt it. The only one
+      // not yet marked is one nobody had published on.
+      if (!claimed.row.directorClaimed) {
+        await db
+          .updateTable('live_streams')
+          .set({ director_claimed: true, updated_at: new Date() })
+          .where('id', '=', claimed.row.id)
+          .execute()
       }
       // A later claim with no name, including `{ "cameraName": "" }`, leaves
       // a name already stored. Clearing stays the live-stream PATCH.
       if (cameraName != null) {
-        await setCameraName(db, streamId, cameraName)
+        await setCameraName(db, claimed.row.id, cameraName)
       }
 
-      const row =
-        existing ??
-        (await myLiveStreams(db, game.id, actor.userId)).find(
-          item => item.slot === 1
-        )
-      setAudit(res.locals, { entityType: 'liveStream', entityId: row?.id })
+      const row = claimed.row
+      const key = claimed.key
+      setAudit(res.locals, { entityType: 'liveStream', entityId: row.id })
       res.json({
         gameId: game.id,
         url: streamUrlFor(options.live, options.host, key),
-        opensAt: row?.opensAt.toISOString() ?? null,
-        closesAt: row?.closesAt?.toISOString() ?? null
+        opensAt: row.opensAt.toISOString(),
+        closesAt: row.closesAt?.toISOString() ?? null
       })
     })
   )
@@ -178,7 +222,7 @@ export function directorRoutes(
    * that sentence is far better than the socket's, which can only say that a
    * connection closed.
    *
-   * Its own camera only. A Director holds slot one on the game it claimed.
+   * Its own camera only: the one the claim resolves (`directorsStream`).
    */
   router.get(
     '/director/events/:gameId/stream',
@@ -187,8 +231,9 @@ export function directorRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
-      const mine = (await myLiveStreams(db, gameId, actor.userId)).find(
-        item => item.slot === 1
+      const mine = await directorsStream(
+        db,
+        await myLiveStreams(db, gameId, actor.userId)
       )
       if (mine == null) throw notFound()
       res.json({

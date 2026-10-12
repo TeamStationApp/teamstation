@@ -549,6 +549,69 @@ describe('api client', function () {
     })
   })
 
+  it('asks for a device’s stream, says it holds its recording, and dismisses the reminder', async function () {
+    const device = {
+      id: 'liv_1',
+      gameId: 'gam 1',
+      userId: 42,
+      ownerName: 'Pat',
+      slot: 1,
+      label: 'Home Plate',
+      keyPrefix: 'ts_abc',
+      state: 'idle',
+      opensAt: '2026-05-02T18:00:00.000Z',
+      closesAt: null,
+      deviceModel: 'iPhone 13 Pro',
+      deviceId: '00000000-0000-4000-8000-000000000001',
+      localRecording: 'none'
+    }
+    const asked = stubFetch(201, device)
+    const stream = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: asked.fetch
+    }).addLiveStream('gam 1', 'Home Plate', {
+      deviceId: '00000000-0000-4000-8000-000000000001',
+      deviceModel: 'iPhone 13 Pro',
+      recordsLocally: true
+    })
+    expect(stream.deviceModel).equals('iPhone 13 Pro')
+    expect(stream.localRecording).equals('none')
+    expect(JSON.parse(asked.calls[0].body ?? '')).deep.equals({
+      label: 'Home Plate',
+      deviceId: '00000000-0000-4000-8000-000000000001',
+      deviceModel: 'iPhone 13 Pro',
+      recordsLocally: true
+    })
+
+    // A browser's camera has no device fields at all, and a list item's
+    // device model may be null.
+    const plain = stubFetch(201, { ...device, deviceModel: null })
+    const unnamed = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: plain.fetch
+    }).addLiveStream('gam 1')
+    expect(JSON.parse(plain.calls[0].body ?? '')).deep.equals({})
+    expect(unnamed.deviceModel).equals(null)
+
+    const recorded = stubFetch(200, { ...device, localRecording: 'recorded' })
+    const marked = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: recorded.fetch
+    }).updateLiveStream('gam 1', 'liv_1', { localRecording: 'recorded' })
+    expect(marked.localRecording).equals('recorded')
+
+    // 204 in production; a stub Response cannot carry a body with it.
+    const dismissed = stubFetch(200, '')
+    await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: dismissed.fetch
+    }).dismissNotification('aud 1')
+    expect(dismissed.calls[0].method).equals('PUT')
+    expect(dismissed.calls[0].url).equals(
+      'http://x/api/v1/me/notifications/aud%201/dismissed'
+    )
+  })
+
   it('cleans a team list', async function () {
     const { fetch } = stubFetch(200, [
       { id: 'tem_1', name: 'Badgers', shortName: null, logoPath: null }

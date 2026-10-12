@@ -97,6 +97,12 @@ export interface RelationshipInvitation {
   confirmBoth?: boolean
   idempotencyKey: string
 }
+/**
+ * The notification source type of a reminder to upload a phone's recording of
+ * one camera angle. One per stream, to the stream's owner only.
+ */
+export const RECORDING_UPLOAD = 'recordingUpload'
+
 const cleanNotification = asObject({
   id: asString,
   requestId: asString,
@@ -132,11 +138,19 @@ const cleanNotification = asObject({
       })
     ),
     null
-  )
+  ),
+  /** On a `recordingUpload` reminder: the game and the angle's stream. */
+  gameId: asOptional(asString),
+  liveStreamId: asOptional(asString)
 })
 type Cleaned = ReturnType<typeof cleanNotification>
-export type Notification = Omit<Cleaned, 'leave'> & {
+export type Notification = Omit<
+  Cleaned,
+  'leave' | 'gameId' | 'liveStreamId'
+> & {
   leave?: Cleaned['leave']
+  gameId?: string
+  liveStreamId?: string
 }
 export const asNotification: (raw: unknown) => Notification = cleanNotification
 export const asNotificationPage = asObject({
