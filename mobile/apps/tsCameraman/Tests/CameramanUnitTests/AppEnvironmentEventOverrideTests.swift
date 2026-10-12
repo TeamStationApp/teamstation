@@ -26,7 +26,7 @@ struct AppEnvironmentEventOverrideTests {
     )
     defer { environment.eventOverride.listener.stop() }
     // Radar sending off before the assignment, and it stays off.
-    environment.radarSession.setEnabled(false)
+    environment.radarFleet.setEnabled(false)
     environment.eventOverride.start()
     environment.setAllowDirectorOverride(true)
     await environment.eventOverride.settle()
@@ -56,7 +56,7 @@ struct AppEnvironmentEventOverrideTests {
     #expect(sockets.opened.isEmpty, "an assignment alone publishes nothing")
 
     // A reading handed in as the radar would, stamped as it arrives, goes to B.
-    environment.radarSession.onSpeeds?(83, 0)
+    environment.radarFleet.onSpeeds?("ADFA0000001", 83, 0)
     #expect(await eventually { sockets.sent(to: F.urlB) == [ "{\"pitchSpeed\":83}" ] })
     await director.stop()
     #expect(await eventually { !environment.scoreboard.eventLocked })
