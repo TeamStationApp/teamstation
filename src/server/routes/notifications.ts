@@ -6,7 +6,12 @@ import type { Database } from '../db/database'
 import { type Clock, realClock } from '../groups/requests'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
-import { inbox, markViewed, notificationDetail } from '../notifications/inbox'
+import {
+  dismissNotification,
+  inbox,
+  markViewed,
+  notificationDetail
+} from '../notifications/inbox'
 
 export function notificationRoutes(
   db: Kysely<Database>,
@@ -71,6 +76,15 @@ export function notificationRoutes(
       if (req.actor == null) throw unauthorized()
       await markViewed(db, req.actor, String(req.params.id), clock)
       res.json({ ok: true })
+    })
+  )
+  router.put(
+    '/me/notifications/:id/dismissed',
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      await dismissNotification(db, req.actor, String(req.params.id), clock)
+      res.status(204).end()
     })
   )
   return router

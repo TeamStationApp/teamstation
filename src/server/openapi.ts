@@ -1207,6 +1207,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'forbidden',
                 'notFound',
                 'conflict',
+                'gone',
                 'tooLarge',
                 'unsupportedMedia',
                 'rateLimited',
@@ -1296,6 +1297,25 @@ export function openApiDocument(version: string): OpenApiDocument {
               description:
                 'What the ingest last reported: the stream arriving, and each ' +
                 'leg it is being sent to. Never carries a key.'
+            },
+            deviceModel: {
+              type: ['string', 'null'],
+              description:
+                'What the device holding it is, in words. On every item of ' +
+                'a game\u2019s list, and on a single device stream; null for ' +
+                'a browser\u2019s or streaming software\u2019s stream'
+            },
+            deviceId: {
+              type: ['string', 'null'],
+              description:
+                'The install holding it, on the owner\u2019s own streams only'
+            },
+            localRecording: {
+              type: 'string',
+              enum: ['none', 'recorded', 'uploaded'],
+              description:
+                'How far the phone\u2019s own recording of it has got. ' +
+                '`uploaded`: the upload stands in for its live copy'
             },
             url: {
               type: 'string',
@@ -2376,6 +2396,27 @@ export function openApiDocument(version: string): OpenApiDocument {
               content: {
                 'application/json': {
                   schema: { $ref: '#/components/schemas/Health' }
+                }
+              }
+            }
+          }
+        }
+      },
+      '/time': {
+        get: {
+          summary: "The server's clock, for a device to correct its own by",
+          description:
+            "Answers without authentication. A device times the request both ways and takes serverTime as the midpoint, then sends the instants it reports (a live stream's first picture, an upload's start) on the server's clock.",
+          responses: {
+            200: {
+              description: 'Milliseconds since 1970 on the server',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['serverTime'],
+                    properties: { serverTime: { type: 'integer' } }
+                  }
                 }
               }
             }
@@ -4821,7 +4862,8 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'Asked when a publish fails: the ingest writes why on the row, ' +
             'and that sentence beats the socket\u2019s, which can only say ' +
-            'that a connection closed.',
+            'that a connection closed. The camera is the one the claim ' +
+            'resolves.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -5604,7 +5646,15 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'Up to four per person per game. The slot is the lowest I do not ' +
             'already hold, so ending one and asking again gives that number ' +
-            'back rather than counting upwards.',
+            'back rather than counting upwards.\n\n' +
+            'With `deviceId`, the stream that device holds under that camera ' +
+            'name: the same one again, in any case (200); else one an ' +
+            'installed TS Director claimed under that name, which the device ' +
+            'adopts with its key and video (200); else a new one (201), after ' +
+            'revoking an ended stream of that device and name. A camera name ' +
+            'is unique among my active device streams on the game (409). A ' +
+            'redial sends `heldStreamId`; if that stream was ended or ' +
+            'revoked the answer is 410 and nothing is created.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {
@@ -5613,7 +5663,26 @@ export function openApiDocument(version: string): OpenApiDocument {
               'application/json': {
                 schema: {
                   type: 'object',
-                  properties: { label: { type: 'string' } }
+                  properties: {
+                    label: { type: 'string' },
+                    deviceId: {
+                      type: 'string',
+                      description: 'The install id of the device asking'
+                    },
+                    deviceModel: { type: 'string', maxLength: 60 },
+                    recordsLocally: {
+                      type: 'boolean',
+                      description:
+                        'A phone keeps its own recording: only its own ' +
+                        'upload replaces this stream\u2019s live copy'
+                    },
+                    heldStreamId: {
+                      type: 'string',
+                      description:
+                        'The stream a redial already holds. Only an explicit ' +
+                        'start leaves it out'
+                    }
+                  }
                 }
               }
             }
@@ -5627,9 +5696,15 @@ export function openApiDocument(version: string): OpenApiDocument {
                 }
               }
             },
-            200: { description: 'The one that won a race for the same slot' },
+            200: {
+              description:
+                'The stream this device already holds or adopted, or the ' +
+                'one that won a race for the same slot'
+            },
             400: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            409: errorResponse,
+            410: errorResponse
           }
         }
       },
@@ -5689,7 +5764,17 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         },
         patch: {
-          summary: 'Rename one of my cameras',
+          summary:
+            'Rename one of my cameras, or say a phone holds its recording',
+          description:
+            'A device stream\u2019s new name must not be one of my other ' +
+            'active device streams\u2019 on the game (409). ' +
+            '`localRecording` takes only `recorded`, and only on a device ' +
+            'stream; the first change from `none` records an upload reminder ' +
+            'for me. `liveStartedAt` says when the stream\u2019s first picture ' +
+            'was captured, on the server\u2019s clock (`GET /time`): the live ' +
+            'video is placed there unless a publisher already placed it, or ' +
+            'the instant is too far from when the publish arrived to be of it.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam, streamIdParam],
           requestBody: {
@@ -5699,7 +5784,9 @@ export function openApiDocument(version: string): OpenApiDocument {
                 schema: {
                   type: 'object',
                   properties: {
-                    label: { type: 'string' }
+                    label: { type: 'string' },
+                    localRecording: { type: 'string', enum: ['recorded'] },
+                    liveStartedAt: { type: 'string', format: 'date-time' }
                   }
                 }
               }
@@ -5708,7 +5795,8 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: { description: 'The camera as it now stands' },
             400: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            409: errorResponse
           }
         }
       },
@@ -5954,7 +6042,12 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'Take a game, and get the URL to publish it to',
           description:
             'For a videographer of either team, which every admin of it ' +
-            'is. Anybody else gets 404.',
+            'is. Anybody else gets 404. Kept for the TS Director builds ' +
+            'already installed: it returns my lowest-numbered stream that no ' +
+            'device holds, renamed to `cameraName`, or makes one in my lowest ' +
+            'free slot, and never returns or renames a device\u2019s stream. ' +
+            'Newer builds ask `POST /games/{gameId}/live-streams` with their ' +
+            'install id.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -5963,6 +6056,162 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'The URL with its key, which the operator never sees or types'
             },
             400: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/director/uploads': {
+        post: {
+          summary: 'Open an upload of a recording, in parts',
+          description:
+            'For a videographer of the game\u2019s teams; anybody else gets ' +
+            '404. The parts are sent with PUT, what has landed is asked with ' +
+            'GET, and finish takes it in behind the request. An upload with ' +
+            'no `liveStreamId` replaces the live copies it covers by the ' +
+            '120-second coverage rule, among streams that do not keep their ' +
+            'own recording. `liveStreamId` counts only for a stream of mine ' +
+            'on this game that keeps its own recording and has not been ' +
+            'replaced, ended or revoked streams included. That stream\u2019s ' +
+            'live copy alone is replaced when the upload lands: always with ' +
+            '`wholeStream`, else only if the upload covers it, and never ' +
+            'while it is publishing; a stream with no live copy is settled ' +
+            'by the upload all the same. Any other stream of mine makes the ' +
+            'upload replace nothing. 409 when it is publishing as the upload ' +
+            'opens.',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['gameId', 'title', 'filename', 'sizeBytes'],
+                  properties: {
+                    gameId: { type: 'string' },
+                    title: { type: 'string' },
+                    kind: { type: 'string' },
+                    filename: { type: 'string' },
+                    sizeBytes: { type: 'integer', minimum: 1 },
+                    startAt: { type: 'string', format: 'date-time' },
+                    liveStreamId: {
+                      type: 'string',
+                      description:
+                        'The phone stream this recording was made alongside'
+                    },
+                    wholeStream: {
+                      type: 'boolean',
+                      description:
+                        'The recording ran for every moment that stream ' +
+                        'published, so its live copy is replaced whatever ' +
+                        'the coverage test says'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            201: { description: 'The upload id, the part size and count' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/director/uploads/{id}': {
+        get: {
+          summary: 'What has landed of one of my uploads, and what is left',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: 'Its state, parts received and missing' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        },
+        delete: {
+          summary: 'Give up on one of my uploads, and take its parts',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            204: { description: 'Abandoned' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/director/uploads/{id}/parts/{index}': {
+        put: {
+          summary: 'One part of an upload, as raw bytes',
+          description:
+            'Sending a part twice is not an error. A part of the wrong ' +
+            'length is refused.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            },
+            {
+              name: 'index',
+              in: 'path',
+              required: true,
+              schema: { type: 'integer', minimum: 0 }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/octet-stream': {
+                schema: { type: 'string', format: 'binary' }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'Parts received, and what is missing' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/director/uploads/{id}/finish': {
+        post: {
+          summary: 'Every part is here: make it a video',
+          description:
+            'Answered at once with 202; the work runs behind, and GET says ' +
+            'how far it has got. Asked again once ready, the same video.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: { description: 'Already taken in' },
+            202: { description: 'Being taken in' },
+            400: errorResponse,
+            401: errorResponse,
             404: errorResponse
           }
         }
