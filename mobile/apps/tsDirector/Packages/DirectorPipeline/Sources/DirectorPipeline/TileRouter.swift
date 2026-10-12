@@ -672,6 +672,9 @@ public final class TileRouter: @unchecked Sendable {
   private var missedTicks: UInt64 = 0
   /// The picture the recording last took, so a repeat can be told from a new one.
   private var lastRecordedSequence: UInt64?
+  /// The picture the stream last took, for the same reason: only a new picture's capture time says
+  /// when a stream frame was; a repeat borrows the lag, as the recording's does.
+  private var lastStreamedSequence: UInt64?
   /// Programme pictures left out because the compositor could not make one.
   private var composeMisses: UInt64 = 0
 
@@ -773,6 +776,11 @@ public final class TileRouter: @unchecked Sendable {
       freshForRecording = entry.sequence != lastRecordedSequence
       lastRecordedSequence = entry.sequence
     }
+    var freshForStream = false
+    if tick.streamFrame != nil {
+      freshForStream = entry.sequence != lastStreamedSequence
+      lastStreamedSequence = entry.sequence
+    }
     lock.unlock()
 
     if let frame = tick.recordingFrame, programEncoder.running {
@@ -801,7 +809,8 @@ public final class TileRouter: @unchecked Sendable {
     if let frame = tick.streamFrame, programStreamer.running {
       programStreamer.append(
         picture.buffer,
-        presentationTime: CMTime(value: frame, timescale: CMTimeScale(streamRate))
+        presentationTime: CMTime(value: frame, timescale: CMTimeScale(streamRate)),
+        captureWall: freshForStream ? picture.captureWall : nil
       )
     }
   }
