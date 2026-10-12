@@ -60,7 +60,6 @@ interface Harness {
   patches: Array<{ streamId: string; change: unknown }>
   rotations: string[]
   closes: number
-  settings: number
   failPatch: boolean
 }
 
@@ -78,7 +77,6 @@ async function mount(
     patches: [],
     rotations: [],
     closes: 0,
-    settings: 0,
     failPatch: false
   }
   const client = {
@@ -107,14 +105,12 @@ async function mount(
           deviceModel="iPhone 13 Pro"
           phone={makePhoneStream(native)}
           rotation={{
+            allow: () => harness.rotations.push('any'),
             lockLandscape: () => harness.rotations.push('landscape'),
             restore: () => harness.rotations.push('portrait')
           }}
           onClose={() => {
             harness.closes += 1
-          }}
-          onOpenSettings={() => {
-            harness.settings += 1
           }}
         />
       </ThemeProvider>
@@ -204,9 +200,14 @@ describe('the streaming screen', function () {
     expect(calls(h.native, 'setZoom')).deep.equals([[3]])
     await emit(h.native, { displayedZoom: 2.4 })
     expect(byTestId('zoom-label')?.textContent).equals('2x')
-    // The gear is M12's settings sheet; here it only calls the hook.
+    // The gear opens the settings sheet, which lets Android turn while it is
+    // up and holds it sideways again after Done.
     await press('settings-button')
-    expect(h.settings).equals(1)
+    expect(byTestId('settings-done')).not.equals(null)
+    expect(h.rotations).deep.equals(['landscape', 'any'])
+    await press('settings-done')
+    expect(byTestId('settings-done')).equals(null)
+    expect(h.rotations).deep.equals(['landscape', 'any', 'landscape'])
     await press('camera-close')
     expect(h.closes).equals(1)
     await act(async () => {
@@ -215,7 +216,12 @@ describe('the streaming screen', function () {
     })
     root = undefined
     expect(calls(h.native, 'close')).has.length(1)
-    expect(h.rotations).deep.equals(['landscape', 'portrait'])
+    expect(h.rotations).deep.equals([
+      'landscape',
+      'any',
+      'landscape',
+      'portrait'
+    ])
   })
 
   it('records on the stream URL with the redial’s request, holds Close, and stops with a slide', async function () {
@@ -380,8 +386,7 @@ describe('the streaming screen', function () {
     expect(byTestId('stream-problem')?.textContent).equals(
       'There is not enough free space on this phone to record.'
     )
-    // Without a settings hook the gear does nothing, and a token-less client sends an empty one.
-    await press('settings-button')
+    // A token-less client sends an empty one.
     await press('broadcast-button')
     expect(
       (calls(refused, 'startRecording')[0][4] as { token: string }).token
@@ -409,6 +414,209 @@ describe('the streaming screen', function () {
       document.querySelectorAll('[data-testid^="zoom-preset-"]')
     ).has.length(5)
     expect(calls(h.native, 'zoomScale')).has.length(2)
+  })
+
+  it('refuses Android’s back while recording or streaming, as it refuses Close', async function () {
+    const back = async (): Promise<void> => {
+      await act(async () => {
+        document.dispatchEvent(
+          new window.KeyboardEvent('keyup', { key: 'Escape', bubbles: true })
+        )
+        await delay(10)
+      })
+    }
+    const h = await mount()
+    // The modal listens for back once its fade-in has ended; React hears the
+    // DOM's end of an animation under its prefixed name here.
+    await act(async () => {
+      for (const element of document.body.querySelectorAll('*'))
+        for (const type of ['animationend', 'webkitAnimationEnd'])
+          element.dispatchEvent(new window.Event(type, { bubbles: true }))
+      await delay(10)
+    })
+    await emit(h.native, {})
+    await back()
+    expect(h.closes).equals(1)
+    await emit(h.native, { phase: 'live', isRecording: true })
+    await back()
+    expect(h.closes).equals(1)
+    expect(calls(h.native, 'close')).has.length(0)
+    // The part stopped for low storage and the stream goes on: still held,
+    // and the button stops the stream rather than offering a Record that
+    // the engine would refuse.
+    await emit(h.native, {
+      phase: 'live',
+      isRecording: false,
+      error: 'recordingStoppedLowStorage'
+    })
+    await back()
+    expect(h.closes).equals(1)
+    expect(byTestId('camera-close')?.getAttribute('aria-disabled')).equals(
+      'true'
+    )
+    // The part's end told the server the phone holds a recording.
+    expect(h.patches).deep.equals([
+      { streamId: SESSION.streamId, change: { localRecording: 'recorded' } }
+    ])
+    await press('broadcast-button')
+    expect(calls(h.native, 'startRecording')).has.length(0)
+    await slide(SLIDE_TRAVEL)
+    expect(calls(h.native, 'stopRecording')).has.length(1)
+    await emit(h.native, {})
+    await back()
+    expect(h.closes).equals(2)
+    expect(h.patches).has.length(1)
+  })
+
+  it('tells the server whenever a part ends, once, and again only if it did not hear', async function () {
+    const h = await mount()
+    h.failPatch = true
+    await emit(h.native, { phase: 'live', isRecording: true })
+    await emit(h.native, { phase: 'live', isRecording: false })
+    expect(h.patches).has.length(1)
+    h.failPatch = false
+    await emit(h.native, { phase: 'live', isRecording: true })
+    await emit(h.native, { phase: 'idle', isRecording: false })
+    expect(h.patches).has.length(2)
+    await emit(h.native, { phase: 'live', isRecording: true })
+    await emit(h.native, { phase: 'idle', isRecording: false })
+    expect(h.patches).has.length(2)
+  })
+
+  it('closes the engine only once a slow open has finished', async function () {
+    let release: () => void = () => undefined
+    const gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const h = await mount()
+    await act(async () => {
+      root?.unmount()
+      await delay(10)
+    })
+    root = undefined
+    // A second screen whose open is still waiting on the permission prompt.
+    const slow = fakePhoneStreamModule({ zoomScale: SCALE })
+    const order: string[] = []
+    const open = slow.open
+    slow.open = async (...args) => {
+      order.push('open')
+      await gate
+      await open(...args)
+      order.push('opened')
+    }
+    const close = slow.close
+    slow.close = async () => {
+      order.push('close')
+      await close()
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <StreamingScreen
+            client={
+              { baseUrl: '', token: undefined } as unknown as TeamStationClient
+            }
+            session={SESSION}
+            deviceId="00000000-0000-4000-8000-000000000001"
+            deviceModel="iPhone 13 Pro"
+            phone={makePhoneStream(slow)}
+            onClose={() => {}}
+          />
+        </ThemeProvider>
+      )
+      await delay(20)
+    })
+    await act(async () => {
+      root?.unmount()
+      await delay(10)
+    })
+    root = undefined
+    expect(order).deep.equals(['open'])
+    release()
+    await act(async () => {
+      await delay(20)
+    })
+    expect(order).deep.equals(['open', 'opened', 'close'])
+    expect(calls(h.native, 'close')).has.length(1)
+  })
+
+  it('carries a take a kill interrupted on, when opened again on its stream', async function () {
+    const interrupted = {
+      liveStreamId: SESSION.streamId,
+      gameId: SESSION.gameId,
+      angleName: 'Home Plate',
+      streaming: true,
+      downtimeSeconds: 40
+    }
+    const h = await mount(SESSION, {
+      interruptedSession: interrupted,
+      resumeInterrupted: true
+    })
+    expect(calls(h.native, 'resumeInterrupted')).deep.equals([
+      [
+        {
+          apiBase: 'https://teamstation.example.test/api/v1',
+          token: 'token-0000',
+          deviceId: '00000000-0000-4000-8000-000000000001',
+          deviceModel: 'iPhone 13 Pro'
+        }
+      ]
+    ])
+    // Recording again before the engine's first status says so.
+    expect(byTestId('camera-close')?.getAttribute('aria-disabled')).equals(
+      'true'
+    )
+    await act(async () => {
+      root?.unmount()
+      await delay(10)
+    })
+    root = undefined
+
+    // A take of another stream is left for that stream's Record to close.
+    const other = await mount(SESSION, {
+      interruptedSession: { ...interrupted, liveStreamId: 'liv_other' },
+      resumeInterrupted: true
+    })
+    expect(calls(other.native, 'interruptedSession')).has.length(1)
+    expect(calls(other.native, 'resumeInterrupted')).deep.equals([])
+    await act(async () => {
+      root?.unmount()
+      await delay(10)
+    })
+    root = undefined
+
+    // Refused: the screen says why.
+    const again = fakePhoneStreamModule({
+      zoomScale: SCALE,
+      interruptedSession: interrupted
+    })
+    again.failures.resumeInterrupted = { code: 'insufficientStorage' }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <StreamingScreen
+            client={
+              { baseUrl: '', token: undefined } as unknown as TeamStationClient
+            }
+            session={SESSION}
+            deviceId="00000000-0000-4000-8000-000000000001"
+            deviceModel="iPhone 13 Pro"
+            phone={makePhoneStream(again)}
+            onClose={() => {}}
+          />
+        </ThemeProvider>
+      )
+      await delay(20)
+    })
+    expect(byTestId('stream-problem')?.textContent).equals(
+      'There is not enough free space on this phone to record.'
+    )
   })
 
   it('words each refusal for the person holding the phone', function () {
