@@ -88,6 +88,8 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   const jumpTo = useSharedValue(-1)
   /** A finger is on the page. */
   const dragging = useSharedValue(false)
+  /** Where the page could scroll to at the last scroll: its end. */
+  const pageEnd = useSharedValue(0)
   /**
    * The page was taken in hand after a tab was selected and before it was
    * anchored. The anchor then gives way: the tab is not jumped back to its
@@ -145,6 +147,59 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     latest.current.onScroll()
   }, [])
 
+  /**
+   * The page was pulled back from `back` by `lost` because its content shrank
+   * under it — a filter that leaves less to show — while it sat at its end:
+   * the room grows by what the content lost, and the page goes back, with
+   * the head where it was.
+   */
+  const restore = useCallback(
+    (back: number, lost: number): void => {
+      if (pending.current != null || growing.current != null) return
+      const room = spaceNow.current + lost
+      const jump = (): void => {
+        growing.current = undefined
+        // Kept, and sent again, as an anchor's jump is: the room can be
+        // reported before it is mounted, and a jump into it then clamped.
+        // eslint-disable-next-line @typescript-eslint/no-deprecated -- as below
+        runOnUI((to: number) => {
+          'worklet'
+          jumpTo.value = dragging.value ? -1 : to
+          scrollTo(scrollRef, 0, to, false)
+        })(back)
+        for (const delay of [50, 150, 300, 600]) {
+          timers.current.push(
+            setTimeout(() => {
+              // eslint-disable-next-line @typescript-eslint/no-deprecated -- as below
+              runOnUI(() => {
+                'worklet'
+                if (jumpTo.value >= 0)
+                  scrollTo(scrollRef, 0, jumpTo.value, false)
+              })()
+            }, delay)
+          )
+        }
+        timers.current.push(
+          setTimeout(() => {
+            // eslint-disable-next-line @typescript-eslint/no-deprecated -- as below
+            runOnUI(() => {
+              'worklet'
+              jumpTo.value = -1
+            })()
+          }, 900)
+        )
+      }
+      growing.current = { room, jump }
+      setSpace(room)
+      timers.current.push(
+        setTimeout(() => {
+          if (growing.current?.jump === jump) jump()
+        }, 250)
+      )
+    },
+    [dragging, jumpTo, scrollRef]
+  )
+
   const onScroll = useAnimatedScrollHandler({
     onBeginDrag: () => {
       // A finger on the page: from here the page goes where it is taken.
@@ -168,6 +223,24 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       const next = event.contentOffset.y
       if (jumpTo.value >= 0 && Math.abs(next - jumpTo.value) > 1) {
         scrollTo(scrollRef, 0, jumpTo.value, false)
+        return
+      }
+      // Pulled back to the new end of content that shrank under a page at
+      // rest: not a scroll anybody made, so the head stays where it is and
+      // the page is put back. The end itself moved, which a bounce at the
+      // end, springing back to the same place, never does.
+      const end = event.contentSize.height - event.layoutMeasurement.height
+      const shrank = end < pageEnd.value - 1
+      pageEnd.value = end
+      if (
+        shrank &&
+        !holding.value &&
+        !dragging.value &&
+        next < y.value - 1 &&
+        next >= end - 1
+      ) {
+        // eslint-disable-next-line @typescript-eslint/no-deprecated -- as below
+        runOnJS(restore)(y.value, y.value - next)
         return
       }
       if (holding.value) {
@@ -219,8 +292,14 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       contentBottom,
       viewport
     }
-    setSpace(spacerFor(anchor.offset + pin, contentBottom, viewport))
-  }, [roomAfterDrag])
+    // And room for where the page is, so shrinking content cannot pull it.
+    setSpace(
+      Math.max(
+        spacerFor(anchor.offset + pin, contentBottom, viewport),
+        spacerFor(y.value, contentBottom, viewport)
+      )
+    )
+  }, [roomAfterDrag, y])
 
   /** The hand-off's ref, forwarded as it is now, whatever it was before. */
   const cardRef = useCallback((node: unknown): void => {

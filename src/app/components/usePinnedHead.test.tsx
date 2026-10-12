@@ -347,4 +347,92 @@ describe('the pinned head in a browser', function () {
       globals.ResizeObserver = before
     }
   })
+
+  it('keeps the page and pinned pills put when the tab shrinks under them', async function () {
+    const watchers: Array<() => void> = []
+    const globals = globalThis as { ResizeObserver?: unknown }
+    const before = globals.ResizeObserver
+    globals.ResizeObserver = class {
+      constructor(callback: () => void) {
+        watchers.push(callback)
+      }
+
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    const height = LAYOUT.content.height
+    const room = (): string =>
+      `${PIN_AT + VIEWPORT - (LAYOUT.content.top + LAYOUT.content.height + TAIL)}px`
+    try {
+      // A short tab, opened with the pills pinned: the page ends where it is.
+      LAYOUT.content.height = 200
+      await mount()
+      await setScroll(900)
+      await select('stats', false)
+      expect(named('scroller').scrollTop).equals(PIN_AT)
+      expect(named('spacer').style.height).equals(room())
+      // A filter leaves 100 less to show, and the browser pulls the page
+      // back to its new end before the tab is measured again.
+      LAYOUT.content.height -= 100
+      scrollTop = PIN_AT - 100
+      await act(async () => {
+        for (const watcher of watchers) watcher()
+      })
+      expect(named('spacer').style.height).equals(room())
+      expect(named('scroller').scrollTop).equals(PIN_AT)
+      // The pull's own scroll, arriving after, finds nothing moved.
+      await setScroll(named('scroller').scrollTop)
+      expect(named('pills').style.top).equals(`${HEADER}px`)
+      expect(named('card').style.position).equals('')
+    } finally {
+      LAYOUT.content.height = height
+      globals.ResizeObserver = before
+    }
+  })
+
+  it('puts the page back when the shrinking tab is scrolled before it is measured', async function () {
+    // The page's height, as a browser lays it out: the tab and its room.
+    const original = Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      'scrollHeight'
+    )
+    Object.defineProperty(Element.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.dataset.name !== 'scroller') return 0
+        const room = named('spacer').style.height
+        return (
+          LAYOUT.content.top +
+          LAYOUT.content.height +
+          TAIL +
+          (room === '' ? 0 : Number.parseFloat(room))
+        )
+      }
+    })
+    const height = LAYOUT.content.height
+    try {
+      LAYOUT.content.height = 200
+      await mount()
+      await setScroll(900)
+      await select('stats', false)
+      expect(named('scroller').scrollTop).equals(PIN_AT)
+      const room = Number.parseFloat(named('spacer').style.height)
+      // The tab loses 100 and the browser's pull reaches the page first.
+      LAYOUT.content.height -= 100
+      await setScroll(PIN_AT - 100)
+      expect(named('scroller').scrollTop).equals(PIN_AT)
+      expect(named('spacer').style.height).equals(`${room + 100}px`)
+      expect(named('pills').style.top).equals(`${HEADER}px`)
+      // A scroll somebody makes is still followed, and left where it went.
+      const told = calls.length
+      await setScroll(PIN_AT - 50)
+      expect(named('scroller').scrollTop).equals(PIN_AT - 50)
+      expect(calls.length).equals(told + 1)
+    } finally {
+      LAYOUT.content.height = height
+      if (original != null)
+        Object.defineProperty(Element.prototype, 'scrollHeight', original)
+    }
+  })
 })

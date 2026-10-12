@@ -16,18 +16,22 @@ import type { WalkUpSong } from '../../common/walkUpSong'
 import {
   Button,
   Card,
+  CardBand,
   Emblem,
   GameRow,
   HandoffView,
   initialsOf,
+  PillBand,
   PillTabs,
+  PinnedContent,
+  PinnedSpacer,
   Screen,
   type StatFilter,
   StatFilterModal,
   StatGrid,
-  useHandoff,
   useHeaderHandoff,
-  useHeaderSlot
+  usePinnedHandoff,
+  usePinnedTabs
 } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -367,8 +371,8 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   // names the player by: the short name, even where a roster manager's header
   // shows the whole one.
   const shortShown = publicName ?? (privateNameDenied ? '' : title) ?? ''
-  const { headerHeight } = useHeaderSlot()
-  const handoff = useHandoff(headerHeight)
+  const head = usePinnedHandoff()
+  const { handoff } = head
   const progress = handoff.progress
   const avatarUrl = player?.avatarUrl
   useHeaderHandoff(
@@ -506,316 +510,341 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     onVideoFilter?.(next)
   }
 
-  return (
-    <Screen onScroll={handoff.handleScroll}>
-      <Card style={styles.identity} ref={handoff.ref}>
-        <View style={styles.identityTop}>
-          <Emblem
-            uri={player?.avatarUrl}
-            fallback={initialsOf(shown)}
-            shape="circle"
-            size={3.5}
-          />
-          <View style={styles.identityText}>
-            <Text style={styles.playerName}>{shown}</Text>
-            {/*
-              Only when there is something to say. `B: —` claims we looked and
-              found nothing; a missing line claims nothing at all, which is
-              what an empty column actually means.
-            */}
-            {handedness != null && (
-              <Text style={styles.playerMeta}>{handedness}</Text>
-            )}
-            {asksToGuard && (
-              <GuardianRequest
-                client={client}
-                playerUserId={player.userId}
-                playerName={shortShown}
-                viewerId={viewer.userId}
-              />
-            )}
-          </View>
-        </View>
-      </Card>
+  // The card scrolls away and the pills pin under the header, as a team's
+  // do; a selected tab starts directly under them. Every tab starts at its
+  // top, so nothing waits on data: the card and the tab are measured again
+  // as what loads changes their height.
+  const { pinned, selectTab } = usePinnedTabs({
+    head,
+    ready: true,
+    tab: shownTab,
+    anchorOnRow: false
+  })
 
-      <PillTabs
-        tabs={tabs}
-        selected={shownTab}
-        onSelect={next => {
-          setTab(next)
-          onTab?.(next)
-        }}
-        size="compact"
-        dense={tabs.length >= 5}
-        accessibilityLabel={lstrings.player_sections}
-      />
+  return (
+    <Screen {...pinned.screen}>
+      <CardBand part={pinned.cardBand}>
+        <Card style={styles.identity}>
+          <View style={styles.identityTop}>
+            <Emblem
+              uri={player?.avatarUrl}
+              fallback={initialsOf(shown)}
+              shape="circle"
+              size={3.5}
+            />
+            <View style={styles.identityText}>
+              <Text style={styles.playerName}>{shown}</Text>
+              {/*
+                Only when there is something to say. `B: —` claims we looked and
+                found nothing; a missing line claims nothing at all, which is
+                what an empty column actually means.
+              */}
+              {handedness != null && (
+                <Text style={styles.playerMeta}>{handedness}</Text>
+              )}
+              {asksToGuard && (
+                <GuardianRequest
+                  client={client}
+                  playerUserId={player.userId}
+                  playerName={shortShown}
+                  viewerId={viewer.userId}
+                />
+              )}
+            </View>
+          </View>
+        </Card>
+      </CardBand>
+
+      <PillBand part={pinned.pillBand}>
+        <PillTabs
+          tabs={tabs}
+          selected={shownTab}
+          onSelect={next => {
+            selectTab(next)
+            setTab(next)
+            onTab?.(next)
+          }}
+          size="compact"
+          dense={tabs.length >= 5}
+          accessibilityLabel={lstrings.player_sections}
+        />
+      </PillBand>
 
       {error != null && <Text style={styles.error}>{error}</Text>}
 
-      {shownTab === 'videos' && (
-        <View style={styles.section}>
-          <View style={styles.pillRow}>
-            <Button
-              label={
-                stats == null && player == null
-                  ? lstrings.player_filter
-                  : filterName(stats, videoFilter, player?.teams)
-              }
-              accessibilityLabel={lstrings.player_videos_filter}
-              icon="filter_alt"
-              kind="secondary"
-              compact
-              onPress={() => {
-                setFiltering('videos')
-              }}
-            />
-          </View>
-          {loadingVideos && highlights.length === 0 && (
-            <Card>
-              <Text style={styles.muted}>{lstrings.player_loading}</Text>
-            </Card>
-          )}
-          {!loadingVideos && highlights.length === 0 && (
-            <Card>
-              <Text style={styles.muted}>
-                {withoutVideo > 0
-                  ? lstrings.player_videos_none_recorded
-                  : isNarrowed(videoFilter)
-                    ? lstrings.player_videos_filter_empty
-                    : lstrings.player_videos_empty}
-              </Text>
-              {isNarrowed(videoFilter) && (
-                <Button
-                  label={lstrings.player_filter_clear}
-                  kind="secondary"
-                  onPress={() => {
-                    applyVideoFilter({})
-                  }}
-                />
-              )}
-            </Card>
-          )}
-          {highlights.map(highlight => (
-            <Card key={`${highlight.eventId} ${highlight.videoId}`}>
-              <GameRow
-                first={highlight.teamName ?? ''}
-                second={highlight.outcome}
-                detail={exactDateTime(highlight.playAt)}
-                posterUrl={highlight.stillUrl}
+      <PinnedContent
+        key={shownTab}
+        part={pinned.content}
+        testID="playerTabContent"
+      >
+        {shownTab === 'videos' && (
+          <View style={styles.section}>
+            <View style={styles.pillRow}>
+              <Button
+                label={
+                  stats == null && player == null
+                    ? lstrings.player_filter
+                    : filterName(stats, videoFilter, player?.teams)
+                }
+                accessibilityLabel={lstrings.player_videos_filter}
+                icon="filter_alt"
+                kind="secondary"
+                compact
                 onPress={() => {
-                  onOpenMoment?.(
-                    highlight.gameId,
-                    highlight.videoId,
-                    highlight.startOffsetSec,
-                    highlight.outcome
-                  )
+                  setFiltering('videos')
                 }}
               />
-            </Card>
-          ))}
-          {nextBefore != null && (
-            <Button
-              label={lstrings.player_show_more}
-              kind="secondary"
-              onPress={() => {
-                setBefore(nextBefore)
-              }}
-            />
-          )}
-        </View>
-      )}
+            </View>
+            {loadingVideos && highlights.length === 0 && (
+              <Card>
+                <Text style={styles.muted}>{lstrings.player_loading}</Text>
+              </Card>
+            )}
+            {!loadingVideos && highlights.length === 0 && (
+              <Card>
+                <Text style={styles.muted}>
+                  {withoutVideo > 0
+                    ? lstrings.player_videos_none_recorded
+                    : isNarrowed(videoFilter)
+                      ? lstrings.player_videos_filter_empty
+                      : lstrings.player_videos_empty}
+                </Text>
+                {isNarrowed(videoFilter) && (
+                  <Button
+                    label={lstrings.player_filter_clear}
+                    kind="secondary"
+                    onPress={() => {
+                      applyVideoFilter({})
+                    }}
+                  />
+                )}
+              </Card>
+            )}
+            {highlights.map(highlight => (
+              <Card key={`${highlight.eventId} ${highlight.videoId}`}>
+                <GameRow
+                  first={highlight.teamName ?? ''}
+                  second={highlight.outcome}
+                  detail={exactDateTime(highlight.playAt)}
+                  posterUrl={highlight.stillUrl}
+                  onPress={() => {
+                    onOpenMoment?.(
+                      highlight.gameId,
+                      highlight.videoId,
+                      highlight.startOffsetSec,
+                      highlight.outcome
+                    )
+                  }}
+                />
+              </Card>
+            ))}
+            {nextBefore != null && (
+              <Button
+                label={lstrings.player_show_more}
+                kind="secondary"
+                onPress={() => {
+                  setBefore(nextBefore)
+                }}
+              />
+            )}
+          </View>
+        )}
 
-      {shownTab === 'walkup' && forTeam != null && (
-        <View style={styles.section}>
-          <WalkUpTab
-            client={client}
-            teamId={forTeam}
-            userId={userId}
-            music={music}
-            resolve={walkUp?.resolve}
-            onPick={
-              walkUp?.onPick == null
-                ? undefined
-                : song => {
-                    walkUp.onPick?.(song, shown)
-                  }
-            }
-            fadeAppleMusic={walkUp?.fadeAppleMusic}
-          />
-        </View>
-      )}
-
-      {shownTab === 'teams' && (
-        <View style={styles.section}>
-          <PlayerTeamsTab teams={player?.teams} onOpenTeam={onOpenTeam} />
-        </View>
-      )}
-
-      {shownTab === 'settings' && (
-        <View style={styles.section}>
-          {settingsPending ? (
-            <Text style={styles.muted}>{lstrings.common_loading}</Text>
-          ) : (
-            <PlayerSettingsTab
+        {shownTab === 'walkup' && forTeam != null && (
+          <View style={styles.section}>
+            <WalkUpTab
               client={client}
               teamId={forTeam}
               userId={userId}
-              fullNames={rosterManager === true}
-              onSaved={(hands, entry) => {
-                if (entry == null) {
+              music={music}
+              resolve={walkUp?.resolve}
+              onPick={
+                walkUp?.onPick == null
+                  ? undefined
+                  : song => {
+                      walkUp.onPick?.(song, shown)
+                    }
+              }
+              fadeAppleMusic={walkUp?.fadeAppleMusic}
+            />
+          </View>
+        )}
+
+        {shownTab === 'teams' && (
+          <View style={styles.section}>
+            <PlayerTeamsTab teams={player?.teams} onOpenTeam={onOpenTeam} />
+          </View>
+        )}
+
+        {shownTab === 'settings' && (
+          <View style={styles.section}>
+            {settingsPending ? (
+              <Text style={styles.muted}>{lstrings.common_loading}</Text>
+            ) : (
+              <PlayerSettingsTab
+                client={client}
+                teamId={forTeam}
+                userId={userId}
+                fullNames={rosterManager === true}
+                onSaved={(hands, entry) => {
+                  if (entry == null) {
+                    // How they bat and throw is on the card above; keep it true.
+                    setPlayer(held =>
+                      held == null
+                        ? held
+                        : { ...held, bats: hands.bats, throws: hands.throws }
+                    )
+                    return
+                  }
+                  // A roster may extend surnames to resolve collisions. The
+                  // ordinary player page always uses its own abbreviated name.
+                  const profileName =
+                    entry.nameDetails == null
+                      ? entry.shortName
+                      : shortName({ id: entry.userId, ...entry.nameDetails })
+                  savedPlayer.current = { userId, entry, profileName }
+                  props.onSettingsSaved?.(entry)
+                  if (entry.nameDetails != null) {
+                    privateNameGeneration.current++
+                    setPrivateNameDenied(false)
+                    setPrivateName(
+                      rosterFullName({ id: entry.userId, ...entry.nameDetails })
+                    )
+                  }
                   // How they bat and throw is on the card above; keep it true.
                   setPlayer(held =>
                     held == null
                       ? held
-                      : { ...held, bats: hands.bats, throws: hands.throws }
+                      : {
+                          ...held,
+                          name: profileName,
+                          bats: entry.bats,
+                          throws: entry.throws
+                        }
                   )
-                  return
-                }
-                // A roster may extend surnames to resolve collisions. The
-                // ordinary player page always uses its own abbreviated name.
-                const profileName =
-                  entry.nameDetails == null
-                    ? entry.shortName
-                    : shortName({ id: entry.userId, ...entry.nameDetails })
-                savedPlayer.current = { userId, entry, profileName }
-                props.onSettingsSaved?.(entry)
-                if (entry.nameDetails != null) {
-                  privateNameGeneration.current++
-                  setPrivateNameDenied(false)
-                  setPrivateName(
-                    rosterFullName({ id: entry.userId, ...entry.nameDetails })
-                  )
-                }
-                // How they bat and throw is on the card above; keep it true.
-                setPlayer(held =>
-                  held == null
-                    ? held
-                    : {
-                        ...held,
-                        name: profileName,
-                        bats: entry.bats,
-                        throws: entry.throws
-                      }
-                )
-              }}
-            />
-          )}
-          {!settingsPending && invitesGuardians && (
-            <GuardianInvite
-              client={client}
-              teamId={inviteAs === 'team' ? forTeam : undefined}
-              playerUserId={player?.userId ?? Number(userId)}
-              playerName={shortShown}
-            />
-          )}
-          {
-            // The player's own roles on the team, for its staff.
-            forTeam != null && coachesTeam(roles, forTeam) && (
-              <PlayerTeamRoles
-                client={client}
-                teamId={forTeam}
-                userId={player?.userId ?? Number(userId)}
-              />
-            )
-          }
-          {
-            // Last: taking them off the team, for its administrators alone.
-            forTeam != null && removesFromTeam && teamName != null && (
-              <PlayerRemoveFromTeam
-                client={client}
-                teamId={forTeam}
-                teamName={teamName}
-                userId={player?.userId ?? Number(userId)}
-                shortName={shortShown}
-                onRemoved={notice => {
-                  onRemovedFromTeam?.(forTeam, teamName, notice)
                 }}
               />
-            )
-          }
-        </View>
-      )}
-
-      {shownTab === 'stats' && (
-        <View style={styles.section}>
-          <View style={styles.filterRow}>
-            <Text style={styles.scope}>
-              {scopeOf(stats, filter, player?.teams)}
-            </Text>
-            <Button
-              label={lstrings.player_filter}
-              kind="secondary"
-              onPress={() => {
-                setFiltering('stats')
-              }}
-            />
-          </View>
-
-          {loadingStats && stats == null && (
-            <Card>
-              <Text style={styles.muted}>{lstrings.player_loading}</Text>
-            </Card>
-          )}
-
-          {stats != null && stats.batting == null && stats.pitching == null && (
-            <Card>
-              {/*
-                Two different silences. "Nothing under this filter" is a
-                narrowing the reader chose and can undo; "no stats yet" is
-                about the player. Saying the second when the first is true
-                reads as a boy with twelve games having none.
-              */}
-              <Text style={styles.muted}>
-                {narrowed
-                  ? lstrings.player_filter_empty
-                  : lstrings.player_stats_empty}
-              </Text>
-              {narrowed && (
-                <Button
-                  label={lstrings.player_filter_clear}
-                  kind="secondary"
-                  onPress={() => {
-                    setFilter({})
-                    onFilter?.({})
+            )}
+            {!settingsPending && invitesGuardians && (
+              <GuardianInvite
+                client={client}
+                teamId={inviteAs === 'team' ? forTeam : undefined}
+                playerUserId={player?.userId ?? Number(userId)}
+                playerName={shortShown}
+              />
+            )}
+            {
+              // The player's own roles on the team, for its staff.
+              forTeam != null && coachesTeam(roles, forTeam) && (
+                <PlayerTeamRoles
+                  client={client}
+                  teamId={forTeam}
+                  userId={player?.userId ?? Number(userId)}
+                />
+              )
+            }
+            {
+              // Last: taking them off the team, for its administrators alone.
+              forTeam != null && removesFromTeam && teamName != null && (
+                <PlayerRemoveFromTeam
+                  client={client}
+                  teamId={forTeam}
+                  teamName={teamName}
+                  userId={player?.userId ?? Number(userId)}
+                  shortName={shortShown}
+                  onRemoved={notice => {
+                    onRemovedFromTeam?.(forTeam, teamName, notice)
                   }}
                 />
+              )
+            }
+          </View>
+        )}
+
+        {shownTab === 'stats' && (
+          <View style={styles.section}>
+            <View style={styles.filterRow}>
+              <Text style={styles.scope}>
+                {scopeOf(stats, filter, player?.teams)}
+              </Text>
+              <Button
+                label={lstrings.player_filter}
+                kind="secondary"
+                onPress={() => {
+                  setFiltering('stats')
+                }}
+              />
+            </View>
+
+            {loadingStats && stats == null && (
+              <Card>
+                <Text style={styles.muted}>{lstrings.player_loading}</Text>
+              </Card>
+            )}
+
+            {stats != null &&
+              stats.batting == null &&
+              stats.pitching == null && (
+                <Card>
+                  {/*
+                    Two different silences. "Nothing under this filter" is a
+                    narrowing the reader chose and can undo; "no stats yet" is
+                    about the player. Saying the second when the first is true
+                    reads as a boy with twelve games having none.
+                  */}
+                  <Text style={styles.muted}>
+                    {narrowed
+                      ? lstrings.player_filter_empty
+                      : lstrings.player_stats_empty}
+                  </Text>
+                  {narrowed && (
+                    <Button
+                      label={lstrings.player_filter_clear}
+                      kind="secondary"
+                      onPress={() => {
+                        setFilter({})
+                        onFilter?.({})
+                      }}
+                    />
+                  )}
+                </Card>
               )}
-            </Card>
-          )}
 
-          {stats?.batting != null && (
-            <Card>
-              <Text style={styles.cardTitle}>{lstrings.player_batting}</Text>
-              <StatGrid
-                stats={playerStats(stats.batting, battingColumns)}
-                columns={4}
-              />
-            </Card>
-          )}
+            {stats?.batting != null && (
+              <Card>
+                <Text style={styles.cardTitle}>{lstrings.player_batting}</Text>
+                <StatGrid
+                  stats={playerStats(stats.batting, battingColumns)}
+                  columns={4}
+                />
+              </Card>
+            )}
 
-          {/*
-            A card that says why it is empty, rather than one that is not
-            there: a pitcher with no plate appearances and a pitcher we have
-            no figures for look identical when the card is simply dropped.
-          */}
-          {stats?.batting == null && stats?.pitching != null && (
-            <Card>
-              <Text style={styles.cardTitle}>{lstrings.player_batting}</Text>
-              <Text style={styles.muted}>{lstrings.player_no_batting}</Text>
-            </Card>
-          )}
+            {/*
+              A card that says why it is empty, rather than one that is not
+              there: a pitcher with no plate appearances and a pitcher we have
+              no figures for look identical when the card is simply dropped.
+            */}
+            {stats?.batting == null && stats?.pitching != null && (
+              <Card>
+                <Text style={styles.cardTitle}>{lstrings.player_batting}</Text>
+                <Text style={styles.muted}>{lstrings.player_no_batting}</Text>
+              </Card>
+            )}
 
-          {stats?.pitching != null && (
-            <Card>
-              <Text style={styles.cardTitle}>{lstrings.player_pitching}</Text>
-              <StatGrid
-                stats={playerStats(stats.pitching, pitchingColumns)}
-                columns={4}
-              />
-            </Card>
-          )}
-        </View>
-      )}
+            {stats?.pitching != null && (
+              <Card>
+                <Text style={styles.cardTitle}>{lstrings.player_pitching}</Text>
+                <StatGrid
+                  stats={playerStats(stats.pitching, pitchingColumns)}
+                  columns={4}
+                />
+              </Card>
+            )}
+          </View>
+        )}
+      </PinnedContent>
+      <PinnedSpacer part={pinned.spacer} />
 
       {filtering != null && stats != null && (
         <StatFilterModal
