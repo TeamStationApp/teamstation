@@ -26,8 +26,9 @@ App/                      app target: entry point, Info.plist, and App Icon
   CameramanCore/          pure value types: zoom mapping, identity, settings, format catalogue,
                           thermal level, the CameraControlling seam (shared with Director/Preview)
   CameramanControlUI/     the operating screen, Settings, zoom rail, thermal and battery pills (shared)
+  CameramanCapture/       AVFoundation: lens control, format selection, capability measurement, radar
+                          (shared with the TeamStation app)
 Packages/
-  CameramanCapture/       AVFoundation: lens control, format selection, capability measurement
   CameramanEncode/        VideoToolbox H.264/HEVC and AAC, NAL layout conversion
   CameramanRTSP/          SDP, RTP packetization, RTCP, interleaved framing, the server
   CameramanUI/            AppEnvironment wiring, the preview layer, the root and diagnostic views
