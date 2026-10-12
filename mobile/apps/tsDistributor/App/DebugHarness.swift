@@ -151,10 +151,10 @@ final class DebugHarness {
         let day = DateFormatter()
         day.dateFormat = "yyyy-MM-dd"
         upload = model.teamStationPlan(
+          listing: recording,
           gameId: gameId,
           title: query["title"] ?? "\(day.string(from: game.startAt)) \(game.title)",
-          tracks: wanted,
-          startedAt: recording.startedAt.date
+          tracks: wanted
         )
       }
       model.export(recording, tracks: tracks, reprocess: query["reprocess"] == "1", combined: plan, teamStation: upload)

@@ -115,6 +115,11 @@ public struct RecordingListing: Codable, Equatable, Sendable {
   /// The take's once-a-second telemetry log (`rec-<id>-telemetry.jsonl` beside the programme
   /// master), when the Director kept one. TS Distributor saves it beside the take's files.
   public var telemetry: RemoteFile?
+  /// How far the server's clock was ahead of the iPad's while the take was made, in milliseconds
+  /// (`RecordingSummary.serverClockOffsetMs`). TS Distributor sends it with every upload of the take,
+  /// so the server places the video on its own clock, where the game's scoring is. Nil for a take
+  /// the iPad never measured, and from a TS Director that does not say.
+  public var serverClockOffsetMs: Int?
 
   public init(
     id: Int64,
@@ -127,7 +132,8 @@ public struct RecordingListing: Codable, Equatable, Sendable {
     soundShortfall: Double? = nil,
     gameId: String? = nil,
     gameTitle: String? = nil,
-    telemetry: RemoteFile? = nil
+    telemetry: RemoteFile? = nil,
+    serverClockOffsetMs: Int? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -140,6 +146,7 @@ public struct RecordingListing: Codable, Equatable, Sendable {
     self.gameId = gameId
     self.gameTitle = gameTitle
     self.telemetry = telemetry
+    self.serverClockOffsetMs = serverClockOffsetMs
   }
 }
 

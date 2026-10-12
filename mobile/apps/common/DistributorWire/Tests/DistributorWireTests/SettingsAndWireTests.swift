@@ -96,4 +96,42 @@ struct SettingsAndWireTests {
     #expect(listing.gameId == nil)
     #expect(listing.gameTitle == nil)
   }
+
+  @Test("A listing carries the take's server clock offset, there and back")
+  func listingWithAServerClockOffset() throws {
+    let listing = RecordingListing(
+      id: 362,
+      startedAt: WallClock(seconds: 1_000),
+      endedAt: WallClock(seconds: 2_000),
+      isLive: false,
+      hasPrimary: true,
+      cameras: [],
+      preparedTracks: [],
+      gameId: "gam_1",
+      serverClockOffsetMs: -1_234
+    )
+    let data = try JSONEncoder().encode(listing)
+    let fields = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    #expect(fields["serverClockOffsetMs"] as? Int == -1_234)
+    let back = try JSONDecoder().decode(RecordingListing.self, from: data)
+    #expect(back == listing)
+    #expect(back.serverClockOffsetMs == -1_234)
+  }
+
+  @Test("A listing from a TS Director that does not measure the server's clock has no offset")
+  func listingWithoutAServerClockOffset() throws {
+    let json = """
+    {"id": 7, "startedAt": {"seconds": 1000}, "isLive": false, "hasPrimary": true, "cameras": [], "preparedTracks": [],
+     "gameId": "gam_1", "gameTitle": "2026-09-20 Home at Away"}
+    """
+    let listing = try JSONDecoder().decode(RecordingListing.self, from: Data(json.utf8))
+    #expect(listing.serverClockOffsetMs == nil)
+    #expect(listing.gameId == "gam_1")
+
+    // And nothing is written for it, so an older Mac reads the listing as before.
+    let fields = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(listing)) as? [String: Any]
+    )
+    #expect(fields["serverClockOffsetMs"] == nil)
+  }
 }
