@@ -32,6 +32,18 @@ android {
         unitTests {
             isReturnDefaultValues = true
             isIncludeAndroidResources = true
+            all { test ->
+                // The golden vectors TS Director's tests write, which the stream and recording ports
+                // assert byte for byte.
+                test.systemProperty("mediaFixtures", file("../../MediaFixtures").absolutePath)
+                // The end-to-end runs (RtmpInteropTest, RecordingExportTest) are gated on these, and
+                // must run again whenever they change rather than be skipped as up to date.
+                listOf(
+                    "TS_RTMP_INTEROP_URL", "TS_RTMP_INTEROP_MODE", "TS_RTMP_INTEROP_FIXTURE", "TS_RTMP_INTEROP_SECONDS",
+                    "TS_RTMP_INTEROP_LOG", "TS_RECORDING_E2E_DIR"
+                )
+                    .forEach { name -> test.inputs.property(name, System.getenv(name) ?: "") }
+            }
         }
     }
 
