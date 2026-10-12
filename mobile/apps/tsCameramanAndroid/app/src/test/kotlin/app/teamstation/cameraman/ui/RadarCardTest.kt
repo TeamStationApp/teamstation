@@ -19,7 +19,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
-import app.teamstation.streamcore.radar.PreferencesRadarPairingStore
+import app.teamstation.streamcore.radar.PreferencesRadarFleetStore
 import app.teamstation.streamcore.radar.systemRadarRadio
 
 @RunWith(RobolectricTestRunner::class)
@@ -153,17 +153,17 @@ class RadarCardTest {
 
     @Test
     fun `preferences round-trip a serial and reject anything that is not a TAG One`() {
-        val store = PreferencesRadarPairingStore(RuntimeEnvironment.getApplication())
-        assertEquals(null, store.read())
-        store.write("ADFA0000001")
-        assertEquals("ADFA0000001", store.read())
-        store.write("nope")
+        val store = PreferencesRadarFleetStore.cameraman(RuntimeEnvironment.getApplication())
+        assertEquals(emptyList<String>(), store.readSerials())
+        store.writeSerials(listOf("ADFA0000001"))
+        assertEquals(listOf("ADFA0000001"), store.readSerials())
+        store.writeSerials(listOf("nope"))
         assertEquals("nope", org.robolectric.RuntimeEnvironment.getApplication()
-            .getSharedPreferences(PreferencesRadarPairingStore.FILE, 0)
+            .getSharedPreferences(PreferencesRadarFleetStore.CAMERAMAN_FILE, 0)
             .getString("serial", null))
-        assertEquals(null, store.read())
-        store.write(null)
-        assertEquals(null, store.read())
+        assertEquals(emptyList<String>(), store.readSerials())
+        store.writeSerials(emptyList())
+        assertEquals(emptyList<String>(), store.readSerials())
     }
 
     @Test

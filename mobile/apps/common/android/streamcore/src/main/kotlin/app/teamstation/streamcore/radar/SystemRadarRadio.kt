@@ -90,7 +90,17 @@ fun systemRadarRadio(context: Context): RadarRadio {
                 .firstOrNull() ?: return@AndroidRadarRadio 0
             writeCommand(current, characteristic, bytes)
         },
-        listenerFn = { listener = it }
+        listenerFn = { listener = it },
+        releaseFn = {
+            val scanner = adapter?.bluetoothLeScanner
+            val current = callback
+            if (scanner != null && current != null) scanner.stopScan(current)
+            callback = null
+            gatt?.close()
+            gatt = null
+            listener = null
+            thread.quitSafely()
+        }
     )
 }
 

@@ -1,162 +1,185 @@
-import CameramanCore
-import CoreBluetooth
 import Foundation
 
-/// Connects to one paired TAG One and publishes its battery and pitch/exit.
+/// Connects to one paired TAG One and publishes its connection, battery and pitch/exit.
 ///
-/// The radio stays down while `enabled` is false, so a second camera can take the gun. The battery
-/// byte is the standard Battery Level characteristic, already a percent from 0 to 100.
-public final class RadarSession: NSObject, @unchecked Sendable {
-  public var onChange: (@MainActor (RadarSnapshot) -> Void)?
+/// `RadarFleet` owns one per paired serial. The radio stays down while the session is disabled, so
+/// a second camera can take the gun. The battery byte is the standard Battery Level characteristic,
+/// already a percent from 0 to 100.
+@MainActor
+public final class RadarSession: RadarRadioListener {
+  public let serial: String
+  public private(set) var state: RadarDeviceState
+  /// After every change of `state`.
+  var onChange: (() -> Void)?
   /// A pitch or exit that just arrived. Expiry to a dash does not call this.
-  public var onSpeeds: (@Sendable (Int, Int) -> Void)?
+  var onSpeeds: ((Int, Int) -> Void)?
 
-  private let defaults: UserDefaults
-  private var central: CBCentralManager?
-  private var peripheral: CBPeripheral?
-  private var writeCharacteristic: CBCharacteristic?
-  private var snapshot = RadarSnapshot()
-  private var pitch: (mph: Int, at: Date)?
-  private var exit: (mph: Int, at: Date)?
-  private var handshake: Task<Void, Never>?
-  private var keepalive: Task<Void, Never>?
-  private var didHandshake = false
-
-  public init(defaults: UserDefaults = .standard) {
-    self.defaults = defaults
-    super.init()
-    snapshot.enabled = defaults.object(forKey: Keys.enabled) as? Bool ?? false
-    snapshot.serial = defaults.string(forKey: Keys.serial)
-    snapshot.status = snapshot.enabled ? "Idle" : "Off"
+  private enum Link {
+    case down
+    case connecting
+    case up
   }
 
-  public func start() {
-    guard snapshot.enabled else {
+  private let makeRadio: @MainActor () -> RadarRadio
+  private let pause: @Sendable (Duration) async -> Void
+  private let now: () -> Date
+  private var radio: RadarRadio?
+  private var enabled: Bool
+  private var link = Link.down
+  private var battery: Int?
+  private var pitch: (mph: Int, at: Date)?
+  private var exit: (mph: Int, at: Date)?
+  private var readingAt: Date?
+  private var handshake: Task<Void, Never>?
+  private var keepalive: Task<Void, Never>?
+
+  init(
+    serial: String,
+    enabled: Bool,
+    makeRadio: @escaping @MainActor () -> RadarRadio,
+    pause: @escaping @Sendable (Duration) async -> Void,
+    now: @escaping () -> Date
+  ) {
+    self.serial = serial
+    self.enabled = enabled
+    self.makeRadio = makeRadio
+    self.pause = pause
+    self.now = now
+    self.state = RadarDeviceState(serial: serial, connection: .off)
+  }
+
+  /// Brings the radio up when enabled, and starts looking for this serial.
+  func start() {
+    if enabled { ensureRadio() }
+    refresh()
+  }
+
+  func setEnabled(_ on: Bool) {
+    enabled = on
+    if on {
+      ensureRadio()
+    } else {
+      dropLink()
+    }
+    refresh()
+  }
+
+  /// Unpaired: the link drops and the radio is let go.
+  func stop() {
+    enabled = false
+    dropLink()
+    radio?.listener = nil
+    radio = nil
+    publish()
+  }
+
+  /// The lightning bolt, the percent, a space, and the pitch/exit pair, each side a dash five
+  /// seconds after its reading. Nil unless connected.
+  func readout(at time: Date) -> String? {
+    guard link == .up else { return nil }
+    let speeds = side(pitch, now: time) + "/" + side(exit, now: time)
+    guard let battery else { return speeds }
+    return "⚡\(battery)% \(speeds)"
+  }
+
+  // MARK: RadarRadioListener
+
+  public func radioPowerChanged(_ power: RadarPower) {
+    if power != .on { dropLink() }
+    refresh()
+  }
+
+  public func radioDiscovered(_ name: String) {
+    guard enabled, link == .down, name.caseInsensitiveCompare(serial) == .orderedSame else { return }
+    link = .connecting
+    radio?.stopScan()
+    radio?.connect(name)
+    publish()
+  }
+
+  public func radioConnected() {
+    guard link != .down else { return }
+    link = .up
+    publish()
+  }
+
+  public func radioReady() {
+    guard link == .up else { return }
+    beginHandshake()
+  }
+
+  public func radioDisconnected() {
+    guard link != .down else { return }
+    link = .down
+    cancelHandshake()
+    refresh()
+  }
+
+  public func radioReceived(_ bytes: [UInt8]) {
+    if bytes.count == 1, bytes[0] <= 100 {
+      battery = Int(bytes[0])
       publish()
       return
     }
-    ensureCentral()
-  }
-
-  public func setEnabled(_ enabled: Bool) {
-    defaults.set(enabled, forKey: Keys.enabled)
-    snapshot.enabled = enabled
-    if !enabled {
-      stopRadio()
-      snapshot.connected = false
-      snapshot.pairing = false
-      snapshot.choices = []
-      snapshot.status = "Off"
-      snapshot.readout = nil
-    } else {
-      snapshot.status = "Idle"
-      ensureCentral()
-      refresh()
+    guard let speeds = RadarWire.pitchExit(bytes) else { return }
+    let time = now()
+    if speeds.pitch > 0 { pitch = (speeds.pitch, time) }
+    if speeds.exit > 0 { exit = (speeds.exit, time) }
+    if speeds.pitch > 0 || speeds.exit > 0 {
+      readingAt = time
+      onSpeeds?(speeds.pitch, speeds.exit)
     }
     publish()
   }
 
-  public func openPairing() {
-    guard snapshot.enabled else { return }
-    snapshot.pairing = true
-    snapshot.choices = []
-    ensureCentral()
-    refresh()
-    publish()
+  // MARK: Private
+
+  private func ensureRadio() {
+    guard radio == nil else { return }
+    let next = makeRadio()
+    next.listener = self
+    radio = next
   }
 
-  public func dismissPairing() {
-    snapshot.pairing = false
-    refresh()
-    publish()
-  }
-
-  public func pair(_ name: String) {
-    guard name.uppercased().hasPrefix("ADFA") else { return }
-    defaults.set(name, forKey: Keys.serial)
-    snapshot.serial = name
-    snapshot.pairing = false
-    snapshot.choices = []
-    refresh()
-    publish()
-  }
-
-  public func unpair() {
-    defaults.removeObject(forKey: Keys.serial)
-    snapshot.serial = nil
-    snapshot.connected = false
-    snapshot.pairing = false
-    pitch = nil
-    exit = nil
-    stopRadio()
-    snapshot.status = snapshot.enabled ? "Idle" : "Off"
-    snapshot.readout = nil
-    publish()
-  }
-
-  private func ensureCentral() {
-    if central == nil {
-      central = CBCentralManager(delegate: self, queue: .main)
-    }
-  }
-
+  /// Scans for this serial while the radio is on and nothing is connected or connecting.
   private func refresh() {
-    guard snapshot.enabled, central?.state == .poweredOn else {
-      central?.stopScan()
-      return
+    if enabled, let radio, radio.power == .on, link == .down {
+      radio.startScan()
+    } else {
+      radio?.stopScan()
     }
-    if snapshot.serial == nil && !snapshot.pairing {
-      central?.stopScan()
-      if peripheral != nil { stopRadio() }
-      snapshot.connected = false
-      snapshot.status = "Idle"
-      return
-    }
-    if peripheral?.state == .connected {
-      central?.stopScan()
-      return
-    }
-    central?.scanForPeripherals(withServices: nil, options: [
-      CBCentralManagerScanOptionAllowDuplicatesKey: false
-    ])
-    snapshot.status = snapshot.serial == nil ? "Scanning" : "Connecting"
+    publish()
   }
 
-  private func stopRadio() {
-    handshake?.cancel()
-    keepalive?.cancel()
-    handshake = nil
-    keepalive = nil
-    didHandshake = false
-    central?.stopScan()
-    if let peripheral {
-      central?.cancelPeripheralConnection(peripheral)
+  private func dropLink() {
+    cancelHandshake()
+    radio?.stopScan()
+    if link != .down {
+      radio?.disconnect()
     }
-    peripheral = nil
-    writeCharacteristic = nil
+    link = .down
+  }
+
+  private func connection() -> RadarConnection {
+    guard enabled, let radio else { return .off }
+    if radio.power == .off { return .bluetoothOff }
+    switch link {
+    case .up: return .connected
+    case .connecting: return .connecting
+    case .down: return .scanning
+    }
   }
 
   private func publish() {
-    rebuildReadout()
-    let next = snapshot
-    let callback = onChange
-    Task { @MainActor in
-      callback?(next)
-    }
-  }
-
-  private func rebuildReadout() {
-    guard snapshot.connected else {
-      snapshot.readout = nil
-      return
-    }
-    let now = Date()
-    let speeds = side(pitch, now: now) + "/" + side(exit, now: now)
-    if let battery = snapshot.batteryPercent {
-      snapshot.readout = "⚡\(battery)% \(speeds)"
-    } else {
-      snapshot.readout = speeds
-    }
+    state = RadarDeviceState(
+      serial: serial,
+      connection: connection(),
+      batteryPercent: battery,
+      pitchMph: pitch?.mph,
+      exitMph: exit?.mph,
+      readingAt: readingAt
+    )
+    onChange?()
   }
 
   private func side(_ slot: (mph: Int, at: Date)?, now: Date) -> String {
@@ -164,161 +187,34 @@ public final class RadarSession: NSObject, @unchecked Sendable {
     return now.timeIntervalSince(slot.at) < 5 ? String(slot.mph) : "–"
   }
 
-  private func noteSpeed(pitchMph: Int, exitMph: Int) {
-    let now = Date()
-    if pitchMph > 0 { pitch = (pitchMph, now) }
-    if exitMph > 0 { exit = (exitMph, now) }
-    if pitchMph > 0 || exitMph > 0 { onSpeeds?(pitchMph, exitMph) }
-  }
-
-  private static func isTag(_ name: String?) -> Bool {
-    guard let name else { return false }
-    return name.uppercased().hasPrefix("ADFA")
-  }
-
-  private enum Keys {
-    static let enabled = "app.teamstation.cameraman.radar.enabled"
-    static let serial = "app.teamstation.cameraman.radar.serial"
-  }
-}
-
-extension RadarSession: CBCentralManagerDelegate {
-  public func centralManagerDidUpdateState(_ central: CBCentralManager) {
-    if central.state != .poweredOn {
-      snapshot.connected = false
-      snapshot.status = snapshot.enabled ? "Bluetooth is off" : "Off"
-      publish()
-      return
-    }
-    refresh()
-    publish()
-  }
-
-  public func centralManager(
-    _ central: CBCentralManager,
-    didDiscover peripheral: CBPeripheral,
-    advertisementData: [String: Any],
-    rssi RSSI: NSNumber
-  ) {
-    let name = peripheral.name ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
-    guard let name, Self.isTag(name) else { return }
-    if snapshot.pairing && !snapshot.choices.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) {
-      snapshot.choices.append(name)
-      publish()
-    }
-    guard let serial = snapshot.serial, name.caseInsensitiveCompare(serial) == .orderedSame else { return }
-    guard self.peripheral == nil else { return }
-    self.peripheral = peripheral
-    peripheral.delegate = self
-    central.stopScan()
-    central.connect(peripheral, options: nil)
-    snapshot.status = "Connecting"
-    publish()
-  }
-
-  public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-    snapshot.connected = true
-    snapshot.status = "Connected"
-    publish()
-    peripheral.discoverServices(nil)
-  }
-
-  public func centralManager(
-    _ central: CBCentralManager,
-    didFailToConnect peripheral: CBPeripheral,
-    error: Error?
-  ) {
-    self.peripheral = nil
-    snapshot.connected = false
-    refresh()
-    publish()
-  }
-
-  public func centralManager(
-    _ central: CBCentralManager,
-    didDisconnectPeripheral peripheral: CBPeripheral,
-    error: Error?
-  ) {
-    self.peripheral = nil
-    writeCharacteristic = nil
-    didHandshake = false
-    snapshot.connected = false
-    snapshot.readout = nil
+  private func cancelHandshake() {
     handshake?.cancel()
     keepalive?.cancel()
-    refresh()
-    publish()
-  }
-}
-
-extension RadarSession: CBPeripheralDelegate {
-  public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-    for service in peripheral.services ?? [] {
-      peripheral.discoverCharacteristics(nil, for: service)
-    }
+    handshake = nil
+    keepalive = nil
   }
 
-  public func peripheral(
-    _ peripheral: CBPeripheral,
-    didDiscoverCharacteristicsFor service: CBService,
-    error: Error?
-  ) {
-    for characteristic in service.characteristics ?? [] {
-      let id = characteristic.uuid.uuidString
-      if RadarWire.isCommandWrite(id) {
-        writeCharacteristic = characteristic
-      }
-      if characteristic.properties.contains(.notify), RadarWire.shouldNotify(id) {
-        peripheral.setNotifyValue(true, for: characteristic)
-      }
-    }
-    if writeCharacteristic != nil, !didHandshake {
-      didHandshake = true
-      beginHandshake()
-    }
-  }
-
-  public func peripheral(
-    _ peripheral: CBPeripheral,
-    didUpdateValueFor characteristic: CBCharacteristic,
-    error: Error?
-  ) {
-    guard let value = characteristic.value else { return }
-    let bytes = [UInt8](value)
-    if bytes.count == 1, bytes[0] <= 100 {
-      snapshot.batteryPercent = Int(bytes[0])
-      publish()
-      return
-    }
-    if let speeds = RadarWire.pitchExit(bytes) {
-      noteSpeed(pitchMph: speeds.pitch, exitMph: speeds.exit)
-      publish()
-    }
-  }
-
+  /// The six handshake commands a second apart, then the version every 25 seconds while the link
+  /// stays up.
   private func beginHandshake() {
-    handshake?.cancel()
-    handshake = Task { @MainActor in
-      let commands = RadarWire.handshake(now: Date())
+    cancelHandshake()
+    let pause = self.pause
+    let commands = RadarWire.handshake(now: now())
+    handshake = Task { [weak self] in
       for command in commands {
-        if Task.isCancelled { return }
-        try? await Task.sleep(for: .seconds(1))
-        self.write(command)
+        await pause(.seconds(1))
+        guard !Task.isCancelled, let self else { return }
+        self.radio?.write(command)
       }
-      self.keepalive?.cancel()
-      self.keepalive = Task { @MainActor in
+      guard !Task.isCancelled, let self else { return }
+      self.keepalive = Task { [weak self] in
         while !Task.isCancelled {
-          try? await Task.sleep(for: .seconds(25))
-          if Task.isCancelled { return }
-          self.write(RadarWire.version)
+          await pause(.seconds(25))
+          guard !Task.isCancelled, let self else { return }
+          self.radio?.write(RadarWire.version)
         }
       }
     }
-  }
-
-  private func write(_ bytes: [UInt8]) {
-    guard let peripheral, let writeCharacteristic else { return }
-    peripheral.writeValue(Data(bytes), for: writeCharacteristic, type: .withoutResponse)
   }
 }
 
