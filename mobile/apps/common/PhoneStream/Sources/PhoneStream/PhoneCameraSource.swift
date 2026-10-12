@@ -55,8 +55,12 @@ public protocol PhoneCaptureDevice: AnyObject, Sendable {
   var onVideoFrame: (@Sendable (SampleBuffer) -> Void)? { get set }
   var onAudioFrame: (@Sendable (SampleBuffer) -> Void)? { get set }
   var onStateChange: (@MainActor @Sendable (CameraSession.State) -> Void)? { get set }
-  /// What a preview layer draws from; nil for a device with no session.
-  var previewSession: AVCaptureSession? { get }
+  /// Draws the camera in a preview layer, turned and mirrored as asked, or changes how it is drawn.
+  /// The device makes the change on its own capture queue, in order with `start` and `stop`.
+  func showPreview(in layer: AVCaptureVideoPreviewLayer, rotationAngle: CGFloat, mirrored: Bool)
+  /// Stops drawing the camera in a preview layer, after everything asked of the device before it,
+  /// then calls `done` on any thread.
+  func hidePreview(in layer: AVCaptureVideoPreviewLayer, then done: (@Sendable () -> Void)?)
   func configure(position: CameraPosition, settings: CameramanCore.StreamSettings)
   func start()
   func stop()
@@ -65,9 +69,7 @@ public protocol PhoneCaptureDevice: AnyObject, Sendable {
   func setDisplayedZoom(_ value: Double)
 }
 
-extension CameraSession: PhoneCaptureDevice {
-  public var previewSession: AVCaptureSession? { captureSession }
-}
+extension CameraSession: PhoneCaptureDevice {}
 
 /// The phone's one camera as a `FrameSource`: every picture and every buffer of sound stamped with
 /// when it was captured, on the steady wall clock.

@@ -11,8 +11,11 @@ using namespace facebook::react;
 NS_ASSUME_NONNULL_BEGIN
 
 /** `PhoneStreamBridge.swift`'s preview half, declared by hand as `RCTPhoneStream.mm` does. */
-@interface TSPhoneStreamBridge : NSObject
-+ (nullable AVCaptureSession *)previewSession;
+@interface TSPhoneStreamPreviewLink : NSObject
+- (instancetype)initWithLayer:(AVCaptureVideoPreviewLayer *)layer;
+- (void)refresh;
+- (void)turn:(CGFloat)rotationAngle mirrored:(BOOL)mirrored;
+- (void)detach;
 @end
 
 NS_ASSUME_NONNULL_END
@@ -23,18 +26,29 @@ static NSString *const TSPhoneStreamPreviewSessionChanged = @"TSPhoneStreamPrevi
 /**
  * `TSPhoneStreamPreview`: the camera straight from the capture session, the
  * engine's own preview, without the programme's picture delay. It hosts an
- * `AVCaptureVideoPreviewLayer` on the engine's session, taken again whenever
+ * `AVCaptureVideoPreviewLayer` on the engine's camera, taken again whenever
  * the engine opens or closes, and turned to the screen so the field stays
- * upright in either landscape. A simulator has no session: its synthetic
- * source feeds the programme only, and this view stays black.
+ * upright in either landscape. The layer is attached, turned and detached
+ * through `TSPhoneStreamPreviewLink`, which hands each change to the camera's
+ * capture queue: made here on the main thread, a change opens a configuration
+ * on the session that the camera's `stopRunning` on Close can land inside,
+ * and AVFoundation raises an exception for that. A simulator Debug build has
+ * no camera: its synthetic source feeds the programme only, and this view
+ * stays black.
  * `codegenConfig.ios.componentProvider` maps the name to this class.
  */
 @interface TSPhoneStreamPreviewComponentView : RCTViewComponentView <RCTTSPhoneStreamPreviewViewProtocol>
 @end
 
+/** The scene's geometry, watched so the picture turns when the interface does. */
+static void *TSPhoneStreamPreviewGeometryContext = &TSPhoneStreamPreviewGeometryContext;
+
 @implementation TSPhoneStreamPreviewComponentView {
   AVCaptureVideoPreviewLayer *_previewLayer;
+  TSPhoneStreamPreviewLink *_link;
   BOOL _mirrored;
+  /** The scene whose `effectiveGeometry` this view observes, while it is in a window. */
+  UIWindowScene *_observedScene;
 }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider
@@ -52,6 +66,7 @@ static NSString *const TSPhoneStreamPreviewSessionChanged = @"TSPhoneStreamPrevi
     _previewLayer = [AVCaptureVideoPreviewLayer new];
     _previewLayer.videoGravity = AVLayerVideoGravityResizeAspectFill;
     [self.layer addSublayer:_previewLayer];
+    _link = [[TSPhoneStreamPreviewLink alloc] initWithLayer:_previewLayer];
     [NSNotificationCenter.defaultCenter addObserver:self
                                            selector:@selector(sessionChanged)
                                                name:TSPhoneStreamPreviewSessionChanged
@@ -63,7 +78,9 @@ static NSString *const TSPhoneStreamPreviewSessionChanged = @"TSPhoneStreamPrevi
 
 - (void)dealloc
 {
+  [self stopObservingScene];
   [NSNotificationCenter.defaultCenter removeObserver:self];
+  [_link detach];
 }
 
 - (void)updateProps:(Props::Shared const &)props oldProps:(Props::Shared const &)oldProps
@@ -82,10 +99,6 @@ static NSString *const TSPhoneStreamPreviewSessionChanged = @"TSPhoneStreamPrevi
     });
     return;
   }
-  AVCaptureSession *session = [TSPhoneStreamBridge previewSession];
-  if (_previewLayer.session != session) {
-    _previewLayer.session = session;
-  }
   [self applyConnection];
 }
 
@@ -102,16 +115,51 @@ static NSString *const TSPhoneStreamPreviewSessionChanged = @"TSPhoneStreamPrevi
 - (void)didMoveToWindow
 {
   [super didMoveToWindow];
+  // A modal that only turns sideways is presented before its scene has turned: the preview is laid
+  // out once, while the interface still reads upright. Watching the scene's geometry turns the
+  // picture when the interface itself turns.
+  [self stopObservingScene];
+  UIWindowScene *scene = self.window.windowScene;
+  if (scene != nil) {
+    [scene addObserver:self
+            forKeyPath:@"effectiveGeometry"
+               options:NSKeyValueObservingOptionNew
+               context:TSPhoneStreamPreviewGeometryContext];
+    _observedScene = scene;
+  }
   [self applyConnection];
 }
 
-/** Turns the picture to the interface, and mirrors it when asked. */
-- (void)applyConnection
+- (void)stopObservingScene
 {
-  AVCaptureConnection *connection = _previewLayer.connection;
-  if (connection == nil) {
+  UIWindowScene *scene = _observedScene;
+  if (scene != nil) {
+    [scene removeObserver:self forKeyPath:@"effectiveGeometry" context:TSPhoneStreamPreviewGeometryContext];
+  }
+  _observedScene = nil;
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary<NSKeyValueChangeKey, id> *)change
+                       context:(void *)context
+{
+  if (context != TSPhoneStreamPreviewGeometryContext) {
+    [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
     return;
   }
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [self applyConnection];
+  });
+}
+
+/**
+ * Draws the engine's camera, turned to the interface and mirrored when asked.
+ * The link changes nothing when nothing has changed, so this runs on every
+ * layout pass and geometry report.
+ */
+- (void)applyConnection
+{
   CGFloat angle = 90;
   switch (self.window.windowScene.effectiveGeometry.interfaceOrientation) {
     case UIInterfaceOrientationLandscapeRight:
@@ -127,19 +175,16 @@ static NSString *const TSPhoneStreamPreviewSessionChanged = @"TSPhoneStreamPrevi
       angle = 90;
       break;
   }
-  if ([connection isVideoRotationAngleSupported:angle]) {
-    connection.videoRotationAngle = angle;
-  }
-  if (connection.isVideoMirroringSupported) {
-    connection.automaticallyAdjustsVideoMirroring = NO;
-    connection.videoMirrored = _mirrored;
-  }
+  [_link turn:angle mirrored:_mirrored];
+  [_link refresh];
 }
 
 - (void)prepareForRecycle
 {
   [super prepareForRecycle];
   _mirrored = NO;
+  // A recycled view waits in the pool still holding its layer; the camera must not draw into it.
+  [_link detach];
 }
 
 @end
