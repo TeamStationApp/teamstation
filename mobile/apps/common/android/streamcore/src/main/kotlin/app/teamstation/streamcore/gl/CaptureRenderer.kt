@@ -6,8 +6,10 @@ import android.opengl.GLES20
 import android.opengl.Matrix
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.view.Surface
 import java.util.concurrent.CountDownLatch
+import kotlin.math.roundToLong
 
 /**
  * Camera frames in, every attached encoder and the preview out, with the capture rotation applied on
@@ -121,6 +123,20 @@ internal class CaptureRenderer(
 
     private var wasBlank = false
 
+    /** The programme clock the encoders are drawn on, null to draw them on each camera frame. */
+    private var programme: ProgrammeTicker? = null
+
+    /** The sensor timestamp of the picture the texture holds, null before the first. */
+    private var latestCapture: Long? = null
+    private var tickStartMillis = 0L
+    private var tickCount = 0L
+    private val programmeTick = Runnable {
+        runCatching { drawProgramme() }.onFailure { error ->
+            android.util.Log.w("TSCameraman", "PROGRAMME_TICK_DROPPED $error")
+        }
+        scheduleNextTick()
+    }
+
     /**
      * The surface the camera writes into. Created on the render thread, so this blocks until it
      * exists — a caller that got null here would open the camera with no output at all.
@@ -164,6 +180,65 @@ internal class CaptureRenderer(
         handler.post { encoders.detach(key) }
     }
 
+    /**
+     * Draws the encoders on [ticker]'s clock from now on, the latest camera picture on every tick,
+     * or on each camera frame again when null. The preview is drawn on each camera frame either way.
+     */
+    fun setProgramme(ticker: ProgrammeTicker?) {
+        handler.post {
+            handler.removeCallbacks(programmeTick)
+            programme = ticker
+            if (ticker != null) {
+                tickStartMillis = SystemClock.uptimeMillis()
+                tickCount = 0
+                handler.postAtTime(programmeTick, tickStartMillis)
+            }
+        }
+    }
+
+    /** The next tick on the programme's grid; after a stall longer than a second the grid starts again. */
+    private fun scheduleNextTick() {
+        val ticker = programme ?: return
+        tickCount += 1
+        val now = SystemClock.uptimeMillis()
+        var at = tickStartMillis + (tickCount * 1000.0 / maxOf(1, ticker.frameRate)).roundToLong()
+        if (at < now - 1000) {
+            tickStartMillis = now
+            tickCount = 0
+            at = now
+        }
+        handler.postAtTime(programmeTick, maxOf(at, now))
+    }
+
+    /** One programme tick: the picture held, into each encoder the programme names, at its time. */
+    private fun drawProgramme() {
+        val ticker = programme ?: return
+        val draws = ticker.tick(latestCapture, encoders.keys.toSet())
+        if (draws.isEmpty() || latestCapture == null) return
+        val blank = blankEncoder
+        val (scaleX, scaleY) = fillScale(width, height)
+        var drawn = 0
+        for (draw in draws) {
+            val surface = encoders[draw.key] ?: continue
+            if (!egl.makeCurrent(surface)) {
+                encoders.detach(draw.key)
+                continue
+            }
+            GLES20.glViewport(0, 0, width, height)
+            if (blank) {
+                GLES20.glClearColor(0f, 0f, 0f, 1f)
+                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+            } else {
+                buildMvp(scaleX, scaleY)
+                program.draw(textureId, textureMatrix, mvpMatrix)
+            }
+            egl.setPresentationTime(surface, draw.presentationNanos)
+            egl.swapBuffers(surface)
+            drawn += 1
+        }
+        if (drawn > 0) onFrameRendered()
+    }
+
     fun attachPreview(surface: Surface?, viewWidth: Int, viewHeight: Int) {
         handler.post {
             previewSurface?.let { egl.releaseSurface(it) }
@@ -203,6 +278,8 @@ internal class CaptureRenderer(
 
     fun release() {
         handler.post {
+            handler.removeCallbacks(programmeTick)
+            programme = null
             encoders.releaseAll()
             previewSurface?.let { egl.releaseSurface(it) }
             previewSurface = null
@@ -262,7 +339,8 @@ internal class CaptureRenderer(
             onBlankChanged?.invoke()
         }
 
-        if (deliverToEncoder(timestamp)) {
+        latestCapture = timestamp
+        if (programme == null && deliverToEncoder(timestamp)) {
             // Every encoder surface is exactly the encoded size, so at 0 or 180 nothing needs
             // scaling. At 90 or 270 the source turns portrait against a landscape destination, and a
             // bare rotation of the quad would squash it, so an aspect-fill scale applies.
