@@ -80,7 +80,7 @@ export function eventInfoPaths(
         summary: 'RSVP for oneself or a child',
         security: [{ bearer: [] }],
         description:
-          'Only self or a current guardian-linked player on the event teams; administrator status gives no proxy RSVP power. Rechecked transactionally. No reply is absence; returning to center stores maybe.',
+          'Only self or a current guardian-linked active child; administrator status gives no proxy RSVP power. Rechecked transactionally. No reply is absence; returning to center stores maybe.',
         parameters: [
           ...parameters,
           {

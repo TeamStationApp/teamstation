@@ -120,6 +120,7 @@ export async function mergeTeams(
   const references: Array<[string, string]> = [
     ['season_teams', 'team_id'],
     ['memberships', 'team_id'],
+    ['team_events', 'team_id'],
     ['games', 'home_team_id'],
     ['games', 'away_team_id'],
     ['games', 'withdrawn_by_team_id'],
@@ -284,6 +285,22 @@ export async function mergeTeams(
       // every play in the box score. Where the table of archived responses
       // still exists, the retired game's rows are kept with no game rather
       // than moved to the kept one (036).
+      // Location and attendance belong to the shared fixture too. Preserve
+      // the survivor's location and each person's most recent answer.
+      await sql`update games target set
+        address = coalesce(target.address, source.address),
+        latitude = case when target.address is null then source.latitude else target.latitude end,
+        longitude = case when target.address is null then source.longitude else target.longitude end,
+        end_at = coalesce(target.end_at, source.end_at)
+        from games source where target.id = ${fixture.keptGameId} and source.id = ${fixture.retiredGameId}`.execute(
+        trx
+      )
+      await sql`insert into game_rsvps(event_id, user_id, response, updated_by, updated_at)
+        select ${fixture.keptGameId}, user_id, response, updated_by, updated_at
+        from game_rsvps where event_id = ${fixture.retiredGameId}
+        on conflict(event_id, user_id) do update set
+          response = excluded.response, updated_by = excluded.updated_by, updated_at = excluded.updated_at
+        where game_rsvps.updated_at < excluded.updated_at`.execute(trx)
       await trx
         .deleteFrom('games')
         .where('id', '=', fixture.retiredGameId)

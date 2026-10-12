@@ -18,6 +18,7 @@ import { isRecord } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
 import { shortName } from '../../common/names'
 import { canSeeGame, canSeeTeam, visibleScopes } from '../access'
+import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
@@ -155,6 +156,19 @@ async function eventPeople(
           .where('kind', '=', 'guardian')
           .where('related_user_id', 'in', players)
           .execute()
+  const parent = await onePerson(db, actor.userId)
+  const ownLinks = await db
+    .selectFrom('user_links')
+    .select('related_user_id')
+    .where('kind', '=', 'guardian')
+    .where('user_id', 'in', parent.userIds)
+    .orderBy('related_user_id')
+    .execute()
+  const ownChildren = new Set<number>()
+  for (const link of ownLinks) {
+    const child = await onePerson(db, link.related_user_id)
+    if (child.userId !== actor.userId) ownChildren.add(child.userId)
+  }
   const table = event.eventKind === 'game' ? 'game_rsvps' : 'team_event_rsvps'
   const replies = await db
     .selectFrom(table)
@@ -162,7 +176,9 @@ async function eventPeople(
     .where('event_id', '=', event.id)
     .execute()
   const eligible = new Set(
-    [...members, ...staff, ...guardians].map(row => row.user_id)
+    [...members, ...staff, ...guardians]
+      .map(row => row.user_id)
+      .concat([...ownChildren])
   )
   const ids = [
     ...new Set([...eligible, actor.userId, ...replies.map(row => row.user_id)])
@@ -177,22 +193,18 @@ async function eventPeople(
   const activeIds = new Set(users.map(user => user.id))
   const replyUserIds = [
     actor.userId,
-    ...new Set(
-      guardians
-        .filter(
-          row =>
-            row.user_id === actor.userId && activeIds.has(row.related_user_id)
-        )
-        .map(row => row.related_user_id)
-    )
+    ...[...ownChildren].filter(id => activeIds.has(id))
   ]
   // A spectator may RSVP for themselves. Show their reply to other viewers
   // only while they can still see this event; removed roster rows stay private.
+  const parentVisibility = new Map<number, boolean>(
+    parent.userIds.map((id): [number, boolean] => [id, true])
+  )
   const visibleUsers = []
   for (const user of users) {
     if (!eligible.has(user.id) && user.id !== actor.userId) {
       const scopes = await visibleScopes(db, user.id, user.is_admin)
-      const allowed =
+      let allowed =
         event.eventKind === 'event'
           ? canSeeTeam(scopes, event.teamId)
           : canSeeGame(scopes, {
@@ -200,6 +212,54 @@ async function eventPeople(
               awayTeamId: event.teamIds[1],
               seasonId: event.seasonId
             })
+      if (!allowed) {
+        const child = await onePerson(db, user.id)
+        const links = await db
+          .selectFrom('user_links')
+          .select('user_id')
+          .where('kind', '=', 'guardian')
+          .where('related_user_id', 'in', child.userIds)
+          .execute()
+        for (const link of links) {
+          const cached = parentVisibility.get(link.user_id)
+          if (cached !== undefined) {
+            if (cached) {
+              allowed = true
+              break
+            }
+            continue
+          }
+          const guardian = await onePerson(db, link.user_id)
+          const active = await db
+            .selectFrom('users')
+            .select('is_admin')
+            .where('id', '=', guardian.userId)
+            .where('disabled_at', 'is', null)
+            .where('merged_into', 'is', null)
+            .executeTakeFirst()
+          let visible = false
+          if (active != null) {
+            const scopes = await visibleScopes(
+              db,
+              guardian.userId,
+              active.is_admin
+            )
+            visible =
+              event.eventKind === 'event'
+                ? canSeeTeam(scopes, event.teamId)
+                : canSeeGame(scopes, {
+                    homeTeamId: event.teamIds[0],
+                    awayTeamId: event.teamIds[1],
+                    seasonId: event.seasonId
+                  })
+          }
+          parentVisibility.set(link.user_id, visible)
+          if (visible) {
+            allowed = true
+            break
+          }
+        }
+      }
       if (!allowed) continue
     }
     visibleUsers.push(user)
@@ -246,9 +306,7 @@ export async function saveEventRsvp(
     const event = await resolveEvent(trx, actor, id)
     const people = await eventPeople(trx, event, actor)
     if (!people.replyUserIds.includes(userId))
-      throw forbidden(
-        'You can RSVP only for yourself or your children on this event’s teams'
-      )
+      throw forbidden('You can RSVP only for yourself or your children')
     const table = event.eventKind === 'game' ? 'game_rsvps' : 'team_event_rsvps'
     await trx
       .insertInto(table)
@@ -394,10 +452,9 @@ export async function updateEventInfo(
         .where('id', '=', id)
         .execute()
     } else {
-      const title =
-        raw.title === undefined
-          ? event.title!
-          : eventText(raw.title, 'Title', 200, true)!
+      let title = event.title!
+      if (raw.title !== undefined)
+        title = eventText(raw.title, 'Title', 200, true)!
       if (
         raw.status !== undefined &&
         raw.status !== 'scheduled' &&
@@ -418,10 +475,7 @@ export async function updateEventInfo(
             raw.venue === undefined
               ? event.venue
               : eventText(raw.venue, 'Venue', 200),
-          status:
-            raw.status === undefined
-              ? (event.status as 'scheduled' | 'cancelled')
-              : raw.status
+          status: raw.status ?? (event.status as 'scheduled' | 'cancelled')
         })
         .where('id', '=', id)
         .execute()

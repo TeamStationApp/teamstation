@@ -15,7 +15,8 @@ const phase =
 const report = resolve('coverage/eventInfo')
 const temp = resolve(report, 'tmp')
 const reportOnly = process.argv.includes('--report-only')
-if (!reportOnly) rmSync(temp, { recursive: true, force: true })
+if (!reportOnly && phase !== 'ui')
+  rmSync(temp, { recursive: true, force: true })
 mkdirSync(temp, { recursive: true })
 function run(command, args, env = {}) {
   const result = spawnSync(command, args, {
@@ -49,6 +50,7 @@ const serverSuites = [
   'src/common/api.test.ts',
   'src/common/gameApprovals.test.ts',
   'src/server/events/eventInfo.test.ts',
+  'src/server/admin/mergeTeams.test.ts',
   'src/server/location/eventGeocoder.test.ts',
   'src/server/routes/games.test.ts',
   'src/server/routes/seasonReaders.test.ts',

@@ -7,6 +7,7 @@ import { asEventInfo, type EventInfo } from '../../common/eventInfo'
 import { makeId } from '../../common/ids'
 import { migration055EventInfo } from '../../migrate/migrations/055eventInfo'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
+import { mergeTeams } from '../admin/mergeTeams'
 import { openApiDocument } from '../openapi'
 
 describe('real event info and guardian attendance', function () {
@@ -247,6 +248,56 @@ describe('real event info and guardian attendance', function () {
         .status
     ).equals(403)
   })
+  it('lets a guardian reply for every active child and shows guest-child replies only while that guardian remains authorized', async () => {
+    const id = await create()
+    await f.h.db
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: 101,
+        related_user_id: 106,
+        kind: 'guardian',
+        can_manage: false
+      })
+      .execute()
+    expect((await info(id)).replyUserIds).includes(106)
+    expect(
+      (await f.h.request('PUT', `/events/${id}/rsvps/106`, { response: 'yes' }))
+        .status
+    ).equals(200)
+    expect(
+      (await info(id, 103)).attendees.find(row => row.userId === 106)?.response
+    ).equals('yes')
+    await f.h.db
+      .insertInto('user_links')
+      .values({
+        id: makeId('userLink'),
+        user_id: 104,
+        related_user_id: 106,
+        kind: 'guardian',
+        can_manage: false
+      })
+      .execute()
+    await f.h.db
+      .deleteFrom('user_links')
+      .where('user_id', '=', 101)
+      .where('related_user_id', '=', 106)
+      .execute()
+    expect(
+      (await info(id, 103)).attendees.find(row => row.userId === 106)?.response
+    ).equals('yes')
+    await f.h.db
+      .deleteFrom('user_links')
+      .where('related_user_id', '=', 106)
+      .execute()
+    expect((await info(id, 103)).attendees.map(row => row.userId)).not.includes(
+      106
+    )
+    expect(
+      (await f.h.request('PUT', `/events/${id}/rsvps/106`, { response: 'no' }))
+        .status
+    ).equals(403)
+  })
   it('applies the same RSVP controls to a game and hides inactive or merged roster identities', async () => {
     await f.h.db
       .insertInto('memberships')
@@ -477,5 +528,74 @@ describe('real event info and guardian attendance', function () {
     expect(await f.h.db.selectFrom('team_events').selectAll().execute()).length(
       0
     )
+  })
+  it('keeps title events, game locations and latest RSVPs when duplicate teams and fixtures merge', async () => {
+    const id = await create()
+    const made = await f.h.request('POST', '/teams', {
+      name: 'Demo Hawks Copy',
+      parent: { kind: 'season', id: f.seasonA },
+      locality: {
+        city: 'Demo City',
+        region: 'Demo Region',
+        country: 'US',
+        placeId: null,
+        timezone: 'UTC'
+      },
+      idempotencyKey: 'event-merge-team'
+    })
+    expect(made.status).equals(201)
+    const target: string = (await made.json()).id
+    await f.h.db
+      .insertInto('games')
+      .values({
+        id: 'gam_info_duplicate',
+        home_team_id: target,
+        away_team_id: f.teamB,
+        season_id: f.seasonA,
+        start_at: new Date(startAt),
+        end_at: new Date(endAt),
+        address: '1 Demo Way',
+        latitude: 0,
+        longitude: 0
+      })
+      .execute()
+    await f.h.db
+      .insertInto('game_rsvps')
+      .values([
+        {
+          event_id: gameId,
+          user_id: 101,
+          response: 'no',
+          updated_by: 101,
+          updated_at: new Date('2027-01-01T00:00:00Z')
+        },
+        {
+          event_id: 'gam_info_duplicate',
+          user_id: 101,
+          response: 'yes',
+          updated_by: 101,
+          updated_at: new Date('2027-01-02T00:00:00Z')
+        }
+      ])
+      .execute()
+    await mergeTeams(f.h.db, {
+      fromTeamId: f.teamA,
+      intoTeamId: target,
+      apply: true
+    })
+    expect((await info(id, 103)).teamId).equals(target)
+    expect((await info(id, 103)).title).equals('Team dinner')
+    const survivor = await f.h.db
+      .selectFrom('games')
+      .selectAll()
+      .executeTakeFirstOrThrow()
+    expect(survivor.address).equals('1 Demo Way')
+    const replies = await f.h.db.selectFrom('game_rsvps').selectAll().execute()
+    expect(replies).length(1)
+    expect(replies[0]).includes({
+      user_id: 101,
+      response: 'yes',
+      event_id: survivor.id
+    })
   })
 })
