@@ -15,4 +15,7 @@ expoAutolinking.useExpoModules()
 rootProject.name = 'TeamStation'
 expoAutolinking.useExpoVersionCatalog()
 include ':app'
+// Capture, lens, encoder and radar code shared with TS Cameraman for Android.
+include ':streamcore'
+project(':streamcore').projectDir = new File(rootDir, '../mobile/apps/common/android/streamcore')
 includeBuild('../node_modules/@react-native/gradle-plugin')

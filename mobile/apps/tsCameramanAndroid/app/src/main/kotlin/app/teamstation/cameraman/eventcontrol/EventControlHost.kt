@@ -1,7 +1,7 @@
 package app.teamstation.cameraman.eventcontrol
 
 import android.os.SystemClock
-import app.teamstation.cameraman.core.SettingsStore
+import app.teamstation.streamcore.core.SettingsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

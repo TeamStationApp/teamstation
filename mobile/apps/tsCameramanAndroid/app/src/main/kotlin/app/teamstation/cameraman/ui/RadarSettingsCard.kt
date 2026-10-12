@@ -27,9 +27,9 @@ import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
-import app.teamstation.cameraman.radar.ConnectionLabel
-import app.teamstation.cameraman.radar.RadarPhase
-import app.teamstation.cameraman.radar.RadarUiState
+import app.teamstation.streamcore.radar.ConnectionLabel
+import app.teamstation.streamcore.radar.RadarPhase
+import app.teamstation.streamcore.radar.RadarUiState
 import app.teamstation.cameraman.ui.theme.MonospaceLabel
 
 @Composable
