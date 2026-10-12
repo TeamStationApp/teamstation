@@ -272,7 +272,10 @@ class ProgramEncoder(
                 contentLagSeconds = nowWall - captureWall
             }
             val contentWall = nowWall - (contentLagSeconds ?: 0.0)
-            soundOrigin.offer(contentWall - time, time)
+            // A picture on the programme clock's grid that is a repeat (no capture time) says
+            // nothing new about the content's age. Below 30 fps the repeats follow the freshest
+            // pictures, so offering them would tilt the median toward those and put the sound early.
+            if (captureWall != null || !onClockGrid) soundOrigin.offer(contentWall - time, time)
             val recording = anchorRecordingID
             anchor = if (recording != null && time - lastAnchorSeconds >= anchorIntervalSeconds) {
                 lastAnchorSeconds = time
@@ -507,6 +510,7 @@ class ProgramEncoder(
     }
 
     internal val writtenSoundEndForTesting: Double get() = lock.withLock { writtenAudioEnd }
+    internal val soundOriginForTesting: Double? get() = lock.withLock { soundOrigin.partStartWall }
     internal val acceptedSoundCountForTesting: Int get() = lock.withLock { acceptedAudioCount }
     internal val audioBehindTrackForTesting: Int get() = lock.withLock { audioBehindTrack }
 

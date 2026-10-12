@@ -103,6 +103,16 @@ class ProgramStreamer(
 
     override val running: Boolean get() = lock.withLock { isRunning }
 
+    /**
+     * When the first picture this publish sent was captured, in wall seconds: where the server's
+     * copy of the stream begins. Null until a picture has gone out. Every picture is stamped on the
+     * stream's clock from its capture time ([pictureWall]), so this is that clock's start plus the
+     * first stamp sent; a picture with no capture time counts from when it left the encoder.
+     */
+    @Volatile
+    var liveTimelineStart: Double? = null
+        private set
+
     /** The surface the stream's pictures are drawn into; a new one after the watchdog rebuilds the session. */
     val inputSurface: Surface? get() = lock.withLock { surface }
 
@@ -171,13 +181,14 @@ class ProgramStreamer(
         lastOutputWall = 0.0
         pendingEncodes = 0
         syncRequested = false
+        liveTimelineStart = null
         true
     }
 
     private fun applyStreamSettings(settings: StreamSettings) {
         this.settings = settings.copy(frameRate = maxOf(1, settings.frameRate))
         codec = RTMPVideoCodec.of(settings.codec)
-        bitrate = settings.bitrateHigh
+        bitrate = this.settings.openingBitrate
     }
 
     /** The next coded picture must be an IDR. */
@@ -191,11 +202,11 @@ class ProgramStreamer(
     }
 
     /**
-     * Starts the controller at the high bitrate, which is where the session already is. Until the
+     * Starts the controller at the opening bitrate, which is where the session already is. Until the
      * publish is live there is no link to judge, and the controller holds.
      */
     private fun startRateLoop(client: RTMPClient) {
-        val (high, low) = lock.withLock { settings.bitrateHigh to settings.bitrateLow }
+        val (high, low, opening) = lock.withLock { Triple(settings.bitrateHigh, settings.bitrateLow, bitrate) }
         val loop = AdaptiveBitrateLoop(
             ceiling = high,
             floor = low,
@@ -204,7 +215,7 @@ class ProgramStreamer(
             apply = { applyBitrate(it) }
         )
         lock.withLock { rateLoop = loop }
-        loop.configure(high, low, enabled = true)
+        loop.configure(high, low, enabled = true, start = opening)
     }
 
     /** A rate from the controller, onto the live session: the next picture is coded at it. */
@@ -234,6 +245,7 @@ class ProgramStreamer(
             watchdog?.shutdown()
             watchdog = null
             pendingEncodes = 0
+            liveTimelineStart = null
             val closing = Closing(encoder, client, rateLoop, aac, surfaceListener.takeIf { encoder != null })
             encoder = null
             client = null
@@ -486,6 +498,7 @@ class ProgramStreamer(
                 val record = if (keyframe) decoderConfigurationRecord(parameterSets, codec) else null
                 if (record == null) return
                 sentVideoConfig = true
+                if (liveTimelineStart == null) liveTimelineStart = clock.startWall + time.seconds
                 header = FLVTag.videoSequenceHeader(codec, record)
             }
             Triple(client, metadata, header)
