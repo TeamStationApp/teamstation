@@ -112,6 +112,7 @@ export class DmFacts {
         'id',
         'merged_into',
         'login_enabled',
+        'disabled_at',
         'birth_year',
         'birth_month'
       ])
@@ -121,7 +122,10 @@ export class DmFacts {
     for (const row of rows) {
       this.rows.set(row.id, {
         id: row.id,
-        account: row.merged_into == null && row.login_enabled,
+        account:
+          row.merged_into == null &&
+          row.disabled_at == null &&
+          row.login_enabled,
         birthYear: row.birth_year,
         birthMonth: row.birth_month
       })

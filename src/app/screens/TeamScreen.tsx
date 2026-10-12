@@ -13,6 +13,7 @@ import type {
   GameSummary,
   PitchingRow,
   RosterEntry,
+  StaffEntry,
   StandingsRow,
   TeamStationClient,
   TeamSummary
@@ -1110,3 +1111,17 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.dangerColor
   }
 }))
+
+const ROLE_LABELS: Record<Role, string> = {
+  admin: 'Admin',
+  coach: 'Coach',
+  assistant: 'Assistant',
+  scorekeeper: 'Scorekeeper',
+  songkeeper: 'Songkeeper',
+  videographer: 'Videographer'
+}
+
+/** The line under a staff name: `Coach · Scorekeeper`. */
+export function staffSubtitle(person: StaffEntry): string {
+  return person.roles.map(role => ROLE_LABELS[role]).join(' · ')
+}

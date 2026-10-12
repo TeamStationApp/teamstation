@@ -97,6 +97,7 @@ export async function eligibleSurvivors(
     .where('id', 'in', ids)
     .where('merged_into', 'is', null)
     .where('login_enabled', '=', true)
+    .where('disabled_at', 'is', null)
     .execute()
   return new Set(
     rows
@@ -117,6 +118,7 @@ export async function isEligible(
     .where('id', '=', userId)
     .where('merged_into', 'is', null)
     .where('login_enabled', '=', true)
+    .where('disabled_at', 'is', null)
     .executeTakeFirst()
   return row != null && !isUnder13(row.birth_year, row.birth_month, now)
 }

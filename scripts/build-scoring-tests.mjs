@@ -66,7 +66,9 @@ for (const entry of entries)
     plugins: [...(webSettings.plugins ?? []), chatCoreResolvePlugin()],
     define: {
       __DEV__: 'true',
-      TS_CHAT_NODE_ADDON: JSON.stringify(resolve('src/common/chatCrypto/node/chat_crypto.node')),
+      TS_CHAT_NODE_ADDON: JSON.stringify(
+        resolve('src/common/chatCrypto/node/chat_crypto.node')
+      ),
       TS_API_BASE_URL: JSON.stringify('/api/v1'),
       // Tests never report; they hand startSentry a DSN and an SDK of their own.
       'process.env.TS_SENTRY_DSN': JSON.stringify(''),

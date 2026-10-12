@@ -219,6 +219,8 @@ export function profileDirectories(home: string): string[] {
     noSymlinks(modern)
     return [modern]
   }
+  noSymlinks(legacy)
+  noSymlinks(modern)
   return [legacy, modern]
 }
 export async function withSigning<T>(

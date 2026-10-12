@@ -677,7 +677,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       {onChatDevices != null && (
         <View style={styles.section}>
           <SectionHeader title={lstrings.account_chat} />
-          <Card>
+          <ListCard>
             <ListRow
               title={lstrings.account_chat_devices}
               subtitle={lstrings.account_chat_devices_detail}
@@ -686,7 +686,6 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
             />
             {onChatReports != null && user.isAdmin && (
               <>
-                <View style={styles.divider} />
                 <ListRow
                   title={lstrings.chat_reports_title}
                   subtitle={lstrings.account_chat_reports_detail}
@@ -695,7 +694,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                 />
               </>
             )}
-          </Card>
+          </ListCard>
         </View>
       )}
       {Platform.OS === 'ios' && (

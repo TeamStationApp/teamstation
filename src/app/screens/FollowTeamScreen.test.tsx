@@ -364,7 +364,7 @@ describe('following a team in the app', function () {
 
   it('opens the follow screen from its address', async function () {
     fakeApi()
-    showRoute({ name: 'followTeam' }, true)
+    showRoute({ name: 'discover', kind: 'team', follow: true }, true)
     await render(<App />)
     expect(currentRoute()).deep.equals({ name: 'followTeam' })
     expect(text()).contains('You follow no teams yet')

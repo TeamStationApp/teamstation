@@ -535,15 +535,15 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
             ))}
           </ListCard>
         </View>
+      )}
       {props.leagueChats != null &&
         props.leagueChats.length > 0 &&
         props.onOpenChat != null && (
           <View style={styles.section}>
             <SectionHeader title="Leagues" />
-            <Card>
-              {props.leagueChats.map((chat, index) => (
+            <ListCard>
+              {props.leagueChats.map(chat => (
                 <View key={chat.id}>
-                  {index > 0 && <View style={styles.divider} />}
                   <ListRow
                     title={chat.league}
                     subtitle={chat.title}
@@ -554,11 +554,10 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                   />
                 </View>
               ))}
-            </Card>
+            </ListCard>
           </View>
         )}
 
-      )}
       {counts.league > 0 && (
         <View style={styles.section}>
           <SectionHeader

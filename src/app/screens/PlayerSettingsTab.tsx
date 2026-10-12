@@ -11,8 +11,7 @@ import {
 } from '../../common/playerSettings'
 import { Button, Card, SectionHeader, TextField } from '../components'
 import { GuardiansModal, kindLabel } from '../components/GuardiansModal'
-import { sprintf } from '../../common/sprintf'
-import { lstrings } from '../locales/strings'
+import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface PlayerSettingsTabProps {
@@ -42,7 +41,7 @@ export interface PlayerSettingsTabProps {
 /** What the form starts from: a roster entry, or the person away from one. */
 type Saved = Pick<
   RosterEntry,
-  'jersey' | 'positions' | 'bats' | 'throws' | 'nameDetails'
+  'jersey' | 'positions' | 'bats' | 'throws' | 'nameDetails' | 'shortName'
 >
 
 type Bats = NonNullable<RosterEntry['bats']>
@@ -100,7 +99,8 @@ export function PlayerSettingsTab(
     setLoadError(undefined)
     const loaded: Promise<Saved | undefined> =
       teamId == null
-        ? client.player(userId).then(({ bats, throws }) => ({
+        ? client.player(userId).then(({ bats, throws, name }) => ({
+            shortName: name,
             jersey: null,
             positions: [],
             bats,
@@ -185,135 +185,142 @@ export function PlayerSettingsTab(
 
   return (
     <View style={styles.sections}>
-    <Card style={styles.form}>
-      {teamId != null && (
-        <>
-          {draft.name != null && (
-            <View pointerEvents={busy ? 'none' : 'auto'} style={{ gap: 16 }}>
-              <TextField
-                label={lstrings.player_settings_first_name}
-                value={draft.name.firstName}
-                onChangeText={firstName => {
-                  edit({ name: { ...draft.name!, firstName } })
-                }}
-              />
-              <TextField
-                label={lstrings.player_settings_last_name}
-                value={draft.name.lastName}
-                onChangeText={lastName => {
-                  edit({ name: { ...draft.name!, lastName } })
-                }}
-              />
-            </View>
-          )}
-          <TextField
-            label={lstrings.player_settings_jersey}
-            value={draft.jersey}
-            keyboardType="number-pad"
-            onChangeText={jersey => {
-              edit({ jersey })
-            }}
-          />
-
-          <Text style={styles.label}>
-            {lstrings.player_settings_positions.toUpperCase()}
-          </Text>
-          <View
-            style={styles.chips}
-            accessibilityLabel={lstrings.player_settings_positions}
-          >
-            {PLAYER_POSITIONS.map(position => {
-              const on = draft.positions.includes(position)
-              return (
-                <Chip
-                  key={position}
-                  label={position}
-                  role="checkbox"
-                  on={on}
-                  disabled={busy}
-                  onPress={() => {
-                    edit({
-                      positions: on
-                        ? draft.positions.filter(held => held !== position)
-                        : PLAYER_POSITIONS.filter(
-                            item =>
-                              item === position ||
-                              draft.positions.includes(item)
-                          )
-                    })
+      <Card style={styles.form}>
+        {teamId != null && (
+          <>
+            {draft.name != null && (
+              <View pointerEvents={busy ? 'none' : 'auto'} style={{ gap: 16 }}>
+                <TextField
+                  label={lstrings.player_settings_first_name}
+                  value={draft.name.firstName}
+                  onChangeText={firstName => {
+                    edit({ name: { ...draft.name!, firstName } })
                   }}
                 />
-              )
-            })}
-          </View>
-        </>
-      )}
+                <TextField
+                  label={lstrings.player_settings_last_name}
+                  value={draft.name.lastName}
+                  onChangeText={lastName => {
+                    edit({ name: { ...draft.name!, lastName } })
+                  }}
+                />
+              </View>
+            )}
+            <TextField
+              label={lstrings.player_settings_jersey}
+              value={draft.jersey}
+              keyboardType="number-pad"
+              onChangeText={jersey => {
+                edit({ jersey })
+              }}
+            />
 
-      {teamId == null && (
-        <>
-          <Text style={styles.label}>
-            {lstrings.player_settings_bats.toUpperCase()}
-          </Text>
-          <View
-            style={styles.chips}
-            accessibilityRole="radiogroup"
-            accessibilityLabel={lstrings.player_settings_bats}
-          >
-            {BATS.map(choice => (
-              <Chip
-                key={choice.id}
-                label={choice.label}
-                accessibilityLabel={`${lstrings.player_settings_bats} ${choice.label}`}
-                role="radio"
-                on={draft.bats === choice.id}
-                disabled={busy}
-                onPress={() => {
-                  edit({ bats: choice.id })
-                }}
-              />
-            ))}
-          </View>
+            <Text style={styles.label}>
+              {lstrings.player_settings_positions.toUpperCase()}
+            </Text>
+            <View
+              style={styles.chips}
+              accessibilityLabel={lstrings.player_settings_positions}
+            >
+              {PLAYER_POSITIONS.map(position => {
+                const on = draft.positions.includes(position)
+                return (
+                  <Chip
+                    key={position}
+                    label={position}
+                    role="checkbox"
+                    on={on}
+                    disabled={busy}
+                    onPress={() => {
+                      edit({
+                        positions: on
+                          ? draft.positions.filter(held => held !== position)
+                          : PLAYER_POSITIONS.filter(
+                              item =>
+                                item === position ||
+                                draft.positions.includes(item)
+                            )
+                      })
+                    }}
+                  />
+                )
+              })}
+            </View>
+          </>
+        )}
 
-          <Text style={styles.label}>
-            {lstrings.player_settings_throws.toUpperCase()}
-          </Text>
-          <View
-            style={styles.chips}
-            accessibilityRole="radiogroup"
-            accessibilityLabel={lstrings.player_settings_throws}
-          >
-            {THROWS.map(choice => (
-              <Chip
-                key={choice.id}
-                label={choice.label}
-                accessibilityLabel={`${lstrings.player_settings_throws} ${choice.label}`}
-                role="radio"
-                on={draft.throws === choice.id}
-                disabled={busy}
-                onPress={() => {
-                  edit({ throws: choice.id })
-                }}
-              />
-            ))}
-          </View>
-        </>
-      )}
+        {teamId == null && (
+          <>
+            <Text style={styles.label}>
+              {lstrings.player_settings_bats.toUpperCase()}
+            </Text>
+            <View
+              style={styles.chips}
+              accessibilityRole="radiogroup"
+              accessibilityLabel={lstrings.player_settings_bats}
+            >
+              {BATS.map(choice => (
+                <Chip
+                  key={choice.id}
+                  label={choice.label}
+                  accessibilityLabel={`${lstrings.player_settings_bats} ${choice.label}`}
+                  role="radio"
+                  on={draft.bats === choice.id}
+                  disabled={busy}
+                  onPress={() => {
+                    edit({ bats: choice.id })
+                  }}
+                />
+              ))}
+            </View>
 
-      {error != null && <Text style={styles.error}>{error}</Text>}
-      {done && !changed && (
-        <Text style={styles.muted}>{lstrings.player_settings_saved}</Text>
-      )}
+            <Text style={styles.label}>
+              {lstrings.player_settings_throws.toUpperCase()}
+            </Text>
+            <View
+              style={styles.chips}
+              accessibilityRole="radiogroup"
+              accessibilityLabel={lstrings.player_settings_throws}
+            >
+              {THROWS.map(choice => (
+                <Chip
+                  key={choice.id}
+                  label={choice.label}
+                  accessibilityLabel={`${lstrings.player_settings_throws} ${choice.label}`}
+                  role="radio"
+                  on={draft.throws === choice.id}
+                  disabled={busy}
+                  onPress={() => {
+                    edit({ throws: choice.id })
+                  }}
+                />
+              ))}
+            </View>
+          </>
+        )}
 
-      <Button
-        label={lstrings.player_settings_save}
-        accessibilityLabel={lstrings.player_settings_save}
-        busy={busy}
-        disabled={!changed}
-        onPress={save}
-      />
-    </Card>
+        {error != null && <Text style={styles.error}>{error}</Text>}
+        {done && !changed && (
+          <Text style={styles.muted}>{lstrings.player_settings_saved}</Text>
+        )}
+
+        <Button
+          label={lstrings.player_settings_save}
+          accessibilityLabel={lstrings.player_settings_save}
+          busy={busy}
+          disabled={!changed}
+          onPress={save}
+        />
+      </Card>
       <BirthMonthSection client={client} userId={userId} />
-      {teamId != null && <GuardiansSection client={client} teamId={teamId} userId={userId} playerName={saved.shortName} />}
+      {teamId != null && (
+        <GuardiansSection
+          client={client}
+          teamId={teamId}
+          userId={userId}
+          playerName={saved.shortName}
+        />
+      )}
     </View>
   )
 }
@@ -644,7 +651,9 @@ function Chip(props: {
     <Pressable
       accessibilityRole={role}
       accessibilityLabel={props.accessibilityLabel ?? label}
-      accessibilityState={role === 'button' ? { disabled } : { checked: on, disabled }}
+      accessibilityState={
+        role === 'button' ? { disabled } : { checked: on, disabled }
+      }
       // react-native-web does not render `aria-checked` from
       // `accessibilityState`, so the web says it directly.
       aria-checked={role === 'button' ? undefined : on}

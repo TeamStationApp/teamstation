@@ -6,9 +6,8 @@ import {
   type ChatFixture,
   openChatFixture
 } from '../server/chat/chatTestFixture'
-import { migrations } from './migrations'
 import { migration053ChatPreferences } from './migrations/053chatPreferences'
-import { migrateDown, migrateUp } from './runner'
+import { migrateUp } from './runner'
 
 describe('053: personal chat metadata migration', function () {
   this.timeout(120000)
@@ -48,7 +47,8 @@ describe('053: personal chat metadata migration', function () {
       manual_unread: false
     })
     expect(Number(defaults.manual_unread_revision)).equals(0)
-    expect(await migrateDown(pool, migrations, 1)).deep.equals([
+    await pool.query(migration053ChatPreferences.down)
+    await pool.query('delete from schema_migrations where name = $1', [
       migration053ChatPreferences.name
     ])
     expect(
@@ -58,9 +58,9 @@ describe('053: personal chat metadata migration', function () {
         )
       ).rows[0].count
     ).equals(before)
-    expect((await migrateUp(pool, migrations)).applied).deep.equals([
-      migration053ChatPreferences.name
-    ])
+    expect(
+      (await migrateUp(pool, [migration053ChatPreferences])).applied
+    ).deep.equals([migration053ChatPreferences.name])
     expect(
       (
         await pool.query(

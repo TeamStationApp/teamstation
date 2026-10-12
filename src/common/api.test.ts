@@ -2,7 +2,12 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { testPasswordParameters } from '../test/passwordFixtures'
-import { asStandingsRow, asManagePage, asScopeGrant, TeamStationClient } from './api'
+import {
+  asManagePage,
+  asScopeGrant,
+  asStandingsRow,
+  TeamStationClient
+} from './api'
 import { HttpError } from './errors'
 import { asGumboPlay } from './gumboPlay'
 import { halfOutcomes, lineScore } from './scoring/linescore'
@@ -467,14 +472,14 @@ describe('api client', function () {
     )
 
     const follow = client({ following: true })
-    expect(await follow.client.follow('tem 1')).equals(true)
+    expect(await follow.client.followTeam('tem 1')).equals(true)
     expect(follow.calls[0]).deep.include({
       method: 'PUT',
       url: 'http://x/api/v1/teams/tem%201/follow'
     })
 
     const unfollow = client({ following: false })
-    expect(await unfollow.client.unfollow('tem_1')).equals(false)
+    expect(await unfollow.client.unfollowTeam('tem_1')).equals(false)
     expect(unfollow.calls[0]).deep.include({
       method: 'DELETE',
       url: 'http://x/api/v1/teams/tem_1/follow'
@@ -482,7 +487,7 @@ describe('api client', function () {
 
     const mine = client([{ ...hawks, following: true }])
     expect((await mine.client.myFollows())[0]?.following).equals(true)
-    expect(mine.calls[0].url).equals('http://x/api/v1/me/follows')
+    expect(mine.calls[0].url).equals('http://x/api/v1/me/team-follows')
 
     const entry = {
       gameId: 'gam_1',

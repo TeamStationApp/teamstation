@@ -42,7 +42,12 @@ export async function settleInviteSignIn(
 ): Promise<SettledJoin | undefined> {
   const knownInvite = await findInviteById(db, options.inviteId)
   if (knownInvite == null) return undefined
-  if (knownInvite.guardianOfUserId != null && (knownInvite.forEmail ?? '').trim().toLowerCase() !== options.email.trim().toLowerCase()) return undefined
+  if (
+    knownInvite.guardianOfUserId != null &&
+    (knownInvite.forEmail ?? '').trim().toLowerCase() !==
+      options.email.trim().toLowerCase()
+  )
+    return undefined
   const settled = await settleAccount(db, options.email, {
     displayName: options.displayName
   })

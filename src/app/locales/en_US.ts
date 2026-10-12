@@ -780,7 +780,6 @@ export const enUs = {
   player_removed: 'Removed %1$s from %2$s',
   player_remove_unchanged: '%1$s is not on %2$s. Nothing was changed.',
   people_none: 'Nobody here yet.',
-  manage_no_address_header: 'No address on file',
   manage_guardians: 'Guardians',
   manage_safesport_title: 'SafeSport',
   manage_safesport_label: 'SafeSport Local Affiliated Organization',

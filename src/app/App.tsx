@@ -84,10 +84,10 @@ import { ScoringPlayerSettingsFlow } from './scoring/ScoringPlayerSettingsFlow'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
+import { ChatReportsScreen } from './screens/ChatReportsScreen'
 import { CreateGameScreen } from './screens/CreateGameScreen'
 import { CreateGroupScreen } from './screens/CreateGroupScreen'
 import { DiscoverScreen } from './screens/DiscoverScreen'
-import { ChatReportsScreen } from './screens/ChatReportsScreen'
 import { GameScreen } from './screens/GameScreen'
 import {
   type GameSettingsResult,
@@ -397,7 +397,14 @@ function Shell(props: AppProps): React.ReactElement {
   // to a game opens that game rather than the screen behind it.
   const [stacks, setStacks] = useState<Record<NavTabId, Pushed[]>>(() => {
     const opened = stackFor(currentRoute())
-    return { home: [], videos: [], schedule: [], search: [], chat: [], ...opened }
+    return {
+      home: [],
+      videos: [],
+      schedule: [],
+      search: [],
+      chat: [],
+      ...opened
+    }
   })
   const settingsVisitId = useRef(0)
   const [settingsVisit, setSettingsVisit] = useState(0)
@@ -862,22 +869,29 @@ function Shell(props: AppProps): React.ReactElement {
   )
   const goFromAddress = useCallback(
     (route: Route, onHandled?: (accepted: boolean) => void): void => {
-      chatListNavigation.navigate(() => goToRoute(route, onHandled)).catch(error => {
-        reportNavigationError(error)
-        onHandled?.(false)
-      })
+      chatListNavigation
+        .navigate(() => {
+          goToRoute(route, onHandled)
+        })
+        .catch((error: unknown) => {
+          reportNavigationError(error)
+          onHandled?.(false)
+        })
     },
     [chatListNavigation, goToRoute]
   )
   useBrowserBack(goFromAddress)
 
-  const captureChatLeave = (change: () => void): void => {
-    if (!chatListNavigation.hasReader()) {
-      change()
-      return
-    }
-    chatListNavigation.navigate(change).catch(reportNavigationError)
-  }
+  const captureChatLeave = useCallback(
+    (change: () => void): void => {
+      if (!chatListNavigation.hasReader()) {
+        change()
+        return
+      }
+      chatListNavigation.navigate(change).catch(reportNavigationError)
+    },
+    [chatListNavigation]
+  )
 
   /** The tab, or — pressed on the tab you are already on — a step out of it. */
   const selectTab = (next: NavTabId): void => {
@@ -913,18 +927,22 @@ function Shell(props: AppProps): React.ReactElement {
   }
   const openGroup = useCallback(
     (group: GroupRef): void => {
-      setStacks(current => ({
-        ...current,
-        [tab]: [...current[tab], { name: 'group', ...group }]
-      }))
+      captureChatLeave(() => {
+        setStacks(current => ({
+          ...current,
+          [tab]: [...current[tab], { name: 'group', ...group }]
+        }))
+      })
     },
-    [tab]
+    [tab, captureChatLeave]
   )
   const replace = (next: Pushed): void => {
-    setStacks(current => ({
-      ...current,
-      [tab]: [...current[tab].slice(0, -1), next]
-    }))
+    captureChatLeave(() => {
+      setStacks(current => ({
+        ...current,
+        [tab]: [...current[tab].slice(0, -1), next]
+      }))
+    })
   }
   const openPrivateGroup = async (group: GroupRef): Promise<void> => {
     if (group.kind === 'team') {
@@ -1505,7 +1523,7 @@ function Shell(props: AppProps): React.ReactElement {
             push({ name: 'chatNew' })
           }}
           onFollowTeam={() => {
-            push({ name: 'followTeam' })
+            push({ name: 'discover', kind: 'team', follow: true })
           }}
           onMembers={conversationId => {
             push({ name: 'chatMembers', conversationId })
@@ -1805,7 +1823,6 @@ function Shell(props: AppProps): React.ReactElement {
           refreshNotifications().catch(() => undefined)
         }}
       />
-
     ) : top.name === 'chatMembers' ? (
       gated(
         <ChatMembersScreen
@@ -1898,7 +1915,13 @@ function Shell(props: AppProps): React.ReactElement {
         onSignOut={() => {
           client.signOut().catch(() => undefined)
           rememberSession(undefined)
-          setStacks({ home: [], videos: [], schedule: [], search: [], chat: [] })
+          setStacks({
+            home: [],
+            videos: [],
+            schedule: [],
+            search: [],
+            chat: []
+          })
           setTab('home')
         }}
       />
@@ -2307,35 +2330,37 @@ function Shell(props: AppProps): React.ReactElement {
   return (
     <GestureHandlerRootView style={styles.root}>
       <ChatOverlayHost>
-      <View style={styles.app}>
-        <View key="pane" style={styles.pane}>
-          <HeaderSlotProvider
-            headerHeight={immersiveField ? 0 : headerHeight}
-            onHandoff={setHandoff}
-            onBackOverride={setBack}
-          >
-            <View style={styles.body}>
-              <ScoringPlayerSettingsFlow
-                scoring={scoringBody}
-                active={scoringActive}
-              >
-                {body}
-              </ScoringPlayerSettingsFlow>
-            </View>
-          </HeaderSlotProvider>
-          {!immersiveField && <View style={styles.headerLayer}>{header}</View>}
+        <View style={styles.app}>
+          <View key="pane" style={styles.pane}>
+            <HeaderSlotProvider
+              headerHeight={immersiveField ? 0 : headerHeight}
+              onHandoff={setHandoff}
+              onBackOverride={setBack}
+            >
+              <View style={styles.body}>
+                <ScoringPlayerSettingsFlow
+                  scoring={scoringBody}
+                  active={scoringActive}
+                >
+                  {body}
+                </ScoringPlayerSettingsFlow>
+              </View>
+            </HeaderSlotProvider>
+            {!immersiveField && (
+              <View style={styles.headerLayer}>{header}</View>
+            )}
+          </View>
+          {!isWide && !immersiveField && (
+            <AppNav
+              key="nav"
+              mode="floating"
+              selected={tab}
+              onSelect={selectTab}
+              dots={{ chat: hasUnread(chatList) }}
+            />
+          )}
+          <SuccessToast notice={successNotice} />
         </View>
-        {!isWide && !immersiveField && (
-          <AppNav
-            key="nav"
-            mode="floating"
-            selected={tab}
-            onSelect={selectTab}
-            dots={{ chat: hasUnread(chatList) }}
-          />
-        )}
-        <SuccessToast notice={successNotice} />
-      </View>
       </ChatOverlayHost>
     </GestureHandlerRootView>
   )

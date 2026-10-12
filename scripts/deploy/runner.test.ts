@@ -347,7 +347,7 @@ describe('Pinned multi-app deployment orchestration', () => {
     ])
     assert(
       logs.includes(
-        'android build failure reason (android.verify): Unexpected build validation error; private details withheld'
+        'android build failure reason (android.verify): Deployment tool failed'
       )
     )
     assert.equal(

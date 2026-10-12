@@ -16,8 +16,8 @@ import {
   relationshipSides,
   withdrawRelationshipRequest
 } from '../groups/requests'
-import { addToScope } from './people'
 import { linkGuardian, type RelativeKind } from '../people/guardians'
+import { addToScope } from './people'
 
 /**
  * Invite codes: who may make one, what one is worth, and what redeeming does.
@@ -473,8 +473,18 @@ export async function redeemInvite(
     const granted =
       requestGrant ??
       (current.scopeType === 'team' && current.guardianOfUserId != null
-        ? (await linkGuardian(trx, current.guardianOfUserId, userId, current.scopeId, current.createdBy, current.relativeKind ?? 'guardian')).created
-        : (await addToScope(trx, current.scopeType, current.scopeId, userId)).added)
+        ? (
+            await linkGuardian(
+              trx,
+              current.guardianOfUserId,
+              userId,
+              current.scopeId,
+              current.createdBy,
+              current.relativeKind ?? 'guardian'
+            )
+          ).created
+        : (await addToScope(trx, current.scopeType, current.scopeId, userId))
+            .added)
 
     if (recorded != null) {
       await trx
@@ -517,4 +527,3 @@ async function mustHoldInvitedAddress(
     })
   }
 }
-
