@@ -5,7 +5,7 @@ import android.view.SurfaceView
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
-import app.teamstation.cameraman.capture.CameraSession
+import app.teamstation.streamcore.capture.CameraSession
 
 /**
  * Hosts the preview surface.

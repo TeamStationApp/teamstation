@@ -9,9 +9,10 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import app.teamstation.cameraman.core.CameraParameters
 import app.teamstation.cameraman.core.DeviceIdentity
-import app.teamstation.cameraman.core.EncodedAudioFrame
-import app.teamstation.cameraman.core.EncodedVideoFrame
-import app.teamstation.cameraman.core.StreamCodec
+import app.teamstation.streamcore.bitrate.CongestionSample
+import app.teamstation.streamcore.core.EncodedAudioFrame
+import app.teamstation.streamcore.core.EncodedVideoFrame
+import app.teamstation.streamcore.core.StreamCodec
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket

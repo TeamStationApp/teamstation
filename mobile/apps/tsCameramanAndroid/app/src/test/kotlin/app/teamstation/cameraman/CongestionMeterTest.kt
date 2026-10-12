@@ -1,7 +1,7 @@
 package app.teamstation.cameraman
 
 import app.teamstation.cameraman.rtsp.CongestionMeter
-import app.teamstation.cameraman.rtsp.CongestionSample
+import app.teamstation.streamcore.bitrate.CongestionSample
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
