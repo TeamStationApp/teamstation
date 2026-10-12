@@ -51,6 +51,11 @@ import {
   usePhoneStreamStatusOf,
   useRadarStateOf
 } from './phoneStream'
+import {
+  type OpenPublisherSocket,
+  useScoreboardRadarPublisher
+} from './scoreboardRadarPublisher'
+import { StreamSettingsSheet } from './settings/StreamSettingsSheet'
 
 /** The stream this phone holds for one angle, as `POST …/live-streams` gave it. */
 export interface StreamingSession {
@@ -70,12 +75,19 @@ export interface StreamingScreenProps {
   deviceId: string
   deviceModel: string
   onClose: () => void
-  /** The gear. The settings sheet arrives with M12; until then it opens nothing. */
-  onOpenSettings?: () => void
   /** The engine; a test hands in one over a stand-in module. */
   phone?: PhoneStream
-  /** Android's landscape lock; a test hands in its own. */
-  rotation?: { lockLandscape: () => void; restore: () => void }
+  /**
+   * Android's rotation: held sideways while the screen is up, let turn while
+   * the settings sheet is; a test hands in its own.
+   */
+  rotation?: {
+    allow?: () => void
+    lockLandscape: () => void
+    restore: () => void
+  }
+  /** The scoreboard's socket; a test hands in its own. */
+  openScoreboardSocket?: OpenPublisherSocket
 }
 
 /** How many times a one-pill rail is read again while the camera starts. */
@@ -122,6 +134,9 @@ export function describeRefusal(error: unknown, angleName: string): string {
  * server gave this phone for the angle; stopping takes a slide. The first time
  * a recording stops, the server is told this phone holds it, which starts the
  * upload reminder.
+ *
+ * The gear opens the settings sheet (microphone, lenses, the angle's name,
+ * radars). While a radar is paired, its readings go to the game's scoreboard.
  */
 export function StreamingScreen(
   props: StreamingScreenProps
@@ -157,9 +172,9 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
     deviceId,
     deviceModel,
     onClose,
-    onOpenSettings,
     phone = phoneStream,
-    rotation = androidRotation
+    rotation = androidRotation,
+    openScoreboardSocket
   } = props
   const insets = useInsets()
   const window = useWindowDimensions()
@@ -171,7 +186,20 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
   const [confirmStop, setConfirmStop] = useState(false)
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | undefined>(undefined)
+  /** The angle's name: Record video's, until the settings sheet renames it. */
+  const [angleName, setAngleName] = useState(session.angleName)
+  /** The microphone, which the settings sheet turns off and on. */
+  const [audioEnabled, setAudioEnabled] = useState(true)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const recording = status?.isRecording ?? recordingHere
+  // The game's scoreboard hears each radar reading while a radar is paired.
+  useScoreboardRadarPublisher({
+    apiBase: client.baseUrl,
+    gameId: session.gameId,
+    token: client.token,
+    radar,
+    open: openScoreboardSocket
+  })
   // Told once: the server keeps its reminder from the first.
   const reported = useRef(
     session.localRecording === 'recorded' ||
@@ -218,7 +246,7 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
       closing = phone.close().catch(() => {})
       rotation.restore()
     }
-    // One engine session per screen: the angle is renamed through it (M12).
+    // One engine session per screen: the settings sheet renames the angle through it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phone])
 
@@ -261,7 +289,7 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
         rtmpUrl: session.url,
         liveStreamId: session.streamId,
         gameId: session.gameId,
-        angleName: session.angleName,
+        angleName,
         request: {
           apiBase: client.baseUrl,
           token: client.token ?? '',
@@ -274,7 +302,7 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
           setRecordingHere(true)
         },
         (error: unknown) => {
-          setProblem(describeRefusal(error, session.angleName))
+          setProblem(describeRefusal(error, angleName))
         }
       )
       .finally(() => {
@@ -302,13 +330,13 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
             })
         },
         (error: unknown) => {
-          setProblem(describeRefusal(error, session.angleName))
+          setProblem(describeRefusal(error, angleName))
         }
       )
       .finally(() => {
         setBusy(false)
       })
-  }, [client, phone, session])
+  }, [angleName, client, phone, session])
 
   const flip = (): void => {
     phone.flip().then(
@@ -318,7 +346,7 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
         readScale()
       },
       (error: unknown) => {
-        setProblem(describeRefusal(error, session.angleName))
+        setProblem(describeRefusal(error, angleName))
       }
     )
   }
@@ -358,10 +386,10 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
           testID="settings-button"
           accessibilityLabel={lstrings.stream_settings}
           onPress={() => {
-            onOpenSettings?.()
+            setSettingsOpen(true)
           }}
         />
-        <NameBadge name={session.angleName} />
+        <NameBadge name={angleName} />
       </View>
 
       {problem != null ? (
@@ -455,6 +483,33 @@ function StreamingOverlay(props: StreamingScreenProps): React.ReactElement {
           />
         )}
       </View>
+
+      {settingsOpen ? (
+        <StreamSettingsSheet
+          client={client}
+          gameId={session.gameId}
+          streamId={session.streamId}
+          angleName={angleName}
+          audioEnabled={audioEnabled}
+          phone={phone}
+          radar={radar}
+          rotation={{
+            allow: () => {
+              rotation.allow?.()
+            },
+            lockLandscape: rotation.lockLandscape
+          }}
+          onRenamed={setAngleName}
+          onDone={applied => {
+            setAngleName(applied.angleName)
+            setAudioEnabled(applied.audioEnabled)
+            setSettingsOpen(false)
+          }}
+          onCancel={() => {
+            setSettingsOpen(false)
+          }}
+        />
+      ) : null}
     </View>
   )
 }
