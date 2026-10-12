@@ -11,6 +11,12 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { Card } from './Card'
 import { SectionHeader } from './SectionHeader'
+import {
+  asksTwice,
+  runStreamAction,
+  type StreamAction,
+  streamActionsFor
+} from './streamActions'
 import { TextField } from './TextField'
 
 /** How long a camera name may be, counted after trimming. */
@@ -175,7 +181,7 @@ export function StreamPanel(
     // One camera's failure must not hide an address that did come back.
     Promise.allSettled(
       pending.map(
-        async stream => await client.revealLiveStream(gameId, stream.id)
+        async stream => await runStreamAction(client, gameId, stream, 'reveal')
       )
     )
       .then(results => {
@@ -183,8 +189,8 @@ export function StreamPanel(
         let failure: unknown
         for (const result of results) {
           if (result.status === 'fulfilled') {
-            const url = result.value.url
-            if (url != null) remember(result.value.id, url)
+            const answered = result.value
+            if (answered?.url != null) remember(answered.id, answered.url)
           } else {
             failure ??= result.reason
           }
@@ -275,19 +281,20 @@ export function StreamPanel(
 
   if (!allowed) return null
 
-  /** One destructive press, armed while the game is on the air. */
-  const pressOnce = (
-    kind: 'rotate' | 'end' | 'remove' | 'deleteVideo',
-    stream: LiveStream,
-    act: () => void
-  ): void => {
-    const arming = `${kind}:${stream.id}`
-    if (stream.state === 'publishing' && armed !== arming) {
+  /**
+   * One destructive press: armed first while the game is on the air, and
+   * always for deleting a recording (`asksTwice`), then done.
+   */
+  const pressOnce = (action: StreamAction, stream: LiveStream): void => {
+    const arming = `${action}:${stream.id}`
+    if (asksTwice(action, stream) && armed !== arming) {
       setArmed(arming)
       return
     }
     setArmed(undefined)
-    act()
+    run(
+      async () => await runStreamAction(client, gameId, stream, action)
+    ).catch(() => undefined)
   }
 
   return (
@@ -385,14 +392,10 @@ export function StreamPanel(
               style={styles.action}
               disabled={busy}
               onPress={() => {
-                pressOnce('rotate', stream, () => {
-                  run(
-                    async () => await client.rotateLiveStream(gameId, stream.id)
-                  ).catch(() => undefined)
-                })
+                pressOnce('rotate', stream)
               }}
             />
-            {stream.state !== 'ended' && (
+            {offers(stream, true, 'end') && (
               <Button
                 label={
                   armed === `end:${stream.id}`
@@ -403,11 +406,7 @@ export function StreamPanel(
                 style={styles.action}
                 disabled={busy}
                 onPress={() => {
-                  pressOnce('end', stream, () => {
-                    run(
-                      async () => await client.endLiveStream(gameId, stream.id)
-                    ).catch(() => undefined)
-                  })
+                  pressOnce('end', stream)
                 }}
               />
             )}
@@ -418,7 +417,7 @@ export function StreamPanel(
             to check that a URL works leaves a recording of a car park, and the
             person who made it is the right person to be able to throw it away.
           */}
-          {stream.videoId != null && stream.state !== 'publishing' && (
+          {offers(stream, true, 'deleteVideo') && (
             <Button
               label={
                 armed === `deleteVideo:${stream.id}`
@@ -432,18 +431,7 @@ export function StreamPanel(
               onPress={() => {
                 // Always armed, whatever the camera is doing: this one cannot
                 // be undone, and the row above it can.
-                const arming = `deleteVideo:${stream.id}`
-                if (armed !== arming) {
-                  setArmed(arming)
-                  return
-                }
-                setArmed(undefined)
-                const videoId = stream.videoId
-                if (videoId == null) return
-                run(async () => {
-                  await client.deleteVideo(videoId)
-                  return undefined
-                }).catch(() => undefined)
+                pressOnce('deleteVideo', stream)
               }}
             />
           )}
@@ -453,19 +441,14 @@ export function StreamPanel(
             takes it off the game and gives its number back, which is what
             somebody who added a fourth by mistake actually wants.
           */}
-          {stream.state !== 'publishing' && (
+          {offers(stream, true, 'remove') && (
             <Button
               label="Remove camera"
               kind="text"
               style={styles.textAction}
               disabled={busy}
               onPress={() => {
-                pressOnce('remove', stream, () => {
-                  run(async () => {
-                    await client.removeLiveStream(gameId, stream.id)
-                    return undefined
-                  }).catch(() => undefined)
-                })
+                pressOnce('remove', stream)
               }}
             />
           )}
@@ -525,7 +508,7 @@ export function StreamPanel(
                 </Text>
                 <Text style={styles.stateNote}>{whatItIsDoing(stream)}</Text>
               </View>
-              {stream.state !== 'ended' && (
+              {offers(stream, false, 'end') && (
                 <Button
                   label={
                     armed === `end:${stream.id}`
@@ -535,12 +518,7 @@ export function StreamPanel(
                   kind="secondary"
                   disabled={busy}
                   onPress={() => {
-                    pressOnce('end', stream, () => {
-                      run(
-                        async () =>
-                          await client.endLiveStream(gameId, stream.id)
-                      ).catch(() => undefined)
-                    })
+                    pressOnce('end', stream)
                   }}
                 />
               )}
@@ -552,6 +530,15 @@ export function StreamPanel(
       {error != null && <Text style={styles.warning}>{error}</Text>}
     </View>
   )
+}
+
+/** Whether a camera offers an action, by the rules both panels share. */
+function offers(
+  stream: LiveStream,
+  mine: boolean,
+  action: StreamAction
+): boolean {
+  return streamActionsFor(stream, mine).includes(action)
 }
 
 /** The four things a camera can be, in a word. */
