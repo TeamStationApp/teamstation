@@ -25,6 +25,10 @@ export interface PendingSchedule {
   seasonId: string | null
   startAt: string
   venue: string | null
+  endAt?: string | null
+  address?: string | null
+  latitude?: number | null
+  longitude?: number | null
   exhibition: boolean
   timezone: string
 }
@@ -234,6 +238,10 @@ export async function pendingSchedule(
       seasonId: terms.game.seasonId,
       startAt: terms.game.startAt,
       venue: terms.game.venue,
+      endAt: terms.game.endAt,
+      address: terms.game.address,
+      latitude: terms.game.latitude,
+      longitude: terms.game.longitude,
       exhibition: terms.game.exhibition ?? false,
       timezone: terms.game.timezone ?? 'UTC'
     })

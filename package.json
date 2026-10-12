@@ -4,7 +4,7 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "author": "Paul Puey <paul@teamstation.app>",
-  "description": "TeamStation — a platform for youth sports team management, scoring, and video streaming",
+  "description": "TeamStation \u2014 a platform for youth sports team management, scoring, and video streaming",
   "engines": {
     "node": ">=24.9.0"
   },
@@ -85,7 +85,8 @@
     "test:hosting": "mocha -r sucrase/register --timeout 60000 'scripts/deploy/hosting/*.test.ts'",
     "coverage.mason": "c8 --all --include Masonfile.ts --include scripts/deploy/mason.ts --report-dir coverage/mason --reporter text --reporter json --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 scripts/deploy/masonEntry.test.ts",
     "coverage.creation": "node scripts/creation-coverage.mjs",
-    "coverage.refinements": "node scripts/refinements-coverage.mjs"
+    "coverage.refinements": "node scripts/refinements-coverage.mjs",
+    "coverage.eventInfo": "node scripts/event-info-coverage.mjs"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",

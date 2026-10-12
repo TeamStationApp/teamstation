@@ -2,6 +2,11 @@ import { asArray, asBoolean, asObject, asOptional, asString } from 'cleaners'
 
 import { asLiteral } from './asLiteral'
 import {
+  asEventLocationFields,
+  type EventLocationFields,
+  withEventMetadata
+} from './eventInfo'
+import {
   asCalendarDate,
   asGroupRef,
   type GroupRef,
@@ -9,17 +14,19 @@ import {
 } from './groupCreation'
 const nullableText = (raw: unknown): string | null =>
   raw == null ? null : asString(raw)
-export const asGameIntent = asObject({
-  homeTeamId: asString,
-  awayTeamId: asString,
-  seasonId: nullableText,
-  startAt: asString,
-  venue: nullableText,
-  outsideTournament: nullableText,
-  exhibition: asOptional(asBoolean, false),
-  timezone: asOptional(asString, 'UTC'),
-  status: asLiteral('scheduled', 'cancelled')
-})
+export const asGameIntent = withEventMetadata(
+  asObject({
+    homeTeamId: asString,
+    awayTeamId: asString,
+    seasonId: nullableText,
+    startAt: asString,
+    venue: nullableText,
+    outsideTournament: nullableText,
+    exhibition: asOptional(asBoolean, false),
+    timezone: asOptional(asString, 'UTC'),
+    status: asLiteral('scheduled', 'cancelled')
+  })
+)
 export const asGameScheduling = asObject({
   game: asGameIntent,
   version: asString,
@@ -40,7 +47,7 @@ export const asGameScheduleProposal = asObject({
 })
 export type GameScheduleProposal = ReturnType<typeof asGameScheduleProposal>
 
-export interface GameIntent {
+export interface GameIntent extends EventLocationFields {
   homeTeamId: string
   awayTeamId: string
   seasonId: string | null
@@ -145,6 +152,7 @@ export function asGameProposal(raw: unknown): GameProposal {
   const result: GameProposal = {
     sender,
     game: {
+      ...asEventLocationFields(raw.game, raw.game.startAt),
       homeTeamId,
       awayTeamId,
       seasonId,

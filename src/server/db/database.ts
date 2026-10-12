@@ -251,6 +251,10 @@ export interface ExternalIdsTable {
 }
 
 export interface GamesTable {
+  end_at: Generated<Date | null>
+  address: Generated<string | null>
+  latitude: Generated<number | null>
+  longitude: Generated<number | null>
   exhibition: Generated<boolean>
   timezone: Generated<string>
   outside_tournament: Generated<string | null>
@@ -728,7 +732,39 @@ export interface NotificationReceiptsTable {
   viewed_at: Timestamp
 }
 
+export interface TeamEventsTable {
+  id: string
+  team_id: string
+  title: string
+  start_at: Timestamp
+  end_at: Generated<Date | null>
+  timezone: Generated<string>
+  venue: Generated<string | null>
+  address: Generated<string | null>
+  latitude: Generated<number | null>
+  longitude: Generated<number | null>
+  status: Generated<'scheduled' | 'cancelled'>
+  created_at: Generated<Date>
+  updated_at: Generated<Date>
+}
+export interface EventRsvpsTable {
+  event_id: string
+  user_id: number
+  response: 'yes' | 'maybe' | 'no'
+  updated_by: number | null
+  updated_at: Generated<Date>
+}
+
 export interface Database {
+  team_events: TeamEventsTable
+  game_rsvps: EventRsvpsTable
+  team_event_rsvps: EventRsvpsTable
+  event_geocodes: {
+    address: string
+    latitude: number
+    longitude: number
+    updated_at: Generated<Date>
+  }
   event_tag_catalog: { tag: string }
   event_tags: EventTagsTable
   user_tags: UserTagsTable

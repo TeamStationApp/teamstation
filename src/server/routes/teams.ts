@@ -21,8 +21,9 @@ import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
 import { creditsForHighlight } from '../events/credits'
+import { teamEventDetail } from '../events/eventInfo'
 import { whyEmpty } from '../events/whyEmpty'
-import { resolvedFenceDistance } from '../games/fenceDistance'
+import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
   highlightEvent,
@@ -416,6 +417,11 @@ export function teamRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
+      const event = await teamEventDetail(db, actor, gameId)
+      if (event != null) {
+        res.json(event)
+        return
+      }
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
 
       const game = await db
@@ -531,6 +537,13 @@ export function teamRoutes(
         seasonId: game.season_id,
         startAt: toIso(game.start_at),
         venue: game.venue,
+        endAt: toIso(game.end_at),
+        address: game.address,
+        latitude: game.latitude,
+        longitude: game.longitude,
+        hasScoringEvents:
+          (await gameHasPlays(db, game.id)) ||
+          hasCurrentScoring(game.currentPlay),
         exhibition: game.exhibition,
         timezone: game.timezone,
         cancellationReason: game.cancellation_reason,
@@ -906,4 +919,11 @@ async function averagesToDate(
     if (line.ab > 0) out.set(line.userId, line.h / line.ab)
   }
   return out
+}
+
+function hasCurrentScoring(raw: unknown): boolean {
+  if (raw == null || typeof raw !== 'object') return false
+  const teamStation = (raw as { teamStation?: { actions?: unknown[] } })
+    .teamStation
+  return (teamStation?.actions?.length ?? 0) > 0
 }

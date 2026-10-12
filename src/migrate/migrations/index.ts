@@ -53,6 +53,7 @@ import { migration052SeasonGameRefinements } from './052seasonGameRefinements'
 import { migration052SignOutMergedAccounts } from './052signOutMergedAccounts'
 import { migration053Follows } from './053follows'
 import { migration054AppOrigin } from './054appOrigin'
+import { migration055EventInfo } from './055eventInfo'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -109,5 +110,6 @@ export const migrations: Migration[] = [
   migration052SeasonGameRefinements,
   migration052SignOutMergedAccounts,
   migration053Follows,
-  migration054AppOrigin
+  migration054AppOrigin,
+  migration055EventInfo
 ]

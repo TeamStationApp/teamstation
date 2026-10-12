@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { makeToken } from '../server/auth/tokens'
 import { type Clock, realClock } from '../server/groups/requests'
 import { publishPictureCatalog } from '../server/media/pictureCatalog'
+import { eventInfoRoutes } from '../server/routes/eventInfo'
 import { eventListRoutes } from '../server/routes/eventList'
 import { gameApprovalRoutes } from '../server/routes/gameApprovals'
 import { groupRoutes } from '../server/routes/groups'
@@ -55,6 +56,7 @@ export async function creationHarness(
       app.use('/api/v1', walkUpSongRoutes(db))
       app.use('/api/v1', lineupRoutes(db))
       app.use('/api/v1', teamMemberRoutes(db, media))
+      app.use('/api/v1', eventInfoRoutes(db, media))
       app.use('/api/v1', eventListRoutes(db, media))
       app.use(
         '/api/v1',
