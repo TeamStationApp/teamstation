@@ -27,6 +27,35 @@
     -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <!--
+      Record video: the camera, streamed and recorded on the phone. Not
+      required, so a handset without one can still be installed.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!--
+      The radar's Bluetooth link: the scan and connect pair on Android 12 and
+      later; on Android 11, the old pair and fine location, which BLE scans
+      needed then.
+    -->
+    <uses-permission
+      android:name="android.permission.BLUETOOTH_SCAN"
+      android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <!--
+      Recording carries on with the screen off in a camera|microphone
+      foreground service, and uploads in a dataSync one, each with its
+      notification.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
       android:name=".MainApplication"
@@ -63,5 +92,9 @@
             <data android:scheme="teamstation" />
         </intent-filter>
       </activity>
+      <service
+        android:name=".stream.PhoneStreamService"
+        android:exported="false"
+        android:foregroundServiceType="camera|microphone|dataSync" />
     </application>
 </manifest>
