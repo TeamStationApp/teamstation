@@ -327,6 +327,54 @@ public struct TeamStationClient: Sendable {
     )
   }
 
+  /// Says when the first picture of a stream's first publish was captured, on this device's wall
+  /// clock: TeamStation places the stream's live video there, where the angle grid lines it up with
+  /// the game's other cameras, instead of at the moment the publish reached it. The first account
+  /// holds; one of a later publish is ignored.
+  @discardableResult
+  public func reportLiveStart(
+    gameId: String,
+    streamId: String,
+    startedAt: Date
+  ) async throws -> TeamStationDeviceStream {
+    let instant = ISO8601DateFormatter()
+    instant.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
+    return try await send(
+      "games/\(escape(gameId))/live-streams/\(escape(streamId))",
+      method: "PATCH",
+      body: [ "liveStartedAt": instant.string(from: startedAt) ],
+      goneIsEnded: true
+    )
+  }
+
+  private struct ServerTime: Decodable {
+    let serverTime: Double
+  }
+
+  /// What to add to `now` to read TeamStation's clock (`ServerClock`), from `samples` round trips
+  /// to `GET /time`. `now` is the clock the caller's instants are on. Throws only when no round trip
+  /// came back.
+  public func serverClockOffset(
+    samples: Int = ServerClock.samples,
+    now: @Sendable () -> Double = { Date().timeIntervalSince1970 }
+  ) async throws -> Double {
+    var taken: [ServerClock.Sample] = []
+    var failure: (any Error)?
+    for _ in 0 ..< max(1, samples) {
+      let sent = now()
+      do {
+        let reply: ServerTime = try await send("time", method: "GET", timeout: 5)
+        taken.append(ServerClock.Sample(sent: sent, server: reply.serverTime / 1_000, received: now()))
+      } catch {
+        failure = error
+      }
+    }
+    guard let offset = ServerClock.offset(from: taken) else {
+      throw failure ?? TeamStationError.server("no answer from the server's clock")
+    }
+    return offset
+  }
+
   // MARK: - The wire
 
   private func escape(_ value: String) -> String {
