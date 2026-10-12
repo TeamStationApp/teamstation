@@ -74,34 +74,55 @@ final class DistributorLinkBackend: DistributorBackend, @unchecked Sendable {
     let bytes = try index.bytesBySource()
 
     return recordings.map { recording in
-      let recorded = (try? index.recordedCameraNames(recordingID: recording.id)) ?? [:]
-      let cameras = recording.sourceIDs.map { sourceID in
-        let name = recorded[sourceID] ?? liveNames[sourceID] ?? sourceID.rawValue
-        return CameraListing(
-          sourceID: sourceID,
-          name: name,
-          isNamed: name != sourceID.rawValue,
-          bytes: bytes[recording.id]?[sourceID] ?? 0
-        )
-      }
-      return RecordingListing(
-        id: recording.id,
-        startedAt: recording.startedAt,
-        endedAt: recording.endedAt,
+      Self.listing(
+        for: recording,
+        recordedNames: (try? index.recordedCameraNames(recordingID: recording.id)) ?? [:],
+        liveNames: liveNames,
+        bytes: bytes[recording.id] ?? [:],
         isLive: recording.id == liveID,
-        hasPrimary: recording.programFilename != nil,
-        cameras: cameras,
-        preparedTracks: preparedTracks(of: recording, cameras: cameras),
-        soundShortfall: Self.soundShortfall(of: recording),
-        gameId: recording.gameId,
-        gameTitle: recording.gameTitle,
-        telemetry: telemetry(of: recording.id)
+        roots: roots
       )
     }
   }
 
+  /// What the Mac is told about one take: its cameras by the names they recorded under (else the
+  /// names they have now, else their ids), what is already stitched, its sound, its game, its
+  /// telemetry and the server clock offset its uploads carry.
+  static func listing(
+    for summary: RecordingSummary,
+    recordedNames: [SourceID: String],
+    liveNames: [SourceID: String],
+    bytes: [SourceID: Int64],
+    isLive: Bool,
+    roots: FileRoots
+  ) -> RecordingListing {
+    let cameras = summary.sourceIDs.map { sourceID in
+      let name = recordedNames[sourceID] ?? liveNames[sourceID] ?? sourceID.rawValue
+      return CameraListing(
+        sourceID: sourceID,
+        name: name,
+        isNamed: name != sourceID.rawValue,
+        bytes: bytes[sourceID] ?? 0
+      )
+    }
+    return RecordingListing(
+      id: summary.id,
+      startedAt: summary.startedAt,
+      endedAt: summary.endedAt,
+      isLive: isLive,
+      hasPrimary: summary.programFilename != nil,
+      cameras: cameras,
+      preparedTracks: preparedTracks(of: summary, cameras: cameras, roots: roots),
+      soundShortfall: soundShortfall(of: summary),
+      gameId: summary.gameId,
+      gameTitle: summary.gameTitle,
+      telemetry: telemetry(of: summary.id, roots: roots),
+      serverClockOffsetMs: summary.serverClockOffsetMs
+    )
+  }
+
   /// The take's telemetry log, when it kept one.
-  private func telemetry(of recording: Int64) -> RemoteFile? {
+  private static func telemetry(of recording: Int64, roots: FileRoots) -> RemoteFile? {
     let name = TakeTelemetryLog.filename(for: recording)
     let url = roots.program.appendingPathComponent(name)
     guard FileManager.default.fileExists(atPath: url.path) else { return nil }
@@ -266,7 +287,11 @@ final class DistributorLinkBackend: DistributorBackend, @unchecked Sendable {
 
   // MARK: - Helpers
 
-  private func preparedTracks(of recording: RecordingSummary, cameras: [CameraListing]) -> [Track] {
+  private static func preparedTracks(
+    of recording: RecordingSummary,
+    cameras: [CameraListing],
+    roots: FileRoots
+  ) -> [Track] {
     let directory = RecordingExport.preparedDirectory(recordingID: recording.id, in: roots.prepared)
     var tracks: [Track] = []
     if recording.programFilename != nil,

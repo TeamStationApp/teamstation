@@ -67,14 +67,16 @@ public actor UploadService {
   ///
   /// `startedAt` is when the recording began — the take's own wall clock, the
   /// same for every file of it — because that is what the library aligns a
-  /// take's cameras on. `uploadId` resumes an upload already opened; leaving
-  /// it out opens one.
+  /// take's cameras on. `serverClockOffsetMs` is the take's measured server
+  /// clock offset, sent with the opening request when there is one.
+  /// `uploadId` resumes an upload already opened; leaving it out opens one.
   public func send(
     file: URL,
     gameId: String,
     title: String,
     kind: String,
     startedAt: Date,
+    serverClockOffsetMs: Int? = nil,
     uploadId existing: String? = nil,
     onProgress: @Sendable (Progress) -> Void = { _ in }
   ) async throws -> String {
@@ -99,7 +101,8 @@ public actor UploadService {
           kind: kind,
           filename: file.lastPathComponent,
           sizeBytes: size,
-          startedAt: startedAt
+          startedAt: startedAt,
+          serverClockOffsetMs: serverClockOffsetMs
         )
       }
       opened = (made.uploadId, made.partSize, made.parts, Set(made.received))

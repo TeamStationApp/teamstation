@@ -247,6 +247,74 @@ struct UploadServiceTests {
     #expect(abs(when.timeIntervalSince(Self.began)) < 0.001)
   }
 
+  @Test func sendsTheTakesServerClockOffsetWhenItHasOne() async throws {
+    // The server adds it to the start, so the video sits on the server's clock
+    // with the game's scoring rather than on the iPad's.
+    finishesAtOnce()
+    FlakyServer.failuresLeft = [:]
+    FlakyServer.opened = []
+    let file = try aFile()
+    defer { try? FileManager.default.removeItem(at: file) }
+
+    _ = try await service().send(
+      file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began,
+      serverClockOffsetMs: -1234
+    )
+    _ = try await service().send(
+      file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began
+    )
+
+    #expect(FlakyServer.opened.count == 2)
+    #expect(FlakyServer.opened[0]["serverClockOffsetMs"] as? Int == -1234)
+    // Nothing measured, nothing said: the server takes the start as it is.
+    #expect(FlakyServer.opened[1]["serverClockOffsetMs"] == nil)
+  }
+
+  /// An account signed in to the fake server.
+  @MainActor
+  private func account() -> TeamStationAccount {
+    let keychain = KeychainStore.inMemory()
+    keychain.setToken("tok")
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ FlakyServer.self ]
+    return TeamStationAccount(
+      serverURL: URL(string: "https://develop.example")!,
+      deviceName: "a test",
+      keychain: keychain,
+      session: URLSession(configuration: configuration)
+    )
+  }
+
+  @Test @MainActor func theAccountPassesTheOffsetThrough() async throws {
+    // TS Distributor sends through `send`, TS Director through `upload`; both
+    // reach the opening request.
+    finishesAtOnce()
+    FlakyServer.failuresLeft = [:]
+    FlakyServer.opened = []
+    let file = try aFile()
+    defer { try? FileManager.default.removeItem(at: file) }
+    let account = account()
+
+    let sent = try await account.send(
+      file: file, gameId: "gam_1", title: "a take", kind: "program", startedAt: Self.began,
+      serverClockOffsetMs: 250
+    )
+    let uploaded = await account.upload(
+      file: file, recordingID: 7, gameId: "gam_1", title: "a take", kind: "program",
+      startedAt: Self.began, serverClockOffsetMs: 40
+    )
+    let plain = await account.upload(
+      file: file, recordingID: 8, gameId: "gam_1", title: "a take", kind: "program",
+      startedAt: Self.began
+    )
+
+    #expect(sent == "vid_1")
+    #expect(uploaded == "vid_1")
+    #expect(plain == "vid_1")
+    #expect(account.uploads[7]?.done == true)
+    #expect(FlakyServer.opened.map { $0["serverClockOffsetMs"] as? Int } == [ 250, 40, nil ])
+  }
+
   @Test func saysSoWhenTheServerCouldNotFinishIt() async throws {
     FlakyServer.failuresLeft = [:]
     FlakyServer.seen = []

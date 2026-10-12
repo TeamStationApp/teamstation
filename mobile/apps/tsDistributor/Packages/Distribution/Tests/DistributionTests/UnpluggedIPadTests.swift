@@ -193,7 +193,7 @@ struct UnpluggedIPadTests {
         gameId: "gam_test",
         title: "2026-01-01 Home at Away",
         tracks: [ .camera("home"), .camera("away"), .combined ]
-      ) { file, title, kind, _ in
+      ) { file, title, kind, _, _ in
         await sent.add(title: title, kind: kind, bytes: DistributionRunTestSupport.size(of: file))
         return "vid_\(kind)"
       }
@@ -256,7 +256,7 @@ struct UnpluggedIPadTests {
           gameId: game,
           title: "Game \(number + 1)",
           tracks: [ .camera("home") ] + (number == 1 ? [ .combined ] : [])
-        ) { file, title, kind, _ in
+        ) { file, title, kind, _, _ in
           await sent.add(game: game, title: title, kind: kind, bytes: DistributionRunTestSupport.size(of: file))
           return "vid_\(kind)"
         }

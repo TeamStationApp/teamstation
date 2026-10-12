@@ -222,10 +222,10 @@ struct UploadSheet: View {
     guard let gameId else { return }
     onContinue(
       model.teamStationPlan(
+        listing: recording,
         gameId: gameId,
         title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-        tracks: ticked,
-        startedAt: recording.startedAt.date
+        tracks: ticked
       )
     )
   }

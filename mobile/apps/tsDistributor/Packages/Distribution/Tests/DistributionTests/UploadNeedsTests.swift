@@ -20,7 +20,7 @@ struct UploadNeedsTests {
   )
 
   static func upload(_ tracks: [UploadTrack]) -> TeamStationPlan {
-    TeamStationPlan(gameId: "gam_1", title: "2026-01-01 Home at Away", tracks: tracks) { _, _, _, _ in "vid" }
+    TeamStationPlan(gameId: "gam_1", title: "2026-01-01 Home at Away", tracks: tracks) { _, _, _, _, _ in "vid" }
   }
 
   @Test("Every file an upload sends is fetched, in the recording's order, though only one was asked for")
