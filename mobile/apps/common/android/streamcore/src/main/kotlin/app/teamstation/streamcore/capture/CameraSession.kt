@@ -23,6 +23,7 @@ import app.teamstation.streamcore.core.LensSelection
 import app.teamstation.streamcore.core.StreamSettings
 import app.teamstation.streamcore.core.ZoomMapping
 import app.teamstation.streamcore.gl.CaptureRenderer
+import app.teamstation.streamcore.gl.ProgrammeTicker
 import java.util.concurrent.Executor
 import kotlin.math.max
 import kotlin.math.min
@@ -127,6 +128,29 @@ class CameraSession(private val context: Context) {
 
     /** Blanking turned on or off, so the encoder can force the keyframe the transition needs. */
     var onBlankChanged: (() -> Unit)? = null
+
+    /** The programme clock the encoders are drawn on; null draws them on each camera frame. */
+    private var programme: ProgrammeTicker? = null
+
+    /**
+     * Whether the open camera stamps its frames on `elapsedRealtimeNanos`
+     * (`SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME`), the clock the steady wall clock runs on. False means
+     * the monotonic clock `System.nanoTime` reads.
+     */
+    @Volatile
+    var sensorTimestampsAreRealtime: Boolean = true
+        private set
+
+    /**
+     * Draws the encoders on [ticker]'s clock instead of on each camera frame: the phone's programme
+     * tick, which sends the stream and the recording the latest picture thirty times a second.
+     */
+    fun setProgramme(ticker: ProgrammeTicker?) {
+        handler.post {
+            programme = ticker
+            renderer?.setProgramme(ticker)
+        }
+    }
 
     /**
      * Blanks the encoded picture without stopping capture. The preview stays live: the operator can
@@ -304,6 +328,8 @@ class CameraSession(private val context: Context) {
             return
         }
 
+        sensorTimestampsAreRealtime = characteristics.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE) ==
+            CameraMetadata.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
         val descriptors = descriptors(characteristics)
         val catalogue = FormatCatalogue(descriptors)
         val wanted = catalogue.selection(settings.width, settings.height, settings.frameRate)
@@ -337,6 +363,7 @@ class CameraSession(private val context: Context) {
                         created.deliverToEncoder = { deliversFrame(it) }
                         created.blankEncoder = !settings.videoEnabled
                         created.onBlankChanged = { onBlankChanged?.invoke() }
+                        programme?.let(created::setProgramme)
                     }
             } catch (error: Exception) {
                 publish(state.copy(failure = "could not start the renderer: ${error.message}"))
