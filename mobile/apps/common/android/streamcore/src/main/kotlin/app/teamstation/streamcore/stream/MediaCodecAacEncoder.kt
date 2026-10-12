@@ -51,10 +51,30 @@ class MediaCodecAacEncoder(
         return packets
     }
 
-    private fun drain(running: MediaCodec, into: MutableList<ByteArray>) {
+    /**
+     * Pads the last partial frame with silence, ends the stream and answers every packet still in
+     * the encoder, so a recording's sound runs to its last sample.
+     */
+    override fun finish(): List<ByteArray> {
+        val running = codec ?: return emptyList()
+        val packets = mutableListOf<ByteArray>()
+        val needed = StreamAudioStamps.samplesPerPacket * channels
+        if (leftover.isNotEmpty()) packets += encode(ShortArray(needed - leftover.size))
+        val index = running.dequeueInputBuffer(timeoutMicros * 50)
+        if (index >= 0) {
+            val time = queuedFrames * 1_000_000 / StreamAudioStamps.sampleRate
+            running.queueInputBuffer(index, 0, 0, time, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+        }
+        drain(running, packets, untilEnd = true)
+        return packets
+    }
+
+    private fun drain(running: MediaCodec, into: MutableList<ByteArray>, untilEnd: Boolean = false) {
         val info = MediaCodec.BufferInfo()
+        val deadline = System.nanoTime() + 500_000_000L
         while (true) {
-            val index = running.dequeueOutputBuffer(info, 0)
+            val index = running.dequeueOutputBuffer(info, if (untilEnd) timeoutMicros else 0)
+            if (untilEnd && index == MediaCodec.INFO_TRY_AGAIN_LATER && System.nanoTime() < deadline) continue
             if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                 AudioEncoder.delaySamples(running.outputFormat)?.let { primingSamples = it }
                 continue
@@ -72,6 +92,7 @@ class MediaCodecAacEncoder(
                 }
             }
             running.releaseOutputBuffer(index, false)
+            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return
         }
     }
 
