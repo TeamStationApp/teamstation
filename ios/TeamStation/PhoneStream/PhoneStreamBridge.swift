@@ -2,6 +2,7 @@ import AVFoundation
 import CameramanCapture
 import Foundation
 import PhoneStream
+import UIKit
 
 /// What every call hands back to `RCTPhoneStream`: a value to resolve with, or an error code (the
 /// engine's own, such as `uploadInProgress`) and a message to reject with.
@@ -70,6 +71,8 @@ final class TSPhoneStreamBridge: NSObject {
       }
       Self.run(reply) { engine in
         try engine.open(angleName: angleName, audioEnabled: audioEnabled, disabledLenses: Set(disabledLenses))
+        // The streaming screen is up while the engine is open: the phone stays awake for it.
+        UIApplication.shared.isIdleTimerDisabled = true
         NotificationCenter.default.post(name: Self.previewSessionChanged, object: nil)
         return nil
       }
@@ -79,6 +82,7 @@ final class TSPhoneStreamBridge: NSObject {
   @objc func close(_ reply: @escaping PhoneStreamReply) {
     Self.runAsync(reply) { engine in
       await engine.close()
+      UIApplication.shared.isIdleTimerDisabled = false
       NotificationCenter.default.post(name: Self.previewSessionChanged, object: nil)
       return nil
     }

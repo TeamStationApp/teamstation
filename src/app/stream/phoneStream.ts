@@ -1,3 +1,5 @@
+import type { StyleProp, ViewStyle } from 'react-native'
+
 import {
   makePhoneStream,
   type PhoneStreamStatus,
@@ -18,7 +20,10 @@ export * from './phoneStreamClient'
 export const phoneStream = makePhoneStream(null)
 
 /** The browser draws no camera preview. */
-export function PhoneStreamPreview(_props: { mirrored?: boolean }): null {
+export function PhoneStreamPreview(_props: {
+  mirrored?: boolean
+  style?: StyleProp<ViewStyle>
+}): null {
   return null
 }
 
@@ -27,6 +32,3 @@ export const usePhoneStreamStatus = (): PhoneStreamStatus | null =>
 export const useRadarState = (): RadarState | null =>
   useRadarStateOf(phoneStream)
 export const useRecordings = (): Recordings => useRecordingsOf(phoneStream)
-
-/** Nothing to report in a browser. */
-export function reportPhoneStreamCapabilities(): void {}
