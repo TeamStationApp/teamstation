@@ -8,6 +8,7 @@ import app.teamstation.streamcore.core.StreamCodec
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -123,6 +124,72 @@ class MediaCodecEncodersTest {
         assertTrue(asks >= 16)
         // SilentAac's eight frames at once, on the same busy codec: a packet, and no exception.
         assertTrue(app.teamstation.streamcore.record.SilentAac.packet(encoder) != null)
+    }
+
+    @Test
+    fun anInputIndexWithNoBufferIsHandedBackRatherThanLost() {
+        ShadowMediaCodec.addEncoder(MediaFormat.MIMETYPE_AUDIO_AAC, copy)
+        val encoder = MediaCodecAacEncoder()
+        // The first indexes come with no buffer. Kept, they would leave the codec none to hand out.
+        var misses = 0
+        encoder.inputBuffer = { codec, index -> if (misses++ < 40) null else codec.getInputBuffer(index) }
+        val packets = encoder.encode(ShortArray(1024 * 2 * 4) { 5 })
+        assertEquals(4, packets.size)
+        assertTrue(misses > 40)
+        encoder.close()
+    }
+
+    @Test
+    fun aClosedCodecsOutputBufferDoesNotEndTheProcess() {
+        ShadowMediaCodec.addEncoder("video/hevc", copy)
+        val encoder = MediaCodecStreamEncoder(surfaceInput = false)
+        val frames = Collections.synchronizedList(mutableListOf<EncodedVideoFrame>())
+        encoder.open(
+            StreamEncoderConfig(StreamCodec.HEVC, 1920, 1080, 30, 4_000_000, 2.0),
+            object : StreamVideoEncoding.Output {
+                override fun onFrame(frame: EncodedVideoFrame) {
+                    frames += frame
+                }
+
+                override fun onError(code: Int, message: String) = Unit
+            }
+        )
+        // A close on another thread released the codec between the owner check and the read.
+        encoder.outputBuffer = { _, _ -> throw IllegalStateException("released") }
+        encoder.deliverOutputForTesting(0, MediaCodec.BufferInfo().apply { set(0, 16, 0, 0) })
+        assertTrue(frames.isEmpty())
+        encoder.close()
+    }
+
+    @Test
+    fun aSessionThatFailsToOpenLeavesNoCodecOrThreadBehind() {
+        fun encodeThreads() = Thread.getAllStackTraces().keys.count { it.name == "stream-encode" && it.isAlive }
+        val before = encodeThreads()
+        val config = StreamEncoderConfig(StreamCodec.HEVC, 1920, 1080, 30, 4_000_000, 2.0)
+        val output = object : StreamVideoEncoding.Output {
+            override fun onFrame(frame: EncodedVideoFrame) = Unit
+            override fun onError(code: Int, message: String) = Unit
+        }
+        // No encoder for the type at all.
+        val missing = MediaCodecStreamEncoder(surfaceInput = false)
+        missing.createCodec = { throw java.io.IOException("no encoder for $it") }
+        assertTrue(runCatching { missing.open(config, output) }.isFailure)
+        assertFalse(missing.isOpenForTesting)
+        // A codec that refuses its format once it exists.
+        val refuses = object : ShadowMediaCodec.CodecConfig.Codec {
+            override fun process(input: java.nio.ByteBuffer, output: java.nio.ByteBuffer) = Unit
+
+            override fun onConfigured(format: MediaFormat, surface: android.view.Surface?, crypto: android.media.MediaCrypto?, flags: Int) {
+                throw IllegalArgumentException("unsupported format")
+            }
+        }
+        ShadowMediaCodec.addEncoder("video/hevc", ShadowMediaCodec.CodecConfig(1024, 1024, refuses))
+        val refusing = MediaCodecStreamEncoder(surfaceInput = false)
+        assertTrue(runCatching { refusing.open(config, output) }.isFailure)
+        assertFalse(refusing.isOpenForTesting)
+        val deadline = System.nanoTime() + 2_000_000_000L
+        while (encodeThreads() > before && System.nanoTime() < deadline) Thread.sleep(10)
+        assertEquals(before, encodeThreads())
     }
 
     @Test
