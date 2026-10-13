@@ -2,13 +2,22 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
+import { arrivalMinutesInput, type EventType } from '../../common/eventInfo'
+import {
+  eventScheduleValue,
+  newEventSchedule
+} from '../../common/eventSchedule'
 import type { GameIntent } from '../../common/gameApprovals'
-import { gameCalendarDay, gameTime } from '../../common/gameTime'
 import type { GroupRef } from '../../common/groupCreation'
 import { localityLabel } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
 import { Button, Card, Screen, TextField } from '../components'
+import { EventArrivalField } from '../components/EventArrivalField'
+import { EventScheduleFields } from '../components/EventScheduleFields'
+import { EventTypeRow } from '../components/EventTypeRow'
+import { EventVenueFields } from '../components/EventVenueFields'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { type EventCreationRetry, EventDetailsForm } from './EventDetailsForm'
 
 async function administeredSeasons(
   client: TeamStationClient,
@@ -36,14 +45,19 @@ export function CreateGameScreen({
   source,
   gameId,
   onSent,
+  onEventCreated,
   onCancel
 }: {
   client: TeamStationClient
   source: GroupRef
   gameId?: string
   onSent: (id: string) => void
+  onEventCreated?: (id: string) => void
   onCancel: () => void
 }): React.ReactElement {
+  const [eventType, setEventType] = useState<EventType>('game')
+  const eventMode = eventType !== 'game'
+  const [eventTeam, setEventTeam] = useState<PublicGroup>()
   const styles = getStyles(useTheme())
   const { kind: sourceKind, id: sourceId } = source
   const [home, setHome] = useState<PublicGroup | undefined>()
@@ -51,17 +65,14 @@ export function CreateGameScreen({
   const [choosing, setChoosing] = useState<'home' | 'away'>('away')
   const [query, setQuery] = useState('')
   const [teams, setTeams] = useState<PublicGroup[]>([])
-  const [date, setDate] = useState(
-    gameCalendarDay(
-      new Date().toISOString(),
-      Intl.DateTimeFormat().resolvedOptions().timeZone
-    )
-  )
-  const [time, setTime] = useState('18:00')
-  const [timezone, setTimezone] = useState(
-    Intl.DateTimeFormat().resolvedOptions().timeZone
-  )
+  const [schedule, setSchedule] = useState(() => newEventSchedule())
+  const { date } = schedule
   const [venue, setVenue] = useState('')
+  const [address, setAddress] = useState('')
+  const [notes, setNotes] = useState('')
+  const [arrival, setArrival] = useState(gameId == null ? '45' : '')
+  const [eventTitle, setEventTitle] = useState('')
+  const arrivalTouched = useRef(false)
   const [exhibition, setExhibition] = useState(false)
   const [outsideTournament, setOutsideTournament] = useState('')
   const [season, setSeason] = useState<PublicGroup | undefined>()
@@ -76,6 +87,8 @@ export function CreateGameScreen({
   const [dismissedRange, setDismissedRange] = useState('')
   const [loadError, setLoadError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [eventBusy, setEventBusy] = useState(false)
+  const eventRetry = useRef<EventCreationRetry | undefined>(undefined)
   const [retry, setRetry] = useState(0)
   const submitted = useRef<{ body: string; key: string } | undefined>(undefined)
   useEffect(() => {
@@ -146,13 +159,16 @@ export function CreateGameScreen({
     const load = async (): Promise<void> => {
       setLoading(true)
       setLoadError('')
+      setEventType('game')
+      setEventTeam(undefined)
       const own = await client.group({ kind: sourceKind, id: sourceId })
       if (!active) return
       setPermitted(own.canManage)
-      if (sourceKind === 'team') setHome(own.group)
-      else {
+      if (sourceKind === 'team') {
+        setHome(own.group)
+        if (!own.group.external) setEventTeam(own.group)
+      } else {
         setSeason(own.group)
-        setTimezone(own.group.timezone)
       }
       if (gameId == null) return
       const current = await client.gameScheduling(gameId)
@@ -172,23 +188,24 @@ export function CreateGameScreen({
       setExpected(current.version)
       setPermitted(current.canPropose)
       setVenue(current.game.venue ?? '')
+      setAddress(current.game.address ?? '')
+      setNotes(current.game.notes ?? '')
+      setArrival(
+        current.game.arrivalTimeDelta == null
+          ? ''
+          : String(current.game.arrivalTimeDelta)
+      )
+      setSchedule(
+        newEventSchedule(
+          current.game.startAt,
+          current.game.endAt,
+          undefined,
+          current.game.timezone
+        )
+      )
       setExhibition(current.game.exhibition ?? false)
       setOutsideTournament(current.game.outsideTournament ?? '')
       setCancelling(current.game.status === 'cancelled')
-      const zone =
-        current.game.timezone ??
-        hosted?.timezone ??
-        Intl.DateTimeFormat().resolvedOptions().timeZone
-      setTimezone(zone)
-      setDate(gameCalendarDay(current.game.startAt, zone))
-      setTime(
-        new Intl.DateTimeFormat('en', {
-          timeZone: zone,
-          hour: '2-digit',
-          minute: '2-digit',
-          hourCycle: 'h23'
-        }).format(new Date(current.game.startAt))
-      )
     }
     load()
       .catch((error: unknown) => {
@@ -221,11 +238,18 @@ export function CreateGameScreen({
         throw new Error(
           'You need administrator access to host this game in that season.'
         )
+      const { startAt, endAt, timezone } = eventScheduleValue(schedule)
       const game: GameIntent = {
+        notes: notes.trim() === '' ? null : notes.trim(),
+        arrivalTimeDelta: arrivalMinutesInput(arrival),
+        ...(address.trim() === '' && gameId == null
+          ? {}
+          : { address: address.trim() === '' ? null : address.trim() }),
+        endAt,
         homeTeamId: home.id,
         awayTeamId: away.id,
         seasonId: season?.id ?? null,
-        startAt: gameTime(date, time, timezone),
+        startAt,
         timezone,
         exhibition,
         venue: venue.trim() === '' ? null : venue,
@@ -291,205 +315,265 @@ export function CreateGameScreen({
     )
   return (
     <Screen>
-      <Card style={styles.card}>
-        <Text style={styles.title}>
-          {gameId == null ? 'Create Game' : 'Propose game change'}
-        </Text>
-        <Text style={styles.hint}>
-          {season == null
-            ? 'Outside a TeamStation season'
-            : `Hosted by ${season.name}`}
-          . Every affected team must approve. This creates no parent
-          organization or season participation.
-        </Text>
-        {!permitted && (
-          <Text style={styles.error}>
-            This game cannot be changed here. A season game needs its organizer;
-            a withdrawn game requires a new game.
+      <View style={styles.eventChoice}>
+        <EventTypeRow
+          value={eventType}
+          disabled={
+            sourceKind !== 'team' ||
+            gameId != null ||
+            !permitted ||
+            eventTeam == null ||
+            busy ||
+            eventBusy
+          }
+          onChange={type => {
+            setEventType(type)
+            if (!arrivalTouched.current)
+              setArrival(type === 'game' ? '45' : '0')
+          }}
+        />
+      </View>
+      {eventMode && eventTeam != null ? (
+        <EventDetailsForm
+          client={client}
+          teamId={eventTeam.id}
+          eventType={eventType}
+          hideType
+          creationRetry={eventRetry}
+          onBusyChange={setEventBusy}
+          draft={{
+            title: eventTitle,
+            schedule,
+            venue,
+            address,
+            notes,
+            arrival
+          }}
+          onDraftChange={draft => {
+            if (draft.arrival !== arrival) arrivalTouched.current = true
+            setEventTitle(draft.title)
+            setSchedule(draft.schedule)
+            setVenue(draft.venue)
+            setAddress(draft.address)
+            setNotes(draft.notes)
+            setArrival(draft.arrival)
+          }}
+          onSaved={id => {
+            ;(onEventCreated ?? onSent)(id)
+          }}
+          onCancel={onCancel}
+        />
+      ) : (
+        <Card style={styles.card}>
+          <Text style={styles.title}>
+            {gameId == null ? 'Create Game' : 'Propose game change'}
           </Text>
-        )}
-        <Button
-          label="Choose a different season"
-          kind="secondary"
-          onPress={() => {
-            setChoosingHost(!choosingHost)
-          }}
-        />
-        {choosingHost && (
-          <View style={styles.hosts}>
-            <Text style={styles.name}>Season</Text>
-            <Button
-              label="Outside a TeamStation season"
-              kind="secondary"
-              onPress={() => {
-                setSeason(undefined)
-                setChoosingHost(false)
-              }}
-            />
-            <TextField
-              label="Find a season you manage"
-              value={hostQuery}
-              onChangeText={setHostQuery}
-            />
-            {hosts
-              .filter(host =>
-                host.name
-                  .toLocaleLowerCase()
-                  .includes(hostQuery.toLocaleLowerCase())
-              )
-              .map(host => (
-                <Button
-                  key={host.id}
-                  label={`Host: ${host.name}`}
-                  kind={season?.id === host.id ? 'primary' : 'secondary'}
-                  onPress={() => {
-                    setSeason(host)
-                    setTimezone(host.timezone)
-                    setChoosingHost(false)
-                  }}
-                />
-              ))}
-          </View>
-        )}
-        <View style={styles.sideRow}>
-          <Button
-            label={`Home: ${home?.name ?? 'Choose team'}`}
-            kind={choosing === 'home' ? 'primary' : 'secondary'}
-            onPress={() => {
-              setChoosing('home')
-            }}
-          />
-          <Button
-            label={`Away: ${away?.name ?? 'Choose team'}`}
-            kind={choosing === 'away' ? 'primary' : 'secondary'}
-            onPress={() => {
-              setChoosing('away')
-            }}
-          />
-        </View>
-        <TextField label="Find a team" value={query} onChangeText={setQuery} />
-        <ScrollView
-          style={styles.teams}
-          contentContainerStyle={styles.teamList}
-        >
-          {teams.map(team => (
-            <Pressable
-              key={team.id}
-              accessibilityRole="button"
-              accessibilityLabel={`Choose ${team.name}${teams.filter(other => other.name === team.name).length < 2 ? '' : ', ' + (team.locality == null ? 'Location not set' : localityLabel(team.locality))}`}
-              onPress={() => {
-                choosing === 'home' ? setHome(team) : setAway(team)
-              }}
-              style={styles.team}
-            >
-              <Text style={styles.name}>{team.name}</Text>
-              <Text style={styles.hint}>
-                {team.locality == null
-                  ? 'Location not set'
-                  : localityLabel(team.locality)}
-                {team.external ? ' · Placeholder' : ''}
-              </Text>
-              {team.parentNames.length > 0 && (
-                <Text style={styles.hint}>{team.parentNames.join(', ')}</Text>
-              )}
-            </Pressable>
-          ))}
-        </ScrollView>
-        <TextField
-          label="Date"
-          value={date}
-          onChangeText={setDate}
-          placeholder="YYYY-MM-DD"
-        />
-        <TextField
-          label="Time"
-          value={time}
-          onChangeText={setTime}
-          placeholder="18:00"
-        />
-        <TextField
-          label="Time zone"
-          value={timezone}
-          onChangeText={setTimezone}
-        />
-        <TextField
-          label="Venue (optional)"
-          value={venue}
-          onChangeText={setVenue}
-        />
-        <Button
-          label={exhibition ? 'Exhibition: On' : 'Exhibition: Off'}
-          kind="secondary"
-          onPress={() => {
-            setExhibition(value => !value)
-          }}
-        />
-        {season == null && (
-          <TextField
-            label="Outside tournament (optional)"
-            value={outsideTournament}
-            onChangeText={setOutsideTournament}
-          />
-        )}
-        {outsideRange && dismissedRange !== rangeWarning && (
-          <>
-            <Text style={styles.hint}>
-              This date is outside the season’s reference time frame. You may
-              still send and schedule this game.
+          <Text style={styles.hint}>
+            {season == null
+              ? 'Outside a TeamStation season'
+              : `Hosted by ${season.name}`}
+            . Every affected team must approve. This creates no parent
+            organization or season participation.
+          </Text>
+          {!permitted && (
+            <Text style={styles.error}>
+              This game cannot be changed here. A season game needs its
+              organizer; a withdrawn game requires a new game.
             </Text>
-            <Button
-              label="Dismiss date warning"
-              kind="secondary"
-              onPress={() => {
-                setDismissedRange(rangeWarning)
-              }}
-            />
-          </>
-        )}
-        {gameId != null && (
+          )}
           <Button
-            label={
-              cancelling ? 'Cancellation selected' : 'Propose cancellation'
-            }
+            label="Choose a different season"
             kind="secondary"
             onPress={() => {
-              setCancelling(!cancelling)
+              setChoosingHost(!choosingHost)
             }}
           />
-        )}
-        {displayError !== '' && (
-          <Text accessibilityRole="alert" style={styles.error}>
-            {displayError}
-          </Text>
-        )}
-        <Button
-          label="Send game proposal"
-          busy={busy}
-          disabled={
-            !permitted || home == null || away == null || home.id === away.id
-          }
-          onPress={() => {
-            send().catch(() => undefined)
-          }}
-        />
-        <Button
-          label="Retry teams"
-          kind="secondary"
-          onPress={() => {
-            setRetry(retry + 1)
-          }}
-        />
-        <Button
-          label="Cancel"
-          kind="secondary"
-          disabled={busy}
-          onPress={onCancel}
-        />
-      </Card>
+          {choosingHost && (
+            <View style={styles.hosts}>
+              <Text style={styles.name}>Season</Text>
+              <Button
+                label="Outside a TeamStation season"
+                kind="secondary"
+                onPress={() => {
+                  setSeason(undefined)
+                  setChoosingHost(false)
+                }}
+              />
+              <TextField
+                label="Find a season you manage"
+                value={hostQuery}
+                onChangeText={setHostQuery}
+              />
+              {hosts
+                .filter(host =>
+                  host.name
+                    .toLocaleLowerCase()
+                    .includes(hostQuery.toLocaleLowerCase())
+                )
+                .map(host => (
+                  <Button
+                    key={host.id}
+                    label={`Host: ${host.name}`}
+                    kind={season?.id === host.id ? 'primary' : 'secondary'}
+                    onPress={() => {
+                      setSeason(host)
+                      setChoosingHost(false)
+                    }}
+                  />
+                ))}
+            </View>
+          )}
+          <View style={styles.sideRow}>
+            <Button
+              label={`Home: ${home?.name ?? 'Choose team'}`}
+              kind={choosing === 'home' ? 'primary' : 'secondary'}
+              onPress={() => {
+                setChoosing('home')
+              }}
+            />
+            <Button
+              label={`Away: ${away?.name ?? 'Choose team'}`}
+              kind={choosing === 'away' ? 'primary' : 'secondary'}
+              onPress={() => {
+                setChoosing('away')
+              }}
+            />
+          </View>
+          <TextField
+            label="Find a team"
+            value={query}
+            onChangeText={setQuery}
+          />
+          <ScrollView
+            style={styles.teams}
+            contentContainerStyle={styles.teamList}
+          >
+            {teams.map(team => (
+              <Pressable
+                key={team.id}
+                accessibilityRole="button"
+                accessibilityLabel={`Choose ${team.name}${teams.filter(other => other.name === team.name).length < 2 ? '' : ', ' + (team.locality == null ? 'Location not set' : localityLabel(team.locality))}`}
+                onPress={() => {
+                  choosing === 'home' ? setHome(team) : setAway(team)
+                }}
+                style={styles.team}
+              >
+                <Text style={styles.name}>{team.name}</Text>
+                <Text style={styles.hint}>
+                  {team.locality == null
+                    ? 'Location not set'
+                    : localityLabel(team.locality)}
+                  {team.external ? ' · Placeholder' : ''}
+                </Text>
+                {team.parentNames.length > 0 && (
+                  <Text style={styles.hint}>{team.parentNames.join(', ')}</Text>
+                )}
+              </Pressable>
+            ))}
+          </ScrollView>
+          <EventScheduleFields
+            value={schedule}
+            onChange={setSchedule}
+            disabled={busy}
+          />
+          <EventArrivalField
+            value={arrival}
+            disabled={busy}
+            onChange={value => {
+              arrivalTouched.current = true
+              setArrival(value)
+            }}
+          />
+          <EventVenueFields
+            client={client}
+            value={{ venue, address, notes }}
+            disabled={busy}
+            onChange={value => {
+              setVenue(value.venue)
+              setAddress(value.address)
+              setNotes(value.notes)
+            }}
+          />
+          <Button
+            label={exhibition ? 'Exhibition: On' : 'Exhibition: Off'}
+            kind="secondary"
+            onPress={() => {
+              setExhibition(value => !value)
+            }}
+          />
+          {season == null && (
+            <TextField
+              label="Outside tournament (optional)"
+              value={outsideTournament}
+              onChangeText={setOutsideTournament}
+            />
+          )}
+          {outsideRange && dismissedRange !== rangeWarning && (
+            <>
+              <Text style={styles.hint}>
+                This date is outside the season’s reference time frame. You may
+                still send and schedule this game.
+              </Text>
+              <Button
+                label="Dismiss date warning"
+                kind="secondary"
+                onPress={() => {
+                  setDismissedRange(rangeWarning)
+                }}
+              />
+            </>
+          )}
+          {gameId != null && (
+            <Button
+              label={
+                cancelling ? 'Cancellation selected' : 'Propose cancellation'
+              }
+              kind="secondary"
+              onPress={() => {
+                setCancelling(!cancelling)
+              }}
+            />
+          )}
+          {displayError !== '' && (
+            <Text accessibilityRole="alert" style={styles.error}>
+              {displayError}
+            </Text>
+          )}
+          <Button
+            label="Send game proposal"
+            busy={busy}
+            disabled={
+              !permitted || home == null || away == null || home.id === away.id
+            }
+            onPress={() => {
+              send().catch(() => undefined)
+            }}
+          />
+          <Button
+            label="Retry teams"
+            kind="secondary"
+            onPress={() => {
+              setRetry(retry + 1)
+            }}
+          />
+          <Button
+            label="Cancel"
+            kind="secondary"
+            disabled={busy}
+            onPress={onCancel}
+          />
+        </Card>
+      )}
     </Screen>
   )
 }
 const getStyles = cacheStyles((theme: Theme) => ({
+  eventChoice: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: theme.rem(0.75),
+    marginBottom: theme.rem(1)
+  },
   card: { gap: theme.rem(1) },
   title: {
     fontSize: theme.rem(1.5),

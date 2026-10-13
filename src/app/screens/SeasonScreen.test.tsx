@@ -1188,9 +1188,9 @@ describe('the season screen', function () {
     const playedDate = scheduleDate(PLAYED.startAt)
     expect(rows).has.lengthOf(2)
     expect(rows[0]).includes('Rivals @ Comets')
-    expect(rows[0]).includes(liveDate.when)
+    expect(rows[0]).includes(liveDate.time)
     expect(rows[1]).includes('Alta Hawks @ Bay Stars')
-    expect(rows[1]).includes(playedDate.when)
+    expect(rows[1]).includes(playedDate.time)
     expect(text()).includes(liveDate.month)
     expect(text()).includes(liveDate.day)
     expect(text()).includes('1–0')
@@ -1246,7 +1246,7 @@ describe('the season screen', function () {
       {
         gameId: 'gam_played',
         title: 'Alta Hawks @ Bay Stars',
-        options: { autoPlay: true }
+        options: { autoPlay: false }
       },
       {
         gameId: 'gam_ahead',
@@ -1256,9 +1256,9 @@ describe('the season screen', function () {
     ])
   })
 
-  it('drops the weekday from a game’s date on a phone, and keeps it wider', async function () {
+  it('keeps the weekday in the date column and time in the details at both widths', async function () {
     await mount({ games: async () => [PLAYED] })
-    const when = scheduleDate(PLAYED.startAt).when
+    const when = scheduleDate(PLAYED.startAt).time
     expect(gameRows()[0]).includes(when)
     expect(text()).includes(when)
 

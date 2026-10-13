@@ -115,7 +115,7 @@ describe('pending games through the actual team card', () => {
       target()!.click()
     })
     expect(opened).deep.equals([
-      { id: 'gam_pending', options: { autoPlay: true } }
+      { id: 'gam_pending', options: { tab: 'watch', autoPlay: true } }
     ])
   })
   it('preserves the ordinary win card and exposes canceled withdrawal history separately', async () => {
@@ -128,7 +128,7 @@ describe('pending games through the actual team card', () => {
       target()!.click()
     })
     expect(opened).deep.equals([
-      { id: 'gam_pending', options: { autoPlay: true } }
+      { id: 'gam_pending', options: { autoPlay: false } }
     ])
     await act(async () => {
       root!.unmount()

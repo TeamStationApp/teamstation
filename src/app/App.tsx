@@ -67,11 +67,9 @@ import { AccountScreen } from './screens/AccountScreen'
 import { CreateGameScreen } from './screens/CreateGameScreen'
 import { CreateGroupScreen } from './screens/CreateGroupScreen'
 import { DiscoverScreen } from './screens/DiscoverScreen'
+import { EventSettingsScreen } from './screens/EventSettingsScreen'
 import { GameScreen } from './screens/GameScreen'
-import {
-  type GameSettingsResult,
-  GameSettingsScreen
-} from './screens/GameSettingsScreen'
+import type { GameSettingsResult } from './screens/GameSettingsScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
 import { GroupLinkScreen } from './screens/GroupLinkScreen'
 import { GroupScreen } from './screens/GroupScreen'
@@ -151,7 +149,7 @@ type Pushed =
       gameId: string
       title: string
       /** Which half of the game screen to open on. */
-      tab?: 'boxScore' | 'watch' | 'score'
+      tab?: 'info' | 'boxScore' | 'watch' | 'score'
       /** Start the video rather than waiting to be asked. */
       autoPlay?: boolean
       /** Which video, and where in it, from a link to a moment. */
@@ -831,12 +829,14 @@ function Shell(props: AppProps): React.ReactElement {
     gameId: string,
     title: string,
     options: {
-      tab?: 'watch' | 'boxScore'
+      tab?: 'info' | 'watch' | 'boxScore'
       autoPlay?: boolean
       pendingRequestId?: string | null
     } = {}
   ): void => {
     const { pendingRequestId, ...presentation } = options
+    if (presentation.autoPlay === true && presentation.tab == null)
+      presentation.tab = 'watch'
     if (pendingRequestId != null) {
       push({ name: 'notification', id: pendingRequestId })
     } else push({ name: 'game', gameId, title, ...presentation })
@@ -1502,7 +1502,7 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'gameSettings' ||
       (top.name === 'createGame' && top.gameId != null) ? (
-      <GameSettingsScreen
+      <EventSettingsScreen
         client={client}
         gameId={top.gameId!}
         onSaved={(result: GameSettingsResult) => {
@@ -1511,7 +1511,9 @@ function Shell(props: AppProps): React.ReactElement {
             message:
               result.status === 'pending'
                 ? 'Game proposal sent'
-                : 'Game changes saved'
+                : result.status === 'eventUpdated'
+                  ? 'Event changes saved'
+                  : 'Game changes saved'
           })
           if (
             result.status === 'accepted' &&
@@ -1530,6 +1532,9 @@ function Shell(props: AppProps): React.ReactElement {
         client={client}
         source={{ kind: top.kind, id: top.id }}
         gameId={top.gameId}
+        onEventCreated={id => {
+          replace({ name: 'game', gameId: id, title: '' })
+        }}
         onSent={id => {
           replace({ name: 'notification', id })
           refreshRoles()
@@ -1802,6 +1807,7 @@ function Shell(props: AppProps): React.ReactElement {
       // DJ Game is an iPhone's: on the web and Android its address shows
       // the game.
       <GameScreen
+        socket={gameSocket}
         client={client}
         gameId={top.gameId}
         onSettings={() => {
@@ -1836,6 +1842,7 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'scoreGame' ? null : top.name === 'game' ? (
       <GameScreen
+        socket={gameSocket}
         client={client}
         gameId={top.gameId}
         onSettings={() => {
@@ -2140,7 +2147,7 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
 /** A game's page, beneath a screen opened from it. */
 function gameUnder(
   gameId: string,
-  section?: 'boxScore' | 'watch' | 'score'
+  section?: 'info' | 'boxScore' | 'watch' | 'score'
 ): Pushed {
   return { name: 'game', gameId, title: '', tab: section }
 }
