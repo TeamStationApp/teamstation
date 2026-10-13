@@ -6,6 +6,7 @@ import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
+import java.nio.channels.ClosedSelectorException
 import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
 import java.nio.channels.SocketChannel
@@ -70,8 +71,13 @@ class ChannelRTMPTransport private constructor(
             if (written > 0) return written
             val remaining = (deadline - System.nanoTime()) / 1_000_000
             if (remaining <= 0) throw RTMPWouldBlockException()
-            writeSelector.select(remaining)
-            writeSelector.selectedKeys().clear()
+            try {
+                writeSelector.select(remaining)
+                writeSelector.selectedKeys().clear()
+            } catch (closed: ClosedSelectorException) {
+                // [close] on another thread: the socket is gone, as a closed channel would say.
+                throw IOException("socket closed")
+            }
             if (!channel.isOpen) throw IOException("socket closed")
         }
     }
@@ -81,8 +87,14 @@ class ChannelRTMPTransport private constructor(
         while (true) {
             val count = channel.read(wrapped)
             if (count != 0) return count
-            readSelector.select()
-            readSelector.selectedKeys().clear()
+            try {
+                readSelector.select()
+                readSelector.selectedKeys().clear()
+            } catch (closed: ClosedSelectorException) {
+                // [close] from the client's stop, while this thread waited to read: the end of the
+                // stream, not a crash of the read thread.
+                return -1
+            }
             if (!channel.isOpen) return -1
         }
     }

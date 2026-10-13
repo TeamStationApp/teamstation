@@ -318,6 +318,36 @@ class RTMPClientTest {
     }
 
     @Test
+    fun closingTheTransportWhileItWaitsToReadOrWriteEndsItQuietly() {
+        // The client's stop closes the transport from another thread while its read thread waits on
+        // the selector: that read ends the stream (-1), and a write in the same wait reads as a closed
+        // socket, never an unchecked ClosedSelectorException that kills the app.
+        repeat(20) {
+            val peer = StalledPeer().also { closers += it }
+            val transport = ChannelRTMPTransport.wrap(peer.sender, sendTimeoutSeconds = 5.0)
+            val read = AtomicReference<Any>()
+            val reader = Thread {
+                read.set(runCatching { transport.receive(ByteArray(16)) }.fold({ it }, { it }))
+            }.also { it.start() }
+            Thread.sleep(20)
+            transport.close()
+            reader.join(2_000)
+            assertEquals(-1, read.get())
+        }
+        val peer = StalledPeer().also { closers += it }
+        val transport = ChannelRTMPTransport.wrap(peer.sender, sendTimeoutSeconds = 5.0)
+        val written = AtomicReference<Any>()
+        val writer = Thread {
+            val big = ByteArray(1 shl 20)
+            written.set(runCatching { while (true) transport.send(big, 0, big.size) }.exceptionOrNull())
+        }.also { it.start() }
+        Thread.sleep(200)
+        transport.close()
+        writer.join(2_000)
+        assertTrue("${written.get()}", written.get() is java.io.IOException)
+    }
+
+    @Test
     fun aQueueOlderThanTheBufferShedsAllButHeaders() {
         val peer = StalledPeer().also { closers += it }
         val transport = ChannelRTMPTransport.wrap(peer.sender, sendTimeoutSeconds = 0.05)
