@@ -79,16 +79,18 @@ class UploadService(
         onOpened(opened.uploadId)
         val have = opened.received.toMutableSet()
         onProgress(Progress(have.size, opened.parts, minOf(size, have.size.toLong() * opened.partSize), size))
+        // One part's worth of memory for the whole upload: a buffer per part left a two-hour take's
+        // upload a few garbage collections from the heap limit (245 MB of 256 on a 24-minute take).
+        val buffer = ByteArray(minOf(opened.partSize.toLong(), size).toInt())
         RandomAccessFile(file, "r").use { handle ->
             for (index in 0 until opened.parts) {
                 if (index in have) continue
                 val start = index.toLong() * opened.partSize
                 val length = minOf(opened.partSize.toLong(), size - start).toInt()
                 if (length <= 0) throw UploadError.CannotRead("part $index of ${file.name} is short on this phone")
-                val bytes = ByteArray(length)
                 handle.seek(start)
-                handle.readFully(bytes)
-                withRetries("part $index") { client.sendPart(opened.uploadId, index, bytes) }
+                handle.readFully(buffer, 0, length)
+                withRetries("part $index") { client.sendPart(opened.uploadId, index, buffer, length) }
                 have += index
                 onProgress(Progress(have.size, opened.parts, minOf(size, have.size.toLong() * opened.partSize), size))
             }

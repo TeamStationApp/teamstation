@@ -97,8 +97,9 @@ class UploadClient(
     }
 
     /** One part of the recording, as bytes; minutes rather than seconds to land on a field's uplink. */
-    suspend fun sendPart(uploadId: String, index: Int, bytes: ByteArray): PartTaken {
-        val json = request("director/uploads/${escape(uploadId)}/parts/$index", "PUT", bytes, "application/octet-stream", 300_000)
+    /** The first [length] bytes of [bytes] are the part, so one buffer can carry every part in turn. */
+    suspend fun sendPart(uploadId: String, index: Int, bytes: ByteArray, length: Int = bytes.size): PartTaken {
+        val json = request("director/uploads/${escape(uploadId)}/parts/$index", "PUT", bytes, "application/octet-stream", 300_000, length)
         return PartTaken(json.getInt("received"), json.getInt("parts"), ints(json.optJSONArray("missing")))
     }
 
@@ -113,7 +114,14 @@ class UploadClient(
         runCatching { request("director/uploads/${escape(uploadId)}", "DELETE", null, null, 20_000) }
     }
 
-    private suspend fun request(path: String, method: String, body: ByteArray?, type: String?, timeoutMillis: Int): JSONObject =
+    private suspend fun request(
+        path: String,
+        method: String,
+        body: ByteArray?,
+        type: String?,
+        timeoutMillis: Int,
+        bodyLength: Int = body?.size ?: 0
+    ): JSONObject =
         withContext(Dispatchers.IO) {
             val connection = try {
                 open(URL(baseURL.trimEnd('/') + "/api/v1/" + path))
@@ -129,8 +137,8 @@ class UploadClient(
                 if (body != null) {
                     connection.doOutput = true
                     connection.setRequestProperty("content-type", type)
-                    connection.setFixedLengthStreamingMode(body.size)
-                    connection.outputStream.use { it.write(body) }
+                    connection.setFixedLengthStreamingMode(bodyLength)
+                    connection.outputStream.use { it.write(body, 0, bodyLength) }
                 }
                 val status = connection.responseCode
                 val text = (if (status in 200..299) connection.inputStream else connection.errorStream)

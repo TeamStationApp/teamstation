@@ -77,6 +77,10 @@ class UploadServiceTest {
             assertEquals("/api/v1/director/uploads/u1/parts/$index", part.path)
             assertEquals("application/octet-stream", part.getHeader("content-type"))
             assertEquals(if (index < 2) 4L else 2L, part.bodySize)
+            // One buffer carries every part, so the short last one must not drag the previous part's
+            // tail along: each part is exactly its own slice of the file.
+            val from = index * 4
+            assertEquals((from until minOf(from + 4, 10)).map { it.toByte() }, part.body.readByteArray().toList())
         }
         assertEquals("/api/v1/director/uploads/u1/finish", take().path)
         assertEquals("GET", take().method)
