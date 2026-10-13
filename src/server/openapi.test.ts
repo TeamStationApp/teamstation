@@ -261,6 +261,27 @@ describe('the API document', function () {
     expect(JSON.stringify(settings?.requestBody)).includes('"DH"')
   })
 
+  it('declares the team suggestions and the public team row fields', function () {
+    const parameters = (
+      openApiDocument('0.0.0').paths as Record<
+        string,
+        {
+          get?: {
+            parameters?: Array<{ name: string; description?: string }>
+          }
+        }
+      >
+    )['/teams']?.get?.parameters
+    const named = (name: string): string =>
+      parameters?.find(parameter => parameter.name === name)?.description ?? ''
+    expect(named('relatedTeam')).includes('view=public')
+    expect(named('relatedTeam')).includes('404')
+    expect(named('relatedTeam')).includes('six months')
+    expect(named('relatedSeason')).includes('404')
+    expect(named('query')).includes('seasonNames')
+    expect(named('query')).includes('staffNames')
+  })
+
   it('documents guardian invitations and requests beside the other relationship requests', function () {
     const post = (openApiDocument('0.0.0').paths as Record<string, any>)[
       '/relationship-requests'

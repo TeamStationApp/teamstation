@@ -697,6 +697,125 @@ export async function givenRolesOnTeam(
   )
 }
 
+/**
+ * `givenRolesOnTeam` for many teams in a fixed handful of queries, for a
+ * list that names each team's staff: the roles given on each team (with its
+ * owner's or manager's `admin`), its seasons and their leagues.
+ */
+export async function givenRolesOnTeams(
+  db: Kysely<Database>,
+  teamIds: string[]
+): Promise<Map<string, Map<number, Role[]>>> {
+  const result = new Map<string, Map<number, Role[]>>(
+    teamIds.map(id => [id, new Map()])
+  )
+  if (teamIds.length === 0) return result
+  const seasons = await db
+    .selectFrom(permissionParents(db))
+    .innerJoin('seasons', 'seasons.id', 'permission_parents.season_id')
+    .select([
+      'permission_parents.team_id as teamId',
+      'seasons.id as seasonId',
+      'seasons.league_id as leagueId'
+    ])
+    .where('permission_parents.team_id', 'in', teamIds)
+    .execute()
+  const teams = await db
+    .selectFrom('teams')
+    .select(['id', 'league_id'])
+    .where('id', 'in', teamIds)
+    .execute()
+  const levels = new Map(
+    teamIds.map(id => [
+      id,
+      { seasonIds: new Set<string>(), leagueIds: new Set<string>() }
+    ])
+  )
+  for (const team of teams)
+    if (team.league_id != null)
+      levels.get(team.id)!.leagueIds.add(team.league_id)
+  for (const row of seasons) {
+    const level = levels.get(row.teamId)!
+    level.seasonIds.add(row.seasonId)
+    if (row.leagueId != null) level.leagueIds.add(row.leagueId)
+  }
+  const seasonIds = [...new Set(seasons.map(row => row.seasonId))]
+  const leagueIds = [
+    ...new Set([...levels.values()].flatMap(level => [...level.leagueIds]))
+  ]
+  const rows = await db
+    .selectFrom('scope_roles')
+    .innerJoin('users', 'users.id', 'scope_roles.user_id')
+    .select([
+      'scope_roles.user_id',
+      'scope_roles.role',
+      'scope_roles.scope_type',
+      'scope_roles.scope_id'
+    ])
+    .where('users.disabled_at', 'is', null)
+    .where('users.merged_into', 'is', null)
+    .where(eb =>
+      eb.or([
+        eb.and([
+          eb('scope_roles.scope_type', '=', 'team'),
+          eb('scope_roles.scope_id', 'in', teamIds)
+        ]),
+        ...(seasonIds.length === 0
+          ? []
+          : [
+              eb.and([
+                eb('scope_roles.scope_type', '=', 'season'),
+                eb('scope_roles.scope_id', 'in', seasonIds)
+              ])
+            ]),
+        ...(leagueIds.length === 0
+          ? []
+          : [
+              eb.and([
+                eb('scope_roles.scope_type', '=', 'league'),
+                eb('scope_roles.scope_id', 'in', leagueIds)
+              ])
+            ])
+      ])
+    )
+    .execute()
+  const owners = await db
+    .selectFrom('memberships')
+    .innerJoin('users', 'users.id', 'memberships.user_id')
+    .select(['memberships.user_id', 'memberships.team_id'])
+    .where('memberships.team_id', 'in', teamIds)
+    .where('memberships.role', 'in', ['owner', 'manager'])
+    .where('users.disabled_at', 'is', null)
+    .where('users.merged_into', 'is', null)
+    .execute()
+  for (const teamId of teamIds) {
+    const level = levels.get(teamId)!
+    const held = new Map<number, Set<Role>>()
+    const give = (userId: number, role: Role): void => {
+      held.set(userId, (held.get(userId) ?? new Set<Role>()).add(role))
+    }
+    for (const row of rows)
+      if (
+        (row.scope_type === 'team' && row.scope_id === teamId) ||
+        (row.scope_type === 'season' && level.seasonIds.has(row.scope_id)) ||
+        (row.scope_type === 'league' && level.leagueIds.has(row.scope_id))
+      )
+        give(row.user_id, row.role)
+    for (const row of owners)
+      if (row.team_id === teamId) give(row.user_id, 'admin')
+    result.set(
+      teamId,
+      new Map(
+        [...held].map(([userId, roles]) => [
+          userId,
+          ROLES.filter(role => roles.has(role))
+        ])
+      )
+    )
+  }
+  return result
+}
+
 /** Where a role was given, from the team up. */
 export type RoleLevel = 'team' | 'season' | 'league'
 

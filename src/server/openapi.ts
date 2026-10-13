@@ -2635,7 +2635,33 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', maxLength: 120, default: '' },
               description:
-                'Public discovery by group name, city or region; used with view=public'
+                'Public discovery by group name, city or region; used with ' +
+                'view=public. Each public team row also carries ' +
+                '`seasonNames`, the seasons it is in, newest first, and ' +
+                '`staffNames`, its staff as public short names (`First L.`), ' +
+                'coaches first; nobody who has not named themselves yet.'
+            },
+            {
+              name: 'relatedTeam',
+              in: 'query',
+              schema: { type: 'string', maxLength: 120 },
+              description:
+                'Suggests the teams a game against this team is likely to ' +
+                'be with, at most 50: the same season, the same league, ' +
+                'opponents within six months, then the same region, each ' +
+                'team once and never this one or a merged team. Needs ' +
+                '`view=public` (400) and an empty `query` (400 `relatedTeam ' +
+                'and relatedSeason do not combine with query`); an unknown ' +
+                'team answers 404. Leaving it out keeps the search.'
+            },
+            {
+              name: 'relatedSeason',
+              in: 'query',
+              schema: { type: 'string', maxLength: 120 },
+              description:
+                'Suggests around this season as well, or alone: its teams ' +
+                'first, then its league\u2019s. The same rules as ' +
+                '`relatedTeam`; an unknown season answers 404.'
             },
             {
               name: 'externalId',

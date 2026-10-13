@@ -75,7 +75,12 @@ export function asCreateGroup(raw: unknown): CreateGroup {
   )
     throw new TypeError('Creation needs a retry key')
   const result: CreateGroup = { kind, name, idempotencyKey: raw.idempotencyKey }
-  if (kind !== 'season') result.locality = asLocality(raw.locality)
+  // A placeholder team may be named before anybody knows where it plays.
+  if (
+    kind !== 'season' &&
+    !(kind === 'team' && raw.external === true && raw.locality == null)
+  )
+    result.locality = asLocality(raw.locality)
   if (kind === 'season') {
     result.startsOn = asCalendarDate(raw.startsOn)
     result.endsOn = asCalendarDate(raw.endsOn)

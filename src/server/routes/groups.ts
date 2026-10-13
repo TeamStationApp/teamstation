@@ -50,6 +50,11 @@ import {
   groupDetail,
   publicGroup
 } from '../groups/publicSummary'
+import {
+  type RelatedAnchor,
+  relatedTeams,
+  teamRowExtras
+} from '../groups/relatedTeams'
 import { applyParents, previewParents } from '../groups/relationships'
 import {
   type Clock,
@@ -271,6 +276,26 @@ async function guardianTerms(
     playerUserId: player,
     guardian:
       account == null ? named : { userId: account.id, email: named.email }
+  }
+}
+
+/** `relatedTeam` and `relatedSeason`, each at most once, or nothing asked. */
+function relatedAnchorAsked(
+  query: Request['query']
+): RelatedAnchor | undefined {
+  const one = (name: 'relatedTeam' | 'relatedSeason'): string | undefined => {
+    const value = query[name]
+    if (value == null) return undefined
+    if (typeof value !== 'string' || value === '' || value.length > 120)
+      throw badRequest(`${name} must be one id`)
+    return value
+  }
+  const teamId = one('relatedTeam')
+  const seasonId = one('relatedSeason')
+  if (teamId == null && seasonId == null) return undefined
+  return {
+    ...(teamId == null ? {} : { teamId }),
+    ...(seasonId == null ? {} : { seasonId })
   }
 }
 
@@ -679,6 +704,10 @@ export function groupRoutes(
       withAsync(async (req, res, next) => {
         if (req.query.view != null && req.query.view !== 'public')
           throw badRequest('view must be public when provided')
+        const anchor =
+          kind === 'team' ? relatedAnchorAsked(req.query) : undefined
+        if (anchor != null && req.query.view !== 'public')
+          throw badRequest('relatedTeam and relatedSeason need view=public')
         if (req.query.view !== 'public' && kind !== 'league') {
           next()
           return
@@ -686,6 +715,19 @@ export function groupRoutes(
         const query = req.query.query ?? ''
         if (typeof query !== 'string' || query.length > 120)
           throw badRequest('Invalid discovery filters')
+        if (anchor != null) {
+          if (query !== '')
+            throw badRequest(
+              'relatedTeam and relatedSeason do not combine with query'
+            )
+          res.json(
+            await teamRowExtras(
+              db,
+              await relatedTeams(db, anchor, media.space, clock.now())
+            )
+          )
+          return
+        }
         let allowedIds: string[] | undefined
         if (kind === 'league' && req.query.view !== 'public') {
           const actor = await currentActor(db, actorOf(req))
@@ -699,7 +741,12 @@ export function groupRoutes(
           media.space,
           allowedIds
         )
-        res.json(groups)
+        // A public team search shows each team's seasons and staff.
+        res.json(
+          kind === 'team' && req.query.view === 'public'
+            ? await teamRowExtras(db, groups)
+            : groups
+        )
       })
     )
     router.get(
