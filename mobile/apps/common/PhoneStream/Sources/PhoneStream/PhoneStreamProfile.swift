@@ -13,6 +13,9 @@ import Foundation
 ///   makes; 128 kbps on the stream, 192 kbps in the recording (the encoders' own rates).
 /// - The programme shows each picture a second after it was captured, Director's live value, and
 ///   the recording's mix waits a second for sound, because the microphone is local and never late.
+/// - A stream whose connection has taken nothing for 6 s while the stream waits on it is replaced by a
+///   fresh dial (`stallRedialSeconds`). A phone's network stack can sit on a dead connection far
+///   longer than that, and the stream would come back only when the server gives up on it.
 public enum PhoneStreamProfile {
   public static let codec: ProgramCodec = .hevc
   public static let resolution: ProgramResolution = .hd1080
@@ -32,6 +35,9 @@ public enum PhoneStreamProfile {
   public static let recordingMixDelaySeconds: Double = 1
   /// How long the app may be away before an interrupted take is closed rather than resumed.
   public static let resumeDowntimeLimitSeconds: Double = 3_600
+  /// How long the stream's connection may take nothing, with the stream waiting on it, before it is
+  /// replaced.
+  public static let stallRedialSeconds: Double = 6
 
   /// The recording's encoding, kept with every take so its export is made the way it was recorded.
   public static var recordingEncoding: EncodeSettings {

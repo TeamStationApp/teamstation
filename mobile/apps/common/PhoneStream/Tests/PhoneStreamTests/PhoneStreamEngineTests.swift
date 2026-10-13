@@ -208,6 +208,8 @@ extension PhoneStreamTests {
       #expect(engine.status.phase == "idle")
       #expect(!engine.streamController.wanted)
       #expect(engine.streamController.lastError == "ended")
+      // The phone replaces a connection that stops moving, which Director does not.
+      #expect(engine.streamController.stallRedialSeconds == PhoneStreamProfile.stallRedialSeconds)
       let asks = StubServer.read { $0.streamRequests }.count
       #expect(asks == 1)
       let frames = engine.encoder.frameCount

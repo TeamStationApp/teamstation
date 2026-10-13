@@ -39,6 +39,7 @@ extension PhoneStreamTests {
       #expect(PhoneStreamProfile.audioSampleRate == 48_000)
       #expect(PhoneStreamProfile.pictureDelaySeconds == 1)
       #expect(PhoneStreamProfile.recordingMixDelaySeconds == 1)
+      #expect(PhoneStreamProfile.stallRedialSeconds == 6)
     }
 
     @Test("A capture-clock instant becomes its steady-wall and uptime instants by its age")

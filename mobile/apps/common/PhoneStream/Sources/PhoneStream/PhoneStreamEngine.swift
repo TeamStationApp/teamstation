@@ -153,7 +153,8 @@ public final class PhoneStreamEngine {
         ended: { [weak self] _ in self?.fail(.streamEnded) }
       ),
       scheduler: environment.makeRetryScheduler(),
-      pathMonitor: environment.makePathMonitor()
+      pathMonitor: environment.makePathMonitor(),
+      stallRedialSeconds: PhoneStreamProfile.stallRedialSeconds
     )
     radar.onChange = { [weak self] state in self?.emit(.radar(state)) }
     if environment.observesApplication { observeApplication() }
