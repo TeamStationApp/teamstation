@@ -348,7 +348,9 @@ export interface VideosTable {
   /**
    * How `start_at` was worked out — a method, not a source of the file. An
    * upload says `distributor` whichever app sent it, because both read the
-   * instant off the take's own index.
+   * instant off the take's own index. A live video says `liveSession` when
+   * the server placed it as the stream arrived, and `publisher` when the
+   * phone or Director publishing it said when its first picture was captured.
    */
   start_at_source:
     | 'obsFilename'
@@ -356,6 +358,7 @@ export interface VideosTable {
     | 'originallyPublishedAt'
     | 'distributor'
     | 'manual'
+    | 'publisher'
     | null
   sync_offset_sec: Generated<number>
   duration_sec: number | null

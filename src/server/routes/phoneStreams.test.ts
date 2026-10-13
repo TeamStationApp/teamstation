@@ -17,7 +17,13 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
-import { requestDeviceStream } from '../live/streamKeys'
+import { beganPublishing } from '../live/controller'
+import {
+  placeByPublisher,
+  PUBLISHER_LAG_MAX_MS,
+  PUBLISHER_LEAD_MAX_MS,
+  requestDeviceStream
+} from '../live/streamKeys'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
@@ -745,6 +751,143 @@ describe('phones and Directors asking for their streams by device', function () 
       )
       expect(deviceless.status).equals(400)
       expect(await reminders(made.body.id)).equals(0)
+    })
+  })
+
+  describe('S4b PATCH liveStartedAt places the live video', function () {
+    const video = async (
+      streamId: string
+    ): Promise<{ startAt: Date | null; source: string | null }> => {
+      const { videoId } = await stream(streamId)
+      return await db!
+        .selectFrom('videos')
+        .select(['start_at as startAt', 'start_at_source as source'])
+        .where('id', '=', videoId!)
+        .executeTakeFirstOrThrow()
+    }
+
+    const ingest = (): Parameters<typeof beganPublishing>[0] => ({
+      db: db!,
+      live: LIVE,
+      ffmpegPath: '/not-used',
+      mediaRoot: uploadsDir,
+      workDir: uploadsDir,
+      sessionSecret: 'k'.repeat(32)
+    })
+
+    /** What the ingest does when the publish arrives, at `heard`. */
+    const publish = async (streamId: string, heard: Date): Promise<void> => {
+      await beganPublishing(ingest(), streamId)
+      await db!
+        .updateTable('live_streams')
+        .set({ first_published_at: heard })
+        .where('id', '=', streamId)
+        .execute()
+      await db!
+        .updateTable('videos')
+        .set({ start_at: heard })
+        .where('id', '=', (await stream(streamId)).videoId!)
+        .execute()
+    }
+
+    const report = async (
+      gameId: string,
+      streamId: string,
+      at: string,
+      token = OWNER
+    ): Promise<{ status: number; body: Body }> =>
+      await call('PATCH', `/games/${gameId}/live-streams/${streamId}`, token, {
+        liveStartedAt: at
+      })
+
+    it('moves a video the server placed to its first picture, once', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      const heard = new Date(Date.now() - 10_000)
+      await publish(made.body.id, heard)
+      expect((await video(made.body.id)).source).equals('liveSession')
+
+      const captured = new Date(heard.getTime() - 1620)
+      const placed = await report(gameId, made.body.id, captured.toISOString())
+      expect(placed.status).equals(200)
+      expect(await video(made.body.id)).deep.equals({
+        startAt: captured,
+        source: 'publisher'
+      })
+
+      // A reconnect's account, or a second one, never moves it again; nor
+      // does the ingest hearing the stream again.
+      const later = new Date(heard.getTime() - 500)
+      expect(
+        (await report(gameId, made.body.id, later.toISOString())).status
+      ).equals(200)
+      await beganPublishing(ingest(), made.body.id)
+      expect(await video(made.body.id)).deep.equals({
+        startAt: captured,
+        source: 'publisher'
+      })
+    })
+
+    it('holds a start given before the ingest says the publish began', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('First Base', PIXEL))
+      const captured = new Date(Date.now() - 750)
+      expect(
+        (await report(gameId, made.body.id, captured.toISOString())).status
+      ).equals(200)
+      expect(await video(made.body.id)).deep.equals({
+        startAt: captured,
+        source: 'publisher'
+      })
+      await beganPublishing(ingest(), made.body.id)
+      expect(await video(made.body.id)).deep.equals({
+        startAt: captured,
+        source: 'publisher'
+      })
+    })
+
+    it('ignores an account of a later publish, or one implausibly early', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      const heard = new Date(Date.now() - 600_000)
+      await publish(made.body.id, heard)
+      const resumed = new Date(heard.getTime() + PUBLISHER_LAG_MAX_MS + 1000)
+      expect(
+        (await report(gameId, made.body.id, resumed.toISOString())).status
+      ).equals(200)
+      const early = new Date(heard.getTime() - PUBLISHER_LEAD_MAX_MS - 1000)
+      expect(
+        (await report(gameId, made.body.id, early.toISOString())).status
+      ).equals(200)
+      expect(await video(made.body.id)).deep.equals({
+        startAt: heard,
+        source: 'liveSession'
+      })
+    })
+
+    it('refuses what is not an instant, and somebody else’s stream', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      expect(
+        (await report(gameId, made.body.id, 'half past nine')).status
+      ).equals(400)
+      const theirs = await ask(gameId, phone('Home Plate'), OTHER)
+      expect(
+        (await report(gameId, theirs.body.id, new Date().toISOString())).status
+      ).equals(404)
+      expect((await video(made.body.id)).source).equals(null)
+      expect((await video(theirs.body.id)).source).equals(null)
+    })
+
+    it('places nothing for a stream with no video', async function () {
+      if (db == null) this.skip()
+      expect(await placeByPublisher(db, 'liv_missing', new Date())).equals(
+        false
+      )
     })
   })
 

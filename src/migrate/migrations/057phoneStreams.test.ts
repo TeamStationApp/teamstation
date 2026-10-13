@@ -147,6 +147,18 @@ describe('057 keys streams by device and keeps a phone’s recording', function 
     ])
   })
 
+  it('lets a live video say its publisher placed it', async () => {
+    const definition = async (): Promise<string> =>
+      (
+        await pool.query(
+          `select pg_get_constraintdef(oid) as def from pg_constraint
+            where conname = 'videos_start_at_source_check'`
+        )
+      ).rows[0].def as string
+    expect(await definition()).contains("'publisher'")
+    expect(await definition()).contains("'liveSession'")
+  })
+
   it('rolls down to the earlier shape', async () => {
     expect(
       await migrateDown(

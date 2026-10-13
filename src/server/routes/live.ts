@@ -27,6 +27,7 @@ import {
   liveStreamsFor,
   MAX_CAMERAS,
   myLiveStreams,
+  placeByPublisher,
   requestDeviceStream,
   revealKey,
   rotateLiveStreamKey,
@@ -69,7 +70,12 @@ export interface LiveRouteOptions {
 const asStreamChange = asObject({
   label: asOptional(asString),
   /** Only `recorded`, and only on the caller's own device stream. */
-  localRecording: asOptional(asString)
+  localRecording: asOptional(asString),
+  /**
+   * When the stream's first picture was captured, on the publisher's wall
+   * clock, as an ISO 8601 instant: where its live video starts.
+   */
+  liveStartedAt: asOptional(asString)
 })
 const asNewStream = asObject({
   label: asOptional(asString),
@@ -330,12 +336,14 @@ export function liveRoutes(
   )
 
   /**
-   * Renaming a camera, or a phone saying it holds its recording.
+   * Renaming a camera, a phone saying it holds its recording, or a publisher
+   * saying when its first picture was captured.
    *
    * A device stream's new name follows the label rule: no two of the
    * caller's active device streams on the game share one. The first change
    * of `localRecording` from `none` to `recorded` records the upload
-   * reminder.
+   * reminder. `liveStartedAt` places the live video by the publisher's own
+   * clock, once; see `placeByPublisher`.
    */
   router.patch(
     '/games/:gameId/live-streams/:streamId',
@@ -362,6 +370,11 @@ export function liveRoutes(
         if (row.deviceId == null) {
           throw badRequest('Only a device stream holds a recording.')
         }
+      }
+      const liveStartedAt =
+        body.liveStartedAt == null ? undefined : new Date(body.liveStartedAt)
+      if (liveStartedAt != null && Number.isNaN(liveStartedAt.getTime())) {
+        throw badRequest('liveStartedAt must be an ISO 8601 instant.')
       }
       if (
         named != null &&
@@ -391,6 +404,9 @@ export function liveRoutes(
           await recordRecordingReminder(db, row.id)
         }
       }
+      const placed =
+        liveStartedAt != null &&
+        (await placeByPublisher(db, row.id, liveStartedAt))
 
       setAudit(res.locals, {
         entityType: 'liveStream',
@@ -401,7 +417,8 @@ export function liveRoutes(
           localRecording:
             body.localRecording != null && row.localRecording === 'none'
               ? 'recorded'
-              : row.localRecording
+              : row.localRecording,
+          ...(placed ? { liveStartedAt: liveStartedAt.toISOString() } : {})
         }
       })
       const fresh = (await liveStreamById(db, row.id)) ?? row

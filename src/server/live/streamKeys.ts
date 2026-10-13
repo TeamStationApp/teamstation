@@ -414,6 +414,68 @@ export async function setCameraName(
 }
 
 /**
+ * How long before the server first heard a stream its publisher may say the
+ * first picture was captured. A phone holds a picture for a second before it
+ * sends it, and the dial takes a few more; a minute is far past any of that.
+ */
+export const PUBLISHER_LEAD_MAX_MS = 60_000
+/**
+ * How long after the server first heard a stream its publisher may say the
+ * first picture was captured: the two clocks' disagreement, and no more. A
+ * later account is of a later publish, a reconnect, whose picture the video
+ * already holds further on.
+ */
+export const PUBLISHER_LAG_MAX_MS = 2_000
+
+/**
+ * Places a stream's live video where its publisher says its first picture
+ * was captured, on the wall clock: what the angle grid lines angles up by.
+ *
+ * The server's own placement is when the publish reached it, and a phone's
+ * picture arrives anywhere from a fraction of a second to more than a second
+ * after it was taken, so two phones filming one clock played out of step by
+ * the difference. The publisher knows the capture time; nothing else does.
+ *
+ * The first placement holds. A reconnect continues the video's timeline, so
+ * only the stream's first publish says where it starts: a video already
+ * placed by its publisher is left alone, and so is an account too far from
+ * when the server first heard the stream to be of that publish. Answers
+ * whether the video moved.
+ */
+export async function placeByPublisher(
+  db: Kysely<Database>,
+  streamId: string,
+  startedAt: Date,
+  now = new Date()
+): Promise<boolean> {
+  const row = await db
+    .selectFrom('live_streams')
+    .select(['video_id as videoId', 'first_published_at as firstPublishedAt'])
+    .where('id', '=', streamId)
+    .executeTakeFirst()
+  if (row?.videoId == null) return false
+  // Before the ingest has said so, the publish being described is the one
+  // arriving now.
+  const heard = row.firstPublishedAt ?? now
+  const lead = heard.getTime() - startedAt.getTime()
+  if (lead > PUBLISHER_LEAD_MAX_MS || lead < -PUBLISHER_LAG_MAX_MS) {
+    return false
+  }
+  const placed = await db
+    .updateTable('videos')
+    .set({ start_at: startedAt, start_at_source: 'publisher', updated_at: now })
+    .where('id', '=', row.videoId)
+    .where(eb =>
+      eb.or([
+        eb('start_at_source', 'is', null),
+        eb('start_at_source', '=', 'liveSession')
+      ])
+    )
+    .executeTakeFirst()
+  return Number(placed.numUpdatedRows) > 0
+}
+
+/**
  * Replaces the key, leaving everything else as it was.
  *
  * The old key stops working the moment this returns — the ingest re-reads the

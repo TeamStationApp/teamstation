@@ -30,6 +30,13 @@ import type { Migration } from '../runner'
  *
  * **Dismissing.** `notification_receipts.dismissed_at` takes a reminder out of
  * Pending and into History.
+ *
+ * **Placed by its publisher.** `videos.start_at_source` may say `publisher`:
+ * a live video whose phone or Director said when its first picture was
+ * captured, rather than one placed when the server first heard it. A phone's
+ * picture reaches the server up to a second after it was taken, and by a
+ * different amount on each phone, so the arrival put two angles of one game
+ * out of step.
  */
 export const migration057PhoneStreams: Migration = {
   name: '057phoneStreams',
@@ -51,8 +58,24 @@ alter table director_uploads add column live_stream_id text
 alter table director_uploads add column whole_stream boolean not null default false;
 
 alter table notification_receipts add column dismissed_at timestamptz;
+
+alter table videos drop constraint videos_start_at_source_check;
+alter table videos add constraint videos_start_at_source_check
+  check (start_at_source in (
+    'obsFilename', 'liveSession', 'originallyPublishedAt', 'distributor',
+    'manual', 'publisher'
+  ));
 `,
   down: `
+update videos set start_at_source = 'liveSession'
+  where start_at_source = 'publisher';
+alter table videos drop constraint videos_start_at_source_check;
+alter table videos add constraint videos_start_at_source_check
+  check (start_at_source in (
+    'obsFilename', 'liveSession', 'originallyPublishedAt', 'distributor',
+    'manual'
+  ));
+
 alter table notification_receipts drop column if exists dismissed_at;
 
 alter table director_uploads drop column if exists whole_stream;

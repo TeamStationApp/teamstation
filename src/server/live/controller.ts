@@ -466,9 +466,14 @@ export async function beganPublishing(
       status: 'live',
       hidden: false,
       // A reconnect keeps the first start: the video is one recording of one
-      // game, and its clock began when the first frame did.
+      // game, and its clock began when the first frame did. So does a start
+      // its publisher has already given (`placeByPublisher`), which can land
+      // before this does.
       start_at: eb.fn.coalesce('start_at', eb.val(now)),
-      start_at_source: 'liveSession',
+      start_at_source: eb.fn.coalesce(
+        'start_at_source',
+        eb.val<'liveSession'>('liveSession')
+      ),
       updated_at: now
     }))
     .where('id', '=', row.videoId)
