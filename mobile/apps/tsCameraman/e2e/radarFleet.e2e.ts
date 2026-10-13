@@ -56,10 +56,13 @@ async function main(): Promise<void> {
     await m.extendedWaitUntil({ visible: { id: 'settings-button' }, timeout: 30000 })
     await m.tapOn({ id: 'settings-button' })
     await scrollLeftColumnTo(m, { id: 'settings-radar-enabled' })
-    if (await shows(m, { id: 'settings-radar-enabled', checked: false }, 1000)) {
+    // Off, the card shows neither Pair nor Unpair. A SwiftUI toggle does not report `checked` to
+    // the driver, so the card's own controls say whether the radar is on.
+    if (!(await shows(m, { id: 'settings-radar-pair' }, 1000)) && !(await shows(m, { id: 'settings-radar-unpair' }, 1000))) {
       await m.tapOn({ id: 'settings-radar-enabled' })
       // The first time on, iOS asks for Bluetooth.
       await m.tapOn({ text: 'Allow', optional: true, timeout: 5000 })
+      await scrollLeftColumnTo(m, { id: 'settings-radar-(pair|unpair)' })
     }
     if (await shows(m, { id: 'settings-radar-unpair' })) {
       await m.tapOn({ id: 'settings-radar-unpair' })
