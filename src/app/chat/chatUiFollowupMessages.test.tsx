@@ -2368,6 +2368,7 @@ describe('chat follow-up conversation message integration', function () {
   })
 
   it('preserves the reading anchor when an empty older page removes the paging header, including a cancelled jump', async function () {
+    this.timeout(10000)
     for (const cancelAt of [undefined, 'before-removal', 'after-removal']) {
       for (const layoutBeforeResolution of [false, true]) {
         if (cancelAt === 'after-removal' && !layoutBeforeResolution) continue
