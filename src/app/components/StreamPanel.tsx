@@ -7,6 +7,7 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { copyToClipboard } from '../platform/clipboard'
+import { usePublishingReport } from '../player/useVideoListRefresh'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { Card } from './Card'
@@ -37,6 +38,8 @@ function cameraNameToSend(raw: string): string | undefined {
 export interface StreamPanelProps {
   client: TeamStationClient
   gameId: string
+  /** The videos this game's cameras are publishing to, each time that changes. */
+  onPublishing?: (videoIds: string[]) => void
 }
 
 /**
@@ -218,6 +221,8 @@ export function StreamPanel(
       }
     }
   }, [client, gameId, remember, streams])
+
+  usePublishingReport(streams, props.onPublishing)
 
   const all = [...(streams?.mine ?? []), ...(streams?.others ?? [])]
   const anyPublishing = all.some(row => row.state === 'publishing')

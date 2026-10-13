@@ -54,7 +54,13 @@ import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
 import { MultiCamView } from '../player/MultiCamView'
 import { PlayerSurface } from '../player/PlayerSurface'
+import { isStillLive } from '../player/stillLive'
 import { useVideoAspect } from '../player/useVideoAspect'
+import {
+  openingVideo,
+  sameVideos,
+  useVideoListRefresh
+} from '../player/useVideoListRefresh'
 import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
@@ -574,12 +580,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         onTitle?.(`${found.awayTeamName} @ ${found.homeTeamName}`)
         setVideo(
           // The address names one, when somebody followed a link to a moment.
+          // Otherwise a game being played right now opens on the game being
+          // played right now, ahead of anything already recorded of it.
           found.videos.find(item => item.id === initialVideoId) ??
-            // A game being played right now opens on the game being played
-            // right now, ahead of anything already recorded of it.
-            found.videos.find(item => item.status === 'live') ??
-            found.videos.find(item => item.status === 'ready') ??
-            found.videos[0]
+            openingVideo(found.videos)
         )
       })
       .catch(() => {
@@ -592,6 +596,33 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // it here would refetch the game in a loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, gameId])
+
+  /** The videos the cameras panel has seen publishing on this game. */
+  const [publishing, setPublishing] = useState<string[]>([])
+  const gameIdRef = useRef(gameId)
+  gameIdRef.current = gameId
+  const refreshVideos = useCallback((): void => {
+    const forGame = gameId
+    client
+      .game(forGame)
+      .then(found => {
+        if (gameIdRef.current !== forGame) return
+        setGame(current =>
+          current == null || sameVideos(current.videos, found.videos)
+            ? current
+            : { ...current, videos: found.videos }
+        )
+        // A page that had nothing to play opens on what there is now. One
+        // already playing something is left on it.
+        setVideo(current => current ?? openingVideo(found.videos))
+      })
+      .catch(() => undefined)
+  }, [client, gameId])
+  useVideoListRefresh({
+    videos: game?.videos,
+    publishing,
+    refresh: refreshVideos
+  })
 
   const seasonId = game?.seasonId
   const awayTeamId = game?.awayTeamId
@@ -710,8 +741,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   startAtSecRef.current = startAtSec
   const autoPlayRef = useRef(autoPlay)
   autoPlayRef.current = autoPlay
-  const placeFor = useRef<{ videoId?: string; playbackFor?: string }>({})
-  placeFor.current = { videoId: video?.id, playbackFor }
+  const placeFor = useRef<{
+    videoId?: string
+    playbackFor?: string
+    /** Asks the server, for a video that was live when it was opened. */
+    isLive?: () => Promise<boolean>
+  }>({})
+  placeFor.current = {
+    videoId: video?.id,
+    playbackFor,
+    isLive:
+      video?.status === 'live'
+        ? async () => await isStillLive(client, gameId, video.id)
+        : undefined
+  }
 
   /**
    * What the viewer wants the single player to be doing, and who paused it.
@@ -790,7 +833,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       () => {
         setAddressAttempt(attempt => attempt + 1)
       },
-      { wantsToPlay: () => !suspended.current && viewerWants.current }
+      {
+        wantsToPlay: () => !suspended.current && viewerWants.current,
+        isLive: placeFor.current.isLive
+      }
     )
 
     const resume = resumeAtRef.current
@@ -1296,6 +1342,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <MultiCamView
       client={client}
       videos={game.videos}
+      isLive={async videoId => await isStillLive(client, gameId, videoId)}
       order={angles ?? defaultAngles(game.videos)}
       audioId={audioId ?? null}
       // No zoom for now: the double tap that made one tile fill the screen
@@ -1373,7 +1420,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                     here at all. A browser lists stream URLs; a phone records
                     with its own camera.
                   */}
-                  <StreamFooter client={client} gameId={gameId} />
+                  <StreamFooter
+                    client={client}
+                    gameId={gameId}
+                    onPublishing={setPublishing}
+                  />
                 </>
               }
               layout={layout}

@@ -1,5 +1,6 @@
 import Hls from 'hls.js'
 
+import { liveRejoin } from './liveRejoin'
 import { BEHIND_SEC } from './multiCam/buffering'
 import type { BufferControl, PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
@@ -323,11 +324,19 @@ function attachHlsJs(
   /** The caller's answer where there is one, and ours where there is not. */
   const wantsToPlay = (): boolean =>
     intent == null ? ownWantsToPlay : intent.wantsToPlay()
+  /**
+   * Whether to play once a live game has been rejoined: whether it was
+   * playing when it ran out, which is a pause of its own, not the viewer's.
+   */
+  let playAfterRejoin = !handle.paused
   const onPlay = (): void => {
     ownWantsToPlay = true
+    playAfterRejoin = true
   }
   const onPause = (): void => {
-    if (!recovering) ownWantsToPlay = false
+    if (recovering) return
+    ownWantsToPlay = false
+    if (!video.ended) playAfterRejoin = false
   }
   handle.addEventListener('play', onPlay)
   handle.addEventListener('pause', onPause)
@@ -387,10 +396,49 @@ function attachHlsJs(
   hls.on(Hls.Events.FRAG_BUFFERED, resume)
   hls.on(Hls.Events.MEDIA_ATTACHED, resume)
 
+  /**
+   * A live game whose playlist was closed under it, while the game still
+   * lists the video as live: wait for the playlist to open again, then load
+   * it afresh. Where the player was following the game it rejoins the live
+   * edge; where somebody was watching an earlier moment it stays there.
+   */
+  let following = false
+  let rejoining = false
+  const isLive = intent?.isLive
+  const rejoiner =
+    isLive == null
+      ? undefined
+      : liveRejoin({
+          isLive,
+          fetchPlaylist: async () =>
+            await (await fetch(url, { cache: 'no-store' })).text(),
+          rejoin: () => {
+            rejoining = true
+            recovering = true
+            hls.config.startPosition =
+              following || video.ended ? -1 : video.currentTime
+            hls.loadSource(url)
+          }
+        })
+  hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+    if (data.details.live) {
+      following = true
+      return
+    }
+    rejoiner?.ended()
+  })
+  hls.on(Hls.Events.FRAG_BUFFERED, () => {
+    if (!rejoining) return
+    rejoining = false
+    recovering = false
+    if (playAfterRejoin) handle.play().catch(() => undefined)
+  })
+
   hls.loadSource(url)
   hls.attachMedia(video)
   return () => {
     if (timer != null) clearTimeout(timer)
+    rejoiner?.stop()
     handle.removeEventListener('play', onPlay)
     handle.removeEventListener('pause', onPause)
     limit?.onControl?.(null)
