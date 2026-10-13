@@ -327,6 +327,19 @@ struct ChooseTests {
     #expect(account.lastError == "This game is not yours to stream")
   }
 
+  @Test func reportsTheHeldStreamsLiveStart() async {
+    let account = makeAccount()
+    let started = Date(timeIntervalSince1970: 1_790_000_000.5)
+    #expect(await account.reportLiveStart(startedAt: started) == false)
+    #expect(await account.choose(event: event("g1")))
+    #expect(await account.reportLiveStart(startedAt: started))
+    #expect(StreamServer.asked.last == "PATCH /api/v1/games/g1/live-streams/lst_1")
+    #expect(StreamServer.bodies.last == [ "liveStartedAt": "2026-09-21T14:13:20.500Z" ])
+    StreamServer.refuse = true
+    #expect(await account.reportLiveStart(startedAt: started) == false)
+    #expect(account.lastError == nil)
+  }
+
   @Test func reportsWhenAStreamsFirstPictureWasCapturedWithAPatch() async throws {
     StreamServer.reset()
     let configuration = URLSessionConfiguration.ephemeral

@@ -612,6 +612,23 @@ public final class TeamStationAccount: TeamStationEventService {
   }
 
   /**
+   * Says when the first picture of the held stream's first publish was
+   * captured, which is where TeamStation places the stream's live video.
+   * Nothing is asked when no stream is held. A failure is not the operator's
+   * to hear about: the server then places the video by when it heard it.
+   */
+  @discardableResult
+  public func reportLiveStart(startedAt: Date) async -> Bool {
+    guard let current = chosen, let streamId = current.streamId else { return false }
+    do {
+      try await client.reportLiveStart(gameId: current.gameId, streamId: streamId, startedAt: startedAt)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * Why TeamStation refused the publish, in its own words.
    *
    * The ingest writes the reason on the game's row — the key is not open, the
@@ -662,6 +679,9 @@ public protocol TeamStationEventService: AnyObject {
   /// Renames the held stream's camera on TeamStation.
   @discardableResult
   func renameStream(label: String) async -> Bool
+  /// Says when the held stream's first published picture was captured.
+  @discardableResult
+  func reportLiveStart(startedAt: Date) async -> Bool
   func forgetChosenEvent()
   func scoreboardURL(for gameId: String) -> URL
 }
