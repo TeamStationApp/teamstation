@@ -17,8 +17,13 @@
 //   3. Director streams as "Center Field": started by hand on the iPad,
 //      which this waits for. With no iPad, a stand-in device C ("iPad Pro",
 //      not recording locally) does.
+//      With both the Pixel and the iPad, Director goes on the air before the
+//      Pixel records, so the Pixel's list (its camera covers it once it
+//      films) reads Home Plate and Center Field with their models.
 //   4. Every phone lists all three angles with their models; the game has a
 //      live video for each, which is what its angle pills are drawn from.
+//      With the Pixel, both phones stay on the air for E16, and the server's
+//      list names every device.
 //      With no Pixel, the iPhone stops and closes its camera to read its
 //      list (the camera covers it while live), and the stand-in device B
 //      reports its recording as not uploaded, which the iPhone shows.
@@ -67,6 +72,20 @@ async function rowReads(
   throw new Error(`${row.label}'s row reads “${words}”, not ${want.join(', ')}`)
 }
 
+/** Waits for Director, started by hand on the iPad, to stream as Center Field. */
+async function waitForDirector(token: string): Promise<StreamRow> {
+  say(`waiting for Director on the iPad to stream as “${CENTER}”`)
+  const wait = Number(optional('TS_STREAM_DIRECTOR_WAIT') ?? '300') * 1000
+  for (const until = Date.now() + wait; Date.now() < until;) {
+    const center = (await cameras(token)).mine.find(
+      row => row.label === CENTER && row.state === 'publishing'
+    )
+    if (center != null) return center
+    await sleep(2000)
+  }
+  throw new Error('Director never streamed as Center Field')
+}
+
 async function main(): Promise<void> {
   const email = required('TS_STREAM_EMAIL')
   const token = await apiToken(email)
@@ -90,7 +109,17 @@ async function main(): Promise<void> {
     await waitPublishing(token, home.id)
     results.push(`1 ${HOME} live from ${home.deviceModel ?? '?'}`)
 
-    // 2. First Base on the Pixel, or a stand-in.
+    // 2. First Base on the Pixel, or a stand-in. With the Pixel, Director
+    // goes on the air first: the Pixel's own camera covers its list once it
+    // films, so it reads Home Plate and Center Field before it records.
+    let center: StreamRow | undefined
+    const pixelLines: string[] = []
+    if (director != null && pixelSerial != null) {
+      center = await waitForDirector(token)
+      results.push(
+        `3 Director streams ${CENTER} (${center.deviceModel ?? '?'})`
+      )
+    }
     let first: StreamRow
     if (pixelSerial != null) {
       pixel = await Phone.attach(pixelSerial, 'android')
@@ -98,13 +127,24 @@ async function main(): Promise<void> {
       await pixel.signInIfAsked(email)
       await pixel.openGame()
       await pixel.scrollTo({ id: `angle-row-${home.id}` })
-      const words = await rowReads(pixel, home, [HOME, 'iPhone 13 Pro', 'Live'])
-      say(`$ assertVisible ${words}`)
+      pixelLines.push(
+        await rowReads(pixel, home, [HOME, 'iPhone 13 Pro', 'Live'])
+      )
+      if (center != null) {
+        await pixel.scrollTo({ id: `angle-row-${center.id}` })
+        pixelLines.push(
+          await rowReads(pixel, center, [CENTER, 'iPad Pro', 'Live'])
+        )
+      }
+      for (const line of pixelLines) say(`$ assertVisible ${line}`)
+      await pixel.shot('two-devices-angle-list.png')
       await pixel.recordAngle(FIRST)
       const found = (await cameras(token)).mine.find(row => row.label === FIRST)
       assert(found != null, 'First Base is on the game')
       first = found
-      results.push(`2 the Pixel lists “${words}”, then records ${FIRST}`)
+      results.push(
+        `2 the Pixel lists “${pixelLines.join(' | ')}”, then records ${FIRST}`
+      )
     } else {
       const b = await standIn(token, {
         label: FIRST,
@@ -122,18 +162,10 @@ async function main(): Promise<void> {
     await waitPublishing(token, first.id)
 
     // 3. Center Field from Director, or a stand-in.
-    let center: StreamRow | undefined
-    if (director != null) {
-      say(`waiting for Director on the iPad to stream as “${CENTER}”`)
-      const wait = Number(optional('TS_STREAM_DIRECTOR_WAIT') ?? '300') * 1000
-      for (const until = Date.now() + wait; Date.now() < until;) {
-        center = (await cameras(token)).mine.find(
-          row => row.label === CENTER && row.state === 'publishing'
-        )
-        if (center != null) break
-        await sleep(2000)
-      }
-      assert(center != null, 'Director streams as Center Field')
+    if (center != null) {
+      // Already on the air, before the Pixel recorded.
+    } else if (director != null) {
+      center = await waitForDirector(token)
       results.push(
         `3 Director streams ${CENTER} (${center.deviceModel ?? '?'})`
       )
@@ -154,9 +186,11 @@ async function main(): Promise<void> {
     }
 
     // 4. The lists, and the game's live videos.
+    // A real Pixel names itself with its maker (Build.MANUFACTURER before
+    // Build.MODEL); the stand-in device B says only "Pixel 10".
     const models = new Map([
       [HOME, 'iPhone 13 Pro'],
-      [FIRST, 'Pixel 10'],
+      [FIRST, pixel == null ? 'Pixel 10' : 'Google Pixel 10'],
       [CENTER, 'iPad Pro']
     ])
     const all = await cameras(token)
@@ -190,35 +224,37 @@ async function main(): Promise<void> {
       )
       assert(patched.ok, `device B reports its recording: ${patched.status}`)
     }
-    const lines: string[] = []
-    for (const row of rows) {
-      await listing.scrollTo({ id: `angle-row-${row.id}` })
-      const live = !(pixel == null && row.id === home.id)
-      lines.push(
-        await rowReads(listing, row, [
-          row.label,
-          models.get(row.label) ?? '',
-          live ? 'Live' : 'Idle'
-        ])
-      )
-    }
-    if (pixel == null)
+    if (pixel == null) {
+      const lines: string[] = []
+      for (const row of rows) {
+        await listing.scrollTo({ id: `angle-row-${row.id}` })
+        const live = row.id !== home.id
+        lines.push(
+          await rowReads(listing, row, [
+            row.label,
+            models.get(row.label) ?? '',
+            live ? 'Live' : 'Idle'
+          ])
+        )
+      }
       lines.push(
         await rowReads(listing, first, ['Recording on Pixel 10 not uploaded'])
       )
-    for (const line of lines) say(`$ assertVisible ${line}`)
-    await listing.scrollTo({ id: `angle-row-${first.id}` })
-    await listing.shot('two-devices-angle-list.png')
-    results.push(
-      `4 ${listing.platform === 'ios' ? 'the iPhone' : 'the Pixel'} lists: ${lines.join(' | ')}`
-    )
-    if (pixel != null) {
-      // The iPhone, still filming, is checked through the server's list:
-      // its own screen is the camera.
+      for (const line of lines) say(`$ assertVisible ${line}`)
+      await listing.scrollTo({ id: `angle-row-${first.id}` })
+      await listing.shot('two-devices-angle-list.png')
+      results.push(`4 the iPhone lists: ${lines.join(' | ')}`)
+    } else {
+      // Both phones are filming, so their screens are their cameras: the
+      // Pixel read its list before it recorded (step 2), and every device is
+      // checked here through the server's list.
       assert.deepEqual(
         rows.map(row => row.deviceModel),
-        [models.get(HOME), models.get(FIRST), rows[2].deviceModel],
+        [models.get(HOME), models.get(FIRST), models.get(CENTER)],
         'the server names every device'
+      )
+      results.push(
+        `4 the server lists: ${rows.map(row => `${row.label} · ${row.deviceModel ?? '-'} · ${row.state}`).join(' | ')}`
       )
     }
 
@@ -234,13 +270,20 @@ async function main(): Promise<void> {
 
     // The Videos tab, framed as videos-tab-native-before.png. The game's
     // videos are read when its screen mounts: start the app again so the
-    // live videos are there above the cameras.
-    await listing.launch()
-    await listing.openGame()
-    await listing.scrollTo({ text: 'CAMERAS' })
-    await listing.m.swipe({ start: '50%, 70%', end: '50%, 45%', duration: 600 })
-    await sleep(1500)
-    await listing.shot('videos-tab-native-after.png')
+    // live videos are there above the cameras. Not while the Pixel films:
+    // E16 stops that take from the streaming screen.
+    if (pixel == null) {
+      await listing.launch()
+      await listing.openGame()
+      await listing.scrollTo({ text: 'CAMERAS' })
+      await listing.m.swipe({
+        start: '50%, 70%',
+        end: '50%, 45%',
+        duration: 600
+      })
+      await sleep(1500)
+      await listing.shot('videos-tab-native-after.png')
+    }
   } finally {
     for (const one of standIns) await one.stop()
     await iphone.detach()

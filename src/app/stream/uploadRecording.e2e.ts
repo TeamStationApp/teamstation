@@ -143,7 +143,11 @@ async function main(): Promise<void> {
     await phone.launch()
     await phone.signInIfAsked(email)
     await phone.openGame()
-    await phone.scrollTo({ text: 'CAMERAS' })
+    // Android's hierarchy holds only what is on screen, and the upload row
+    // sits below the cameras: scroll to the row itself there.
+    await phone.scrollTo(
+      phone.platform === 'android' ? { id: rowId } : { text: 'CAMERAS' }
+    )
     await phone.find(node => node.id === `upload-progress-${stream.id}`, 15000)
     const resumed = await progressOf(phone, stream.id)
     say(`$ assertVisible upload-progress-${stream.id}: ${resumed ?? 'none'}%`)

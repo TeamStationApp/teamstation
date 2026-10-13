@@ -357,9 +357,11 @@ export async function probePlayback(
 export class Phone {
   readonly m: Driver
   readonly platform: 'ios' | 'android'
-  constructor(m: Driver, platform: 'ios' | 'android') {
+  readonly device: string
+  constructor(m: Driver, platform: 'ios' | 'android', device: string) {
     this.m = m
     this.platform = platform
+    this.device = device
   }
 
   static async attach(
@@ -385,7 +387,7 @@ export class Phone {
       appId: APP,
       ...(platform === 'ios' && teamId != null ? { teamId } : {})
     })
-    return new Phone(m, platform)
+    return new Phone(m, platform, device)
   }
 
   async nodes(): Promise<UiNode[]> {
@@ -459,7 +461,62 @@ export class Phone {
   }
 
   async scrollTo(element: { text: string } | { id: string }): Promise<void> {
-    say(`$ scrollUntilVisible ${'text' in element ? element.text : element.id}`)
+    const name = 'text' in element ? element.text : element.id
+    if (this.platform === 'android') {
+      // maestro-d's scroll swipes across the middle of the screen, which on
+      // Android is the game's video player, and the player keeps the swipe.
+      // Swipe below it instead, until the element is clear of the floating
+      // tab bar (the hierarchy holds only what is on screen).
+      const matches = (node: UiNode): boolean =>
+        'text' in element ? node.text === element.text : node.id === element.id
+      for (let i = 0; i < 12; i++) {
+        const all = await this.nodes()
+        // The screen as the hierarchy has it now, in pixels: right after the
+        // landscape streaming screen closes, a percentage can still be taken
+        // of the sideways size and land on the player.
+        const width = Math.max(
+          ...all.map(node => (node.bounds?.x ?? 0) + (node.bounds?.width ?? 0))
+        )
+        const screen = Math.max(
+          ...all.map(node => (node.bounds?.y ?? 0) + (node.bounds?.height ?? 0))
+        )
+        const bounds = all.find(
+          node => matches(node) && node.bounds != null && node.bounds.height > 0
+        )?.bounds
+        // Below the game's player and angle strip, which stay pinned at the
+        // top while the page scrolls under them, and above the tab bar.
+        if (
+          bounds != null &&
+          bounds.y >= screen * 0.45 &&
+          bounds.y + bounds.height <= screen * 0.88
+        )
+          return
+        const up = bounds == null || bounds.y + bounds.height > screen * 0.88
+        const x = Math.round(width / 2)
+        const [from, to] = up ? [0.78, 0.3] : [0.4, 0.7]
+        const startY = Math.round(screen * from)
+        const endY = Math.round(screen * to)
+        say(`$ swipe ${x},${startY} → ${x},${endY} (to ${name})`)
+        // Through adb: a driver session that began on the landscape
+        // streaming screen goes on mapping its swipes to that size after the
+        // screen turns upright, and they land nowhere.
+        await run('adb', [
+          '-s',
+          this.device,
+          'shell',
+          'input',
+          'swipe',
+          String(x),
+          String(startY),
+          String(x),
+          String(endY),
+          '600'
+        ])
+        await sleep(800)
+      }
+      throw new Error(`${name} never came into view`)
+    }
+    say(`$ scrollUntilVisible ${name}`)
     await this.m.scrollUntilVisible({ element, centerElement: true })
   }
 
@@ -475,10 +532,17 @@ export class Phone {
     // Typing a whole name through WebDriverAgent now and then drops a
     // character as the field redraws (the field's value is not in the
     // hierarchy to check): one character at a time keeps up.
-    say(`$ inputText ${name} (a character at a time)`)
-    for (const character of name) {
-      await this.m.inputText({ text: character })
-      await sleep(150)
+    // UIAutomator2 sets an Android field's whole text, so there one call
+    // types the name and a character at a time would leave only the last.
+    if (this.platform === 'android') {
+      say(`$ inputText ${name}`)
+      await this.m.inputText({ text: name })
+    } else {
+      say(`$ inputText ${name} (a character at a time)`)
+      for (const character of name) {
+        await this.m.inputText({ text: character })
+        await sleep(150)
+      }
     }
     say('$ tapOn Start')
     await this.m.tapOn({ text: 'Start' })
