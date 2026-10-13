@@ -7,7 +7,6 @@ import app.teamstation.streamcore.stream.AudioFrame
 import app.teamstation.streamcore.stream.ProgramStreamer
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
-import kotlin.math.floor
 import kotlin.math.roundToLong
 
 /** Where the programme's recording pictures and sound go: [ProgramEncoder], or a fake in a test. */
@@ -148,13 +147,20 @@ class PhoneProgramme(
         wallNow: Double = wall()
     ): TickOutput? = lock.withLock {
         val start = zero ?: now.also { zero = it }
-        val frame = floor((now - start) * frameRate + 1e-9).toLong()
+        // The nearest frame, as Director's ProgrammeClock numbers its ticks: the renderer's handler
+        // posts on whole milliseconds, so a tick can fire a fraction of a millisecond before its
+        // frame's time, and rounding down would skip it and draw the next tick's picture twice.
+        val elapsed = now - start
+        val frame = (elapsed * frameRate).roundToLong()
         if (frame <= lastFrame) return null
         val missed = if (lastFrame < 0) 0 else frame - lastFrame - 1
         lastFrame = frame
         ticks += 1
         latestCapture?.let { offer(it) }
-        val entry = pictures.pick(wallNow, 1.0 / frameRate) ?: return TickOutput()
+        // Chosen at the frame's own time, not when the busy render thread got to it: a tick held up
+        // by an encoder would otherwise take a newer picture for the same slot.
+        val lateness = elapsed - frame.toDouble() / frameRate
+        val entry = pictures.pick(wallNow - lateness, 1.0 / frameRate) ?: return TickOutput()
         val capture = entry.captureWall
         val held = entry.captureNanos
         val draws = mutableListOf<ProgrammeDraw>()

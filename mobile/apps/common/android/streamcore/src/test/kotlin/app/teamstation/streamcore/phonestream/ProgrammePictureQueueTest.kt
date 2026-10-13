@@ -137,6 +137,38 @@ class ProgrammePictureQueueTest {
     }
 
     @Test
+    fun ticksOnWholeMillisecondsAndHeldUpTicksDrawEachPictureInItsOwnSlot() {
+        val recording = Recording()
+        var now = 0.0
+        val programme = PhoneProgramme(recording, Stream(), captureWall = { it / 1e9 }, uptime = { now }, wall = { 100.0 + now })
+        programme.start(wall = 100.0)
+        // A 30 fps camera captured 8 ms before each frame's time, each picture arriving 60 ms later.
+        val captures = (0 until 140).map { 100.0 + it / 30.0 - 0.008 }
+        var next = 0
+        var newest: Long? = null
+        for (tick in 0 until 120) {
+            // The renderer's handler fires on whole milliseconds, some a fraction early, and every
+            // fifth tick is held up 12 ms behind an encoder.
+            now = Math.round(tick * 1000.0 / 30) / 1000.0 + if (tick % 5 == 4) 0.012 else 0.0
+            while (next < captures.size && captures[next] + 0.06 <= 100.0 + now) {
+                newest = (captures[next] * 1e9).toLong()
+                programme.pictureArrived(newest)
+                next += 1
+            }
+            programme.tick(newest, PhoneProgramme.allKeys)
+        }
+        // Every slot has its own fresh picture: none repeated, none skipped.
+        assertTrue(recording.placed.size > 100)
+        assertTrue(recording.placed.all { it.second != null })
+        assertEquals(0L, programme.skippedPictures)
+        // Each captured the picture delay, and under one frame, before its slot's time.
+        for ((slot, capture) in recording.placed) {
+            val age = 100.0 + slot - PhoneStreamProfile.pictureDelaySeconds - capture!!
+            assertTrue("age $age", age >= 0 && age < 1.0 / 30)
+        }
+    }
+
+    @Test
     fun thePhoneProgrammeDrawsTheHeldPictureWhoseMomentHasComeIntoBothEncoders() {
         val recording = Recording()
         var now = 0.0
