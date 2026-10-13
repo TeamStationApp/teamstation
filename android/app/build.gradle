@@ -159,6 +159,9 @@ dependencies {
     // Walk-up songs play through ExoPlayer, at the version react-native-video
     // already brings (RNVideo_media3Version), so the app carries one copy.
     implementation("androidx.media3:media3-exoplayer:1.8.0")
+    // Live HLS players get a playlist tracker that waits out a publisher's
+    // absence (LivePlaylistPatience), at the same version.
+    implementation("androidx.media3:media3-exoplayer-hls:1.8.0")
     // LocalFileIdTest reads the fixtures it shares with localFileId.test.ts.
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

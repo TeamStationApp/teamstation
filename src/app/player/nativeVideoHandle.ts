@@ -74,6 +74,13 @@ interface Listener {
  */
 export const MAX_INTERPOLATION_MS = 1000
 
+/**
+ * How soon after the player says it stopped a buffering report makes that
+ * stop a stall. Android sends the two in the same batch, the buffering one
+ * last.
+ */
+export const STALL_REPORT_MS = 1000
+
 // React Native has `performance.now()`, but its types leave it out.
 const monotonic = (globalThis as { performance?: { now: () => number } })
   .performance
@@ -127,6 +134,30 @@ export class NativeVideoHandle implements VideoHandle {
 
   /** What is playing, kept so a stalled stream can be asked for again. */
   source: string | null = null
+
+  /**
+   * Whether `reload` has to clear the player's source before handing it the
+   * same one again. Set by the view on Android.
+   *
+   * Android's player compares a new source with the one it holds and, when
+   * they match, does nothing at all: a player that has failed stays failed,
+   * with Play on its control bar, and the recovery in `attachHls.native.ts`
+   * waits for a picture that never comes. Clearing first makes the second
+   * source a new one. iOS loads whatever it is handed.
+   */
+  clearBeforeReload = false
+
+  /**
+   * The player has run out of picture and is waiting for more, from the
+   * player's `onBuffer` until it says it has enough again.
+   */
+  private buffering = false
+
+  /**
+   * When the player last said it had stopped playing, by itself, until
+   * anything else happens: the buffering report that follows a stall.
+   */
+  private playerStoppedAt: number | null = null
 
   constructor(onPropsChange: () => void, clock: () => number = steadyNow) {
     this.onPropsChange = onPropsChange
@@ -204,6 +235,7 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   async play(): Promise<void> {
+    this.playerStoppedAt = null
     if (!this.props.paused) return
     this.rebase()
     this.props = { ...this.props, paused: false }
@@ -216,6 +248,7 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   pause(): void {
+    this.playerStoppedAt = null
     if (this.props.paused) return
     this.rebase()
     this.props = { ...this.props, paused: true }
@@ -309,9 +342,20 @@ export class NativeVideoHandle implements VideoHandle {
     // believe a viewer paused something they did not.
     const paused = !data.isPlaying
     if (paused === this.props.paused) return
+    // A player that has run dry is waiting, not paused, as a browser's
+    // element is. Android says "not playing" for both, and taking a stall for
+    // a pause handed `paused` back to the player, which then stayed stopped
+    // when the picture came again: a live viewer at the end of what had been
+    // written, while the phone filming it was away, was left on Play for good.
+    // Kept playing, the player carries on by itself once there is more.
+    // Android reports "not playing" before it reports buffering, so a stop
+    // is taken for a pause here and given back by `handleBuffer` when the
+    // buffering report follows it; one that comes after is ignored here.
+    if (paused && this.buffering) return
     this.rebase()
     this.props = { ...this.props, paused }
     this.onPropsChange()
+    this.playerStoppedAt = paused ? this.clock() : null
     this.emit(paused ? 'pause' : 'play')
   }
 
@@ -340,8 +384,22 @@ export class NativeVideoHandle implements VideoHandle {
    */
   handleBuffer = (data: OnBufferData): void => {
     this.rebase()
+    this.buffering = data.isBuffering
+    const stoppedAt = this.playerStoppedAt
+    this.playerStoppedAt = null
     if (data.isBuffering) {
       this.state = Math.min(this.state, HAVE_CURRENT_DATA)
+      // The player's "not playing" just before this was the stall, not a
+      // pause: it is still meant to be playing, and plays on by itself.
+      if (
+        stoppedAt != null &&
+        this.props.paused &&
+        this.clock() - stoppedAt <= STALL_REPORT_MS
+      ) {
+        this.props = { ...this.props, paused: false }
+        this.onPropsChange()
+        this.emit('play')
+      }
       return
     }
     if (this.state < HAVE_CURRENT_DATA || this.state === HAVE_ENOUGH_DATA) {
@@ -379,6 +437,15 @@ export class NativeVideoHandle implements VideoHandle {
   handleEnd = (): void => {
     this.rebase()
     this.over = true
+    // Ended is paused, as a browser's element is. Said here because a player
+    // that ran dry before it ended, as a live one does when its playlist is
+    // closed while it waits, said "not playing" already and will not again.
+    this.buffering = false
+    this.playerStoppedAt = null
+    if (this.props.paused) return
+    this.props = { ...this.props, paused: true }
+    this.onPropsChange()
+    this.emit('pause')
   }
 
   handleError = (error: OnVideoErrorData): void => {
@@ -407,6 +474,7 @@ export class NativeVideoHandle implements VideoHandle {
       this.props = { ...this.props, paused: true }
       this.onPropsChange()
     }
+    if (this.clearBeforeReload) this.player?.setSource(undefined)
     this.player?.setSource({ uri: this.source })
   }
 
@@ -420,6 +488,8 @@ export class NativeVideoHandle implements VideoHandle {
     this.height = 0
     this.pendingSeekTo = null
     this.over = false
+    this.buffering = false
+    this.playerStoppedAt = null
   }
 
   /**

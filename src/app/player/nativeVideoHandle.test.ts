@@ -17,8 +17,8 @@ function fakePlayer(): { ref: VideoRef; calls: string[] } {
     pause: () => {
       calls.push('pause')
     },
-    setSource: (source: { uri: string }) => {
-      calls.push(`source ${source.uri}`)
+    setSource: (source?: { uri: string }) => {
+      calls.push(source == null ? 'clear' : `source ${source.uri}`)
     }
   } as unknown as VideoRef
   return { ref, calls }
@@ -74,6 +74,101 @@ describe('NativeVideoHandle', function () {
       isSeeking: false
     })
     expect(handle.paused).equals(true)
+  })
+
+  it('keeps playing through a stall: a player that has run dry is waiting, not paused', async function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.attach(fakePlayer().ref)
+    await handle.play()
+    handle.handleReadyForDisplay()
+    const events: string[] = []
+    handle.addEventListener('pause', () => events.push('pause'))
+    handle.addEventListener('play', () => events.push('play'))
+    // Android, at the end of what a live playlist holds: the state first,
+    // then "not playing".
+    handle.handleBuffer({ isBuffering: true })
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    expect(handle.paused, 'still wants to play').equals(false)
+    // More picture, and the player carries on by itself.
+    handle.handleBuffer({ isBuffering: false })
+    handle.handlePlaybackState({ isPlaying: true, isSeeking: false })
+    expect(handle.paused).equals(false)
+    expect(events).deep.equals([])
+    // Ready again, a "not playing" is a real pause once more.
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    expect(handle.paused).equals(true)
+    expect(events).deep.equals(['pause'])
+  })
+
+  it('takes back the pause Android reports just before it says it is buffering', async function () {
+    let now = 0
+    const handle = new NativeVideoHandle(
+      () => undefined,
+      () => now
+    )
+    handle.attach(fakePlayer().ref)
+    await handle.play()
+    handle.handleReadyForDisplay()
+    const events: string[] = []
+    handle.addEventListener('pause', () => events.push('pause'))
+    handle.addEventListener('play', () => events.push('play'))
+    // react-native-video on Android: "not playing" first, buffering after.
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    now += 20
+    handle.handleBuffer({ isBuffering: true })
+    expect(handle.paused, 'a stall, still meant to be playing').equals(false)
+    expect(events).deep.equals(['pause', 'play'])
+    handle.handleBuffer({ isBuffering: false })
+    handle.handlePlaybackState({ isPlaying: true, isSeeking: false })
+    expect(handle.paused).equals(false)
+    // A real pause, with a buffering report long after it, stays a pause.
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    now += 5000
+    handle.handleBuffer({ isBuffering: true })
+    expect(handle.paused).equals(true)
+    // So does one the viewer asked for.
+    handle.handleBuffer({ isBuffering: false })
+    await handle.play()
+    handle.pause()
+    handle.handleBuffer({ isBuffering: true })
+    expect(handle.paused).equals(true)
+  })
+
+  it('is paused once it has ended, even after running dry first', async function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.attach(fakePlayer().ref)
+    await handle.play()
+    const events: string[] = []
+    handle.addEventListener('pause', () => events.push('pause'))
+    handle.handleBuffer({ isBuffering: true })
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    // The playlist is closed while it waits: it plays out and ends.
+    handle.handleEnd()
+    expect(handle.paused).equals(true)
+    expect(events).deep.equals(['pause'])
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    expect(events).deep.equals(['pause'])
+    // And plays again when asked.
+    await handle.play()
+    expect(handle.paused).equals(false)
+  })
+
+  it('clears the source before handing it again on Android, which ignores the same source twice', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    const { ref, calls } = fakePlayer()
+    handle.attach(ref)
+    handle.source = 'https://media.example.test/a/index.m3u8'
+    handle.reload()
+    expect(calls).deep.equals([
+      'source https://media.example.test/a/index.m3u8'
+    ])
+    calls.length = 0
+    handle.clearBeforeReload = true
+    handle.reload()
+    expect(calls).deep.equals([
+      'clear',
+      'source https://media.example.test/a/index.m3u8'
+    ])
   })
 
   it('says it has a picture once the player is ready to show one', function () {

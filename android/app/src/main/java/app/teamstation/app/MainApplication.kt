@@ -6,6 +6,7 @@ import app.teamstation.app.feedback.HapticsPackage
 import app.teamstation.app.glass.GlassPackage
 import app.teamstation.app.orientation.OrientationPackage
 import app.teamstation.app.stream.PhoneStreamPackage
+import app.teamstation.app.video.LivePlaylistPatience
 import app.teamstation.app.walkup.DictationMicrophonePackage
 import app.teamstation.app.walkup.WalkUpMusicPackage
 import com.facebook.react.PackageList
@@ -43,6 +44,8 @@ class MainApplication : Application(), ReactApplication {
   override fun onCreate() {
     super.onCreate()
     registerFonts()
+    // Live viewers wait out a phone's absence instead of failing (LivePlaylistPatience).
+    LivePlaylistPatience.register()
     loadReactNative(this)
   }
 
