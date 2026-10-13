@@ -77,10 +77,11 @@ extension PhoneStreamTests {
       // went out, after the camera opened. Refused once, the same moment is offered again.
       #expect(await waitUntil(10) { StubServer.read { $0.streamChanges }.count == 2 })
       let starts = StubServer.read { $0.streamChanges }.map { $0["liveStartedAt"] as? String }
-      #expect(starts[0] != nil && starts[0] == starts[1])
+      #expect(starts.count == 2 && starts.first == starts.last)
       let instant = ISO8601DateFormatter()
       instant.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
-      let liveStart = try #require(instant.date(from: try #require(starts[0])))
+      let liveStartText = try #require(starts.first ?? nil)
+      let liveStart = try #require(instant.date(from: liveStartText))
       #expect(liveStart > opened, "first picture captured \(liveStart) before the camera opened \(opened)")
       let delay = PhoneStreamProfile.pictureDelaySeconds
       #expect(liveStart < firstPictureSeen.addingTimeInterval(-delay + 0.1), "first picture captured \(liveStart), seen \(firstPictureSeen)")
