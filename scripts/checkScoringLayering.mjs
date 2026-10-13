@@ -25,7 +25,11 @@ function sources(dir) {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name)
     if (statSync(path).isDirectory()) out.push(...sources(path))
-    else if (/\.(ts|tsx|mjs|js)$/.test(name)) out.push(path)
+    else if (
+      /\.(ts|tsx|mjs|js)$/.test(name) &&
+      !/\.(test|e2e|smoke)\./.test(name)
+    )
+      out.push(path)
   }
   return out
 }

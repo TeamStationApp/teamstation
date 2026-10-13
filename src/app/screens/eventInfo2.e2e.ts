@@ -619,7 +619,7 @@ async function main(): Promise<void> {
     const groups = await evaluate<
       Array<{ id: string; text: string; count: string; right: boolean }>
     >(
-      `Array.from(document.querySelectorAll('[data-testid^="attendance-"]')).filter(node=>/^attendance-(staff|players|others)-(yes|maybe|no|noReply)$/.test(node.dataset.testid)).map(node=>{const heading=node.querySelector('[role="heading"]'), texts=heading.querySelectorAll('[dir="auto"]'), count=texts[texts.length-1];return{id:node.dataset.testid,text:node.textContent,count:count.textContent,right:Math.abs(count.getBoundingClientRect().right-heading.getBoundingClientRect().right)<1}})`
+      `Array.from(document.querySelectorAll('[data-testid^="attendance-"]')).filter(node=>/^attendance-(staff|players|others)-(yes|maybe|no|noReply)$/.test(node.dataset.testid)).map(node=>{const heading=node.querySelector('[role="heading"]'), texts=heading.querySelectorAll('[dir="auto"]'), count=heading.querySelector('[data-testid="settings-pill-count"]')??texts[texts.length-1];return{id:node.dataset.testid,text:node.textContent,count:count.textContent,right:Math.abs(count.getBoundingClientRect().right-heading.getBoundingClientRect().right)<1}})`
     )
     assert.equal(groups.length, 9)
     assert(

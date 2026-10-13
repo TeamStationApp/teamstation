@@ -41,7 +41,9 @@ export async function groupFixture(
   mountExtra?: MountExtra,
   cityLookup?: GooglePlaces
 ): Promise<GroupFixture> {
-  let timestamp = Date.parse('2026-10-06T19:00:00Z')
+  // Public readers and sign-in use the real clock. Start the controllable
+  // fixture clock alongside it so newly created requests are not already expired.
+  let timestamp = Date.now()
   let key = 0
   const clock = { now: () => new Date(timestamp) }
   const h = await creationHarness(

@@ -82,14 +82,11 @@ async function main(): Promise<void> {
       waitUntil: 'networkidle0'
     })
     await press(team, 'Manage')
-    await text(team, 'Add somebody')
-    await fill(team, 'E-mail address', 'fixture106@example.com')
-    await press(team, 'Choose roles')
+    await press(team, 'Add Person to Team')
+    await fill(team, 'E-mail addresses', 'fixture106@example.com')
     await toggle(team, 'Team admin')
-    await press(team, 'Save')
-    await text(team, 'Adds them as: Team admin.')
-    await press(team, 'Add')
-    await text(team, 'Tim Raines has been added.')
+    await press(team, 'Send invite')
+    await text(team, 'Team management')
     await team.screenshot({
       path: join(artifacts!, 'admin-added-at-once.png')
     })

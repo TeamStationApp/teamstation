@@ -17,7 +17,7 @@ const suites = [
   'src/app/screens/TeamSelectorScene.test.tsx',
   'src/app/screens/gameDraft.test.ts',
   'src/app/screens/EventSettingsScreen.test.tsx',
-  'src/app/screens/eventAttendance.test.ts',
+  'src/app/screens/eventAttendance.test.tsx',
   'src/app/components/eventRsvpPosition.test.ts',
   'src/app/components/eventMapDocument.test.ts',
   'src/app/components/googleMapDocument.test.ts',

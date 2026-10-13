@@ -313,7 +313,7 @@ async function main(): Promise<void> {
     )
     console.log('Failed map tiles recover through the visible retry button')
     await m.scrollUntilVisible({
-      element: { id: 'attendance-yes' },
+      element: { id: 'event-rsvp-101-1' },
       direction: 'DOWN',
       centerElement: true,
       maxScrolls: 8
@@ -386,7 +386,12 @@ async function main(): Promise<void> {
       true,
       'The pill remains on the avatar/name row'
     )
-    await m.assertVisible({ text: 'Maybe for Babe Ruth' })
+    await m.scrollUntilVisible({
+      element: { id: 'event-rsvp-101-1' },
+      direction: 'DOWN',
+      centerElement: true,
+      maxScrolls: 8
+    })
     await m.tapOn({ id: 'event-rsvp-103-2' })
     await m.tapOn({ id: 'event-rsvp-104-0' })
     for (const id of [101, 103, 104])
@@ -407,18 +412,23 @@ async function main(): Promise<void> {
       ['no', 'yes', 'yes']
     )
     await open(`/games/${gameId}`)
-    await m.assertVisible({ text: 'Maybe for Babe Ruth' })
+    await m.scrollUntilVisible({
+      element: { id: 'event-rsvp-101-1' },
+      direction: 'DOWN',
+      centerElement: true,
+      maxScrolls: 8
+    })
     await m.tapOn({ id: 'event-rsvp-101-1' })
     await m.waitForAnimationToEnd()
     await m.scrollUntilVisible({
-      element: { id: 'attendance-yes' },
+      element: { id: 'event-rsvp-101-1' },
       direction: 'DOWN',
       centerElement: true,
       maxScrolls: 8
     })
     await shot('family-rsvps.png')
     await m.scrollUntilVisible({
-      element: { id: 'attendance-noReply' },
+      element: { id: 'attendance-players-yes' },
       direction: 'DOWN',
       centerElement: true,
       maxScrolls: 8
@@ -457,8 +467,8 @@ async function main(): Promise<void> {
     await m.openBrowser({
       url: f.h.origin + `/groups/team/${f.teamA}/create-game`
     })
-    await m.assertVisible({ text: 'Event', timeout: 20000 })
-    await m.tapOn({ text: 'Event' })
+    await m.assertVisible({ text: 'Other', timeout: 20000 })
+    await m.tapOn({ text: 'Other' })
     await m.assertVisible({ text: 'Create Event' })
     await shot('creation-after.png')
     const fill = async (label: string, text: string): Promise<void> => {
@@ -467,30 +477,9 @@ async function main(): Promise<void> {
       await m.inputText({ text })
     }
     await fill('Title', 'Team dinner')
-    await fill('Date', '2027-04-10')
-    await fill('Address (optional)', '1 Demo Way, Demo City')
-    await fill('Time zone', 'America/')
+    await fill('Venue address (optional)', '1 Demo Way, Demo City')
     await m.scrollUntilVisible({
-      element: { text: 'Back' },
-      direction: 'DOWN',
-      maxScrolls: 8
-    })
-    await m.tapOn({ text: 'Create event' })
-    await m.assertVisible({ text: 'Choose a valid timezone', timeout: 10000 })
-    assert.equal(
-      await evaluate(
-        `document.querySelector('input[aria-label="Title"]').value`
-      ),
-      'Team dinner'
-    )
-    await m.scrollUntilVisible({
-      element: { css: 'input[aria-label="Time zone"]' },
-      direction: 'UP',
-      maxScrolls: 8
-    })
-    await fill('Time zone', 'America/Los_Angeles')
-    await m.scrollUntilVisible({
-      element: { text: 'Back' },
+      element: { text: 'Create event' },
       direction: 'DOWN',
       maxScrolls: 8
     })
@@ -642,30 +631,16 @@ async function main(): Promise<void> {
       'Info'
     )
     await shot('game-ended-after.png')
-    await open(`/games/${eventId}`)
-    await m.tapOn({ text: 'Edit event details' })
+    await m.openBrowser({ url: f.h.origin + `/games/${eventId}/settings` })
     await m.assertVisible({ text: 'Save event details', timeout: 10000 })
     await fill('Title', 'Team picnic')
-    await fill('Time zone', 'America/')
+    // Time zones are a constrained picker now; its row selection/cancel and
+    // retained-draft checks run in gameForm.e2e and EventScheduleFields tests.
     await m.scrollUntilVisible({
-      element: { text: 'Back' },
+      element: { text: 'Cancel event' },
       direction: 'DOWN',
       maxScrolls: 8
     })
-    await m.tapOn({ text: 'Save event details' })
-    await m.assertVisible({ text: 'Choose a valid timezone', timeout: 10000 })
-    assert.equal(
-      await evaluate(
-        `document.querySelector('input[aria-label="Title"]').value`
-      ),
-      'Team picnic'
-    )
-    await m.scrollUntilVisible({
-      element: { css: 'input[aria-label="Time zone"]' },
-      direction: 'UP',
-      maxScrolls: 8
-    })
-    await fill('Time zone', 'America/Los_Angeles')
     await m.tapOn({ text: 'Cancel event' })
     await m.scrollUntilVisible({
       element: { text: 'Back' },
@@ -719,17 +694,30 @@ async function main(): Promise<void> {
         timezone
       })
       assert.equal(response.status, 200)
+      await coveragePage.emulateTimezone(timezone)
       await open(`/games/${eventId}`)
       const includesDate = name !== 'same-local-day'
-      const end = new Intl.DateTimeFormat('en', {
+      const endTime = new Intl.DateTimeFormat('en', {
         timeZone: timezone,
-        dateStyle: includesDate ? 'medium' : undefined,
-        timeStyle: 'short'
+        hour: 'numeric',
+        minute: '2-digit'
       }).format(new Date(endAt))
-      await m.assertVisible({
-        text: `.* – ${end.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} · ${timezone}.*`,
-        timeout: 10000
-      })
+      const endDay = includesDate
+        ? new Intl.DateTimeFormat('en', {
+            timeZone: timezone,
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric'
+          }).format(new Date(endAt)) + ', '
+        : ''
+      await m.assertVisible({ id: 'event-hero-time', timeout: 10000 })
+      assert(
+        (
+          await evaluate<string>(
+            `document.querySelector('[data-testid="event-hero-time"]').textContent`
+          )
+        ).includes(`– ${endDay}${endTime}`)
+      )
       await shot(`event-${name}.png`)
     }
     const futureId = 'gam_event_future_end'
@@ -744,40 +732,46 @@ async function main(): Promise<void> {
         timezone: 'America/Los_Angeles'
       })
       .execute()
-    await open(`/games/${futureId}`)
-    await m.tapOn({ text: 'Edit event details' })
-    await m.assertVisible({ text: 'Save event details', timeout: 10000 })
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: 'role_future_end_editor',
+        scope_type: 'team',
+        scope_id: f.teamB,
+        user_id: 101,
+        role: 'admin'
+      })
+      .execute()
+    await m.openBrowser({ url: f.h.origin + `/games/${futureId}/settings` })
+    await m.assertVisible({ text: 'Game Settings', timeout: 10000 })
     await m.scrollUntilVisible({
-      element: { text: 'End time: Not set' },
+      element: { text: 'Set end time' },
       direction: 'DOWN',
       maxScrolls: 8
     })
-    await m.tapOn({ text: 'End time: Not set' })
-    await m.scrollUntilVisible({
-      element: { css: 'input[aria-label="End date"]' },
-      direction: 'DOWN',
-      maxScrolls: 8
-    })
+    await m.tapOn({ text: 'Set end time' })
     assert.equal(
       await evaluate(
-        `document.querySelector('input[aria-label="End date"]').value`
+        `document.querySelector('[data-testid="event-schedule-date"]').getAttribute('aria-label')`
       ),
-      '2037-07-01'
+      'Date: 2037-07-01'
     )
     await shot('future-game-end-date.png')
     await m.scrollUntilVisible({
-      element: { text: 'Save event details' },
+      element: { text: 'Save' },
       direction: 'DOWN',
       maxScrolls: 8
     })
-    await m.tapOn({ text: 'Save event details' })
-    await m.assertVisible({ text: 'Are you going?', timeout: 10000 })
+    await m.tapOn({ text: 'Save' })
+    await coveragePage.waitForFunction(
+      () => !location.pathname.endsWith('/settings')
+    )
     const savedEnd = await f.h.db
       .selectFrom('games')
       .select('end_at')
       .where('id', '=', futureId)
       .executeTakeFirstOrThrow()
-    assert.equal(savedEnd.end_at?.toISOString(), '2037-07-02T03:00:00.000Z')
+    assert.equal(savedEnd.end_at?.toISOString(), '2037-07-02T05:00:00.000Z')
     console.log(
       'Overnight/local-timezone Info dates and future-game end addition passed'
     )

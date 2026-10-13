@@ -357,11 +357,19 @@ describe('dictation route', function () {
   /** Waits until the route has done what the last frames asked. */
   async function settled(
     recogniser: FakeRecogniser,
-    call: string
+    call: string,
+    count = 1
   ): Promise<void> {
-    for (let i = 0; i < 100 && !recogniser.calls.includes(call); i++)
+    for (
+      let i = 0;
+      i < 100 &&
+      recogniser.calls.filter(value => value === call).length < count;
+      i++
+    )
       await pause(10)
-    expect(recogniser.calls).includes(call)
+    expect(
+      recogniser.calls.filter(value => value === call)
+    ).to.have.length.at.least(count)
   }
 
   describe('the upgrade', function () {
@@ -946,7 +954,7 @@ describe('dictation route', function () {
         message: 'No question is open for that'
       })
       client.send(start('u2'))
-      await pause()
+      await settled(recogniser, 'begin', 2)
       expect(recogniser.calls.filter(call => call === 'begin')).to.have.length(
         2
       )
@@ -957,17 +965,17 @@ describe('dictation route', function () {
       const client = await connect()
       const recogniser = recognisers[recognisers.length - 1]
       client.send(start('u1'))
-      await pause()
+      await settled(recogniser, 'begin')
       client.audio(2)
       client.send({ kind: 'release', id: 'u1' })
-      await pause()
+      await settled(recogniser, 'end')
       let answer: (turn: Turn) => void = () => undefined
       script.push(new Promise<Turn>(resolve => (answer = resolve)))
       recogniser.handlers.onFinal('Ball.')
       await client.next()
       const seen = client.replies.length
       client.ws.close()
-      await pause()
+      await settled(recogniser, 'close')
       expect(recogniser.calls).includes('close')
       answer({ kind: 'actions', actions: [ball], dropped: [] })
       await pause()
