@@ -312,7 +312,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     top: theme.rem(0.375),
     bottom: theme.rem(0.375),
     borderRadius: theme.rem(1),
-    backgroundColor: theme.pillBackground
+    backgroundColor: theme.sliderTrackBackground
   },
   fill: {
     position: 'absolute',

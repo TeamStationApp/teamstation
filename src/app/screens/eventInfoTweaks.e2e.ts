@@ -368,17 +368,18 @@ async function main(): Promise<void> {
     await wait(
       `document.querySelector('[data-testid="${rsvpId}-2"]').getAttribute('aria-checked')==='true'`
     )
-    // No reply has room for one line in the label's own font.
+    // No reply has room for one line in the label's own font, and both
+    // slider rails are dark enough to show on the page.
     assert(
       await evaluate<boolean>(`(()=>{
-      const modal=document.querySelector('[data-testid="event-rsvp-modal"]'), canvas=document.createElement('canvas').getContext('2d');
-      const pills=Array.from(modal.querySelectorAll('[role="radiogroup"]'));
+      const modal=document.querySelector('[data-testid="event-rsvp-modal"]'), canvas=document.createElement('canvas').getContext('2d'), rail='rgb(205, 213, 194)';
+      const pills=Array.from(modal.querySelectorAll('[role="radiogroup"]')), teams=document.querySelector('[aria-label="RSVP teams"]');
       return pills.every(pill=>{
         const middle=pill.querySelectorAll('[role="radio"]')[1], label=middle.querySelector('[dir="auto"]'), style=getComputedStyle(middle);
         canvas.font=getComputedStyle(label).font;
         const room=middle.getBoundingClientRect().width-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);
-        return canvas.measureText('No reply').width*1.1<=room;
-      });
+        return canvas.measureText('No reply').width*1.1<=room && getComputedStyle(pill.firstElementChild).backgroundColor===rail;
+      }) && getComputedStyle(teams).backgroundColor===rail && getComputedStyle(document.body).backgroundColor!==rail;
     })()`)
     )
     writeFileSync(join(artifacts, 'rsvp-modal.png'), await m.screenshot())

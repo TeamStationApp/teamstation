@@ -104,6 +104,8 @@ export interface Theme {
   pillTextColor: string
   pillActiveBackground: string
   pillActiveTextColor: string
+  /** The rail of a sliding choice, which sits straight on the page. */
+  sliderTrackBackground: string
 
   // The header, and the navigation that becomes a sidebar on a wide screen.
   headerBackgroundColor: string

@@ -170,7 +170,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     maxWidth: theme.rem(27),
     borderRadius: theme.radiusPill,
     overflow: 'hidden',
-    backgroundColor: theme.pillBackground
+    backgroundColor: theme.sliderTrackBackground
   },
   fill: {
     position: 'absolute',

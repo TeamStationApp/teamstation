@@ -151,6 +151,8 @@ export const tsBallpark: Theme = {
 
   // Pills — the tab strip that repeats on nearly every screen.
   pillBackground: palette.cream,
+  // Well under the cream, so a slider's rail shows plainly on the bone page.
+  sliderTrackBackground: '#CDD5C2',
   pillPressedBackground: palette.creamPressed,
   pillTextColor: palette.bark,
   pillActiveBackground: palette.forest,
