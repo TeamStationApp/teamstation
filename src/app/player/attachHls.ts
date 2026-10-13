@@ -1,5 +1,6 @@
 import Hls from 'hls.js'
 
+import { liveRejoin } from './liveRejoin'
 import { BEHIND_SEC } from './multiCam/buffering'
 import type { BufferControl, PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
@@ -323,14 +324,38 @@ function attachHlsJs(
   /** The caller's answer where there is one, and ours where there is not. */
   const wantsToPlay = (): boolean =>
     intent == null ? ownWantsToPlay : intent.wantsToPlay()
+  /**
+   * Whether to play once a live game has been rejoined: whether it was
+   * playing when it ran out, which is a pause of its own, not the viewer's.
+   */
+  let playAfterRejoin = !handle.paused
+  /**
+   * What the caller wanted the moment it ran out, read once the end's own
+   * pause has been heard by everybody. A caller whose intent follows the
+   * element's pauses — the single player's does — reads the end as a pause,
+   * and that is not the viewer stopping it. One whose intent goes from
+   * wanting to not wanting after the end — a grid the viewer paused, which
+   * leaves an already paused tile without a pause event — has been stopped,
+   * and the rejoin leaves it stopped.
+   */
+  let wantedAtEnd: boolean | undefined
   const onPlay = (): void => {
     ownWantsToPlay = true
+    playAfterRejoin = true
+    wantedAtEnd = undefined
+  }
+  const onEnded = (): void => {
+    wantedAtEnd = wantsToPlay()
   }
   const onPause = (): void => {
-    if (!recovering) ownWantsToPlay = false
+    if (recovering) return
+    ownWantsToPlay = false
+    if (!video.ended) playAfterRejoin = false
   }
   handle.addEventListener('play', onPlay)
   handle.addEventListener('pause', onPause)
+  // The web element's own event: no native player is handed this path.
+  video.addEventListener('ended', onEnded)
 
   /** Puts it back to playing, if that is what it was doing. */
   const resume = (): void => {
@@ -387,15 +412,84 @@ function attachHlsJs(
   hls.on(Hls.Events.FRAG_BUFFERED, resume)
   hls.on(Hls.Events.MEDIA_ATTACHED, resume)
 
+  /**
+   * A live game whose playlist was closed under it, while the game still
+   * lists the video as live: wait for the playlist to open again, then load
+   * it afresh. Where the player was following the game it rejoins the live
+   * edge; where somebody was watching an earlier moment it stays there.
+   *
+   * Following is where the playhead is, not whether the playlist was live:
+   * at the end of the closed playlist, or within the distance hls.js itself
+   * keeps a live player behind that end, and a segment more.
+   */
+  let closedAt: { edgeSec: number; targetSec: number } | undefined
+  const following = (): boolean =>
+    video.ended ||
+    (closedAt != null &&
+      atLiveEdge(
+        video.currentTime,
+        closedAt.edgeSec,
+        closedAt.targetSec,
+        hls.config.liveSyncDurationCount
+      ))
+  let rejoining = false
+  const isLive = intent?.isLive
+  const rejoiner =
+    isLive == null
+      ? undefined
+      : liveRejoin({
+          isLive,
+          fetchPlaylist: async () =>
+            await (await fetch(url, { cache: 'no-store' })).text(),
+          rejoin: () => {
+            rejoining = true
+            recovering = true
+            hls.config.startPosition = following() ? -1 : video.currentTime
+            hls.loadSource(url)
+          }
+        })
+  hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+    const { details } = data
+    if (details.live) return
+    closedAt =
+      Number.isFinite(details.edge) && Number.isFinite(details.targetduration)
+        ? { edgeSec: details.edge, targetSec: details.targetduration }
+        : undefined
+    rejoiner?.ended()
+  })
+  hls.on(Hls.Events.FRAG_BUFFERED, () => {
+    if (!rejoining) return
+    rejoining = false
+    recovering = false
+    const stillWanted = wantsToPlay() || wantedAtEnd === false
+    if (playAfterRejoin && stillWanted) handle.play().catch(() => undefined)
+  })
+
   hls.loadSource(url)
   hls.attachMedia(video)
   return () => {
     if (timer != null) clearTimeout(timer)
+    rejoiner?.stop()
     handle.removeEventListener('play', onPlay)
     handle.removeEventListener('pause', onPause)
+    video.removeEventListener('ended', onEnded)
     limit?.onControl?.(null)
     hls.destroy()
   }
+}
+
+/**
+ * Whether a playhead is following a live playlist that ends at `edgeSec`:
+ * no further behind it than hls.js keeps a live player (`syncCount` target
+ * durations), and one segment more for the one it was waiting on.
+ */
+export function atLiveEdge(
+  currentSec: number,
+  edgeSec: number,
+  targetSec: number,
+  syncCount: number
+): boolean {
+  return edgeSec - currentSec <= (syncCount + 1) * targetSec
 }
 
 /**
