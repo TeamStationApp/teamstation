@@ -12,6 +12,7 @@ import app.teamstation.streamcore.stream.ProgramStreamer
 import app.teamstation.streamcore.stream.StreamAudioEncoding
 import app.teamstation.streamcore.stream.roundedHalfAwayFromZero
 import java.io.File
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -496,7 +497,14 @@ class ProgramEncoder(
         }
 
         // What the file holds, not what the encoder believes it wrote.
-        val reading = finished?.let { FragmentedMp4Reader.read(it) }
+        val reading = finished?.let { file ->
+            try {
+                FragmentedMp4Reader.read(file)
+            } catch (error: IOException) {
+                telemetry.recordError(error.message ?: "could not read ${file.name}")
+                null
+            }
+        }
         val picture = reading?.video?.endSeconds ?: -1.0
         val sound = reading?.audio?.let { track ->
             track.endSeconds?.let { it - track.mediaTime.toDouble() / track.timescale }

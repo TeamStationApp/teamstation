@@ -179,8 +179,11 @@ object ProgrammeExport {
      * sound both run to [windowEnd], or to where the last part ends.
      */
     fun place(parts: List<Pair<Double, File>>, windowStart: Double, windowEnd: Double?, silentPacket: ByteArray, output: File) {
-        val readers = parts.mapNotNull { (start, file) -> FragmentedMp4Reader.read(file)?.let { start to it } }
-        require(readers.isNotEmpty()) { "no readable programme part" }
+        val readings = parts.map { (start, file) -> Triple(start, file, FragmentedMp4Reader.read(file)) }
+        val readers = readings.mapNotNull { (start, _, reader) -> reader?.let { start to it } }
+        require(readers.isNotEmpty()) {
+            "no readable programme part: " + readings.joinToString { (_, file, _) -> "${file.name} is not an MP4 with tracks" }
+        }
         val sourceVideo = readers.firstNotNullOfOrNull { it.second.video?.takeIf { track -> track.configuration != null } }
         val sourceAudio = readers.firstNotNullOfOrNull { it.second.audio?.takeIf { track -> track.configuration != null } }
         // Priming is not sound: the first part's is skipped with the edit list, as in the part itself.
@@ -212,29 +215,32 @@ object ProgrammeExport {
         var end = 0.0
         for ((start, reader) in readers) {
             val offset = start - windowStart
-            reader.video?.let { track ->
-                for (sample in track.samples) {
-                    val at = offset + sample.ticks.toDouble() / track.timescale
-                    if (at <= lastPicture) continue
-                    if (writer.writeVideo(reader.read(sample), at, sample.sync)) lastPicture = at
-                    pictureEnd = maxOf(pictureEnd, at + sample.duration.toDouble() / track.timescale)
+            // One sample in memory at a time, read from the part as it is written out.
+            reader.samples().use { source ->
+                reader.video?.let { track ->
+                    for (sample in track.samples) {
+                        val at = offset + sample.ticks.toDouble() / track.timescale
+                        if (at <= lastPicture) continue
+                        if (writer.writeVideo(source.read(sample), at, sample.sync)) lastPicture = at
+                        pictureEnd = maxOf(pictureEnd, at + sample.duration.toDouble() / track.timescale)
+                    }
                 }
-            }
-            reader.audio?.let { track ->
-                var at = offset - track.mediaTime.toDouble() / track.timescale
-                while (soundEnd + packet / 2 < at) {
-                    writer.writeAudio(silentPacket)
-                    soundEnd += packet
-                }
-                for (sample in track.samples) {
-                    // A packet the sound has already passed (parts that overlap) is left out.
-                    if (at >= soundEnd - packet / 2) {
-                        writer.writeAudio(reader.read(sample))
+                reader.audio?.let { track ->
+                    var at = offset - track.mediaTime.toDouble() / track.timescale
+                    while (soundEnd + packet / 2 < at) {
+                        writer.writeAudio(silentPacket)
                         soundEnd += packet
                     }
-                    at += sample.duration.toDouble() / track.timescale
+                    for (sample in track.samples) {
+                        // A packet the sound has already passed (parts that overlap) is left out.
+                        if (at >= soundEnd - packet / 2) {
+                            writer.writeAudio(source.read(sample))
+                            soundEnd += packet
+                        }
+                        at += sample.duration.toDouble() / track.timescale
+                    }
+                    end = maxOf(end, soundEnd)
                 }
-                end = maxOf(end, soundEnd)
             }
         }
         // The window's end when the take has one; otherwise wherever the last part's media ends.
