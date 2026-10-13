@@ -133,5 +133,9 @@
   "src/app/stream/**/*.tsx",
   "src/app/screens/GameWatchLayout.native.tsx",
   "src/app/components/streamActions.ts",
-  "src/app/components/TextField.tsx"
+  "src/app/components/TextField.tsx",
+  "src/app/player/attachHls.ts",
+  "src/app/player/liveRejoin.ts",
+  "src/app/player/stillLive.ts",
+  "src/app/player/MultiCamView.tsx"
 ]

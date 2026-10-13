@@ -75,6 +75,11 @@ export interface MultiCamProps {
   /** Where the viewer now is, so the address can say so. */
   onMoment?: (wallMs: number) => void
   onClose: () => void
+  /**
+   * Whether the server still lists a video as live, for a tile whose live
+   * playlist was closed under it (`PlayIntent.isLive`).
+   */
+  isLive?: (videoId: string) => Promise<boolean>
 }
 
 export interface MultiCamOptions {

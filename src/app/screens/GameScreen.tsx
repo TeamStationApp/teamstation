@@ -54,6 +54,7 @@ import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
 import { MultiCamView } from '../player/MultiCamView'
 import { PlayerSurface } from '../player/PlayerSurface'
+import { isStillLive } from '../player/stillLive'
 import { useVideoAspect } from '../player/useVideoAspect'
 import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
@@ -710,8 +711,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   startAtSecRef.current = startAtSec
   const autoPlayRef = useRef(autoPlay)
   autoPlayRef.current = autoPlay
-  const placeFor = useRef<{ videoId?: string; playbackFor?: string }>({})
-  placeFor.current = { videoId: video?.id, playbackFor }
+  const placeFor = useRef<{
+    videoId?: string
+    playbackFor?: string
+    /** Asks the server, for a video that was live when it was opened. */
+    isLive?: () => Promise<boolean>
+  }>({})
+  placeFor.current = {
+    videoId: video?.id,
+    playbackFor,
+    isLive:
+      video?.status === 'live'
+        ? async () => await isStillLive(client, gameId, video.id)
+        : undefined
+  }
 
   /**
    * What the viewer wants the single player to be doing, and who paused it.
@@ -790,7 +803,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       () => {
         setAddressAttempt(attempt => attempt + 1)
       },
-      { wantsToPlay: () => !suspended.current && viewerWants.current }
+      {
+        wantsToPlay: () => !suspended.current && viewerWants.current,
+        isLive: placeFor.current.isLive
+      }
     )
 
     const resume = resumeAtRef.current
@@ -1296,6 +1312,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <MultiCamView
       client={client}
       videos={game.videos}
+      isLive={async videoId => await isStillLive(client, gameId, videoId)}
       order={angles ?? defaultAngles(game.videos)}
       audioId={audioId ?? null}
       // No zoom for now: the double tap that made one tile fill the screen

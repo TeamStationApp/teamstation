@@ -3,6 +3,7 @@ import { spawn } from 'child_process'
 import { readdirSync, readFileSync, writeFileSync } from 'fs'
 
 import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
+import { segmentPictureSec } from '../media/trackStarts'
 
 /**
  * The RTMP ingest, and the split.
@@ -175,17 +176,27 @@ interface OutputRuntime {
    * generation still holds this object, and must not spawn anything.
    */
   released: boolean
-  /** Written by an HLS output that has appended to an existing playlist. */
-  nextSegmentNumber?: number
+  /**
+   * Where an HLS writer that appends to an existing playlist carries on from:
+   * the playlist's own first sequence number, and how many seconds of video
+   * it already holds.
+   */
+  continuation?: Continuation
   hlsRestarted?: boolean
   /**
    * Finishing of its own accord rather than being killed.
    *
    * When the publisher goes, the HLS writer is left alone for a moment: it
-   * sees the end of the stream, flushes the segment it was part way through
-   * and writes `EXT-X-ENDLIST` itself. Killing it there costs the last few
-   * seconds of every recording — the whole point being that the video runs as
-   * long as the game did.
+   * sees the end of the stream and flushes the segment it was part way
+   * through. Killing it there costs the last few seconds of every recording —
+   * the whole point being that the video runs as long as the game did.
+   *
+   * It does **not** close the playlist (`omit_endlist`). A publisher that has
+   * gone is usually back within seconds, and every player that reads an
+   * `EXT-X-ENDLIST` takes the game to be over and stops asking for more, for
+   * good. The controller closes the playlist when the stream really has
+   * finished: its publisher stayed away past `RECONNECT_GRACE_MS`, or
+   * somebody ended it.
    */
   draining?: boolean
   drainTimer?: NodeJS.Timeout
@@ -513,6 +524,33 @@ export function clearLive(key: string, reason: string): void {
   }
 }
 
+/**
+ * `clearLive`, and then waits for the key's ffmpeg children to be gone.
+ *
+ * A writer told to stop flushes the segment it was part way through and
+ * writes its playlist one last time on the way out, so whatever closes the
+ * playlist after this — the end of a game — must not run until it has: the
+ * writer's last word would land on top of the close.
+ *
+ * The wait is bounded by the SIGKILL that follows a writer ignoring the
+ * SIGTERM.
+ */
+export async function clearLiveSettled(
+  key: string,
+  reason: string
+): Promise<void> {
+  const entry = entries.get(key)
+  const children =
+    entry == null ? [] : entry.outputs.flatMap(output => [...output.spawned])
+  clearLive(key, reason)
+  const running = (child: ChildProcess): boolean =>
+    child.exitCode == null && child.signalCode == null && isPidAlive(child.pid)
+  const deadline = Date.now() + SIGKILL_GRACE_MS + 1000
+  while (children.some(running) && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+}
+
 export function statusFor(key: string): LiveStatus | undefined {
   const entry = entries.get(key)
   return entry == null ? undefined : toStatus(entry)
@@ -570,16 +608,42 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     ]
   }
 
-  // The HLS leg. `temp_file` so a half-written segment is never served.
+  // The HLS leg. `temp_file` so a half-written segment is never served,
+  // `program_date_time` so every segment says when it was written, and
+  // `omit_endlist` because the end of a game is the controller's to declare,
+  // not the end of one connection's (see `draining`).
   //
   // A restart adds `append_list`, so the stream continues the playlist it
-  // already has rather than starting a new one, and `discont_start`, which
-  // marks the join: the timeline really did break, and a player told so
-  // recovers instead of trying to decode across the gap. Neither belongs on a
-  // first run — `append_list` on an empty playlist writes a discontinuity
-  // before the first segment, which says a video began by being interrupted.
-  const flags = ['independent_segments', 'temp_file']
-  if (output.hlsRestarted === true) flags.push('append_list', 'discont_start')
+  // already has rather than starting a new one. That alone marks the join
+  // with an `EXT-X-DISCONTINUITY`: the publisher's encoder started again, and
+  // a player told so resets its decoder instead of decoding across the gap.
+  // `discont_start` is left off, because on top of that it writes another one
+  // above the first segment on each restart, which changes the playlist above
+  // segments a player already has, and an `EVENT` playlist may only grow at
+  // the end.
+  //
+  // Two numbers make the continuation seamless to a player that kept the
+  // playlist across the restart:
+  //
+  // - `-start_number` is the playlist's own first sequence number, not the
+  //   next free one. FFmpeg writes `EXT-X-MEDIA-SEQUENCE` from it and names
+  //   the new segments after it plus the segments already listed. Handing it
+  //   the next free number renumbered every segment already in the playlist,
+  //   and a player that held it took them for new ones and played the start
+  //   of the game again after the break.
+  // - `-output_ts_offset` is the playlist's length so far, so the new
+  //   segments' own timestamps carry on from where the last ones stopped
+  //   instead of starting again at nought. The recording made from these
+  //   segments then needs no guess about where each part goes.
+  const flags = [
+    'independent_segments',
+    'temp_file',
+    'program_date_time',
+    'omit_endlist'
+  ]
+  const restart = output.hlsRestarted === true
+  if (restart) flags.push('append_list')
+  const offsetSec = output.continuation?.offsetSec ?? 0
   const directory = output.target.slice(
     0,
     output.target.length - LIVE_PLAYLIST_NAME.length - 1
@@ -588,6 +652,9 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     ...base,
     '-c',
     'copy',
+    ...(restart && offsetSec > 0
+      ? ['-output_ts_offset', offsetSec.toFixed(6)]
+      : []),
     // Safari refuses HEVC tagged `hev1`, which is what a copy from RTMP is
     // tagged by default, so every HLS track here is tagged `hvc1`. It is also
     // why an H.264 publish is turned away rather than written: this tag and
@@ -610,7 +677,7 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     '-hls_flags',
     flags.join('+'),
     '-start_number',
-    String(output.nextSegmentNumber ?? 0),
+    String(output.continuation?.startNumber ?? 0),
     '-hls_segment_filename',
     `${directory}/seg%06d.m4s`,
     output.target
@@ -672,8 +739,12 @@ function spawnOutput(entry: LiveEntry, output: OutputRuntime): void {
     const next = nextSegmentNumber(entry.hlsDir)
     if (next > 0) {
       output.hlsRestarted = true
-      output.nextSegmentNumber = next
       reopenPlaylist(entry.hlsDir)
+      settleLastSegment(entry.hlsDir)
+      output.continuation = playlistContinuation(
+        readPlaylist(entry.hlsDir),
+        next
+      )
     }
   }
 
@@ -844,14 +915,117 @@ export function nextSegmentNumber(directory: string): number {
   }
 }
 
+/** Where a writer appending to a playlist carries on from. */
+export interface Continuation {
+  /** What `-start_number` must be for the playlist's numbering to hold. */
+  startNumber: number
+  /** The playlist's length so far, which the new timestamps start from. */
+  offsetSec: number
+}
+
+/**
+ * Where a writer appending to `playlist` carries on from.
+ *
+ * FFmpeg's `append_list` writes `EXT-X-MEDIA-SEQUENCE` as `-start_number` and
+ * names each new segment `-start_number` plus the segments it found listed,
+ * so the start number that keeps the numbering is the playlist's own media
+ * sequence. A playlist whose numbering an older writer already broke (the
+ * segment names running ahead of their sequence numbers) gets the smallest
+ * start that still names every new segment after the last one listed:
+ * overwriting a listed segment would lose part of the game, which is worse
+ * than a jump in the numbering.
+ *
+ * With no playlist, or one listing nothing, it starts after the segments on
+ * the disk, `nextOnDisk`, as it always did.
+ */
+export function playlistContinuation(
+  playlist: string | undefined,
+  nextOnDisk: number
+): Continuation {
+  if (playlist == null) return { startNumber: nextOnDisk, offsetSec: 0 }
+  let mediaSequence = 0
+  let listed = 0
+  let highest = -1
+  let offsetSec = 0
+  for (const raw of playlist.split('\n')) {
+    const line = raw.trim()
+    const sequence = /^#EXT-X-MEDIA-SEQUENCE:(\d+)$/.exec(line)
+    if (sequence != null) mediaSequence = Number.parseInt(sequence[1], 10)
+    const duration = /^#EXTINF:([\d.]+)/.exec(line)
+    if (duration != null) offsetSec += Number.parseFloat(duration[1])
+    const segment = /^seg(\d+)\.m4s$/.exec(line)
+    if (segment != null) {
+      listed += 1
+      highest = Math.max(highest, Number.parseInt(segment[1], 10))
+    }
+  }
+  if (listed === 0) return { startNumber: nextOnDisk, offsetSec: 0 }
+  return {
+    startNumber: Math.max(mediaSequence, highest + 1 - listed),
+    // To the microsecond, as FFmpeg writes the durations.
+    offsetSec: Math.round(offsetSec * 1_000_000) / 1_000_000
+  }
+}
+
+/**
+ * Lists the playlist's last segment at its true length.
+ *
+ * FFmpeg lists the last segment a writer closes as running to the start of
+ * its last picture, a frame short of its end. Appended to as it stands, the
+ * next part starts a frame early, under that last picture: a player that
+ * loads the playlist afresh puts the next part where the playlist says, one
+ * that played up to the break puts it after the picture it already has, and
+ * the two disagree by a frame for the rest of the game. Measured from the
+ * segment itself, the length is the same for both, and the new part's
+ * timestamps (`-output_ts_offset`) start exactly where it ends.
+ *
+ * Only a small correction is made, to the last segment, and only once its
+ * samples have been read; anything it cannot read is left as it is.
+ */
+export function settleLastSegment(directory: string): void {
+  const path = `${directory}/${LIVE_PLAYLIST_NAME}`
+  try {
+    const lines = readFileSync(path, 'utf8').split('\n')
+    let segmentAt = -1
+    for (let at = lines.length - 1; at >= 0 && segmentAt < 0; at--) {
+      if (/^seg\d+\.m4s$/.test(lines[at].trim())) segmentAt = at
+    }
+    let durationAt = -1
+    for (let at = segmentAt - 1; at >= 0 && durationAt < 0; at--) {
+      if (lines[at].startsWith('#EXTINF:')) durationAt = at
+    }
+    if (durationAt < 0) return
+    const listed = Number.parseFloat(lines[durationAt].slice('#EXTINF:'.length))
+    const real = segmentPictureSec(
+      readFileSync(`${directory}/init.mp4`),
+      readFileSync(`${directory}/${lines[segmentAt].trim()}`)
+    )
+    if (real == null || real <= 0) return
+    const off = Math.abs(real - listed)
+    if (off < 0.0005 || off > 1) return
+    lines[durationAt] = `#EXTINF:${real.toFixed(6)},`
+    writeFileSync(path, lines.join('\n'))
+  } catch {
+    // No playlist, or no segment to read: nothing to correct.
+  }
+}
+
+function readPlaylist(directory: string): string | undefined {
+  try {
+    return readFileSync(`${directory}/${LIVE_PLAYLIST_NAME}`, 'utf8')
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Takes the `EXT-X-ENDLIST` off a playlist that is about to be written to
  * again.
  *
- * The writer before this one closed the playlist, because from where it stood
- * the stream had finished — and it had, for a moment. A player reading a
- * playlist with an `ENDLIST` in the middle stops there, so the second half of
- * the game would exist on disk and be unwatchable.
+ * The controller closed the playlist, because the publisher had stayed away
+ * past the reconnect grace — and now it is back. A player reading a playlist
+ * with an `ENDLIST` in the middle stops there, so the rest of the game would
+ * exist on disk and be unwatchable.
  */
 export function reopenPlaylist(directory: string): void {
   const path = `${directory}/${LIVE_PLAYLIST_NAME}`
