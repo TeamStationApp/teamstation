@@ -78,13 +78,17 @@ function recordSeenLineup(next: ScoringSnapshot): void {
   })
 }
 
-function applyLogged(next: ScoringSnapshot, action: ScoringAction): Applied {
+function applyLogged(
+  next: ScoringSnapshot,
+  action: ScoringAction,
+  options: { requireCurrentSetup?: boolean } = {}
+): Applied {
   const before = next.session
   // On a copy that shares the finished plays (`copyGame`): `applyAction`'s
   // own copy is of the whole game, a stall that grew with it.
   const applied = applyAction(copyGame(before), action, {
     inPlace: true,
-    requireCurrentSetup: true
+    requireCurrentSetup: options.requireCurrentSetup ?? true
   })
   if (applied.problems.length > 0) throw new Refused(applied.problems)
   next.session = applied.state
@@ -109,14 +113,23 @@ function applyLogged(next: ScoringSnapshot, action: ScoringAction): Applied {
   return applied
 }
 
-export function act(next: ScoringSnapshot, action: ScoringAction): Applied {
+export function act(
+  next: ScoringSnapshot,
+  action: ScoringAction,
+  options: { requireCurrentSetup?: boolean } = {}
+): Applied {
   if (next.readOnly === true)
     throw new Refused([{ code: 'notNow', message: 'Scoring is read-only' }])
   // A roster save names its own confirmation. Any other play first records
   // a lineup the screen is already showing in place of an unseen roster order.
-  if (action.type !== 'lineup' || action.kind !== 'roster')
+  // Stored actions replayed without the current setup (a replay) already
+  // hold every lineup their scorer recorded.
+  if (
+    options.requireCurrentSetup !== false &&
+    (action.type !== 'lineup' || action.kind !== 'roster')
+  )
     recordSeenLineup(next)
-  return applyLogged(next, action)
+  return applyLogged(next, action, options)
 }
 
 export function destination(base: number): Destination {
@@ -134,6 +147,18 @@ const DRAFTING = [
 /** The step the screen is on once everything has moved. */
 export function settleRunners(state: ScoringState): void {
   if (DRAFTING.includes(state.phase)) return
+  // A replay watches the game: it asks nothing and decides nothing, so the
+  // scorer's own saved actions are all that move it.
+  if (state.watching === true) {
+    const moving =
+      (state.reel?.length ?? 0) > 0 ||
+      state.presentation != null ||
+      state.motions.some(motion => !motion.complete)
+    state.phase = moving ? 'runnerMovement' : 'ready'
+    state.runnerAction = null
+    state.correctionWindow = null
+    return
+  }
   // A dictated sentence is still being shown.
   if ((state.reel?.length ?? 0) > 0) {
     state.phase = 'runnerMovement'

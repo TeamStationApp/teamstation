@@ -135,6 +135,11 @@ export interface HomeRunCelebration {
   kind: HomeRunKind
 }
 export interface ScoringSnapshot {
+  /**
+   * A replay watching the game rather than a scorer scoring it: nothing is
+   * prompted and nothing is applied but the stored actions it is given.
+   */
+  watching?: boolean
   celebration?: HomeRunCelebration | null
   presentationEnabled?: boolean
   presentation?: PresentationSequence | null
@@ -363,6 +368,11 @@ export type ScoringEvent =
       acceptedLineup?: string | null
     }
   | { type: 'DICTATION_DISMISS' }
+  /**
+   * A replay's step: stored actions applied exactly as saved and drawn as a
+   * dictated sentence is, with nothing rewritten, asked or refused for setup.
+   */
+  | { type: 'REPLAYED'; actions: readonly ScoringAction[] }
   /** One undo step: the sentence, or its valid prefix at a setup boundary. */
   | {
       type: 'DICTATED'

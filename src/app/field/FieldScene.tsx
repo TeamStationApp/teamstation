@@ -27,6 +27,7 @@ import {
 import { Ballpark } from './Ballpark'
 import { projectBases } from './baseProjection'
 import { applyFieldCamera } from './cameraModel'
+import { catcherBounds, movedRect, type ScreenRect } from './catcherBounds'
 import { fieldKey } from './fieldKeyboard'
 import type { FieldPlayer } from './fieldModel'
 import { BASES, clampToField } from './fieldModel'
@@ -89,6 +90,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const textures = useSurfaceTextures()
   const ready = useRef(false)
   const boundsKey = useRef('')
+  const catcherRect = useRef<ScreenRect | null>(null)
   const baseKey = useRef('')
   useFrame(() => {
     const report = callbacks.current.onNameplates
@@ -108,6 +110,23 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       if (baseKey.current !== key) {
         baseKey.current = key
         callbacks.current.onBaseProjection(value)
+      }
+    }
+    if (callbacks.current.onCatcherBounds != null) {
+      const catcher = callbacks.current.players.find(
+        player => player.team === 'defense' && player.label === 'C'
+      )
+      if (catcher != null) {
+        const rect = catcherBounds(
+          camera,
+          size.width,
+          size.height,
+          catcher.position
+        )
+        if (movedRect(catcherRect.current, rect)) {
+          catcherRect.current = rect
+          callbacks.current.onCatcherBounds(rect)
+        }
       }
     }
     if (callbacks.current.onScoreboardBounds != null) {

@@ -13,6 +13,71 @@ import type { BaseProjection, FieldPlacement } from './fieldTypes'
 import { nameplateSize, projectPlayerLabel } from './playerPresentation'
 import { TERRAIN } from './terrain'
 
+describe('where the field says the catcher is', function () {
+  it('reports the catcher once, again when it moves or the view resizes, and not for an unchanged frame', async function () {
+    const players = createPlayers()
+    const reports: Array<{
+      x: number
+      y: number
+      width: number
+      height: number
+    }> = []
+    const props = {
+      players,
+      selected: '',
+      onSelect: () => undefined,
+      view: 'home' as const,
+      zoom: 1,
+      onCatcherBounds: (rect: {
+        x: number
+        y: number
+        width: number
+        height: number
+      }) => reports.push(rect)
+    }
+    let resize: ((width: number, height: number) => void) | undefined
+    const renderer = await create(React.createElement(FieldScene, props), {
+      width: 390,
+      height: 844,
+      onCreated: state => {
+        resize = (width, height) => {
+          state.setSize(width, height)
+        }
+      }
+    })
+    try {
+      await renderer.advanceFrames(1, 1 / 60)
+      expect(reports).length(1)
+      expect(reports[0].width).greaterThan(0)
+      expect(reports[0].height).greaterThan(0)
+      await renderer.advanceFrames(5, 1 / 60)
+      expect(reports).length(1)
+      // The catcher steps out from behind the plate.
+      await renderer.update(
+        React.createElement(FieldScene, {
+          ...props,
+          players: players.map(player =>
+            player.team === 'defense' && player.label === 'C'
+              ? {
+                  ...player,
+                  position: { ...player.position, x: player.position.x + 8 }
+                }
+              : player
+          )
+        })
+      )
+      await renderer.advanceFrames(1, 1 / 60)
+      expect(reports).length(2)
+      expect(reports[1].x).not.closeTo(reports[0].x, 1)
+      resize?.(1200, 900)
+      await renderer.advanceFrames(1, 1 / 60)
+      expect(reports).length(3)
+    } finally {
+      await renderer.unmount()
+    }
+  })
+})
+
 describe('rendered field interaction', function () {
   it('reports runner head and foot anchors with the camera, only when projection changes', async function () {
     let camera: Camera | undefined

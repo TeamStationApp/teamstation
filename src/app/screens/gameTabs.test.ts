@@ -301,4 +301,33 @@ describe('the pills across a game', function () {
       'info'
     ])
   })
+
+  describe('Replay', function () {
+    const onReplay = (): void => undefined
+    const finished = gameWith({ status: 'final', replayable: true })
+
+    it('follows Videos for a member once a game TeamStation scored is over', function () {
+      const pills = gameTabs({ game: finished, onReplay })
+      expect(ids(pills)).deep.equals(['boxScore', 'watch', 'replay', 'info'])
+      expect(pills[2]).deep.equals({
+        id: 'replay',
+        label: 'Replay',
+        role: 'button'
+      })
+      expect(
+        ids(gameTabs({ game: { ...finished, canScore: true }, onReplay }))
+      ).deep.equals(['boxScore', 'watch', 'replay', 'info'])
+    })
+
+    it('is left out with nothing stored, for a non-member, before the end, or with no way to open it', function () {
+      for (const game of [
+        { ...finished, replayable: false },
+        { ...finished, nonMemberView: true },
+        { ...finished, status: 'scheduled' },
+        { ...finished, status: 'inProgress' }
+      ])
+        expect(ids(gameTabs({ game, onReplay }))).not.includes('replay')
+      expect(ids(gameTabs({ game: finished }))).not.includes('replay')
+    })
+  })
 })

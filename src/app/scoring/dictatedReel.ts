@@ -5,7 +5,7 @@ import type {
   RunnerMovementAction,
   ScoringAction
 } from '../../common/scoring/actions'
-import { allowedAngle } from '../../common/scoring/rules'
+import { allowedAngle, inPlay } from '../../common/scoring/rules'
 import { fieldingLocation } from '../field/fieldingLocation'
 import { BASES, type GroundPoint } from '../field/fieldModel'
 import { homeRunLanding } from '../field/stadiumBoundary'
@@ -256,10 +256,24 @@ export class ReelBuilder {
         const { pending, angle } = hitGeometry(state, action, result)
         this.defenderPoints.clear()
         this.choice = pending.outcome === "Fielder's Choice"
-        this.open(
-          'hit',
-          hitPresentation({ ...state, pendingPlay: pending }, angle)
+        const presentation = hitPresentation(
+          { ...state, pendingPlay: pending },
+          angle
         )
+        // A second ball in play says more of the one already drawn, as the
+        // engine takes it: the scoring screen saves the outcome's bare ball,
+        // then the one with where it went. That hit is drawn once, there.
+        const again =
+          this.group === 'hit' &&
+          this.current != null &&
+          this.current === this.hitBeat
+        if (again && this.current != null) {
+          if (this.animate) this.current.presentation = presentation
+        } else if (inPlay(state.session.liveData.plays.currentPlay))
+          // An earlier sentence drew the ball, as a live view gets the bare
+          // ball before the rest: the play goes on from there, unpitched.
+          this.open('hit')
+        else this.open('hit', presentation)
         this.hitOpen = true
         this.hitBeat = this.current
         this.hitResultSeen = false

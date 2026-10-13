@@ -81,10 +81,12 @@ export function copyState<T>(value: T): T {
 
 export function initialScoringState(
   session: ScoringSessionState,
-  presentationEnabled = false
+  presentationEnabled = false,
+  options: { watching?: boolean } = {}
 ): ScoringState {
   const owned = copyGame(session)
   const state: ScoringState = {
+    ...(options.watching === true ? { watching: true } : {}),
     session: owned,
     presentationEnabled,
     presentation: null,
@@ -595,6 +597,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
   // Above the presentation guard, so a sentence spoken mid-animation is told
   // why rather than swallowed.
   if (event.type === 'DICTATED') return dictated(state, event)
+  if (event.type === 'REPLAYED') return replayed(state, event.actions)
   if (event.type === 'DICTATION_ANSWER') {
     const question = state.dictationQuestion
     const actions = question == null ? undefined : answerOf(question, event)
@@ -957,6 +960,52 @@ export function scoringScreenReducer(
   return next === scoring ? model : { ...model, scoring: next }
 }
 
+/**
+ * Applies a sentence's actions and draws them as one reel of beats: a pitch,
+ * a hit, a throw, with the runners that go with each. Dictation and a
+ * replay's stored steps both play through it, so both look as the taps would.
+ */
+function playSentence(
+  edit: ScoringState,
+  sentence: readonly ScoringAction[],
+  presentationEnabled: boolean,
+  options: { requireCurrentSetup?: boolean } = {}
+): void {
+  const reel = new ReelBuilder(presentationEnabled)
+  sentence.forEach((action, index) => {
+    reel.before(edit, action, sentence.slice(index + 1))
+    const known = new Set(edit.motions.map(motion => motion.id))
+    act(edit, action, options)
+    reel.after(edit.motions.filter(motion => !known.has(motion.id)))
+    edit.motions = edit.motions.filter(motion => known.has(motion.id))
+  })
+  if (reel.homeRunKind != null)
+    edit.celebration = {
+      id: `${edit.generation}:${edit.session.meta.sequence}:home-run`,
+      generation: edit.generation,
+      kind: reel.homeRunKind
+    }
+  beginReel(edit, reel.finish(edit))
+  settleRunners(edit)
+}
+
+/**
+ * A replay's step: the actions as the scorer saved them, in order, with no
+ * rewriting, no question and no setup check, as `replayPlays` applies them.
+ * A step the game will not take leaves it as it was.
+ */
+function replayed(
+  state: ScoringState,
+  actions: readonly ScoringAction[]
+): ScoringState {
+  if (actions.length === 0) return state
+  return accepted(state, '', edit => {
+    playSentence(edit, actions, state.presentationEnabled === true, {
+      requireCurrentSetup: false
+    })
+  })
+}
+
 /** The steps a dictated sentence may land on: nothing drawn, nothing moving. */
 const AT_REST: ReadonlyArray<ScoringState['phase']> = [
   'ready',
@@ -1116,23 +1165,8 @@ function dictated(
       }
     }
   const sentence = done.actions
-  const reel = new ReelBuilder(state.presentationEnabled === true)
   const next = accepted(current, transcript, edit => {
-    sentence.forEach((action, index) => {
-      reel.before(edit, action, sentence.slice(index + 1))
-      const known = new Set(edit.motions.map(motion => motion.id))
-      act(edit, action)
-      reel.after(edit.motions.filter(motion => !known.has(motion.id)))
-      edit.motions = edit.motions.filter(motion => known.has(motion.id))
-    })
-    if (reel.homeRunKind != null)
-      edit.celebration = {
-        id: `${edit.generation}:${edit.session.meta.sequence}:home-run`,
-        generation: edit.generation,
-        kind: reel.homeRunKind
-      }
-    beginReel(edit, reel.finish(edit))
-    settleRunners(edit)
+    playSentence(edit, sentence, state.presentationEnabled === true)
   })
   // The dry run and `act` consult the same rules, so this is only a guard.
   if (next === current) return refused('The game would not take that')

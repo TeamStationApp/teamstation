@@ -136,6 +136,8 @@ export interface GameScreenProps {
    */
   onCoachGame?: (teamId: string) => void
   onDjGame?: () => void
+  /** Opens the game's replay. */
+  onReplay?: () => void
   /** Opens a separate scheduling settings screen for a participating team admin. */
   onSettings?: () => void
   /** An explicit section. Bare addresses use the event's current default. */
@@ -1570,10 +1572,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <PillTabs
       tabs={gameTabs({
         game,
-        now: clockNow
+        now: clockNow,
+        onReplay: props.onReplay
       })}
       selected={tab}
       onSelect={next => {
+        if (next === 'replay') {
+          props.onReplay?.()
+          return
+        }
         if (next !== 'info' && next !== 'boxScore' && next !== 'watch') return
         selectSection(next)
       }}
