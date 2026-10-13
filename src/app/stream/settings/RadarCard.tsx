@@ -37,6 +37,17 @@ export function radarRowParts(
   return parts
 }
 
+/**
+ * A part as the row lays it out: free to break before its " · " and nowhere
+ * else, so a row too long for its line wraps between whole parts ("⚡77%",
+ * "– / – mph") rather than inside one.
+ */
+export function unbreakablePart(text: string): string {
+  const separated = text.startsWith(' ')
+  const body = (separated ? text.slice(1) : text).replace(/ /g, '\u00a0')
+  return separated ? ` ${body}` : body
+}
+
 export interface RadarCardProps {
   phone: PhoneStream
   radar: RadarState | null
@@ -141,14 +152,20 @@ export function RadarCard(props: RadarCardProps): React.ReactElement {
                 testID={`settings-radar-device-${device.serial}`}
                 style={[styles.row, styles.deviceRow]}
               >
-                <Text style={styles.device} numberOfLines={1}>
+                {/* Not cut to one line: in two columns the battery and the
+                    speeds would fall behind an ellipsis. It wraps instead, in
+                    the space before Unpair. */}
+                <Text
+                  testID={`settings-radar-device-text-${device.serial}`}
+                  style={styles.device}
+                >
                   <Text style={styles.serial}>{device.serial}</Text>
                   {radarRowParts(device).map(part => (
                     <Text
                       key={part.text}
                       style={part.connected === true ? styles.connected : null}
                     >
-                      {part.text}
+                      {unbreakablePart(part.text)}
                     </Text>
                   ))}
                 </Text>
@@ -217,6 +234,8 @@ const styles = StyleSheet.create({
   },
   device: {
     flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
     color: SETTINGS.text,
     fontSize: SETTINGS.body - 2,
     fontVariant: ['tabular-nums']

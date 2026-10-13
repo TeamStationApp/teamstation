@@ -19,7 +19,7 @@ import {
   type RadarDevice
 } from '../phoneStreamClient'
 import { StreamingScreen } from '../StreamingScreen.native'
-import { radarRowParts } from './RadarCard'
+import { radarRowParts, unbreakablePart } from './RadarCard'
 import { cardColumns, settingsColumns } from './settingsLayout'
 import {
   type AppliedSettings,
@@ -467,6 +467,42 @@ describe('the stream settings sheet', function () {
     expect(radarRowParts(DEVICE)[0].connected).equals(true)
   })
 
+  it('wraps a long radar row between its parts instead of cutting it off, Unpair on the right', async function () {
+    expect(unbreakablePart(' · 54 / – mph')).equals(
+      ' ·\u00a054\u00a0/\u00a0–\u00a0mph'
+    )
+    expect(unbreakablePart('⚡80%')).equals('⚡80%')
+    await mountSheet({
+      radar: {
+        ...RADAR,
+        devices: [
+          {
+            ...DEVICE,
+            serial: 'TAG-0000000000000000000000000001',
+            batteryPercent: 100,
+            pitchMph: 101.4,
+            exitMph: 112.6
+          }
+        ]
+      }
+    })
+    const serial = 'TAG-0000000000000000000000000001'
+    const text = byTestId(`settings-radar-device-text-${serial}`)!
+    // The whole row is there, battery and speeds included, with no ellipsis.
+    expect(text.textContent).equals(
+      `${serial} ·\u00a0Connected ·\u00a0⚡100% ·\u00a0101\u00a0/\u00a0113\u00a0mph`
+    )
+    const style = getComputedStyle(text)
+    expect(style.textOverflow).not.equals('ellipsis')
+    expect(style.whiteSpace).not.equals('nowrap')
+    expect(style.getPropertyValue('-webkit-line-clamp')).equals('')
+    // Unpair follows the text in the row, so it sits on the right.
+    const row = byTestId(`settings-radar-device-${serial}`)!
+    expect(row.lastElementChild?.getAttribute('data-testid')).equals(
+      `settings-radar-unpair-${serial}`
+    )
+  })
+
   it('lists each paired radar with Unpair, and Pair Device last', async function () {
     const h = await mountSheet()
     const card = byTestId('settings-radar')!
@@ -474,9 +510,12 @@ describe('the stream settings sheet', function () {
       'Track pitch speed and exit velocity with Tag Sports Radar.'
     )
     expect(switchOf('settings-radar-enabled').checked).equals(true)
-    expect(byTestId('settings-radar-device-TAG-00000001')?.textContent).equals(
-      'TAG-00000001 · Connected · ⚡80% · 54 / – mphUnpair'
-    )
+    expect(
+      byTestId('settings-radar-device-TAG-00000001')?.textContent?.replace(
+        /\u00a0/g,
+        ' '
+      )
+    ).equals('TAG-00000001 · Connected · ⚡80% · 54 / – mphUnpair')
     const pressables = [
       ...card.querySelectorAll<HTMLElement>('[data-testid^="settings-radar-"]')
     ].map(node => node.getAttribute('data-testid'))
