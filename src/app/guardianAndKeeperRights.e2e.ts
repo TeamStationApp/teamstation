@@ -1599,8 +1599,15 @@ async function guardian(run: Run): Promise<void> {
     expect(decided.status).equals(200)
     expect(decided.body.status).equals('declined')
   }
-  const blocked =
-    'Three guardian requests were declined. You can ask again on October 13, 2026.'
+  const retryOn = new Date(
+    f.clock.now().getTime() + 7 * 24 * 3600 * 1000
+  ).toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC'
+  })
+  const blocked = `Three guardian requests were declined. You can ask again on ${retryOn}.`
   const ivy = await run.signIn('guardian-declined', declined)
   await openFromRoster(ivy, 'Eli F', eli.id)
   await ask(ivy, 'Eli F')

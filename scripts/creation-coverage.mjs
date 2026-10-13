@@ -50,12 +50,12 @@ const suites = [
   ...globSync('src/server/media/pictureCatalog.test.ts'),
   ...globSync('src/server/routes/pictures.test.ts'),
   ...globSync('src/server/routes/location.test.ts'),
+  ...globSync('src/server/routes/cityLookup.test.ts'),
   ...globSync('src/common/publicStaffName.test.ts'),
   ...globSync('src/common/seasonTimeFrames.test.ts'),
   ...globSync('src/common/gameTime.test.ts'),
   ...globSync('src/app/navigation/*.test.ts'),
   ...globSync('src/app/components/iconFont.test.ts'),
-  ...globSync('src/app/platform/roughLocation*.test.ts'),
   ...globSync('src/server/teams/storeTeamPictures.test.ts'),
   ...globSync('src/server/openapi.test.ts'),
   ...globSync('src/server/auth/settleAccount.test.ts'),
@@ -90,10 +90,37 @@ const paths = [...globSync('src/server/groups/**/*.ts')]
     'src/app/screens/HomeScreen.tsx',
     'src/app/components/AppHeader.tsx',
     'src/app/components/SectionHeader.tsx',
+    'src/app/screens/LocationScreen.tsx',
+    'src/app/screens/GroupLocationPage.tsx',
+    'src/app/components/LocationRow.tsx',
+    'src/app/components/TextField.tsx',
+    'src/app/components/AddEventCard.tsx',
+    'src/app/screens/TeamPage.tsx',
+    'src/app/screens/TeamSelectorScene.tsx',
+    'src/server/location/googlePlaces.ts',
+    'src/app/components/Button.tsx',
+    'src/app/components/Badge.tsx',
+    'src/app/components/PillTabs.tsx',
+    'src/app/theme/pill.ts',
     'src/app/screens/DiscoverScreen.tsx',
     'src/app/screens/GroupScreen.tsx',
     'src/app/screens/GroupLinkScreen.tsx',
     'src/app/screens/GroupSettingsScreen.tsx',
+    'src/app/screens/ManagementCard.tsx',
+    'src/app/screens/AddPeopleScreen.tsx',
+    'src/app/screens/GroupPeoplePage.tsx',
+    'src/app/components/RoleSwitches.tsx',
+    'src/app/components/ChoiceSheet.tsx',
+    'src/app/components/RolesModal.tsx',
+    'src/app/locales/en_US.ts',
+    'src/app/components/roleLabels.ts',
+    'src/common/emailList.ts',
+    'src/app/screens/InviteSpectatorsScreen.tsx',
+    'src/app/screens/InvitationsWaiting.tsx',
+    'src/app/screens/ManagePlayers.tsx',
+    'src/app/screens/ParentOrganizations.tsx',
+    'src/app/components/BreakParentSheet.tsx',
+    'src/app/screens/useBreakParent.tsx',
     'src/app/screens/NotificationsScreen.tsx',
     'src/app/screens/PromoteExternalScreen.tsx',
     'src/app/components/DateRangePicker.tsx',
@@ -118,17 +145,20 @@ const paths = [...globSync('src/server/groups/**/*.ts')]
     'src/server/location/places.ts',
     'src/server/routes/pictures.ts',
     'src/server/routes/location.ts',
-    'src/app/platform/roughLocation.ts',
-    'src/app/platform/roughLocationNative.ts',
-    'src/app/platform/getRoughLocation.ts',
     'src/app/components/PhotoGrid.tsx',
-    'src/app/components/CreationCard.tsx',
-    'src/app/components/LocalityPicker.tsx'
+    'src/app/components/CreationCard.tsx'
   ])
 const uiSuites = [
+  'src/app/screens/LocationScreen.test.tsx',
+  'src/app/screens/TeamPage.test.tsx',
+  'src/app/screens/TeamSelectorScene.test.tsx',
+  'src/app/screens/NotificationsScreen.test.tsx',
+  'src/app/screens/GroupSettingsScreen.test.tsx',
+  'src/app/screens/settingsPeople.test.tsx',
+  'src/app/components/settingsPieces.test.tsx',
+  'src/app/components/pillGeometry.test.tsx',
+  'src/app/components/PillTabs.test.tsx',
   'src/app/components/PhotoGrid.test.tsx',
-  'src/app/components/LocalityPicker.test.tsx',
-  'src/app/platform/getRoughLocation.test.tsx',
   'src/app/components/VideoPoster.test.tsx',
   'src/app/screens/OnboardingScreen.test.tsx',
   'src/app/screens/groupCreation.test.tsx',
@@ -138,7 +168,6 @@ const uiSuites = [
   'src/app/screens/gameCreation.test.tsx',
   'src/app/screens/GameFormScreen.create.test.tsx',
   'src/app/screens/gameDraft.test.ts',
-  'src/app/screens/ManageScreen.test.tsx',
   'src/app/screens/AccountScreen.test.tsx',
   'src/app/screens/expandedStats.test.tsx',
   'src/app/components/RolesModal.test.tsx'
@@ -192,19 +221,15 @@ if (!reportOnly) {
   if (process.env.TS_CREATION_ARTIFACTS == null)
     throw new Error('Set TS_CREATION_ARTIFACTS for browser creation coverage')
   run('node', ['src/build.mjs'])
-  run('node', [
-    '-r',
-    'sucrase/register',
-    'src/app/creation.e2e.ts',
-    '--phase',
-    'M3'
-  ])
-  run('node', ['-r', 'sucrase/register', 'src/app/groupCreation.e2e.ts'])
-  run('node', ['-r', 'sucrase/register', 'src/app/gameCreation.e2e.ts'])
-  run('node', ['-r', 'sucrase/register', 'src/app/memberAdministration.e2e.ts'])
-  run('node', ['-r', 'sucrase/register', 'src/app/relationshipCorners.e2e.ts'])
-  run('node', ['-r', 'sucrase/register', 'src/app/reviewCreation.e2e.ts'])
-  run('node', ['-r', 'sucrase/register', 'src/app/creationUi.e2e.ts'])
+  for (const scenario of ['E2', 'E4', 'E8', 'E11', 'E14'])
+    run('node', [
+      '-r',
+      'sucrase/register',
+      'src/app/settingsCleanup.e2e.ts',
+      '--only',
+      scenario
+    ])
+  run('node', ['-r', 'sucrase/register', 'src/app/settingsPillSweep.e2e.ts'])
 }
 for (const file of readdirSync(temp)) {
   const location = resolve(temp, file)
@@ -229,6 +254,11 @@ run('node_modules/.bin/c8', [
   '--exclude-after-remap',
   ...paths
     .concat([
+      'src/app/components/iconCodepoints.ts',
+      'src/app/screens/PlaceholderTeamForm.tsx',
+      'src/server/schedule/pendingProjection.ts',
+      'src/common/errors.ts',
+      'src/server/serverConfig.ts',
       'src/common/api.ts',
       'src/server/access.ts',
       'src/server/schedule/scheduleGames.ts',
@@ -280,23 +310,16 @@ const merger = createRequire(import.meta.url)('istanbul-lib-coverage')
 const map = merger.createCoverageMap(
   JSON.parse(readFileSync(resolve(report, 'coverage-final.json'), 'utf8'))
 )
-map.merge(JSON.parse(readFileSync(resolve(report, 'browser.json'), 'utf8')))
-map.merge(
-  JSON.parse(readFileSync(resolve(report, 'groups-browser.json'), 'utf8'))
-)
-map.merge(
-  JSON.parse(readFileSync(resolve(report, 'games-browser.json'), 'utf8'))
-)
-map.merge(
-  JSON.parse(readFileSync(resolve(report, 'members-browser.json'), 'utf8'))
-)
-map.merge(
-  JSON.parse(readFileSync(resolve(report, 'corners-browser.json'), 'utf8'))
-)
-map.merge(
-  JSON.parse(readFileSync(resolve(report, 'review-browser.json'), 'utf8'))
-)
-map.merge(JSON.parse(readFileSync(resolve(report, 'ui-browser.json'), 'utf8')))
+for (const file of [
+  'settings-E2-browser.json',
+  'settings-E4-browser.json',
+  'settings-E8-browser.json',
+  'settings-E11-browser.json',
+  'settings-E14-browser.json',
+  'settings-sweep-browser.json'
+])
+  map.merge(JSON.parse(readFileSync(resolve(report, file), 'utf8')))
+
 writeFileSync(
   resolve(report, 'coverage-final.json'),
   JSON.stringify(map.toJSON())
@@ -333,6 +356,12 @@ const {
   lineReportFromCounts
 } = require('./changed-line-coverage.cjs')
 const changedRuntime = [
+  'src/app/components/iconCodepoints.ts',
+  'src/app/screens/PlaceholderTeamForm.tsx',
+  'src/server/schedule/pendingProjection.ts',
+  'src/common/errors.ts',
+  'src/server/serverConfig.ts',
+  'src/app/screens/TeamScreen.tsx',
   ...paths,
   'src/app/screens/HomeScreen.tsx',
   'src/app/components/AppHeader.tsx',
@@ -398,9 +427,17 @@ for (const file of changedRuntime)
 const changed = lineReportFromCounts(changes, counts, file =>
   changedRuntime.includes(file)
 )
-if (changed.total === 0 || !changed.pass)
+writeFileSync(
+  resolve(report, 'changed-lines.json'),
+  JSON.stringify(changed, null, 2)
+)
+const changedFailures = Object.entries(changed.files).filter(([, lines]) => {
+  const total = lines.covered.length + lines.uncovered.length
+  return total > 0 && lines.covered.length / total < 0.9
+})
+if (changed.total === 0 || !changed.pass || changedFailures.length > 0)
   throw new Error(
-    `Creation changed-line gate failed: ${JSON.stringify(changed)}`
+    `Creation changed-line gate failed: ${JSON.stringify({ ...changed, perFileFailures: changedFailures.map(([file]) => file) })}`
   )
 console.log(
   `Creation changed runtime coverage: ${changed.percent.toFixed(2)}% (${changed.covered}/${changed.total} lines)`

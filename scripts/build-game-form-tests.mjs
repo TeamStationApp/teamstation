@@ -6,6 +6,7 @@ import { webSettings } from './web-build-settings.mjs'
 
 const suites = [
   'src/app/screens/TeamSelectorScene.test.tsx',
+  'src/app/screens/TeamPage.test.tsx',
   'src/app/screens/gameDraft.test.ts',
   'src/app/screens/GameFormScreen.create.test.tsx',
   'src/app/screens/GameFormScreen.edit.test.tsx',

@@ -150,7 +150,7 @@ async function main(): Promise<void> {
     await contains(admin.page, 'Demo League A')
     await capture(admin.m, artifacts, 'league-after.png')
     await tap(admin.m, 'League settings')
-    await contains(admin.page, 'Save settings')
+    await contains(admin.page, 'Save name')
     const mobile = await make('web-refinements-mobile', 390, 844, 101)
     await contains(mobile.page, 'YOUR TEAMS')
     await capture(mobile.m, artifacts, 'mobile-nav-after.png')

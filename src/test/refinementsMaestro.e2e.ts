@@ -98,8 +98,11 @@ export async function fill(
   label: string,
   value: string
 ): Promise<void> {
-  await m.tapOn({ css: `input[aria-label="${label}"]`, timeout: 10000 })
-  const selector = `input[aria-label="${label}"]`
+  await m.tapOn({
+    css: `[aria-label="${label}"]:is(input, textarea)`,
+    timeout: 10000
+  })
+  const selector = `[aria-label="${label}"]:is(input, textarea)`
   const page = browserPages.get(m)
   if (page != null) {
     const current = await page.$eval(

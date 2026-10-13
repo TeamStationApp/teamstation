@@ -224,9 +224,11 @@ describe('scoring shell and exit', function () {
         await click('Exit Current Game')
         expect(currentRoute()).include({
           name: 'game',
-          gameId: 'g1',
-          tab: 'watch'
+          gameId: 'g1'
         })
+        expect(
+          document.querySelector('[aria-label="Info"][aria-selected="true"]')
+        ).not.equals(null)
         await clickTab('Videos')
         await clickTab('Schedule')
         expect(currentRoute()).deep.equals({ name: 'schedule', when })
@@ -265,11 +267,14 @@ describe('scoring shell and exit', function () {
     await render(<App />)
     await click('Open scoring menu')
     await click('Exit Current Game')
-    expect(currentRoute()).include({ name: 'game', gameId: 'g1', tab: 'watch' })
+    expect(currentRoute()).include({ name: 'game', gameId: 'g1' })
+    expect(
+      document.querySelector('[aria-label="Info"][aria-selected="true"]')
+    ).not.equals(null)
     await clickTab('Schedule')
     expect(currentRoute().name).equals('schedule')
     await click('Home')
-    expect(currentRoute()).include({ name: 'game', gameId: 'g1', tab: 'watch' })
+    expect(currentRoute()).include({ name: 'game', gameId: 'g1' })
   })
   it('has a visible failure exit, retries the load, and ignores a late response after unmount', async function () {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })

@@ -220,6 +220,7 @@ async function startupSmoke(): Promise<void> {
         sessionSecret: randomBytes(32).toString('hex'),
         mediaSecret: randomBytes(32).toString('hex'),
         live: { enabled: false },
+        googlePlaces: { apiKey: 'placeholder-key', baseUrl: objectOrigin },
         redis: {
           url: `redis://127.0.0.1:${redisPort}`,
           prefix: `${name}:`,

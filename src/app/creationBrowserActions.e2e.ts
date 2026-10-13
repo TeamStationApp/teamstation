@@ -64,12 +64,14 @@ export async function press(
     (label, role) => {
       const button = [
         ...document.querySelectorAll<HTMLElement>(`[role="${role}"]`)
-      ].find(
-        node =>
-          (node.hasAttribute('aria-label')
-            ? node.getAttribute('aria-label')
-            : node.textContent) === label
-      )
+      ]
+        .filter(
+          node =>
+            (node.hasAttribute('aria-label')
+              ? node.getAttribute('aria-label')
+              : node.textContent) === label
+        )
+        .at(-1)
       if (button == null) throw new Error('Missing requested action')
       button.click()
     },
@@ -82,34 +84,39 @@ export async function fill(
   label: string,
   value: string
 ): Promise<void> {
-  const selector = `input[aria-label="${label}"]`
+  const selector = `:is(input, textarea)[aria-label="${label}"]`
   await page.waitForSelector(selector)
-  await page.click(selector)
-  await page.$eval(selector, input => {
+  // Routed sheets can retain hidden inputs from the previous visit. Select the
+  // visible field, rather than the first matching node left in the document.
+  const fields = await page.$$(selector)
+  let field = fields.at(-1)
+  for (const candidate of fields)
+    if (await candidate.isVisible()) field = candidate
+  if (field == null) throw new Error(`Missing visible field: ${label}`)
+  await page.waitForFunction(
+    input => !(input as HTMLInputElement).disabled,
+    {},
+    field
+  )
+  await field.evaluate(input => {
     ;(input as HTMLInputElement).focus()
     ;(input as HTMLInputElement).select()
   })
   await page.keyboard.press('Backspace')
   await page.waitForFunction(
-    selector => {
-      const input = document.querySelector<HTMLInputElement>(selector)
-      return input !== null && input.value === ''
-    },
+    input => (input as HTMLInputElement).value === '',
     {},
-    selector
+    field
   )
   // Paste one value through the browser input event so React receives one
   // complete edit even while V8 coverage slows successive key events.
-  await page.focus(selector)
+  await field.focus()
   await page.keyboard.sendCharacter(value)
   await page
     .waitForFunction(
-      (selector, value) => {
-        const input = document.querySelector<HTMLInputElement>(selector)
-        return input !== null && input.value === value
-      },
+      (input, value) => (input as HTMLInputElement).value === value,
       {},
-      selector,
+      field,
       value
     )
     .catch(async (error: unknown) => {
