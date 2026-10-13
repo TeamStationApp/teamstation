@@ -1,4 +1,6 @@
-import { asArray, asObject, asString } from 'cleaners'
+import { asArray, asObject, asOptional, asString } from 'cleaners'
+
+import { asLiteral } from './asLiteral'
 
 export type EventPlaceKind = 'venue' | 'address'
 export const asEventPlace = asObject({
@@ -7,7 +9,11 @@ export const asEventPlace = asObject({
   address: asString
 })
 export type EventPlace = ReturnType<typeof asEventPlace>
-export const asEventPlaces = asObject({ places: asArray(asEventPlace) })
+export const asEventPlaces = asObject({
+  places: asArray(asEventPlace),
+  provider: asOptional(asLiteral('google', 'openstreetmap'), 'openstreetmap'),
+  attribution: asOptional(asString, '© OpenStreetMap contributors')
+})
 
 /** An address only supplies a name when the draft has none. */
 export function selectedEventPlace(

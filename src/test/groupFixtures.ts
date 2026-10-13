@@ -4,6 +4,7 @@ import type { Actor } from '../server/auth/sessions'
 import { createSession } from '../server/auth/sessions'
 import type { Clock } from '../server/groups/requests'
 import type { GooglePlaces } from '../server/location/googlePlaces'
+import type { eventInfoRoutes } from '../server/routes/eventInfo'
 import type { AccountHarness, MountExtra } from './accountHarness'
 import { creationHarness } from './creationHarness'
 
@@ -39,7 +40,8 @@ export async function groupFixture(
   webRoot?: string,
   bindHost?: string,
   mountExtra?: MountExtra,
-  cityLookup?: GooglePlaces
+  cityLookup?: GooglePlaces,
+  eventOptions: Parameters<typeof eventInfoRoutes>[2] = {}
 ): Promise<GroupFixture> {
   // Public readers and sign-in use the real clock. Start the controllable
   // fixture clock alongside it so newly created requests are not already expired.
@@ -51,7 +53,8 @@ export async function groupFixture(
     clock,
     bindHost,
     mountExtra,
-    cityLookup
+    cityLookup,
+    eventOptions
   )
   try {
     await h.db

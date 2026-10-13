@@ -1,8 +1,10 @@
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { googlePlacesStub } from '../../test/googlePlacesStub'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { eventGeocoder, photonCoordinates } from './eventGeocoder'
+import { googlePlaces } from './googlePlaces'
 
 describe('event address geocoding', function () {
   this.timeout(60000)
@@ -122,5 +124,97 @@ describe('event address geocoding', function () {
         row => row.status === 'rejected' && String(row.reason).includes('busy')
       )
     ).equals(true)
+  })
+  it('queries Google before old fallback cache and never stores Google coordinates there', async () => {
+    const stub = await googlePlacesStub()
+    try {
+      await f.h.db
+        .insertInto('event_geocodes')
+        .values({ address: '1 demo way', latitude: 1, longitude: 2 })
+        .execute()
+      const geocoder = eventGeocoder(f.h.db, {
+        googlePlaces: googlePlaces({
+          apiKey: 'placeholder-key',
+          baseUrl: stub.baseUrl
+        })
+      })
+      expect(geocoder.usesGoogle).equals(true)
+      expect(await geocoder.lookup('1 Demo Way')).deep.equals({
+        latitude: 34,
+        longitude: 12
+      })
+      await geocoder.lookup('1 Demo Way')
+      expect(stub.calls).length(2)
+      expect(
+        await f.h.db
+          .selectFrom('event_geocodes')
+          .select(['latitude', 'longitude'])
+          .executeTakeFirst()
+      ).deep.equals({ latitude: 1, longitude: 2 })
+      stub.controls.empty = true
+      try {
+        await geocoder.lookup('1 Demo Way')
+        expect.fail('no match cannot use fallback')
+      } catch (error) {
+        expect(error).property('code', 'notFound')
+      }
+      stub.controls.empty = false
+      stub.controls.fail = true
+      expect(await geocoder.lookup('1 Demo Way')).deep.equals({
+        latitude: 1,
+        longitude: 2
+      })
+    } finally {
+      await stub.close()
+    }
+  })
+  it('coalesces Google work, bounds concurrency and recovers through the fallback provider', async () => {
+    const stub = await googlePlacesStub()
+    let fallbackCalls = 0
+    try {
+      const geocoder = eventGeocoder(f.h.db, {
+        googlePlaces: googlePlaces({
+          apiKey: 'placeholder-key',
+          baseUrl: stub.baseUrl,
+          timeoutMs: 1000
+        }),
+        spacingMs: 0,
+        fetch: async () => {
+          fallbackCalls++
+          return new Response(JSON.stringify(result))
+        }
+      })
+      stub.controls.delay = 10
+      const answers = await Promise.all([
+        geocoder.lookup('Same address'),
+        geocoder.lookup('Same address')
+      ])
+      expect(answers[0]).deep.equals(answers[1])
+      expect(stub.calls).length(1)
+      stub.controls.fail = true
+      stub.controls.delay = 0
+      expect(await geocoder.lookup('Fallback address')).deep.equals({
+        latitude: 34,
+        longitude: 12
+      })
+      expect(fallbackCalls).equals(1)
+      stub.controls.fail = false
+      stub.controls.delay = 2000
+      const outcomes = await Promise.allSettled(
+        Array.from(
+          { length: 10 },
+          async (_, i) => await geocoder.lookup(`Bounded address ${i}`)
+        )
+      )
+      expect(outcomes.filter(row => row.status === 'rejected')).length(2)
+      stub.controls.delay = 0
+      expect(await geocoder.lookup('Fallback address')).deep.equals({
+        latitude: 34,
+        longitude: 12
+      })
+      expect(fallbackCalls).equals(9)
+    } finally {
+      await stub.close()
+    }
   })
 })

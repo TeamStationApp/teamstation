@@ -39,6 +39,17 @@ const untracked = git(['ls-files', '--others', '--exclude-standard'])
 // This regression gate measures the event-info paths exercised by these suites.
 const ownedPaths = new Set([
   'src/server/index.ts',
+  'src/server/routes/eventInfo.ts',
+  'src/server/location/googleLookupLimits.ts',
+  'src/server/location/eventGeocoder.ts',
+  'src/server/location/googlePlaces.ts',
+  'src/server/location/coordinateTimezone.ts',
+  'src/app/components/EventVenueFields.tsx',
+  'src/app/components/googleMapDocument.ts',
+  'src/app/components/EventMap.tsx',
+  'src/app/components/EventMap.native.tsx',
+  'src/app/components/EventMap.android.tsx',
+  'src/common/eventPlaces.ts',
   'src/app/screens/EventSettingsScreen.tsx',
   'src/app/screens/EventInfoTab.tsx',
   'src/app/screens/EventDetailsForm.tsx',
@@ -60,6 +71,11 @@ const paths = [
     (phase !== 'server' || !path.startsWith('src/app/'))
 )
 const serverSuites = [
+  'src/server/location/coordinateTimezone.test.ts',
+  'src/server/location/googleCityTimezone.test.ts',
+  'src/server/routes/googleEventLookup.test.ts',
+  'src/server/location/googlePlaces.test.ts',
+  'src/app/components/googleMapDocument.test.ts',
   'src/test/smokeRecorder.test.ts',
   'src/common/eventInfo.test.ts',
   'src/common/eventDetails.test.ts',
