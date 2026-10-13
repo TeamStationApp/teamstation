@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { TeamStationClient } from '../../common/api'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import { locationRoutes } from './location'
 
@@ -9,11 +10,61 @@ describe('locality HTTP boundary', function () {
   let h: AccountHarness
   before(async () => {
     h = await accountHarness(undefined, app => {
-      app.use('/api/v1', locationRoutes())
+      app.use(
+        '/api/v1',
+        locationRoutes({
+          search: async (query, kind) => [
+            {
+              id: 'demo',
+              name: kind === 'venue' ? 'Demo Park' : null,
+              address: `${query}, Demo City`
+            }
+          ]
+        })
+      )
     })
   })
   after(async () => {
     await h?.close()
+  })
+  it('keeps city search public while authorizing mapping searches and validating parameters', async () => {
+    expect(
+      (
+        await h.request(
+          'GET',
+          '/locations?kind=venue&query=Demo',
+          undefined,
+          null
+        )
+      ).status
+    ).equals(401)
+    const response = await h.request('GET', '/locations?kind=venue&query=Demo')
+    expect(response.status).equals(200)
+    expect(await response.json()).deep.equals({
+      places: [{ id: 'demo', name: 'Demo Park', address: 'Demo, Demo City' }],
+      attribution: '© OpenStreetMap contributors'
+    })
+    const client = new TeamStationClient({
+      baseUrl: h.origin + '/api/v1',
+      token: h.tokens.get(101)
+    })
+    expect(await client.eventPlaces('Demo', 'venue')).deep.equals([
+      { id: 'demo', name: 'Demo Park', address: 'Demo, Demo City' }
+    ])
+    expect(
+      (
+        await (
+          await h.request('GET', '/locations?kind=address&query=1%20Demo%20Way')
+        ).json()
+      ).places[0].name
+    ).equals(null)
+    for (const path of [
+      '/locations?kind=bad&query=Demo',
+      '/locations?kind=venue',
+      '/locations?kind=venue&kind=address&query=Demo',
+      '/locations?kind=venue&query=' + 'x'.repeat(121)
+    ])
+      expect((await h.request('GET', path)).status).equals(400)
   })
   it('searches public cities and does not persist or serialize submitted coordinates', async () => {
     const found = await h.request(

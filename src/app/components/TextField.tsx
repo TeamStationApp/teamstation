@@ -18,6 +18,10 @@ export interface TextFieldProps {
   action?: { label: string; onPress: () => void }
   error?: string
   onSubmitEditing?: () => void
+  onFocus?: () => void
+  disabled?: boolean
+  multiline?: boolean
+  maxLength?: number
 }
 
 /**
@@ -69,6 +73,9 @@ export function TextField(props: TextFieldProps): React.ReactElement {
         <TextInput
           accessibilityLabel={label}
           value={value}
+          editable={props.disabled !== true}
+          multiline={props.multiline}
+          maxLength={props.maxLength}
           onChangeText={onChangeText}
           placeholder={placeholder}
           placeholderTextColor={theme.placeholderTextColor}
@@ -96,12 +103,18 @@ export function TextField(props: TextFieldProps): React.ReactElement {
           onSubmitEditing={onSubmitEditing}
           onFocus={() => {
             setFocused(true)
+            props.onFocus?.()
           }}
           onBlur={() => {
             setFocused(false)
           }}
           style={[
             styles.input,
+            props.multiline === true && {
+              minHeight: theme.rem(6),
+              paddingVertical: theme.rem(0.75),
+              textAlignVertical: 'top'
+            },
             value !== '' && styles.inputWithClear,
             focused && styles.inputFocused,
             error != null && styles.inputError
@@ -111,6 +124,7 @@ export function TextField(props: TextFieldProps): React.ReactElement {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Clear ${label}`}
+            disabled={props.disabled}
             onPress={() => {
               onChangeText('')
             }}

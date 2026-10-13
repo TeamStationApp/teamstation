@@ -2,14 +2,52 @@ import { Router } from 'express'
 
 import { badRequest } from '../../common/errors'
 import {
+  EVENT_PLACE_ATTRIBUTION,
+  type EventPlaceSearch,
+  eventPlaceSearch
+} from '../location/eventPlaces'
+import {
   findPlaces,
   nearestPlace,
   placeAttribution,
   placeSnapshot
 } from '../location/places'
+import { requireActor } from '../middleware/withAuth'
+import { withAsync } from '../middleware/withErrors'
 
-export function locationRoutes(): Router {
+export function locationRoutes(
+  search: EventPlaceSearch = eventPlaceSearch()
+): Router {
   const router = Router()
+  router.get(
+    '/locations',
+    (req, res, next) => {
+      if (req.query.kind === undefined) {
+        next()
+        return
+      }
+      requireActor(req, res, next)
+    },
+    withAsync(async (req, res, next) => {
+      if (req.query.kind === undefined) {
+        next()
+        return
+      }
+      const { query, kind } = req.query
+      if (
+        typeof query !== 'string' ||
+        query.length > 120 ||
+        (kind !== 'venue' && kind !== 'address')
+      )
+        throw badRequest(
+          'Choose venue or address and enter at most 120 characters'
+        )
+      res.set('Cache-Control', 'no-store').json({
+        places: await search.search(query, kind),
+        attribution: EVENT_PLACE_ATTRIBUTION
+      })
+    })
+  )
   router.get('/locations', (req, res) => {
     const query = req.query.query
     if (typeof query !== 'string' || query.length > 120)

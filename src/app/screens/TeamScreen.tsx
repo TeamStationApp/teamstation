@@ -26,6 +26,7 @@ import {
   PillTabs,
   PinnedContent,
   PinnedSpacer,
+  RsvpScheduleRow,
   ScheduleRow,
   Screen,
   SectionHeader,
@@ -56,6 +57,7 @@ import {
 } from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
 import { PublicTeamContent } from './PublicTeamContent'
+import { ScheduleRsvpControl } from './ScheduleRsvpControl'
 import {
   battingColumns,
   pitchingColumns,
@@ -474,7 +476,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                     }
                   >
                     {nonMemberView ? (
-                      // A non-member's only way to the videos' thumbnails:
+                      // A visitor opens recordings from the schedule;
                       // the library itself is kept for members.
                       <GameCard
                         game={game}
@@ -485,6 +487,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                       />
                     ) : (
                       <ScheduleCard
+                        client={client}
                         game={game}
                         teamId={team.id}
                         onOpen={onOpenGame}
@@ -616,31 +619,54 @@ function GameCard(props: {
 
   return (
     <Card>
-      <GameRow
-        first={lines.first}
-        second={lines.second}
-        detail={detail}
-        venue={game.venue}
-        posterUrl={game.posterUrl}
-        length={game.durationSec == null ? undefined : clock(game.durationSec)}
-        badgeLabel={
-          game.pendingApproval
-            ? 'Pending approval'
-            : game.status === 'cancelled'
-              ? 'Canceled'
-              : result?.label
-        }
-        badgeTone={
-          game.pendingApproval ? 'neutral' : (result?.tone ?? 'neutral')
-        }
-        onPress={
-          options == null
-            ? undefined
-            : () => {
-                onOpen(game.id, `${lines.first} ${lines.second}`, options)
-              }
-        }
-      />
+      {mode === 'schedule' ? (
+        <ScheduleRow
+          first={game.eventKind === 'event' ? lines.first : lines.second}
+          startAt={game.startAt}
+          venue={game.venue}
+          status={game.status}
+          awayScore={game.awayScore}
+          homeScore={game.homeScore}
+          videoCount={game.videoCount}
+          result={result}
+          pendingApproval={game.pendingApproval}
+          onPress={
+            options == null
+              ? undefined
+              : () => {
+                  onOpen(game.id, `${lines.first} ${lines.second}`, options)
+                }
+          }
+        />
+      ) : (
+        <GameRow
+          first={lines.first}
+          second={lines.second}
+          detail={detail}
+          venue={game.venue}
+          posterUrl={game.posterUrl}
+          length={
+            game.durationSec == null ? undefined : clock(game.durationSec)
+          }
+          badgeLabel={
+            game.pendingApproval
+              ? 'Pending approval'
+              : game.status === 'cancelled'
+                ? 'Canceled'
+                : result?.label
+          }
+          badgeTone={
+            game.pendingApproval ? 'neutral' : (result?.tone ?? 'neutral')
+          }
+          onPress={
+            options == null
+              ? undefined
+              : () => {
+                  onOpen(game.id, `${lines.first} ${lines.second}`, options)
+                }
+          }
+        />
+      )}
       {game.status === 'cancelled' &&
         game.cancellationReason === 'withdrawal' && (
           <Text style={styles.muted}>
@@ -662,36 +688,56 @@ function GameCard(props: {
  * says only who it is against, and where — `@ Owls`, `vs Hawks`.
  */
 function ScheduleCard(props: {
+  client: TeamStationClient
   game: GameSummary
   teamId: string
   onOpen: TeamScreenProps['onOpenGame']
 }): React.ReactElement {
-  const { game, teamId, onOpen } = props
+  const { client, game, teamId, onOpen } = props
   const lines = matchupLines(game, teamId)
   // A pending game opens its proposal, and only for those allowed to see it.
   const options = gameListOptions(game, 'schedule')
+  const rowProps = {
+    first: game.eventKind === 'event' ? lines.first : lines.second,
+    startAt: game.startAt,
+    venue: game.venue,
+    status: game.status,
+    awayScore: game.awayScore,
+    homeScore: game.homeScore,
+    videoCount: game.videoCount,
+    result: resultFor(game, teamId),
+    pendingApproval: game.pendingApproval,
+    cancellationReason: game.cancellationReason,
+    withdrawnByTeamName: game.withdrawnByTeamName,
+    onPress:
+      options == null
+        ? undefined
+        : () => {
+            onOpen(game.id, `${lines.first} ${lines.second}`, options)
+          }
+  }
   return (
     <Card>
-      <ScheduleRow
-        first={lines.second}
-        startAt={game.startAt}
-        venue={game.venue}
-        status={game.status}
-        awayScore={game.awayScore}
-        homeScore={game.homeScore}
-        videoCount={game.videoCount}
-        result={resultFor(game, teamId)}
-        pendingApproval={game.pendingApproval}
-        cancellationReason={game.cancellationReason}
-        withdrawnByTeamName={game.withdrawnByTeamName}
-        onPress={
-          options == null
-            ? undefined
-            : () => {
-                onOpen(game.id, `${lines.first} ${lines.second}`, options)
+      {game.playerRsvps == null ? (
+        <ScheduleRow {...rowProps} />
+      ) : (
+        <RsvpScheduleRow
+          {...rowProps}
+          footer={
+            <ScheduleRsvpControl
+              key={`${teamId}/${game.id}`}
+              client={client}
+              game={game}
+              teamId={teamId}
+              label={
+                game.eventKind === 'event'
+                  ? (game.title ?? 'Event')
+                  : lines.second
               }
-        }
-      />
+            />
+          }
+        />
+      )}
     </Card>
   )
 }

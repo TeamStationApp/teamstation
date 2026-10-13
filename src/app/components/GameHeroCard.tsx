@@ -10,6 +10,7 @@ import { useBreakpoint } from './useBreakpoint'
 import { VideoPoster } from './VideoPoster'
 
 export interface GameHeroCardProps {
+  testID?: string
   awayName: string
   homeName: string
   awayScore: number | null
@@ -60,6 +61,8 @@ export interface GameHeroCardProps {
   } | null
   /** `WED, MAY 13`, on its own line above the ground. */
   date?: string
+  dateNumberOfLines?: number
+  dateLines?: readonly [string, string]
   /** `VALE FIELD`, under the date, where we know it. */
   venue?: string
   /** `12–3`, under each team's name. */
@@ -126,6 +129,8 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     compact = false,
     teamStats,
     date,
+    dateNumberOfLines = 1,
+    dateLines,
     venue,
     awayRecord,
     homeRecord,
@@ -144,7 +149,9 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
   const styles = getStyles(useTheme())
   const narrow = useBreakpoint() === 'phone'
   const hasMeta =
-    (date != null && date !== '') || (venue != null && venue !== '')
+    dateLines != null ||
+    (date != null && date !== '') ||
+    (venue != null && venue !== '')
 
   const line =
     teamStats == null ||
@@ -159,7 +166,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     // A light card, not the dark panel: the panel was drawn for a screen with
     // nothing else on it, and against a pale background it reads as a hole.
     return (
-      <View style={styles.card}>
+      <View testID={props.testID} style={styles.card}>
         {hasMeta && (
           <View style={styles.meta}>
             {/*
@@ -169,11 +176,27 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
               half somebody is actually looking for.
             */}
             <View style={styles.metaLines}>
-              {date != null && date !== '' && (
-                <Text style={styles.metaText} numberOfLines={1}>
-                  {date.toUpperCase()}
-                </Text>
-              )}
+              {dateLines != null
+                ? dateLines.map((line, index) => (
+                    <Text
+                      key={index}
+                      testID={
+                        index === 0 ? 'event-hero-date' : 'event-hero-time'
+                      }
+                      style={styles.eventDate}
+                    >
+                      {line}
+                    </Text>
+                  ))
+                : date != null &&
+                  date !== '' && (
+                    <Text
+                      style={styles.metaText}
+                      numberOfLines={dateNumberOfLines}
+                    >
+                      {date.toUpperCase()}
+                    </Text>
+                  )}
               {venue != null && venue !== '' && (
                 <Text style={styles.metaVenue} numberOfLines={1}>
                   {venue.toUpperCase()}
@@ -182,11 +205,11 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             </View>
             {live ? (
               <LivePill inline />
-            ) : (
+            ) : status !== '' ? (
               <View style={styles.statusChip}>
                 <Text style={styles.statusChipText}>{status}</Text>
               </View>
-            )}
+            ) : null}
           </View>
         )}
         <View style={[styles.plain, narrow && styles.plainStacked]}>
@@ -221,7 +244,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
   }
 
   return (
-    <View style={styles.card}>
+    <View testID={props.testID} style={styles.card}>
       <VideoPoster uri={posterUrl} videoUrl={videoUrl} size="hero">
         <View style={styles.over}>
           <Text style={styles.team} numberOfLines={1}>
@@ -457,6 +480,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.6875),
     fontWeight: '700',
     letterSpacing: theme.rem(0.0625)
+  },
+  eventDate: {
+    color: '#000000',
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.6875 * 1.25),
+    lineHeight: theme.rem(0.6875 * 1.25 * 1.4),
+    fontWeight: '700'
   },
   statusChip: {
     backgroundColor: theme.containerBackgroundColor,

@@ -162,7 +162,7 @@ describe('a team’s schedule', function () {
     ])
   })
 
-  it('plays a game that has a video when it is opened', async function () {
+  it('opens the automatic event section from the schedule even when a recording exists', async function () {
     const opened = await mount()
     const first = rows()[0]
     await act(async () => {
@@ -172,7 +172,7 @@ describe('a team’s schedule', function () {
     expect(opened[0]).deep.equals({
       gameId: 'gam_mudcats01',
       title: 'Mudcats vs Cranes',
-      options: { autoPlay: true }
+      options: { autoPlay: false }
     })
   })
 

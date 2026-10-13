@@ -133,7 +133,7 @@ export type Route =
   | {
       name: 'game'
       gameId: string
-      tab?: 'boxScore' | 'watch' | 'score'
+      tab?: 'info' | 'boxScore' | 'watch' | 'score'
       videoId?: string
       /** Seconds into the video. The link somebody pastes into a group chat. */
       at?: number
@@ -443,7 +443,14 @@ export function parseRoute(path: string, search = ''): Route {
             ? 'boxScore'
             : query.get('tab') === 'score'
               ? 'score'
-              : 'watch',
+              : query.get('tab') === 'info'
+                ? 'info'
+                : query.get('tab') === 'watch' ||
+                    query.has('video') ||
+                    query.has('t') ||
+                    angles.length > 0
+                  ? 'watch'
+                  : undefined,
         videoId: query.get('video') ?? undefined,
         at: Number.isFinite(at) && at > 0 ? at : undefined,
         ...(angles.length > 0 ? { angles } : {}),
@@ -583,7 +590,14 @@ export function routePath(route: Route): string {
     case 'game': {
       if (route.tab === 'score') return `/games/${route.gameId}/score-game`
       const query = new URLSearchParams()
-      if (route.tab === 'boxScore') query.set('tab', 'boxScore')
+      if (
+        route.tab != null &&
+        (route.tab !== 'watch' ||
+          (route.videoId == null &&
+            route.at == null &&
+            (route.angles?.length ?? 0) === 0))
+      )
+        query.set('tab', route.tab)
       if (route.videoId != null) query.set('video', route.videoId)
       if (route.at != null) query.set('t', String(Math.round(route.at)))
       if (route.angles != null && route.angles.length > 0) {

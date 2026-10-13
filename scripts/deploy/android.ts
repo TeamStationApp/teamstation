@@ -109,6 +109,9 @@ export async function android(context: BuildContext): Promise<BuiltPackage> {
   writeFileSync(init, androidOverride, { mode: 0o600 })
   const env = {
     ...buildEnvironment(context),
+    ...(context.target.app === 'app.teamstation.app'
+      ? { GOOGLE_MAPS_ANDROID_API_KEY: process.env.GOOGLE_MAPS_ANDROID_API_KEY }
+      : {}),
     GRADLE_USER_HOME: path.join(directory, '.deploy', 'gradle'),
     DEPLOY_BUILD_NUMBER: String(context.buildNumber),
     DEPLOY_VERSION: context.version,

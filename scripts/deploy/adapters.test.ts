@@ -401,6 +401,21 @@ describe('Native build and signing adapters', () => {
   })
   it('builds Groovy and Kotlin APKs using private signing and checks the finished identity', async () => {
     context.target = target(app, 'android')
+    const beforeMapsKey = process.env.GOOGLE_MAPS_ANDROID_API_KEY
+    process.env.GOOGLE_MAPS_ANDROID_API_KEY = 'example-android-display-key'
+    try {
+      await android(context)
+      assert.equal(
+        calls.find(c => c.args.includes(':app:assembleRelease'))?.env
+          ?.GOOGLE_MAPS_ANDROID_API_KEY,
+        'example-android-display-key'
+      )
+    } finally {
+      if (beforeMapsKey === undefined)
+        delete process.env.GOOGLE_MAPS_ANDROID_API_KEY
+      else process.env.GOOGLE_MAPS_ANDROID_API_KEY = beforeMapsKey
+    }
+    calls = []
     const result = await android(context)
     assert(result.file.endsWith('.apk'))
     assert.equal(result.buildNumber, '26093004')

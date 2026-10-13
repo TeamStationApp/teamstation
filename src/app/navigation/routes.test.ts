@@ -228,7 +228,7 @@ describe('addresses', function () {
     expect(parseRoute('/games/gam_1', 'audio=b&zoom=c')).deep.equals({
       name: 'game',
       gameId: 'gam_1',
-      tab: 'watch',
+      tab: undefined,
       videoId: undefined,
       at: undefined
     })
@@ -317,7 +317,7 @@ describe('addresses', function () {
       routePath({ name: 'game', gameId: 'gam_1', tab: 'boxScore' })
     ).equals('/games/gam_1?tab=boxScore')
     expect(routePath({ name: 'game', gameId: 'gam_1', tab: 'watch' })).equals(
-      '/games/gam_1'
+      '/games/gam_1?tab=watch'
     )
     expect(parseRoute('/games/gam_1', '?tab=boxScore')).deep.equals({
       name: 'game',

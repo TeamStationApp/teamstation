@@ -3,7 +3,7 @@ import { Text, View } from 'react-native'
 
 import { localityLabel } from '../../common/locality'
 import type { GroupDetail } from '../../common/publicGroups'
-import { Card, SectionHeader } from '../components'
+import { Card, ScheduleRow, SectionHeader } from '../components'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 /**
@@ -35,28 +35,19 @@ export function PublicTeamContent({
         )}
         {detail.games.map(game => (
           <Card key={game.id} style={styles.card}>
-            <Text style={styles.name}>
-              {game.awayTeam.name} at {game.homeTeam.name}
-            </Text>
-            <Text style={styles.hint}>
-              {new Date(game.startAt).toLocaleString()}
-              {game.venue == null ? '' : ` · ${game.venue}`}
-            </Text>
-            <Text style={styles.hint}>
-              {game.pendingApproval
-                ? 'Pending approval'
-                : game.status === 'cancelled'
-                  ? game.cancellationReason === 'withdrawal'
-                    ? `Canceled — ${game.withdrawnByTeamName ?? 'A team'} withdrew`
-                    : 'Canceled'
-                  : game.status}
-              {!game.pendingApproval &&
-              game.status !== 'cancelled' &&
-              game.homeScore != null &&
-              game.awayScore != null
-                ? ` · ${game.awayScore}–${game.homeScore}`
-                : ''}
-            </Text>
+            <ScheduleRow
+              first={game.awayTeam.name}
+              second={`at ${game.homeTeam.name}`}
+              startAt={game.startAt}
+              venue={game.venue}
+              status={game.status}
+              pendingApproval={game.pendingApproval}
+              cancellationReason={game.cancellationReason}
+              withdrawnByTeamName={game.withdrawnByTeamName}
+              awayScore={game.awayScore}
+              homeScore={game.homeScore}
+              videoCount={0}
+            />
           </Card>
         ))}
       </View>

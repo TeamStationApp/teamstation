@@ -23,6 +23,8 @@ import { asOAuthConfig } from './oauth/config'
 export const asServerConfig = asObject({
   oauth: asOptional(asOAuthConfig),
   buildsUrl: asOptional(asHttpsUrl),
+  /** Browser-restricted display key; never a server or Android credential. */
+  googleMaps: asOptional(asObject({ webApiKey: asString })),
   /** Where the API listens. */
   listenHost: asOptional(asString, '127.0.0.1'),
   listenPort: asOptional(asNumber, 9100),

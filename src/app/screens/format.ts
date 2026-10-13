@@ -72,19 +72,21 @@ export function shortTime(iso: string | null): string {
 }
 
 /**
- * The date on a schedule row: a short month over a two-digit day, and the
- * weekday and time on their own line. Always en-US, so a phone set to
+ * The date column and time on a schedule row. Always en-US, so a phone set to
  * another language still reads `Oct` and `4:45 PM`.
  */
 export function scheduleDate(iso: string | null): {
   month: string
   day: string
+  weekday: string
+  time: string
   when: string
 } {
-  if (iso == null) return { month: '\u2014', day: '', when: '' }
+  if (iso == null)
+    return { month: '\u2014', day: '', weekday: '', time: '', when: '' }
   const when = new Date(iso)
   if (Number.isNaN(when.getTime()))
-    return { month: '\u2014', day: '', when: '' }
+    return { month: '\u2014', day: '', weekday: '', time: '', when: '' }
   const weekday = when.toLocaleDateString('en-US', { weekday: 'short' })
   const time = when.toLocaleTimeString('en-US', {
     hour: 'numeric',
@@ -93,6 +95,8 @@ export function scheduleDate(iso: string | null): {
   return {
     month: when.toLocaleDateString('en-US', { month: 'short' }),
     day: when.toLocaleDateString('en-US', { day: '2-digit' }),
+    weekday,
+    time,
     when: `${weekday} \u00b7 ${time}`
   }
 }
@@ -192,9 +196,13 @@ export function matchupLines(
     awayTeamId: string
     homeTeamName: string
     awayTeamName: string
+    eventKind?: 'game' | 'event'
+    title?: string | null
   },
   fromTeamId?: string
 ): { first: string; second: string } {
+  if (game.eventKind === 'event')
+    return { first: game.title ?? 'Team event', second: '' }
   if (fromTeamId === game.homeTeamId) {
     return { first: game.homeTeamName, second: `vs ${game.awayTeamName}` }
   }

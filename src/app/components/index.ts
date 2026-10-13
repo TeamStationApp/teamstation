@@ -35,6 +35,7 @@ export {
 } from './GameHeroCard'
 export { GameRow, type GameRowProps } from './GameRow'
 export { ScheduleRow, type ScheduleRowProps } from './ScheduleRow'
+export { RsvpScheduleRow, type RsvpScheduleRowProps } from './RsvpScheduleRow'
 export { SideCamera } from './SideCamera'
 export { Icon, type IconName } from './Icon'
 export { InvitePanel, type InvitePanelProps } from './InvitePanel'

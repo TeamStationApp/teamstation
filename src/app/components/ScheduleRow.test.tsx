@@ -77,7 +77,17 @@ describe('ScheduleRow', function () {
     expect(container.querySelector('img')).equals(null)
     expect(text(container)).includes(dated.month)
     expect(text(container)).includes(dated.day)
-    expect(text(container)).includes(dated.when)
+    expect(text(container)).includes(dated.time)
+    const calendar = container.querySelector('[data-testid="schedule-date"]')!
+    expect(calendar.textContent).equals(
+      `${dated.weekday}${dated.month}${dated.day}`
+    )
+    expect(calendar.children[1].getAttribute('data-testid')).equals(
+      'schedule-date-separator'
+    )
+    expect(
+      container.querySelector('[data-testid="schedule-details"]')!.textContent
+    ).not.includes(dated.weekday)
     expect(text(container)).includes('4–0')
     expect(container.querySelector('[aria-label="Video"]')).not.equals(null)
   })

@@ -7,6 +7,11 @@ import { TeamStationClient } from '../../common/api'
 import { asGameScheduling, type GameProposal } from '../../common/gameApprovals'
 import type { CreateGroup } from '../../common/groupCreation'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
+import {
+  chooseSchedule,
+  pressSchedule,
+  typeSchedule
+} from '../../test/eventScheduleDom'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
   type GameSettingsResult,
@@ -14,11 +19,7 @@ import {
 } from './GameSettingsScreen'
 
 let root: Root | undefined
-afterEach(async () => {
-  await act(async () => root?.unmount())
-  root = undefined
-  document.body.replaceChildren()
-})
+
 async function settle(milliseconds = 300): Promise<void> {
   await act(async () => {
     await new Promise(resolve => setTimeout(resolve, milliseconds))
@@ -159,6 +160,19 @@ async function press(label: string): Promise<void> {
   await settle(0)
 }
 async function fill(label: string, value: string): Promise<void> {
+  if (
+    [
+      'Date',
+      'End date',
+      'Time',
+      'Start time',
+      'End time',
+      'Time zone'
+    ].includes(label)
+  ) {
+    await chooseSchedule(label, value)
+    return
+  }
   const input = document.querySelector<HTMLInputElement>(
     `input[aria-label="${label}"]`
   )
@@ -173,6 +187,11 @@ async function fill(label: string, value: string): Promise<void> {
 }
 
 describe('separate game settings drafts and consent labels', () => {
+  afterEach(async () => {
+    await act(async () => root?.unmount())
+    root = undefined
+    document.body.replaceChildren()
+  })
   for (const status of ['declined', 'expired', 'withdrawn', 'superseded'])
     it(`keeps the draft and refuses success feedback when a lost-response retry finds its proposal ${status}`, async () => {
       const f = fixture([home.id])
@@ -188,7 +207,7 @@ describe('separate game settings drafts and consent labels', () => {
         }
       }
       await mount(f)
-      await fill('Venue (optional)', 'Demo Retry Field')
+      await fill('Venue name (optional)', 'Demo Retry Field')
       await press('Send Game Proposal')
       await press('Send Game Proposal')
       expect(f.sent[0].idempotencyKey).equals(f.sent[1].idempotencyKey)
@@ -196,7 +215,7 @@ describe('separate game settings drafts and consent labels', () => {
       expect(document.body.textContent).includes('This proposal is closed.')
       expect(
         document.querySelector<HTMLInputElement>(
-          'input[aria-label="Venue (optional)"]'
+          'input[aria-label="Venue name (optional)"]'
         )!.value
       ).equals('Demo Retry Field')
     })
@@ -334,7 +353,7 @@ describe('separate game settings drafts and consent labels', () => {
       f.withdrawn.push(teamId)
     }
     await mount(f)
-    await fill('Venue (optional)', 'Unsaved Field')
+    await fill('Venue name (optional)', 'Unsaved Field')
     await press('Withdraw Demo Hawks from game')
     await press('Confirm withdrawal')
     expect(document.body.textContent).includes('Withdrawal unavailable')
@@ -352,7 +371,7 @@ describe('separate game settings drafts and consent labels', () => {
       throw new Error('The game changed. Review the current schedule.')
     }
     await mount(f)
-    await fill('Venue (optional)', 'Stale Field')
+    await fill('Venue name (optional)', 'Stale Field')
     await press('Save')
     f.client.gameScheduling = async () =>
       asGameScheduling({
@@ -366,7 +385,7 @@ describe('separate game settings drafts and consent labels', () => {
     await settle()
     expect(
       document.querySelector<HTMLInputElement>(
-        'input[aria-label="Venue (optional)"]'
+        'input[aria-label="Venue name (optional)"]'
       )!.value
     ).equals('Latest Field')
     await press('Save')
@@ -380,14 +399,18 @@ describe('separate game settings drafts and consent labels', () => {
     expect(document.body.textContent).not.includes('Choose a different season')
     expect(document.body.textContent).not.includes('Retry teams')
     expect(
-      document.querySelector<HTMLInputElement>('input[aria-label="Time"]')!
-        .value
-    ).equals('18:00')
+      document.querySelector('[data-testid="event-schedule-time"]')?.textContent
+    ).includes(
+      new Intl.DateTimeFormat('en', {
+        hour: 'numeric',
+        minute: '2-digit'
+      }).format(new Date(game.startAt))
+    )
     await press('Swap home and away')
     expect(f.sent).length(0)
     const names = document.body.textContent!
     expect(names.indexOf('Demo Hawks')).lessThan(names.indexOf('Demo Eagles'))
-    await fill('Venue (optional)', 'Demo New Field')
+    await fill('Venue name (optional)', 'Demo New Field')
     await press('Exhibition: Off')
     await press('Save')
     expect(f.sent).length(1)
@@ -396,13 +419,43 @@ describe('separate game settings drafts and consent labels', () => {
       awayTeamId: home.id,
       exhibition: true,
       venue: 'Demo New Field',
-      timezone: 'UTC'
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
     })
     expect(f.sent[0]).includes({
       expected: 'a'.repeat(64),
       gameId: 'game_demo'
     })
     expect(f.saved[0].status).equals('accepted')
+  })
+  it('sends address and exact unchanged off-grid start/end instants through game approval', async () => {
+    const f = fixture()
+    const startAt = '2027-04-11T06:32:42.123Z'
+    const endAt = '2027-04-11T09:32:42.123Z'
+    f.client.gameScheduling = async () =>
+      asGameScheduling({
+        game: {
+          ...game,
+          startAt,
+          endAt,
+          address: '1 Demo Way',
+          latitude: 0,
+          longitude: 0
+        },
+        version: 'a'.repeat(64),
+        canPropose: true,
+        withdrawTeamIds: [home.id],
+        administeredTeamIds: [home.id]
+      })
+    await mount(f)
+    await fill('Venue address (optional)', '2 Demo Way')
+    await press('Save')
+    expect(f.sent[0].game).includes({
+      startAt,
+      endAt,
+      address: '2 Demo Way',
+      latitude: null,
+      longitude: null
+    })
   })
   it('Cancel discards every draft without creating a team or proposing a game', async () => {
     const f = fixture()
@@ -449,11 +502,12 @@ describe('separate game settings drafts and consent labels', () => {
     await press('Change Demo Hawks')
     await settle()
     await press('Choose Demo Eagles')
-    await fill('Date', 'not-a-date')
-    await press('Save')
+    await pressSchedule('[data-testid="event-schedule-date"]')
+    await typeSchedule('Year', 'invalid')
     expect(document.querySelector('[role="alert"]')).not.equals(null)
     expect(f.sent).length(0)
     expect(f.created).length(0)
+    await pressSchedule('Cancel date picker')
   })
   it('preserves drafts on error and reuses the identical retry key', async () => {
     const f = fixture()
@@ -469,13 +523,13 @@ describe('separate game settings drafts and consent labels', () => {
       }
     }
     await mount(f)
-    await fill('Venue (optional)', 'Demo Retry Field')
+    await fill('Venue name (optional)', 'Demo Retry Field')
     await press('Save')
     expect(f.saved).length(0)
     expect(document.body.textContent).includes('Temporary game error')
     expect(
       document.querySelector<HTMLInputElement>(
-        'input[aria-label="Venue (optional)"]'
+        'input[aria-label="Venue name (optional)"]'
       )!.value
     ).equals('Demo Retry Field')
     await press('Save')
@@ -647,7 +701,7 @@ describe('separate game settings drafts and consent labels', () => {
   it('withdraws only after confirmation, without proposing draft changes', async () => {
     const f = fixture()
     await mount(f)
-    await fill('Venue (optional)', 'Unsaved Field')
+    await fill('Venue name (optional)', 'Unsaved Field')
     await press('Withdraw Demo Hawks from game')
     expect(f.withdrawn).length(0)
     await press('Keep game')

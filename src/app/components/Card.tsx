@@ -16,6 +16,7 @@ export interface CardProps {
   /** A left edge in the accent colour, marking a row worth noticing. */
   accent?: boolean
   style?: StyleProp<ViewStyle>
+  testID?: string
   /**
    * So a screen can watch where this card is as the page scrolls.
    *
@@ -33,11 +34,12 @@ export interface CardProps {
  * where half of these screens are read.
  */
 export function Card(props: CardProps): React.ReactElement {
-  const { children, flush = false, accent = false, style, ref } = props
+  const { children, flush = false, accent = false, style, ref, testID } = props
   const styles = getStyles(useTheme())
   return (
     <View
       ref={ref}
+      testID={testID}
       // A card somebody is watching the position of must survive Android's
       // view flattening, which folds away any view that only groups its
       // children — and a folded view has no position to measure.

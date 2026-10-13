@@ -2,8 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
+import { arrivalMinutesInput } from '../../common/eventInfo'
+import {
+  eventScheduleValue,
+  newEventSchedule
+} from '../../common/eventSchedule'
 import type { GameIntent } from '../../common/gameApprovals'
-import { gameCalendarDay, gameTime } from '../../common/gameTime'
 import type { CreateGroup } from '../../common/groupCreation'
 import type { Locality } from '../../common/locality'
 import type { GroupDetail, PublicGroup } from '../../common/publicGroups'
@@ -16,6 +20,10 @@ import {
   Screen,
   TextField
 } from '../components'
+import { EventArrivalField } from '../components/EventArrivalField'
+import { EventScheduleFields } from '../components/EventScheduleFields'
+import { EventTypeRow } from '../components/EventTypeRow'
+import { EventVenueFields } from '../components/EventVenueFields'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -56,10 +64,12 @@ export function GameSettingsScreen({
   const [home, setHome] = useState<TeamChoice>()
   const [away, setAway] = useState<TeamChoice>()
   const [originalNames, setOriginalNames] = useState<Record<string, string>>({})
-  const [date, setDate] = useState('')
-  const [time, setTime] = useState('')
-  const [timezone, setTimezone] = useState('UTC')
+  const [schedule, setSchedule] = useState(() => newEventSchedule())
+  const { timezone } = schedule
+  const [address, setAddress] = useState('')
   const [venue, setVenue] = useState('')
+  const [notes, setNotes] = useState('')
+  const [arrival, setArrival] = useState('')
   const [exhibition, setExhibition] = useState(false)
   const [choosing, setChoosing] = useState<Side>()
   const [query, setQuery] = useState('')
@@ -100,7 +110,6 @@ export function GameSettingsScreen({
         client.group({ kind: 'team', id: state.game.awayTeamId })
       ])
       if (!current()) return
-      const zone = state.game.timezone ?? 'UTC'
       setLoaded(state)
       setHome({ group: homeDetail.group, canManage: homeDetail.canManage })
       setAway({ group: awayDetail.group, canManage: awayDetail.canManage })
@@ -108,17 +117,22 @@ export function GameSettingsScreen({
         [homeDetail.group.id]: homeDetail.group.name,
         [awayDetail.group.id]: awayDetail.group.name
       })
-      setDate(gameCalendarDay(state.game.startAt, zone))
-      setTime(
-        new Intl.DateTimeFormat('en', {
-          timeZone: zone,
-          hour: '2-digit',
-          minute: '2-digit',
-          hourCycle: 'h23'
-        }).format(new Date(state.game.startAt))
+      setSchedule(
+        newEventSchedule(
+          state.game.startAt,
+          state.game.endAt,
+          undefined,
+          state.game.timezone
+        )
       )
-      setTimezone(zone)
+      setAddress(state.game.address ?? '')
       setVenue(state.game.venue ?? '')
+      setNotes(state.game.notes ?? '')
+      setArrival(
+        state.game.arrivalTimeDelta == null
+          ? ''
+          : String(state.game.arrivalTimeDelta)
+      )
       setExhibition(state.game.exhibition ?? false)
       setChoosing(undefined)
       setConfirmation(undefined)
@@ -289,7 +303,10 @@ export function GameSettingsScreen({
       if (home.group.id === away.group.id)
         throw new Error('Choose two different teams.')
       // Validate the date before committing even an explicitly submitted placeholder.
-      const startAt = gameTime(date, time, timezone)
+      const { startAt, endAt, timezone } = eventScheduleValue(schedule)
+      const nextAddress = address.trim() === '' ? null : address.trim()
+      const arrivalTimeDelta = arrivalMinutesInput(arrival)
+      const changedAddress = nextAddress !== (loaded.game.address ?? null)
       const resolvedHome = await createSelectedPlaceholder(home)
       const resolvedAway = await createSelectedPlaceholder(away)
       setHome(resolvedHome)
@@ -309,6 +326,11 @@ export function GameSettingsScreen({
           homeTeamId: resolvedHome.group.id,
           awayTeamId: resolvedAway.group.id,
           startAt,
+          endAt,
+          address: nextAddress,
+          notes: notes.trim() === '' ? null : notes.trim(),
+          arrivalTimeDelta,
+          ...(changedAddress ? { latitude: null, longitude: null } : {}),
           timezone,
           exhibition,
           venue: venue.trim() === '' ? null : venue.trim()
@@ -510,27 +532,26 @@ export function GameSettingsScreen({
             />
           </View>
         )}
-        <TextField
-          label="Date"
-          value={date}
-          onChangeText={setDate}
-          placeholder="YYYY-MM-DD"
+        <EventScheduleFields
+          value={schedule}
+          onChange={setSchedule}
+          disabled={busy || loaded?.canPropose !== true}
         />
-        <TextField
-          label="Time"
-          value={time}
-          onChangeText={setTime}
-          placeholder="18:00"
+        <EventTypeRow value="game" disabled onChange={() => undefined} />
+        <EventArrivalField
+          value={arrival}
+          disabled={busy || loaded?.canPropose !== true}
+          onChange={setArrival}
         />
-        <TextField
-          label="Time zone"
-          value={timezone}
-          onChangeText={setTimezone}
-        />
-        <TextField
-          label="Venue (optional)"
-          value={venue}
-          onChangeText={setVenue}
+        <EventVenueFields
+          client={client}
+          value={{ venue, address, notes }}
+          disabled={busy || loaded?.canPropose !== true}
+          onChange={value => {
+            setVenue(value.venue)
+            setAddress(value.address)
+            setNotes(value.notes)
+          }}
         />
         <Button
           label={exhibition ? 'Exhibition: On' : 'Exhibition: Off'}

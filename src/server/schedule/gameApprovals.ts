@@ -9,6 +9,10 @@ import {
   HttpError,
   notFound
 } from '../../common/errors'
+import {
+  asEventLocationFields,
+  type EventLocationFields
+} from '../../common/eventInfo'
 import type {
   GameIntent,
   GameProposal,
@@ -74,6 +78,7 @@ export async function requireImmediateGameConsent(
 }
 export function materialGame(game: GameRow): GameIntent {
   return {
+    ...storedEventFields(game),
     homeTeamId: game.home_team_id,
     awayTeamId: game.away_team_id,
     seasonId: game.season_id,
@@ -265,6 +270,7 @@ async function normalizedIntent(
   fallbackTimezone: string
 ): Promise<GameIntent> {
   return {
+    ...asEventLocationFields({ ...game }, game.startAt),
     homeTeamId: await followMerges(db, game.homeTeamId),
     awayTeamId: await followMerges(db, game.awayTeamId),
     seasonId: game.seasonId,
@@ -371,6 +377,7 @@ export async function finishGameRequest(
         away_team_id: terms.game.awayTeamId,
         season_id: terms.game.seasonId,
         start_at: new Date(terms.game.startAt),
+        ...eventColumns(terms.game),
         venue: terms.game.venue,
         outside_tournament: terms.game.outsideTournament,
         exhibition: terms.game.exhibition ?? false,
@@ -449,6 +456,7 @@ export async function finishGameRequest(
         away_team_id: terms.game.awayTeamId,
         season_id: terms.game.seasonId,
         start_at: new Date(terms.game.startAt),
+        ...eventColumns(terms.game),
         venue: terms.game.venue,
         outside_tournament: terms.game.outsideTournament,
         exhibition: terms.game.exhibition ?? current.exhibition,
@@ -600,6 +608,7 @@ export async function proposeGame(
             .executeTakeFirst()
     const game = {
       ...body.game,
+      ...preservedEventFields(body.game, old),
       homeTeamId: await followMerges(trx, body.game.homeTeamId),
       awayTeamId: await followMerges(trx, body.game.awayTeamId),
       timezone: asGameTimezone(
@@ -1293,5 +1302,71 @@ export async function schedulingGame(
       row.cancellation_reason !== 'replacement',
     withdrawTeamIds: teamIds,
     administeredTeamIds: teamIds
+  }
+}
+
+function storedEventFields(game: {
+  notes: string | null
+  arrival_time_delta: number | null
+  address: string | null
+  end_at: Date | null
+  latitude: number | null
+  longitude: number | null
+}): EventLocationFields {
+  return {
+    ...(game.notes == null ? {} : { notes: game.notes }),
+    ...(game.arrival_time_delta == null
+      ? {}
+      : { arrivalTimeDelta: game.arrival_time_delta }),
+    ...(game.address == null ? {} : { address: game.address }),
+    ...(game.end_at == null ? {} : { endAt: game.end_at.toISOString() }),
+    ...(game.latitude == null
+      ? {}
+      : { latitude: game.latitude, longitude: game.longitude })
+  }
+}
+function preservedEventFields(
+  game: GameIntent,
+  old: GameRow | null | undefined
+): EventLocationFields {
+  if (old == null) return asEventLocationFields({ ...game }, game.startAt)
+  const stored = storedEventFields(old)
+  if (game.endAt === undefined && old.end_at != null)
+    stored.endAt = new Date(
+      old.end_at.getTime() + Date.parse(game.startAt) - old.start_at.getTime()
+    ).toISOString()
+  if (
+    game.address !== undefined &&
+    game.address !== old.address &&
+    game.latitude === undefined
+  )
+    return {
+      ...stored,
+      ...asEventLocationFields({ ...game }, game.startAt),
+      latitude: null,
+      longitude: null
+    }
+  return { ...stored, ...asEventLocationFields({ ...game }, game.startAt) }
+}
+function eventColumns(game: EventLocationFields): {
+  notes?: string | null
+  arrival_time_delta?: number | null
+  address?: string | null
+  end_at?: Date | null
+  latitude?: number | null
+  longitude?: number | null
+} {
+  return {
+    ...(game.notes === undefined ? {} : { notes: game.notes }),
+    ...(game.arrivalTimeDelta === undefined
+      ? {}
+      : { arrival_time_delta: game.arrivalTimeDelta }),
+    ...(game.address === undefined ? {} : { address: game.address }),
+    ...(game.endAt === undefined
+      ? {}
+      : { end_at: game.endAt == null ? null : new Date(game.endAt) }),
+    ...(game.latitude === undefined
+      ? {}
+      : { latitude: game.latitude, longitude: game.longitude ?? null })
   }
 }

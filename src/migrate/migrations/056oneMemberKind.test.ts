@@ -8,6 +8,8 @@ import { migrateDown, migrateUp } from '../runner'
 import { type SchemaSnapshot, schemaSnapshot } from '../schemaSnapshot'
 import { testDatabaseUrl } from '../testDatabase'
 
+const subjectMigrations = migrations.filter(m => m.name <= '056oneMemberKind')
+
 describe('056 makes one kind of member at every level', function () {
   this.timeout(60000)
   const name = `teamstation_one_member_kind_${Date.now()}`
@@ -77,7 +79,7 @@ describe('056 makes one kind of member at every level', function () {
   }
 
   it('turns every season and league spectator into a member, and allows nothing else', async () => {
-    expect((await migrateUp(pool, migrations)).applied).deep.equals([
+    expect((await migrateUp(pool, subjectMigrations)).applied).deep.equals([
       '056oneMemberKind'
     ])
     expect(await roles('season_members')).deep.equals(['member', 'member'])
@@ -128,6 +130,6 @@ describe('056 makes one kind of member at every level', function () {
     expect(
       (await pool.query(`select is_spectator from memberships`)).rows
     ).deep.equals([{ is_spectator: false }])
-    await migrateUp(pool, migrations)
+    await migrateUp(pool, subjectMigrations)
   })
 })
