@@ -77,6 +77,8 @@ reviewed it for what follows and fixed what you found.
 
 Before adding or changing a screen, read [docs/ui-rules.md](docs/ui-rules.md). A picker of more
 choices than fit on one line is a list of rows, never pills, and Cancel is red text.
+Pill labels stay on their straight run, with horizontal padding of at least half
+the explicit shell height; see the pill rule in that document.
 
 ## API design
 

@@ -44,6 +44,16 @@ never a list expanding inside a card on the screen beneath.
 
 ## Buttons
 
+### A pill's label sits on its straight run
+
+A fully rounded button, badge, count or tab has semicircular ends, each as
+wide as half its height. The first and last glyph must clear those arcs:
+horizontal padding is at least half the explicit shell height. Derive the
+padding from that height, and check the longest label. A label that would
+truncate gets smaller type, a shorter label or its own row; its padding and
+touch target stay large enough. Dense tab strips reduce gaps and scroll.
+
+
 - **One filled button per form.** The primary action (Save, Create) is the
   only filled button.
 - **Cancel is red text.** Cancelling a form or dismissing a picker is a text
