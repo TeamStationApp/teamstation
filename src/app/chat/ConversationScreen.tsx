@@ -221,6 +221,7 @@ export function ConversationScreen(
         offset: number
         content: number
         firstSeq: number | undefined
+        hasEarlier: boolean | undefined
         positions: Map<string, number>
         anchor: { id: string; relativeY: number } | undefined
       }
@@ -433,6 +434,11 @@ export function ConversationScreen(
       latestView.current?.messages[0]?.seq === prepend.current.firstSeq
     ) {
       prepend.current.offset = scrolled.current.offset
+      prepend.current.hasEarlier = latestView.current?.hasEarlier
+      prepend.current.positions = new Map([
+        ...prepend.current.positions,
+        ...messagePositions.current
+      ])
       prepend.current.anchor = readingAnchor(prepend.current.positions)
     }
     atBottom.current = false
@@ -469,13 +475,15 @@ export function ConversationScreen(
 
   const loadOlder = async (): Promise<ConversationView> => {
     const before = engine.view(conversationId)
-    prepend.current = {
+    const pending = {
       offset: scrolled.current.offset,
       content: scrolled.current.content,
       firstSeq: before?.messages[0]?.seq,
+      hasEarlier: before?.hasEarlier,
       positions: new Map(messagePositions.current),
       anchor: readingAnchor(messagePositions.current)
     }
+    prepend.current = pending
     messagePositions.current.clear()
     atBottom.current = false
     try {
@@ -487,15 +495,30 @@ export function ConversationScreen(
       ) {
         // Edit/reaction-only pages can advance the raw cursor without new
         // rows. Keep known geometry for a following page's reading anchor.
-        const present = new Set(next.messages.map(message => message.id))
-        for (const [id, y] of prepend.current?.positions ?? [])
-          if (present.has(id) && !messagePositions.current.has(id))
-            messagePositions.current.set(id, y)
-        prepend.current = undefined
+        if (prepend.current === pending) {
+          const present = new Set(next.messages.map(message => message.id))
+          for (const [id, y] of pending.positions)
+            if (present.has(id) && !messagePositions.current.has(id))
+              messagePositions.current.set(id, y)
+          prepend.current = undefined
+          if (
+            before?.hasEarlier === true &&
+            !next.hasEarlier &&
+            pending.anchor != null &&
+            mounted.current &&
+            paneActive.current &&
+            latestView.current?.conversation.id === conversationId
+          ) {
+            // Exhaustion removes the paging header even without new rows.
+            // Use the current reader's anchor, including a cancelled jump.
+            restoreAnchor.current = pending.anchor
+            restoreReadingAnchor()
+          }
+        }
       }
       return next
     } catch (error) {
-      prepend.current = undefined
+      if (prepend.current === pending) prepend.current = undefined
       throw error
     }
   }
@@ -665,6 +688,7 @@ export function ConversationScreen(
         if (original == null) {
           measuringJump.current = undefined
           setError(lstrings.chat_message_unavailable)
+          restoreReadingAnchor()
           return
         }
         // Measure the mounted row relative to scroll content. Paging resolves
@@ -704,6 +728,7 @@ export function ConversationScreen(
         if (generation === jumpGeneration.current) {
           measuringJump.current = undefined
           setError(lstrings.chat_message_unavailable)
+          restoreReadingAnchor()
         }
       })
   }
@@ -1062,6 +1087,7 @@ export function ConversationScreen(
     if (
       pending != null &&
       latestView.current?.messages[0]?.seq === pending.firstSeq &&
+      latestView.current?.hasEarlier === pending.hasEarlier &&
       Math.abs(scrolled.current.content - pending.content) < 1
     ) {
       pending.offset = scrolled.current.offset
@@ -1307,7 +1333,10 @@ export function ConversationScreen(
                 if (!mounted.current || !paneActive.current) return
                 const y = event.nativeEvent.layout.y
                 messagePositions.current.set(message.id, y)
-                if (view.messages[0]?.seq === prepend.current?.firstSeq)
+                if (
+                  view.messages[0]?.seq === prepend.current?.firstSeq &&
+                  view.hasEarlier === prepend.current?.hasEarlier
+                )
                   prepend.current?.positions.set(message.id, y)
                 if (message.id === restoreAnchor.current?.id)
                   restoreReadingAnchor()
