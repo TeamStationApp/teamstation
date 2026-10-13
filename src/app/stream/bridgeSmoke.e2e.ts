@@ -12,6 +12,7 @@
 //   TS_STREAM_SERVER_LOG=<the local server's log> \
 //   TS_STREAM_EMAIL=<a seeded user> TS_STREAM_GAME=<a game with two videos> \
 //   TS_STREAM_WALKUP_PLAYER=<teamId>/<userId> [TS_STREAM_TOKEN=<session>] \
+//   [TS_STREAM_WALKUP_SEARCH=<on Android, the start of a music file's title>] \
 //   [TS_STREAM_ARTIFACT_DIR=<dir>] \
 //     node -r sucrase/register src/app/stream/bridgeSmoke.e2e.ts
 //
@@ -31,6 +32,10 @@
 //   3. The jog wheel's haptics are requested and raise no error. Only a
 //      Debug build logs the request, so with TS_STREAM_RELEASE_BUILD=1 the
 //      wheel moving the clip stands in for it.
+//   On Android, which has no DJ Game, 2 and 3 run on the player's walk-up
+//   song screen with a music file already on the phone: its preview must
+//   play, and the jog wheel must move the clip and play touch haptics, which
+//   the vibrator service lists. The song is not saved.
 //   4. All angles: the multi-camera view turns with the device.
 import assert from 'node:assert/strict'
 import { type ChildProcess, execFile, spawn } from 'node:child_process'
@@ -103,6 +108,8 @@ const game = required('TS_STREAM_GAME')
 const [walkUpTeam, walkUpPlayer] = required('TS_STREAM_WALKUP_PLAYER').split(
   '/'
 )
+// On Android, the start of a music file's title on the phone, for the preview.
+const walkUpSearch = android ? required('TS_STREAM_WALKUP_SEARCH') : ''
 const artifacts = process.env.TS_STREAM_ARTIFACT_DIR
 const teamId = process.env.TS_STREAM_TEAM_ID
 const releaseBuild = process.env.TS_STREAM_RELEASE_BUILD === '1'
@@ -364,15 +371,127 @@ async function main(): Promise<void> {
     results.push('1 Videos tab offers Record video')
     await shot('bridge-smoke-videos')
 
-    // DJ Game, and with it the walk-up preview and the jog wheel, is offered
-    // on an iPhone only (makeWalkUpMusic: djSupported is platform === 'ios').
+    // DJ Game is offered on an iPhone only (makeWalkUpMusic: djSupported is
+    // platform === 'ios'), so on Android the preview and the jog wheel are the
+    // player page's walk-up song screen, with a music file on the phone.
     if (android) {
-      results.push(
-        '2 walk-up preview: not offered on Android (DJ Game is iPhone-only)'
+      // 2a. The walk-up module: the phone's music searched, then a preview.
+      const link = `teamstation://players/${walkUpPlayer}?onTeam=${walkUpTeam}&tab=walkup`
+      say(`$ openLink ${link}`)
+      await m.openLink({ link })
+      const edit =
+        (await find(lstrings.player_walkup_set, 15000)) ??
+        (await find(lstrings.player_walkup_change, 1000))
+      assert(edit?.bounds != null, 'the Walk-up tab offers Set or Change')
+      say(`$ tapOn ${labelOf(edit)}`)
+      await m.tapOn({ point: centre(edit.bounds) })
+      await sleep(2000)
+      if ((await find(lstrings.walkup_pick_another, 2000)) != null)
+        await tap(lstrings.walkup_pick_another, 2000)
+      await tap(lstrings.walkup_search_device, 1000)
+      say(`$ inputText ${walkUpSearch}`)
+      await adb('shell', 'input', 'text', walkUpSearch.replace(/ /g, '%s'))
+      await sleep(1000)
+      let found: Node | undefined
+      for (const until = Date.now() + 15000; Date.now() < until;) {
+        found = (await nodes()).find(
+          node =>
+            labelOf(node).startsWith(walkUpSearch) &&
+            labelOf(node) !== walkUpSearch &&
+            node.bounds != null
+        )
+        if (found != null) break
+        await sleep(500)
+      }
+      assert(
+        found?.bounds != null,
+        `the phone's music lists a song starting "${walkUpSearch}"`
+      )
+      say(`$ tapOn ${labelOf(found)}`)
+      await m.tapOn({ point: centre(found.bounds) })
+      assert(
+        (await find(lstrings.walkup_jog, 10000)) != null,
+        'the song opens in the clip editor'
+      )
+      const beforePlay = log.since()
+      await tap(lstrings.walkup_play, 0)
+      const played = await logLine(
+        log,
+        /WalkUpMusicState \{.*"kind":"(playing|error)"|WalkUpMusic (play|search) failed/,
+        beforePlay,
+        8000
+      )
+      assert(played != null, 'the walk-up module answered the preview')
+      assert(
+        played.includes('"kind":"playing"'),
+        `the preview plays: ${played}`
       )
       results.push(
-        '3 haptics: the jog wheel is in DJ Game, which Android does not offer'
+        `2 walk-up preview: ${played.slice(played.indexOf('WalkUpMusicState'))}`
       )
+      await sleep(1500)
+      await shot('bridge-smoke-walkup-preview')
+      await tap(lstrings.player_walkup_stop, 1000)
+
+      // 3. The jog wheel's haptics: the vibrator service lists each effect
+      // the app plays, so the new TOUCH effects are the jog wheel's.
+      const jog = await find(lstrings.walkup_jog, 5000)
+      assert(jog?.bounds != null, 'the clip editor has its jog wheel')
+      const clipStart = async (): Promise<string> =>
+        (await nodes()).find(node => idOf(node) === 'walkup-start')?.text ?? ''
+      const effects = async (): Promise<string[]> =>
+        (await adb('shell', 'dumpsys', 'vibrator_manager'))
+          .split('\n')
+          .filter(
+            line =>
+              line.includes('usage: TOUCH') && line.includes(`${APP} (uid=`)
+          )
+          .map(line => line.trim())
+      const startBefore = await clipStart()
+      const effectsBefore = new Set(await effects())
+      const beforeJog = log.since()
+      const y = Math.round(jog.bounds.y + jog.bounds.height / 2)
+      const x = Math.round(jog.bounds.x + jog.bounds.width * 0.3)
+      const x2 = Math.round(jog.bounds.x + jog.bounds.width * 0.7)
+      say(`$ drag the jog wheel ${x},${y} → ${x2},${y}`)
+      await adb(
+        'shell',
+        'input',
+        'swipe',
+        `${x}`,
+        `${y}`,
+        `${x2}`,
+        `${y}`,
+        '1200'
+      )
+      await sleep(1500)
+      const startAfter = await clipStart()
+      const played2 = (await effects()).filter(line => !effectsBefore.has(line))
+      const hapticError = log.lines
+        .slice(beforeJog)
+        .find(line =>
+          /TSHaptics.*(error|exception)|Unhandled.*Haptic|FATAL EXCEPTION/i.test(
+            line
+          )
+        )
+      assert(hapticError == null, `haptics raised ${hapticError}`)
+      assert.notEqual(startAfter, startBefore, 'the jog wheel moved the clip')
+      assert(played2.length > 0, 'the jog wheel played touch haptics')
+      // Each effect's status: finished, or cancelled_superseded when the
+      // wheel's next tick came first.
+      const statuses = new Map<string, number>()
+      for (const line of played2) {
+        const status = line.split('|')[2]?.trim() ?? '?'
+        statuses.set(status, (statuses.get(status) ?? 0) + 1)
+      }
+      const counted = [...statuses].map(([status, n]) => `${n} ${status}`)
+      results.push(
+        `3 haptics: ${played2.length} TOUCH effects from the jog wheel (${counted.join(', ')}); the clip start ${startBefore} → ${startAfter}`
+      )
+      await shot('bridge-smoke-walkup-jog')
+      // Leave without saving: the player's song stays as it was.
+      await adb('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+      await sleep(1000)
     } else {
       // 2a. The walk-up module: a song to report on, then its preview.
       const token = await apiToken()
