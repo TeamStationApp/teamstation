@@ -131,11 +131,15 @@ describe('a date on a schedule row', function () {
     expect(scheduleDate(null)).deep.equals({
       month: '\u2014',
       day: '',
+      weekday: '',
+      time: '',
       when: ''
     })
     expect(scheduleDate('not a date')).deep.equals({
       month: '\u2014',
       day: '',
+      weekday: '',
+      time: '',
       when: ''
     })
   })

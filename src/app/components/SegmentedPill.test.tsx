@@ -22,7 +22,8 @@ afterEach(async () => {
   document.body.replaceChildren()
 })
 async function render(
-  initial: 'inSeason' | 'all' = 'inSeason'
+  initial: 'inSeason' | 'all' = 'inSeason',
+  disabled = false
 ): Promise<string[]> {
   const selected: string[] = []
   function Harness(): React.ReactElement {
@@ -32,6 +33,7 @@ async function render(
         options={OPTIONS}
         selected={value}
         accessibilityLabel="Standings games"
+        disabled={disabled}
         onSelect={next => {
           selected.push(next)
           setValue(next)
@@ -79,6 +81,19 @@ function fill(): HTMLElement {
 }
 
 describe('one sliding standings capsule', () => {
+  it('keeps disabled choices selected without issuing a change', async () => {
+    const changes = await render('inSeason', true)
+    await select('Include Exhibitions')
+    expect(changes).deep.equals([])
+    expect(
+      host
+        .querySelector('[aria-label="Include Exhibitions"]')!
+        .getAttribute('aria-disabled')
+    ).equals('true')
+    expect(host.querySelector('[aria-selected="true"]')!.textContent).equals(
+      'In-Season'
+    )
+  })
   it('renders two accessible equal regions inside one rounded pill with white active text', async () => {
     await render()
     const track = host.querySelector<HTMLElement>('[role="tablist"]')!

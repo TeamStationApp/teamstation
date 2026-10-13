@@ -1,10 +1,12 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { scheduleDate } from '../screens/format'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
 import { SideCamera } from './SideCamera'
+
+export const SCHEDULE_DATE_WIDTH_REM = 2.75
 
 export interface ScheduleRowProps {
   /**
@@ -44,8 +46,8 @@ export interface ScheduleRowProps {
 /**
  * One game on a schedule.
  *
- * The thumbnail is gone. The month sits over the day, the weekday and the
- * time take the line the date used to, and a recorded game keeps a small
+ * The weekday sits above a separator and the month/day. The time belongs
+ * to the event details, and a recorded game keeps a small
  * camera at the bottom right. LIVE is a game being scored, where the score
  * would have been.
  */
@@ -68,6 +70,12 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const dated = scheduleDate(startAt)
+  const [detailsHeight, setDetailsHeight] = useState(0)
+  // Two 1.5rem text lines, the 2.4rem day, 1rem separator spacing and its 3px rule.
+  const calendarHeight =
+    dated.weekday === '' ? theme.rem(1.5) : theme.rem(6.4) + 3
+  const scale =
+    detailsHeight > 0 ? Math.min(1, detailsHeight / calendarHeight) : 1
   const inProgress = status === 'inProgress'
   const scored = awayScore != null && homeScore != null && !inProgress
   const cancelled = status === 'cancelled'
@@ -90,54 +98,130 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
         : (result?.tone ?? 'neutral')
   const teams = second == null ? first : `${first} ${second}`
 
+  const calendar = (
+    <View
+      style={[
+        styles.date,
+        { width: theme.rem(SCHEDULE_DATE_WIDTH_REM) * scale }
+      ]}
+      testID="schedule-date"
+    >
+      {dated.weekday !== '' && (
+        <>
+          <Text
+            style={[
+              styles.month,
+              {
+                fontSize: theme.rem(1.25) * scale,
+                lineHeight: theme.rem(1.5) * scale
+              }
+            ]}
+            testID="schedule-weekday"
+          >
+            {dated.weekday}
+          </Text>
+          <View
+            style={[
+              styles.dateSeparator,
+              { height: 3 * scale, marginVertical: theme.rem(0.5) * scale }
+            ]}
+            testID="schedule-date-separator"
+          />
+        </>
+      )}
+      <Text
+        style={[
+          styles.month,
+          {
+            fontSize: theme.rem(1.25) * scale,
+            lineHeight: theme.rem(1.5) * scale
+          }
+        ]}
+      >
+        {dated.month}
+      </Text>
+      {dated.day !== '' && (
+        <Text
+          style={[
+            styles.day,
+            {
+              fontSize: theme.rem(2) * scale,
+              lineHeight: theme.rem(2.4) * scale
+            }
+          ]}
+        >
+          {dated.day}
+        </Text>
+      )}
+    </View>
+  )
+  const details = (
+    <View
+      style={styles.details}
+      testID="schedule-details"
+      onLayout={event => {
+        const height = event.nativeEvent.layout.height
+        if (height > 0)
+          setDetailsHeight(held =>
+            Math.abs(held - height) < 0.1 ? held : height
+          )
+      }}
+    >
+      <View style={styles.first}>
+        <Text style={[styles.team, styles.firstName]} numberOfLines={1}>
+          {first}
+        </Text>
+        {badgeLabel != null && <Badge label={badgeLabel} tone={badgeTone} />}
+      </View>
+      {second != null && (
+        <Text style={styles.team} numberOfLines={1}>
+          {second}
+        </Text>
+      )}
+      {dated.when !== '' && (
+        <Text style={styles.detail} numberOfLines={1}>
+          {dated.time}
+        </Text>
+      )}
+      {venue != null && venue !== '' && (
+        <Text style={styles.venue} numberOfLines={1}>
+          {venue}
+        </Text>
+      )}
+      {status === 'cancelled' && cancellationReason === 'withdrawal' && (
+        <Text style={styles.detail}>
+          Withdrawal — {withdrawnByTeamName ?? 'A team'} withdrew
+        </Text>
+      )}
+    </View>
+  )
+  const camera =
+    videoCount > 0 ? (
+      <View style={styles.camera} pointerEvents="none">
+        <SideCamera />
+      </View>
+    ) : null
+  const label = `${teams}, ${dated.when}${pendingApproval ? ', Pending approval' : ''}`
   const content = (
     <>
-      <View style={styles.date}>
-        <Text style={styles.month}>{dated.month}</Text>
-        <Text style={styles.day}>{dated.day}</Text>
-      </View>
-      <View style={styles.text}>
-        <View style={styles.first}>
-          <Text style={[styles.team, styles.firstName]} numberOfLines={1}>
-            {first}
-          </Text>
-          {badgeLabel != null && <Badge label={badgeLabel} tone={badgeTone} />}
-        </View>
-        {second != null && (
-          <Text style={styles.team} numberOfLines={1}>
-            {second}
-          </Text>
-        )}
-        {dated.when !== '' && (
-          <Text style={styles.detail} numberOfLines={1}>
-            {dated.when}
-          </Text>
-        )}
-        {venue != null && venue !== '' && (
-          <Text style={styles.venue} numberOfLines={1}>
-            {venue}
-          </Text>
-        )}
-        {status === 'cancelled' && cancellationReason === 'withdrawal' && (
-          <Text style={styles.detail}>
-            Withdrawal — {withdrawnByTeamName ?? 'A team'} withdrew
-          </Text>
-        )}
-      </View>
-      {videoCount > 0 && (
-        <View style={styles.camera} pointerEvents="none">
-          <SideCamera />
-        </View>
-      )}
+      {calendar}
+      <View style={styles.text}>{details}</View>
+      {camera}
     </>
   )
 
-  if (onPress == null) return <View style={styles.row}>{content}</View>
+  if (onPress == null)
+    return (
+      <View style={styles.row} testID="schedule-display-row">
+        {content}
+      </View>
+    )
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${teams}, ${dated.when}${pendingApproval ? ', Pending approval' : ''}`}
+      testID="schedule-display-row"
+      accessibilityLabel={label}
       onPress={onPress}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
@@ -150,30 +234,39 @@ const getStyles = cacheStyles((theme: Theme) => ({
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: theme.rem(theme.spaceSmRem),
+    gap: theme.rem(theme.cardContentInsetRem),
     position: 'relative'
   },
   pressed: {
     backgroundColor: theme.highlightRowActiveBackground
   },
   date: {
-    width: theme.rem(2.75),
+    width: theme.rem(SCHEDULE_DATE_WIDTH_REM),
     alignItems: 'center'
   },
   month: {
     fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.75),
+    fontSize: theme.rem(1.25),
     fontWeight: '600',
     color: theme.secondaryTextColor
   },
+  dateSeparator: {
+    width: '100%',
+    height: 3,
+    backgroundColor: theme.defaultBorderColor,
+    marginVertical: theme.rem(0.5)
+  },
   day: {
     fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1.25),
+    fontSize: theme.rem(2),
     fontWeight: '700',
     color: theme.primaryTextColor
   },
   text: {
     flex: 1,
+    minWidth: 0
+  },
+  details: {
     gap: theme.rem(0.0625)
   },
   first: {

@@ -9,6 +9,7 @@ import { Icon, type IconName } from './Icon'
 export interface ListRowProps {
   title: string
   subtitle?: string
+  subtitleNumberOfLines?: number
   /** A short glyph or initials in the leading tile. */
   emblem?: string
   /** A Material Symbol in the leading tile, in place of the initials. */
@@ -47,6 +48,7 @@ export function ListRow(props: ListRowProps): React.ReactElement {
   const {
     title,
     subtitle,
+    subtitleNumberOfLines = 1,
     emblem,
     emblemIcon,
     emblemUri,
@@ -75,7 +77,7 @@ export function ListRow(props: ListRowProps): React.ReactElement {
           {title}
         </Text>
         {subtitle != null && (
-          <Text style={styles.subtitle} numberOfLines={1}>
+          <Text style={styles.subtitle} numberOfLines={subtitleNumberOfLines}>
             {subtitle}
           </Text>
         )}
