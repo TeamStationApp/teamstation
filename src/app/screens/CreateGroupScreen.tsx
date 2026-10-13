@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Text, View } from 'react-native'
+import { Modal, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type {
@@ -14,11 +14,12 @@ import {
   formatDateRange,
   seasonTimeFrames
 } from '../../common/seasonTimeFrames'
-import { Button, Card, Screen, TextField } from '../components'
+import { Button, Card, ListCard, Screen, TextField } from '../components'
 import { DateRangePicker } from '../components/DateRangePicker'
 import { GroupPictureChooser } from '../components/GroupPictureChooser'
-import { LocalityPicker } from '../components/LocalityPicker'
+import { LocationRow } from '../components/LocationRow'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { LocationScreen } from './LocationScreen'
 import { type ParentChoice, ParentChooser } from './ParentChooser'
 
 export interface CreateGroupScreenProps {
@@ -77,8 +78,10 @@ export function CreateGroupScreen({
   const [position, setPosition] = useState(0)
   const step = steps[position]
   const [name, setName] = useState('')
-  const [locality, setLocality] = useState<Locality | undefined>()
-  const [suggestion, setSuggestion] = useState(initialLocality)
+  const [locality, setLocality] = useState<Locality | undefined>(
+    initialLocality
+  )
+  const [locationOpen, setLocationOpen] = useState(false)
   const [timezone, setTimezone] = useState(
     Intl.DateTimeFormat().resolvedOptions().timeZone
   )
@@ -104,7 +107,8 @@ export function CreateGroupScreen({
             detail.group.locality ??
             detail.parents.find(group => group.kind === 'league')?.locality ??
             undefined
-          setSuggestion(inherited)
+          if (kind === 'team' && inherited != null)
+            setLocality(value => value ?? inherited)
           if (kind === 'season' && inherited?.timezone != null)
             setTimezone(inherited.timezone)
           setContextError('')
@@ -253,15 +257,38 @@ export function CreateGroupScreen({
         {step === 'location' && (
           <>
             <Text style={styles.hint}>
-              Choose this {kind}’s city and state. You can use approximate
-              location or search; confirm the city before continuing.
+              Choose this {kind}’s city and state.
             </Text>
-            <LocalityPicker
-              client={client}
-              value={locality ?? null}
-              suggestion={suggestion}
-              onChange={setLocality}
-            />
+            <ListCard>
+              <LocationRow
+                value={locality ?? null}
+                onPress={() => {
+                  setLocationOpen(true)
+                }}
+              />
+            </ListCard>
+            {locationOpen && (
+              <Modal
+                visible
+                animationType="slide"
+                presentationStyle="fullScreen"
+                onRequestClose={() => {
+                  setLocationOpen(false)
+                }}
+              >
+                <LocationScreen
+                  client={client}
+                  current={locality ?? null}
+                  onSave={async value => {
+                    setLocality(value)
+                    setLocationOpen(false)
+                  }}
+                  onCancel={() => {
+                    setLocationOpen(false)
+                  }}
+                />
+              </Modal>
+            )}
           </>
         )}
         {step === 'photo' && (

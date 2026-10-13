@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { makeToken } from '../server/auth/tokens'
 import type { AddedNotice, GuardianInvitation } from '../server/email/sendMail'
 import { type Clock, realClock } from '../server/groups/requests'
+import type { GooglePlaces } from '../server/location/googlePlaces'
 import { publishPictureCatalog } from '../server/media/pictureCatalog'
 import { eventInfoRoutes } from '../server/routes/eventInfo'
 import { eventListRoutes } from '../server/routes/eventList'
@@ -36,7 +37,8 @@ export async function creationHarness(
   webRoot?: string,
   clock: Clock = realClock,
   bindHost = '127.0.0.1',
-  mountExtra?: MountExtra
+  mountExtra?: MountExtra,
+  cityLookup?: GooglePlaces
 ): Promise<AccountHarness> {
   const h: AccountHarness = await accountHarness(
     webRoot,
@@ -50,7 +52,10 @@ export async function creationHarness(
       }
       app.use('/api/v1', onboardingRoutes(db, media))
       app.use('/api/v1', pictureRoutes(db, space))
-      app.use('/api/v1', locationRoutes())
+      app.use(
+        '/api/v1',
+        locationRoutes(undefined, { db, googlePlaces: cityLookup })
+      )
       const sendGuardianInvite = async (
         email: string,
         invitation: GuardianInvitation

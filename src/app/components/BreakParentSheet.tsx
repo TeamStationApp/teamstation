@@ -4,6 +4,7 @@ import { Modal, Pressable, Text, View } from 'react-native'
 import type { ParentPreview } from '../../common/groupLinks'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { DangerText } from './DangerText'
 
 export interface BreakParentSheetProps {
   preview: ParentPreview
@@ -11,6 +12,11 @@ export interface BreakParentSheetProps {
   error?: string
   onBreak: () => void
   onKeep: () => void
+  title?: string
+  warning?: string
+  confirmLabel?: string
+  cancelLabel?: string
+  danger?: boolean
 }
 
 /**
@@ -23,16 +29,36 @@ export interface BreakParentSheetProps {
 export function BreakParentSheet(
   props: BreakParentSheetProps
 ): React.ReactElement {
-  const { preview, busy = false, error, onBreak, onKeep } = props
-  const styles = getStyles(useTheme())
+  const {
+    preview,
+    busy = false,
+    error,
+    onBreak,
+    onKeep,
+    title = 'Review relationship changes',
+    warning,
+    confirmLabel = 'Break relationship',
+    cancelLabel,
+    danger = false
+  } = props
+  const theme = useTheme()
+  const styles = getStyles(theme)
   const changes = preview.explanation.slice(0, preview.effects.length)
   const notes = preview.explanation.slice(preview.effects.length)
   return (
-    <Modal transparent animationType="slide" visible onRequestClose={onKeep}>
+    <Modal
+      transparent
+      animationType="slide"
+      visible
+      onRequestClose={() => {
+        if (!busy) onKeep()
+      }}
+    >
       <View style={styles.scrim}>
         <Pressable
           accessibilityLabel="Keep relationship"
           style={styles.behind}
+          disabled={busy}
           onPress={onKeep}
         />
         <View
@@ -46,7 +72,8 @@ export function BreakParentSheet(
               {line}
             </Text>
           ))}
-          <Text style={styles.title}>Review relationship changes</Text>
+          <Text style={styles.title}>{title}</Text>
+          {warning != null && <Text style={styles.note}>{warning}</Text>}
           {notes.map((line, index) => (
             <Text key={`note:${index}`} style={styles.note}>
               {line}
@@ -57,13 +84,22 @@ export function BreakParentSheet(
               {error}
             </Text>
           )}
-          <Button label="Break relationship" busy={busy} onPress={onBreak} />
           <Button
-            label="Keep relationship"
-            kind="secondary"
-            disabled={busy}
-            onPress={onKeep}
+            label={confirmLabel}
+            color={danger ? theme.dangerColor : undefined}
+            busy={busy}
+            onPress={onBreak}
           />
+          {cancelLabel == null ? (
+            <Button
+              label="Keep relationship"
+              kind="secondary"
+              disabled={busy}
+              onPress={onKeep}
+            />
+          ) : (
+            <DangerText label={cancelLabel} disabled={busy} onPress={onKeep} />
+          )}
         </View>
       </View>
     </Modal>

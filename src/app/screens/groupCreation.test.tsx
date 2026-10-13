@@ -259,8 +259,10 @@ describe('creation and organization interface behavior', () => {
         onOpenGame={(id, _title, options) => opened.push({ id, options })}
       />
     )
-    expect(document.body.textContent).includes('final · 1–4')
-    expect(document.body.textContent).includes('Canceled — Demo Guest withdrew')
+    expect(document.body.textContent).includes('1–4')
+    expect(document.body.textContent).includes(
+      'Withdrawal — Demo Guest withdrew'
+    )
     expect(document.body.textContent!.match(/Canceled/g)).has.lengthOf(2)
     expect(opened).deep.equals([])
     expect(document.body.textContent).not.includes('Open game')
@@ -323,9 +325,7 @@ describe('creation and organization interface behavior', () => {
     const row = [
       ...document.querySelectorAll<HTMLElement>('[role="button"]')
     ].find(node =>
-      (node.getAttribute('aria-label') ?? '').startsWith(
-        'Demo Hawks vs Demo Guest'
-      )
+      (node.getAttribute('aria-label') ?? '').includes('Demo Guest')
     )
     expect(row).not.equals(undefined)
     await act(async () => {
@@ -441,19 +441,14 @@ describe('creation and organization interface behavior', () => {
     )
     await fill('Team name', 'Demo New Hawks')
     await press('Continue')
-    expect(
-      document.querySelector<HTMLInputElement>(
-        'input[aria-label="Search city and state"]'
-      )!.value
-    ).equals('Demo Parent Town')
+    expect(document.body.textContent).includes('Demo Parent Town')
     const next = [
       ...document.querySelectorAll<HTMLElement>('[role="button"]')
     ].find(
       node =>
         (node.getAttribute('aria-label') ?? node.textContent) === 'Continue'
     )!
-    expect(next.getAttribute('aria-disabled')).equals('true')
-    await press('Choose Demo Parent Town, Demo Region, US')
+    expect(next.getAttribute('aria-disabled')).not.equals('true')
     await press('Continue')
     await press('Use initials')
     await press('Create Team')
@@ -1176,8 +1171,7 @@ describe('creation and organization interface behavior', () => {
       <GroupSettingsScreen
         client={api}
         groupRef={{ kind: 'team', id: group.id }}
-        onLink={() => {}}
-        onSaved={() => {
+        onChanged={() => {
           saved = true
         }}
       />
@@ -1188,13 +1182,15 @@ describe('creation and organization interface behavior', () => {
     expect(text).not.includes('Parent relationships')
     expect(text).not.includes('Break relationship')
     expect(text).not.includes('Add parent league')
-    await press('Save settings')
+    await fill('Name', 'Wrens')
+    await press('Save name')
     expect(document.body.textContent).includes('Settings offline')
     api.updateGroup = async () => group
-    await press('Save settings')
+    await press('Save name')
     expect(saved).equals(true)
-    await press('Change picture')
+    await press('Add picture')
     await press('Use initials')
+    await press('Save photo')
   })
   it('titles league and season settings by their kind', async () => {
     for (const kind of ['league', 'season'] as const) {
@@ -1208,8 +1204,6 @@ describe('creation and organization interface behavior', () => {
         <GroupSettingsScreen
           client={api}
           groupRef={{ kind, id: `${kind}_demo` }}
-          onLink={() => {}}
-          onSaved={() => {}}
         />
       )
       const text = document.body.textContent

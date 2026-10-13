@@ -63,6 +63,25 @@ async function fill(label: string, value: string): Promise<void> {
 
 it('offers a name first for every group and updates chosen initials after returning to edit', async () => {
   const api = new TeamStationClient({ baseUrl: '/api/v1' })
+  api.citySuggestions = async () => ({
+    suggestions: [
+      {
+        id: 'google:fixture',
+        primary: 'Demo City',
+        secondary: 'Demo Region, Canada'
+      }
+    ],
+    provider: 'google',
+    attribution: 'Powered by Google',
+    snapshot: ''
+  })
+  api.location = async () => ({
+    city: 'Demo City',
+    region: 'Demo Region',
+    country: 'Canada',
+    placeId: 'google:fixture',
+    timezone: 'America/Toronto'
+  })
   api.pictures = async () => {
     throw new Error('Group flow must not request icons')
   }
@@ -84,10 +103,13 @@ it('offers a name first for every group and updates chosen initials after return
       await press('Cancel')
       continue
     }
-    await press('Enter location manually')
+    await press('Location not set, Add a city')
     await fill('City', 'Demo City')
-    await fill('State or region', 'Demo Region')
-    await press('Confirm location')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    })
+    await press('Choose Demo City, Demo Region, Canada')
+    await press('Save')
     await press('Continue')
     await press('Use initials')
     expect(

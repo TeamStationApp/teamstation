@@ -1,394 +1,396 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
 
 import { asManagePage, TeamStationClient } from '../../common/api'
-import { asGameScheduleProposal } from '../../common/gameApprovals'
-import { asGroupDetail } from '../../common/publicGroups'
-import { ThemeProvider } from '../theme/ThemeContext'
+import type { GroupRef } from '../../common/groupCreation'
+import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
+import {
+  fill,
+  find,
+  mount,
+  press,
+  settle,
+  text,
+  unmount
+} from '../../test/gameFormDom'
 import { GroupSettingsScreen } from './GroupSettingsScreen'
 
-let root: Root | undefined
-const detail = asGroupDetail({
-  nonMemberView: false,
-  group: {
-    kind: 'team',
-    id: 'canonical',
-    name: 'Demo Hawks',
-    imageUrl: null,
-    locality: null
-  },
-  parents: [],
-  children: [],
-  participatingSeasons: [],
-  competingTeams: [],
-  games: [],
-  staff: [],
-  canManage: true,
-  canViewPrivate: false
-})
-const proposal = asGameScheduleProposal({
-  requestId: 'declined-request',
-  gameId: null,
-  previous: null,
-  status: 'declined',
-  sentAt: '2026-10-10T18:00:00Z',
-  canDelete: true,
-  version: null,
-  game: {
-    homeTeamId: 'canonical',
-    awayTeamId: 'visitor',
-    seasonId: null,
-    startAt: '2026-10-12T18:00:00Z',
-    venue: null,
-    outsideTournament: null,
-    status: 'scheduled'
-  }
-})
-function api(): TeamStationClient {
+function fixture(kind: GroupRef['kind'] = 'team'): {
+  client: TeamStationClient
+  calls: unknown[]
+  controls: { fail: boolean; allowed: boolean }
+} {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
-  client.group = async () => detail
+  const calls: unknown[] = []
+  const controls = { fail: false, allowed: true }
+  let group = asGroupDetail({
+    group: {
+      kind,
+      id: 'canonical',
+      name: 'Bluebirds',
+      imageUrl: null,
+      locality:
+        kind === 'season'
+          ? null
+          : {
+              city: 'Toronto',
+              region: 'Ontario',
+              country: 'Canada',
+              placeId: null,
+              timezone: 'America/Toronto'
+            },
+      startsOn: kind === 'season' ? '2027-03-01' : null,
+      endsOn: kind === 'season' ? '2027-05-31' : null
+    },
+    parents: [],
+    children: [],
+    competingTeams: [],
+    participatingSeasons: [],
+    games: [],
+    staff: [],
+    canManage: true,
+    nonMemberView: false,
+    canViewPrivate: true
+  })
+  client.group = async () => {
+    if (controls.fail) throw new Error('Settings unavailable')
+    return { ...group, canManage: controls.allowed }
+  }
+  client.managePage = async (asked, id) =>
+    asManagePage({
+      scope: { kind: asked, id, name: 'Bluebirds' },
+      tree: { leagues: [], seasons: [], teams: [] },
+      people: [],
+      pending: [],
+      invites: []
+    })
+  client.roster = async () => []
   client.gameProposals = async () => []
-  return client
-}
-async function mount(element: React.ReactElement): Promise<void> {
-  const host = document.createElement('div')
-  document.body.append(host)
-  root = createRoot(host)
-  await act(async () => {
-    root!.render(<ThemeProvider>{element}</ThemeProvider>)
-  })
-}
-function button(label: string): HTMLElement {
-  const found = [
-    ...document.querySelectorAll<HTMLElement>('[role="button"]')
-  ].find(
-    node => (node.getAttribute('aria-label') ?? node.textContent) === label
-  )
-  expect(found, label).not.equals(undefined)
-  return found!
-}
-async function press(label: string): Promise<void> {
-  await act(async () => {
-    button(label).click()
-  })
-}
-afterEach(async () => {
-  await act(async () => {
-    root?.unmount()
-  })
-  root = undefined
-  document.body.replaceChildren()
-})
-describe('team settings management and pending saves', () => {
-  it('retains canonical declined proposals and request navigation/deletion behind settings', async () => {
-    const client = api()
-    let removed = false
-    let opened = ''
-    client.gameProposals = async scope => {
-      expect(scope).deep.equals({ kind: 'team', id: 'canonical' })
-      return removed ? [] : [proposal]
+  client.updateGroup = async (ref, body) => {
+    calls.push([ref, body])
+    if (controls.fail) throw new Error('Save unavailable')
+    group = {
+      ...group,
+      group: {
+        ...group.group,
+        ...body,
+        imageUrl:
+          body.picture == null
+            ? group.group.imageUrl
+            : 'https://images.example.test/group.png'
+      }
     }
-    client.deleteDeclinedGame = async (id, scope) => {
-      expect(id).equals('declined-request')
-      expect(scope).deep.equals({ kind: 'team', id: 'canonical' })
+    return group.group
+  }
+  return { client, calls, controls }
+}
+
+describe('group settings identity and individual saves', () => {
+  afterEach(unmount)
+  it('releases an invalidated name save when a parent removal refreshes the same group', async () => {
+    const f = fixture()
+    const own = await f.client.group({ kind: 'team', id: 'canonical' })
+    let removed = false
+    f.client.group = async () => ({
+      ...own,
+      parents: removed
+        ? []
+        : [
+            asPublicGroup({
+              kind: 'league',
+              id: 'harbor',
+              name: 'Harbor League',
+              imageUrl: null,
+              locality: null
+            })
+          ]
+    })
+    f.client.parentPreview = async actions => ({
+      actions,
+      effects: actions,
+      expected: {},
+      explanation: []
+    })
+    f.client.changeParents = async () => {
       removed = true
     }
-    await mount(
-      <GroupSettingsScreen
-        client={client}
-        groupRef={{ kind: 'team', id: 'alias' }}
-        onLink={() => undefined}
-        onSaved={() => undefined}
-        onRequest={id => {
-          opened = id
-        }}
-      />
-    )
-    expect(document.body.textContent).includes('Declined')
-    await press('Open game proposal')
-    expect(opened).equals('declined-request')
-    await press('Delete declined entry')
-    expect(removed).equals(true)
-    expect(document.body.textContent).not.includes('Delete declined entry')
-  })
-  it('does not load administrative proposal lists for a viewer', async () => {
-    const client = api()
-    let requests = 0
-    client.group = async () => ({ ...detail, canManage: false })
-    client.gameProposals = async () => {
-      requests++
-      return [proposal]
+    let finish: (() => void) | undefined
+    f.client.updateGroup = async () => {
+      await new Promise<void>(resolve => {
+        finish = resolve
+      })
+      return own.group
     }
     await mount(
       <GroupSettingsScreen
-        client={client}
+        client={f.client}
         groupRef={{ kind: 'team', id: 'canonical' }}
-        onLink={() => undefined}
-        onSaved={() => undefined}
-        onRequest={() => undefined}
       />
     )
-    expect(requests).equals(0)
-    expect(document.body.textContent).not.includes('Game proposals')
-  })
-  for (const leaves of [false, true])
-    it(`locks Cancel and management during a save and ${leaves ? 'ignores completion after leaving' : 'completes exactly once'}`, async () => {
-      const client = api()
-      client.gameProposals = async () => [proposal]
-      let finish!: () => void
-      client.updateGroup = async () => {
-        await new Promise<void>(resolve => {
-          finish = resolve
-        })
-        return detail.group
-      }
-      let saved = 0
-      let navigated = 0
-      client.deleteDeclinedGame = async () => {
-        navigated++
-      }
-      await mount(
-        <GroupSettingsScreen
-          client={client}
-          groupRef={{ kind: 'team', id: 'canonical' }}
-          onSaved={() => {
-            saved++
-          }}
-          onCancel={() => {
-            navigated++
-          }}
-          onLink={() => {
-            navigated++
-          }}
-          onCreateGame={() => {
-            navigated++
-          }}
-          onRequest={() => {
-            navigated++
-          }}
-        />
-      )
-      await press('Save settings')
-      for (const label of [
-        'Cancel',
-        'Join a Season',
-        'Create Game',
-        'Open game proposal',
-        'Delete declined entry'
-      ]) {
-        expect(button(label).getAttribute('aria-disabled'), label).equals(
-          'true'
+    await fill('Name', 'Wrens')
+    await press('Save name')
+    await press('Leave Harbor League')
+    await act(async () => {
+      const confirm = [
+        ...document.querySelectorAll<HTMLElement>('[role="button"]')
+      ]
+        .filter(
+          node =>
+            (node.getAttribute('aria-label') ?? node.textContent) ===
+            'Leave Harbor League'
         )
-        await press(label)
-      }
-      expect(navigated).equals(0)
-      if (leaves) {
-        await act(async () => {
-          root!.unmount()
-        })
-        root = undefined
-      }
-      await act(async () => {
-        finish()
-      })
-      expect(saved).equals(leaves ? 0 : 1)
-      expect(navigated).equals(0)
+        .at(-1)
+      expect(confirm).not.equals(undefined)
+      confirm!.click()
     })
-})
-
-async function typeAddress(value: string): Promise<void> {
-  const input = document.querySelector<HTMLInputElement>(
-    'input[aria-label="E-mail address"]'
-  )
-  expect(input).not.equals(null)
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      'value'
-    )!.set!.call(input, value)
-    input!.dispatchEvent(new window.Event('input', { bubbles: true }))
-    await new Promise(resolve => setTimeout(resolve, 10))
+    await settle()
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Name"]')!.disabled
+    ).equals(false)
+    expect(find('Save name')!.getAttribute('aria-disabled')).not.equals('true')
+    await act(async () => {
+      finish!()
+    })
+    expect(text()).not.includes('Name saved')
   })
-}
-
-describe('a group’s people in its Settings', () => {
-  function people(kind: 'team' | 'season' | 'league'): {
-    client: TeamStationClient
-    calls: unknown[]
-  } {
-    const calls: unknown[] = []
-    const client = api()
-    client.group = async () => ({
-      ...detail,
-      group: { ...detail.group, kind, id: `${kind}_one` }
+  it('loads a new visit instead of carrying its predecessor’s draft or pending save', async () => {
+    const f = fixture()
+    const original = await f.client.group({ kind: 'team', id: 'canonical' })
+    f.client.group = async ref => ({
+      ...original,
+      group: {
+        ...original.group,
+        kind: ref.kind,
+        id: ref.id,
+        name: ref.id === 'first' ? 'Bluebirds' : 'Wrens'
+      }
     })
-    let pending = true
-    client.managePage = async (asked, id) => {
-      calls.push(['page', asked, id])
-      return asManagePage({
-        scope: { kind, id, name: `Demo ${kind}` },
-        tree: { leagues: [], seasons: [], teams: [] },
-        people: [
-          {
-            userId: 301,
-            displayName: 'Nolan Quiet',
-            emails: [],
-            teams: kind === 'team' ? [{ id, name: 'x', role: 'member' }] : [],
-            seasons:
-              kind === 'season' ? [{ id, name: 'x', role: 'member' }] : [],
-            leagues:
-              kind === 'league' ? [{ id, name: 'x', role: 'member' }] : [],
-            adminOf: [],
-            createdAt: '2026-01-01T00:00:00Z',
-            lastSignInAt: null,
-            lastSeenAt: null
-          },
-          {
-            userId: 302,
-            displayName: 'Pat Young',
-            emails: ['pat@example.com'],
-            teams: [],
-            seasons: [],
-            leagues: [],
-            adminOf: [],
-            createdAt: '2026-01-01T00:00:00Z',
-            lastSignInAt: null,
-            lastSeenAt: null
-          }
-        ],
-        pending: pending
-          ? [
-              {
-                inviteId: 'inv_one',
-                email: 'newcomer@example.com',
-                code: 'abc',
-                invitedAt: '2026-10-01T00:00:00Z',
-                requestId: 'req_one'
-              }
-            ]
-          : [],
-        invites: []
+    let finish: (() => void) | undefined
+    f.client.updateGroup = async ref => {
+      await new Promise<void>(resolve => {
+        finish = resolve
       })
+      return (await f.client.group(ref)).group
     }
-    client.invites = async () => ({ canInvite: true, invites: [] })
-    client.addPerson = async (asked, id, email, options) => {
-      calls.push(['add', asked, id, email, options?.admin, options?.flags])
-      pending = false
-      return email.startsWith('pat')
-        ? {
-            added: true,
-            person: { userId: 302, displayName: 'Pat Young', email },
-            invited: undefined
-          }
-        : {
-            added: false,
-            person: undefined,
-            invited: {
-              inviteId: 'inv_two',
-              email,
-              code: 'def',
-              invitedAt: '2026-10-02T00:00:00Z',
-              requestId: 'req_two'
-            }
-          }
+    let visit: (ref: GroupRef) => void = () => {}
+    function Visit(): React.ReactElement {
+      const [ref, setRef] = React.useState<GroupRef>({
+        kind: 'team',
+        id: 'first'
+      })
+      visit = setRef
+      return <GroupSettingsScreen client={f.client} groupRef={ref} />
     }
-    client.removePerson = async (asked, id, userId) => {
-      calls.push(['remove', asked, id, userId])
-      return { removed: true }
-    }
-    return { client, calls }
-  }
-
-  for (const kind of ['team', 'season', 'league'] as const)
-    it(`adds somebody by address, lists the invitations waiting and the people with no address, for a ${kind}`, async () => {
-      const { client, calls } = people(kind)
-      const opened: string[] = []
+    await mount(<Visit />)
+    await fill('Name', 'Unsaved Bluebirds')
+    await press('Save name')
+    await act(async () => {
+      visit({ kind: 'league', id: 'second' })
+    })
+    await settle()
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Name"]')!.value
+    ).equals('Wrens')
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Name"]')!.disabled
+    ).equals(false)
+    await act(async () => {
+      finish!()
+    })
+    expect(text()).not.includes('Name saved')
+  })
+  it('keeps participation above parents and ends only the chosen participation, with retry', async () => {
+    for (const kind of ['team', 'season'] as const) {
+      const f = fixture(kind)
+      const own = await f.client.group({ kind, id: 'canonical' })
+      const parent = asPublicGroup({
+        kind: 'league',
+        id: 'harbor',
+        name: 'Harbor League',
+        locality: null,
+        imageUrl: null
+      })
+      const counterpart = asPublicGroup({
+        kind: kind === 'team' ? 'season' : 'team',
+        id: 'participant',
+        name: 'Spring Bluebirds',
+        locality: null,
+        imageUrl: null
+      })
+      let ended = false
+      let fail = true
+      f.client.group = async () => ({
+        ...own,
+        parents: [parent],
+        participatingSeasons: kind === 'team' && !ended ? [counterpart] : [],
+        competingTeams: kind === 'season' && !ended ? [counterpart] : []
+      })
+      const calls: unknown[] = []
+      f.client.endParticipation = async (season, team) => {
+        calls.push([season, team])
+        if (fail) throw new Error('Participation unavailable')
+        ended = true
+      }
       await mount(
         <GroupSettingsScreen
-          client={client}
-          groupRef={{ kind, id: `${kind}_one` }}
-          onLink={() => undefined}
-          onSaved={() => undefined}
-          onRequest={id => {
-            opened.push(id)
+          client={f.client}
+          groupRef={{ kind, id: 'alias' }}
+          onRequest={() => {}}
+        />
+      )
+      const label =
+        kind === 'team'
+          ? 'End participation in Spring Bluebirds'
+          : 'End participation for Spring Bluebirds'
+      if (kind === 'team')
+        expect(text().indexOf('SEASON PARTICIPATION')).lessThan(
+          text().indexOf('PARENT ORGANIZATIONS')
+        )
+      await press(label)
+      expect(text()).includes('Participation unavailable')
+      fail = false
+      await press(label)
+      await settle()
+      expect(calls[1]).deep.equals(
+        kind === 'team'
+          ? ['participant', 'canonical']
+          : ['canonical', 'participant']
+      )
+      expect(text()).not.includes(label)
+      await unmount()
+    }
+  })
+  for (const kind of ['team', 'season', 'league'] as const)
+    it(`shows ${kind} identity and saves the name without leaving settings`, async () => {
+      const f = fixture(kind)
+      const opened: GroupRef[] = []
+      let changed = 0
+      await mount(
+        <GroupSettingsScreen
+          client={f.client}
+          groupRef={{ kind, id: 'alias' }}
+          onLocation={ref => {
+            opened.push(ref)
+          }}
+          onChanged={() => {
+            changed++
           }}
         />
       )
-      await act(async () => {
-        await new Promise(resolve => setTimeout(resolve, 20))
-      })
-      const text = (): string => document.body.textContent ?? ''
-      expect(text()).includes('ADD SOMEBODY')
-      expect(text()).includes('INVITATIONS WAITING')
-      expect(text()).includes('newcomer@example.com')
-      expect(text()).includes('NO ADDRESS ON FILE')
-      expect(text()).includes('Nolan Quiet')
-      // Somebody with an address is managed from the people list instead.
-      expect(text()).not.includes('Pat Young')
-      expect(text()).includes('INVITE PEOPLE')
-      await press('Open')
-      expect(opened).deep.equals(['req_one'])
-
-      // Roles chosen for the add, then an account added at once.
-      await press('Choose roles')
-      await act(async () => {
-        document
-          .querySelector<HTMLInputElement>('input[aria-label="Coach"]')!
-          .click()
-      })
-      await press('Save')
-      expect(text()).includes('Adds them as: Coach.')
-      await typeAddress('pat@example.com')
-      await press('Add')
-      await act(async () => {
-        await new Promise(resolve => setTimeout(resolve, 20))
-      })
-      expect(text()).includes('Pat Young has been added.')
-      expect(calls).deep.include([
-        'add',
-        kind,
-        `${kind}_one`,
-        'pat@example.com',
-        false,
-        ['coach']
+      await settle()
+      expect(
+        document.querySelector<HTMLInputElement>('[aria-label="Name"]')!.value
+      ).equals('Bluebirds')
+      expect(text())
+        .includes(`${kind.toUpperCase()} DETAILS`)
+        .and.not.includes('Save settings')
+      expect(find('Add picture')).not.equals(undefined)
+      expect(find('Save name')?.getAttribute('aria-disabled')).equals('true')
+      await fill('Name', 'Wrens')
+      await press('Save name')
+      await settle()
+      expect(f.calls).deep.equals([
+        [{ kind, id: 'canonical' }, { name: 'Wrens' }]
       ])
-      expect(text()).not.includes('INVITATIONS WAITING')
-
-      await press('Remove Nolan Quiet')
-      await act(async () => {
-        await new Promise(resolve => setTimeout(resolve, 20))
-      })
-      expect(calls).deep.include(['remove', kind, `${kind}_one`, 301])
+      expect(changed).equals(1)
+      expect(text()).includes('Name saved').and.includes('Wrens')
+      if (kind === 'season') {
+        expect(text()).not.includes('Toronto')
+        expect(text()).includes('Time frame')
+      } else {
+        await press('Toronto, Ontario, Canada')
+        expect(opened).deep.equals([{ kind, id: 'canonical' }])
+      }
     })
-
-  it('says an invitation went to an address nobody holds, and opens it', async () => {
-    const { client } = people('team')
-    const opened: string[] = []
+  it('saves pictures through the sheet and preserves an unsaved name', async () => {
+    const f = fixture()
     await mount(
       <GroupSettingsScreen
-        client={client}
-        groupRef={{ kind: 'team', id: 'team_one' }}
-        onLink={() => undefined}
-        onSaved={() => undefined}
-        onRequest={id => {
-          opened.push(id)
+        client={f.client}
+        groupRef={{ kind: 'team', id: 'alias' }}
+      />
+    )
+    await settle()
+    await fill('Name', 'Unsaved Bluebirds')
+    await press('Add picture')
+    await press('Use initials')
+    await press('Save photo')
+    await settle()
+    expect(f.calls[0]).deep.equals([
+      { kind: 'team', id: 'canonical' },
+      { picture: { initials: true } }
+    ])
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="Name"]')!.value
+    ).equals('Unsaved Bluebirds')
+  })
+  it('keeps failed name saves recoverable and refuses blank names', async () => {
+    const f = fixture()
+    await mount(
+      <GroupSettingsScreen
+        client={f.client}
+        groupRef={{ kind: 'team', id: 'alias' }}
+      />
+    )
+    await settle()
+    await fill('Name', '')
+    expect(find('Save name')?.getAttribute('aria-disabled')).equals('true')
+    await fill('Name', 'Wrens')
+    f.controls.fail = true
+    await press('Save name')
+    await settle()
+    expect(text()).includes('Save unavailable')
+    f.controls.fail = false
+    await press('Save name')
+    await settle()
+    expect(text()).includes('Name saved')
+  })
+  it('does not expose administrative controls to a viewer and retries loading errors', async () => {
+    const f = fixture()
+    f.controls.fail = true
+    await mount(
+      <GroupSettingsScreen
+        client={f.client}
+        groupRef={{ kind: 'team', id: 'alias' }}
+      />
+    )
+    await settle()
+    expect(text()).includes('Settings unavailable')
+    f.controls.fail = false
+    f.controls.allowed = false
+    await press('Retry settings')
+    await settle()
+    expect(text()).includes('Only a current administrator')
+    expect(find('Save name')).equals(undefined)
+  })
+  it('blocks competing saves and does not navigate on a stale completion', async () => {
+    const f = fixture()
+    let finish: (() => void) | undefined
+    let changed = 0
+    f.client.updateGroup = async () => {
+      await new Promise<void>(resolve => {
+        finish = resolve
+      })
+      return (await f.client.group({ kind: 'team', id: 'canonical' })).group
+    }
+    await mount(
+      <GroupSettingsScreen
+        client={f.client}
+        groupRef={{ kind: 'team', id: 'alias' }}
+        onChanged={() => {
+          changed++
         }}
       />
     )
+    await settle()
+    await fill('Name', 'Wrens')
+    await press('Save name')
+    expect(find('Save name')?.getAttribute('aria-disabled')).equals('true')
+    await unmount()
     await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 20))
+      finish!()
     })
-    await typeAddress('later@example.com')
-    await press('Add')
-    await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 20))
-    })
-    expect(document.body.textContent).includes(
-      'An invitation is on its way to later@example.com.'
-    )
-    await press('Open sent invitation')
-    expect(opened).deep.equals(['req_two'])
+    expect(changed).equals(0)
   })
 })

@@ -266,8 +266,8 @@ describe('a player’s tabs', function () {
       'Teams',
       'Settings'
     ])
-    // Five fit a phone side by side only with narrower pills.
-    expect(tabSides()).deep.equals(Array(5).fill(px(tsBallpark.spaceSmRem)))
+    // Dense strips keep the same clearance and scroll when necessary.
+    expect(tabSides()).deep.equals(Array(5).fill(px(1.125)))
   })
 
   it('offers Teams to anybody, and Settings and Walk-up to nobody else', async function () {
@@ -302,7 +302,7 @@ describe('a player’s tabs', function () {
       />
     )
     expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
-    expect(tabSides()).deep.equals(Array(4).fill(px(tsBallpark.spaceMdRem)))
+    expect(tabSides()).deep.equals(Array(4).fill(px(1.125)))
     await act(async () => {
       root?.unmount()
     })

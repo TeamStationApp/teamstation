@@ -97,15 +97,20 @@ function api(
       games: [],
       canManage: ref.id !== 'tem_herons'
     })
-  client.locations = async () => [
-    {
-      city: 'Springfield',
-      region: 'Demo Region',
-      country: 'US',
-      placeId: 'place-1',
-      timezone: 'America/Chicago'
-    }
-  ]
+  client.citySuggestions = async () => ({
+    provider: 'geonames',
+    attribution: 'GeoNames',
+    suggestions: [
+      { id: 'place-1', primary: 'Springfield', secondary: 'Demo Region, US' }
+    ]
+  })
+  client.location = async () => ({
+    city: 'Springfield',
+    region: 'Demo Region',
+    country: 'US',
+    placeId: 'place-1',
+    timezone: 'America/Chicago'
+  })
   return { client, asked }
 }
 
@@ -288,9 +293,11 @@ describe('team selector scene', () => {
     await press('Create Placeholder Team')
     await fill('Team name', 'Riverside Owls')
     await press('Continue')
-    await fill('Search city and state', 'Spring')
+    await press('Location not set')
+    await fill('City', 'Spring')
     await settle()
     await press('Choose Springfield, Demo Region, US')
+    await press('Save')
     await press('Continue')
     await press('Use initials')
     await press('Previous step')
