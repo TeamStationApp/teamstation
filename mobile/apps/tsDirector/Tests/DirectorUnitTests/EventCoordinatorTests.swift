@@ -379,8 +379,13 @@ struct StreamEndedTests {
     )
   }
 
-  private func settle() async {
-    for _ in 0 ..< 20 { await Task.yield() }
+  /// Waits, up to five seconds, for the controller's dial to get where the test needs it.
+  /// The dial runs in a task of its own, so how many turns it takes depends on the load.
+  private func until(_ condition: @MainActor () -> Bool) async {
+    let deadline = Date().addingTimeInterval(5)
+    while !condition(), Date() < deadline {
+      try? await Task.sleep(for: .milliseconds(10))
+    }
   }
 
   @Test("A redial carries the controller's reason, and an ended stream is StreamEndedError")
@@ -404,21 +409,22 @@ struct StreamEndedTests {
     let scheduler = ManualScheduler()
     let controller = wire(rig, publisher: publisher, scheduler: scheduler)
     controller.start()
-    await settle()
+    await until { controller.phase == .live }
     #expect(controller.phase == .live)
 
     rig.events.ended = true
     publisher.drop()
-    await settle()
+    await until { controller.phase == .retrying }
+    #expect(controller.phase == .retrying)
     scheduler.fire()
-    await settle()
+    await until { controller.phase == .idle }
     #expect(controller.phase == .idle)
     #expect(controller.lastError == "ended")
     #expect(rig.events.made == 0)
     #expect(publisher.dialled == [ "rtmp://ingest/live/g1" ])
 
     controller.start()
-    await settle()
+    await until { controller.phase == .live }
     #expect(controller.phase == .live)
     #expect(rig.events.asked.suffix(2) == [ "refresh redial", "refresh start" ])
     #expect(rig.events.made == 1)
@@ -434,7 +440,7 @@ struct StreamEndedTests {
     let controller = wire(rig, publisher: publisher, scheduler: ManualScheduler())
     // `applyResumedStream`: the stream was live when the app stopped.
     controller.start(reason: .redial)
-    await settle()
+    await until { controller.phase == .idle }
     #expect(controller.phase == .idle)
     #expect(rig.events.asked.last == "refresh redial")
     #expect(rig.events.made == 0)
