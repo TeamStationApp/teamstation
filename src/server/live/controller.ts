@@ -25,6 +25,7 @@ import { isRecordingShape, toRecording } from './finishVideo'
 import { openSecret } from './secrets'
 import {
   clearLive,
+  clearLiveSettled,
   configureIngest,
   LIVE_PLAYLIST_NAME,
   type LiveEvent,
@@ -32,6 +33,7 @@ import {
   type LiveStatus,
   setLive,
   startIngest,
+  statusFor,
   stopIngest
 } from './splitter'
 
@@ -65,6 +67,24 @@ export const REPLACED_BY_UPLOAD =
  * everybody's home screen until the window runs out hours later.
  */
 const SILENCE_LIMIT_MS = 100 * 365 * 24 * 60 * 60 * 1000
+/**
+ * How long a publisher may be away before its viewers are told the stream
+ * has finished.
+ *
+ * The writer never closes the playlist itself, because every player — hls.js,
+ * Safari and AVPlayer, ExoPlayer — reads `EXT-X-ENDLIST` as the end of the
+ * broadcast and stops asking for more, for good: a phone that lost its signal
+ * for twenty seconds froze everybody watching it, even after it was back.
+ * So while the publisher may yet come back the playlist stays open, and the
+ * players wait at the end of it.
+ *
+ * Past this, the playlist is closed so the people watching are not left
+ * waiting on a stream that has stopped. It is not the end of the stream: the
+ * key still works, a publisher coming back reopens the playlist and carries on
+ * in it, and the web player, which knows the video is still live, picks it up
+ * again. The stream itself finishes as it always has, when somebody ends it.
+ */
+export const RECONNECT_GRACE_MS = 60_000
 /**
  * How long a video's files stay on this machine after the Space has them.
  *
@@ -117,6 +137,11 @@ let syncing: Promise<void> | undefined
 /** Live stream id → what the ingest was last told, so it can be untold. */
 const tracked = new Map<string, Tracked>()
 const lastStatusWrite = new Map<string, number>()
+/**
+ * Live stream id → the absence its playlist was closed for, as the
+ * `last_published_at` it was measured from, so one absence closes it once.
+ */
+const closedAfterGrace = new Map<string, number>()
 /** One chain per stream, so two events for one stream cannot interleave. */
 const work = new Map<string, Promise<void>>()
 
@@ -296,6 +321,7 @@ export function stopLiveController(): void {
   stopIngest()
   tracked.clear()
   lastStatusWrite.clear()
+  closedAfterGrace.clear()
 }
 
 /**
@@ -653,20 +679,28 @@ export async function sync(
         )
 
   const wanted = new Set<string>()
+  // Streams being finished, side by side rather than one after another: each
+  // waits for its own writer to exit, and angles ended together should not
+  // hold up every other stream's tick for the sum of those waits.
+  const finishing: Array<Promise<void>> = []
   for (const row of rows) {
     if (row.state === 'revoked') {
-      await finishStream(
-        current,
-        row.id,
-        row.localRecording === 'uploaded'
-          ? REPLACED_BY_UPLOAD
-          : (row.lastError ?? 'streaming permission was removed')
+      finishing.push(
+        finishStream(
+          current,
+          row.id,
+          row.localRecording === 'uploaded'
+            ? REPLACED_BY_UPLOAD
+            : (row.lastError ?? 'streaming permission was removed')
+        )
       )
       continue
     }
     if (!(await mayPublish(db, row))) {
       await revokePublishing(db, row.id, now)
-      await finishStream(current, row.id, 'streaming permission was removed')
+      finishing.push(
+        finishStream(current, row.id, 'streaming permission was removed')
+      )
       continue
     }
     // `closes_at` is now the moment somebody ended it rather than a window
@@ -674,7 +708,7 @@ export async function sync(
     // removal all come through.
     const closesAt = row.closesAt == null ? null : new Date(row.closesAt)
     if (closesAt != null && now >= closesAt) {
-      await finishStream(current, row.id, 'the stream was ended')
+      finishing.push(finishStream(current, row.id, 'the stream was ended'))
       continue
     }
     // Nothing has arrived for a long time, and something did once. The game is
@@ -682,11 +716,14 @@ export async function sync(
     if (row.state === 'idle' && row.lastPublishedAt != null) {
       const silentFor = now.getTime() - new Date(row.lastPublishedAt).getTime()
       if (silentFor > SILENCE_LIMIT_MS) {
-        await finishStream(current, row.id, 'the stream stopped arriving')
+        finishing.push(
+          finishStream(current, row.id, 'the stream stopped arriving')
+        )
         continue
       }
     }
     if (row.videoId == null) continue
+    await closeAfterGrace(current, row, now)
 
     // A stream already running is left alone: cutting a game off part way
     // through is worse than letting it use the last of the disk, and ffmpeg
@@ -736,6 +773,48 @@ export async function sync(
     clearLive(entry.key, 'no longer open')
     tracked.delete(liveStreamId)
   }
+
+  // Every finish runs to its end before the tick does, and the first failure
+  // is the tick's, as it was when they ran in turn.
+  const failed = (await Promise.allSettled(finishing)).find(
+    (one): one is PromiseRejectedResult => one.status === 'rejected'
+  )
+  if (failed != null) throw failed.reason
+}
+
+/**
+ * Closes the playlist of a stream whose publisher has been away for longer
+ * than `RECONNECT_GRACE_MS`, once per absence.
+ *
+ * Measured from `last_published_at`, which moves while video arrives and is
+ * stamped when the publisher goes, so it holds across a restart of this
+ * process too. A stream the ingest says is publishing again is left alone
+ * whatever the row says: the row learns of a reconnect a moment after the
+ * ingest does, and closing the playlist then would put an `ENDLIST` under a
+ * writer that has just started appending to it.
+ */
+async function closeAfterGrace(
+  current: LiveControllerOptions,
+  row: {
+    id: string
+    state: string
+    videoId: string | null
+    lastPublishedAt: Date | string | null
+  },
+  now: Date
+): Promise<void> {
+  if (row.state !== 'idle' || row.lastPublishedAt == null) {
+    closedAfterGrace.delete(row.id)
+    return
+  }
+  const leftAt = new Date(row.lastPublishedAt).getTime()
+  if (now.getTime() - leftAt <= RECONNECT_GRACE_MS) return
+  if (closedAfterGrace.get(row.id) === leftAt) return
+  const key = tracked.get(row.id)?.key
+  if (key != null && statusFor(key)?.ingress.publishing === true) return
+  if (row.videoId == null) return
+  closedAfterGrace.set(row.id, leftAt)
+  await closePlaylist(current.mediaRoot, row.videoId)
 }
 
 /** A key belongs to an active account filming a current side of this game. */
@@ -826,9 +905,12 @@ export async function finishStream(
 ): Promise<void> {
   const { db, mediaRoot, ffmpegPath } = current
   const entry = tracked.get(liveStreamId)
+  closedAfterGrace.delete(liveStreamId)
   if (entry != null) {
-    clearLive(entry.key, reason)
     tracked.delete(liveStreamId)
+    // The writer's last segment and its last playlist land before the
+    // playlist is closed below, not on top of it.
+    await clearLiveSettled(entry.key, reason)
   }
 
   const now = new Date()
@@ -1120,12 +1202,12 @@ async function toTheSpace(
 }
 
 /**
- * Writes `EXT-X-ENDLIST` if ffmpeg did not.
+ * Writes `EXT-X-ENDLIST`, once.
  *
- * It writes one itself when it exits cleanly, and does not when it is killed —
- * which is every case where the stream was cut off rather than stopped. A
- * playlist without it keeps every player waiting for a segment that is never
- * coming, and the video is unseekable to its own end.
+ * The writer never does (`omit_endlist`): a publisher going away is not the
+ * end of the game. This is, at the end of a stream and past the reconnect
+ * grace. A playlist without it keeps every player waiting for a segment that
+ * is never coming, and the video is unseekable to its own end.
  */
 async function closePlaylist(
   mediaRoot: string,

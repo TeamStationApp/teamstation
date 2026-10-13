@@ -100,6 +100,7 @@ class FakeVideo {
   src = ''
   error: { code: number } | null = null
   paused = true
+  ended = false
   currentTime = 0
   readyState = 0
   loads = 0
@@ -512,5 +513,143 @@ describe('the browser’s own player, when it stumbles', function () {
       expect(video.loads).equals(1)
       done()
     }, 1100)
+  })
+})
+
+describe('a live game whose playlist was closed under the player', function () {
+  const url = 'https://example.com/media/vid_example/master.m3u8'
+  type Stubbed = Record<string, unknown>
+  type Listener = (event: string, data: unknown) => void
+  interface Running {
+    config: { startPosition: number }
+    listeners: (event: string) => Listener[]
+  }
+  let saved: Stubbed = {}
+  let loads: Array<{ hls: Running; source: string }> = []
+  let fetched: string[] = []
+  const realFetch = globalThis.fetch
+
+  function stubbed(playlist: string): void {
+    const proto = Hls.prototype as unknown as Stubbed
+    saved = {
+      isSupported: (Hls as unknown as Stubbed).isSupported,
+      loadSource: proto.loadSource,
+      attachMedia: proto.attachMedia
+    }
+    loads = []
+    fetched = []
+    Hls.isSupported = () => true
+    proto.loadSource = function (this: Running, source: string) {
+      loads.push({ hls: this, source })
+    }
+    proto.attachMedia = () => undefined
+    globalThis.fetch = (async (input: string) => {
+      fetched.push(input)
+      return { text: async () => playlist }
+    }) as unknown as typeof fetch
+  }
+
+  afterEach(function () {
+    globalThis.fetch = realFetch
+    if (saved.isSupported == null) return
+    const proto = Hls.prototype as unknown as Stubbed
+    Hls.isSupported = saved.isSupported as typeof Hls.isSupported
+    proto.loadSource = saved.loadSource
+    proto.attachMedia = saved.attachMedia
+    saved = {}
+  })
+
+  /** Runs this file's own handler for an hls.js event, the last one added. */
+  function emit(hls: Running, event: string, data: unknown = {}): void {
+    hls.listeners(event).at(-1)?.(event, data)
+  }
+
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 5; i++)
+      await new Promise(resolve => setImmediate(resolve))
+  }
+
+  function attach(
+    video: FakeVideo,
+    isLive?: () => boolean
+  ): { detach: () => void; hls: Running } {
+    let detach: () => void = () => undefined
+    asBrowser('Google Inc.', () => {
+      detach = attachHls(video as unknown as VideoHandle, url, undefined, {
+        wantsToPlay: () => true,
+        isLive
+      })
+    })
+    return { detach, hls: loads[0].hls }
+  }
+
+  it('rejoins the live edge of a game it was following, playing again', async function () {
+    stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')
+    const video = new FakeVideo()
+    let asked = 0
+    const { detach, hls } = attach(video, () => {
+      asked += 1
+      return true
+    })
+    video.emit('play')
+    emit(hls, Hls.Events.LEVEL_LOADED, { details: { live: true } })
+    // Closed: it plays out what it has, and the end of it is not the viewer
+    // pausing.
+    emit(hls, Hls.Events.LEVEL_LOADED, { details: { live: false } })
+    video.ended = true
+    video.emit('pause')
+    await settle()
+    expect(asked).equals(1)
+    expect(fetched).deep.equals([url])
+    expect(loads.map(one => one.source)).deep.equals([url, url])
+    expect(hls.config.startPosition).equals(-1)
+    const plays = video.plays
+    emit(hls, Hls.Events.FRAG_BUFFERED)
+    expect(video.plays).equals(plays + 1)
+    // Only the rejoin's first pictures play it; later ones are left alone.
+    emit(hls, Hls.Events.FRAG_BUFFERED)
+    expect(video.plays).equals(plays + 1)
+    detach()
+  })
+
+  it('stays where the viewer was watching, and paused if they paused it', async function () {
+    stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')
+    const video = new FakeVideo()
+    const { detach, hls } = attach(video, () => true)
+    video.emit('play')
+    video.emit('pause')
+    video.currentTime = 42
+    // Opened while the playlist was already closed: never followed live.
+    emit(hls, Hls.Events.LEVEL_LOADED, { details: { live: false } })
+    await settle()
+    expect(loads).has.length(2)
+    expect(hls.config.startPosition).equals(42)
+    const plays = video.plays
+    emit(hls, Hls.Events.FRAG_BUFFERED)
+    expect(video.plays).equals(plays)
+    detach()
+  })
+
+  it('lets a finished video end, as it always has', async function () {
+    stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')
+    const video = new FakeVideo()
+    const { detach, hls } = attach(video, () => false)
+    emit(hls, Hls.Events.LEVEL_LOADED, { details: { live: true } })
+    emit(hls, Hls.Events.LEVEL_LOADED, { details: { live: false } })
+    await settle()
+    expect(fetched).deep.equals([])
+    expect(loads).has.length(1)
+    detach()
+  })
+
+  it('asks nothing for a video that was not live when it was opened', async function () {
+    stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')
+    const video = new FakeVideo()
+    const { detach, hls } = attach(video)
+    emit(hls, Hls.Events.LEVEL_LOADED, { details: { live: false } })
+    await settle()
+    expect(fetched).deep.equals([])
+    expect(loads).has.length(1)
+    detach()
   })
 })

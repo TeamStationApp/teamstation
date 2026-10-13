@@ -471,6 +471,57 @@ describe('useMultiCam', function () {
   })
 })
 
+/** A camera live now, which began `startOffsetSec` into the take. */
+function liveVideo(id: string, startOffsetSec: number): VideoSummary {
+  return { ...video(id, startOffsetSec), status: 'live', durationSec: null }
+}
+
+describe('useMultiCam on live angles', function () {
+  // A began at the take's start and B a minute later. Each opens near its own
+  // live edge: A 100 s in, B 30 s in, which is 90 s into the take.
+  const live = {
+    videos: [liveVideo('A', 0), liveVideo('B', 60)],
+    atMs: undefined
+  }
+  const atTheirEdges = (tiles: Record<string, FakeTile>): void => {
+    tiles.A.duration = Number.POSITIVE_INFINITY
+    tiles.B.duration = Number.POSITIVE_INFINITY
+    tiles.A.currentTime = 100
+    tiles.B.currentTime = 30
+    fill(tiles.A, [100, 116])
+    fill(tiles.B, [30, 46])
+  }
+
+  it('opens on the moment the tile furthest ahead has reached, and plays every tile', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid(live, {}, atTheirEdges)
+    // No moment to open on until the tiles have said where they are.
+    expect(mc().atWallMs).equals(null)
+    expect(tiles.A.paused).equals(true)
+    expect(tiles.B.paused).equals(true)
+
+    await ticks(1)
+    expect(mc().atWallMs).equals(T0 + 100_000)
+    expect(tiles.A.currentTime).equals(100)
+    expect(tiles.B.currentTime).equals(40)
+    expect(tiles.A.paused).equals(false)
+    expect(tiles.B.paused).equals(false)
+    expect(mc().waiting).equals(false)
+  })
+
+  it('waits a moment for a tile with no picture yet, and then opens without it', async function () {
+    this.timeout(8000)
+    const { mc } = await grid(live, {}, tiles => {
+      atTheirEdges(tiles)
+      tiles.B.readyState = 1
+    })
+    await ticks(2)
+    expect(mc().atWallMs).equals(null)
+    await ticks(2)
+    expect(mc().atWallMs).equals(T0 + 100_000)
+  })
+})
+
 describe('useMultiCam buffering', function () {
   // A is two minutes in at 120 s; B, which started a minute later, at 60 s.
 

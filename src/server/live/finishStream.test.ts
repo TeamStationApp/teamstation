@@ -315,6 +315,13 @@ describe('the end of a live stream', function () {
     const dir = await recordSomething('vid_played')
 
     await finishStream(options, 'liv_played', 'the stream window closed')
+    // The writer never closes a playlist; the end of the stream does, after
+    // its last segment.
+    const closed = await readFile(join(dir, LIVE_PLAYLIST_NAME), 'utf8')
+    expect(closed.trimEnd().split('\n').slice(-2)).deep.equals([
+      'seg000002.m4s',
+      '#EXT-X-ENDLIST'
+    ])
     // The video is watchable the moment the stream ends; the packing and the
     // upload happen behind it.
     const ready = await db
