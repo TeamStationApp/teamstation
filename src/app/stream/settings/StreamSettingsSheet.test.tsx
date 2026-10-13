@@ -65,6 +65,26 @@ const delay = async (ms: number): Promise<void> => {
 const byTestId = (id: string): HTMLElement | null =>
   document.querySelector<HTMLElement>(`[data-testid="${id}"]`)
 
+/**
+ * The props a React Native field was given, read off the rendered input's
+ * fiber: the web renderer drops Android-only props such as
+ * `disableFullscreenUI` from the DOM.
+ */
+function fieldProps(input: Element | null): Record<string, unknown> {
+  const key = Object.keys(input ?? {}).find(name =>
+    name.startsWith('__reactFiber$')
+  )
+  interface Fiber {
+    memoizedProps?: Record<string, unknown>
+    return?: Fiber
+  }
+  let fiber = (key == null ? undefined : (input as never)[key]) as
+    Fiber | undefined
+  while (fiber != null && fiber.memoizedProps?.onChangeText == null)
+    fiber = fiber.return
+  return fiber?.memoizedProps ?? {}
+}
+
 async function press(id: string): Promise<void> {
   await act(async () => {
     const node = byTestId(id)
@@ -315,6 +335,10 @@ describe('the stream settings sheet', function () {
 
   it('renames the angle on the server and in the engine with Done', async function () {
     const h = await mountSheet()
+    // Held sideways, an Android phone edits the name in place.
+    expect(fieldProps(byTestId('settings-name')).disableFullscreenUI).equals(
+      true
+    )
     await type('settings-name', '  Third Base ')
     await press('settings-done')
     expect(h.patches).deep.equals([

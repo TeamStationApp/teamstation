@@ -1,9 +1,11 @@
 // E13: the streaming screen's settings sheet turns with the phone, has only
 // the phone's own settings, turns the microphone off on the live stream and
 // renames the angle. Through maestro-d's JavaScript client, on an iOS
-// simulator or an iPhone.
+// simulator or an iPhone, or on an Android phone with TS_STREAM_ANDROID_SERIAL
+// in place of the UDID.
 //
-//   TS_STREAM_IOS_UDID=<device> MAESTRO_D=<this agent's daemon> \
+//   TS_STREAM_IOS_UDID=<device> | TS_STREAM_ANDROID_SERIAL=<adb serial> \
+//   MAESTRO_D=<this agent's daemon> \
 //   MAESTRO_D_CLIENT_ROOT=<maestro-d npm package> [MAESTRO_D_BIN=<binary>] \
 //   [TS_STREAM_TEAM_ID=<WebDriverAgent signing team, for a real device>] \
 //   TS_STREAM_API=http://<address>:<port>/api/v1 \
@@ -87,7 +89,7 @@ interface Driver {
 interface Daemon {
   attach: (options: {
     device: string
-    platform: 'ios'
+    platform: 'ios' | 'android'
     appId: string
     teamId?: string
   }) => Promise<Driver>
@@ -98,7 +100,10 @@ const required = (key: string): string => {
   assert(value != null && value !== '', `${key} is required`)
   return value
 }
-const device = required('TS_STREAM_IOS_UDID')
+// TS_STREAM_ANDROID_SERIAL drives an Android phone instead of an iOS device.
+const androidSerial = process.env.TS_STREAM_ANDROID_SERIAL
+const android = androidSerial != null && androidSerial !== ''
+const device = android ? androidSerial : required('TS_STREAM_IOS_UDID')
 const daemonName = required('MAESTRO_D')
 const clientRoot = required('MAESTRO_D_CLIENT_ROOT')
 const api = required('TS_STREAM_API').replace(/\/$/, '')
@@ -276,7 +281,7 @@ async function main(): Promise<void> {
   const daemon = await MaestroD.connect({ name: daemonName, spawn: true })
   const m = await daemon.attach({
     device,
-    platform: 'ios',
+    platform: android ? 'android' : 'ios',
     appId: APP,
     ...(teamId == null ? {} : { teamId })
   })
@@ -369,13 +374,47 @@ async function main(): Promise<void> {
     say(`$ openLink teamstation://games/${game}`)
     await m.openLink({ link: `teamstation://games/${game}` })
     await sleep(3000)
-    say('$ scrollUntilVisible Record video')
-    await m.scrollUntilVisible({
-      element: { text: 'Record video' },
-      centerElement: true
-    })
+    if (android) {
+      // maestro-d's scroll swipes across the middle of the screen, which on
+      // Android is the game's video player, and the player keeps the swipe:
+      // swipe below it instead (the hierarchy holds only what is on screen).
+      for (
+        let i = 0;
+        i < 4 &&
+        // Off screen, or under the floating tab bar at the bottom.
+        ((await find(byText('Record video'), 1000))?.bounds?.y ?? 1e9) >
+          ((await m.hierarchy()).bounds?.height ?? 2400) * 0.7;
+        i++
+      ) {
+        say('$ swipe 50%,78% → 50%,30%')
+        await (
+          m as unknown as {
+            swipe: (gesture: unknown) => Promise<unknown>
+          }
+        ).swipe({ start: '50%, 78%', end: '50%, 30%', duration: 600 })
+        await sleep(800)
+      }
+    } else {
+      say('$ scrollUntilVisible Record video')
+      await m.scrollUntilVisible({
+        element: { text: 'Record video' },
+        centerElement: true
+      })
+    }
     say('$ tapOn Record video')
-    await m.tapOn({ text: 'Record video' })
+    const recordVideo = android
+      ? await find(byText('Record video'), 3000)
+      : undefined
+    if (recordVideo?.bounds != null) {
+      // In the middle: the watch tab leaves room under its last row for the
+      // floating tab bar, so the whole button is clear of it.
+      const { x, y, width, height } = recordVideo.bounds
+      await m.tapOn({
+        point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`
+      })
+    } else {
+      await m.tapOn({ text: 'Record video' })
+    }
     assert(
       (await find(byText('Name this camera angle'))) != null,
       'Record video asks for the angle’s name'
@@ -471,10 +510,42 @@ async function main(): Promise<void> {
     await m.tapOn({ id: 'settings-audio' })
     say('$ tapOn settings-name')
     await m.tapOn({ id: 'settings-name' })
-    await m.eraseText({ characters: angle.length + 10 })
-    say(`$ inputText ${renamed}`)
-    await m.inputText({ text: renamed })
-    await m.hideKeyboard().catch(() => {})
+    if (android) {
+      // Sideways, Android edits the field in the keyboard's full-screen
+      // editor. UIAutomator2's text goes into that editor only and never
+      // reaches the app's field, so type through the keyboard instead, and
+      // Enter commits and closes the editor.
+      await sleep(800)
+      say(
+        `$ adb shell input keyevent MOVE_END, DEL x${angle.length + 4}; input text ${renamed}`
+      )
+      await run('adb', ['-s', device, 'shell', 'input', 'keyevent', '123'])
+      await run('adb', [
+        '-s',
+        device,
+        'shell',
+        'input',
+        'keyevent',
+        ...Array<string>(angle.length + 4).fill('67')
+      ])
+      await run('adb', [
+        '-s',
+        device,
+        'shell',
+        'input',
+        'text',
+        renamed.replace(/ /g, '%s')
+      ])
+      await sleep(500)
+      say('$ adb shell input keyevent KEYCODE_ENTER')
+      await run('adb', ['-s', device, 'shell', 'input', 'keyevent', '66'])
+      await sleep(1000)
+    } else {
+      await m.eraseText({ characters: angle.length + 10 })
+      say(`$ inputText ${renamed}`)
+      await m.inputText({ text: renamed })
+      await m.hideKeyboard().catch(() => {})
+    }
     say('$ tapOn settings-done')
     await m.tapOn({ id: 'settings-done' })
     const doneAt = Date.now()
@@ -524,7 +595,13 @@ async function main(): Promise<void> {
     say('$ tapOn camera-close')
     await m.tapOn({ id: 'camera-close' })
     assert(
-      (await find(byText('Record video'), 10000)) != null,
+      // Android lists only what is on the screen, and Record video may be below it.
+      (await find(
+        node =>
+          node.text === 'Record video' ||
+          (android && node.text === 'Box score'),
+        10000
+      )) != null,
       'Close goes back to the game'
     )
     // The game's videos are read when its screen mounts: start the app again

@@ -277,6 +277,9 @@ function SheetBody(
           placeholderTextColor={SETTINGS.secondaryText}
           autoCorrect={false}
           returnKeyType="done"
+          // Sideways, Android would edit the name in the keyboard's
+          // full-screen editor, over the sheet and the picture.
+          disableFullscreenUI
           style={styles.input}
         />
       </View>
