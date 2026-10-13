@@ -50,6 +50,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
+import { screenOf } from './screenOf'
+
 const run = promisify(execFile)
 
 interface Bounds {
@@ -567,20 +569,28 @@ async function main(): Promise<void> {
         }
       }
     } else {
-      const port = (
+      const log = (
         await readFile(path.join(daemon.info.runDir, 'daemon.log'), 'utf8')
-      )
-        .split('\n')
+      ).split('\n')
+      // Where the daemon reached WebDriverAgent: a usbmuxd forward on
+      // localhost, or the CoreDevice tunnel address for a phone that usbmuxd
+      // does not list. Older daemons only log the forwarded port.
+      const reached = log
+        .map(line => /WDA on (\S+) reached over .+ at (\S+)$/.exec(line))
+        .filter(match => match != null)
+      const url = (reached.filter(match => match[1] === device).at(-1) ??
+        reached.at(-1))?.[2]
+      const port = log
         .filter(line =>
           line.includes(`Starting WDA on device ${device} (port:`)
         )
         .at(-1)
         ?.match(/\(port: (\d+)\)/)?.[1]
       assert(
-        port != null,
-        'this device’s WebDriverAgent port is in the daemon log'
+        url != null || port != null,
+        'this device’s WebDriverAgent address is in the daemon log'
       )
-      const wda = `http://127.0.0.1:${port}`
+      const wda = url ?? `http://127.0.0.1:${port}`
       const status = await m.eval(
         `http.get(${JSON.stringify(`${wda}/status`)})`
       )
@@ -590,12 +600,7 @@ async function main(): Promise<void> {
           `http.post(${JSON.stringify(`${wda}/session/${sessionId}/actions`)}, {body:${JSON.stringify(body)}})`
         )
     }
-    const screen = (await m.hierarchy()).bounds ?? {
-      x: 0,
-      y: 0,
-      width: 844,
-      height: 390
-    }
+    const screen = screenOf(await m.hierarchy())
     const mid = {
       x: Math.round(screen.width * 0.45),
       y: Math.round(screen.height / 2)
