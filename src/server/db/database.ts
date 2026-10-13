@@ -801,8 +801,25 @@ export interface Database {
 export function makeDatabase(connectionString: string): Kysely<Database> {
   attachInt8Parser()
   return new Kysely<Database>({
-    dialect: new PostgresDialect({
-      pool: new Pool({ connectionString, max: 10 })
-    })
+    dialect: new PostgresDialect({ pool: makePool(connectionString) })
   })
+}
+
+/**
+ * The pool, with a listener for the error an idle connection raises when the
+ * database goes away under it: a Postgres restart, a full disk. Unheard, that
+ * error took the whole server down; heard, the pool drops the dead connection
+ * and the next query opens a fresh one.
+ */
+export function makePool(
+  connectionString: string,
+  log: (message: string) => void = message => {
+    console.error(message)
+  }
+): Pool {
+  const pool = new Pool({ connectionString, max: 10 })
+  pool.on('error', (error: Error) => {
+    log(`database: idle connection lost: ${error.message}`)
+  })
+  return pool
 }
