@@ -26,6 +26,8 @@ public final class ProgramStreamer: @unchecked Sendable {
     public var droppedPackets: UInt64 = 0
     /// Bytes queued between this encoder and the socket.
     public var queuedBytes = 0
+    /// Every byte the socket has taken since the publish began.
+    public var bytesSent: UInt64 = 0
     /// The bitrate controller, as it last decided.
     public var rate = StreamRateTelemetry()
   }
@@ -125,6 +127,7 @@ public final class ProgramStreamer: @unchecked Sendable {
       megabitsPerSecond: raw.megabitsPerSecond,
       droppedPackets: raw.droppedPackets,
       queuedBytes: raw.queuedBytes,
+      bytesSent: raw.bytesSent,
       rate: loop.map { Self.rateTelemetry($0.status.controller, codec: codec) } ?? StreamRateTelemetry()
     )
   }

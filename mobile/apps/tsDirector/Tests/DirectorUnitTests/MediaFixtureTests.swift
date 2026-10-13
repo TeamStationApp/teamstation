@@ -30,7 +30,8 @@ struct MediaFixtureTests {
     "rtmp-wire.json",
     "stream-audio-stamps.json",
     "stream-encode-clock.json",
-    "stream-stall-policy.json"
+    "stream-stall-policy.json",
+    "stream-stall-redial.json"
   ]
 
   @Test("Every fixture is written, and writing again changes no byte")

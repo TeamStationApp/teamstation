@@ -116,6 +116,54 @@ public struct StreamRetrySchedule: Sendable, Equatable {
   }
 }
 
+/// Tells a live session that has stopped moving from one that is only slow, and paces the dials that
+/// replace it. Pure, so its decisions are a fixture the Kotlin port shares.
+///
+/// A session is stuck when the socket has taken no byte for `redialSeconds` while bytes are waiting
+/// for it. A link that carries anything at all is not stuck, however slowly it drains, and a session
+/// with nothing queued is idle, not stuck. Once stuck, its replacements are dialled every
+/// `retrySeconds`, counted from when each dial began, until one goes live.
+public struct StreamStallWatch: Sendable, Equatable {
+  /// How often a live session's progress is read.
+  public static let checkSeconds: Double = 1
+  /// How far apart the dials that replace a stuck session start.
+  public static let retrySeconds: Double = 2
+
+  /// How long a session may take nothing while bytes wait before it counts as stuck.
+  public let redialSeconds: Double
+  private var lastBytesSent: UInt64?
+  private var movedAt: Double = 0
+
+  public init(redialSeconds: Double) {
+    self.redialSeconds = max(redialSeconds, Self.checkSeconds)
+  }
+
+  /// A session went live at `now`: it has moved as of then.
+  public mutating func live(at now: Double) {
+    lastBytesSent = nil
+    movedAt = now
+  }
+
+  /// One reading of the session: whether it is stuck now.
+  public mutating func check(at now: Double, bytesSent: UInt64, queuedBytes: Int) -> Bool {
+    guard let last = lastBytesSent else {
+      lastBytesSent = bytesSent
+      return now - movedAt >= redialSeconds && queuedBytes > 0
+    }
+    lastBytesSent = bytesSent
+    if bytesSent != last || queuedBytes <= 0 {
+      movedAt = now
+      return false
+    }
+    return now - movedAt >= redialSeconds
+  }
+
+  /// How long after a replacement dial failed, `dialledFor` seconds after it began, the next one goes.
+  public static func waitAfterFailedDial(dialledFor: Double) -> Double {
+    max(0, retrySeconds - max(0, dialledFor))
+  }
+}
+
 /// Thrown by a host's URL request when the server has ended the stream this device holds (a 410):
 /// the controller stops redialling until its host starts streaming again.
 public struct StreamEndedError: Error, Equatable, Sendable {
@@ -143,6 +191,14 @@ public struct StreamEndedError: Error, Equatable, Sendable {
  * - A host's URL request that throws `StreamEndedError` (the server's 410: somebody ended this
  *   camera) is terminal. The controller goes to `idle` with `lastError` "ended" and dials nothing
  *   until its host calls `start` again.
+ *
+ * - With `stallRedialSeconds` set, a live session whose socket has taken nothing for that long while
+ *   bytes wait for it (`StreamStallWatch`) is stuck: the controller goes to `retrying`, closes it and
+ *   dials a fresh one at once, rather than waiting for the operating system's TCP backoff or the
+ *   server's stale-publisher timeout to notice. Until a dial goes live, dials start every
+ *   `StreamStallWatch.retrySeconds`, and one that has not gone live by then is given up for the
+ *   next; after that the normal waits apply again. A phone sets it; Director leaves it nil and rides
+ *   an outage out on the one connection, which its send buffer is sized for.
  *
  * The first dial of a `start` asks for the address with `.start`; every redial asks with `.redial`,
  * which a host passes on to the server so that an ended stream stays ended.
@@ -217,6 +273,10 @@ public final class StreamSessionController {
   public static let liveResetSeconds = StreamRetrySchedule.liveResetSeconds
   /// `lastError` after the server ended the stream.
   public static let endedError = "ended"
+  /// `lastError` after a session stopped moving and was replaced.
+  public static let stalledError = "the stream server stopped taking the stream"
+  /// Why a replacement dial was given up for the next.
+  public static let stalledDialError = "the stream server did not answer in time"
 
   public private(set) var phase: Phase = .idle
   /// How long until the next redial, while `retrying`.
@@ -229,7 +289,15 @@ public final class StreamSessionController {
   public private(set) var wanted = false
   /// What the next redial waits.
   public var nextRetrySeconds: Double { schedule.next }
+  /// How long a live session may take nothing while bytes wait before it is replaced; nil: never.
+  public let stallRedialSeconds: Double?
+  /// From a stuck session until a dial goes live: dials then go every `StreamStallWatch.retrySeconds`.
+  public private(set) var replacingStall = false
   private var schedule = StreamRetrySchedule()
+  private var stallWatch: StreamStallWatch?
+  private var stallTimer: (any StreamRetryTimer)?
+  private var dialTimer: (any StreamRetryTimer)?
+  private var dialStartedAt: Double = 0
 
   private let publisher: any StreamPublishing
   private let host: Host
@@ -246,12 +314,14 @@ public final class StreamSessionController {
     host: Host,
     scheduler: (any StreamRetryScheduling)? = nil,
     pathMonitor: (any NetworkPathMonitoring)? = nil,
+    stallRedialSeconds: Double? = nil,
     now: @escaping @MainActor () -> Double = { ProcessInfo.processInfo.systemUptime }
   ) {
     self.publisher = publisher
     self.host = host
     self.scheduler = scheduler ?? TaskRetryScheduler()
     self.pathMonitor = pathMonitor
+    self.stallRedialSeconds = stallRedialSeconds
     self.now = now
   }
 
@@ -263,6 +333,7 @@ public final class StreamSessionController {
     wanted = true
     schedule.started()
     lastError = nil
+    replacingStall = false
     cancelRetry()
     pathMonitor?.start { [weak self] in self?.networkRestored() }
     dial(reason)
@@ -272,6 +343,7 @@ public final class StreamSessionController {
   public func stop() {
     wanted = false
     attempt += 1
+    replacingStall = false
     cancelRetry()
     pathMonitor?.cancel()
     liveSince = nil
@@ -299,7 +371,15 @@ public final class StreamSessionController {
     let mine = attempt
     phase = .connecting
     retryInSeconds = nil
+    dialStartedAt = now()
     host.willDial(reason)
+    if replacingStall {
+      // A replacement that has not gone live by the next one's turn is given up for it.
+      dialTimer = scheduler.schedule(after: StreamStallWatch.retrySeconds) { [weak self] in
+        guard let self, mine == self.attempt, self.phase == .connecting else { return }
+        self.handleDrop(Self.stalledDialError, attempt: mine)
+      }
+    }
     Task { @MainActor [weak self] in
       guard let self else { return }
       let url: String
@@ -328,11 +408,60 @@ public final class StreamSessionController {
       self.phase = .live
       self.liveSince = self.now()
       self.lastError = nil
+      self.wentLive(attempt: mine)
     }
+  }
+
+  /// A dial went live: a stall being replaced is over, and this session's progress is watched.
+  private func wentLive(attempt mine: Int) {
+    replacingStall = false
+    dialTimer?.cancel()
+    dialTimer = nil
+    guard let stallRedialSeconds else { return }
+    var watch = StreamStallWatch(redialSeconds: stallRedialSeconds)
+    watch.live(at: now())
+    stallWatch = watch
+    scheduleStallCheck(attempt: mine)
+  }
+
+  private func scheduleStallCheck(attempt mine: Int) {
+    stallTimer = scheduler.schedule(after: StreamStallWatch.checkSeconds) { [weak self] in
+      self?.checkStall(attempt: mine)
+    }
+  }
+
+  private func checkStall(attempt mine: Int) {
+    stallTimer = nil
+    guard mine == attempt, phase == .live, wanted, var watch = stallWatch else { return }
+    let metrics = publisher.metrics
+    let stuck = watch.check(at: now(), bytesSent: metrics.bytesSent, queuedBytes: metrics.queuedBytes)
+    stallWatch = watch
+    if stuck {
+      replaceStuckSession()
+    } else {
+      scheduleStallCheck(attempt: mine)
+    }
+  }
+
+  /// The live session stopped moving: it is closed, and a fresh one dialled at once.
+  private func replaceStuckSession() {
+    // A drop the stuck session reports later belongs to a session already replaced.
+    attempt += 1
+    stallWatch = nil
+    lastError = Self.stalledError
+    host.dropped(Self.stalledError)
+    publisher.stop()
+    congestion = ProgramStreamer.Metrics()
+    liveSince = nil
+    replacingStall = true
+    phase = .retrying
+    retryInSeconds = 0
+    redial()
   }
 
   private func handleDrop(_ message: String, attempt dropped: Int) {
     guard dropped == attempt, phase == .connecting || phase == .live else { return }
+    cancelRetry()
     lastError = message
     host.dropped(message)
     publisher.stop()
@@ -342,13 +471,17 @@ public final class StreamSessionController {
     guard wanted, host.isRetryable(message) else {
       let wasWanted = wanted
       wanted = false
+      replacingStall = false
       phase = .idle
       pathMonitor?.cancel()
       if wasWanted { host.gaveUp(message) }
       return
     }
-    // A session that held for long enough was a good one: its wait starts over.
-    let delay = schedule.dropped(liveFor: liveFor)
+    // Replacing a stuck session, dials go every `StreamStallWatch.retrySeconds`; otherwise a
+    // session that held for long enough was a good one, and its wait starts over.
+    let delay = replacingStall
+      ? StreamStallWatch.waitAfterFailedDial(dialledFor: now() - dialStartedAt)
+      : schedule.dropped(liveFor: liveFor)
     phase = .retrying
     retryInSeconds = delay
     retryTimer = scheduler.schedule(after: delay) { [weak self] in
@@ -365,6 +498,7 @@ public final class StreamSessionController {
 
   private func end(_ message: String) {
     wanted = false
+    replacingStall = false
     cancelRetry()
     pathMonitor?.cancel()
     publisher.stop()
@@ -379,5 +513,10 @@ public final class StreamSessionController {
     retryTimer?.cancel()
     retryTimer = nil
     retryInSeconds = nil
+    dialTimer?.cancel()
+    dialTimer = nil
+    stallTimer?.cancel()
+    stallTimer = nil
+    stallWatch = nil
   }
 }

@@ -31,15 +31,20 @@ public final class RTMPClient: @unchecked Sendable {
     /// Bytes handed to the sender that have not reached the socket. Pinned at the budget is the
     /// signature of an upstream stall.
     public var queuedBytes: Int = 0
+    /// Every byte the socket has taken since the publish began. Standing still while bytes are
+    /// queued is a connection that has stopped moving.
+    public var bytesSent: UInt64 = 0
 
     public init(
       megabitsPerSecond: Double = 0,
       droppedPackets: UInt64 = 0,
-      queuedBytes: Int = 0
+      queuedBytes: Int = 0,
+      bytesSent: UInt64 = 0
     ) {
       self.megabitsPerSecond = megabitsPerSecond
       self.droppedPackets = droppedPackets
       self.queuedBytes = queuedBytes
+      self.bytesSent = bytesSent
     }
   }
 
@@ -206,7 +211,8 @@ public final class RTMPClient: @unchecked Sendable {
     return Metrics(
       megabitsPerSecond: megabitsPerSecond,
       droppedPackets: droppedPackets,
-      queuedBytes: queuedBytes
+      queuedBytes: queuedBytes,
+      bytesSent: bytesSent
     )
   }
 

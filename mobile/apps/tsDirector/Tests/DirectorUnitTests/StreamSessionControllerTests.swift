@@ -14,6 +14,9 @@ final class FakePublisher: StreamPublishing, @unchecked Sendable {
   private(set) var stops = 0
   /// The next `start` throws this, once.
   var refuseNext: Error?
+  /// What the socket has taken, and what waits for it.
+  var bytesSent: UInt64 = 0
+  var queuedBytes = 1_000
 
   var running: Bool {
     lock.lock()
@@ -25,7 +28,8 @@ final class FakePublisher: StreamPublishing, @unchecked Sendable {
     var metrics = ProgramStreamer.Metrics()
     metrics.megabitsPerSecond = running ? 4 : 0
     metrics.droppedPackets = 2
-    metrics.queuedBytes = 1_000
+    metrics.queuedBytes = queuedBytes
+    metrics.bytesSent = bytesSent
     return metrics
   }
 
@@ -126,11 +130,24 @@ final class StreamRig {
   var redials = 0
   /// What the next address request does: an address, or an error to throw.
   var answer: () throws -> String = { "rtmp://ingest.example.test/live/00000000-0000-4000-8000-000000000001" }
+  /// The next address request waits until the test resumes it, as one into an outage does.
+  var holdNext = false
+  var held: CheckedContinuation<Void, Never>?
+  let stallRedialSeconds: Double?
+
+  init(stallRedialSeconds: Double? = nil) {
+    self.stallRedialSeconds = stallRedialSeconds
+  }
+
   lazy var controller = StreamSessionController(
     publisher: publisher,
     host: .init(
       requestURL: { [unowned self] reason in
         self.reasons.append(reason)
+        if self.holdNext {
+          self.holdNext = false
+          await withCheckedContinuation { self.held = $0 }
+        }
         return try self.answer()
       },
       settings: {
@@ -151,6 +168,7 @@ final class StreamRig {
     ),
     scheduler: scheduler,
     pathMonitor: path,
+    stallRedialSeconds: stallRedialSeconds,
     now: { [unowned self] in self.now }
   )
 
@@ -313,6 +331,147 @@ struct StreamSessionControllerTests {
     await rig.settle()
     #expect(rig.reasons == [ .start ])
     #expect(rig.controller.congestion == ProgramStreamer.Metrics())
+  }
+
+  @Test("Without a stall setting nothing watches the session, as Director has it")
+  func directorRidesItOut() async {
+    let rig = StreamRig()
+    rig.controller.start()
+    await rig.settle()
+    #expect(rig.controller.stallRedialSeconds == nil)
+    #expect(rig.scheduler.waiting.isEmpty)
+  }
+
+  @Test("A stuck session is replaced at once; dials go every 2 s until one is live; then the normal waits")
+  func replacesAStuckSession() async {
+    let rig = StreamRig(stallRedialSeconds: 6)
+    rig.controller.start()
+    await rig.settle()
+    #expect(rig.controller.phase == .live)
+    // The socket takes bytes until 3 s in, then nothing while bytes wait.
+    for second in 1 ... 8 {
+      rig.now = Double(second)
+      if second <= 3 { rig.publisher.bytesSent += 1_000 }
+      #expect(rig.scheduler.waiting.map(\.seconds) == [ 1 ])
+      rig.scheduler.fire()
+      await rig.settle()
+      #expect(rig.controller.phase == .live, "still live at \(second) s")
+    }
+    // Six seconds without progress: replaced at once, and the next dial is refused.
+    struct Unreachable: Error {}
+    rig.publisher.refuseNext = Unreachable()
+    rig.now = 9
+    rig.scheduler.fire()
+    await rig.settle()
+    #expect(rig.dropped.first == StreamSessionController.stalledError)
+    #expect(rig.controller.replacingStall)
+    #expect(rig.redials == 1)
+    #expect(rig.reasons == [ .start, .redial ])
+    #expect(rig.publisher.dialled.count == 2)
+    // That dial failed at once: the next goes 2 s after it began.
+    #expect(rig.controller.phase == .retrying)
+    #expect(rig.controller.retryInSeconds == 2)
+    rig.now = 11
+    rig.holdNext = true
+    rig.scheduler.fire()
+    await rig.settle()
+    #expect(rig.controller.phase == .connecting)
+    // This one hangs, as a dial into an outage does: at 2 s it is given up for the next.
+    #expect(rig.scheduler.waiting.map(\.seconds) == [ 2 ])
+    rig.now = 13
+    rig.scheduler.fire()
+    await rig.settle()
+    #expect(rig.dropped.last == StreamSessionController.stalledDialError)
+    #expect(rig.controller.retryInSeconds == 0)
+    rig.scheduler.fire()
+    await rig.settle()
+    #expect(rig.controller.phase == .live)
+    #expect(rig.controller.replacingStall == false)
+    #expect(rig.controller.lastError == nil)
+    #expect(rig.reasons == [ .start, .redial, .redial, .redial ])
+    // The hung dial's late answer belongs to a dial given up.
+    rig.held?.resume()
+    await rig.settle()
+    #expect(rig.publisher.dialled.count == 3)
+    #expect(rig.controller.phase == .live)
+    // The new session is watched in its turn, and a drop of it waits the normal 3 s.
+    #expect(rig.scheduler.waiting.map(\.seconds) == [ 1 ])
+    rig.publisher.drop()
+    await rig.settle()
+    #expect(rig.controller.retryInSeconds == 3)
+    #expect(rig.scheduler.waiting.map(\.seconds) == [ 3 ])
+  }
+
+  @Test("A slow session, or one with nothing to send, is not stuck")
+  func slowOrIdleIsNotStuck() async {
+    let rig = StreamRig(stallRedialSeconds: 6)
+    rig.controller.start()
+    await rig.settle()
+    for second in 1 ... 20 {
+      rig.now = Double(second)
+      // A byte a second for ten seconds, then nothing queued for ten.
+      if second <= 10 { rig.publisher.bytesSent += 1 } else { rig.publisher.queuedBytes = 0 }
+      rig.scheduler.fire()
+      await rig.settle()
+    }
+    #expect(rig.controller.phase == .live)
+    #expect(rig.dropped.isEmpty)
+    // Stopping ends the watch.
+    rig.controller.stop()
+    #expect(rig.scheduler.waiting.isEmpty)
+  }
+
+  @Test("A stall followed by a refused address or an ended stream stops replacing")
+  func stallThenGiveUpOrEnd() async {
+    let rig = StreamRig(stallRedialSeconds: 6)
+    rig.controller.start()
+    await rig.settle()
+    rig.answer = { throw StreamEndedError() }
+    for second in 1 ... 7 {
+      rig.now = Double(second)
+      rig.scheduler.fire()
+      await rig.settle()
+    }
+    #expect(rig.controller.phase == .idle)
+    #expect(rig.controller.lastError == "ended")
+    #expect(rig.controller.replacingStall == false)
+    #expect(rig.scheduler.waiting.isEmpty)
+
+    rig.answer = { "not a url" }
+    rig.controller.start()
+    await rig.settle()
+    for second in 8 ... 14 {
+      rig.now = Double(second)
+      if second == 13 { rig.publisher.refuseNext = RTMPURLRefusal() }
+      rig.scheduler.fire()
+      await rig.settle()
+    }
+    #expect(rig.controller.phase == .idle)
+    #expect(rig.gaveUp == [ "Invalid stream URL" ])
+    #expect(rig.controller.replacingStall == false)
+  }
+
+  @Test("The stall watch on its own")
+  func stallWatch() {
+    var watch = StreamStallWatch(redialSeconds: 6)
+    watch.live(at: 0)
+    var readings: [Bool] = []
+    for (at, bytes, queued) in [
+      (1.0, UInt64(10), 5), (5, 10, 5),
+      // Progress, then nothing queued, each start the six seconds again.
+      (6, 11, 5), (11, 11, 5), (12, 11, 0), (17, 11, 5), (18, 11, 5)
+    ] {
+      readings.append(watch.check(at: at, bytesSent: bytes, queuedBytes: queued))
+    }
+    #expect(readings == [ false, false, false, false, false, false, true ])
+    // A first reading that is already six seconds after going live, with bytes waiting.
+    watch.live(at: 20)
+    let late = watch.check(at: 26, bytesSent: 10, queuedBytes: 5)
+    #expect(late)
+    #expect(StreamStallWatch(redialSeconds: 0).redialSeconds == StreamStallWatch.checkSeconds)
+    #expect(StreamStallWatch.waitAfterFailedDial(dialledFor: 0.5) == 1.5)
+    #expect(StreamStallWatch.waitAfterFailedDial(dialledFor: 3) == 0)
+    #expect(StreamStallWatch.waitAfterFailedDial(dialledFor: -1) == 2)
   }
 
   @Test("The retry schedule on its own")

@@ -52,6 +52,7 @@ enum MediaFixtureWriter {
     out.append(json("stream-audio-stamps.json", streamAudioStamps()))
     out.append(json("stream-stall-policy.json", streamStallPolicy()))
     out.append(json("reconnect-backoff.json", reconnectBackoff()))
+    out.append(json("stream-stall-redial.json", stallRedial()))
     out.append(json("programme-grid-placement.json", gridPlacement()))
     out.append(json("programme-sound-origin.json", soundOrigin()))
     out.append(json("programme-hold-fill.json", holdFill()))
@@ -472,6 +473,59 @@ enum MediaFixtureWriter {
       "longestRetrySeconds": AnyEncodable(StreamRetrySchedule.longestRetrySeconds),
       "liveResetSeconds": AnyEncodable(StreamRetrySchedule.liveResetSeconds),
       "events": AnyEncodable(events)
+    ]
+  }
+
+  struct StallEvent: Encodable {
+    let event: String
+    let at: Double
+    var bytesSent: UInt64?
+    var queuedBytes: Int?
+    var stuck: Bool?
+  }
+
+  struct StallDial: Encodable {
+    let dialledFor: Double
+    let waits: Double
+  }
+
+  /// When a phone's `StreamSessionController` counts a live session as stuck, from
+  /// `StreamStallWatch`'s own rules, and how far apart the dials that replace it go.
+  private static func stallRedial() -> [String: AnyEncodable] {
+    let redialSeconds = 6.0
+    var watch = StreamStallWatch(redialSeconds: redialSeconds)
+    var events: [StallEvent] = []
+    func live(_ at: Double) {
+      watch.live(at: at)
+      events.append(StallEvent(event: "live", at: at))
+    }
+    func check(_ at: Double, _ bytesSent: UInt64, _ queuedBytes: Int) {
+      let stuck = watch.check(at: at, bytesSent: bytesSent, queuedBytes: queuedBytes)
+      events.append(StallEvent(event: "check", at: at, bytesSent: bytesSent, queuedBytes: queuedBytes, stuck: stuck))
+    }
+    live(0)
+    // Moving, then idle with nothing queued for seven seconds, then six seconds without a byte
+    // while bytes wait: stuck at the sixth.
+    check(1, 1_000, 500)
+    check(2, 2_000, 500)
+    for second in 3 ... 9 { check(Double(second), 2_000, 0) }
+    for second in 10 ... 15 { check(Double(second), 2_000, 800) }
+    // A new session that drains a byte a second is slow, not stuck; then it stops.
+    live(20)
+    for second in 21 ... 30 { check(Double(second), UInt64(second), 5_000) }
+    for second in 31 ... 36 { check(Double(second), 30, 5_000) }
+    // A first reading six seconds after going live, with bytes waiting, is already stuck.
+    live(40)
+    check(46, 0, 100)
+    let dials = [ 0, 0.25, 1.5, 2, 3.5 ].map {
+      StallDial(dialledFor: $0, waits: StreamStallWatch.waitAfterFailedDial(dialledFor: $0))
+    }
+    return [
+      "checkSeconds": AnyEncodable(StreamStallWatch.checkSeconds),
+      "retrySeconds": AnyEncodable(StreamStallWatch.retrySeconds),
+      "redialSeconds": AnyEncodable(redialSeconds),
+      "events": AnyEncodable(events),
+      "failedDials": AnyEncodable(dials)
     ]
   }
 
