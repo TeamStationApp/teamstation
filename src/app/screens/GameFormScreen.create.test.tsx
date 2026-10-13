@@ -367,14 +367,20 @@ describe('create game in the shared game scene', () => {
       document.querySelector('[role="heading"], [aria-level]')?.textContent
     ).equals('Create Practice')
     expect(arrival()).equals('0')
-    await fill('Title', 'Demo practice')
+    // A practice is called Practice: it has no title to fill.
+    expect(document.querySelector('[aria-label="Title"]')).equals(null)
     await press('Game')
     expect(arrival()).equals('45')
     await press('Other')
     expect(arrival()).equals('0')
+    expect(disabled('Create event')).equals(true)
+    await fill('Title', 'Team dinner')
+    expect(disabled('Create event')).equals(false)
+    await press('Game')
+    await press('Other')
     expect(
       document.querySelector<HTMLInputElement>('[aria-label="Title"]')!.value
-    ).equals('Demo practice')
+    ).equals('Team dinner')
     expect(
       document.querySelector<HTMLInputElement>(
         '[aria-label="Venue name (optional)"]'
@@ -406,7 +412,6 @@ describe('create game in the shared game scene', () => {
     }
     await open(f)
     await press('Practice')
-    await fill('Title', 'Demo practice')
     await fill('Notes (optional)', 'Field 2')
     await fill('Arrival minutes (optional)', '0.5')
     await press('Create event')
@@ -416,6 +421,7 @@ describe('create game in the shared game scene', () => {
     await press('Create event')
     expect(sent).includes({
       eventType: 'practice',
+      title: '',
       arrivalTimeDelta: null,
       notes: 'Field 2'
     })
@@ -431,7 +437,6 @@ describe('create game in the shared game scene', () => {
     }
     await open(f)
     await press('Practice')
-    await fill('Title', 'Demo practice')
     await press('Create event')
     expect(text()).includes('Synthetic lost response')
     await press('Game')

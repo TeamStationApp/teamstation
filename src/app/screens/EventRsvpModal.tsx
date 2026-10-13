@@ -12,6 +12,7 @@ import type { GameSummary, TeamStationClient } from '../../common/api'
 import {
   type EventAttendee,
   type EventInfo,
+  eventName,
   type PlayerRsvpCounts,
   playerRsvpCounts,
   type Rsvp
@@ -144,13 +145,10 @@ export function EventRsvpModal({
   }
   const info = infos[0]
   const title =
-    game.eventKind === 'event'
-      ? game.eventType === 'practice'
-        ? 'Practice'
-        : (game.title ?? 'Event')
-      : game.homeTeamId === teamId
-        ? `vs ${game.awayTeamName}`
-        : `at ${game.homeTeamName}`
+    eventName(game) ??
+    (game.homeTeamId === teamId
+      ? `vs ${game.awayTeamName}`
+      : `at ${game.homeTeamName}`)
   return (
     <Modal transparent visible animationType="fade" onRequestClose={onClose}>
       <View style={styles.scrim}>

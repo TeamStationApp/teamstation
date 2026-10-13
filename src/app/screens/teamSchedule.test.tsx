@@ -29,18 +29,23 @@ const delay = async (ms: number): Promise<void> => {
 }
 
 /** A client that answers from the fixture, as the fixture's server does. */
-function fixtureClient(season: FixtureSeason = 'normal'): TeamStationClient {
+function fixtureClient(
+  season: FixtureSeason = 'normal',
+  extra: (games: Array<Record<string, unknown>>) => unknown[] = games => games
+): TeamStationClient {
   const get = (path: string): unknown =>
     teamScheduleAnswer('GET', `/api/v1${path}`, NOW, undefined, season).body
   return {
-    teamGames: async (teamId: string) => get(`/teams/${teamId}/games`),
+    teamGames: async (teamId: string) =>
+      extra(get(`/teams/${teamId}/games`) as Array<Record<string, unknown>>),
     roster: async (teamId: string) => get(`/teams/${teamId}/roster`),
     teamStats: async (teamId: string) => get(`/teams/${teamId}/stats`),
     teamPitchingStats: async (teamId: string) =>
       get(`/teams/${teamId}/stats?kind=pitching`),
     standings: async (seasonId: string) =>
       get(`/seasons/${seasonId}/standings`),
-    invites: async () => get('/invites')
+    invites: async () => get('/invites'),
+    follows: async () => []
   } as unknown as TeamStationClient
 }
 
@@ -64,7 +69,9 @@ interface Opened {
 
 async function mount(
   season: FixtureSeason = 'normal',
-  initialTab = 'schedule'
+  initialTab = 'schedule',
+  client: TeamStationClient = fixtureClient(season),
+  nonMemberView = false
 ): Promise<Opened[]> {
   const opened: Opened[] = []
   host = document.createElement('div')
@@ -74,9 +81,10 @@ async function mount(
     root?.render(
       <ThemeProvider>
         <TeamScreen
-          client={fixtureClient(season)}
+          client={client}
           team={TEAM}
           initialTab={initialTab}
+          nonMemberView={nonMemberView}
           onOpenGame={(gameId, title, options) => {
             opened.push({ gameId, title, options })
           }}
@@ -129,6 +137,84 @@ describe('a team’s schedule', function () {
       'vs Lynx',
       '@ Marlins'
     ])
+  })
+
+  it('names a practice Practice and another event by its title, in place of the teams', async function () {
+    const event = (
+      game: Record<string, unknown>,
+      id: string,
+      eventType: string,
+      title: string
+    ): Record<string, unknown> => ({
+      ...game,
+      id,
+      eventKind: 'event',
+      eventType,
+      title,
+      awayTeamName: '',
+      status: 'scheduled',
+      homeScore: null,
+      awayScore: null,
+      videoCount: 0
+    })
+    const opened = await mount(
+      'normal',
+      'schedule',
+      fixtureClient('normal', games => [
+        ...games,
+        {
+          ...event(games[0], 'tev_practice', 'practice', 'Morning drills'),
+          // Replies are taken for what is still to come.
+          startAt: new Date(NOW + 7 * 86_400_000).toISOString(),
+          playerRsvps: { yes: 2, unknown: 1, no: 0 }
+        },
+        event(games[0], 'tev_dinner', 'other', 'Team dinner')
+      ])
+    )
+    // Its RSVP control is named for the practice, not its stored title.
+    expect(document.querySelector('[aria-label="RSVP: Practice"]')).not.equals(
+      null
+    )
+    const named = rows().map(row => linesOf(row))
+    expect(named.some(lines => lines.includes('Practice'))).equals(true)
+    expect(named.some(lines => lines.includes('Morning drills'))).equals(false)
+    expect(named.some(lines => lines.includes('Team dinner'))).equals(true)
+    const practice = rows().find(row => linesOf(row).includes('Practice'))!
+    await act(async () => {
+      practice.querySelector<HTMLElement>('[role="button"]')!.click()
+      await delay(10)
+    })
+    expect(opened.map(item => item.title)).deep.equals(['Practice'])
+  })
+
+  it('names events the same way on a visitor’s schedule', async function () {
+    const opened = await mount(
+      'normal',
+      'schedule',
+      fixtureClient('normal', games => [
+        ...games,
+        {
+          ...games[0],
+          id: 'tev_visitor_practice',
+          eventKind: 'event',
+          eventType: 'practice',
+          title: 'Morning drills',
+          awayTeamName: '',
+          status: 'scheduled',
+          homeScore: null,
+          awayScore: null,
+          videoCount: 0
+        }
+      ]),
+      true
+    )
+    const practice = rows().find(row => linesOf(row).includes('Practice'))!
+    expect(linesOf(practice)).not.includes('Morning drills')
+    await act(async () => {
+      practice.querySelector<HTMLElement>('[role="button"]')!.click()
+      await delay(10)
+    })
+    expect(opened.map(item => item.title)).deep.equals(['Practice'])
   })
 
   it('says only who it is against, never the team’s own name', async function () {

@@ -113,6 +113,72 @@ describe('real event info and guardian attendance', function () {
     expect(response.status).equals(200)
     return asEventInfo(await response.json())
   }
+  it('calls an untitled practice Practice, and keeps every other event titled', async () => {
+    const { title, ...untitled } = body()
+    const created = await f.h.request('POST', '/events', {
+      ...untitled,
+      eventType: 'practice',
+      idempotencyKey: 'untitled-practice'
+    })
+    expect(created.status, await created.clone().text()).equals(201)
+    const { id } = (await created.json()) as { id: string }
+    const stored = async (): Promise<{ title: string; event_type: string }> =>
+      await f.h.db
+        .selectFrom('team_events')
+        .select(['title', 'event_type'])
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+    expect(await stored()).deep.equals({
+      title: 'Practice',
+      event_type: 'practice'
+    })
+    // Clearing a practice's title calls it Practice again.
+    expect(
+      (await f.h.request('PUT', `/events/${id}/info`, { title: 'Drills' }))
+        .status
+    ).equals(200)
+    expect((await stored()).title).equals('Drills')
+    expect(
+      (await f.h.request('PUT', `/events/${id}/info`, { title: '' })).status
+    ).equals(200)
+    expect((await stored()).title).equals('Practice')
+    // An Other event needs a title, made or changed into one.
+    expect(
+      (
+        await f.h.request('PUT', `/events/${id}/info`, {
+          title: '',
+          eventType: 'other'
+        })
+      ).status
+    ).equals(400)
+    // Called Practice only by default, it has no title to become Other with.
+    expect(
+      (await f.h.request('PUT', `/events/${id}/info`, { eventType: 'other' }))
+        .status
+    ).equals(400)
+    expect(
+      (
+        await f.h.request('PUT', `/events/${id}/info`, {
+          eventType: 'other',
+          title: 'Team dinner'
+        })
+      ).status
+    ).equals(200)
+    expect(await stored()).deep.equals({
+      title: 'Team dinner',
+      event_type: 'other'
+    })
+    expect(
+      (
+        await f.h.request('POST', '/events', {
+          ...untitled,
+          eventType: 'other',
+          idempotencyKey: 'untitled-other'
+        })
+      ).status
+    ).equals(400)
+    expect(title).equals('Team dinner')
+  })
   it('maps legacy venues with locality and keeps explicit address coordinates authoritative', async () => {
     const path = `/fixture/events/${gameId}/location`
     expect(await (await f.h.request('GET', path)).json()).includes({

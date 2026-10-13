@@ -924,7 +924,11 @@ async function main(): Promise<void> {
       ),
       '0'
     )
-    await fill('Title', 'Demo practice')
+    // A practice is called Practice; only other events take a title.
+    assert.equal(
+      await evaluate(`document.querySelector('[aria-label="Title"]')==null`),
+      true
+    )
     await shot('practice-create.png')
     await see({ css: '[aria-label="Arrival minutes (optional)"]' })
     await shot('practice-arrival-default.png')

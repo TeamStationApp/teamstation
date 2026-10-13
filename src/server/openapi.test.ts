@@ -282,6 +282,16 @@ describe('the API document', function () {
     expect(named('query')).includes('staffNames')
   })
 
+  it('lets a practice be created and kept without a title', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const create =
+      paths['/events'].post.requestBody.content['application/json'].schema
+    expect(create.required).not.includes('title')
+    expect(create.properties.title.description).includes('Practice')
+    const update = JSON.stringify(paths['/events/{id}/info'].put)
+    expect(update).includes('Title is required')
+  })
+
   it('documents guardian invitations and requests beside the other relationship requests', function () {
     const post = (openApiDocument('0.0.0').paths as Record<string, any>)[
       '/relationship-requests'

@@ -11,6 +11,7 @@ import type {
   TeamSummary
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { eventName } from '../../common/eventInfo'
 import type { GroupDetail } from '../../common/publicGroups'
 import {
   Badge,
@@ -621,7 +622,7 @@ function GameCard(props: {
     <Card>
       {mode === 'schedule' ? (
         <ScheduleRow
-          first={game.eventKind === 'event' ? lines.first : lines.second}
+          first={eventName(game) ?? lines.second}
           startAt={game.startAt}
           venue={game.venue}
           status={game.status}
@@ -634,7 +635,13 @@ function GameCard(props: {
             options == null
               ? undefined
               : () => {
-                  onOpen(game.id, `${lines.first} ${lines.second}`, options)
+                  onOpen(
+                    game.id,
+                    [lines.first, lines.second]
+                      .filter(line => line !== '')
+                      .join(' '),
+                    options
+                  )
                 }
           }
         />
@@ -662,7 +669,13 @@ function GameCard(props: {
             options == null
               ? undefined
               : () => {
-                  onOpen(game.id, `${lines.first} ${lines.second}`, options)
+                  onOpen(
+                    game.id,
+                    [lines.first, lines.second]
+                      .filter(line => line !== '')
+                      .join(' '),
+                    options
+                  )
                 }
           }
         />
@@ -698,7 +711,7 @@ function ScheduleCard(props: {
   // A pending game opens its proposal, and only for those allowed to see it.
   const options = gameListOptions(game, 'schedule')
   const rowProps = {
-    first: game.eventKind === 'event' ? lines.first : lines.second,
+    first: eventName(game) ?? lines.second,
     startAt: game.startAt,
     venue: game.venue,
     status: game.status,
@@ -713,7 +726,11 @@ function ScheduleCard(props: {
       options == null
         ? undefined
         : () => {
-            onOpen(game.id, `${lines.first} ${lines.second}`, options)
+            onOpen(
+              game.id,
+              [lines.first, lines.second].filter(line => line !== '').join(' '),
+              options
+            )
           }
   }
   return (
@@ -729,11 +746,7 @@ function ScheduleCard(props: {
               client={client}
               game={game}
               teamId={teamId}
-              label={
-                game.eventKind === 'event'
-                  ? (game.title ?? 'Event')
-                  : lines.second
-              }
+              label={eventName(game) ?? lines.second}
             />
           }
         />

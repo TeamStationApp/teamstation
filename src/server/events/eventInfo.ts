@@ -11,6 +11,7 @@ import {
   eventDate,
   type EventInfo,
   eventText,
+  PRACTICE_TITLE,
   type Rsvp,
   sortedAttendees,
   type TeamEventInput
@@ -572,9 +573,27 @@ export async function updateEventInfo(
         .where('id', '=', id)
         .execute()
     } else {
+      const askedType =
+        raw.eventType === undefined
+          ? undefined
+          : asLiteral('practice', 'other')(raw.eventType)
+      const eventType = askedType ?? event.eventType
+      // A practice keeps a title of its own or is called Practice; any other
+      // event needs one.
       let title = event.title!
       if (raw.title !== undefined)
-        title = eventText(raw.title, 'Title', 200, true)!
+        title =
+          eventType === 'practice'
+            ? (eventText(raw.title, 'Title', 200) ?? PRACTICE_TITLE)
+            : eventText(raw.title, 'Title', 200, true)!
+      // A practice called Practice only because nobody titled it has no
+      // title to become another event with.
+      else if (
+        eventType === 'other' &&
+        event.eventType === 'practice' &&
+        title === PRACTICE_TITLE
+      )
+        throw new TypeError('Title is required')
       if (
         raw.status !== undefined &&
         raw.status !== 'scheduled' &&
@@ -586,9 +605,7 @@ export async function updateEventInfo(
         .set({
           ...location,
           title,
-          ...(raw.eventType === undefined
-            ? {}
-            : { event_type: asLiteral('practice', 'other')(raw.eventType) }),
+          ...(askedType === undefined ? {} : { event_type: askedType }),
           start_at: new Date(startAt),
           timezone:
             raw.timezone === undefined

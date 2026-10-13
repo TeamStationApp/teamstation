@@ -22,6 +22,7 @@ import type {
   TeamSummary,
   VideoSummary
 } from '../../common/api'
+import { eventName } from '../../common/eventInfo'
 import { eventHeroLines, viewerTimezone } from '../../common/eventTime'
 import type { GameSocket } from '../../common/gameSocket'
 import {
@@ -357,9 +358,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       setGame(found)
       setError(undefined)
       videoHints.current.onTitle?.(
-        found.eventKind === 'event'
-          ? (found.title ?? 'Team event')
-          : `${found.awayTeamName} @ ${found.homeTeamName}`
+        eventName(found) ?? `${found.awayTeamName} @ ${found.homeTeamName}`
       )
       setVideo(current =>
         current != null && found.videos.some(item => item.id === current.id)
@@ -564,7 +563,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     () =>
       game == null ? null : game.eventKind === 'event' ? (
         <HandoffView progress={progress}>
-          <Text style={styles.eventHeaderTitle}>{game.title}</Text>
+          <Text style={styles.eventHeaderTitle}>{eventName(game)}</Text>
         </HandoffView>
       ) : (
         <HandoffView progress={progress} style={styles.headerScore}>
@@ -1035,7 +1034,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     game.eventKind === 'event' ? (
       <Card testID="event-hero" style={styles.eventHero}>
         <Text accessibilityRole="header" style={styles.eventTitle}>
-          {game.title}
+          {eventName(game)}
         </Text>
         <Text style={styles.eventHeaderTitle}>{game.homeTeamName}</Text>
         {game.startAt != null &&

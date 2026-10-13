@@ -10,6 +10,7 @@ import {
   asRsvp,
   asTeamEventInput,
   eventDate,
+  eventName,
   eventText,
   playerRsvpCounts,
   sortedAttendees,
@@ -231,6 +232,39 @@ describe('event information contracts', () => {
         ]
       }).attendees[0].response
     ).equals(null)
+  })
+  it('calls a practice Practice and requires a title of any other event', () => {
+    expect(
+      asTeamEventInput({ ...body, eventType: 'practice', title: undefined })
+    ).includes({ eventType: 'practice', title: 'Practice' })
+    expect(
+      asTeamEventInput({ ...body, eventType: 'practice', title: ' ' })
+    ).includes({ title: 'Practice' })
+    expect(
+      asTeamEventInput({ ...body, eventType: 'practice', title: 'Drills' })
+    ).includes({ title: 'Drills' })
+    for (const eventType of ['other', undefined])
+      expect(() => asTeamEventInput({ ...body, eventType, title: '' })).throws(
+        'Title is required'
+      )
+    expect(() => asTeamEventInput({ ...body, eventType: 'game' })).throws(
+      TypeError
+    )
+    expect(eventName({})).equals(undefined)
+    expect(eventName({ eventType: 'game', title: 'x' })).equals(undefined)
+    expect(eventName({ eventKind: 'game' })).equals(undefined)
+    expect(
+      eventName({ eventKind: 'event', eventType: 'practice', title: 'Drills' })
+    ).equals('Practice')
+    expect(eventName({ eventType: 'practice' })).equals('Practice')
+    expect(
+      eventName({
+        eventKind: 'event',
+        eventType: 'other',
+        title: ' Team dinner '
+      })
+    ).equals('Team dinner')
+    expect(eventName({ eventKind: 'event', title: null })).equals('Event')
   })
   it('orders replies yes, maybe, no, then absence without changing its source', () => {
     const rows = [null, 'no', 'maybe', 'yes', 'yes'].map((response, i) => ({

@@ -6,6 +6,8 @@
  * without a browser.
  */
 
+import { eventName } from '../../common/eventInfo'
+
 export interface ScoredGame {
   startAt: string | null
   status: string
@@ -197,12 +199,14 @@ export function matchupLines(
     homeTeamName: string
     awayTeamName: string
     eventKind?: 'game' | 'event'
+    eventType?: string | null
     title?: string | null
   },
   fromTeamId?: string
 ): { first: string; second: string } {
-  if (game.eventKind === 'event')
-    return { first: game.title ?? 'Team event', second: '' }
+  // A practice or another event is named in place of its teams.
+  const name = eventName(game)
+  if (name != null) return { first: name, second: '' }
   if (fromTeamId === game.homeTeamId) {
     return { first: game.homeTeamName, second: `vs ${game.awayTeamName}` }
   }

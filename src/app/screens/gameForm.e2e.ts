@@ -13,7 +13,6 @@ import puppeteer, {
 } from 'puppeteer'
 
 import { makeId } from '../../common/ids'
-import { monthsBefore } from '../../server/groups/relatedTeams'
 import {
   demoLocality,
   type GroupFixture,
@@ -27,10 +26,12 @@ import {
  * `GAME_FORM_MODE`:
  * - `before`: the screenshots of the scenes this work replaces, run on the
  *   base branch;
+ * - `schedule`: the team schedule with a practice, an Other event and a
+ *   game, run on the base branch;
  * - `api`: the suggestions API only, with no browser;
  * - `all` (the default): the API, then every scene in Chromium.
  */
-type Mode = 'before' | 'api' | 'all'
+type Mode = 'before' | 'schedule' | 'api' | 'all'
 
 interface Browser {
   openBrowser: (body: { url: string }) => Promise<unknown>
@@ -74,6 +75,13 @@ function required(name: string): string {
   const value = process.env[name]
   assert(value != null && value !== '', `${name} is required`)
   return value
+}
+
+/** The calendar date this many months before `now`. */
+function monthsBefore(now: Date, months: number): Date {
+  const date = new Date(now)
+  date.setUTCMonth(date.getUTCMonth() - months)
+  return date
 }
 
 const farLocality = {
@@ -198,7 +206,42 @@ async function seed(f: GroupFixture): Promise<Seeded> {
       granted_at: new Date()
     })
     .execute()
+  // A practice and an Other event beside the game on the Hawks schedule.
+  for (const [id, type, title, startAt] of [
+    ['tev_form_practice', 'practice', 'Morning drills', '2027-01-09T17:00:00Z'],
+    ['tev_form_dinner', 'other', 'Team dinner', '2027-01-12T02:00:00Z']
+  ] as const)
+    await f.h.db
+      .insertInto('team_events')
+      .values({
+        id,
+        team_id: f.teamA,
+        event_type: type,
+        title,
+        start_at: new Date(startAt),
+        timezone: 'America/Los_Angeles'
+      })
+      .execute()
   return { sameSeason, recentOpponent, staleOpponent, sameRegion, gameId }
+}
+
+/** The Hawks schedule, with its practice, Other event and game. */
+async function scheduleShot(
+  f: GroupFixture,
+  m: Browser,
+  artifacts: string,
+  file: string
+): Promise<void> {
+  await m.openBrowser({
+    url: `${f.h.origin}/teams/${encodeURIComponent(f.teamA)}?tab=schedule`
+  })
+  await m.assertVisible({ text: 'Team dinner', timeout: 20000 })
+  await m.evalBrowserScript({
+    script: `const node=Array.from(document.querySelectorAll('div')).find(node=>node.childElementCount===0&&node.textContent==='Team dinner');node.scrollIntoView({block:'center'})`
+  })
+  await new Promise(resolve => setTimeout(resolve, 600))
+  writeFileSync(join(artifacts, file), await m.screenshot())
+  console.log(`Captured ${file}`)
 }
 
 /** E1: the suggestions API, each call a real `curl` with its answer. */
@@ -434,6 +477,10 @@ async function scenes({ f, seeded, m, page, artifacts }: Scene): Promise<void> {
   })
   const team = encodeURIComponent(f.teamA)
   const createRoute = `/groups/team/${team}/create-game`
+
+  // E15, first half: the seeded schedule, before any scene changes it, so
+  // it matches the base branch's capture.
+  await scheduleShot(f, m, artifacts, 'schedule-events-after.png')
 
   // E2: the shared scene, created from a team.
   await open(createRoute, 'Create Game')
@@ -736,7 +783,8 @@ async function scenes({ f, seeded, m, page, artifacts }: Scene): Promise<void> {
   await page.setViewport({ width: 402, height: 874 })
   console.log('E13 PASS')
 
-  // E14: Practice keeps the event branch's form, under the scene's title.
+  // E14: Practice keeps the event branch's form, under the scene's title,
+  // and needs no title of its own.
   await open(createRoute, 'Create Game')
   await tap('Practice')
   await wait(
@@ -748,16 +796,53 @@ async function scenes({ f, seeded, m, page, artifacts }: Scene): Promise<void> {
     ),
     false
   )
-  await fill('Title', 'Demo practice')
+  assert.equal(
+    await evaluate<boolean>(
+      `document.querySelector('[aria-label="Title"]')==null`
+    ),
+    true
+  )
   await tap('Create event')
   await wait(`location.pathname.startsWith('/games/')`)
-  const practice = await f.h.db
+  const practices = await f.h.db
     .selectFrom('team_events')
     .select(['event_type', 'title'])
-    .where('title', '=', 'Demo practice')
-    .executeTakeFirst()
-  assert.equal(practice?.event_type, 'practice')
+    .where('event_type', '=', 'practice')
+    .where('title', '=', 'Practice')
+    .execute()
+  assert.equal(practices.length, 1)
   console.log('E14 PASS')
+
+  // E15: Other needs a title; the schedule names each event by its type.
+  await open(createRoute, 'Create Game')
+  await tap('Other')
+  await wait(`document.querySelector('[aria-label="Title"]')!=null`)
+  assert.equal(
+    await evaluate<string>(
+      `${button('Create event')}.getAttribute('aria-disabled')`
+    ),
+    'true'
+  )
+  await fill('Title', 'Season party')
+  await tap('Create event')
+  await wait(`location.pathname.startsWith('/games/')`)
+  await m.openBrowser({
+    url: `${f.h.origin}/teams/${encodeURIComponent(f.teamA)}?tab=schedule`
+  })
+  await see('Season party')
+  const firstLines = await evaluate<string[]>(
+    `Array.from(document.querySelectorAll('[data-testid="scheduleGame"]')).map(row=>Array.from(row.querySelectorAll('div')).filter(node=>node.childElementCount===0).map(node=>node.textContent).find(line=>line!=='' && !/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\\d+)$/.test(line)))`
+  )
+  assert.equal(
+    firstLines.filter(line => line === 'Practice').length,
+    2,
+    `Two practices read Practice: ${JSON.stringify(firstLines)}`
+  )
+  assert(firstLines.includes('Team dinner'))
+  assert(firstLines.includes('Season party'))
+  assert(!firstLines.includes('Morning drills'))
+  assert(firstLines.some(line => line.includes('Demo Eagles')))
+  console.log('E15 PASS')
 }
 
 function monthName(date: string): string {
@@ -780,7 +865,7 @@ function monthName(date: string): string {
 async function main(): Promise<void> {
   const mode = (process.env.GAME_FORM_MODE ?? 'all') as Mode
   assert(
-    ['before', 'api', 'all'].includes(mode),
+    ['before', 'schedule', 'api', 'all'].includes(mode),
     `Unknown GAME_FORM_MODE ${mode}`
   )
   const artifacts = resolve(required('GAME_FORM_ARTIFACTS'))
@@ -794,7 +879,8 @@ async function main(): Promise<void> {
   const device = process.env.GAME_FORM_BROWSER_DEVICE ?? 'game-form-chromium'
   try {
     const seeded = await seed(f)
-    if (mode !== 'before') await suggestionsApi(f, seeded, artifacts)
+    if (mode === 'api' || mode === 'all')
+      await suggestionsApi(f, seeded, artifacts)
     if (mode === 'api') return
     const load = createRequire(
       join(resolve(required('MAESTRO_D_CLIENT_ROOT')), 'package.json')
@@ -866,6 +952,10 @@ async function main(): Promise<void> {
     })
     if (mode === 'before') {
       await before({ f, seeded, m, page, artifacts })
+      return
+    }
+    if (mode === 'schedule') {
+      await scheduleShot(f, m, artifacts, 'schedule-events-before.png')
       return
     }
     await scenes({ f, seeded, m, page, artifacts }).catch(

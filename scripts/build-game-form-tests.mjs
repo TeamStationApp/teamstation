@@ -15,7 +15,15 @@ const suites = [
   'src/app/screens/EventDetailsForm.test.tsx',
   'src/app/components/EventScheduleFields.test.tsx',
   'src/app/components/EventVenueFields.test.tsx',
-  'src/app/navigation/routes.test.ts'
+  'src/app/navigation/routes.test.ts',
+  'src/app/screens/format.test.ts',
+  'src/app/screens/EventRsvpModal.test.tsx',
+  'src/app/screens/teamSchedule.test.tsx',
+  'src/app/screens/TeamScreen.pending.test.tsx',
+  'src/app/screens/GamesFeedScreen.test.tsx',
+  'src/app/screens/GameScreen.eventInfo.test.tsx',
+  'src/app/screens/homeAddCreate.test.tsx',
+  'src/app/screens/gameCreation.test.tsx'
 ].filter(existsSync)
 mkdirSync('lib', { recursive: true })
 await build({

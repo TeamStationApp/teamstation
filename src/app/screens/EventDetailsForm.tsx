@@ -6,6 +6,7 @@ import {
   arrivalMinutesInput,
   type EventInfo,
   type EventType,
+  PRACTICE_TITLE,
   type TeamEventInput
 } from '../../common/eventInfo'
 import type { EventScheduleDraft } from '../../common/eventSchedule'
@@ -173,21 +174,33 @@ export function EventDetailsForm({
           gameAvailable={onTypeChange != null}
           onChange={type => {
             if (onTypeChange != null) onTypeChange(type)
-            else if (type !== 'game') setLocalType(type)
+            else if (type !== 'game') {
+              // A practice called Practice by default has no title to keep.
+              if (
+                type === 'other' &&
+                eventType === 'practice' &&
+                title.trim() === PRACTICE_TITLE
+              )
+                changeDraft({ ...draft, title: '' })
+              setLocalType(type)
+            }
           }}
           disabled={busy}
         />
       )}
       <>
-        <TextField
-          label="Title"
-          value={title}
-          disabled={busy}
-          onChangeText={title => {
-            changeDraft({ ...draft, title })
-          }}
-          placeholder="Practice, team dinner…"
-        />
+        {/* A practice is called Practice; any other event names itself. */}
+        {eventType !== 'practice' && (
+          <TextField
+            label="Title"
+            value={title}
+            disabled={busy}
+            onChangeText={title => {
+              changeDraft({ ...draft, title })
+            }}
+            placeholder="Team dinner, fundraiser…"
+          />
+        )}
         <EventScheduleFields
           value={schedule}
           onChange={schedule => {
@@ -229,7 +242,7 @@ export function EventDetailsForm({
       <Button
         label={info == null ? 'Create event' : 'Save event details'}
         busy={busy}
-        disabled={busy || (info == null && title.trim() === '')}
+        disabled={busy || (eventType !== 'practice' && title.trim() === '')}
         onPress={() => {
           save().catch(() => undefined)
         }}

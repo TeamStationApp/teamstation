@@ -66,7 +66,12 @@ export function eventInfoPaths(
                 type: 'object',
                 properties: {
                   ...eventLocationProperties,
-                  title: { type: 'string', minLength: 1, maxLength: 200 },
+                  title: {
+                    type: 'string',
+                    maxLength: 200,
+                    description:
+                      'A practice cleared of its title is called `Practice` again. Any other event needs 1–200 characters. Turning a practice still called `Practice` into another event needs a new title (400 `Title is required`).'
+                  },
                   startAt: { type: 'string', format: 'date-time' },
                   venue: { type: ['string', 'null'] },
                   eventType: { type: 'string', enum: ['practice', 'other'] },
@@ -140,18 +145,23 @@ export function createEventOperation(errorResponse: unknown): unknown {
     summary: 'Schedule a titled non-game team event',
     security: [{ bearer: [] }],
     description:
-      'A full-team administrator creates a title-based event with no opponent. The retry key is unique per user; replay returns the same ID, different details conflict. Visible schedules include events; scoring/film/played/scoreboard/external-ID and video queries stay game-only.',
+      'A full-team administrator creates an event with no opponent: a practice, which schedules call `Practice` and needs no title, or another event, which needs one. The retry key is unique per user; replay returns the same ID, different details conflict. Visible schedules include events; scoring/film/played/scoreboard/external-ID and video queries stay game-only.',
     requestBody: {
       required: true,
       content: {
         'application/json': {
           schema: {
             type: 'object',
-            required: ['teamId', 'title', 'startAt', 'idempotencyKey'],
+            required: ['teamId', 'startAt', 'idempotencyKey'],
             properties: {
               ...eventLocationProperties,
               teamId: { type: 'string' },
-              title: { type: 'string', minLength: 1, maxLength: 200 },
+              title: {
+                type: 'string',
+                maxLength: 200,
+                description:
+                  'Required (1–200 characters after trimming) unless `eventType` is `practice`. A practice sent with no title, or a blank one, is stored as `Practice`.'
+              },
               startAt: { type: 'string', format: 'date-time' },
               timezone: { type: 'string', default: 'UTC' },
               venue: { type: ['string', 'null'], maxLength: 200 },

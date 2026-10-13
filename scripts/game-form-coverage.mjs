@@ -71,7 +71,11 @@ const serverSuites = [
   'src/common/api.test.ts',
   'src/common/gameApprovals.test.ts',
   'src/server/notifications/requestInformation.test.ts',
-  'src/server/openapi.test.ts'
+  'src/server/openapi.test.ts',
+  'src/common/eventInfo.test.ts',
+  'src/server/events/eventInfo.test.ts',
+  'src/server/routes/seasonReaders.test.ts',
+  'src/server/schedule/pendingProjection.test.ts'
 ].filter(existsSync)
 run('node', ['src/migrate/requirePostgres18.js'])
 if (running.includes('server'))

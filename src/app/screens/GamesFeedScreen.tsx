@@ -241,7 +241,9 @@ export function GamesFeedScreen(
                         : () => {
                             onOpenGame(
                               game.id,
-                              `${lines.first} ${lines.second}`,
+                              [lines.first, lines.second]
+                                .filter(line => line !== '')
+                                .join(' '),
                               options
                             )
                           }
@@ -287,7 +289,9 @@ export function GamesFeedScreen(
                         : () => {
                             onOpenGame(
                               game.id,
-                              `${lines.first} ${lines.second}`,
+                              [lines.first, lines.second]
+                                .filter(line => line !== '')
+                                .join(' '),
                               options
                             )
                           }
