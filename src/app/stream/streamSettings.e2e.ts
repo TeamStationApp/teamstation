@@ -378,14 +378,13 @@ async function main(): Promise<void> {
       // maestro-d's scroll swipes across the middle of the screen, which on
       // Android is the game's video player, and the player keeps the swipe:
       // swipe below it instead (the hierarchy holds only what is on screen).
-      for (
-        let i = 0;
-        i < 4 &&
-        // Off screen, or under the floating tab bar at the bottom.
-        ((await find(byText('Record video'), 1000))?.bounds?.y ?? 1e9) >
-          ((await m.hierarchy()).bounds?.height ?? 2400) * 0.7;
-        i++
-      ) {
+      const below = async (): Promise<boolean> => {
+        // Off screen, or reaching down to where the floating tab bar starts.
+        const bounds = (await find(byText('Record video'), 1000))?.bounds
+        const screen = (await m.hierarchy()).bounds?.height ?? 2400
+        return bounds == null || bounds.y + bounds.height > screen * 0.88
+      }
+      for (let i = 0; i < 10 && (await below()); i++) {
         say('$ swipe 50%,78% → 50%,30%')
         await (
           m as unknown as {
