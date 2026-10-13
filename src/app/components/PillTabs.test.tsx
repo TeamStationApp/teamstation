@@ -85,7 +85,7 @@ describe('PillTabs', function () {
     )
   })
 
-  it('draws a dense strip’s pills with narrower sides and gaps, as tall as any', async function () {
+  it('draws dense strips with smaller gaps and unchanged label clearance', async function () {
     const sides = async (dense: boolean): Promise<string[]> => {
       const container = await render(
         <PillTabs
@@ -113,12 +113,12 @@ describe('PillTabs', function () {
     }
     const rem = (value: number): string => `${tsBallpark.rem(value)}px`
     expect(await sides(false)).deep.equals([
-      rem(tsBallpark.spaceMdRem),
+      rem(1.125),
       rem(2.25),
       rem(tsBallpark.spaceSmRem)
     ])
     expect(await sides(true)).deep.equals([
-      rem(tsBallpark.spaceSmRem),
+      rem(1.125),
       rem(2.25),
       rem(tsBallpark.spaceXsRem)
     ])

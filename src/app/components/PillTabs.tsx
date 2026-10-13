@@ -1,6 +1,7 @@
 import React from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
+import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { useContentInset } from './contentInset'
 
@@ -31,9 +32,8 @@ export interface PillTabsProps<Id extends string = string> {
    */
   bleed?: boolean
   /**
-   * Narrower sides and gaps, for a strip of five that has to fit a 390-point
-   * phone whole: a cut-off label at either end reads as a fault. The height
-   * and the 48px target are the same as every other strip's.
+   * Smaller gaps for a long strip. Label padding and the 48px targets stay
+   * the same; a strip scrolls instead of squeezing a label into its arcs.
    */
   dense?: boolean
 }
@@ -160,6 +160,7 @@ export function PillButton({
       ]}
     >
       <View
+        testID="settings-pill-tab"
         style={[
           styles.pill,
           compact && styles.pillCompact,
@@ -228,7 +229,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     justifyContent: 'center',
     gap: theme.rem(theme.spaceXsRem),
     minHeight: theme.rem(3),
-    paddingHorizontal: theme.rem(theme.spaceLgRem),
+    height: theme.rem(3),
+    paddingHorizontal: pillPadding(theme.rem(3)),
     borderRadius: theme.radiusPill,
     // The same lift a button has, smaller to match the smaller shape: these
     // are buttons too, and a flat one beside a raised one reads as disabled.
@@ -240,10 +242,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   pillCompact: {
     minHeight: theme.rem(2.25),
-    paddingHorizontal: theme.rem(theme.spaceMdRem)
+    height: theme.rem(2.25),
+    paddingHorizontal: pillPadding(theme.rem(2.25))
   },
   pillDense: {
-    paddingHorizontal: theme.rem(theme.spaceSmRem)
+    // Dense strips reduce their gaps, never the clearance around a label.
   },
   pillIdle: {
     backgroundColor: theme.pillBackground

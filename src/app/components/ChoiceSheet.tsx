@@ -19,7 +19,8 @@ export interface ChoiceSheetProps {
 /** A short list of choices that slides up, e.g. what `Create` should make. */
 export function ChoiceSheet(props: ChoiceSheetProps): React.ReactElement {
   const { title, choices, onClose } = props
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
   return (
     <Modal transparent animationType="slide" visible onRequestClose={onClose}>
       <View style={styles.scrim}>
@@ -57,7 +58,12 @@ export function ChoiceSheet(props: ChoiceSheetProps): React.ReactElement {
               )}
             </Pressable>
           ))}
-          <Button label="Cancel" kind="secondary" onPress={onClose} />
+          <Button
+            label="Cancel"
+            kind="text"
+            textColor={theme.dangerColor}
+            onPress={onClose}
+          />
         </View>
       </View>
     </Modal>
