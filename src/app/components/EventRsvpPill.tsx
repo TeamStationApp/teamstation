@@ -6,6 +6,7 @@ import {
   Platform,
   Pressable,
   Text,
+  type TextProps,
   useWindowDimensions,
   View
 } from 'react-native'
@@ -21,6 +22,21 @@ import {
 } from './eventRsvpPosition'
 import { useMotionPreference } from './useMotionPreference'
 
+/**
+ * What a one-line label adds to its `Text`. A phone shrinks the label a
+ * little before it would wrap. A browser cannot shrink it, and would cut it
+ * off instead, so there it fits at its own size and wraps only when the text
+ * is enlarged.
+ */
+export function oneLineLabelProps(
+  oneLine: boolean,
+  os: string = Platform.OS
+): Partial<TextProps> {
+  return oneLine && os !== 'web'
+    ? { numberOfLines: 1, adjustsFontSizeToFit: true, minimumFontScale: 0.85 }
+    : {}
+}
+
 /** A continuous three-position response capsule, shared by browser and phones. */
 export function EventRsvpPill({
   value,
@@ -34,7 +50,8 @@ export function EventRsvpPill({
   testID,
   widthRem = 14.25,
   disabledChoices = [],
-  labelSizeRem
+  labelSizeRem,
+  oneLineLabels = false
 }: {
   value: RsvpChoice
   onChange: (response: Rsvp) => void
@@ -48,6 +65,12 @@ export function EventRsvpPill({
   widthRem?: number
   disabledChoices?: readonly number[]
   labelSizeRem?: number
+  /**
+   * Each label stays on one line: the capsule is given the width its longest
+   * label needs, and on phones a label shrinks a little before it would wrap.
+   * Its padding stays the fill's radius, so no glyph reaches the rounded ends.
+   */
+  oneLineLabels?: boolean
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -252,10 +275,11 @@ export function EventRsvpPill({
             choose(index)
             if (!disabled && !(value == null && index === 1)) settle(index)
           }}
-          style={styles.choice}
+          style={[styles.choice, oneLineLabels && styles.oneLineChoice]}
         >
           <Text
             selectable={false}
+            {...oneLineLabelProps(oneLineLabels)}
             style={[
               styles.label,
               labelSizeRem == null
@@ -307,6 +331,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     justifyContent: 'center'
   },
+  oneLineChoice: { paddingHorizontal: theme.rem(1) },
   label: {
     maxWidth: '100%',
     flexShrink: 1,

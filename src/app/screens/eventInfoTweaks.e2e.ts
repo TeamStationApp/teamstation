@@ -258,6 +258,11 @@ async function main(): Promise<void> {
     )
     assert(spacing >= 0 && spacing <= 8)
     await m.evalBrowserScript({
+      script: `document.querySelector('[data-testid="event-replies"]').scrollIntoView({block:'center'})`
+    })
+    await new Promise(resolve => setTimeout(resolve, 400))
+    writeFileSync(join(artifacts, 'event-replies.png'), await m.screenshot())
+    await m.evalBrowserScript({
       script: `document.querySelector('[aria-label="RSVP teams"]').scrollIntoView({block:'center'})`
     })
     const points = await evaluate<Array<{ x: number; y: number }>>(
@@ -316,9 +321,31 @@ async function main(): Promise<void> {
     await wait(
       `document.querySelectorAll('[aria-label="RSVP teams"] [role="tab"]')[0]?.getAttribute('aria-selected')==='true'`
     )
-    // The same for an RSVP capsule, from Yes to No with the finger below it.
+    // "Are you going?" is a card of compact lines: avatar, a bold name the
+    // size of the pill text, and the reply in its capsule colour at the right.
+    assert(
+      await evaluate<boolean>(`(()=>{
+      const replies=document.querySelector('[data-testid="event-replies"]'), colours=['rgb(32, 138, 75)','rgb(35, 118, 207)','rgb(203, 57, 65)'];
+      const rows=Array.from(replies.querySelectorAll('[data-testid^="event-reply-row-"]'));
+      return getComputedStyle(replies).backgroundColor!=='rgba(0, 0, 0, 0)' && replies.querySelector('[role="radiogroup"]')==null && rows.length>0 && rows.every(row=>{
+        const id=row.getAttribute('data-testid').slice(16), status=row.querySelector('[data-testid="event-reply-status-'+id+'"]'), name=row.querySelector('[data-testid="event-reply-name-'+id+'"]');
+        return row.getBoundingClientRect().height<=40 && Math.abs(status.getBoundingClientRect().right-row.getBoundingClientRect().right)<1 &&
+          colours.includes(getComputedStyle(status).color) && ['Yes','Maybe','No','No reply'].includes(status.textContent) &&
+          getComputedStyle(name).fontSize==='14px' && Number(getComputedStyle(name).fontWeight)>=600;
+      });
+    })()`)
+    )
+    // A tap anywhere in it opens the schedule's RSVP modal.
+    const replyIds = await evaluate<string[]>(
+      `Array.from(document.querySelectorAll('[data-testid^="event-reply-row-"]')).map(row=>row.getAttribute('data-testid').slice(16))`
+    )
+    await tap(`event-reply-row-${replyIds[replyIds.length - 1]}`)
+    await wait(
+      `document.querySelector('[data-testid="event-rsvp-modal"] [role="radiogroup"]')!=null`
+    )
+    // In it, an RSVP capsule keeps a finger that strays below it: Yes to No.
     const rsvpId = await evaluate<string>(
-      `document.querySelector('[data-testid="event-replies"] [role="radiogroup"]').getAttribute('data-testid')`
+      `document.querySelector('[data-testid="event-rsvp-modal"] [role="radiogroup"]').getAttribute('data-testid')`
     )
     await tap(`${rsvpId}-0`)
     await wait(
@@ -341,8 +368,26 @@ async function main(): Promise<void> {
     await wait(
       `document.querySelector('[data-testid="${rsvpId}-2"]').getAttribute('aria-checked')==='true'`
     )
+    // No reply has room for one line in the label's own font.
+    assert(
+      await evaluate<boolean>(`(()=>{
+      const modal=document.querySelector('[data-testid="event-rsvp-modal"]'), canvas=document.createElement('canvas').getContext('2d');
+      const pills=Array.from(modal.querySelectorAll('[role="radiogroup"]'));
+      return pills.every(pill=>{
+        const middle=pill.querySelectorAll('[role="radio"]')[1], label=middle.querySelector('[dir="auto"]'), style=getComputedStyle(middle);
+        canvas.font=getComputedStyle(label).font;
+        const room=middle.getBoundingClientRect().width-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);
+        return canvas.measureText('No reply').width*1.1<=room;
+      });
+    })()`)
+    )
+    writeFileSync(join(artifacts, 'rsvp-modal.png'), await m.screenshot())
+    await m.tapOn({ text: 'Done' })
+    await wait(
+      `document.querySelector('[data-testid="event-rsvp-modal"]')==null && document.querySelector('[data-testid="event-reply-status-${rsvpId.slice(11)}"]')?.textContent==='No'`
+    )
     console.log(
-      'Pills keep a straying finger and settle from where they are let go'
+      'Replies read as one coloured line each; the card opens the RSVP modal, whose capsules keep a straying finger'
     )
     writeFileSync(join(artifacts, 'info-after.png'), await m.screenshot())
     console.log(

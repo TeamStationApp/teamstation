@@ -24,6 +24,7 @@ const suites = [
   'src/app/screens/GameScreen.eventInfo.test.tsx',
   'src/app/components/EventRsvpPill.test.tsx',
   'src/app/components/SegmentedPill.test.tsx',
+  'src/app/screens/EventInfoTab.test.tsx',
   'src/app/screens/homeAddCreate.test.tsx',
   'src/app/screens/gameCreation.test.tsx'
 ].filter(existsSync)

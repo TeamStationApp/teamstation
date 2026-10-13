@@ -7,7 +7,7 @@ import { View } from 'react-native'
 import type { RsvpChoice } from '../../common/eventInfo'
 import { recordAnimationStarts, responderDrag } from '../../test/responderDrag'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { EventRsvpPill } from './EventRsvpPill'
+import { EventRsvpPill, oneLineLabelProps } from './EventRsvpPill'
 
 let root: Root | undefined
 afterEach(async () => {
@@ -67,6 +67,16 @@ async function measure(width: number): Promise<void> {
 const fill = (): HTMLElement =>
   document.querySelector('[data-testid="event-rsvp-101-fill"]')!
 describe('the independent RSVP capsule', () => {
+  it('keeps one-line labels on one line on phones, shrinking them, and lets a browser wrap enlarged text', () => {
+    for (const os of ['ios', 'android'])
+      expect(oneLineLabelProps(true, os)).deep.equals({
+        numberOfLines: 1,
+        adjustsFontSizeToFit: true,
+        minimumFontScale: 0.85
+      })
+    expect(oneLineLabelProps(true, 'web')).deep.equals({})
+    expect(oneLineLabelProps(false, 'ios')).deep.equals({})
+  })
   it('keeps a drag that strays well below the rail until it lets go', async () => {
     const choices = await render()
     await measure(300)

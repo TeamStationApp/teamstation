@@ -52,6 +52,17 @@ export async function loadEventReplyInfos(
   )
   return [primary, ...others]
 }
+/** What the modal needs of a game or event: its id and how to name it. */
+export type RsvpEvent = Pick<
+  GameSummary,
+  | 'id'
+  | 'homeTeamId'
+  | 'homeTeamName'
+  | 'awayTeamName'
+  | 'eventKind'
+  | 'eventType'
+  | 'title'
+>
 export function EventRsvpModal({
   client,
   game,
@@ -61,7 +72,7 @@ export function EventRsvpModal({
   onReplies
 }: {
   client: TeamStationClient
-  game: GameSummary
+  game: RsvpEvent
   teamId: string
   onClose: () => void
   onCounts: (counts: PlayerRsvpCounts) => void
@@ -213,6 +224,8 @@ export function EventRsvpModal({
                           userId={row.userId}
                           name={row.name}
                           value={row.response}
+                          widthRem={16.5}
+                          oneLineLabels
                           disabled={busy[row.userId]}
                           onChange={response => {
                             change(row.userId, response).catch(() => undefined)

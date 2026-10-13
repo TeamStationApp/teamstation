@@ -1457,7 +1457,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const below = (
     <View style={styles.tabBody}>
       {tab === 'info' ? (
-        <EventInfoTab key={gameId} client={client} eventId={gameId} />
+        <EventInfoTab
+          key={gameId}
+          client={client}
+          eventId={gameId}
+          event={game}
+        />
       ) : tab === 'score' ? (
         <ScoreGameOptions
           game={game}

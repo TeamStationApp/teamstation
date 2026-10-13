@@ -528,6 +528,10 @@ async function main(): Promise<void> {
       ),
       false
     )
+    // The Info card lists replies; a tap opens the schedule's RSVP modal,
+    // whose capsules the replies below are made with.
+    await tap({ id: 'event-replies-open' })
+    await m.assertVisible({ id: 'event-rsvp-modal', timeout: 20000 })
     await tap({ id: 'event-rsvp-101-0' })
     await tap({ id: 'event-rsvp-101-1' })
     await tap({ id: 'event-rsvp-103-2' })
@@ -536,7 +540,7 @@ async function main(): Promise<void> {
       `document.querySelector('[data-testid="event-rsvp-101-1"]').getAttribute('aria-disabled')!=='true'`
     )
     await shape()
-    await see({ id: 'event-reply-row-101' }, 'UP')
+    await see({ id: 'quick-rsvp-row-101' }, 'UP')
     await shot('info-after.png')
     await m.evalBrowserScript({
       script: `window.__tracks=[];for(const track of document.querySelectorAll('[role="radiogroup"]')){window.__tracks.push([track,track.style.width]);track.style.width=(parseFloat(getComputedStyle(track).width)*2)+'px'}window.__fonts=[];for(const label of document.querySelectorAll('[role="radiogroup"] [role="radio"] > div')){window.__fonts.push([label,label.style.fontSize,label.style.lineHeight]);label.style.fontSize=(parseFloat(getComputedStyle(label).fontSize)*2)+'px';label.style.lineHeight=(parseFloat(getComputedStyle(label).lineHeight)*2)+'px'}`
@@ -593,6 +597,10 @@ async function main(): Promise<void> {
     await tap({ id: 'event-rsvp-101-1' })
     console.log(
       'Independent self/child replies, continuous gradient, keyboard and Maybe persistence passed'
+    )
+    await m.tapOn({ text: 'Done' })
+    await wait(
+      `document.querySelector('[data-testid="event-rsvp-modal"]')==null && document.querySelector('[data-testid="event-reply-status-101"]')?.textContent==='Maybe'`
     )
     const persisted = asEventInfo(
       await (await f.h.request('GET', `/events/${gameId}/info`)).json()
@@ -710,6 +718,10 @@ async function main(): Promise<void> {
       `document.querySelector('iframe').contentDocument.querySelector('#error').style.display==='none'`
     )
     await see({ id: 'event-address' })
+    // Clear of the floating tab bar, wherever the cards above leave it.
+    await m.evalBrowserScript({
+      script: `document.querySelector('[data-testid="event-address"]').scrollIntoView({block:'center'})`
+    })
     await m.longPressOn({ id: 'event-address' })
     await m.assertVisible({ text: 'Address copied', timeout: 10000 })
     console.log(
@@ -720,7 +732,9 @@ async function main(): Promise<void> {
         `create function fail_event_rsvp_fixture() returns trigger language plpgsql as $$begin if new.user_id=103 then raise exception 'Synthetic RSVP write failure'; end if; return new; end$$;create trigger fail_event_rsvp_fixture before insert or update on game_rsvps for each row execute function fail_event_rsvp_fixture();`
       )
       .execute(f.h.db)
-    await tap({ id: 'event-rsvp-103-0' }, 'UP')
+    await tap({ id: 'event-replies-open' }, 'UP')
+    await m.assertVisible({ id: 'event-rsvp-modal', timeout: 20000 })
+    await tap({ id: 'event-rsvp-103-0' })
     await m.assertVisible({ text: 'Something went wrong', timeout: 10000 })
     assert.equal(
       await evaluate(
@@ -743,9 +757,9 @@ async function main(): Promise<void> {
     await open(`/games/${gameId}`)
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-rsvp-101-1"]').getAttribute('aria-checked')`
+        `document.querySelector('[data-testid="event-reply-status-101"]').textContent`
       ),
-      'true'
+      'Maybe'
     )
     console.log(
       'Actual failed write isolates rollback; refreshed replies persist'
@@ -796,7 +810,7 @@ async function main(): Promise<void> {
     )
     assert(
       await evaluate<boolean>(
-        `document.querySelector('[data-testid="event-rsvp-103"]')!=null`
+        `document.querySelector('[data-testid="event-reply-row-103"]')!=null`
       ),
       'An out-of-selected-team child keeps a private control'
     )
@@ -1312,9 +1326,9 @@ async function main(): Promise<void> {
     await open(`/games/${gameId}`)
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-rsvp-101-1"]').getAttribute('aria-checked')`
+        `document.querySelector('[data-testid="event-reply-status-101"]').textContent`
       ),
-      'true'
+      'Maybe'
     )
     await m.openBrowser({
       url: f.h.origin + `/groups/team/${f.teamA}/create-game`
@@ -1602,7 +1616,7 @@ async function main(): Promise<void> {
     )
     assert(
       await evaluate<boolean>(
-        `document.querySelector('[data-testid="event-rsvp-103"]')!=null`
+        `document.querySelector('[data-testid="event-reply-row-103"]')!=null`
       )
     )
     console.log(
