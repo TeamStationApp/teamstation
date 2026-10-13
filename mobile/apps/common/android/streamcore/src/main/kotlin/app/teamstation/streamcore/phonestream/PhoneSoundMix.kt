@@ -11,10 +11,16 @@ import kotlin.math.roundToLong
  * of Director's stereo mix by each output at its own delay. TS Director's `AudioMixer` with one
  * contributor.
  *
- * - Sound is placed by when it was captured. A buffer within 20 ms of where the last one ended
- *   follows on from it, so the scheduling jitter in the capture times never reaches the timeline;
- *   one further off is placed where its capture time says, across a gap of silence or back over
- *   what was written.
+ * - Sound is placed by when it was captured, steered the way Director's `SourceSoundTimeline`
+ *   steers a camera's sound. Within a run each buffer follows on from the last by sample count, so
+ *   the jitter in the capture times never reaches the timeline, and the capture times only steer:
+ *   the median of the last [medianBuffers] errors between where a buffer's capture time says it
+ *   belongs and where the run has got to. Once the first window is full the run moves to that
+ *   median in one step, replacing the first buffer's guess; after that a median over
+ *   [ignoreSeconds] moves the run one sample per buffer, about a millisecond a second, which takes
+ *   up the microphone clock's drift without a click. A buffer more than [stepSeconds] off is
+ *   placed where its capture time says at once, across a gap of silence or back over what was
+ *   written.
  * - Each output reads runs out contiguously, [Output.delaySeconds] behind the steady wall clock,
  *   whether or not the microphone spoke: silence where nothing was captured, or while muted. So
  *   both outputs carry sound from their first picture, and the encoders never see a gap.
@@ -23,7 +29,13 @@ import kotlin.math.roundToLong
 class PhoneSoundMix(
     private val sampleRate: Int = PhoneStreamProfile.audioSampleRate,
     private val runSeconds: Double = 0.02,
-    capacitySeconds: Double = 8.0
+    capacitySeconds: Double = 8.0,
+    /** Errors whose median is under this leave the run where it is: Director's 4 ms. */
+    ignoreSeconds: Double = 0.004,
+    /** A buffer further off than this is placed by its capture time at once. */
+    stepSeconds: Double = 0.1,
+    /** How many buffers' errors the median is taken over: a second of the microphone's 20 ms reads. */
+    private val medianBuffers: Int = 50
 ) {
     /** One reader of the bus: the stream's mix, or the recording's. */
     class Output(val delaySeconds: Double, val sink: (AudioFrame) -> Unit) {
@@ -39,6 +51,10 @@ class PhoneSoundMix(
     private var writeEnd: Long? = null
     private var validFrom = Long.MAX_VALUE
     private var started = false
+    private val ignoreFrames = (ignoreSeconds * sampleRate).roundToLong()
+    private val stepFrames = (stepSeconds * sampleRate).roundToLong()
+    private val errors = ArrayDeque<Long>()
+    private var settled = false
 
     @Volatile
     var soundEnabled: Boolean = true
@@ -47,12 +63,23 @@ class PhoneSoundMix(
     var reanchors = 0
         private set
 
+    /** Samples the run was moved by to follow the capture times, for a test or a log line. */
+    var steeredFrames = 0L
+        private set
+
+    /** The median error the run last steered by, in seconds: positive when the capture times say later. */
+    @Volatile
+    var steeringErrorSeconds = 0.0
+        private set
+
     fun add(output: Output) = lock.withLock { outputs += output }
 
     /** Starts the timeline at [wall]: every output reads from its own delay before now. */
     fun start(wall: Double) = lock.withLock {
         epoch = wall
         writeEnd = null
+        errors.clear()
+        settled = false
         validFrom = Long.MAX_VALUE
         started = true
         for (output in outputs) output.cursor = index(wall - output.delaySeconds)
@@ -71,15 +98,16 @@ class PhoneSoundMix(
             var at = index(captureWall)
             val end = writeEnd
             if (end != null) {
-                if (abs(at - end) <= runFrames) {
-                    at = end
-                } else {
+                val error = at - end
+                if (abs(error) > stepFrames) {
                     reanchors += 1
-                    // A gap the microphone left is silence, not whatever the ring held before.
-                    var cursor = end
-                    while (cursor < at) {
-                        ring[slot(cursor)] = 0
-                        cursor += 1
+                    errors.clear()
+                    silence(end, at)
+                } else {
+                    at = end + steer(error)
+                    if (at > end) {
+                        // One sample nudged in repeats the last; a step in is silence.
+                        if (at - end == 1L) ring[slot(end)] = ring[slot(end - 1)] else silence(end, at)
                     }
                 }
             }
@@ -87,6 +115,40 @@ class PhoneSoundMix(
             validFrom = minOf(validFrom, at)
             writeEnd = maxOf(end ?: Long.MIN_VALUE, at + samples.size)
             validFrom = maxOf(validFrom, writeEnd!! - capacity)
+        }
+    }
+
+    /** How far to move the run for a buffer [error] samples from where it has got to. */
+    private fun steer(error: Long): Long {
+        errors.addLast(error)
+        while (errors.size > medianBuffers) errors.removeFirst()
+        if (errors.size < medianBuffers && !settled) return 0
+        val sorted = errors.sorted()
+        val median = sorted[sorted.size / 2]
+        steeringErrorSeconds = median.toDouble() / sampleRate
+        val move = when {
+            !settled -> median.takeIf { abs(it) > ignoreFrames } ?: 0L
+            median > ignoreFrames -> 1L
+            median < -ignoreFrames -> -1L
+            else -> 0L
+        }
+        settled = true
+        if (move != 0L) {
+            steeredFrames += abs(move)
+            // The errors so far were measured against the run before it moved.
+            val shifted = errors.map { it - move }
+            errors.clear()
+            errors.addAll(shifted)
+        }
+        return move
+    }
+
+    /** A gap the microphone left is silence, not whatever the ring held before. */
+    private fun silence(from: Long, until: Long) {
+        var cursor = from
+        while (cursor < until) {
+            ring[slot(cursor)] = 0
+            cursor += 1
         }
     }
 

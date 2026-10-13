@@ -248,10 +248,59 @@ class PhoneStreamUnitTest {
     }
 
     @Test
+    fun theSoundBusMovesToWhereTheCaptureTimesSayAndFollowsTheirDrift() {
+        val mix = PhoneSoundMix(sampleRate = 1_000, runSeconds = 0.02, capacitySeconds = 4.0, medianBuffers = 5)
+        val heard = mutableListOf<AudioFrame>()
+        mix.add(PhoneSoundMix.Output(0.0) { heard += it })
+        mix.start(100.0)
+        // The first buffer's time is 12 ms early: the rest say so, with a few ms of jitter.
+        var wall = 100.0
+        mix.write(ShortArray(20) { 1 }, wall - 0.012)
+        val jitter = listOf(0.002, -0.001, 0.0, 0.003, -0.002, 0.001, 0.0)
+        for (each in jitter) {
+            wall += 0.02
+            mix.write(ShortArray(20) { 1 }, wall + each)
+        }
+        // Once five buffers agree, the run moves 12 ms in one step, and stays within the dead band.
+        assertEquals(0, mix.reanchors)
+        assertEquals(12L, mix.steeredFrames)
+        assertEquals(0.0, mix.steeringErrorSeconds, 0.004)
+        // A microphone clock 0.5 % slow: the capture times run ahead of the count, and the run follows
+        // one sample per buffer once they are more than 4 ms ahead.
+        val before = mix.steeredFrames
+        repeat(200) {
+            wall += 0.02 * 1.005
+            mix.write(ShortArray(20) { 2 }, wall)
+        }
+        val drifted = 200 * 0.02 * 0.005 * 1_000
+        assertEquals(drifted, (mix.steeredFrames - before).toDouble(), 5.0)
+        assertTrue(mix.steeringErrorSeconds <= 0.005)
+        // And back: a fast clock pulls the run the other way, overwriting a sample at a time.
+        val turned = mix.steeredFrames
+        repeat(200) {
+            wall += 0.02 * 0.995
+            mix.write(ShortArray(20) { 3 }, wall)
+        }
+        assertTrue(mix.steeredFrames - turned > 10)
+        assertTrue(mix.steeringErrorSeconds >= -0.005)
+        // Read out, the steered run has no holes: every sample after the first buffer is sound.
+        mix.pump(wall + 0.02)
+        val samples = heard.flatMap { run -> run.samples.toList() }.dropWhile { it == 0.toShort() }
+        assertTrue(samples.isNotEmpty())
+        assertTrue(samples.take(samples.size - 40).none { it == 0.toShort() })
+        // A new start forgets the steering.
+        mix.start(200.0)
+        mix.write(ShortArray(20) { 1 }, 200.0)
+        mix.write(ShortArray(20) { 1 }, 200.03)
+        assertEquals(0, mix.reanchors)
+    }
+
+    @Test
     fun theSoundBusReadsEachOutputContiguouslyAtItsDelay() {
         val live = mutableListOf<AudioFrame>()
         val recorded = mutableListOf<AudioFrame>()
-        val mix = PhoneSoundMix(sampleRate = 1_000, runSeconds = 0.02, capacitySeconds = 2.0)
+        // Steps at 50 ms, and a median window too long to steer within this test.
+        val mix = PhoneSoundMix(sampleRate = 1_000, runSeconds = 0.02, capacitySeconds = 2.0, stepSeconds = 0.05, medianBuffers = 1_000)
         val liveOutput = PhoneSoundMix.Output(0.1) { live += it }
         val recordingOutput = PhoneSoundMix.Output(1.0) { recorded += it }
         mix.add(liveOutput)
