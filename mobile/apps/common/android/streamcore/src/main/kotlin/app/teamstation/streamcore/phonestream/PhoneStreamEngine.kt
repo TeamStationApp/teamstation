@@ -554,9 +554,12 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         liveStartWanted = false
         val client = LiveStreamClient(held.request.apiBase, held.request.token, environment.http)
         liveStartReport = scope.launch {
+            // On the server's clock: this phone's can be a second out ([ServerClock]).
+            var offset: Double? = null
             for (attempt in 1..LIVE_START_ATTEMPTS) {
                 try {
-                    client.reportLiveStart(held.gameId, held.liveStreamId, started)
+                    val known = offset ?: client.serverClockOffset(now = environment.clock::now).also { offset = it }
+                    client.reportLiveStart(held.gameId, held.liveStreamId, started + known)
                     return@launch
                 } catch (ended: LiveStreamClient.Error.StreamEnded) {
                     return@launch
@@ -741,6 +744,13 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                 )
             }
         }
+        // The start goes on the server's clock, set again for every upload: this phone's can be a second
+        // out ([ServerClock]). Unreachable, the upload's own request fails anyway.
+        val offset = try {
+            LiveStreamClient(server, token, environment.http).serverClockOffset(now = environment.clock::now)
+        } catch (error: LiveStreamClient.Error) {
+            0.0
+        }
         val service = environment.uploadSleep?.let { UploadService(environment.makeUploadClient(server, token), sleep = it) }
             ?: UploadService(environment.makeUploadClient(server, token))
         val uploadTitle = recording.uploadTitle ?: title
@@ -749,7 +759,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
             gameId = recording.gameId,
             title = uploadTitle,
             kind = "program",
-            startedAt = start,
+            startedAt = start + offset,
             uploadId = recording.uploadId,
             liveStreamId = liveStreamId,
             wholeStream = if (recording.coversWholeStream) true else null,

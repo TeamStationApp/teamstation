@@ -115,6 +115,40 @@ class LiveStreamClient(
         }
     }
 
+    /**
+     * What to add to [now] to read TeamStation's clock ([ServerClock]), from [samples] round trips to
+     * `GET /api/v1/time`. [now] is the clock the caller's instants are on. Throws only when no round
+     * trip came back.
+     */
+    suspend fun serverClockOffset(samples: Int = ServerClock.SAMPLES, now: () -> Double): Double {
+        val request = Request.Builder()
+            .url("$base/api/v1/time")
+            .header("accept", "application/json")
+            .get()
+            .build()
+        val taken = mutableListOf<ServerClock.Sample>()
+        var failure: Error = Error.Offline
+        withContext(Dispatchers.IO) {
+            repeat(maxOf(1, samples)) {
+                val sent = now()
+                try {
+                    http.newCall(request).execute().use { answer ->
+                        val text = answer.body?.string().orEmpty()
+                        if (!answer.isSuccessful) throw Error.Server(answer.code, "TeamStation answered ${answer.code}")
+                        val server = runCatching { JSONObject(text).getDouble("serverTime") / 1000 }
+                            .getOrElse { throw Error.Server(answer.code, "TeamStation sent something unreadable") }
+                        taken += ServerClock.Sample(sent, server, now())
+                    }
+                } catch (error: IOException) {
+                    failure = Error.Offline
+                } catch (error: Error) {
+                    failure = error
+                }
+            }
+        }
+        return ServerClock.offset(taken) ?: throw failure
+    }
+
     companion object {
         const val endedMessage = "This camera was ended. Start streaming again to go live."
 

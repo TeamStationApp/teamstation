@@ -82,6 +82,43 @@ class PhoneStreamPartsTest {
     }
 
     @Test
+    fun theServersClockIsReadFromTheQuickestRoundTrip() {
+        assertNull(ServerClock.offset(emptyList()))
+        assertNull(ServerClock.offset(listOf(ServerClock.Sample(10.0, 99.0, 9.0))))
+        val samples = listOf(
+            ServerClock.Sample(100.0, 101.5, 100.5),
+            ServerClock.Sample(200.0, 201.06, 200.04),
+            ServerClock.Sample(300.0, 301.1, 300.2)
+        )
+        assertEquals(1.04, ServerClock.offset(samples)!!, 1e-9)
+
+        server.enqueue(MockResponse().setResponseCode(500))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("not json"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"serverTime":1790000003000}"""))
+        var clock = 1_790_000_000.0
+        val offset = runBlocking { client().serverClockOffset(samples = 3) { clock.also { clock += 0.01 } } }
+        assertEquals(2.975, offset, 1e-6)
+        assertEquals("/api/v1/time", server.takeRequest(1, TimeUnit.SECONDS)!!.path)
+
+        server.enqueue(MockResponse().setResponseCode(503))
+        val refused = try {
+            runBlocking { client().serverClockOffset(samples = 1) { 0.0 } }
+            null
+        } catch (error: LiveStreamClient.Error) {
+            error
+        }
+        assertEquals(503, (refused as LiveStreamClient.Error.Server).status)
+        val closed = java.net.ServerSocket(0).use { it.localPort }
+        val offline = try {
+            runBlocking { LiveStreamClient("http://127.0.0.1:$closed", "token-0000").serverClockOffset(samples = 2) { 0.0 } }
+            null
+        } catch (error: LiveStreamClient.Error) {
+            error
+        }
+        assertEquals(LiveStreamClient.Error.Offline, offline)
+    }
+
+    @Test
     fun theLiveStartIsSentAsAnInstantOnTheStreamItPlaces() {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"s1"}"""))
         server.enqueue(MockResponse().setResponseCode(410))

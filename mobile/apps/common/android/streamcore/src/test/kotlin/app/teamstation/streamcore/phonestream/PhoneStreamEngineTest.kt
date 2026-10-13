@@ -71,6 +71,10 @@ class PhoneStreamEngineTest {
     private val server = MockWebServer()
     private val requests = ConcurrentLinkedQueue<RecordedRequest>()
 
+    /** How far the server's clock reads ahead of this phone's. */
+    @Volatile
+    private var clockSkew = 3.0
+
     /** What the next `PATCH …/live-streams/:id` are answered, in turn; then 200. */
     private val patchAnswers = ConcurrentLinkedQueue<MockResponse>()
     private val parts = mutableMapOf<Int, ByteArray>()
@@ -109,6 +113,7 @@ class PhoneStreamEngineTest {
                 requests += request
                 val path = request.path ?: ""
                 return when {
+                    path.endsWith("/api/v1/time") -> json("""{"serverTime":${Math.round((wall + clockSkew) * 1000)}}""")
                     request.method == "PATCH" && path.contains("/live-streams/") -> patchAnswers.poll() ?: json("{}")
                     path.contains("/live-streams") -> liveStreamAnswer
                     request.method == "POST" && path.endsWith("/director/uploads") ->
@@ -626,7 +631,8 @@ class PhoneStreamEngineTest {
         assertEquals(partOne, PhoneStreamEngine.uploadStart(anchors, take.startedAt), 0.0)
         assertNotEquals(take.startedAt, partOne, 1e-6)
         assertEquals(take.startedAt, partOne, 0.5)
-        assertEquals(app.teamstation.streamcore.upload.UploadClient.instant(partOne), body.getString("startAt"))
+        // On the server's clock, which reads 3 s ahead of the phone's.
+        assertEquals(app.teamstation.streamcore.upload.UploadClient.instant(partOne + 3.0), body.getString("startAt"))
         val uploaded = runBlocking { second.recordings() }.single()
         assertTrue(uploaded.isUploaded)
         assertEquals("v1", uploaded.videoId)
@@ -666,7 +672,8 @@ class PhoneStreamEngineTest {
         assertEquals(2, patches.size)
         for (patch in patches) {
             assertEquals("/api/v1/games/g1/live-streams/s1", patch.path)
-            assertEquals(app.teamstation.streamcore.upload.UploadClient.instant(captured), JSONObject(patch.body.clone().readUtf8()).getString("liveStartedAt"))
+            // On the server's clock, which reads 3 s ahead of the phone's.
+            assertEquals(app.teamstation.streamcore.upload.UploadClient.instant(captured + 3.0), JSONObject(patch.body.clone().readUtf8()).getString("liveStartedAt"))
         }
         // A redial in the same session says nothing more.
         on { engine.publishStatus() }
