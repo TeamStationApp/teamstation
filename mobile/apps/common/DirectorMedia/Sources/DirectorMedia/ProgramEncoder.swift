@@ -83,6 +83,9 @@ public final class ProgramEncoder: @unchecked Sendable {
   /// Audio awaiting a writer that is not currently accepting it. Discarding instead of queueing
   /// leaves the audio track short of the video track, which stalls the muxer outright.
   private var pendingAudio: [PendingSound] = []
+  /// Sound the mix handed over while the part's origin was still being sampled, with when it was
+  /// captured. Placed the moment the origin settles; see `placeHeldSoundLocked`.
+  private var heldSound: [(sample: CMSampleBuffer, wall: Double, duration: CMTime)] = []
   /// Only one thread drains at a time. `AVAssetWriterInput.append` from two threads at once is not
   /// safe, and several threads reach the drain here.
   private var isDraining = false
@@ -456,6 +459,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     self.writtenFrames = 0
     self.soundOrigin.reset()
     self.pendingAudio.removeAll()
+    self.heldSound.removeAll()
     self.isRunning = true
     self.fillingTail = false
     self.outputURL = url
@@ -608,6 +612,7 @@ public final class ProgramEncoder: @unchecked Sendable {
       impliedPartStart: contentWall.seconds - time.seconds,
       atProgramme: time.seconds
     )
+    placeHeldSoundLocked()
     var anchor: (recording: Int64, part: Int, seconds: Double, wall: WallClock)?
     if let recording = anchorRecordingID,
        time.isNumeric,
@@ -699,18 +704,50 @@ public final class ProgramEncoder: @unchecked Sendable {
     }
     audioOffered += 1
     if duration.seconds > audioLongestSpan { audioLongestSpan = duration.seconds }
-    // Nil before the opening has been sampled, and for sound captured before the part began.
-    // Neither is a loss: the mix runs seconds behind, so this part's own first sound arrives
-    // long after the origin has settled.
-    guard let target = soundOrigin.timeline(forCaptureWall: frame.wallClock.seconds) else {
-      if soundOrigin.isSettled { audioBeforePart += 1 } else { audioUnseeded += 1 }
+    // Sound that arrives while the opening is still being sampled is held, not dropped, and placed
+    // once the origin settles. A mix that waits seconds (Director's) hands over nothing of the part
+    // that early, but a phone's waits one second against a 1.5 s opening, so the start of its part
+    // arrives before the origin is known; dropping it left the first 1.5 s of every phone take
+    // coded silence.
+    guard soundOrigin.isSettled else {
+      audioUnseeded += 1
+      heldSound.append((frame.sampleBuffer, frame.wallClock.seconds, duration))
+      if heldSound.count > Self.maximumPendingAudio {
+        let lost = heldSound.count - Self.maximumPendingAudio
+        audioQueueDrops += lost
+        heldSound.removeFirst(lost)
+      }
       lock.unlock()
+      return
+    }
+    queueSoundLocked(frame.sampleBuffer, capturedAt: frame.wallClock.seconds, duration: duration)
+    lock.unlock()
+
+    drainAudio(limit: 8)
+  }
+
+  /// Queues the held sound once the origin has settled, in the order it arrived and ahead of
+  /// anything later. Called with `lock` held; the next drain writes it.
+  private func placeHeldSoundLocked() {
+    guard soundOrigin.isSettled, !heldSound.isEmpty else { return }
+    let held = heldSound
+    heldSound.removeAll()
+    for chunk in held {
+      queueSoundLocked(chunk.sample, capturedAt: chunk.wall, duration: chunk.duration)
+    }
+  }
+
+  /// Places one chunk captured at `wall` on the part's timeline and queues it for the writer, or
+  /// counts it as before the part. Called with `lock` held and the origin settled.
+  private func queueSoundLocked(_ sample: CMSampleBuffer, capturedAt wall: Double, duration: CMTime) {
+    guard let target = soundOrigin.timeline(forCaptureWall: wall) else {
+      audioBeforePart += 1
       return
     }
     if audioFirstTarget < 0 { audioFirstTarget = target }
     audioLastTarget = target
 
-    pendingAudio.append(PendingSound(sample: frame.sampleBuffer, target: target, duration: duration))
+    pendingAudio.append(PendingSound(sample: sample, target: target, duration: duration))
     if pendingAudio.count > Self.maximumPendingAudio {
       // The queue stays bounded, and this no longer costs the timeline: `writtenAudioEnd` only
       // advances on buffers the writer took, so the next chunk's fill covers whatever these held.
@@ -720,9 +757,6 @@ public final class ProgramEncoder: @unchecked Sendable {
       pendingAudio.removeFirst(lost)
       telemetry.recordError("program sound queue overflowed, \(lost) buffer(s) of sound lost")
     }
-    lock.unlock()
-
-    drainAudio(limit: 8)
   }
 
   // The lock cannot be taken directly inside an async function.
@@ -1204,6 +1238,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     adaptor = nil
     soundOrigin.reset()
     pendingAudio.removeAll()
+    heldSound.removeAll()
   }
 
   /// Opens a continuation file. The next video sample holds the dead interval as black + silence
@@ -1326,6 +1361,7 @@ public final class ProgramEncoder: @unchecked Sendable {
     part += 1
     pendingRecoveryFill = true
     pendingAudio.removeAll()
+    heldSound.removeAll()
     soundOrigin.reset()
     acceptedAudioCount = 0
     writtenAudioEnd = 0
