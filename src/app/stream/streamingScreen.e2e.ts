@@ -632,11 +632,20 @@ async function main(): Promise<void> {
       JSON.stringify({ actions: [finger('left', -1), finger('right', 1)] })
     )
     assert.equal(pinched.status, 200, pinched.body)
-    await sleep(1500)
-    const after = await textOf('zoom-label')
-    results.push(
-      `4 pinch: zoom readout ${before ?? '?'} → ${after ?? '?'}${before === after ? ' (unchanged)' : ''}`
+    // The readout follows the lens a moment after the fingers lift.
+    const deadline = Date.now() + 5000
+    let after = await textOf('zoom-label')
+    while (after === before && Date.now() < deadline) {
+      await sleep(250)
+      after = await textOf('zoom-label')
+    }
+    assert.ok(before != null, 'the zoom readout shows before the pinch')
+    assert.notEqual(
+      after,
+      before,
+      `the pinch changes the zoom readout (still ${before} after 5 s)`
     )
+    results.push(`4 pinch: zoom readout ${before} → ${after ?? '?'}`)
 
     // E12: the outage.
     if (outageIp != null) {
