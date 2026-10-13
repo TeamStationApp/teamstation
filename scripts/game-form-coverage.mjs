@@ -11,6 +11,8 @@ import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { transformSync } from 'esbuild'
+
 /**
  * Changed-line coverage for Create Game and Game Settings.
  *
@@ -160,8 +162,21 @@ const counts = {}
 for (const path of paths)
   if (map.files().includes(resolve(path)))
     counts[path] = istanbulCounts(map.fileCoverageFor(resolve(path)).toJSON())
-const result = lineReportFromCounts(changedLines(diff), counts, path =>
-  paths.includes(path)
+/** A file of only types and type imports compiles to nothing, so it never loads. */
+function typeOnly(path) {
+  const { code } = transformSync(readFileSync(path, 'utf8'), {
+    loader: path.endsWith('x') ? 'tsx' : 'ts',
+    format: 'esm'
+  })
+  return (
+    code.replace(/^\s*(export\s*\{\s*\};?|import\s[^;]*;)\s*$/gm, '').trim() ===
+    ''
+  )
+}
+const result = lineReportFromCounts(
+  changedLines(diff),
+  counts,
+  path => paths.includes(path) && !typeOnly(path)
 )
 writeFileSync(
   resolve(report, 'changed-lines.json'),
