@@ -15,6 +15,7 @@ import {
   placeSound,
   readFragment,
   readTracks,
+  segmentPictureSec,
   SOUND_STEP_TOLERANCE_SEC,
   soundStepProblem
 } from './trackStarts'
@@ -193,6 +194,20 @@ describe('reading where tracks start', function () {
         durationSec: 4096 / 48_000
       }
     ])
+  })
+
+  it('measures how long a segment’s picture really lasts', function () {
+    const init = Buffer.concat([box('ftyp'), box('moov', MOOV)])
+    const segment = Buffer.concat([
+      box('moof', moof(picture(56), sound(56))),
+      box('mdat'),
+      box('moof', moof(traf(VIDEO, 58 * 90_000, { count: 30 }))),
+      box('mdat')
+    ])
+    expect(segmentPictureSec(init, segment)).equals(3)
+    // No picture, no init segment: nothing to say.
+    expect(segmentPictureSec(init, box('moof', moof(sound(56))))).equals(null)
+    expect(segmentPictureSec(box('ftyp'), segment)).equals(null)
   })
 
   it('reads a 64-bit decode time', function () {

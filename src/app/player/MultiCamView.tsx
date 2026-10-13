@@ -305,6 +305,11 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           onAttached={attached}
           wantsToPlay={() => mc.intents.current.get(video.id) === true}
           buffer={mc.bufferFor(video.id)}
+          isLive={
+            video.status === 'live' && props.isLive != null
+              ? liveCheck(props.isLive, video.id)
+              : undefined
+          }
           rect={mc.shownRects[index] ?? { x: 0, y: 0, w: 0, h: 0 }}
           dragging={mc.drag?.index === index ? mc.drag : null}
           standingAside={mc.drag != null && mc.drag.index !== index}
@@ -400,6 +405,14 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   )
 }
 
+/** One tile's question to the server, about its own video. */
+function liveCheck(
+  isLive: (videoId: string) => Promise<boolean>,
+  videoId: string
+): () => Promise<boolean> {
+  return async () => await isLive(videoId)
+}
+
 function Tile(props: {
   videoId: string
   /** This one has stopped drawing, and has been stopped long enough to say. */
@@ -414,6 +427,8 @@ function Tile(props: {
   wantsToPlay: () => boolean
   /** How far ahead its source loads, and the grid's hold on that. */
   buffer: PlayIntent['buffer']
+  /** For a tile that was live when it was opened (`PlayIntent.isLive`). */
+  isLive?: PlayIntent['isLive']
   rect: Rect
   dragging: { x: number; y: number } | null
   /**
@@ -507,7 +522,8 @@ function Tile(props: {
       onAttached,
       onGiveUp,
       wantsToPlay,
-      buffer
+      buffer,
+      isLive
     } = props
     if (node == null || url == null) return
     const toSec = onAttaching(videoId)
@@ -517,7 +533,7 @@ function Tile(props: {
       () => {
         onGiveUp(videoId)
       },
-      { wantsToPlay, buffer }
+      { wantsToPlay, buffer, isLive }
     )
     const start = (): void => {
       onAttached(videoId, asTile(node), toSec)
