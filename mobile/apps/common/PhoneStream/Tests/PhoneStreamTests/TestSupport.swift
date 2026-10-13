@@ -824,6 +824,7 @@ struct TrackReading {
   var minFrameDuration: Double = 0
   var videoSeconds: Double = 0
   var videoEnd: Double = 0
+  var audioStart: Double = 0
   var audioEnd: Double = 0
   var hasAAC = false
   var bitsPerSecond: Float = 0
@@ -861,6 +862,7 @@ func readBack(_ url: URL, pictures: Bool = false) async throws -> TrackReading {
   if let audio = try await asset.loadTracks(withMediaType: .audio).first {
     let (formats, range) = try await audio.load(.formatDescriptions, .timeRange)
     reading.hasAAC = formats.first.map { CMFormatDescriptionGetMediaSubType($0) == kAudioFormatMPEG4AAC } ?? false
+    reading.audioStart = range.start.seconds
     reading.audioEnd = range.end.seconds
   }
   return reading

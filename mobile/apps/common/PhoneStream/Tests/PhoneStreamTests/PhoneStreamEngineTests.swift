@@ -225,6 +225,110 @@ extension PhoneStreamTests {
     }
 
     @Test("""
+      A take carries sound from its first picture: the recording's sound track starts within one AAC \
+      packet of 0 with the microphone's sound, and its export holds sound under the same head as its \
+      pictures, so a reader that ignores the edit list finds both starting together
+      """)
+    func soundFromTheFirstPicture() async throws {
+      StubServer.reset()
+      let sink = TestRTMPSink()
+      try sink.start()
+      StubServer.with { $0.streamURL = sink.url }
+      let rig = EngineRig(root: try scratchDirectory())
+      let engine = try rig.engine()
+      try engine.open(angleName: Self.angle)
+      // The preview runs a moment before Record, as on the phone, so the microphone has sound for
+      // the picture the part opens on, which was captured a picture delay before Record.
+      try await Task.sleep(for: .seconds(1.5))
+      try engine.startRecording(
+        rtmpUrl: sink.url,
+        liveStreamId: Self.stream,
+        gameId: Self.game,
+        angleName: Self.angle,
+        request: rig.request
+      )
+      #expect(await waitUntil { engine.status.phase == "live" })
+      try await Task.sleep(for: .seconds(4))
+      await engine.stopRecording()
+      let packet = 1_024.0 / 48_000
+
+      // The recording: sound from 0, and the microphone's from its first packet or two (the mix's
+      // first chunk lands within one of the part's start).
+      let take = try #require(try engine.recordings().first)
+      let master = try #require(try partFiles(engine, take).first)
+      let recorded = try await readBack(master)
+      #expect(abs(recorded.audioStart) <= packet, "the recording's sound starts at \(recorded.audioStart)")
+      let heard = try #require(try await firstSound(in: master))
+      #expect(heard <= 2 * packet, "the microphone is first heard \(heard) s into the recording")
+
+      // The export: played, sound from the window's start; in the file, the sound's head reaches
+      // back as far as the pictures' does.
+      let summary = try #require(try engine.index.recordings().first)
+      let export = try #require(try await ExportService(
+        index: engine.index,
+        archives: engine.environment.storage.fileRoots.archives,
+        programDirectory: engine.environment.storage.program,
+        fallbackEncoding: { PhoneStreamProfile.takeEncoding }
+      ).exportRecording(
+        summary,
+        cameras: [],
+        includeProgram: true,
+        programDirectory: engine.environment.storage.program,
+        preparedRoot: engine.environment.storage.prepared
+      ).first)
+      let exported = try await readBack(export)
+      #expect(abs(exported.audioStart) <= packet, "the export's sound starts at \(exported.audioStart)")
+      let exportHeard = try #require(try await firstSound(in: export))
+      #expect(exportHeard <= 2 * packet, "the microphone is first heard \(exportHeard) s into the export")
+      let asset = AVURLAsset(url: export)
+      let pictureHead = try await head(of: try #require(try await asset.loadTracks(withMediaType: .video).first))
+      let soundHead = try await head(of: try #require(try await asset.loadTracks(withMediaType: .audio).first))
+      #expect(pictureHead > 0.5, "the window opens \(pictureHead) s into the part: the picture delay")
+      #expect(soundHead >= pictureHead - packet, "sound head \(soundHead) s, picture head \(pictureHead) s")
+      await engine.close()
+      sink.drop()
+    }
+
+    /// How long the track's media runs before its first edit: what a reader that ignores the edit
+    /// list plays ahead of the window.
+    private func head(of track: AVAssetTrack) async throws -> Double {
+      let segments = try await track.load(.segments)
+      return try #require(segments.first { !$0.isEmpty }).timeMapping.source.start.seconds
+    }
+
+    /// When the file's sound is first louder than a whisper, played as AVFoundation plays it.
+    private func firstSound(in url: URL) async throws -> Double? {
+      let asset = AVURLAsset(url: url)
+      guard let track = try await asset.loadTracks(withMediaType: .audio).first else { return nil }
+      let reader = try AVAssetReader(asset: asset)
+      let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVLinearPCMBitDepthKey: 16,
+        AVLinearPCMIsFloatKey: false,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsNonInterleaved: false,
+        AVSampleRateKey: 48_000,
+        AVNumberOfChannelsKey: 1
+      ])
+      reader.add(output)
+      reader.startReading()
+      defer { reader.cancelReading() }
+      while let sample = output.copyNextSampleBuffer() {
+        guard let block = CMSampleBufferGetDataBuffer(sample) else { continue }
+        let start = CMSampleBufferGetPresentationTimeStamp(sample).seconds
+        let length = CMBlockBufferGetDataLength(block)
+        var values = [Int16](repeating: 0, count: length / 2)
+        _ = values.withUnsafeMutableBytes {
+          CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: $0.baseAddress!)
+        }
+        if let index = values.firstIndex(where: { abs(Int($0)) > 1_000 }) {
+          return start + Double(index) / 48_000
+        }
+      }
+      return nil
+    }
+
+    @Test("""
       After a kill the take resumes within the limit as part 2 from its first picture, the stream \
       redials with the stream held, the export spans the wall clock to a frame, and the upload sends \
       liveStreamId, startAt and wholeStream, resumes after its second part, and marks the take uploaded
