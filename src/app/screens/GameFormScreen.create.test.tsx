@@ -65,7 +65,8 @@ interface Fixture {
   canceled: number[]
 }
 function api(
-  manage: (ref: { kind: string; id: string }) => boolean = () => true
+  manage: (ref: { kind: string; id: string }) => boolean = () => true,
+  people: (ref: { kind: string; id: string }) => boolean = () => false
 ): Fixture {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   const f: Fixture = {
@@ -97,7 +98,8 @@ function api(
       participatingSeasons: [],
       staff: [],
       games: [],
-      canManage: manage(ref)
+      canManage: manage(ref),
+      canManagePeople: people(ref)
     })
   client.proposeGame = async body => {
     f.sent.push(body)
@@ -145,7 +147,40 @@ const arrival = (): string =>
   )!.value
 
 describe('create game in the shared game scene', () => {
+  it('lets a team coach propose a game and keeps a season source administrator-only', async () => {
+    const f = api(
+      () => false,
+      ref => ref.kind === 'team' && ref.id === team.id
+    )
+    await open(f)
+    await choose('Away', 'Demo Eagles')
+    await press('Save')
+    expect(f.sent[0].sender).deep.equals({ kind: 'team', id: team.id })
+    await unmount()
+    const seasonCoach = api(
+      () => false,
+      () => true
+    )
+    await open(seasonCoach, { kind: 'season', id: season.id })
+    expect(text()).includes('administrator')
+    expect(seasonCoach.sent).length(0)
+  })
   afterEach(unmount)
+
+  it('does not request opponent approval when team staff manage both selected teams', async () => {
+    const f = api(
+      () => false,
+      ref => ref.kind === 'team'
+    )
+    await open(f)
+    await choose('Away', 'Demo Eagles')
+    expect(text()).not.includes('must approve this game')
+    await press('Save')
+    expect(f.sent[0].game).includes({
+      homeTeamId: team.id,
+      awayTeamId: away.id
+    })
+  })
 
   it('starts from the team as home, with the opponent to choose, the exhibition note and Save waiting', async () => {
     const f = api()
@@ -316,7 +351,7 @@ describe('create game in the shared game scene', () => {
     })
     expect(f.sent[0].initiatingTeamId).equals(undefined)
     expect(text()).includes(
-      'An admin of Demo Eagles and Demo Owls must approve'
+      'An administrator, coach or assistant of Demo Eagles and Demo Owls must approve'
     )
   })
 

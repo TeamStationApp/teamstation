@@ -125,7 +125,10 @@ export function TeamSelectorScene({
     try {
       const detail = await client.group({ kind: 'team', id: row.id })
       if (open.current)
-        onChoose({ group: detail.group, canManage: detail.canManage })
+        onChoose({
+          group: detail.group,
+          canManage: detail.canManage || detail.canManagePeople === true
+        })
     } catch (caught) {
       if (open.current)
         setError(
