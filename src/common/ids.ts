@@ -29,6 +29,7 @@ export const idPrefixes = {
   season: 'sea',
   seasonMember: 'smb',
   team: 'tem',
+  teamEvent: 'tev',
   user: 'usr',
   userEmail: 'uem',
   userLink: 'lnk',

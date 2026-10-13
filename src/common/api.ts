@@ -18,6 +18,20 @@ import {
 import { asLiteral } from './asLiteral'
 import { type Approval, asApproval, asBuildsLink } from './distribution'
 import { type ApiError, asApiError, HttpError } from './errors'
+import {
+  asEventInfo,
+  asEventLocation,
+  asRsvp,
+  type EventInfo,
+  type Rsvp,
+  type TeamEventInput,
+  withEventMetadata
+} from './eventInfo'
+import {
+  asEventPlaces,
+  type EventPlace,
+  type EventPlaceKind
+} from './eventPlaces'
 import { DEFAULT_FENCE_DISTANCE_FT } from './fenceDistance'
 import {
   asGameScheduleProposal,
@@ -139,32 +153,34 @@ export const asTeamSummary = asObject({
 })
 export type TeamSummary = ReturnType<typeof asTeamSummary>
 
-export const asGameSummary = asObject({
-  id: asString,
-  homeTeamId: asString,
-  awayTeamId: asString,
-  homeTeamName: asString,
-  awayTeamName: asString,
-  seasonId: asNullable(asString),
-  startAt: asNullable(asString),
-  venue: asNullable(asString),
-  exhibition: asOptional(asBoolean, false),
-  timezone: asOptional(asString, 'UTC'),
-  pendingApproval: asOptional(asBoolean, false),
-  pendingRequestId: asOptional(asNullable(asString), null),
-  cancellationReason: asOptional(asNullable(asString), null),
-  withdrawnByTeamId: asOptional(asNullable(asString), null),
-  withdrawnByTeamName: asOptional(asNullable(asString), null),
-  status: asString,
-  homeScore: asNullable(asNumber),
-  awayScore: asNullable(asNumber),
-  ingestStatus: asString,
-  videoCount: asNumber,
-  /** The longest video of the game, for the length on a thumbnail. */
-  durationSec: asOptional(asNullable(asNumber), null),
-  /** A frame of the game's video, signed and short-lived. */
-  posterUrl: asOptional(asNullable(asString), null)
-})
+export const asGameSummary = withEventMetadata(
+  asObject({
+    id: asString,
+    homeTeamId: asString,
+    awayTeamId: asString,
+    homeTeamName: asString,
+    awayTeamName: asString,
+    seasonId: asNullable(asString),
+    startAt: asNullable(asString),
+    venue: asNullable(asString),
+    exhibition: asOptional(asBoolean, false),
+    timezone: asOptional(asString, 'UTC'),
+    pendingApproval: asOptional(asBoolean, false),
+    pendingRequestId: asOptional(asNullable(asString), null),
+    cancellationReason: asOptional(asNullable(asString), null),
+    withdrawnByTeamId: asOptional(asNullable(asString), null),
+    withdrawnByTeamName: asOptional(asNullable(asString), null),
+    status: asString,
+    homeScore: asNullable(asNumber),
+    awayScore: asNullable(asNumber),
+    ingestStatus: asString,
+    videoCount: asNumber,
+    /** The longest video of the game, for the length on a thumbnail. */
+    durationSec: asOptional(asNullable(asNumber), null),
+    /** A frame of the game's video, signed and short-lived. */
+    posterUrl: asOptional(asNullable(asString), null)
+  })
+)
 export type GameSummary = ReturnType<typeof asGameSummary>
 
 export const asVideoSummary = asObject({
@@ -216,91 +232,94 @@ export const asLineScoreSide = asObject({
 
 export type LineScoreSide = ReturnType<typeof asLineScoreSide>
 
-export const asGameDetail = asObject({
-  id: asString,
-  homeTeamId: asString,
-  awayTeamId: asString,
-  homeTeamName: asString,
-  awayTeamName: asString,
-  seasonId: asNullable(asString),
-  startAt: asNullable(asString),
-  venue: asNullable(asString),
-  exhibition: asOptional(asBoolean, false),
-  timezone: asOptional(asString, 'UTC'),
-  pendingApproval: asOptional(asBoolean, false),
-  pendingRequestId: asOptional(asNullable(asString), null),
-  cancellationReason: asOptional(asNullable(asString), null),
-  withdrawnByTeamId: asOptional(asNullable(asString), null),
-  withdrawnByTeamName: asOptional(asNullable(asString), null),
-  status: asString,
-  homeScore: asNullable(asNumber),
-  awayScore: asNullable(asNumber),
-  ingestStatus: asString,
-  ingestMessage: asNullable(asString),
-  /** `teamstation` once TeamStation scores the game, and nothing else may. */
-  scoringOwner: asOptional(
-    asNullable(asLiteral('external', 'teamstation')),
-    null
-  ),
-  /** Each side's record in this game's season, `12–3`. */
-  awayRecord: asOptional(asNullable(asString), null),
-  homeRecord: asOptional(asNullable(asString), null),
-  /** Each side's mark, signed and short-lived. */
-  awayLogoUrl: asOptional(asNullable(asString), null),
-  homeLogoUrl: asOptional(asNullable(asString), null),
-  /**
-   * Runs, hits and errors per side, counted from the plays.
-   *
-   * The runs come from the same shared counter the final score does, so the
-   * two cannot disagree. An error is charged to the side that made it, which
-   * is the fielding side.
-   */
-  linescore: asOptional(
-    asNullable(
-      asObject({
-        away: asLineScoreSide,
-        home: asLineScoreSide
-      })
+export const asGameDetail = withEventMetadata(
+  asObject({
+    id: asString,
+    homeTeamId: asString,
+    awayTeamId: asString,
+    homeTeamName: asString,
+    awayTeamName: asString,
+    seasonId: asNullable(asString),
+    startAt: asNullable(asString),
+    venue: asNullable(asString),
+    exhibition: asOptional(asBoolean, false),
+    timezone: asOptional(asString, 'UTC'),
+    pendingApproval: asOptional(asBoolean, false),
+    pendingRequestId: asOptional(asNullable(asString), null),
+    cancellationReason: asOptional(asNullable(asString), null),
+    withdrawnByTeamId: asOptional(asNullable(asString), null),
+    withdrawnByTeamName: asOptional(asNullable(asString), null),
+    status: asString,
+    homeScore: asNullable(asNumber),
+    awayScore: asNullable(asNumber),
+    ingestStatus: asString,
+    ingestMessage: asNullable(asString),
+    /** `teamstation` once TeamStation scores the game, and nothing else may. */
+    scoringOwner: asOptional(
+      asNullable(asLiteral('external', 'teamstation')),
+      null
     ),
-    null
-  ),
-  /**
-   * Feet from home plate to the fence the game is played to: its own, its
-   * season's or its league's, fixed once the game has plays. A server from
-   * before fences had sizes sends none, and every game there is played to
-   * the default.
-   */
-  fenceDistanceFt: asOptional(asNumber, DEFAULT_FENCE_DISTANCE_FT),
-  /**
-   * Whether this viewer may score the game: a scorekeeper of either team,
-   * which every administrator of it is. A server from before the role flags
-   * sends none, and the app offers no Score Game it would refuse.
-   */
-  canScore: asOptional(asBoolean, false),
-  /**
-   * Whether this viewer may DJ the game: a songkeeper or scorekeeper of
-   * either team, which every administrator of it is. Absent from an older
-   * server, and false.
-   */
-  canDj: asOptional(asBoolean, false),
-  /**
-   * The game's scoreboard: whether it is open, and whether this caller runs
-   * the game and so may override it. Null when the server cannot tell, which
-   * leaves the Score Game screen's Scoreboard option unavailable, and from a
-   * server from before scoreboards.
-   */
-  scoreboard: asOptional(
-    asNullable(asObject({ open: asBoolean, mayOverride: asBoolean })),
-    null
-  ),
-  /**
-   * Whether this caller is signed in and a member of neither team: `linescore`
-   * then carries each side's runs alone, `canScore` and `canDj` are false,
-   * and the box score and playback answer `membersOnly`. False for members.
-   */
-  nonMemberView: asBoolean,
-  videos: asArray(asVideoSummary)
-})
+    /** Each side's record in this game's season, `12–3`. */
+    awayRecord: asOptional(asNullable(asString), null),
+    homeRecord: asOptional(asNullable(asString), null),
+    /** Each side's mark, signed and short-lived. */
+    awayLogoUrl: asOptional(asNullable(asString), null),
+    homeLogoUrl: asOptional(asNullable(asString), null),
+    /**
+     * Runs, hits and errors per side, counted from the plays.
+     *
+     * The runs come from the same shared counter the final score does, so the
+     * two cannot disagree. An error is charged to the side that made it, which
+     * is the fielding side.
+     */
+    linescore: asOptional(
+      asNullable(
+        asObject({
+          away: asLineScoreSide,
+          home: asLineScoreSide
+        })
+      ),
+      null
+    ),
+    /**
+     * Feet from home plate to the fence the game is played to: its own, its
+     * season's or its league's, fixed once the game has plays. A server from
+     * before fences had sizes sends none, and every game there is played to
+     * the default.
+     */
+    fenceDistanceFt: asOptional(asNumber, DEFAULT_FENCE_DISTANCE_FT),
+    /**
+     * Whether this viewer may score the game: a scorekeeper of either team,
+     * which every administrator of it is. A server from before the role flags
+     * sends none, and the app offers no Score Game it would refuse.
+     */
+    canScore: asOptional(asBoolean, false),
+    /**
+     * Whether this viewer may DJ the game: a songkeeper or scorekeeper of
+     * either team, which every administrator of it is. Absent from an older
+     * server, and false.
+     */
+    canDj: asOptional(asBoolean, false),
+    /**
+     * The game's scoreboard: whether it is open, and whether this caller runs
+     * the game and so may override it. Null when the server cannot tell, which
+     * leaves the Score Game screen's Scoreboard option unavailable, and from a
+     * server from before scoreboards.
+     */
+    scoreboard: asOptional(
+      asNullable(asObject({ open: asBoolean, mayOverride: asBoolean })),
+      null
+    ),
+    /**
+     * Whether this caller is signed in and a member of neither team: `linescore`
+     * then carries each side's runs alone, `canScore` and `canDj` are false,
+     * and the box score and playback answer `membersOnly`. False for members.
+     */
+    nonMemberView: asBoolean,
+    videos: asArray(asVideoSummary)
+  })
+)
+
 export type GameDetail = ReturnType<typeof asGameDetail>
 
 export const asHighlight = asObject({
@@ -746,42 +765,44 @@ export const asSeasonSummary = asObject({
 })
 export type SeasonSummary = ReturnType<typeof asSeasonSummary>
 
-export const asSeasonGame = asObject({
-  id: asString,
-  homeTeamId: asString,
-  awayTeamId: asString,
-  homeTeamName: asString,
-  awayTeamName: asString,
-  /** Placeholder identities have no roster of their own. */
-  homeTeamExternal: asBoolean,
-  awayTeamExternal: asBoolean,
-  seasonId: asNullable(asString),
-  startAt: asNullable(asString),
-  venue: asNullable(asString),
-  exhibition: asOptional(asBoolean, false),
-  timezone: asOptional(asString, 'UTC'),
-  pendingApproval: asOptional(asBoolean, false),
-  pendingRequestId: asOptional(asNullable(asString), null),
-  cancellationReason: asOptional(asNullable(asString), null),
-  withdrawnByTeamId: asOptional(asNullable(asString), null),
-  withdrawnByTeamName: asOptional(asNullable(asString), null),
-  status: asString,
-  homeScore: asNullable(asNumber),
-  awayScore: asNullable(asNumber),
-  ingestStatus: asString,
-  videoCount: asNumber,
-  /** The longest video of the game, for the length on a thumbnail. */
-  durationSec: asOptional(asNullable(asNumber), null),
-  /** A frame of the game's video, signed and short-lived. */
-  posterUrl: asOptional(asNullable(asString), null),
-  /** Each side's mark, signed and short-lived; null for a side without one. */
-  homeLogoUrl: asOptional(asNullable(asString), null),
-  awayLogoUrl: asOptional(asNullable(asString), null),
-  /** Being played, and being streamed, right now. */
-  isLive: asOptional(asBoolean, false),
-  /** Other services' ids for the game, as its importers recorded them. */
-  externalIds: asOptional(asArray(asString), () => [])
-})
+export const asSeasonGame = withEventMetadata(
+  asObject({
+    id: asString,
+    homeTeamId: asString,
+    awayTeamId: asString,
+    homeTeamName: asString,
+    awayTeamName: asString,
+    /** Placeholder identities have no roster of their own. */
+    homeTeamExternal: asBoolean,
+    awayTeamExternal: asBoolean,
+    seasonId: asNullable(asString),
+    startAt: asNullable(asString),
+    venue: asNullable(asString),
+    exhibition: asOptional(asBoolean, false),
+    timezone: asOptional(asString, 'UTC'),
+    pendingApproval: asOptional(asBoolean, false),
+    pendingRequestId: asOptional(asNullable(asString), null),
+    cancellationReason: asOptional(asNullable(asString), null),
+    withdrawnByTeamId: asOptional(asNullable(asString), null),
+    withdrawnByTeamName: asOptional(asNullable(asString), null),
+    status: asString,
+    homeScore: asNullable(asNumber),
+    awayScore: asNullable(asNumber),
+    ingestStatus: asString,
+    videoCount: asNumber,
+    /** The longest video of the game, for the length on a thumbnail. */
+    durationSec: asOptional(asNullable(asNumber), null),
+    /** A frame of the game's video, signed and short-lived. */
+    posterUrl: asOptional(asNullable(asString), null),
+    /** Each side's mark, signed and short-lived; null for a side without one. */
+    homeLogoUrl: asOptional(asNullable(asString), null),
+    awayLogoUrl: asOptional(asNullable(asString), null),
+    /** Being played, and being streamed, right now. */
+    isLive: asOptional(asBoolean, false),
+    /** Other services' ids for the game, as its importers recorded them. */
+    externalIds: asOptional(asArray(asString), () => [])
+  })
+)
 export type SeasonGame = ReturnType<typeof asSeasonGame>
 
 /** A person another service knows, and which of the asked ids are theirs. */
@@ -2041,6 +2062,18 @@ export class TeamStationClient {
     return answer.places
   }
 
+  async eventPlaces(
+    query: string,
+    kind: EventPlaceKind
+  ): Promise<EventPlace[]> {
+    const answer = await this.request(
+      'GET',
+      `/locations?kind=${kind}&query=${encodeURIComponent(query)}`,
+      asEventPlaces
+    )
+    return answer.places
+  }
+
   async locationSuggestion(
     latitude: number,
     longitude: number
@@ -2148,6 +2181,58 @@ export class TeamStationClient {
       'GET',
       `/teams/${encodeURIComponent(teamId)}/games`,
       asArray(asGameSummary)
+    )
+  }
+
+  async eventInfo(eventId: string, teamId?: string): Promise<EventInfo> {
+    return await this.request(
+      'GET',
+      `/events/${encodeURIComponent(eventId)}/info${teamId == null ? '' : `?teamId=${encodeURIComponent(teamId)}`}`,
+      asEventInfo
+    )
+  }
+
+  async eventLocation(
+    eventId: string
+  ): Promise<ReturnType<typeof asEventLocation>> {
+    return await this.request(
+      'GET',
+      `/events/${encodeURIComponent(eventId)}/location`,
+      asEventLocation
+    )
+  }
+
+  async createTeamEvent(body: TeamEventInput): Promise<{ id: string }> {
+    return await this.request(
+      'POST',
+      '/events',
+      asObject({ id: asString }),
+      body
+    )
+  }
+
+  async updateEventInfo(
+    eventId: string,
+    body: Record<string, unknown>
+  ): Promise<EventInfo> {
+    return await this.request(
+      'PUT',
+      `/events/${encodeURIComponent(eventId)}/info`,
+      asEventInfo,
+      body
+    )
+  }
+
+  async saveRsvp(
+    eventId: string,
+    userId: number,
+    response: Rsvp
+  ): Promise<{ userId: number; response: Rsvp }> {
+    return await this.request(
+      'PUT',
+      `/events/${encodeURIComponent(eventId)}/rsvps/${userId}`,
+      asObject({ userId: asNumber, response: asRsvp }),
+      { response }
     )
   }
 
