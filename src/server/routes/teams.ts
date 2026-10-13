@@ -65,7 +65,7 @@ import {
   pitchingLines,
   pitchingRates
 } from '../stats'
-import { boxScoreOrder } from '../stats/boxScoreOrder'
+import { boxScoreOrder, pitchingOrder } from '../stats/boxScoreOrder'
 import { teamRecords } from '../stats/records'
 import { statRows } from '../stats/rows'
 import { gameStatsStatus } from '../statsBuilder/status'
@@ -922,7 +922,9 @@ export function teamRoutes(
       // figure.
       const seasonAvg = await averagesToDate(db, gameId, game.season_id, scopes)
 
-      const pitching = pitchingLines(rows).map(line => ({
+      const pitching = (
+        await pitchingOrder(db, gameId, pitchingLines(rows))
+      ).map(line => ({
         ...line,
         shortName: names.get(line.userId) ?? 'Unknown',
         ip: inningsPitched(line.outs),

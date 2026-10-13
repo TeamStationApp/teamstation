@@ -39,6 +39,7 @@ function mint(): number {
 }
 const batter = mint()
 const pitcher = mint()
+const reliever = mint()
 const viewer = mint()
 
 const media: MediaContext = {
@@ -104,6 +105,7 @@ describe('GET /games/:gameId/box-score stats', function () {
     for (const [id, name] of [
       [batter, 'Batter Bat'],
       [pitcher, 'Pitcher Pit'],
+      [reliever, 'Reliever Pen'],
       [viewer, 'Viewer View']
     ] as const) {
       await insertFixtureUsers(db, {
@@ -152,6 +154,54 @@ describe('GET /games/:gameId/box-score stats', function () {
           pitch_outs: 3,
           pitch_h: 1,
           pitch_k: 1
+        },
+        {
+          id: makeId('gamePlayerStats'),
+          game_id: gameId,
+          gumbo_id: reliever,
+          team_id: home,
+          pitch_bf: 6,
+          pitch_outs: 6,
+          pitch_k: 2
+        }
+      ])
+      .execute()
+    // The starter pitches the first play; the reliever, who gets more outs,
+    // comes in during the second.
+    await db
+      .insertInto('events')
+      .values([
+        {
+          id: makeId('event'),
+          gameId,
+          startTime: now,
+          battingTeamId: away,
+          gumbo: JSON.stringify({
+            about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+            result: { eventType: 'single' },
+            matchup: { batter: { id: batter }, pitcher: { id: pitcher } },
+            playEvents: [{ index: 0, isPitch: true, player: { id: pitcher } }]
+          })
+        },
+        {
+          id: makeId('event'),
+          gameId,
+          startTime: now,
+          battingTeamId: away,
+          gumbo: JSON.stringify({
+            about: { atBatIndex: 1, inning: 1, halfInning: 'top' },
+            result: { eventType: 'strikeout' },
+            matchup: { batter: { id: batter }, pitcher: { id: reliever } },
+            playEvents: [
+              {
+                index: 0,
+                details: { eventType: 'pitching_substitution' },
+                player: { id: reliever },
+                replacedPlayer: { id: pitcher }
+              },
+              { index: 1, isPitch: true, player: { id: reliever } }
+            ]
+          })
         }
       ])
       .execute()
@@ -264,8 +314,9 @@ describe('GET /games/:gameId/box-score stats', function () {
     expect(box.batting.map(line => line.userId)).deep.equals(
       batting.map(line => line.userId)
     )
-    expect(box.pitching.map(line => line.userId)).deep.equals(
-      pitching.map(line => line.userId)
+    // The same pitchers, in the order they pitched rather than by outs.
+    expect(box.pitching.map(line => line.userId).sort()).deep.equals(
+      pitching.map(line => line.userId).sort()
     )
     expect(box.batting[0]).includes({
       userId: userIdOfGumbo(batter),
@@ -299,5 +350,21 @@ describe('GET /games/:gameId/box-score stats', function () {
     expect(
       (await boxScoreOrder(db!, gameId, first)).map(line => line.userId)
     ).deep.equals([33, 10, 32].map(userIdOfGumbo))
+  })
+
+  it('lists pitchers in the order they pitched, not by outs', async function () {
+    const box = await ask()
+    expect(box.pitching.map(line => line.userId)).deep.equals([
+      userIdOfGumbo(pitcher),
+      userIdOfGumbo(reliever)
+    ])
+    expect(box.pitching[0]).includes({
+      userId: userIdOfGumbo(pitcher),
+      outs: 3
+    })
+    expect(box.pitching[1]).includes({
+      userId: userIdOfGumbo(reliever),
+      outs: 6
+    })
   })
 })
