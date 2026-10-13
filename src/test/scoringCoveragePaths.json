@@ -132,5 +132,6 @@
   "src/app/player/multiCam/orientationLock.ts",
   "src/app/stream/**/*.tsx",
   "src/app/screens/GameWatchLayout.native.tsx",
-  "src/app/components/streamActions.ts"
+  "src/app/components/streamActions.ts",
+  "src/app/components/TextField.tsx"
 ]
