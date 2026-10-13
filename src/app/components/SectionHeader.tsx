@@ -1,6 +1,7 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface SectionHeaderProps {
@@ -48,17 +49,23 @@ export function SectionHeader(props: SectionHeaderProps): React.ReactElement {
         {title.toUpperCase()}
       </Text>
       <View style={styles.right}>
-        {note != null && <Text style={styles.note}>{note}</Text>}
+        {note != null && (
+          <View testID="settings-pill-count" style={styles.note}>
+            <Text style={styles.noteLabel}>{note}</Text>
+          </View>
+        )}
         {actionLabel != null && onAction != null && (
           <Pressable
             accessibilityRole="button"
             onPress={onAction}
-            style={({ pressed }) => [
-              actionPill && styles.actionPill,
-              pressed && styles.pressed
-            ]}
+            style={({ pressed }) => [styles.target, pressed && styles.pressed]}
           >
-            <Text style={styles.action}>{actionLabel}</Text>
+            <View
+              testID={actionPill ? 'settings-pill-header-action' : undefined}
+              style={actionPill && styles.actionPill}
+            >
+              <Text style={styles.action}>{actionLabel}</Text>
+            </View>
           </Pressable>
         )}
         {actions.map(action => (
@@ -70,12 +77,11 @@ export function SectionHeader(props: SectionHeaderProps): React.ReactElement {
               action.onPress()
             }}
             hitSlop={8}
-            style={({ pressed }) => [
-              styles.smallPill,
-              pressed && styles.pressed
-            ]}
+            style={({ pressed }) => [styles.target, pressed && styles.pressed]}
           >
-            <Text style={styles.smallPillText}>{action.label}</Text>
+            <View testID="settings-pill-header-action" style={styles.smallPill}>
+              <Text style={styles.smallPillText}>{action.label}</Text>
+            </View>
           </Pressable>
         ))}
       </View>
@@ -104,14 +110,18 @@ const getStyles = cacheStyles((theme: Theme) => ({
     gap: theme.rem(theme.spaceSmRem)
   },
   note: {
+    height: theme.rem(1.5),
+    minHeight: theme.rem(1.5),
+    justifyContent: 'center' as const,
+    backgroundColor: theme.containerBackgroundColor,
+    paddingHorizontal: pillPadding(theme.rem(1.5)),
+    borderRadius: theme.radiusPill,
+    overflow: 'hidden' as const
+  },
+  noteLabel: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.8125),
-    color: theme.secondaryTextColor,
-    backgroundColor: theme.containerBackgroundColor,
-    paddingHorizontal: theme.rem(theme.spaceSmRem),
-    paddingVertical: theme.rem(0.125),
-    borderRadius: theme.radiusPill,
-    overflow: 'hidden'
+    color: theme.secondaryTextColor
   },
   action: {
     fontFamily: theme.semiBoldTextFont,
@@ -122,19 +132,20 @@ const getStyles = cacheStyles((theme: Theme) => ({
   actionPill: {
     backgroundColor: theme.containerBackgroundColor,
     borderRadius: theme.radiusPill,
-    paddingHorizontal: theme.rem(theme.spaceSmRem),
-    paddingVertical: theme.rem(0.375),
+    paddingHorizontal: pillPadding(theme.rem(2.75)),
+    height: theme.rem(2.75),
     minHeight: theme.rem(2.75),
     justifyContent: 'center' as const
   },
   smallPill: {
     backgroundColor: theme.containerBackgroundColor,
     borderRadius: theme.radiusPill,
-    paddingHorizontal: theme.rem(0.75),
-    paddingVertical: theme.rem(0.25),
+    paddingHorizontal: pillPadding(theme.rem(1.75)),
+    height: theme.rem(1.75),
     minHeight: theme.rem(1.75),
     justifyContent: 'center' as const
   },
+  target: { minHeight: 48, justifyContent: 'center' as const },
   smallPillText: {
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.8125),

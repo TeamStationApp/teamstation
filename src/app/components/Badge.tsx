@@ -1,6 +1,7 @@
 import React from 'react'
 import { Text, View } from 'react-native'
 
+import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export type BadgeTone = 'win' | 'loss' | 'honour' | 'neutral' | 'live'
@@ -22,7 +23,7 @@ export function Badge(props: BadgeProps): React.ReactElement {
   const { label, tone = 'neutral' } = props
   const styles = getStyles(useTheme())
   return (
-    <View style={[styles.badge, styles[tone]]}>
+    <View testID="settings-pill-badge" style={[styles.badge, styles[tone]]}>
       <Text style={[styles.label, styles[`${tone}Text`]]} numberOfLines={1}>
         {label}
       </Text>
@@ -33,8 +34,10 @@ export function Badge(props: BadgeProps): React.ReactElement {
 const getStyles = cacheStyles((theme: Theme) => ({
   badge: {
     alignSelf: 'flex-start',
-    paddingHorizontal: theme.rem(theme.spaceSmRem),
-    paddingVertical: theme.rem(0.1875),
+    height: theme.rem(1.5),
+    minHeight: theme.rem(1.5),
+    justifyContent: 'center',
+    paddingHorizontal: pillPadding(theme.rem(1.5)),
     borderRadius: theme.radiusPill,
     borderWidth: 1,
     borderColor: 'transparent'

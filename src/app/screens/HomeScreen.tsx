@@ -605,10 +605,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   actions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: theme.rem(theme.spaceSmRem)
   },
   action: {
-    flex: 1
+    flexGrow: 1,
+    flexBasis: theme.rem(10)
   },
   gameMeta: {
     fontFamily: theme.semiBoldTextFont,
