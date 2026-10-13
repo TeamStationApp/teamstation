@@ -138,6 +138,13 @@ internal class CaptureRenderer(
     private var heldWanted: Set<Long> = emptySet()
     private var heldFills = 0L
     private val identity = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
+
+    /** How long after its sensor timestamp each picture reached the renderer, logged every 10 s. */
+    private var arrivalLagMin = Long.MAX_VALUE
+    private var arrivalLagMax = Long.MIN_VALUE
+    private var arrivalLagSum = 0L
+    private var arrivalCount = 0
+    private var arrivalLoggedAt = 0L
     private var tickStartMillis = 0L
     private var tickCount = 0L
     private val programmeTick = Runnable {
@@ -306,6 +313,32 @@ internal class CaptureRenderer(
         if (drawn > 0) onFrameRendered()
     }
 
+    /**
+     * Logs how old pictures are when they reach the renderer, against the boot clock, so a device's
+     * sensor timestamps can be checked against the programme's picture delay.
+     */
+    private fun logArrivalLag(timestamp: Long) {
+        val now = SystemClock.elapsedRealtimeNanos()
+        val lag = now - timestamp
+        arrivalLagMin = minOf(arrivalLagMin, lag)
+        arrivalLagMax = maxOf(arrivalLagMax, lag)
+        arrivalLagSum += lag
+        arrivalCount += 1
+        if (now - arrivalLoggedAt < 10_000_000_000L) return
+        if (arrivalLoggedAt != 0L) {
+            android.util.Log.i(
+                "TSCameraman",
+                "CAPTURE_ARRIVAL frames=$arrivalCount lagMs min=${arrivalLagMin / 1_000_000} " +
+                    "mean=${arrivalLagSum / arrivalCount / 1_000_000} max=${arrivalLagMax / 1_000_000}"
+            )
+        }
+        arrivalLoggedAt = now
+        arrivalLagMin = Long.MAX_VALUE
+        arrivalLagMax = Long.MIN_VALUE
+        arrivalLagSum = 0
+        arrivalCount = 0
+    }
+
     fun attachPreview(surface: Surface?, viewWidth: Int, viewHeight: Int) {
         handler.post {
             previewSurface?.let { egl.releaseSurface(it) }
@@ -410,6 +443,7 @@ internal class CaptureRenderer(
         }
 
         latestCapture = timestamp
+        logArrivalLag(timestamp)
         programme?.let { ticker ->
             runCatching { holdLatestPicture(ticker, timestamp) }.onFailure { error ->
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
