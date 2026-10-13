@@ -429,7 +429,10 @@ extension PhoneStreamTests {
           title: Self.angle
         )
       }
-      #expect(await waitUntil(60) { StubServer.read { $0.partsSent }.count == 2 })
+      #expect(
+        await waitUntil(60) { StubServer.read { $0.partsSent }.count == 2 },
+        "upload: \(log.uploads.map { "\($0.state) \($0.message ?? "")" })"
+      )
       #expect(engine.runningUploads == [ take.recordingID ])
       try engine.open(angleName: Self.angle)
       #expect(throws: PhoneStreamError.uploadInProgress) {
@@ -447,19 +450,14 @@ extension PhoneStreamTests {
       #expect(opened["wholeStream"] as? Bool == true)
       #expect(opened["kind"] as? String == "program")
       #expect(opened["gameId"] as? String == Self.game)
-      // The upload starts where part 1's first picture was captured, not where Record was pressed.
+      // The export starts at the take's start, and so does the upload: on the server's clock, 3 s ahead
+      // of this machine's, by the offset the take kept from its recording rather than one read now.
       let startAt = try #require(opened["startAt"] as? String)
       let reader = ISO8601DateFormatter()
       reader.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
-      let partOne = try #require(starts[1])
-      #expect(PhoneStreamEngine.uploadStart(anchors: anchors, startedAt: take.startedAt) == partOne)
-      // On the server's clock, 3 s ahead of this machine's, by the offset the take kept from its
-      // recording rather than one read at the upload.
-      #expect(abs(try #require(reader.date(from: startAt)).timeIntervalSince(partOne.date) - 3) < 0.05)
+      #expect(abs(try #require(reader.date(from: startAt)).timeIntervalSince(take.startedAt.date) - 3) < 0.05)
       let kept = try #require(try engine.recordings().first?.serverClockOffset)
       #expect(abs(kept - 3) < 0.05)
-      #expect(partOne != take.startedAt)
-      #expect(abs(partOne.seconds - take.startedAt.seconds) < PhoneStreamProfile.pictureDelaySeconds + 1)
       await engine.close()
 
       // Relaunched again: the cut-off upload is still the take's, and Record on its stream refuses.

@@ -50,7 +50,7 @@ public struct PhoneLens: Sendable, Equatable {
  * - A take finishes its part cleanly when free space falls under 500 MB, and the stream goes on.
  * - `uploadRecording` exports the take's programme (placed by wall clock across parts) and sends it
  *   with `UploadService`, keeping the upload id on the take so a killed upload resumes. The export
- *   starts at part 1's first picture, and its `startAt` is when that picture was captured.
+ *   starts at the take's start, which is its `startAt`, on the server's clock.
  * - Once a session's first publish has sent a picture, TeamStation is told when that picture was
  *   captured (`reportLiveStart`), which is where it places the stream's live video.
  */
@@ -880,20 +880,15 @@ public final class PhoneStreamEngine {
       programDirectory: storage.program,
       fallbackEncoding: { PhoneStreamProfile.takeEncoding }
     )
-    // From part 1's first picture, placed where it was captured: the upload says when its first
-    // frame happened, and the server lines it up with the game's other angles by nothing else.
-    let start = Self.uploadStart(
-      anchors: (try? index.programAnchors(recordingID: recording.recordingID)) ?? [],
-      startedAt: recording.startedAt
-    )
+    // The export is cut to the take's window, so its first frame is the take's start: copied from
+    // the picture at or before it, with the edit list hiding the head, or re-encoded from it.
     let files = try await export.exportRecording(
       summary,
       cameras: [],
       includeProgram: true,
       programDirectory: storage.program,
       preparedRoot: storage.prepared,
-      reprocess: recording.uploadId == nil,
-      window: ExportWindow(start: start, end: export.exportWindow(summary, sourceIDs: []).end)
+      reprocess: recording.uploadId == nil
     )
     guard let file = files.first else { throw PhoneStreamError.noRecording }
     try Task.checkCancellation()
@@ -913,7 +908,7 @@ public final class PhoneStreamEngine {
       gameId: recording.gameId,
       title: recording.uploadTitle ?? title,
       kind: "program",
-      startedAt: (start + (offset ?? 0)).date,
+      startedAt: (recording.startedAt + (offset ?? 0)).date,
       uploadId: recording.uploadId,
       liveStreamId: liveStreamId,
       wholeStream: recording.coversWholeStream ? true : nil,
@@ -940,15 +935,6 @@ public final class PhoneStreamEngine {
     ))
     emit(.upload(PhoneUploadProgress(liveStreamId: liveStreamId, state: .uploaded, fraction: 1, videoId: videoId)))
     return videoId
-  }
-
-  /// Where an upload of the take with `anchors` starts on the wall clock: when part 1's first picture
-  /// was captured, which is the same origin its sound was placed by (`ProgrammeSoundOrigin`). The
-  /// take's own start is when Record was pressed, a picture delay or more from any picture in the
-  /// file, so the phones' uploads sat on the wall clock as far apart as their delays. A take with no
-  /// anchors for its first part has nothing better than its start.
-  static func uploadStart(anchors: [ArchiveIndex.ProgramAnchor], startedAt: WallClock) -> WallClock {
-    ArchiveIndex.partStarts(anchors)[1] ?? startedAt
   }
 
   /// Everything stops where it is, as a killed process would leave it: nothing is finished, no
