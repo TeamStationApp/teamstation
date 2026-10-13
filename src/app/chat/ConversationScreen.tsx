@@ -220,8 +220,16 @@ export function ConversationScreen(
     | {
         offset: number
         content: number
+        conversationId: string
         firstSeq: number | undefined
+        firstId: string | undefined
+        firstY: number | undefined
         hasEarlier: boolean | undefined
+        exhausted: boolean
+        headerRemoved: boolean
+        checkingHeader: boolean
+        headerCheckDirty: boolean
+        capturingAnchor: boolean
         positions: Map<string, number>
         anchor: { id: string; relativeY: number } | undefined
       }
@@ -304,6 +312,7 @@ export function ConversationScreen(
   )
   const restoringAnchor = useRef(false)
   const restoreAnchorDirty = useRef(false)
+  const exhaustedPageRestorer = useRef<() => void>(() => {})
   const atBottom = useRef(
     !scrolled.current.hasPosition || scrolled.current.followNewest
   )
@@ -425,21 +434,51 @@ export function ConversationScreen(
   const hasView = view != null
   const userScrolled = useCallback(() => {
     if (!mounted.current || !paneActive.current) return
-    jumpGeneration.current += 1
+    const generation = ++jumpGeneration.current
     measuringJump.current = undefined
     // Cancel the jump, not the older page's position compensation. The
     // response still adds rows above the position the person now chose.
+    const pending = prepend.current
     if (
-      prepend.current != null &&
-      latestView.current?.messages[0]?.seq === prepend.current.firstSeq
+      pending != null &&
+      latestView.current?.messages[0]?.seq === pending.firstSeq
     ) {
-      prepend.current.offset = scrolled.current.offset
-      prepend.current.hasEarlier = latestView.current?.hasEarlier
-      prepend.current.positions = new Map([
-        ...prepend.current.positions,
+      pending.offset = scrolled.current.offset
+      pending.hasEarlier = latestView.current?.hasEarlier
+      pending.positions = new Map([
+        ...pending.positions,
         ...messagePositions.current
       ])
-      prepend.current.anchor = readingAnchor(prepend.current.positions)
+      const anchor = readingAnchor(pending.positions)
+      pending.anchor = anchor
+      pending.capturingAnchor = false
+      if (anchor != null) {
+        pending.capturingAnchor = true
+        const cancelled = (): boolean =>
+          generation !== jumpGeneration.current ||
+          prepend.current !== pending ||
+          !mounted.current ||
+          !paneActive.current
+        // A position-only web layout need not emit a row onLayout event.
+        // Capture the position the person chose from the mounted row.
+        measurePosition(anchor.id, cancelled)
+          .then(y => {
+            if (cancelled()) return
+            pending.anchor =
+              y == null
+                ? undefined
+                : { id: anchor.id, relativeY: y - scrolled.current.offset }
+            if (y != null) pending.positions.set(anchor.id, y)
+          })
+          .catch(() => {
+            if (!cancelled()) pending.anchor = undefined
+          })
+          .finally(() => {
+            if (cancelled()) return
+            pending.capturingAnchor = false
+            exhaustedPageRestorer.current()
+          })
+      }
     }
     atBottom.current = false
     restoreTarget.current = undefined
@@ -478,8 +517,19 @@ export function ConversationScreen(
     const pending = {
       offset: scrolled.current.offset,
       content: scrolled.current.content,
+      conversationId,
       firstSeq: before?.messages[0]?.seq,
+      firstId: before?.messages[0]?.id,
+      firstY:
+        before?.messages[0] == null
+          ? undefined
+          : messagePositions.current.get(before.messages[0].id),
       hasEarlier: before?.hasEarlier,
+      exhausted: false,
+      headerRemoved: false,
+      checkingHeader: false,
+      headerCheckDirty: false,
+      capturingAnchor: false,
       positions: new Map(messagePositions.current),
       anchor: readingAnchor(messagePositions.current)
     }
@@ -487,6 +537,18 @@ export function ConversationScreen(
     messagePositions.current.clear()
     atBottom.current = false
     try {
+      if (
+        pending.anchor != null &&
+        pending.firstId != null &&
+        pending.firstY == null
+      )
+        pending.firstY = await measurePosition(
+          pending.firstId,
+          () =>
+            prepend.current !== pending ||
+            !mounted.current ||
+            !paneActive.current
+        )
       const next = await engine.loadEarlier(conversationId)
       const firstSeq = next.messages[0]?.seq
       if (
@@ -500,20 +562,18 @@ export function ConversationScreen(
           for (const [id, y] of pending.positions)
             if (present.has(id) && !messagePositions.current.has(id))
               messagePositions.current.set(id, y)
-          prepend.current = undefined
           if (
             before?.hasEarlier === true &&
             !next.hasEarlier &&
-            pending.anchor != null &&
             mounted.current &&
             paneActive.current &&
             latestView.current?.conversation.id === conversationId
           ) {
-            // Exhaustion removes the paging header even without new rows.
-            // Use the current reader's anchor, including a cancelled jump.
-            restoreAnchor.current = pending.anchor
-            restoreReadingAnchor()
-          }
+            // Keep ownership through delayed header layout, so a user scroll
+            // after page resolution can still replace the reading anchor.
+            pending.exhausted = true
+            restoreExhaustedPage()
+          } else prepend.current = undefined
         }
       }
       return next
@@ -522,6 +582,61 @@ export function ConversationScreen(
       throw error
     }
   }
+  const restoreExhaustedPage = (): void => {
+    const pending = prepend.current
+    if (pending?.exhausted !== true) return
+    if (
+      pending.anchor == null ||
+      pending.firstId == null ||
+      pending.firstY == null
+    ) {
+      // Without a measured reading anchor there is nothing to compensate.
+      // Retire ownership so later layouts can capture a new reading anchor.
+      prepend.current = undefined
+      return
+    }
+    if (!pending.headerRemoved) {
+      if (pending.checkingHeader) {
+        pending.headerCheckDirty = true
+        return
+      }
+      pending.checkingHeader = true
+      pending.headerCheckDirty = false
+      const firstY = pending.firstY
+      const cancelled = (): boolean =>
+        prepend.current !== pending ||
+        !mounted.current ||
+        !paneActive.current ||
+        latestView.current?.conversation.id !== pending.conversationId
+      // Content can also grow below the reader. Only a measured move of the
+      // first row establishes that the paging header's layout has settled.
+      measurePosition(pending.firstId, cancelled)
+        .then(y => {
+          if (!cancelled() && y != null && y < firstY)
+            pending.headerRemoved = true
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (cancelled()) return
+          pending.checkingHeader = false
+          if (pending.headerRemoved || pending.headerCheckDirty)
+            restoreExhaustedPage()
+        })
+      return
+    }
+    if (pending.capturingAnchor) return
+    prepend.current = undefined
+    if (
+      pending.anchor != null &&
+      mounted.current &&
+      paneActive.current &&
+      latestView.current?.conversation.id === pending.conversationId
+    ) {
+      restoreAnchor.current = pending.anchor
+      restoreReadingAnchor()
+    }
+  }
+  exhaustedPageRestorer.current = restoreExhaustedPage
   const measurePosition = async (
     id: string,
     cancelled: () => boolean
@@ -663,7 +778,9 @@ export function ConversationScreen(
       .finally(() => {
         if (generation === jumpGeneration.current) {
           restoringAnchor.current = false
-          if (restoreAnchorDirty.current && !cancelled()) restoreReadingAnchor()
+          // A replacement anchor cancels this measurement, but still needs
+          // its own measurement after the old one retires.
+          if (restoreAnchorDirty.current) restoreReadingAnchor()
         }
       })
   }
@@ -1276,6 +1393,7 @@ export function ConversationScreen(
               }
               // An appended post or a layout pass is not an older page.
               // Exclude its height from the eventual prepend compensation.
+              restoreExhaustedPage()
               previous.content = height
             }
             if (restoreTarget.current != null) {
