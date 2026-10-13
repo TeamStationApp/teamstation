@@ -6,6 +6,7 @@ import { FLASH_MS, type SeekFlash, useFlash } from '../GestureFeedback'
 import type { BufferControl, PlayIntent } from '../playIntent'
 import { SLOW_RATE } from '../slowMotion'
 import { useKeyboardShortcuts } from '../useKeyboardShortcuts'
+import { HAVE_CURRENT_DATA } from '../videoHandle'
 import { secondsAt, wallAt, type Window, windowOf } from '../wallClock'
 import {
   type AngleZone,
@@ -23,6 +24,7 @@ import {
   isFinished,
   isOurSilence,
   JOIN_LEAD_SEC,
+  liveOpeningMs,
   liveTargetMs,
   masterOf,
   NUDGE_MAX_SEC,
@@ -354,6 +356,8 @@ export function useMultiCam(
   const flowing = useRef(false)
   /** When each tile the grid is waiting for was first seen short of enough. */
   const shortSince = useRef(new Map<string, number>())
+  /** When the first live tile had a picture, for a grid with no moment yet. */
+  const liveSince = useRef<number | null>(null)
   /**
    * Tiles the grid has stopped waiting for: one that kept the rest standing
    * still too long, or one that arrived while the rest were already playing.
@@ -1132,6 +1136,28 @@ export function useMultiCam(
         })
       }
 
+      // A live grid opens on the moment its tiles have reached
+      // (`liveOpeningMs`), once they have pictures to say where that is.
+      if (atWallRef.current == null) {
+        const at = chosen
+          .filter(video => video.status === 'live' && urls[video.id] !== null)
+          .map(video => {
+            const element = elements.current.get(video.id)
+            if (element == null || element.readyState < HAVE_CURRENT_DATA) {
+              return null
+            }
+            return wallAt(video, element.currentTime)
+          })
+        if (liveSince.current == null && at.some(one => one != null)) {
+          liveSince.current = now
+        }
+        const opening = liveOpeningMs(at, now - (liveSince.current ?? now))
+        if (opening != null) {
+          atWallRef.current = opening
+          setAtWallMs(opening)
+        }
+      }
+
       /**
        * Who the clock is read from.
        *
@@ -1305,7 +1331,8 @@ export function useMultiCam(
     playing,
     runningDry,
     chosen,
-    tiles
+    tiles,
+    urls
   ])
 
   /**

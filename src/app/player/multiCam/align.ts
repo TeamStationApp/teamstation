@@ -338,3 +338,37 @@ export function liveTargetMs(edges: Array<number | null>): number | null {
   }
   return earliest
 }
+
+/** How long a live grid waits for its slower tiles before opening without them. */
+export const LIVE_OPEN_WAIT_MS = 3000
+
+/**
+ * The moment a grid of live angles opens on.
+ *
+ * A live grid has no moment of its own to open on — not the take's beginning,
+ * which is hours ago — so it takes one from its tiles: each opens near its own
+ * live edge, and once it has a picture there, says where in the game that is.
+ * Until one has, there is nothing to start from; held for want of a moment,
+ * the grid used to sit still on every live angle for good.
+ *
+ * `at` is each playable live tile's moment, null until it has a picture. The
+ * grid waits for all of them, but not for longer than `LIVE_OPEN_WAIT_MS`
+ * after the first: a camera that never fills is left out by the gate, as
+ * anywhere else. It opens on the one furthest ahead, which the others hold
+ * already: a live tile loads forward from where it opened, so the one furthest
+ * behind would send the rest back to pictures they never loaded.
+ */
+export function liveOpeningMs(
+  at: Array<number | null>,
+  waitedMs: number
+): number | null {
+  let latest: number | null = null
+  let missing = false
+  for (const one of at) {
+    if (one == null) missing = true
+    else if (latest == null || one > latest) latest = one
+  }
+  if (latest == null) return null
+  if (missing && waitedMs < LIVE_OPEN_WAIT_MS) return null
+  return latest
+}
