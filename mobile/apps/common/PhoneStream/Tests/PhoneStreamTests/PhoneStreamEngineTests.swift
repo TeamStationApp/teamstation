@@ -94,7 +94,9 @@ extension PhoneStreamTests {
       #expect(asked.first?["label"] as? String == Self.angle)
       #expect(asked.first?["deviceId"] as? String == rig.request.deviceId)
       #expect(asked.first?["deviceModel"] as? String == "iPhone 13 Pro")
-      #expect(rig.scheduler.waits.first == 3)
+      // The first redial waited the controller's first 3 s; the 1 s waits are its stall checks.
+      #expect(rig.scheduler.waits.first { $0 != StreamStallWatch.checkSeconds } == 3)
+      #expect(rig.scheduler.waits.contains(StreamStallWatch.checkSeconds))
       try await Task.sleep(for: .seconds(6))
       #expect(engine.status.recordingSeconds > 14)
 
