@@ -10,6 +10,7 @@ import { Button } from '../components/Button'
 import { SectionHeader } from '../components/SectionHeader'
 import { streamActionsFor } from '../components/streamActions'
 import { lstrings, sprintf } from '../locales/strings'
+import { usePublishingReport } from '../player/useVideoListRefresh'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { AngleNamePrompt } from './AngleNamePrompt'
 import { deviceId as installId } from './deviceId'
@@ -42,6 +43,8 @@ export interface CameraAnglesPanelProps {
   Screen?: typeof StreamingScreen
   /** The clipboard; a test hands in its own. */
   copy?: (text: string) => void
+  /** The videos this game's cameras are publishing to, each time that changes. */
+  onPublishing?: (videoIds: string[]) => void
 }
 
 interface OpenCamera {
@@ -141,6 +144,8 @@ export function CameraAnglesPanel(
   const live = useRef(true)
   const askDeviceId = useRef(deviceId)
   askDeviceId.current = deviceId
+
+  usePublishingReport(streams, props.onPublishing)
 
   const reload = useCallback(async (): Promise<void> => {
     const next = await client.liveStreams(gameId)

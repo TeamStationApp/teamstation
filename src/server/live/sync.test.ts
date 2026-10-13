@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -22,7 +22,12 @@ import {
   sync
 } from './controller'
 import { sealSecret } from './secrets'
-import { configureIngest, liveKeys, resetForTest } from './splitter'
+import {
+  configureIngest,
+  forcePublishForTest,
+  liveKeys,
+  resetForTest
+} from './splitter'
 
 /**
  * What the ingest is told, once a second.
@@ -40,6 +45,8 @@ const SECRET = 's'.repeat(32)
 const FIRST_KEY = 'ts_firstkeyfirstkeyfirst'
 const SECOND_KEY = 'ts_secondkeysecondkeysec'
 const THIRD_KEY = 'ts_thirdkeythirdkeythirdk'
+const FOURTH_KEY = 'ts_fourthkeyfourthkeyfour'
+const FIFTH_KEY = 'ts_fifthkeyfifthkeyfifthk'
 
 describe('what the ingest is told', function () {
   this.timeout(60000)
@@ -411,5 +418,216 @@ describe('what the ingest is told', function () {
     expect(after.startAt?.getTime()).equals(first.startAt?.getTime())
     // One video per stream: the reconnect made none of its own.
     expect(await gameVideos()).deep.equals(videosBefore)
+  })
+
+  it('finishes angles ended together side by side, not one after another', async function () {
+    if (options == null || db == null) this.skip()
+    // Writers that each take 0.6 s to exit once told to stop.
+    const writer = join(mediaRoot, 'slow-writer.sh')
+    await writeFile(
+      writer,
+      `#!/bin/sh\ntrap 'sleep 0.6; exit 0' TERM\nsleep 30 &\nwait\n`
+    )
+    await chmod(writer, 0o755)
+    configureIngest({
+      ffmpegPath: writer,
+      bindHost: '127.0.0.1',
+      port: 19_362,
+      app: 'live',
+      segmentSeconds: 4,
+      log: () => undefined,
+      onEvent: () => undefined
+    })
+    try {
+      const now = new Date()
+      const owner = await db
+        .selectFrom('live_streams')
+        .select('user_id as userId')
+        .where('id', '=', 'liv_1')
+        .executeTakeFirstOrThrow()
+      const angles = [
+        ['liv_3', 'vid_3', FOURTH_KEY, 3],
+        ['liv_4', 'vid_4', FIFTH_KEY, 4]
+      ] as const
+      for (const [id, videoId, key, slot] of angles) {
+        await db
+          .insertInto('videos')
+          .values({
+            id: videoId,
+            game_id: 'gam_1',
+            kind: 'live',
+            title: `Angle ${slot}`,
+            storage: 'local',
+            status: 'processing',
+            hidden: true,
+            created_at: now,
+            updated_at: now
+          })
+          .execute()
+        await db
+          .insertInto('live_streams')
+          .values({
+            id,
+            game_id: 'gam_1',
+            team_id: 'tem_home',
+            user_id: owner.userId,
+            key_hash: hashToken(key),
+            key_prefix: key.slice(0, 8),
+            key_cipher: sealSecret(SECRET, key),
+            state: 'idle',
+            slot,
+            opens_at: new Date(now.getTime() - 3_600_000),
+            video_id: videoId,
+            created_at: now,
+            updated_at: now
+          })
+          .execute()
+      }
+      await sync(options)
+      for (const [, , key] of angles) forcePublishForTest(key, true)
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      await db
+        .updateTable('live_streams')
+        .set({ closes_at: new Date(Date.now() - 1000) })
+        .where('id', 'in', ['liv_3', 'liv_4'])
+        .execute()
+      const started = Date.now()
+      await sync(options)
+      const took = Date.now() - started
+      // In turn, the two waits add up to 1.2 s at the least.
+      expect(took).lessThan(1100)
+      expect(took).greaterThan(500)
+      expect(liveKeys()).not.contains(FOURTH_KEY)
+      expect(liveKeys()).not.contains(FIFTH_KEY)
+      const ended = await db
+        .selectFrom('live_streams')
+        .select('state')
+        .where('id', 'in', ['liv_3', 'liv_4'])
+        .execute()
+      expect(ended.map(row => row.state)).deep.equals(['ended', 'ended'])
+    } finally {
+      configureIngest({
+        ffmpegPath: '/does/not/matter',
+        bindHost: '127.0.0.1',
+        port: 19_362,
+        app: 'live',
+        segmentSeconds: 4,
+        log: () => undefined,
+        onEvent: () => undefined
+      })
+    }
+  })
+
+  it('waits for every finish before a tick that fails part way, and loses none', async function () {
+    if (options == null || db == null) this.skip()
+    const now = new Date()
+    const owner = await db
+      .selectFrom('live_streams')
+      .select('user_id as userId')
+      .where('id', '=', 'liv_1')
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('games')
+      .values({
+        id: 'gam_tick',
+        home_team_id: 'tem_home',
+        away_team_id: 'tem_away',
+        start_at: now,
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    // liv_5 has been ended, and finishing it fails, as on a dropped database
+    // connection. liv_6 comes after it, and its directory cannot be made.
+    const streams = [
+      ['liv_5', 'vid_5', 'ts_tickfivetickfivetickfi', 1, now],
+      ['liv_6', 'vid_6', 'ts_ticksixticksixticksixt', 2, null]
+    ] as const
+    for (const [id, videoId, key, slot, closesAt] of streams) {
+      await db
+        .insertInto('videos')
+        .values({
+          id: videoId,
+          game_id: 'gam_tick',
+          kind: 'live',
+          title: `Angle ${slot}`,
+          storage: 'local',
+          status: 'processing',
+          hidden: true,
+          created_at: now,
+          updated_at: now
+        })
+        .execute()
+      await db
+        .insertInto('live_streams')
+        .values({
+          id,
+          game_id: 'gam_tick',
+          team_id: 'tem_home',
+          user_id: owner.userId,
+          key_hash: hashToken(key),
+          key_prefix: key.slice(0, 8),
+          key_cipher: sealSecret(SECRET, key),
+          state: 'idle',
+          slot,
+          opens_at: new Date(now.getTime() - 3_600_000),
+          closes_at: closesAt,
+          video_id: videoId,
+          created_at: now,
+          updated_at: now
+        })
+        .execute()
+    }
+    const blocked = liveVideoDir(mediaRoot, 'vid_6')
+    await mkdir(join(blocked, '..'), { recursive: true })
+    await writeFile(blocked, 'not a directory')
+
+    const real = db
+    const failing = new Proxy(real, {
+      get(target, property) {
+        if (property === 'updateTable') {
+          return (table: string) => {
+            if (table === 'live_streams') throw new Error('connection lost')
+            return target.updateTable(table as 'live_streams')
+          }
+        }
+        const value = Reflect.get(target, property) as unknown
+        return typeof value === 'function'
+          ? (value as (...args: unknown[]) => unknown).bind(target)
+          : value
+      }
+    })
+    const unhandled: unknown[] = []
+    const record = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', record)
+    try {
+      let thrown: unknown
+      await sync({ ...options, db: failing }).catch((error: unknown) => {
+        thrown = error
+      })
+      for (let i = 0; i < 10; i++)
+        await new Promise(resolve => setImmediate(resolve))
+      // The tick says what stopped it, and the finish it had started was
+      // waited for and caught rather than left to fail on its own.
+      expect((thrown as NodeJS.ErrnoException | undefined)?.code).equals(
+        'EEXIST'
+      )
+      expect(unhandled).deep.equals([])
+    } finally {
+      process.off('unhandledRejection', record)
+      await rm(blocked, { force: true })
+    }
+
+    // With the database back, the next tick finishes it.
+    await sync(options)
+    const ended = await real
+      .selectFrom('live_streams')
+      .select('state')
+      .where('id', '=', 'liv_5')
+      .executeTakeFirstOrThrow()
+    expect(ended.state).equals('ended')
   })
 })
