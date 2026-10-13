@@ -259,6 +259,12 @@ const HEADER_SCORE_WIDTH = 201
 
 /** How long a chosen highlight's full account stays under the video. */
 const DESCRIPTION_SECONDS = 90
+/**
+ * How long a live video the server has no files for yet waits before the page
+ * asks for it again: its first segment is written a few seconds after the
+ * stream starts publishing.
+ */
+const LIVE_PLAYBACK_RETRY_MS = 2000
 
 /**
  * One game: its videos, the highlights under them, and the box score.
@@ -691,6 +697,42 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       live = false
     }
   }, [client, video, nonMemberView])
+
+  /** How many times a live video without files has been asked for again. */
+  const [playbackAsks, setPlaybackAsks] = useState(0)
+  // A live video is listed the moment its stream starts publishing, a few
+  // seconds before its first segment is written, and until then the server
+  // says its files are not there. The page that picked it up then — the
+  // publishing phone's own, or a viewer's — asks again rather than saying
+  // for good that the video is not available.
+  useEffect(() => {
+    if (
+      video?.status !== 'live' ||
+      playbackFor !== video.id ||
+      playback == null ||
+      playback.url != null
+    )
+      return
+    const forVideoId = video.id
+    let live = true
+    const askAgain = (): void => {
+      if (live) setPlaybackAsks(asks => asks + 1)
+    }
+    const timer = setTimeout(() => {
+      client
+        .playback(forVideoId)
+        .then(found => {
+          if (!live) return
+          if (found.url == null) askAgain()
+          else setPlayback(found)
+        })
+        .catch(askAgain)
+    }, LIVE_PLAYBACK_RETRY_MS)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [client, video, playback, playbackFor, playbackAsks])
 
   // Fetched when the tab is first opened, not with the game: most people come
   // here to watch, and the box score is a second query against every play.
