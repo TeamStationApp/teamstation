@@ -283,6 +283,67 @@ async function main(): Promise<void> {
     await wait(
       `document.querySelectorAll('[aria-label="RSVP teams"] [role="tab"]')[0]?.getAttribute('aria-selected')==='true'`
     )
+    // A finger that strays well below the rail keeps the drag, and the pill
+    // goes on from where it was let go: it never jumps back to where it began.
+    await m.evalBrowserScript({
+      script: `window.__pillTrace=[];(function tick(){const fill=document.querySelector('[aria-label="RSVP teams"] [data-testid="segmented-pill-fill"]');window.__pillTrace.push(new DOMMatrix(getComputedStyle(fill).transform).m41);if(window.__pillTrace.length<3000)requestAnimationFrame(tick)})()`
+    })
+    await m.dragAndDrop({
+      from: {
+        point: `${Math.round(points[0].x)},${Math.round(points[0].y)}`
+      },
+      to: {
+        point: `${Math.round(points[1].x)},${Math.round(points[1].y + 120)}`
+      },
+      holdDuration: 100,
+      duration: 800
+    })
+    await wait(
+      `document.querySelectorAll('[aria-label="RSVP teams"] [role="tab"]')[1]?.getAttribute('aria-selected')==='true'`
+    )
+    await new Promise(resolve => setTimeout(resolve, 600))
+    const trace = await evaluate<{ half: number; values: number[] }>(
+      `({half:document.querySelector('[aria-label="RSVP teams"]').getBoundingClientRect().width/2,values:window.__pillTrace})`
+    )
+    const moved = trace.values.findIndex(value => value > trace.half / 4)
+    assert(moved >= 0, 'The team pill follows the finger')
+    assert(
+      trace.values.slice(moved).every(value => value > trace.half / 8),
+      'The team pill never jumps back after it is let go'
+    )
+    assert(Math.abs(trace.values[trace.values.length - 1] - trace.half) < 2)
+    await drag(1, 0)
+    await wait(
+      `document.querySelectorAll('[aria-label="RSVP teams"] [role="tab"]')[0]?.getAttribute('aria-selected')==='true'`
+    )
+    // The same for an RSVP capsule, from Yes to No with the finger below it.
+    const rsvpId = await evaluate<string>(
+      `document.querySelector('[data-testid="event-replies"] [role="radiogroup"]').getAttribute('data-testid')`
+    )
+    await tap(`${rsvpId}-0`)
+    await wait(
+      `document.querySelector('[data-testid="${rsvpId}-0"]').getAttribute('aria-checked')==='true'`
+    )
+    const rsvp = await evaluate<{
+      yes: { x: number; y: number }
+      no: { x: number; y: number }
+    }>(
+      `(()=>{const radios=document.querySelectorAll('[data-testid="${rsvpId}"] [role="radio"]'),at=n=>{const r=n.getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2}};return{yes:at(radios[0]),no:at(radios[2])}})()`
+    )
+    await m.dragAndDrop({
+      from: { point: `${Math.round(rsvp.yes.x)},${Math.round(rsvp.yes.y)}` },
+      to: {
+        point: `${Math.round(rsvp.no.x)},${Math.round(rsvp.no.y + 120)}`
+      },
+      holdDuration: 100,
+      duration: 800
+    })
+    await wait(
+      `document.querySelector('[data-testid="${rsvpId}-2"]').getAttribute('aria-checked')==='true'`
+    )
+    console.log(
+      'Pills keep a straying finger and settle from where they are let go'
+    )
     writeFileSync(join(artifacts, 'info-after.png'), await m.screenshot())
     console.log(
       'Empty sections omitted, compact family spacing and two-way team pill drag passed'

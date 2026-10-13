@@ -104,6 +104,23 @@ export function EventRsvpPill({
       return
     if (index !== held.selected) held.onChange(rsvpAtPosition(index))
   }
+  /** From where the finger let go to the nearest choice it may take. */
+  const release = (): void => {
+    const next = Math.round(dragged.current)
+    const held = current.current
+    setDragging(false)
+    if (
+      !held.disabled &&
+      !held.disabledChoices.includes(next) &&
+      (held.value != null || next !== 1) &&
+      next !== held.selected
+    ) {
+      held.onChange(rsvpAtPosition(next))
+      settle(next)
+    } else settle(held.selected)
+  }
+  const released = useRef(release)
+  released.current = release
   const pan = useMemo(
     () =>
       PanResponder.create({
@@ -124,21 +141,14 @@ export function EventRsvpPill({
           )
           position.setValue(dragged.current)
         },
+        // Once grabbed, the capsule keeps the finger however far it strays
+        // up or down, until it lets go; a scroll view cannot take it.
+        onPanResponderTerminationRequest: () => false,
         onPanResponderRelease: () => {
-          const next = Math.round(dragged.current)
-          setDragging(false)
-          if (
-            !current.current.disabled &&
-            !current.current.disabledChoices.includes(next) &&
-            (current.current.value != null || next !== 1) &&
-            next !== current.current.selected
-          )
-            current.current.onChange(rsvpAtPosition(next))
-          else position.setValue(current.current.selected)
+          released.current()
         },
         onPanResponderTerminate: () => {
-          setDragging(false)
-          position.setValue(current.current.selected)
+          released.current()
         }
       }),
     [position]

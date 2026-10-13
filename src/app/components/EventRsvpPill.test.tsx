@@ -2,8 +2,10 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { View } from 'react-native'
 
 import type { RsvpChoice } from '../../common/eventInfo'
+import { recordAnimationStarts, responderDrag } from '../../test/responderDrag'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { EventRsvpPill } from './EventRsvpPill'
 
@@ -49,7 +51,102 @@ async function click(index: number): Promise<void> {
     region(index).click()
   })
 }
+async function measure(width: number): Promise<void> {
+  // JSDOM's ResizeObserver does not measure. Deliver the actual RN web layout callback.
+  const track = document.querySelector(
+    '[data-testid="event-rsvp-101"]'
+  ) as unknown as {
+    __reactLayoutHandler: (event: {
+      nativeEvent: { layout: { width: number } }
+    }) => void
+  }
+  await act(async () => {
+    track.__reactLayoutHandler({ nativeEvent: { layout: { width } } })
+  })
+}
+const fill = (): HTMLElement =>
+  document.querySelector('[data-testid="event-rsvp-101-fill"]')!
 describe('the independent RSVP capsule', () => {
+  it('keeps a drag that strays well below the rail until it lets go', async () => {
+    const choices = await render()
+    await measure(300)
+    // From No reply, two thirds of the way along and 150 px below the rail.
+    await responderDrag(region(1), [
+      [150, 10],
+      [170, 12],
+      [220, 90],
+      [270, 160]
+    ])
+    expect(choices).deep.equals(['no'])
+  })
+  it('lets go short of another choice and slides back from where it was let go', async () => {
+    const choices = await render()
+    await measure(300)
+    const animations = recordAnimationStarts()
+    try {
+      await responderDrag(region(1), [
+        [150, 10],
+        [170, 12],
+        [180, 14]
+      ])
+    } finally {
+      animations.restore()
+    }
+    expect(choices).deep.equals([])
+    // Taken at x 170 and let go 10 px on, a tenth of the way past No reply:
+    // it slides back from there, not from No reply itself.
+    expect(animations.starts).deep.equals([1.1])
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 240))
+    })
+    expect(fill().style.transform).equals('translateX(100px)')
+  })
+  it('keeps its drag when a scrolling parent asks for it mid-way', async () => {
+    const choices: string[] = []
+    let asked = 0
+    let taken = 0
+    function Harness(): React.ReactElement {
+      const [value, setValue] = useState<RsvpChoice>(null)
+      return (
+        <View
+          onMoveShouldSetResponderCapture={() => ++asked > 1}
+          onResponderGrant={() => {
+            taken++
+          }}
+        >
+          <EventRsvpPill
+            userId={101}
+            name="Babe Ruth"
+            value={value}
+            onChange={next => {
+              choices.push(next)
+              setValue(next)
+            }}
+          />
+        </View>
+      )
+    }
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <Harness />
+        </ThemeProvider>
+      )
+    })
+    await measure(300)
+    await responderDrag(region(1), [
+      [150, 10],
+      [130, 12],
+      [90, 90],
+      [40, 200]
+    ])
+    expect(asked).greaterThan(1)
+    expect(taken).equals(0)
+    expect(choices).deep.equals(['yes'])
+  })
   it('activates focused choices with Space, Enter and the legacy Spacebar key', async () => {
     const choices = await render()
     for (const [index, key] of [

@@ -34,6 +34,25 @@ export function SegmentedPill<Id extends string>({
   current.current = { index, width, disabled, options, onSelect }
   const origin = useRef(index)
   const dragged = useRef(index)
+  /**
+   * From where the finger let go to the nearer side. The selection effect
+   * then finds the pill already heading there, so it never jumps back first.
+   */
+  const release = (): void => {
+    const held = current.current
+    const next = held.disabled ? held.index : Math.round(dragged.current)
+    if (next !== held.index) {
+      previous.current = next
+      held.onSelect(held.options[next].id)
+    }
+    Animated.timing(position, {
+      toValue: next,
+      duration: 220,
+      useNativeDriver: Platform.OS !== 'web'
+    }).start()
+  }
+  const released = useRef(release)
+  released.current = release
   // Match the RSVP capsule's horizontal gesture capture, leaving vertical scroll alone.
   const pan = useMemo(
     () =>
@@ -58,15 +77,14 @@ export function SegmentedPill<Id extends string>({
           )
           position.setValue(dragged.current)
         },
+        // Once grabbed, the pill keeps the finger however far it strays up
+        // or down, until it lets go; a scroll view cannot take it.
+        onPanResponderTerminationRequest: () => false,
         onPanResponderRelease: () => {
-          const next = Math.round(dragged.current)
-          const held = current.current
-          if (!held.disabled && next !== held.index)
-            held.onSelect(held.options[next].id)
-          position.setValue(held.index)
+          released.current()
         },
         onPanResponderTerminate: () => {
-          position.setValue(current.current.index)
+          released.current()
         }
       }),
     [position]
