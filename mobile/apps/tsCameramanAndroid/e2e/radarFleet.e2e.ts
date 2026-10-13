@@ -73,9 +73,16 @@ async function main(): Promise<void> {
     await m.tapOn({ id: 'settings-radar-pair' })
     await m.extendedWaitUntil({ visible: { id: 'settings-radar-option-ADFA.*' }, timeout: 30000 })
     await m.tapOn({ id: 'settings-radar-option-ADFA.*' })
-    await m.extendedWaitUntil({ visible: { id: 'settings-radar-status', text: 'Connected' }, timeout: 60000 })
+    // In landscape the paired radar's serial lands at the foot of the screen and its status below
+    // the fold: scroll until the status says Connected.
+    await m.scrollUntilVisible({
+      element: { id: 'settings-radar-status', text: 'Connected' },
+      direction: 'DOWN',
+      timeout: 60000
+    })
     await m.shot('cameraman-android-radar-connected')
 
+    await m.scrollUntilVisible({ element: { id: 'settings-radar-unpair' }, direction: 'DOWN', timeout: 10000 })
     await m.tapOn({ id: 'settings-radar-unpair' })
     await m.assertNotVisible({ id: 'settings-radar-serial' })
     await m.assertVisible({ id: 'settings-radar-pair' })
