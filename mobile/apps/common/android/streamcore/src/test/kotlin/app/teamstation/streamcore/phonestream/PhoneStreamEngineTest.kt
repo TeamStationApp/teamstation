@@ -482,9 +482,10 @@ class PhoneStreamEngineTest {
         expect(PhoneStreamError.NOT_READY) { engine.startRecording("rtmp://x", "s1", "g1", "Home Plate", request) }
 
         capture(3.0)
+        // The first four ticks come before the first picture's moment, 0.15 s after its capture.
         val recorded = engine.programme.recordingFramesSent
-        assertEquals(90L, recorded)
-        assertEquals(90, streamOutput.drawn)
+        assertEquals(86L, recorded)
+        assertEquals(86, streamOutput.drawn)
         assertTrue(streamOutput.sound > 100)
         var status = on { engine.status }
         assertEquals("live", status.phase)
@@ -505,7 +506,7 @@ class PhoneStreamEngineTest {
         assertEquals(3.0, status.retryInSeconds!!, 0.0)
         capture(2.0)
         assertEquals(recorded + 60, engine.programme.recordingFramesSent)
-        assertEquals(90, streamOutput.drawn)
+        assertEquals(86, streamOutput.drawn)
 
         // The redial asks for the held stream, and goes live on the URL the server gives.
         on { scheduler.pending!!() }

@@ -50,7 +50,8 @@ class PhoneStreamUnitTest {
         assertEquals(48_000, PhoneStreamProfile.audioSampleRate)
         assertEquals(128_000, PhoneStreamProfile.streamAudioBitrate)
         assertEquals(192_000, PhoneStreamProfile.recordingAudioBitrate)
-        assertEquals(1.0, PhoneStreamProfile.pictureDelaySeconds, 0.0)
+        assertEquals(0.15, PhoneStreamProfile.pictureDelaySeconds, 0.0)
+        assertEquals(8, PhoneStreamProfile.heldPictures)
         assertEquals(1.0, PhoneStreamProfile.recordingMixDelaySeconds, 0.0)
         assertEquals(6.0, PhoneStreamProfile.stallRedialSeconds, 0.0)
         val capture = PhoneStreamProfile.captureSettings(setOf("lens-0"), CameraPosition.FRONT)
@@ -177,20 +178,26 @@ class PhoneStreamUnitTest {
         val recording = FakeRecording()
         val stream = FakeStream()
         var now = 50.0
-        val programme = PhoneProgramme(recording, stream, captureWall = { it / 1e9 + 1_000.0 }, uptime = { now })
+        // No picture delay here, and the wall clock at each picture's capture: each tick takes the newest.
+        var wall = 0.0
+        val programme = PhoneProgramme(
+            recording, stream, captureWall = { it / 1e9 + 1_000.0 }, uptime = { now }, wall = { wall }, pictureDelaySeconds = 0.0
+        )
         programme.start(wall = 1_000.0)
         // Before the camera's first picture a tick counts but draws nothing.
         assertEquals(PhoneProgramme.TickOutput(), programme.tick(now, null))
         // The same instant again is no tick.
+        wall = 1005.0
         assertNull(programme.tick(now, 5_000_000_000))
         now += 1.0 / 30
+        wall = 1005.0
         val first = programme.tick(now, 5_000_000_000)!!
         assertEquals(listOf(1L), first.recordingFrames)
         assertEquals(1L, first.streamFrame)
         assertEquals(
             listOf(
-                app.teamstation.streamcore.gl.ProgrammeDraw(PhoneProgramme.RECORDING_KEY, PhoneProgramme.nanos(1.0 / 30)),
-                app.teamstation.streamcore.gl.ProgrammeDraw(PhoneProgramme.STREAM_KEY, 5_000_000_000)
+                app.teamstation.streamcore.gl.ProgrammeDraw(PhoneProgramme.RECORDING_KEY, PhoneProgramme.nanos(1.0 / 30), 5_000_000_000),
+                app.teamstation.streamcore.gl.ProgrammeDraw(PhoneProgramme.STREAM_KEY, 5_000_000_000, 5_000_000_000)
             ),
             first.draws
         )
@@ -198,6 +205,7 @@ class PhoneStreamUnitTest {
         assertEquals(1_005.0, programme.streamWall(5.0), 1e-9)
         // A late tick: the frames it skipped go to the recording as repeats, with no new capture time.
         now += 4.0 / 30
+        wall = 1005.0
         val late = programme.tick(now, 5_000_000_000)!!
         assertEquals(listOf(2L, 3L, 4L, 5L), late.recordingFrames)
         assertTrue(recording.placed.takeLast(4).all { it.second == null })
@@ -205,11 +213,13 @@ class PhoneStreamUnitTest {
         assertEquals(PhoneProgramme.nanos(5.0 + 1.0 / 30), late.draws.last().presentationNanos)
         // A very late tick repeats at most a quarter of a second.
         now += 1.0
+        wall = 1006.0
         val stalled = programme.tick(now, 6_000_000_000)!!
         assertEquals(8, stalled.recordingFrames.size)
         assertEquals(1_006.0, recording.placed.last().second!!, 1e-9)
         // Only encoders that are attached are given a picture.
         now += 1.0 / 30
+        wall = 1006.1
         val streamOnly = programme.tick(now, 6_100_000_000, setOf(PhoneProgramme.STREAM_KEY))!!
         assertTrue(streamOnly.recordingFrames.isEmpty())
         assertEquals(PhoneProgramme.STREAM_KEY, streamOnly.draws.single().key)
@@ -217,10 +227,12 @@ class PhoneStreamUnitTest {
         now += 1.0 / 30
         stream.admits = false
         recording.refuse = true
+        wall = 1006.2
         assertTrue(programme.tick(now, 6_200_000_000)!!.draws.isEmpty())
         now += 1.0 / 30
         stream.running = false
         recording.running = false
+        wall = 1006.3
         assertTrue(programme.tick(now, 6_300_000_000)!!.draws.isEmpty())
         assertEquals(PhoneProgramme.TickOutput(), PhoneProgramme.TickOutput())
         assertEquals(7L, programme.ticks)
@@ -230,6 +242,7 @@ class PhoneStreamUnitTest {
         now += 1.0 / 30
         recording.running = true
         recording.refuse = false
+        wall = 1_007.0
         assertEquals(1, programme.tick(7_000_000_000, PhoneProgramme.allKeys).size)
         assertEquals(30, programme.frameRate)
     }

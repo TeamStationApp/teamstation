@@ -128,6 +128,16 @@ internal class CaptureRenderer(
 
     /** The sensor timestamp of the picture the texture holds, null before the first. */
     private var latestCapture: Long? = null
+
+    /** One earlier camera picture kept for the programme: its texture, the framebuffer that fills it, and when it was captured. */
+    private class HeldPicture(val texture: Int, val framebuffer: Int, var capture: Long? = null, var filledAt: Long = 0)
+
+    /** The pictures the programme's tick chooses among ([ProgrammeTicker.heldPictures]); empty draws the newest. */
+    private val held = mutableListOf<HeldPicture>()
+    private var heldProgram: TextureProgram? = null
+    private var heldWanted: Set<Long> = emptySet()
+    private var heldFills = 0L
+    private val identity = FloatArray(16).also { Matrix.setIdentityM(it, 0) }
     private var tickStartMillis = 0L
     private var tickCount = 0L
     private val programmeTick = Runnable {
@@ -181,19 +191,71 @@ internal class CaptureRenderer(
     }
 
     /**
-     * Draws the encoders on [ticker]'s clock from now on, the latest camera picture on every tick,
+     * Draws the encoders on [ticker]'s clock from now on, the held camera picture each tick names,
      * or on each camera frame again when null. The preview is drawn on each camera frame either way.
      */
     fun setProgramme(ticker: ProgrammeTicker?) {
         handler.post {
             handler.removeCallbacks(programmeTick)
             programme = ticker
+            holdPictures(ticker?.heldPictures ?: 1)
             if (ticker != null) {
                 tickStartMillis = SystemClock.uptimeMillis()
                 tickCount = 0
                 handler.postAtTime(programmeTick, tickStartMillis)
             }
         }
+    }
+
+    /**
+     * Keeps [count] earlier camera pictures on the GPU, or none for 1. At 1080p each is 8 MB, so a
+     * programme that delays its pictures by a fraction of a second holds a handful, never a second's worth.
+     */
+    private fun holdPictures(count: Int) {
+        val wanted = if (count > 1) count else 0
+        if (held.size == wanted) return
+        releaseHeldPictures()
+        if (wanted == 0) return
+        val created = runCatching {
+            val heldDraw = heldProgram ?: TextureProgram(external = false).also { heldProgram = it }
+            repeat(wanted) {
+                val (texture, framebuffer) = heldDraw.createHeldPicture(width, height)
+                held += HeldPicture(texture, framebuffer)
+            }
+        }
+        created.onFailure { error ->
+            android.util.Log.w("TSCameraman", "PROGRAMME_HOLD_FAILED $error")
+            releaseHeldPictures()
+        }
+    }
+
+    private fun releaseHeldPictures() {
+        val heldDraw = heldProgram
+        for (picture in held) heldDraw?.releaseHeldPicture(picture.texture, picture.framebuffer)
+        held.clear()
+        heldWanted = emptySet()
+    }
+
+    /**
+     * Copies the camera picture just latched into a held texture, drawn as the encoders are given
+     * it (rotation, mirror, zoom and aspect fill), and tells the programme it is held. The texture
+     * reused is the oldest one the programme no longer wants.
+     */
+    private fun holdLatestPicture(ticker: ProgrammeTicker, timestamp: Long) {
+        if (held.isEmpty()) return
+        val slot = held.filter { it.capture == null || it.capture !in heldWanted }.minByOrNull { it.filledAt }
+            ?: held.minByOrNull { it.filledAt }
+            ?: return
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, slot.framebuffer)
+        GLES20.glViewport(0, 0, width, height)
+        val (scaleX, scaleY) = fillScale(width, height)
+        buildMvp(scaleX, scaleY)
+        program.draw(textureId, textureMatrix, mvpMatrix)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        heldFills += 1
+        slot.capture = timestamp
+        slot.filledAt = heldFills
+        heldWanted = ticker.pictureArrived(timestamp)
     }
 
     /** The next tick on the programme's grid; after a stall longer than a second the grid starts again. */
@@ -225,9 +287,14 @@ internal class CaptureRenderer(
                 continue
             }
             GLES20.glViewport(0, 0, width, height)
+            val heldPicture = draw.captureNanos?.let { capture -> held.firstOrNull { it.capture == capture } }
+            val heldDraw = heldProgram
             if (blank) {
                 GLES20.glClearColor(0f, 0f, 0f, 1f)
                 GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+            } else if (heldPicture != null && heldDraw != null) {
+                // Already rotated, mirrored, zoomed and filled when it was held.
+                heldDraw.draw(heldPicture.texture, identity, identity)
             } else {
                 buildMvp(scaleX, scaleY)
                 program.draw(textureId, textureMatrix, mvpMatrix)
@@ -280,6 +347,9 @@ internal class CaptureRenderer(
         handler.post {
             handler.removeCallbacks(programmeTick)
             programme = null
+            releaseHeldPictures()
+            heldProgram?.release()
+            heldProgram = null
             encoders.releaseAll()
             previewSurface?.let { egl.releaseSurface(it) }
             previewSurface = null
@@ -340,6 +410,12 @@ internal class CaptureRenderer(
         }
 
         latestCapture = timestamp
+        programme?.let { ticker ->
+            runCatching { holdLatestPicture(ticker, timestamp) }.onFailure { error ->
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+                android.util.Log.w("TSCameraman", "PROGRAMME_HOLD_DROPPED $error")
+            }
+        }
         if (programme == null && deliverToEncoder(timestamp)) {
             // Every encoder surface is exactly the encoded size, so at 0 or 180 nothing needs
             // scaling. At 90 or 270 the source turns portrait against a landscape destination, and a

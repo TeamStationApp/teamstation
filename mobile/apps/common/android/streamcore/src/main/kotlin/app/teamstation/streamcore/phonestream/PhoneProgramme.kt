@@ -46,7 +46,12 @@ class ProgramEncoderTarget(val encoder: ProgramEncoder) : ProgrammeRecordingTarg
  * The phone's programme: one camera on TS Director's programme clock.
  *
  * One tick drives both outputs, as Director's router does. The clock ticks at 30 fps; on each tick
- * the picture the camera last delivered goes to the recording on its grid slot and to the stream.
+ * the picture queue ([ProgrammePictureQueue]) gives the newest picture whose moment (capture time
+ * plus [pictureDelaySeconds]) has come, or the last one again, and that picture goes to the
+ * recording on its grid slot and to the stream. So a picture sits on the programme by when it was
+ * captured, as the sound does, whatever rate the camera delivers at. The renderer holds the last
+ * [heldPictures] camera pictures on the GPU for the tick to choose among.
+ *
  * Frames a late tick skipped are written to the recording as repeats, up to a quarter of a second of
  * them, so the recording's grid has no holes. A picture is drawn into an encoder's input surface, so
  * a tick answers which encoders draw it and with what presentation time:
@@ -62,7 +67,12 @@ class PhoneProgramme(
     private val captureWall: (Long) -> Double,
     /** Host uptime in seconds, the clock the ticks are counted on. */
     private val uptime: () -> Double,
-    override val frameRate: Int = PhoneStreamProfile.frameRate
+    /** The steady wall clock, which pictures are judged due on. */
+    private val wall: () -> Double = uptime,
+    override val frameRate: Int = PhoneStreamProfile.frameRate,
+    /** How long after capture a picture goes on the programme. */
+    val pictureDelaySeconds: Double = PhoneStreamProfile.pictureDelaySeconds,
+    override val heldPictures: Int = PhoneStreamProfile.heldPictures
 ) : ProgrammeTicker {
     /** What one tick sent, for a test to read. */
     data class TickOutput(
@@ -74,8 +84,10 @@ class PhoneProgramme(
     private val lock = ReentrantLock()
     private var zero: Double? = null
     private var lastFrame = -1L
-    private var lastRecordedCapture: Long? = null
+    private var lastRecordedSequence: Long? = null
     private var lastStreamSeconds = Double.NEGATIVE_INFINITY
+    private val pictures = ProgrammePictureQueue(pictureDelaySeconds)
+    private var lastOffered: Long? = null
 
     /** The wall second the stream's presentation times count from. */
     @Volatile
@@ -94,7 +106,9 @@ class PhoneProgramme(
         lock.withLock {
             zero = null
             lastFrame = -1
-            lastRecordedCapture = null
+            lastRecordedSequence = null
+            pictures.reset()
+            lastOffered = null
             lastStreamSeconds = Double.NEGATIVE_INFINITY
             streamEpoch = wall
         }
@@ -103,37 +117,60 @@ class PhoneProgramme(
     /** The wall second a stream picture drawn at [presentationSeconds] was captured. */
     fun streamWall(presentationSeconds: Double): Double = streamEpoch + presentationSeconds
 
+    /** Pictures dropped for arriving after their moment, and never shown for a newer one due on the same tick. */
+    val latePictures: Long get() = lock.withLock { pictures.latePictures }
+    val skippedPictures: Long get() = lock.withLock { pictures.skippedPictures }
+
+    override fun pictureArrived(captureNanos: Long): Set<Long> = lock.withLock {
+        offer(captureNanos)
+        pictures.wanted
+    }
+
+    private fun offer(captureNanos: Long) {
+        if (captureNanos == lastOffered) return
+        lastOffered = captureNanos
+        pictures.add(captureNanos, captureWall(captureNanos))
+    }
+
     override fun tick(latestCaptureNanos: Long?, attached: Set<String>): List<ProgrammeDraw> =
         tick(uptime(), latestCaptureNanos, attached)?.draws ?: emptyList()
 
     /**
-     * One tick at host uptime [now]. Answers what it sent, null when no tick was due. [latestCapture]
-     * is the sensor timestamp of the picture the renderer holds, null before the first; [attached]
-     * the encoders it can draw into, and only those are given a picture.
+     * One tick at host uptime [now] and steady wall [wallNow]. Answers what it sent, null when no
+     * tick was due. [latestCapture] is the sensor timestamp of the newest picture the renderer holds,
+     * null before the first, queued here if [pictureArrived] has not seen it; [attached] the
+     * encoders it can draw into, and only those are given a picture.
      */
-    fun tick(now: Double, latestCapture: Long?, attached: Set<String> = allKeys): TickOutput? = lock.withLock {
+    fun tick(
+        now: Double,
+        latestCapture: Long?,
+        attached: Set<String> = allKeys,
+        wallNow: Double = wall()
+    ): TickOutput? = lock.withLock {
         val start = zero ?: now.also { zero = it }
         val frame = floor((now - start) * frameRate + 1e-9).toLong()
         if (frame <= lastFrame) return null
         val missed = if (lastFrame < 0) 0 else frame - lastFrame - 1
         lastFrame = frame
         ticks += 1
-        if (latestCapture == null) return TickOutput()
-        val capture = captureWall(latestCapture)
+        latestCapture?.let { offer(it) }
+        val entry = pictures.pick(wallNow, 1.0 / frameRate) ?: return TickOutput()
+        val capture = entry.captureWall
+        val held = entry.captureNanos
         val draws = mutableListOf<ProgrammeDraw>()
         val recorded = mutableListOf<Long>()
         if (RECORDING_KEY in attached && recording.running) {
-            val fresh = latestCapture != lastRecordedCapture
-            lastRecordedCapture = latestCapture
+            val fresh = entry.sequence != lastRecordedSequence
+            lastRecordedSequence = entry.sequence
             val repeats = minOf(missed, (frameRate / 4).toLong())
             for (skipped in frame - repeats until frame) {
                 recording.place(skipped.toDouble() / frameRate, null)?.let {
-                    draws += ProgrammeDraw(RECORDING_KEY, nanos(it))
+                    draws += ProgrammeDraw(RECORDING_KEY, nanos(it), held)
                     recorded += skipped
                 }
             }
             recording.place(frame.toDouble() / frameRate, if (fresh) capture else null)?.let {
-                draws += ProgrammeDraw(RECORDING_KEY, nanos(it))
+                draws += ProgrammeDraw(RECORDING_KEY, nanos(it), held)
                 recorded += frame
             }
         }
@@ -142,7 +179,7 @@ class PhoneProgramme(
             // At its capture time, but never at or before the picture before: a repeat goes a frame on.
             val seconds = maxOf(capture - streamEpoch, lastStreamSeconds + 1.0 / frameRate)
             lastStreamSeconds = seconds
-            draws += ProgrammeDraw(STREAM_KEY, nanos(seconds))
+            draws += ProgrammeDraw(STREAM_KEY, nanos(seconds), held)
             streamFrame = frame
         }
         recordingFramesSent += recorded.size

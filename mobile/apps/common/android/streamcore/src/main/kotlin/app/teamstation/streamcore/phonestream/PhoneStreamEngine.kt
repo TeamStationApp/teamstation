@@ -130,7 +130,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
             recording = ProgramEncoderTarget(encoder),
             stream = stream,
             captureWall = { nanos -> source?.captureWall(nanos) ?: environment.clock.now() },
-            uptime = environment.uptime
+            uptime = environment.uptime,
+            wall = environment.clock::now
         )
         mix.add(PhoneSoundMix.Output(PhoneStreamProfile.liveMixDelaySeconds) { stream.append(it) })
         recordingMix = PhoneSoundMix.Output(PhoneStreamProfile.recordingMixDelaySeconds) { encoder.append(it) }

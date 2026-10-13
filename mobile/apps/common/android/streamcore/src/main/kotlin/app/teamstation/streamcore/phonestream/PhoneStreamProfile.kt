@@ -19,12 +19,15 @@ import app.teamstation.streamcore.core.StreamSettings as CaptureSettings
  * - Recording: a fixed 6 Mbps, crash-safe fragmented MP4.
  * - Sound: AAC at 48 kHz. The microphone is mono and is carried as the stereo mix Director's bus
  *   makes; 128 kbps on the stream, 192 kbps in the recording.
- * - TS Director shows each picture a second after capture ([pictureDelaySeconds]) so a late camera
- *   can still make the programme. A phone's one camera is never late, and every picture and every
- *   run of sound is stamped with its capture time on both outputs, so on Android the tick draws the
- *   newest picture at once rather than holding a second of 1080p textures on the GPU. The recording's
- *   mix still waits [recordingMixDelaySeconds] for its sound, and the stream's mix only as long as
- *   the microphone's own buffering ([liveMixDelaySeconds]).
+ * - TS Director shows each picture a second after capture so a late camera can still make the
+ *   programme, and picks for each tick the picture whose capture time has come. A phone does the
+ *   same with a shorter delay ([pictureDelaySeconds]): long enough that the camera has delivered the
+ *   picture, short enough that the last [heldPictures] pictures, held as 1080p textures on the GPU,
+ *   cover it. So a picture sits against the sound by when it was captured, whatever rate the camera
+ *   delivers at in poor light, rather than by when the tick found it. The recording's mix still
+ *   waits [recordingMixDelaySeconds] for its sound, and the stream's mix only as long as the
+ *   microphone's own buffering ([liveMixDelaySeconds]); every picture and run of sound on the stream
+ *   is stamped with its capture time.
  * - A stream whose connection has taken nothing for 6 s while the stream waits on it is replaced by a
  *   fresh dial ([stallRedialSeconds]). Android's TCP backoff can sit on a dead connection far longer
  *   than that, and the stream would come back only when the server gives up on it.
@@ -45,7 +48,10 @@ object PhoneStreamProfile {
     const val streamAudioBitrate = 128_000
     const val recordingAudioBitrate = 192_000
 
-    const val pictureDelaySeconds = 1.0
+    const val pictureDelaySeconds = 0.15
+
+    /** Camera pictures held on the GPU for the tick: the picture delay and two frames' margin at 30 fps. */
+    const val heldPictures = 8
     const val recordingMixDelaySeconds = 1.0
     const val liveMixDelaySeconds = 0.1
 
