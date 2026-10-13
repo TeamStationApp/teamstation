@@ -34,6 +34,7 @@ import { locationRoutes } from './routes/location'
 import { manageRoutes } from './routes/manage'
 import { meRoutes } from './routes/me'
 import { mediaRoutes } from './routes/media'
+import { narrationRoutes } from './routes/narrations'
 import { nodeAdministrationRoutes } from './routes/nodeAdministration'
 import { notificationRoutes } from './routes/notifications'
 import { onboardingRoutes } from './routes/onboarding'
@@ -161,6 +162,7 @@ describe('the API document', function () {
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
+      ...routesOf(narrationRoutes(db, null)),
       ...routesOf(adminRoutes()),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),
@@ -215,6 +217,7 @@ describe('the API document', function () {
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
+      ...routesOf(narrationRoutes(db, null)),
       ...routesOf(adminRoutes()),
       ...routesOf(statsRoutes(db)),
       ...routesOf(mediaRoutes(db, media)),

@@ -53,6 +53,7 @@ import { warmVideoStills } from '../media/videoStills'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { hasRecordedPlays } from '../replay/replayable'
 import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
 import {
   type ScoreboardStore,
@@ -661,6 +662,9 @@ export function teamRoutes(
               ),
         // Whether this is the non-member view, so the app draws it as one.
         nonMemberView,
+        // Whether anything TeamStation scored is stored, so it can be
+        // replayed: a recorded play, or a recorded at-bat in progress.
+        replayable: await hasRecordedPlays(db, gameId, game.currentPlay),
         scoreboard: nonMemberView
           ? null
           : await scoreboardOf(store, mayOverride, {

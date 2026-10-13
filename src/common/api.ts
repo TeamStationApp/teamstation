@@ -381,6 +381,11 @@ export const asGameDetail = withEventMetadata(
      * and the box score and playback answer `membersOnly`. False for members.
      */
     nonMemberView: asBoolean,
+    /**
+     * Whether anything TeamStation scored is stored for this game, so it can
+     * be replayed. False from a server from before replays.
+     */
+    replayable: asOptional(asBoolean, false),
     videos: asArray(asVideoSummary)
   })
 )
@@ -1437,9 +1442,13 @@ export const asHealth = asObject({
   database: asLiteral('ok', 'unreachable'),
   migrations: asNumber,
   dictation: asOptional(asBoolean, false),
-  dictationModels: asOptional(asArray(asString), [])
+  dictationModels: asOptional(asArray(asString), []),
+  /** Whether the replay's announcer can speak; absent from an older server. */
+  narration: asOptional(asBoolean)
 })
-export type Health = ReturnType<typeof asHealth>
+export type Health = Omit<ReturnType<typeof asHealth>, 'narration'> & {
+  narration?: boolean
+}
 
 export interface ClientOptions {
   baseUrl: string

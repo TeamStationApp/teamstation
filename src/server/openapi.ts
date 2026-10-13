@@ -1428,6 +1428,11 @@ export function openApiDocument(version: string): OpenApiDocument {
               type: 'array',
               items: { type: 'string' },
               description: 'The LLMs dictation has a key for on this server'
+            },
+            narration: {
+              type: 'boolean',
+              description:
+                "Whether the replay's announcer can speak on this server"
             }
           }
         },
@@ -3860,12 +3865,77 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Private notes, arrival timing, ingest details, scoring ownership and ' +
             'scoreboard access are null in this public projection. Playback ' +
             'and detailed statistics still require team membership. ' +
-            'False for members.',
+            'False for members. ' +
+            '`replayable` is whether anything TeamStation scored is stored ' +
+            'for the game — a play carrying its `teamStation` record, or a ' +
+            'recorded at-bat in progress — so it can be replayed.',
           security: [{}, { bearer: [] }],
           parameters: [gameIdParam],
           responses: {
             200: { description: 'The game, its score and its videos' },
             404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/narrations/{stepKey}': {
+        get: {
+          summary: "The replay's announcer reading one step of a game",
+          description:
+            "A step of the game's replay is one delivery, a pitch or a ball " +
+            'put in play, with what the scorer took after it up to the next; ' +
+            'its key is `<atBatIndex>-<actionStart>`, the play and the index ' +
+            "of the step's first action in that play's `teamStation` " +
+            "record. The server writes the step's sentence from the game's " +
+            'stored plays, naming players by first name and the start of ' +
+            'the last, and answers it spoken as MP3. A step grows as the ' +
+            'scorer goes on; `count` asks for it as it stood with its first ' +
+            '`count` actions, the sentence a viewer who saw it then was ' +
+            'shown. A sentence is spoken ' +
+            'once and kept; `ETag` is its digest, and a matching ' +
+            '`If-None-Match` answers 304. **Who may call:** anybody who may ' +
+            "read the game's events.",
+          security: [{ bearer: [] }],
+          parameters: [
+            gameIdParam,
+            {
+              name: 'stepKey',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', pattern: '^[0-9]+-[0-9]+$' }
+            },
+            {
+              name: 'count',
+              in: 'query',
+              required: false,
+              description:
+                "How many of the step's actions the sentence is for. All " +
+                'of them when absent or larger than the step.',
+              schema: { type: 'integer', minimum: 1 }
+            }
+          ],
+          responses: {
+            200: {
+              description: 'The sentence, spoken',
+              content: {
+                'audio/mpeg': { schema: { type: 'string', format: 'binary' } }
+              }
+            },
+            304: { description: 'The sentence the caller already has' },
+            400: errorResponse,
+            404: errorResponse,
+            503: {
+              description: 'Speech is off, or the speech service failed',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      error: { type: 'string', enum: ['narrationUnavailable'] }
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       },
