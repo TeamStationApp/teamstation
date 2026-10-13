@@ -18,11 +18,14 @@ const delay = async (ms: number): Promise<void> => {
 
 async function render(
   short: boolean,
-  sideBySide: boolean
+  sideBySide: boolean,
+  host?: HTMLElement
 ): Promise<HTMLElement> {
-  const host = document.createElement('div')
-  document.body.appendChild(host)
-  root = createRoot(host)
+  if (host == null) {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+  }
   await act(async () => {
     root!.render(
       <ThemeProvider>
@@ -100,5 +103,31 @@ describe('the watch tab on a phone', function () {
     expect(clearance).greaterThan(0)
     expect(expected).equals(clearance)
     expect(paddingBottom).equals(expected)
+  })
+
+  it('lets the list run its full length again once the phone is upright after being held sideways', async function () {
+    // The streaming screen turns an Android phone sideways under the game, and
+    // back. The column's cap while sideways must not outlive it: upright the
+    // list does not scroll, so a cap cut off the cameras' upload rows and
+    // Record video below it, with nothing able to reach them.
+    // The column's scroller: the outermost element holding the list and not
+    // the picture.
+    const list = (host: HTMLElement): HTMLElement => {
+      const column = [...host.querySelectorAll('div')].find(element => {
+        const text = element.textContent ?? ''
+        return text.endsWith('highlightsfooter') && !text.includes('player')
+      })
+      expect(column, 'the list').not.equals(undefined)
+      return column!
+    }
+    const host = await render(true, true)
+    const capped = parseFloat(getComputedStyle(list(host)).maxHeight)
+    expect(capped).lessThanOrEqual(390)
+    await render(false, false, host)
+    const upright = getComputedStyle(list(host)).maxHeight
+    expect(
+      upright === '' || upright === 'none' || parseFloat(upright) > 844 * 100,
+      `max-height ${upright}`
+    ).equals(true)
   })
 })

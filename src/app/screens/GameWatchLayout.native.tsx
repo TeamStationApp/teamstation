@@ -19,6 +19,13 @@ export type { GameWatchLayoutProps }
 const MIN_LIST_HEIGHT = 120
 
 /**
+ * The upright column's cap: none that any list reaches. A number rather than
+ * no key at all, because an animated style keeps the last value of a key it
+ * stops returning (see `listStyle`).
+ */
+const UNCAPPED = 1_000_000
+
+/**
  * Where the picture, the card and the highlights go while a game is watched.
  *
  * The twin of `GameWatchLayout.tsx`, and the only region of this app that
@@ -100,14 +107,21 @@ export function GameWatchLayout(
   })
 
   const listStyle = useAnimatedStyle(() => {
-    if (!sideBySide) return {}
+    // Upright, the column is as tall as everything in it, and has to say so.
+    // Returning no `maxHeight` left the sideways cap on the view: Android's
+    // streaming screen turns the phone sideways under this tab and back, and
+    // the column, which does not scroll upright, then cut off the cameras'
+    // upload rows and Record video with no way to reach them.
+    if (!sideBySide) return { maxHeight: UNCAPPED }
     // The column runs to the bottom of the window, wherever it currently
     // starts. A fixed height cut it off at the picture's lower edge while the
     // card was still on screen, so the rows ended in mid-air and the last of
     // them could not be reached until the card had gone.
     const top = listTop.value - scrollY.value
     return { maxHeight: Math.max(MIN_LIST_HEIGHT, height - top) }
-  })
+    // Named, so it is worked out again when the phone turns wherever the
+    // worklet's closure is not tracked for it (a build without the plugin).
+  }, [sideBySide, height])
 
   const measurePeg = (event: LayoutChangeEvent): void => {
     pegTop.value = event.nativeEvent.layout.y
