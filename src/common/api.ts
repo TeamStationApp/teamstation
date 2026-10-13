@@ -692,6 +692,15 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
 }
 
 /**
+ * A replay step as the announcer reads it: its key, and how many of its
+ * actions the sentence is for, since a step grows as the scorer goes on.
+ */
+export interface NarrationStepRef {
+  key: string
+  count: number
+}
+
+/**
  * A team this player has played for, in which season, and their number and
  * positions there: null and empty on a team they only have stats for.
  * `current` is whether they play on it now; a team they left is false.
@@ -2959,6 +2968,70 @@ export class TeamStationClient {
       }),
       tag == null ? undefined : { tag }
     )
+  }
+
+  /**
+   * Where a replay step's spoken sentence is, as the step stood with `count`
+   * actions, with the header that says who is asking, for a player that
+   * fetches it itself. A browser's session is its cookie, which needs no
+   * header.
+   */
+  narrationSource(
+    gameId: string,
+    step: NarrationStepRef
+  ): { uri: string; headers: Record<string, string> } {
+    return {
+      uri: `${this.baseUrl}/games/${encodeURIComponent(gameId)}/narrations/${encodeURIComponent(step.key)}?count=${step.count}`,
+      headers:
+        this.token == null ? {} : { authorization: `Bearer ${this.token}` }
+    }
+  }
+
+  /** A replay step's spoken sentence, as MP3 audio. */
+  async narrationAudio(
+    gameId: string,
+    step: NarrationStepRef,
+    signal?: AbortSignal
+  ): Promise<Blob> {
+    const response = await this.narrationResponse('GET', gameId, step, signal)
+    return await response.blob()
+  }
+
+  /**
+   * Resolves once a replay step's sentence is ready to be heard, without
+   * downloading it, for a player that fetches the audio itself.
+   */
+  async narrationReady(
+    gameId: string,
+    step: NarrationStepRef,
+    signal?: AbortSignal
+  ): Promise<void> {
+    await this.narrationResponse('HEAD', gameId, step, signal)
+  }
+
+  private async narrationResponse(
+    method: 'GET' | 'HEAD',
+    gameId: string,
+    step: NarrationStepRef,
+    signal?: AbortSignal
+  ): Promise<Response> {
+    const { uri, headers } = this.narrationSource(gameId, step)
+    let response: Response
+    try {
+      response = await this.doFetch(uri, {
+        method,
+        headers: { ...headers, accept: 'audio/mpeg' },
+        credentials: 'include',
+        signal
+      })
+    } catch {
+      throw new HttpError(
+        'offline',
+        'Cannot reach TeamStation. Check your connection and try again.'
+      )
+    }
+    if (!response.ok) throw errorFrom(response.status, await response.text())
+    return response
   }
 
   /**

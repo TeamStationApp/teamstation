@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
@@ -31,11 +31,77 @@ interface Fiber {
   sibling?: Fiber | null
 }
 
+/** What the fake server says about its announcer, and what it was asked. */
+const announcer = {
+  health: true as boolean | 'fails',
+  audio: 'ok' as 'ok' | 'fails',
+  asked: [] as string[]
+}
+
+function fakeClient(
+  game: () => Promise<GameDetail>,
+  events: () => Promise<StoredGame>
+): ReplayClient {
+  return {
+    game,
+    gameEvents: events,
+    health: async () => {
+      if (announcer.health === 'fails') throw new Error('offline')
+      return { narration: announcer.health }
+    },
+    narrationAudio: async (_gameId, step) => {
+      announcer.asked.push(step.key)
+      if (announcer.audio === 'fails') throw new Error('503')
+      return new Blob(['mp3'])
+    },
+    narrationReady: async () => {
+      throw new Error('a browser downloads the sentence')
+    },
+    narrationSource: (gameId, step) => ({
+      uri: `/games/${gameId}/narrations/${step.key}?count=${step.count}`,
+      headers: {}
+    })
+  }
+}
+
 let container: HTMLElement | undefined
 let root: Root | undefined
 let now = 0
 
+const saved = new Map<string, PropertyDescriptor | undefined>()
+const swaps = (): Array<[object, string]> => [
+  [window.HTMLMediaElement.prototype, 'play'],
+  [window.HTMLMediaElement.prototype, 'pause'],
+  [URL, 'createObjectURL'],
+  [URL, 'revokeObjectURL']
+]
+
+beforeEach(function () {
+  announcer.health = true
+  announcer.audio = 'ok'
+  announcer.asked = []
+  // jsdom plays no media and makes no object URLs.
+  const values: unknown[] = [
+    async () => undefined,
+    () => undefined,
+    () => 'blob:narration',
+    () => undefined
+  ]
+  swaps().forEach(([target, name], i) => {
+    saved.set(name, Object.getOwnPropertyDescriptor(target, name))
+    Object.defineProperty(target, name, {
+      configurable: true,
+      value: values[i]
+    })
+  })
+})
+
 afterEach(async function () {
+  for (const [target, name] of swaps()) {
+    const descriptor = saved.get(name)
+    if (descriptor == null) Reflect.deleteProperty(target, name)
+    else Object.defineProperty(target, name, descriptor)
+  }
   await act(async () => {
     root?.unmount()
   })
@@ -126,10 +192,12 @@ async function show(
   client?: ReplayClient
 ): Promise<Shown> {
   const events = await stored
-  const reader = client ?? {
-    game: async () => game,
-    gameEvents: async () => events
-  }
+  const reader =
+    client ??
+    fakeClient(
+      async () => game,
+      async () => events
+    )
   const render = async (): Promise<void> => {
     await act(async () => {
       root!.render(
@@ -292,16 +360,20 @@ describe('the replay screen', function () {
   it('reads the game once, however often the shell renders it', async function () {
     resize(402, 874)
     const reads = { game: 0, events: 0 }
-    const shown = await show(gameOf(), finalGame(), {
-      game: async () => {
-        reads.game++
-        return gameOf()
-      },
-      gameEvents: async () => {
-        reads.events++
-        return await finalGame()
-      }
-    })
+    const shown = await show(
+      gameOf(),
+      finalGame(),
+      fakeClient(
+        async () => {
+          reads.game++
+          return gameOf()
+        },
+        async () => {
+          reads.events++
+          return await finalGame()
+        }
+      )
+    )
     await shown.rerender()
     await shown.rerender()
     await wait(100)
@@ -325,12 +397,16 @@ describe('the replay screen', function () {
     })
     expect(
       (
-        await show(gameOf(), finalGame(), {
-          game: async () => {
-            throw new Error('offline')
-          },
-          gameEvents: async () => await finalGame()
-        })
+        await show(
+          gameOf(),
+          finalGame(),
+          fakeClient(
+            async () => {
+              throw new Error('offline')
+            },
+            async () => await finalGame()
+          )
+        )
       ).notReplayable
     ).equals(1)
     expect(document.querySelector('[data-testid="game-replay"]')).equals(null)
@@ -342,5 +418,77 @@ describe('the replay screen', function () {
     await showCatcher()
     expect(card()).includes('Valley Pines win')
     expect(byLabel('Pause replay')).equals(undefined)
+  })
+
+  describe('the announcer', function () {
+    it('is offered only by a server that has one', async function () {
+      resize(402, 874)
+      announcer.health = false
+      await show(gameOf(), finalGame())
+      expect(byLabel('Turn announcer on')).equals(undefined)
+      expect(byLabel('Exit')).not.equals(undefined)
+      await act(async () => {
+        root?.unmount()
+      })
+      announcer.health = 'fails'
+      await show(gameOf(), finalGame())
+      expect(byLabel('Turn announcer on')).equals(undefined)
+    })
+
+    it('reads nothing while muted, and each step once the speaker is on', async function () {
+      resize(402, 874)
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      now = 100
+      await wait(250)
+      expect(announcer.asked).deep.equals([])
+      await press('Turn announcer on')
+      expect(byLabel('Turn announcer off')).not.equals(undefined)
+      // The two steps ahead are fetched at once.
+      await wait(50)
+      expect(announcer.asked).deep.equals(['0-1', '0-2'])
+      now = 100 + 4500
+      await wait(300)
+      expect(announcer.asked.slice(0, 3)).deep.equals(['0-1', '0-2', '0-3'])
+      await press('Turn announcer off')
+      expect(byLabel('Turn announcer on')).not.equals(undefined)
+    })
+
+    it('turns itself off and says so after three sentences fail', async function () {
+      resize(402, 874)
+      announcer.audio = 'fails'
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await press('Turn announcer on')
+      now = 100
+      await wait(300)
+      // Each sentence fails as its step is shown; the third turns it off.
+      expect(card()).not.includes('Announcer unavailable')
+      for (
+        let i = 0;
+        i < 20 && !card().includes('Announcer unavailable');
+        i++
+      ) {
+        now += 5000
+        await wait(150)
+      }
+      expect(announcer.asked.length).greaterThanOrEqual(3)
+      expect(card()).includes('Announcer unavailable')
+      expect(byLabel('Turn announcer on')).not.equals(undefined)
+      announcer.audio = 'ok'
+      await press('Turn announcer on')
+      expect(card()).not.includes('Announcer unavailable')
+    })
+
+    it('opens muted every time', async function () {
+      resize(402, 874)
+      await show(gameOf(), finalGame())
+      await press('Turn announcer on')
+      await act(async () => {
+        root?.unmount()
+      })
+      await show(gameOf(), finalGame())
+      expect(byLabel('Turn announcer on')).not.equals(undefined)
+    })
   })
 })

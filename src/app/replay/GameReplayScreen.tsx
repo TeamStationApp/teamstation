@@ -25,6 +25,9 @@ import { ScoringButton } from '../scoring/ScoringSheet'
 import { useScoringSheetTheme } from '../scoring/scoringSheetTheme'
 import { scoringSurface as surface } from '../theme/scoringSurface'
 import { ScopedThemeProvider } from '../theme/ThemeContext'
+import { useNarrationPlayer } from './narrationPlayer'
+import type { NarrationClient } from './narrationPlayerTypes'
+import { NarrationQueue, type NarrationStep, PREFETCH } from './narrationQueue'
 import { ReplayBoxScore } from './ReplayBoxScore'
 import {
   replayCard,
@@ -42,9 +45,11 @@ export const DECK_SHARE = 0.45
 export const SIDE_CARD_ROOM = 150
 const TICK_MS = 100
 
-export interface ReplayClient {
+export interface ReplayClient extends NarrationClient {
   game: (gameId: string) => Promise<GameDetail>
   gameEvents: (gameId: string) => Promise<StoredGame>
+  /** Says, among other things, whether the server has an announcer. */
+  health: () => Promise<{ narration?: boolean }>
 }
 
 export interface GameReplayScreenProps {
@@ -86,11 +91,17 @@ export function GameReplayScreen(
     game: GameDetail
     timeline: ReplayTimeline
     mode: ReplayMode
+    narration: boolean
   } | null>(null)
   useEffect(() => {
     let live = true
-    Promise.all([client.game(gameId), client.gameEvents(gameId)])
-      .then(([game, stored]) => {
+    // A server that cannot say has no announcer to offer.
+    const narration = client.health().then(
+      health => health.narration === true,
+      () => false
+    )
+    Promise.all([client.game(gameId), client.gameEvents(gameId), narration])
+      .then(([game, stored, announcer]) => {
         if (!live) return
         const context = replayContextOf(game, stored)
         if (!isReplayable(game, game.replayable) || context == null) {
@@ -100,7 +111,8 @@ export function GameReplayScreen(
         setLoaded({
           game,
           timeline: replayTimelineOf(stored, context),
-          mode: game.status === 'inProgress' ? 'live' : 'replay'
+          mode: game.status === 'inProgress' ? 'live' : 'replay',
+          narration: announcer
         })
       })
       .catch(() => {
@@ -118,6 +130,7 @@ export function GameReplayScreen(
       ) : (
         <ReplayView
           {...loaded}
+          client={client}
           onExit={props.onExit}
           clock={props.clock ?? Date.now}
         />
@@ -127,9 +140,11 @@ export function GameReplayScreen(
 }
 
 function ReplayView(props: {
+  client: NarrationClient
   game: GameDetail
   timeline: ReplayTimeline
   mode: ReplayMode
+  narration: boolean
   onExit: () => void
   clock: () => number
 }): React.ReactElement {
@@ -152,10 +167,64 @@ function ReplayView(props: {
       scoringAudio.setEnabled(true)
     }
   }, [])
+  // The announcer: it reads each step as it is shown, and the replay waits
+  // for it while the speaker is on.
+  const player = useNarrationPlayer(props.client, props.game.id)
+  const [unavailable, setUnavailable] = useState(false)
+  const narration = useMemo(
+    () =>
+      new NarrationQueue(player.output, {
+        speaking: speaking => {
+          dispatch({ type: 'SPEAKING', speaking })
+        },
+        unavailable: () => {
+          scoringAudio.setEnabled(false)
+          setMuted(true)
+          setUnavailable(true)
+        }
+      }),
+    [player.output]
+  )
+  useEffect(
+    () => () => {
+      narration.dispose()
+    },
+    [narration]
+  )
+  useEffect(() => {
+    narration.setMuted(muted)
+  }, [narration, muted])
+  useEffect(() => {
+    narration.setPaused(state.paused)
+  }, [narration, state.paused])
+  const shownKey = state.shown?.key
+  const { shownCount } = state
+  const spoken = useRef(`${shownKey}#${shownCount}`)
+  useEffect(() => {
+    const id = `${shownKey}#${shownCount}`
+    if (shownKey == null || spoken.current === id) return
+    spoken.current = id
+    narration.speak({ key: shownKey, count: shownCount })
+  }, [narration, shownKey, shownCount])
+  // A replay fetches the next two sentences; a live game all it has queued.
+  const upcoming: NarrationStep[] = (
+    props.mode === 'replay' ? state.queue.slice(0, PREFETCH) : state.queue
+  ).map(entry => ({
+    key: entry.step.key,
+    count: (state.applied[entry.step.key] ?? 0) + entry.actions.length
+  }))
+  const upcomingIds = upcoming.map(step => `${step.key}#${step.count}`).join()
+  useEffect(() => {
+    narration.upcoming(upcoming)
+    // The ids say everything the steps do.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [narration, upcomingIds, muted])
   const toggleSound = (): void => {
     if (muted) {
       scoringAudio.unlock()
       scoringAudio.setEnabled(true)
+      player.unlock()
+      setUnavailable(false)
     } else scoringAudio.setEnabled(false)
     setMuted(!muted)
   }
@@ -266,34 +335,38 @@ function ReplayView(props: {
           onPress={props.onExit}
         />
       </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={
-          muted ? lstrings.replay_announcer_on : lstrings.replay_announcer_off
-        }
-        testID="replay-speaker"
-        onPress={toggleSound}
-        style={{
-          width: 44,
-          height: 44,
-          borderRadius: 12,
-          borderWidth: 1,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: muted
-            ? CONTROL_COLORS.micOff.bottom
-            : CONTROL_COLORS.micOn.bottom,
-          borderColor: muted
-            ? CONTROL_COLORS.micOff.border
-            : CONTROL_COLORS.micOn.border
-        }}
-      >
-        <Icon
-          name={muted ? 'volume_off' : 'volume_up'}
-          size={1.5}
-          color={muted ? CONTROL_COLORS.micOff.text : CONTROL_COLORS.micOn.text}
-        />
-      </Pressable>
+      {props.narration && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            muted ? lstrings.replay_announcer_on : lstrings.replay_announcer_off
+          }
+          testID="replay-speaker"
+          onPress={toggleSound}
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 12,
+            borderWidth: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: muted
+              ? CONTROL_COLORS.micOff.bottom
+              : CONTROL_COLORS.micOn.bottom,
+            borderColor: muted
+              ? CONTROL_COLORS.micOff.border
+              : CONTROL_COLORS.micOn.border
+          }}
+        >
+          <Icon
+            name={muted ? 'volume_off' : 'volume_up'}
+            size={1.5}
+            color={
+              muted ? CONTROL_COLORS.micOff.text : CONTROL_COLORS.micOn.text
+            }
+          />
+        </Pressable>
+      )}
     </View>
   )
   const pauseButton = state.final ? null : (
@@ -335,7 +408,7 @@ function ReplayView(props: {
   const playCard = (
     <ReplayPlayCard
       line={card.line}
-      detail={card.detail}
+      detail={unavailable ? lstrings.replay_announcer_unavailable : card.detail}
       catcher={catcher}
       width={fieldWidth}
       height={height}
@@ -355,6 +428,7 @@ function ReplayView(props: {
       ]}
     >
       <View style={{ flex: 1 }}>
+        {player.element}
         {field}
         {playCard}
         <View

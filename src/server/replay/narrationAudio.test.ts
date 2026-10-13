@@ -400,6 +400,22 @@ describe('replay narration audio', function () {
         'If-None-Match': etag
       })
       expect(held.status).equals(304)
+      // A phone checks the sentence is there before its player fetches it.
+      const checked = await fetch(`${base}${path}`, {
+        method: 'HEAD',
+        headers: { 'x-test-actor': String(seeded.accounts.team) }
+      })
+      expect(checked.status).equals(200)
+      expect(checked.headers.get('etag')).equals(etag)
+      expect((await checked.arrayBuffer()).byteLength).equals(0)
+      const missing = await fetch(
+        `${base}/games/${REPLAY_SEED.games.final}/narrations/99-0`,
+        {
+          method: 'HEAD',
+          headers: { 'x-test-actor': String(seeded.accounts.team) }
+        }
+      )
+      expect(missing.status).equals(404)
     })
 
     it('refuses the signed-out, outsiders, unknown steps, and answers 503 without speech', async function () {

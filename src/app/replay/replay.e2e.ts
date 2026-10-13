@@ -4,12 +4,18 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { TeamStationClient } from '../../common/api'
+import {
+  replayContextOf,
+  replayTimelineOf
+} from '../../common/replay/replayTimeline'
 import {
   artifactsDir,
   attachWeb,
   connect,
   type Device,
   required,
+  sessionFor,
   shot,
   signInWeb
 } from './kit.e2e'
@@ -26,6 +32,15 @@ import {
  *     The final game's replay from its pill: the controls, the pitch pacing,
  *     the first home run, pause and play, the box score's pitchers, Exit,
  *     the imported game with nothing to replay, and the wide layout.
+ *
+ *   REPLAY_SCENARIO=announcer   (the server's `speech` set)
+ *     The announcer through the first half-inning: every sentence played as
+ *     its step is shown, none over another, pause and play mid-sentence, and
+ *     muting silencing it at once. Writes narration-first-half.log and the
+ *     served audio, narration-first-half.mp3.
+ *
+ *   REPLAY_SCENARIO=noAnnouncer   (the server's `speech` removed)
+ *     The replay offers no speaker.
  *
  * The seed's game ids are fixed; REPLAY_FINAL, REPLAY_LIVE and
  * REPLAY_IMPORTED override them.
@@ -313,6 +328,202 @@ async function desktop(m: Device): Promise<void> {
   await shot(m, 'replay-desktop')
 }
 
+/**
+ * Records the announcer's element in the page: it is never in the document,
+ * so its play, pause and end are caught on the element's prototype.
+ */
+const MEDIA_LOG = `
+  if (!window.__narrated) {
+    window.__narrated = [];
+    const card = () => document.querySelector('[data-testid="replay-play-card"]')?.textContent ?? '';
+    const log = (type, el) => {
+      if (String(el.src).startsWith('data:')) return;
+      window.__narrated.push({ type, t: Date.now(), src: String(el.src), card: card() });
+    };
+    const proto = HTMLMediaElement.prototype;
+    const play = proto.play, pause = proto.pause;
+    proto.play = function () {
+      if (!this.__logged) {
+        this.__logged = true;
+        this.addEventListener('ended', () => log('ended', this));
+        this.addEventListener('error', () => log('error', this));
+      }
+      log('play', this);
+      return play.apply(this, arguments);
+    };
+    proto.pause = function () {
+      if (!this.paused) log('pause', this);
+      return pause.apply(this, arguments);
+    };
+  }
+  return true;
+`
+
+interface MediaEvent {
+  type: 'play' | 'pause' | 'ended' | 'error'
+  t: number
+  src: string
+  card: string
+}
+
+const mediaEvents = async (m: Device): Promise<MediaEvent[]> =>
+  await evalJson<MediaEvent[]>(m, 'return window.__narrated ?? []')
+
+/** Checks no sentence starts while another is still sounding. */
+function overlaps(events: readonly MediaEvent[]): string[] {
+  const problems: string[] = []
+  let sounding: string | null = null
+  for (const event of events) {
+    if (event.type === 'play') {
+      if (sounding != null && sounding !== event.src)
+        problems.push(`${event.src} started over ${sounding}`)
+      sounding = event.src
+    } else if (event.src === sounding) sounding = null
+  }
+  return problems
+}
+
+async function announcer(m: Device): Promise<void> {
+  await signInWeb(m, LEAGUE)
+  await m.openBrowser({
+    url: `${required('REPLAY_WEB_URL')}/games/${FINAL}/replay`
+  })
+  await m.assertVisible({ id: 'game-replay', timeout: 20000 })
+  await evalJson<boolean>(m, MEDIA_LOG)
+  const started = Date.now()
+  await m.tapOn({ id: 'replay-speaker' })
+  await m.assertVisible({ text: 'Turn announcer off' })
+
+  // Pause in the middle of the third sentence, then play.
+  const deadline = Date.now() + 60000
+  for (;;) {
+    const events = await mediaEvents(m)
+    const plays = events.filter(event => event.type === 'play')
+    const last = events.at(-1)
+    if (plays.length >= 3 && last?.type === 'play') break
+    assert.ok(Date.now() < deadline, 'no third sentence')
+    await wait(150)
+  }
+  await m.tapOn({ id: 'replay-pause' })
+  const pausedAt = (await mediaEvents(m)).length
+  await wait(3000)
+  const whilePaused = (await mediaEvents(m)).slice(pausedAt - 1)
+  assert.equal(whilePaused[0]?.type, 'pause', 'pause did not stop speech')
+  assert.ok(
+    whilePaused.slice(1).every(event => event.type !== 'play'),
+    'speech went on while paused'
+  )
+  await m.tapOn({ id: 'replay-pause' })
+
+  // Through the visitors' half, until the home side's first batter.
+  await cardUntil(
+    m,
+    'the bottom of the 1st',
+    text => text.startsWith('Mookie B steps in'),
+    180000
+  )
+  await m.tapOn({ id: 'replay-speaker' })
+  const mutedAt = Date.now()
+  await m.assertVisible({ text: 'Turn announcer on' })
+  await wait(6000)
+  const events = await mediaEvents(m)
+  const afterMute = events.filter(event => event.t > mutedAt + 300)
+  assert.ok(
+    afterMute.every(event => event.type !== 'play'),
+    'speech after muting'
+  )
+  const stoppedAtMute = events.filter(
+    event => event.type === 'pause' && event.t >= mutedAt - 50
+  )
+  console.log(`muted: ${stoppedAtMute.length} sentence(s) stopped at once`)
+  const problems = overlaps(events)
+  assert.deepEqual(problems, [], problems.join('; '))
+
+  // The served audio of the half-inning, step by step, and the log.
+  const token = await sessionFor(LEAGUE)
+  const client = new TeamStationClient({
+    baseUrl: required('REPLAY_API'),
+    token
+  })
+  const [game, stored] = await Promise.all([
+    client.game(FINAL),
+    client.gameEvents(FINAL)
+  ])
+  const context = replayContextOf(game, stored)
+  assert.ok(context != null, 'no context')
+  const steps = replayTimelineOf(stored, context).steps.filter(
+    step => step.atBatIndex < 4
+  )
+  const dir = await mkdtemp(join(tmpdir(), 'narration-'))
+  const files: string[] = []
+  for (const step of steps) {
+    const file = join(dir, `${step.key}.mp3`)
+    await writeFile(
+      file,
+      Buffer.from(
+        await (
+          await client.narrationAudio(FINAL, {
+            key: step.key,
+            count: step.actions.length
+          })
+        ).arrayBuffer()
+      )
+    )
+    files.push(file)
+  }
+  const list = join(dir, 'list.txt')
+  await writeFile(list, files.map(file => `file '${file}'`).join('\n'))
+  const out = await artifactsDir()
+  const mp3 = join(out, 'narration-first-half.mp3')
+  const joined = spawnSync(
+    'ffmpeg',
+    [
+      '-nostdin',
+      '-loglevel',
+      'error',
+      '-f',
+      'concat',
+      '-safe',
+      '0',
+      '-i',
+      list,
+      '-c',
+      'copy',
+      '-y',
+      mp3
+    ],
+    { stdio: 'inherit' }
+  )
+  assert.equal(joined.status, 0, 'ffmpeg joined nothing')
+  const lines = [
+    '$ REPLAY_SCENARIO=announcer node -r sucrase/register src/app/replay/replay.e2e.ts',
+    `# ${steps.length} steps in the top of the 1st; the announcer's element, seconds from unmuting:`,
+    ...events.map(
+      event =>
+        `${((event.t - started) / 1000).toFixed(2).padStart(7)}s  ${event.type.padEnd(6)} ${event.src.slice(-8)}  card: ${event.card}`
+    ),
+    `# plays: ${events.filter(event => event.type === 'play').length}, overlaps: ${problems.length}, speech after muting: 0`,
+    `# served audio: ${steps.map(step => step.key).join(' ')} -> narration-first-half.mp3`
+  ]
+  await writeFile(
+    join(out, 'narration-first-half.log'),
+    `${lines.join('\n')}\n`
+  )
+  console.log(lines.slice(-2).join('\n'))
+}
+
+/** With no speech on the server, the replay has no speaker to offer. */
+async function noAnnouncer(m: Device): Promise<void> {
+  await signInWeb(m, LEAGUE)
+  await m.openBrowser({
+    url: `${required('REPLAY_WEB_URL')}/games/${FINAL}/replay`
+  })
+  await m.assertVisible({ id: 'game-replay', timeout: 20000 })
+  await m.assertVisible({ text: 'Exit' })
+  await m.assertNotVisible({ id: 'replay-speaker', timeout: 3000 })
+  await shot(m, 'replay-no-announcer')
+}
+
 async function main(): Promise<void> {
   const scenario = required('REPLAY_SCENARIO')
   const daemon = await connect()
@@ -323,7 +534,11 @@ async function main(): Promise<void> {
       await replay((m = await attachWeb(daemon)))
       await m.detach()
       await desktop((m = await attachWeb(daemon, '1440x900')))
-    } else assert.fail(`Unknown scenario ${scenario}`)
+    } else if (scenario === 'announcer')
+      await announcer((m = await attachWeb(daemon)))
+    else if (scenario === 'noAnnouncer')
+      await noAnnouncer((m = await attachWeb(daemon)))
+    else assert.fail(`Unknown scenario ${scenario}`)
     console.log(`PASS: ${scenario}`)
   } finally {
     await m?.detach()
