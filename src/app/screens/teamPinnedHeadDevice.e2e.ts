@@ -12,7 +12,8 @@
 // TS_FIXTURE_PORT defaults to 9317. TS_FIXTURE_SEASON (normal, the default,
 // or over) picks the fixture's season; run E13 alone with over as well.
 // TEST_ONLY is a comma list of scenario ids
-// (default all). `before` captures and logs without asserting.
+// (default all). P1–P3, a player's page, need TS_FIXTURE_COACH=1: the viewer
+// coaches the team and keeps its songs, so Walk-up and Settings are offered. `before` captures and logs without asserting.
 //
 // The header is read with tesseract, so it must be on PATH, and screenshots
 // are cropped with ffmpeg.
@@ -35,6 +36,9 @@ import {
   type FixtureSeason,
   LAST_ROW,
   NEXT_ROW,
+  PLAYER_CARD_LINE,
+  PLAYER_ID,
+  PLAYER_NAME,
   PREVIOUS_ROW,
   TEAM_ID,
   TEAM_NAME,
@@ -104,7 +108,8 @@ const label = (node: Element): string =>
 async function serveFixture(
   host: string,
   port: number,
-  season: FixtureSeason
+  season: FixtureSeason,
+  coach: boolean
 ): Promise<Server> {
   const now = Date.now()
   const server = createServer((request, response) => {
@@ -115,7 +120,8 @@ async function serveFixture(
       (method, path) => {
         console.log(`fixture: unanswered ${method} ${path}`)
       },
-      season
+      season,
+      coach
     )
     response.writeHead(answer.status, { 'content-type': 'application/json' })
     response.end(JSON.stringify(answer.body))
@@ -139,10 +145,18 @@ async function main(): Promise<void> {
   const wanted = (id: string): boolean => only.length === 0 || only.includes(id)
   await mkdir(artifacts, { recursive: true })
   const season = (process.env.TS_FIXTURE_SEASON ?? 'normal') as FixtureSeason
+  const coach = process.env.TS_FIXTURE_COACH === '1'
+  const players = ['P1', 'P2', 'P3', 'P5']
+  // A player's scenarios need the coach: run on their own with it, or skipped.
+  assert(
+    coach || only.length === 0 || !players.some(wanted),
+    'P1–P3 need TS_FIXTURE_COACH=1'
+  )
   const server = await serveFixture(
     required('TS_FIXTURE_HOST'),
     Number(process.env.TS_FIXTURE_PORT ?? 9317),
-    season
+    season,
+    coach
   )
 
   const requireClient = createRequire(
@@ -255,23 +269,31 @@ async function main(): Promise<void> {
           if (n.bounds != null && /^(@|vs) /.test(text)) rows[text] = n.bounds
         }
       }
-      const card = nodes.find(n => label(n) === CARD_LINE)?.bounds
+      // A team's card, or a player's: each has a line nothing else draws.
+      const cardNode = nodes.find(
+        n => label(n) === CARD_LINE || label(n) === PLAYER_CARD_LINE
+      )
+      const card = cardNode?.bounds
+      const name =
+        cardNode != null && label(cardNode) === PLAYER_CARD_LINE
+          ? PLAYER_NAME
+          : TEAM_NAME
       const title =
         card == null
           ? undefined
           : nodes
               .filter(
                 n =>
-                  label(n) === TEAM_NAME &&
-                  n.bounds != null &&
-                  n.bounds.y < card.y
+                  label(n) === name && n.bounds != null && n.bounds.y < card.y
               )
               .sort((a, b) => b.bounds!.y - a.bounds!.y)[0]?.bounds
       return {
         card,
         title,
         pill,
-        content: nodes.find(n => n.id === 'teamTabContent')?.bounds,
+        content: nodes.find(
+          n => n.id === 'teamTabContent' || n.id === 'playerTabContent'
+        )?.bounds,
         rows,
         rowTexts
       }
@@ -426,7 +448,8 @@ async function main(): Promise<void> {
     let headerRow: { top: number; bottom: number } | undefined
     const headerReadsName = async (
       file: string,
-      row?: { top: number; bottom: number }
+      row?: { top: number; bottom: number },
+      name = TEAM_NAME
     ): Promise<boolean> => {
       const top = Math.round((row?.top ?? 0) * pixelScale)
       const pixels = Math.round(
@@ -447,7 +470,7 @@ async function main(): Promise<void> {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore']
       })
-      return text.includes(TEAM_NAME)
+      return text.includes(name)
     }
     /** Screenshot pixels per hierarchy unit. */
     let pixelScale = 1
@@ -693,6 +716,168 @@ async function main(): Promise<void> {
             last.y >= end.pill.y + end.pill.height &&
             last.y + last.height <= (await screen()).height,
           `E13: a full season scrolls on to its last game, ${LAST_ROW}`
+        )
+      }
+    }
+
+    if (!coach && players.some(wanted))
+      log('P1–P3 skipped: they need TS_FIXTURE_COACH=1')
+    if (coach && players.some(wanted)) {
+      // P1 — a player's page: the card in full, the four pills under it.
+      await m.stopApp({ appId: APP })
+      await m.openLink({
+        link: `teamstation:///players/${PLAYER_ID}?onTeam=${TEAM_ID}`
+      })
+      await m.assertVisible({ text: PLAYER_CARD_LINE, timeout: 30000 })
+      await pause(1500)
+      const player = await settled()
+      const offered = (await all()).map(label)
+      log(
+        `player pills: ${offered.filter(t => /^[A-Z][a-z-]+$/.test(t)).join(', ')}`
+      )
+      check(
+        ['Videos', 'Stats', 'Walk-up', 'Teams', 'Settings'].every(t =>
+          offered.includes(t)
+        ),
+        'P1: Videos, Stats, Walk-up, Teams and Settings are offered'
+      )
+      check(
+        player.card != null &&
+          player.card.y + player.card.height <= player.pill.y,
+        'P1: the card is above the pills'
+      )
+      const playerLead =
+        (player.content?.y ?? player.pill.y + player.pill.height) -
+        player.pill.y
+      const playerStart = (layout: Layout): number => layout.pill.y + playerLead
+      const strip = {
+        top: 0,
+        bottom: (player.title?.y ?? player.card?.y ?? 0) - 4 * scale
+      }
+      check(
+        !(await headerReadsName(
+          await capture('player-arrive'),
+          strip,
+          PLAYER_NAME
+        )),
+        'P1: the header shows no name'
+      )
+
+      // P2 — drag up: the card and pills rise with the videos, then the
+      // pills pin and the name is in the header.
+      /** Where each highlight's date line is: the list's own marks. */
+      const marks = async (): Promise<Record<string, number>> =>
+        Object.fromEntries(
+          (await all())
+            .filter(n => n.bounds != null && /\d{4} · \d/.test(label(n)))
+            .map(n => [label(n), n.bounds!.y])
+        )
+      let before = player
+      let beforeMarks = await marks()
+      let pinned: Layout | undefined
+      for (let step = 1; step <= 12; step++) {
+        const now = await drag(-250)
+        const nowMarks = await marks()
+        const moved = Object.entries(nowMarks).some(
+          ([key, y]) =>
+            beforeMarks[key] != null && y < beforeMarks[key] - tolerance
+        )
+        if (now.pill.y >= 0 && near(now.pill.y, before.pill.y) && moved) {
+          pinned = now
+          break
+        }
+        check(
+          now.pill.y < before.pill.y - tolerance,
+          `P2: step ${step}, the pills rise with the videos`
+        )
+        before = now
+        beforeMarks = nowMarks
+      }
+      check(pinned != null, 'P2: the pills pin and the videos go on')
+      const rose = player.pill.y - (pinned?.pill.y ?? player.pill.y)
+      check(
+        pinned != null &&
+          rose > tolerance &&
+          // Android leaves out what is off screen; iOS keeps the card.
+          (pinned.card == null
+            ? platform === 'android'
+            : pinned.card.y + pinned.card.height <= pinned.pill.y &&
+              pinned.card.y <= (player.card?.y ?? 0) - rose + tolerance),
+        'P2: the card has gone under the header'
+      )
+      const row =
+        pinned == null
+          ? undefined
+          : { top: pinned.pill.y - 48 * scale, bottom: pinned.pill.y }
+      check(
+        row != null &&
+          (await headerReadsName(
+            await capture('player-pinned'),
+            row,
+            PLAYER_NAME
+          )),
+        'P2: the name is in the header'
+      )
+
+      // P3 — each pill leaves the pills pinned and starts its tab under them.
+      for (const name of ['Stats', 'Walk-up', 'Teams', 'Settings', 'Videos']) {
+        const now = await tapPill(name)
+        check(
+          near(now.pill.y, pinned?.pill.y),
+          `P3: ${name} leaves the pills pinned where they were`
+        )
+        check(
+          near(now.content?.y, playerStart(now)),
+          `P3: ${name} starts directly under the pills`
+        )
+        if (name === 'Stats') await capture('player-stats')
+      }
+      const home = await dragToEnd(400)
+      check(
+        near(home.card?.y, player.card?.y) && near(home.pill.y, player.pill.y),
+        'P3: dragged back down, the card and pills are where they began'
+      )
+
+      // P5 — Stats, pinned, then a season with no pitching: the tab is
+      // shorter where it is, and the pills stay pinned with Stats under them.
+      if (wanted('P5')) {
+        let up = await read()
+        for (let i = 0; i < 12; i++) {
+          const now = await drag(-250)
+          if (now.pill.y >= 0 && near(now.pill.y, up.pill.y)) break
+          up = now
+        }
+        const stats = await tapPill('Stats')
+        check(
+          stats.pill.y < player.pill.y - tolerance,
+          'P5: Stats opens with the pills pinned'
+        )
+        const press = async (words: string): Promise<void> => {
+          const target = (await all()).find(
+            n => n.bounds != null && label(n).startsWith(words)
+          )?.bounds
+          assert(target != null, `${words} is on screen`)
+          await m.tapOnPoint({
+            point: `${Math.round(target.x + target.width / 2)},${Math.round(
+              target.y + target.height / 2
+            )}`
+          })
+          await pause(800)
+        }
+        await press('Filter')
+        await press('Spring')
+        await press('Show these')
+        for (let i = 0; i < 20; i++) {
+          if (!(await all()).some(n => label(n) === 'Pitching')) break
+          await pause(250)
+        }
+        const shrunk = await settled()
+        log(`P5 shrunk: ${JSON.stringify(shrunk)}`)
+        await capture('player-shrunk')
+        check(near(shrunk.pill.y, stats.pill.y), 'P5: the pills stay pinned')
+        check(
+          near(shrunk.content?.y, playerStart(shrunk)),
+          'P5: Stats still starts right under the pills'
         )
       }
     }

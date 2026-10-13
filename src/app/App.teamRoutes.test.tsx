@@ -65,6 +65,8 @@ describe('team route frames', () => {
 })
 
 describe('team settings browser history', () => {
+  // Two visits of a dozen 60 ms settles each run past mocha's two seconds,
+  // and a test that times out keeps acting under the ones after it.
   it('returns to the original section after Back, Forward and Cancel or Save', async () => {
     const proto = TeamStationClient.prototype
     const originals = Object.getOwnPropertyDescriptors(proto)
@@ -224,7 +226,7 @@ describe('team settings browser history', () => {
       Object.defineProperties(proto, originals)
       window.history.replaceState(null, '', '/')
     }
-  })
+  }).timeout(15000)
 })
 
 describe('a person’s profile, through the app', () => {

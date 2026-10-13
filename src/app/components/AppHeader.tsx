@@ -142,7 +142,9 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
             </Pressable>
           )}
           {handoff != null ? (
-            <View style={styles.handoffLeft}>{handoff}</View>
+            <View testID="headerHandoff" style={styles.handoffLeft}>
+              {handoff}
+            </View>
           ) : (
             title != null && (
               <Text style={styles.title} numberOfLines={1}>

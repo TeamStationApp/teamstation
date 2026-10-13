@@ -247,6 +247,54 @@ const PITCHING = PLAYERS.filter(([, , positions]) =>
   rates: { era: 2.4 + index / 10, whip: 1.2 }
 }))
 
+/** The player whose page the player-screen scenarios open: the first one. */
+const PLAYER = ROSTER.find(person => person.section === 'player')!
+export const PLAYER_ID = String(PLAYER.userId)
+export const PLAYER_NAME = PLAYER.shortName
+/** The player card's own line, how they bat and throw; nothing else draws it. */
+export const PLAYER_CARD_LINE = 'B: R · T: R'
+
+/** Enough highlights that the Videos tab runs well past one screen. */
+function playerHighlights(now: number): unknown {
+  return {
+    highlights: Array.from({ length: 16 }, (_, index) => ({
+      eventId: `evt_${index}`,
+      gameId: `gam_${index}`,
+      videoId: `vid_${index}`,
+      teamId: TEAM_ID,
+      teamName: TEAM_NAME,
+      outcome: ['Single', 'Double', 'Run scored', 'Walk'][index % 4],
+      title: `${PLAYER_NAME} highlight`,
+      playAt: new Date(now - (index + 1) * 3 * DAY).toISOString(),
+      startOffsetSec: 60 * index,
+      playOffsetSec: 60 * index + 5,
+      stillUrl: ''
+    })),
+    nextBefore: null,
+    withoutVideo: 0
+  }
+}
+
+/**
+ * Their career batting and pitching; filtered to a season, batting alone, so
+ * a filter can make the Stats tab shorter where it is.
+ */
+function playerStats(seasonId: string | null): unknown {
+  return {
+    userId: PLAYER.userId,
+    filter: { seasonId, teamId: null, year: null },
+    games: 8,
+    batting: { ...BATTING[0], userId: PLAYER.userId },
+    pitching:
+      seasonId == null ? { ...PITCHING[0], userId: PLAYER.userId } : null,
+    options: {
+      seasons: [{ seasonId: SEASON_ID, name: 'Spring', year: 2026 }],
+      teams: [{ teamId: TEAM_ID, name: TEAM_NAME }],
+      years: [2026]
+    }
+  }
+}
+
 export interface FixtureAnswer {
   status: number
   body: unknown
@@ -264,7 +312,9 @@ export function teamScheduleAnswer(
   path: string,
   now: number,
   onUnknown: (method: string, path: string) => void = () => undefined,
-  season: FixtureSeason = 'normal'
+  season: FixtureSeason = 'normal',
+  /** The viewer coaches the team and keeps its songs: Walk-up and Settings. */
+  coach = false
 ): FixtureAnswer {
   const url = new URL(path, 'http://fixture.example.test')
   const route = url.pathname.replace(/^\/api\/v1/, '')
@@ -276,7 +326,41 @@ export function teamScheduleAnswer(
     case '/auth/me':
       return { status: 200, body: USER }
     case '/me/roles':
-      return { status: 200, body: { teams: {} } }
+      return {
+        status: 200,
+        body: { teams: coach ? { [TEAM_ID]: ['coach', 'songkeeper'] } : {} }
+      }
+    case `/players/${PLAYER_ID}`:
+      return {
+        status: 200,
+        body: {
+          userId: PLAYER.userId,
+          name: PLAYER_NAME,
+          avatarUrl: null,
+          bats: 'right',
+          throws: 'right',
+          teams: [
+            {
+              teamId: TEAM_ID,
+              teamName: TEAM_NAME,
+              logoUrl: null,
+              seasonId: SEASON_ID,
+              seasonName: 'Spring',
+              seasonYear: 2026,
+              jersey: PLAYER.jersey,
+              positions: PLAYER.positions,
+              current: true
+            }
+          ]
+        }
+      }
+    case `/players/${PLAYER_ID}/highlights`:
+      return { status: 200, body: playerHighlights(now) }
+    case `/players/${PLAYER_ID}/stats`:
+      return {
+        status: 200,
+        body: playerStats(url.searchParams.get('seasonId'))
+      }
     case '/teams':
       return { status: 200, body: [TEAM] }
     case `/teams/${TEAM_ID}/games`:
@@ -324,8 +408,8 @@ export function teamScheduleAnswer(
       // The manage gear shows for somebody who may invite.
       return { status: 200, body: { canInvite: true, invites: [] } }
     case `/teams/${TEAM_ID}`:
-      // The team's page reads the team first; a member who manages it, so
-      // the gear shows.
+      // The team's page reads the team first. The viewer is on the team, so
+      // sees its private screen; only its coach manages it, gear and all.
       return {
         status: 200,
         body: {
@@ -344,8 +428,8 @@ export function teamScheduleAnswer(
           games: [],
           canViewPrivate: true,
           nonMemberView: false,
-          canManage: true,
-          canManagePeople: true,
+          canManage: coach,
+          canManagePeople: coach,
           canSeePeople: true
         }
       }

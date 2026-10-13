@@ -174,19 +174,28 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   // A card or tab that changes height after its tab was anchored — a window
   // resized until the team's name wraps, a font arriving late — moves where
   // the pills pin and how much room the tab needs. Both are read again then.
+  //
+  // A tab that shrinks where it is — a filter that leaves less to show —
+  // under a page scrolled to its end has the page pulled back by the
+  // browser, which would take the head down with it. The room is kept for
+  // where the page is, too, and the page put back: the browser runs this
+  // before the scroll its pull would send, which then finds nothing moved.
   const remeasure = useCallback((): void => {
     if (pending.current != null || lastOffset.current == null) return
     const { pinAt: pin, contentBottom, viewport } = measure()
     pinAt.current = pin
+    const at = state.current.y
+    const bottom = contentBottom + latest.current.tail
     if (spacer.current != null) {
-      spacer.current.style.height = `${spacerFor(
-        lastOffset.current + pin,
-        contentBottom + latest.current.tail,
-        viewport
+      spacer.current.style.height = `${Math.max(
+        spacerFor(lastOffset.current + pin, bottom, viewport),
+        spacerFor(at, bottom, viewport)
       )}px`
     }
+    const page = scroller()
+    if (page != null && page.scrollTop < at - 1) page.scrollTop = at
     paint()
-  }, [measure, paint])
+  }, [measure, paint, scroller])
   const remeasureRef = useRef(remeasure)
   remeasureRef.current = remeasure
   // Made on the first commit that can use it, so the card, the tab and the
@@ -222,8 +231,36 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     []
   )
 
+  /** Where the page could scroll to at the last scroll: its end. */
+  const pageEnd = useRef<number | undefined>(undefined)
   const onScroll = useCallback((): void => {
-    const y = scroller()?.scrollTop ?? 0
+    const page = scroller()
+    const y = page?.scrollTop ?? 0
+    const end = page == null ? undefined : page.scrollHeight - page.clientHeight
+    const shrank =
+      end != null && pageEnd.current != null && end < pageEnd.current - 1
+    pageEnd.current = end
+    // Pulled back to the new end of a tab that shrank where it is: not a
+    // scroll anybody made. The room grows by what the tab lost and the page
+    // goes back, the head where it was. (The end moved, which a bounce at
+    // the end never does.)
+    const at = state.current.y
+    if (
+      page != null &&
+      end != null &&
+      shrank &&
+      pending.current == null &&
+      y < at - 1 &&
+      y >= end - 1
+    ) {
+      if (spacer.current != null) {
+        const now = spacer.current.getBoundingClientRect().height
+        spacer.current.style.height = `${now + (at - y)}px`
+      }
+      page.scrollTop = at
+      pageEnd.current = page.scrollHeight - page.clientHeight
+      return
+    }
     // While a tab is being anchored the head holds still: the page can move
     // under it as the new content lands, and must not take the head along.
     state.current =
