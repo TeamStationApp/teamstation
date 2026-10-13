@@ -10,6 +10,8 @@ import {
   holdExpired,
   isFinished,
   isOurSilence,
+  LIVE_OPEN_WAIT_MS,
+  liveOpeningMs,
   liveTargetMs,
   masterOf,
   NUDGE_LIMIT,
@@ -279,5 +281,21 @@ describe('bringing a phone tile back by speed', function () {
   it('never moves the speed further than the limit', function () {
     expect(nudgeRate(1)).equals(1 + NUDGE_LIMIT)
     expect(nudgeRate(-3)).equals(1 - NUDGE_LIMIT)
+  })
+})
+
+describe('the moment a live grid opens on', function () {
+  it('has none until a live tile has a picture', function () {
+    expect(liveOpeningMs([], 0)).equals(null)
+    expect(liveOpeningMs([null, null], 60_000)).equals(null)
+  })
+
+  it('is the moment of the tile furthest ahead, which the others hold already', function () {
+    expect(liveOpeningMs([5000, 3000, 4000], 0)).equals(5000)
+  })
+
+  it('waits for every tile, but not for longer than the wait after the first', function () {
+    expect(liveOpeningMs([5000, null], LIVE_OPEN_WAIT_MS - 1)).equals(null)
+    expect(liveOpeningMs([null, 5000], LIVE_OPEN_WAIT_MS)).equals(5000)
   })
 })
