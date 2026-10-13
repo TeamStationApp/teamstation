@@ -124,10 +124,18 @@ describe('the watch tab on a phone', function () {
     const capped = parseFloat(getComputedStyle(list(host)).maxHeight)
     expect(capped).lessThanOrEqual(390)
     await render(false, false, host)
-    const upright = getComputedStyle(list(host)).maxHeight
-    expect(
-      upright === '' || upright === 'none' || parseFloat(upright) > 844 * 100,
-      `max-height ${upright}`
-    ).equals(true)
+    // The animated style is applied on a frame of its own, which a loaded
+    // machine can take a while to reach; a cap that outlived the turn never
+    // goes, so waiting for it costs a passing run nothing.
+    const uncapped = (value: string): boolean =>
+      value === '' || value === 'none' || parseFloat(value) > 844 * 100
+    let upright = getComputedStyle(list(host)).maxHeight
+    for (let waited = 0; !uncapped(upright) && waited < 2000; waited += 50) {
+      await act(async () => {
+        await delay(50)
+      })
+      upright = getComputedStyle(list(host)).maxHeight
+    }
+    expect(uncapped(upright), `max-height ${upright}`).equals(true)
   })
 })
