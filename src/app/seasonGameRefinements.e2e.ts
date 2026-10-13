@@ -109,10 +109,11 @@ async function main(): Promise<void> {
     old: string,
     name: string
   ): Promise<void> => {
-    await tap(b.m, `Change ${old}`)
-    await fill(b.m, 'Find a team', name)
+    // The team's row opens the selector that slides up.
+    await tap(b.m, old)
+    await fill(b.m, 'Search all teams', name)
     await tap(b.m, `Choose ${name}`)
-    await contains(b.page, `Change ${name}`)
+    await contains(b.page, name)
   }
   const pass = async (id: string, description: string): Promise<void> => {
     await log(artifacts, 'browser-scenarios.log', `${id} PASS: ${description}`)
@@ -386,14 +387,15 @@ async function main(): Promise<void> {
     await openSettings(admin, seed.managedGameId)
     const count = (await f.h.db.selectFrom('teams').select('id').execute())
       .length
-    await tap(admin.m, 'Change Demo Comets')
-    await contains(admin.page, 'Choose Demo Unscheduled')
-    await tap(admin.m, 'Create a placeholder')
-    await fill(admin.m, 'Placeholder name', 'Demo Preview Opponent')
-    await tap(admin.m, 'Managed by Demo Comets')
+    await tap(admin.m, 'Demo Comets')
+    await contains(admin.page, 'Demo Unscheduled')
+    await tap(admin.m, 'Create Placeholder Team')
+    await fill(admin.m, 'Team name', 'Demo Preview Opponent')
+    await tap(admin.m, 'Continue')
+    await tap(admin.m, 'Skip')
     await admin.m.waitForAnimationToEnd()
-    await tap(admin.m, 'Use this placeholder')
-    await contains(admin.page, 'Change Demo Preview Opponent')
+    await tap(admin.m, 'Skip')
+    await contains(admin.page, 'Demo Preview Opponent')
     await tap(admin.m, 'Cancel')
     expect(
       (await f.h.db.selectFrom('teams').select('id').execute()).length
@@ -411,7 +413,7 @@ async function main(): Promise<void> {
       admin.page,
       'An admin of Demo Visitors must approve changes.'
     )
-    await tap(admin.m, 'Send Game Proposal')
+    await tap(admin.m, 'Save')
     await contains(admin.page, 'Game proposal sent')
     const retained = await f.h.db
       .selectFrom('group_requests')
@@ -434,7 +436,7 @@ async function main(): Promise<void> {
     const finalId = 'baseline-hawks-eagles'
     await openSettings(admin, finalId)
     await fill(admin.m, 'Venue (optional)', 'Demo Proposed Final Field')
-    await tap(admin.m, 'Send Game Proposal')
+    await tap(admin.m, 'Save')
     await contains(admin.page, 'Game proposal sent')
     const finalProposal = await f.h.db
       .selectFrom('group_requests')
@@ -452,7 +454,7 @@ async function main(): Promise<void> {
     await contains(admin.page, '2–5')
     await openSettings(admin, finalId)
     await fill(admin.m, 'Venue (optional)', 'Demo Expiring Final Field')
-    await tap(admin.m, 'Send Game Proposal')
+    await tap(admin.m, 'Save')
     await contains(admin.page, 'Game proposal sent')
     const expiring = await f.h.db
       .selectFrom('group_requests')
@@ -478,7 +480,7 @@ async function main(): Promise<void> {
 
     await openSettings(admin, seed.gameId)
     await choose(admin, 'Demo Eagles', 'Demo Visitors')
-    await tap(admin.m, 'Send Game Proposal')
+    await tap(admin.m, 'Save')
     await contains(admin.page, 'Game proposal sent')
     const replacement = await f.h.db
       .selectFrom('group_requests')
@@ -526,7 +528,7 @@ async function main(): Promise<void> {
       .execute()
     await openSettings(admin, decliningId)
     await choose(admin, 'Demo Eagles', 'Demo Visitors')
-    await tap(admin.m, 'Send Game Proposal')
+    await tap(admin.m, 'Save')
     await contains(admin.page, 'Game proposal sent')
     const declines = await f.h.db
       .selectFrom('group_requests')
@@ -621,17 +623,18 @@ async function main(): Promise<void> {
       })
       .execute()
     await openSettings(admin, saveId)
-    await tap(admin.m, 'Change Demo Comets')
-    await contains(admin.page, 'Choose Demo Unscheduled')
-    await tap(admin.m, 'Create a placeholder')
-    await fill(admin.m, 'Placeholder name', 'Demo Saved Opponent')
-    await tap(admin.m, 'Managed by Demo Comets')
+    await tap(admin.m, 'Demo Comets')
+    await contains(admin.page, 'Demo Unscheduled')
+    await tap(admin.m, 'Create Placeholder Team')
+    await fill(admin.m, 'Team name', 'Demo Saved Opponent')
+    await tap(admin.m, 'Continue')
+    await tap(admin.m, 'Skip')
     await admin.m.waitForAnimationToEnd()
-    await tap(admin.m, 'Use this placeholder')
+    await tap(admin.m, 'Skip')
     await fill(admin.m, 'Date', '2026-10-22')
     await fill(admin.m, 'Time', '20:15')
     await fill(admin.m, 'Time zone', 'America/Los_Angeles')
-    await tap(admin.m, 'Exhibition: Off')
+    await tap(admin.m, 'Exhibition', 'switch')
     await tap(admin.m, 'Save')
     await contains(admin.page, 'Game changes saved')
     await capture(admin.m, artifacts, 'success-toast.png')
@@ -715,39 +718,12 @@ async function main(): Promise<void> {
     await visit(admin, `/groups/team/${f.teamA}`)
     await tap(admin.m, 'Manage')
     await tap(admin.m, 'Create Game')
-    await contains(admin.page, 'Outside a TeamStation season')
-    await tap(admin.m, 'Choose a different season')
-    const foreignLookup = admin.page.waitForResponse(response =>
-      response.url().includes('/seasons?view=public&query=Demo%20Tournament')
-    )
-    const foreignPermissionLookup = admin.page.waitForResponse(
-      response =>
-        response.url().endsWith(`/seasons/${f.seasonB}`) &&
-        response.request().method() === 'GET'
-    )
-    await fill(admin.m, 'Find a season you manage', 'Demo Tournament')
-    const discovery = await foreignLookup
-    expect(
-      (await discovery.json()).some((group: any) => group.id === f.seasonB)
-    ).equals(true)
-    const permission = await foreignPermissionLookup
-    expect(permission.status()).equals(200)
-    expect((await permission.json()).canManage).equals(false)
-    // Observe the lookup's rendered result after its exact permission response,
-    // independently of unrelated background requests and subscriptions.
-    await diagnostic(admin.page, async () => {
-      await new Promise<void>(resolve => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            resolve()
-          })
-        })
-      })
-    })
-    await absent(admin.page, 'Host: Demo Tournament')
-    await fill(admin.m, 'Find a season you manage', 'Demo Regular')
-    await tap(admin.m, 'Host: Demo Regular')
-    await fill(admin.m, 'Find a team', 'Demo Eagles')
+    // A team page's game is a scrimmage or exhibition: there is no season
+    // to choose, and none is sent.
+    await contains(admin.page, 'always creates a scrimmage/exhibition game')
+    await absent(admin.page, 'Find a season you manage')
+    await tap(admin.m, 'Choose Away Team')
+    await fill(admin.m, 'Search all teams', 'Demo Eagles')
     await admin.page.waitForFunction(() =>
       [...document.querySelectorAll('[role="button"]')].some(n => {
         const label = n.getAttribute('aria-label')
@@ -765,7 +741,7 @@ async function main(): Promise<void> {
     await fill(admin.m, 'Date', '2026-10-28')
     await fill(admin.m, 'Time', '19:00')
     await fill(admin.m, 'Venue (optional)', 'Demo Administered Host Field')
-    await tap(admin.m, 'Send game proposal')
+    await tap(admin.m, 'Save')
     await contains(admin.page, 'Pending')
     const foreignId = new URL(admin.page.url()).pathname.split('/').at(-1)!
     const foreign = await f.h.db
@@ -779,7 +755,10 @@ async function main(): Promise<void> {
       initiating_team_id: f.teamA,
       status: 'pending'
     })
-    expect((foreign.terms as any).game.seasonId).equals(f.seasonA)
+    expect((foreign.terms as any).game).includes({
+      seasonId: null,
+      exhibition: true
+    })
     await visit(opponent, `/notifications/${foreignId}`)
     await tap(opponent.m, 'Accept invitation')
     await contains(opponent.page, 'Accepted')
@@ -793,12 +772,12 @@ async function main(): Promise<void> {
     ).length(0)
     await pass(
       'B8 regression',
-      'team-origin administered-season chooser preserves team sender and two-team consent, foreign season is unselectable and no foreign membership is created'
+      'a team-origin game is an exhibition in no season, keeps the team sender and two-team consent, and creates no season membership'
     )
     await visit(admin, `/groups/season/${f.seasonA}?tab=schedule&when=upcoming`)
     await tap(admin.m, 'Create Game')
-    await tap(admin.m, 'Home: Choose team')
-    await fill(admin.m, 'Find a team', 'Demo Eagles')
+    await tap(admin.m, 'Choose Home Team')
+    await fill(admin.m, 'Search all teams', 'Demo Eagles')
     await admin.page.waitForFunction(() =>
       [...document.querySelectorAll('[role="button"]')].some(n => {
         const label = n.getAttribute('aria-label')
@@ -812,8 +791,8 @@ async function main(): Promise<void> {
     )
     if (homeGuest == null) throw new Error('Host-only home opponent missing')
     await tap(admin.m, homeGuest)
-    await tap(admin.m, 'Away: Choose team')
-    await fill(admin.m, 'Find a team', 'Demo Visitors')
+    await tap(admin.m, 'Choose Away Team')
+    await fill(admin.m, 'Search all teams', 'Demo Visitors')
     await admin.page.waitForFunction(() =>
       [...document.querySelectorAll('[role="button"]')].some(n => {
         const label = n.getAttribute('aria-label')
@@ -832,7 +811,7 @@ async function main(): Promise<void> {
     await fill(admin.m, 'Date', '2026-10-29')
     await fill(admin.m, 'Time', '19:00')
     await fill(admin.m, 'Venue (optional)', 'Demo Host-only Field')
-    await tap(admin.m, 'Send game proposal')
+    await tap(admin.m, 'Save')
     await contains(admin.page, 'Pending')
     const hostOnlyId = new URL(admin.page.url()).pathname.split('/').at(-1)!
     const sides = await f.h.db

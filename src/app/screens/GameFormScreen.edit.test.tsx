@@ -1,30 +1,23 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
 
 import { TeamStationClient } from '../../common/api'
 import { asGameScheduling, type GameProposal } from '../../common/gameApprovals'
 import type { CreateGroup } from '../../common/groupCreation'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
+import { pressSchedule, typeSchedule } from '../../test/eventScheduleDom'
 import {
-  chooseSchedule,
-  pressSchedule,
-  typeSchedule
-} from '../../test/eventScheduleDom'
-import { ThemeProvider } from '../theme/ThemeContext'
-import {
-  type GameSettingsResult,
-  GameSettingsScreen
-} from './GameSettingsScreen'
+  fill,
+  find,
+  mount as mountElement,
+  press,
+  settle,
+  text,
+  unmount
+} from '../../test/gameFormDom'
+import { GameFormScreen, type GameSettingsResult } from './GameFormScreen'
 
-let root: Root | undefined
-
-async function settle(milliseconds = 300): Promise<void> {
-  await act(async () => {
-    await new Promise(resolve => setTimeout(resolve, milliseconds))
-  })
-}
 const home = asPublicGroup({
   id: 'team_home',
   kind: 'team',
@@ -67,12 +60,14 @@ function fixture(managed = [home.id, away.id, replacement.id]): {
   created: CreateGroup[]
   saved: GameSettingsResult[]
   withdrawn: string[]
+  anchors: Array<{ teamId?: string; seasonId?: string }>
 } {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   const sent: GameProposal[] = []
   const created: CreateGroup[] = []
   const saved: GameSettingsResult[] = []
   const withdrawn: string[] = []
+  const anchors: Array<{ teamId?: string; seasonId?: string }> = []
   client.gameScheduling = async () =>
     asGameScheduling({
       game,
@@ -96,6 +91,10 @@ function fixture(managed = [home.id, away.id, replacement.id]): {
       games: [],
       canManage: managed.includes(group.id) || group.id === league.id
     })
+  }
+  client.relatedTeams = async anchor => {
+    anchors.push(anchor)
+    return [home, away, replacement]
   }
   client.discoverGroups = async () => [home, away, replacement]
   client.ownGroups = async () => [home, league]
@@ -121,77 +120,48 @@ function fixture(managed = [home.id, away.id, replacement.id]): {
   client.withdrawFromGame = async (_id, id) => {
     withdrawn.push(id)
   }
-  return { client, sent, created, saved, withdrawn }
+  return { client, sent, created, saved, withdrawn, anchors }
 }
 async function mount(
   f: ReturnType<typeof fixture>,
   onCancel = (): void => {}
 ): Promise<void> {
-  const host = document.createElement('div')
-  document.body.append(host)
-  root = createRoot(host)
-  await act(async () => {
-    root!.render(
-      <ThemeProvider>
-        <GameSettingsScreen
-          client={f.client}
-          gameId="game_demo"
-          onSaved={result => f.saved.push(result)}
-          onCancel={onCancel}
-        />
-      </ThemeProvider>
-    )
-  })
+  await mountElement(
+    <GameFormScreen
+      client={f.client}
+      mode={{ kind: 'edit', gameId: 'game_demo' }}
+      onSaved={result => f.saved.push(result)}
+      onCancel={onCancel}
+    />
+  )
   await settle()
 }
 function button(label: string): HTMLElement {
-  const found = [
-    ...document.querySelectorAll<HTMLElement>('[role="button"]')
-  ].find(
-    node => (node.getAttribute('aria-label') ?? node.textContent) === label
-  )
+  const found = find(label)
   expect(found, label).not.equals(undefined)
   return found!
 }
-async function press(label: string): Promise<void> {
-  await act(async () => {
-    button(label).click()
-  })
-  await settle(0)
+const disabled = (label: string): boolean =>
+  button(label).getAttribute('aria-disabled') === 'true'
+/** Opens the selector for the side holding this team, and waits for its list. */
+async function change(team: string): Promise<void> {
+  await press(`${team}, ${team === 'Demo Hawks' ? 'Home' : 'Away'}`)
+  await settle()
 }
-async function fill(label: string, value: string): Promise<void> {
-  if (
-    [
-      'Date',
-      'End date',
-      'Time',
-      'Start time',
-      'End time',
-      'Time zone'
-    ].includes(label)
-  ) {
-    await chooseSchedule(label, value)
-    return
-  }
-  const input = document.querySelector<HTMLInputElement>(
-    `input[aria-label="${label}"]`
-  )
-  expect(input, label).not.equals(null)
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      'value'
-    )!.set!.call(input, value)
-    input!.dispatchEvent(new window.Event('input', { bubbles: true }))
-  })
+async function placeholder(name: string): Promise<void> {
+  await press('Create Placeholder Team')
+  await fill('Team name', name)
+  await press('Continue')
+  await press('Skip')
+  await press('Skip')
 }
+const venue = (): string =>
+  document.querySelector<HTMLInputElement>(
+    'input[aria-label="Venue name (optional)"]'
+  )!.value
 
-describe('separate game settings drafts and consent labels', () => {
-  afterEach(async () => {
-    await act(async () => root?.unmount())
-    root = undefined
-    document.body.replaceChildren()
-  })
+describe('game settings in the shared game scene', () => {
+  afterEach(unmount)
   for (const status of ['declined', 'expired', 'withdrawn', 'superseded'])
     it(`keeps the draft and refuses success feedback when a lost-response retry finds its proposal ${status}`, async () => {
       const f = fixture([home.id])
@@ -208,25 +178,24 @@ describe('separate game settings drafts and consent labels', () => {
       }
       await mount(f)
       await fill('Venue name (optional)', 'Demo Retry Field')
-      await press('Send Game Proposal')
-      await press('Send Game Proposal')
+      await press('Save')
+      await press('Save')
       expect(f.sent[0].idempotencyKey).equals(f.sent[1].idempotencyKey)
       expect(f.saved).length(0)
-      expect(document.body.textContent).includes('This proposal is closed.')
-      expect(
-        document.querySelector<HTMLInputElement>(
-          'input[aria-label="Venue name (optional)"]'
-        )!.value
-      ).equals('Demo Retry Field')
+      expect(text()).includes('This proposal is closed.')
+      expect(venue()).equals('Demo Retry Field')
     })
-  it('defaults a new opponent to an administered participating team even when a league is listed first', async () => {
+  it('keeps a new placeholder with an administered participating team even when a league is listed first', async () => {
     const f = fixture()
     f.client.ownGroups = async () => [league, home]
     await mount(f)
-    await press('Change Demo Eagles')
-    await press('Create a placeholder')
-    await fill('Placeholder name', 'Demo Default Opponent')
-    await press('Use this placeholder')
+    await change('Demo Eagles')
+    await press('Create Placeholder Team')
+    expect(text()).includes('Kept by Demo Hawks')
+    await fill('Team name', 'Demo Default Opponent')
+    await press('Continue')
+    await press('Skip')
+    await press('Skip')
     await press('Save')
     expect(f.created[0].custodian).deep.equals({ kind: 'team', id: home.id })
   })
@@ -241,18 +210,16 @@ describe('separate game settings drafts and consent labels', () => {
         administeredTeamIds: []
       })
     await mount(f)
-    expect(button('Send Game Proposal').getAttribute('aria-disabled')).equals(
-      'true'
-    )
-    expect(button('Swap home and away').getAttribute('aria-disabled')).equals(
-      'true'
-    )
-    expect(document.body.textContent).includes(
+    expect(disabled('Save')).equals(true)
+    expect(disabled('Swap home and away')).equals(true)
+    // Neither team row opens the selector.
+    expect(find('Demo Eagles, Away')).equals(undefined)
+    expect(text()).includes(
       'You need administrator access to change this game.'
     )
-    expect(document.body.textContent).not.includes('This canceled game')
-    expect(document.body.textContent).not.includes('Withdraw Demo')
-    await press('Send Game Proposal')
+    expect(text()).not.includes('This canceled game')
+    expect(text()).not.includes('Withdraw Demo')
+    await press('Save')
     expect(f.sent).length(0)
     expect(f.created).length(0)
   })
@@ -266,19 +233,19 @@ describe('separate game settings drafts and consent labels', () => {
             resolveOld = resolve
           })
     await mount(f)
-    await press('Change Demo Eagles')
+    await change('Demo Eagles')
+    await fill('Search all teams', 'Co')
     await settle()
-    await fill('Find a team', 'Comets')
+    await fill('Search all teams', 'Comets')
     await settle()
     expect(button('Choose Demo Comets')).not.equals(null)
     await act(async () => {
       resolveOld([home])
     })
-    expect(document.body.textContent).not.includes('Choose Demo Hawks')
+    expect(text()).not.includes('Choose Demo Hawks')
     expect(f.sent).length(0)
   })
-
-  it('ignores a team detail response after its picker has closed', async () => {
+  it('ignores a team detail response after its selector has closed', async () => {
     const f = fixture()
     const normalGroup = f.client.group.bind(f.client)
     let resolveChoice!: (
@@ -291,19 +258,17 @@ describe('separate game settings drafts and consent labels', () => {
           })
         : await normalGroup(ref)
     await mount(f)
-    await press('Change Demo Eagles')
-    await settle()
+    await change('Demo Eagles')
     await press('Choose Demo Comets')
-    await press('Close team picker')
+    await press('Cancel team selector')
     await act(async () => {
       resolveChoice(await normalGroup({ kind: 'team', id: replacement.id }))
     })
-    expect(button('Change Demo Eagles')).not.equals(null)
-    expect(document.body.textContent).not.includes('Demo Comets')
+    expect(button('Demo Eagles, Away')).not.equals(null)
+    expect(text()).not.includes('Demo Comets')
     expect(f.sent).length(0)
   })
-
-  it('keeps a failed team selection retryable in the current picker', async () => {
+  it('keeps a failed team selection retryable in the open selector', async () => {
     const f = fixture()
     const normalGroup = f.client.group.bind(f.client)
     let failed = false
@@ -315,33 +280,62 @@ describe('separate game settings drafts and consent labels', () => {
       return await normalGroup(ref)
     }
     await mount(f)
-    await press('Change Demo Eagles')
-    await settle()
+    await change('Demo Eagles')
     await press('Choose Demo Comets')
-    expect(document.body.textContent).includes('Selected team is unavailable')
+    expect(text()).includes('Selected team is unavailable')
     await press('Choose Demo Comets')
-    expect(button('Change Demo Comets')).not.equals(null)
+    expect(button('Demo Comets, Away')).not.equals(null)
     expect(f.sent).length(0)
   })
-
-  it('recovers managing-group lookup and offers only administered groups for a placeholder', async () => {
+  it('suggests around the side that stays, and the game’s season', async () => {
+    const f = fixture()
+    await mount(f)
+    await change('Demo Eagles')
+    expect(f.anchors.at(-1)).deep.equals({
+      teamId: home.id,
+      seasonId: 'season_demo'
+    })
+    // The team that stays is never offered for the other side.
+    expect(find('Choose Demo Hawks')).equals(undefined)
+    await press('Cancel team selector')
+    await change('Demo Hawks')
+    expect(f.anchors.at(-1)).deep.equals({
+      teamId: away.id,
+      seasonId: 'season_demo'
+    })
+  })
+  it('offers no placeholder when the managing groups cannot load', async () => {
     const f = fixture([home.id])
     f.client.ownGroups = async () => {
       throw new Error('Managing groups unavailable')
     }
     await mount(f)
-    await press('Change Demo Eagles')
-    await press('Create a placeholder')
-    expect(document.body.textContent).includes('Managing groups unavailable')
-    expect(button('Use this placeholder').getAttribute('aria-disabled')).equals(
-      'true'
+    await change('Demo Eagles')
+    // Not loading is not the same as managing nothing.
+    expect(text()).includes(
+      'Who may keep a placeholder could not load. Cancel and open this again to retry.'
     )
-    f.client.ownGroups = async () => [home, away, league]
-    await press('Create a placeholder')
-    expect(button('Managed by Demo Hawks')).not.equals(null)
-    expect(button('Managed by Demo League')).not.equals(null)
-    expect(document.body.textContent).not.includes('Managed by Demo Eagles')
+    expect(text()).not.includes('You need to manage a team or season')
     expect(f.created).length(0)
+  })
+  it('asks again for the managing groups when the selector reopens after a failure', async () => {
+    const f = fixture([home.id])
+    let asked = 0
+    f.client.ownGroups = async () => {
+      asked++
+      // At mount, and again as the selector first opens.
+      if (asked <= 2) throw new Error('Managing groups unavailable')
+      return [home, league]
+    }
+    await mount(f)
+    await change('Demo Eagles')
+    expect(text()).includes('could not load')
+    await press('Cancel team selector')
+    await settle(400)
+    await change('Demo Eagles')
+    expect(asked).equals(3)
+    expect(text()).not.includes('could not load')
+    expect(disabled('Create Placeholder Team')).equals(false)
   })
 
   it('retries withdrawal after an error without submitting the unsaved draft', async () => {
@@ -354,9 +348,9 @@ describe('separate game settings drafts and consent labels', () => {
     }
     await mount(f)
     await fill('Venue name (optional)', 'Unsaved Field')
-    await press('Withdraw Demo Hawks from game')
+    await press('Withdraw Demo Hawks')
     await press('Confirm withdrawal')
-    expect(document.body.textContent).includes('Withdrawal unavailable')
+    expect(text()).includes('Withdrawal unavailable')
     expect(f.saved).length(0)
     await press('Confirm withdrawal')
     expect(f.withdrawn).deep.equals([home.id])
@@ -383,21 +377,54 @@ describe('separate game settings drafts and consent labels', () => {
       })
     await press('Reload game settings')
     await settle()
-    expect(
-      document.querySelector<HTMLInputElement>(
-        'input[aria-label="Venue name (optional)"]'
-      )!.value
-    ).equals('Latest Field')
+    expect(venue()).equals('Latest Field')
     await press('Save')
     expect(f.sent[1].expected).equals('b'.repeat(64))
     expect(f.sent[1].idempotencyKey).not.equals(f.sent[0].idempotencyKey)
   })
-  it('loads persisted values and swaps only the local preview until Save', async () => {
+  it('shows a failed reload with its retry instead of the stale form', async () => {
     const f = fixture()
+    f.client.proposeGame = async body => {
+      f.sent.push(body)
+      throw new Error('The game changed. Review the current schedule.')
+    }
     await mount(f)
-    expect(document.body.textContent).includes('Game Settings')
-    expect(document.body.textContent).not.includes('Choose a different season')
-    expect(document.body.textContent).not.includes('Retry teams')
+    await press('Save')
+    f.client.gameScheduling = async () => {
+      throw new Error('Game unavailable')
+    }
+    await press('Reload game settings')
+    await settle()
+    expect(text()).includes('Game unavailable')
+    expect(find('Save')).equals(undefined)
+    f.client.gameScheduling = async () =>
+      asGameScheduling({
+        game: { ...game, venue: 'Latest Field' },
+        version: 'b'.repeat(64),
+        canPropose: true,
+        withdrawTeamIds: [home.id],
+        administeredTeamIds: [home.id]
+      })
+    await press('Retry game settings')
+    await settle()
+    expect(venue()).equals('Latest Field')
+    expect(disabled('Save')).equals(false)
+  })
+  it('loads saved values and swaps only the local draft until Save', async () => {
+    const f = fixture()
+    f.client.gameScheduling = async () =>
+      asGameScheduling({
+        game: { ...game, exhibition: true },
+        version: 'a'.repeat(64),
+        canPropose: true,
+        withdrawTeamIds: [home.id],
+        administeredTeamIds: [home.id]
+      })
+    await mount(f)
+    expect(
+      document.querySelector('[role="heading"], [aria-level]')?.textContent
+    ).equals('Game Settings')
+    expect(text()).not.includes('Choose a different season')
     expect(
       document.querySelector('[data-testid="event-schedule-time"]')?.textContent
     ).includes(
@@ -406,25 +433,33 @@ describe('separate game settings drafts and consent labels', () => {
         minute: '2-digit'
       }).format(new Date(game.startAt))
     )
+    const exhibition = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Exhibition"]'
+    )!
+    expect(exhibition.checked).equals(true)
     await press('Swap home and away')
     expect(f.sent).length(0)
-    const names = document.body.textContent!
-    expect(names.indexOf('Demo Hawks')).lessThan(names.indexOf('Demo Eagles'))
+    expect(button('Demo Eagles, Home')).not.equals(null)
+    expect(button('Demo Hawks, Away')).not.equals(null)
     await fill('Venue name (optional)', 'Demo New Field')
-    await press('Exhibition: Off')
+    await act(async () => {
+      exhibition.click()
+    })
     await press('Save')
     expect(f.sent).length(1)
     expect(f.sent[0].game).includes({
       homeTeamId: away.id,
       awayTeamId: home.id,
-      exhibition: true,
+      exhibition: false,
       venue: 'Demo New Field',
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
     })
     expect(f.sent[0]).includes({
       expected: 'a'.repeat(64),
-      gameId: 'game_demo'
+      gameId: 'game_demo',
+      initiatingTeamId: home.id
     })
+    expect(f.sent[0].sender).deep.equals({ kind: 'team', id: home.id })
     expect(f.saved[0].status).equals('accepted')
   })
   it('sends address and exact unchanged off-grid start/end instants through game approval', async () => {
@@ -457,12 +492,38 @@ describe('separate game settings drafts and consent labels', () => {
       longitude: null
     })
   })
+  it('adds an end time to a future game on its loaded local start date', async () => {
+    const f = fixture()
+    f.client.gameScheduling = async () =>
+      asGameScheduling({
+        game: {
+          ...game,
+          startAt: '2037-07-02T02:00:00.000Z',
+          timezone: 'America/Los_Angeles'
+        },
+        version: 'a'.repeat(64),
+        canPropose: true,
+        withdrawTeamIds: [home.id],
+        administeredTeamIds: [home.id]
+      })
+    await mount(f)
+    await press('Set end time')
+    expect(
+      document.querySelector('[data-testid="event-schedule-endTime"]')
+    ).not.equals(null)
+    await press('Save')
+    expect(f.sent[0].game.startAt).equals('2037-07-02T02:00:00.000Z')
+    expect(f.sent[0].game.endAt).equals('2037-07-02T05:00:00.000Z')
+  })
   it('Cancel discards every draft without creating a team or proposing a game', async () => {
     const f = fixture()
     let canceled = 0
     await mount(f, () => canceled++)
     await fill('Date', '2027-03-05')
     await press('Swap home and away')
+    await press('Demo Hawks, Away')
+    await settle()
+    await placeholder('Demo Nomads')
     await press('Cancel')
     expect(canceled).equals(1)
     expect(f.sent).length(0)
@@ -481,27 +542,17 @@ describe('separate game settings drafts and consent labels', () => {
       }
     }
     await mount(f)
-    await press('Change Demo Eagles')
-    await settle()
+    await change('Demo Eagles')
     await press('Choose Demo Comets')
-    expect(document.body.textContent).includes(
-      'An admin of Demo Comets must approve changes.'
-    )
+    expect(text()).includes('An admin of Demo Comets must approve changes.')
     expect(f.sent).length(0)
-    await press('Send Game Proposal')
+    await press('Save')
     expect(f.sent[0].game.awayTeamId).equals(replacement.id)
     expect(f.saved[0].status).equals('pending')
   })
-  it('prevents duplicate opponents and invalid times before any mutation', async () => {
+  it('prevents invalid times before any mutation', async () => {
     const f = fixture()
     await mount(f)
-    await press('Change Demo Eagles')
-    await settle()
-    await press('Choose Demo Hawks')
-    expect(button('Save').getAttribute('aria-disabled')).equals('true')
-    await press('Change Demo Hawks')
-    await settle()
-    await press('Choose Demo Eagles')
     await pressSchedule('[data-testid="event-schedule-date"]')
     await typeSchedule('Year', 'invalid')
     expect(document.querySelector('[role="alert"]')).not.equals(null)
@@ -526,12 +577,8 @@ describe('separate game settings drafts and consent labels', () => {
     await fill('Venue name (optional)', 'Demo Retry Field')
     await press('Save')
     expect(f.saved).length(0)
-    expect(document.body.textContent).includes('Temporary game error')
-    expect(
-      document.querySelector<HTMLInputElement>(
-        'input[aria-label="Venue name (optional)"]'
-      )!.value
-    ).equals('Demo Retry Field')
+    expect(text()).includes('Temporary game error')
+    expect(venue()).equals('Demo Retry Field')
     await press('Save')
     expect(f.sent[0].idempotencyKey).equals(f.sent[1].idempotencyKey)
     expect(f.saved).length(1)
@@ -576,10 +623,7 @@ describe('separate game settings drafts and consent labels', () => {
       })
     await mount(f)
     await press('Save')
-    await act(async () => {
-      root!.unmount()
-    })
-    root = undefined
+    await unmount()
     await act(async () => {
       resolveRequest({
         id: 'request_demo',
@@ -591,24 +635,26 @@ describe('separate game settings drafts and consent labels', () => {
     })
     expect(f.saved).length(0)
   })
-  it('creates a staged placeholder only on Save, with the selected managing group', async () => {
+  it('creates a staged placeholder only on Save, kept automatically by a team in the game', async () => {
     const f = fixture()
     await mount(f)
-    await press('Change Demo Eagles')
-    await press('Create a placeholder')
-    await fill('Placeholder name', 'Demo Nomads')
-    await press('Managed by Demo League')
-    await press('Use this placeholder')
+    await change('Demo Eagles')
+    await placeholder('Demo Nomads')
     expect(f.created).length(0)
     expect(f.sent).length(0)
-    expect(document.body.textContent).includes('Demo Nomads')
+    expect(button('Demo Nomads, Away · Placeholder')).not.equals(null)
+    // A placeholder not made yet is never what the other side suggests around.
+    await change('Demo Hawks')
+    expect(f.anchors.at(-1)).deep.equals({
+      teamId: home.id,
+      seasonId: 'season_demo'
+    })
+    await press('Cancel team selector')
     await press('Save')
     expect(f.created).length(1)
     expect(f.created[0]).includes({ name: 'Demo Nomads', external: true })
-    expect(f.created[0].custodian).deep.equals({
-      kind: 'league',
-      id: league.id
-    })
+    expect(f.created[0].custodian).deep.equals({ kind: 'team', id: home.id })
+    expect(f.created[0]).not.have.property('locality')
     expect(f.sent[0].game.awayTeamId).equals('team_placeholder')
   })
   it('retains the created placeholder when game submission must be retried', async () => {
@@ -618,63 +664,37 @@ describe('separate game settings drafts and consent labels', () => {
       throw new Error('Retry the game')
     }
     await mount(f)
-    await press('Change Demo Eagles')
-    await press('Create a placeholder')
-    await fill('Placeholder name', 'Demo Retry Opponent')
-    await press('Use this placeholder')
+    await change('Demo Eagles')
+    await placeholder('Demo Retry Opponent')
     await press('Save')
     await press('Save')
     expect(f.created).length(1)
     expect(f.sent).length(2)
     expect(f.sent[0].idempotencyKey).equals(f.sent[1].idempotencyKey)
   })
-  it('requires a placeholder name and location when its managing group has none', async () => {
+  it('requires only a placeholder name; a location is optional', async () => {
     const f = fixture()
-    f.client.group = async () =>
-      asGroupDetail({
-        nonMemberView: false,
-        group: { ...home, locality: null },
-        parents: [],
-        children: [],
-        competingTeams: [],
-        participatingSeasons: [],
-        staff: [],
-        games: [],
-        canManage: true
-      })
-    f.client.ownGroups = async () => [home]
     await mount(f)
-    await press('Change Demo Hawks')
-    await press('Create a placeholder')
-    await press('Use this placeholder')
-    expect(document.body.textContent).includes('Enter a placeholder name.')
-    await fill('Placeholder name', 'Demo Location Team')
-    await press('Use this placeholder')
-    expect(document.body.textContent).includes(
-      'Enter a city and state or region.'
-    )
-    await fill('City', 'Demo City')
-    await fill('State or region', 'Demo Region')
-    await fill('Country', 'US')
-    await press('Use this placeholder')
-    expect(f.created).length(0)
+    await change('Demo Hawks')
+    await press('Create Placeholder Team')
+    expect(disabled('Continue')).equals(true)
+    await fill('Team name', 'Demo Location Team')
+    await press('Continue')
+    await press('Skip')
+    await press('Skip')
     await press('Save')
-    expect(f.created[0].locality).includes({
-      city: 'Demo City',
-      region: 'Demo Region',
-      country: 'US'
-    })
+    expect(f.created[0].name).equals('Demo Location Team')
+    expect(f.created[0]).not.have.property('locality')
   })
   it('keeps a team lookup failure recoverable without touching the game', async () => {
     const f = fixture()
-    f.client.discoverGroups = async () => {
+    f.client.relatedTeams = async () => {
       throw new Error('Lookup offline')
     }
     await mount(f)
-    await press('Change Demo Eagles')
-    await settle()
-    expect(document.body.textContent).includes('Teams could not load.')
-    await press('Close team picker')
+    await change('Demo Eagles')
+    expect(text()).includes('Teams could not load.')
+    await press('Cancel team selector')
     expect(f.sent).length(0)
   })
   it('makes load failures retryable and refuses edits on a canceled game', async () => {
@@ -683,7 +703,7 @@ describe('separate game settings drafts and consent labels', () => {
       throw new Error('Game unavailable')
     }
     await mount(f)
-    expect(document.body.textContent).includes('Game unavailable')
+    expect(text()).includes('Game unavailable')
     f.client.gameScheduling = async () =>
       asGameScheduling({
         game: { ...game, status: 'cancelled' },
@@ -693,20 +713,23 @@ describe('separate game settings drafts and consent labels', () => {
         administeredTeamIds: [home.id]
       })
     await press('Retry game settings')
-    expect(button('Save').getAttribute('aria-disabled')).equals('true')
-    expect(document.body.textContent).includes(
-      'This canceled game cannot be changed.'
-    )
+    await settle()
+    expect(disabled('Save')).equals(true)
+    expect(text()).includes('This canceled game cannot be changed.')
   })
-  it('withdraws only after confirmation, without proposing draft changes', async () => {
+  it('withdraws only after confirmation, with small withdrawal labels, without proposing draft changes', async () => {
     const f = fixture()
     await mount(f)
+    const label = [
+      ...button('Withdraw Demo Hawks').querySelectorAll('div')
+    ].find(node => node.textContent === 'Withdraw Demo Hawks')!
+    expect(getComputedStyle(label).fontSize).equals('14px')
     await fill('Venue name (optional)', 'Unsaved Field')
-    await press('Withdraw Demo Hawks from game')
+    await press('Withdraw Demo Hawks')
     expect(f.withdrawn).length(0)
     await press('Keep game')
     expect(f.withdrawn).length(0)
-    await press('Withdraw Demo Hawks from game')
+    await press('Withdraw Demo Hawks')
     await press('Confirm withdrawal')
     expect(f.withdrawn).deep.equals([home.id])
     expect(f.sent).length(0)

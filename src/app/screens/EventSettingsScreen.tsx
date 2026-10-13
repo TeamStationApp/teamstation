@@ -5,10 +5,7 @@ import type { TeamStationClient } from '../../common/api'
 import type { EventInfo } from '../../common/eventInfo'
 import { Button, Screen } from '../components'
 import { EventDetailsForm } from './EventDetailsForm'
-import {
-  type GameSettingsResult,
-  GameSettingsScreen
-} from './GameSettingsScreen'
+import { GameFormScreen, type GameSettingsResult } from './GameFormScreen'
 
 /** Both event kinds share the existing settings URL; games keep their consent flow. */
 export function EventSettingsScreen({
@@ -62,9 +59,9 @@ export function EventSettingsScreen({
   }, [client, gameId, retry])
   if (kind === 'game')
     return (
-      <GameSettingsScreen
+      <GameFormScreen
         client={client}
-        gameId={gameId}
+        mode={{ kind: 'edit', gameId }}
         onSaved={onSaved}
         onCancel={onCancel}
       />

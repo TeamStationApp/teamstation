@@ -21,7 +21,8 @@ let root: Root | undefined
 
 async function render(
   client: TeamStationClient,
-  info?: EventInfo
+  info?: EventInfo,
+  hideTitle = false
 ): Promise<string[]> {
   const saved: string[] = []
   const host = document.createElement('div')
@@ -34,6 +35,7 @@ async function render(
           client={client}
           teamId="tem_demo"
           info={info}
+          hideTitle={hideTitle}
           onSaved={id => {
             saved.push(id)
           }}
@@ -139,6 +141,12 @@ describe('title event creation and event detail editing', () => {
       expect(writes).equals(1)
       expect(saved).deep.equals([info.id])
     })
+  it('leaves its title to a scene that names itself', async () => {
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    await render(client, undefined, true)
+    expect(document.body.textContent).not.includes('Create Event')
+    expect(document.querySelector('input[aria-label="Title"]')).not.equals(null)
+  })
   it('creates an opponent-free event with an address and supports retry keys for failed delivery', async () => {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     const sent: TeamEventInput[] = []

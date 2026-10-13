@@ -1219,7 +1219,7 @@ async function main(): Promise<void> {
         )
       ).includes('2:00 PM')
     )
-    await tap({ text: 'Send Game Proposal' })
+    await tap({ text: 'Save' })
     assert.equal(
       (
         await f.h.db
@@ -1243,7 +1243,7 @@ async function main(): Promise<void> {
     await fill('Venue name (optional)', 'Demo New Park')
     await see({ id: 'event-schedule-date' }, 'UP')
     await shot('game-settings-after.png')
-    await tap({ text: 'Send Game Proposal' })
+    await tap({ text: 'Save' })
     await m.assertVisible({ id: 'event-reply-row-101', timeout: 20000 })
     const request = await f.h.db
       .selectFrom('group_requests')
@@ -1301,11 +1301,20 @@ async function main(): Promise<void> {
       url: f.h.origin + `/groups/team/${f.teamA}/create-game`
     })
     await m.assertVisible({ text: 'Create Game', timeout: 20000 })
-    await tap({ text: 'Choose Demo Eagles' })
+    // The opponent is chosen in the team selector that slides up.
+    await tap({ text: 'Choose Away Team, Away' })
+    // The selector slides up; tap its row once it has come to rest.
+    await m.assertVisible({
+      css: `[data-testid="team-result-${f.teamB}"]`,
+      timeout: 20000
+    })
+    await m.waitForAnimationToEnd()
+    await tap({ css: `[data-testid="team-result-${f.teamB}"]` })
+    await wait(`document.querySelector('[data-testid="team-selector"]')==null`)
     await chooseZone('UTC')
     await chooseDate('date', '2032-03-06')
     await chooseTime('time', '18:05')
-    await tap({ text: 'Send game proposal' })
+    await tap({ text: 'Save' })
     await wait(`window.location.pathname.startsWith('/notifications/')`)
     const newRequest = await f.h.db
       .selectFrom('group_requests')

@@ -383,24 +383,27 @@ async function main(): Promise<void> {
     ).deep.equals(before)
     await open(`/games/${manifest.game}/settings`)
     await m.scrollUntilVisible({
-      element: { text: 'Send Game Proposal' },
+      element: { text: 'Save' },
       centerElement: true,
       timeout: 15000
     })
-    await show('Send Game Proposal')
+    await show('Save')
     const count = (await state()).teams.length
-    await tap('Change Demo Eagles')
-    await tap('Create a placeholder')
-    await input('Placeholder name', 'Demo Native Preview')
-    await tap('Managed by Demo Comets')
-    await tap('Use this placeholder')
+    await tap('Demo Eagles')
+    await tap('Create Placeholder Team')
+    await input('Team name', 'Demo Native Preview')
+    await tap('Continue')
+    await tap('Skip')
+    await tap('Skip')
     await tap('Cancel')
     expect((await state()).teams.length).equals(count)
     await open(`/games/${manifest.game}/settings`)
-    await tap('Change Demo Eagles')
-    await tap('Create a placeholder')
-    await input('Placeholder name', 'Demo Native Opponent')
-    await tap('Use this placeholder')
+    await tap('Demo Eagles')
+    await tap('Create Placeholder Team')
+    await input('Team name', 'Demo Native Opponent')
+    await tap('Continue')
+    await tap('Skip')
+    await tap('Skip')
     await tap('Save')
     await show('Game changes saved')
     await show('Demo Native Opponent')

@@ -624,11 +624,13 @@ A game has two sides: the home team and the away team. It is published when **bo
 
 There is no separate approval from the season. However, placing a new game in a season requires the sender to be an admin of that season.
 
-| You administer… | You see                | What happens                                                                     |
-| --------------- | ---------------------- | -------------------------------------------------------------------------------- |
-| Both teams      | **Save**               | Published immediately                                                            |
-| One team        | **Send Game Proposal** | The other team's admins must approve. "An admin of ‹team› must approve changes." |
-| Only the season | **Send Game Proposal** | Both teams' admins must approve                                                  |
+Create Game and Game Settings both end with **Save**. What Save does depends on what you administer:
+
+| You administer… | What happens                                                                     |
+| --------------- | -------------------------------------------------------------------------------- |
+| Both teams      | Published immediately                                                            |
+| One team        | The other team's admins must approve. "An admin of ‹team› must approve changes." |
+| Only the season | Both teams' admins must approve                                                  |
 
 Until the game is approved, it shows **Pending approval** where the score would be.
 

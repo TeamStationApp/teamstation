@@ -46,7 +46,8 @@ export function EventDetailsForm({
   onTypeChange,
   creationRetry,
   onBusyChange,
-  hideType = false
+  hideType = false,
+  hideTitle = false
 }: {
   client: TeamStationClient
   teamId?: string
@@ -60,6 +61,8 @@ export function EventDetailsForm({
   creationRetry?: RefObject<EventCreationRetry | undefined>
   onBusyChange?: (busy: boolean) => void
   hideType?: boolean
+  /** For a scene that names itself above the form. */
+  hideTitle?: boolean
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const [localDraft, setLocalDraft] = useState<EventFormDraft>(() => ({
@@ -159,9 +162,11 @@ export function EventDetailsForm({
   }
   return (
     <Card style={styles.form}>
-      <Text style={styles.title}>
-        {info == null ? 'Create Event' : 'Event Settings'}
-      </Text>
+      {!hideTitle && (
+        <Text style={styles.title}>
+          {info == null ? 'Create Event' : 'Event Settings'}
+        </Text>
+      )}
       {!hideType && (
         <EventTypeRow
           value={eventType}
