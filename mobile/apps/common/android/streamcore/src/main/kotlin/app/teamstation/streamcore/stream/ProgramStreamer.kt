@@ -53,6 +53,8 @@ class ProgramStreamer(
         val droppedPackets: Long = 0,
         /** Bytes queued between this encoder and the socket. */
         val queuedBytes: Int = 0,
+        /** Every byte the socket has taken since the publish began. */
+        val bytesSent: Long = 0,
         /** The bitrate controller, as it last decided. */
         val rate: StreamRateTelemetry = StreamRateTelemetry()
     )
@@ -117,6 +119,7 @@ class ProgramStreamer(
                 megabitsPerSecond = raw.megabitsPerSecond,
                 droppedPackets = raw.droppedPackets,
                 queuedBytes = raw.queuedBytes,
+                bytesSent = raw.bytesSent,
                 rate = loop?.let { rateTelemetry(it.status.controller, activeCodec) } ?: StreamRateTelemetry()
             )
         }

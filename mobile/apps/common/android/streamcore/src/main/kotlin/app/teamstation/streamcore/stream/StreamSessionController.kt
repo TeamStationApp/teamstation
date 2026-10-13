@@ -107,6 +107,51 @@ class StreamRetrySchedule {
 }
 
 /**
+ * Tells a live session that has stopped moving from one that is only slow, and paces the dials that
+ * replace it. Pure, so its decisions are a fixture shared with TS Director's `StreamStallWatch`.
+ *
+ * A session is stuck when the socket has taken no byte for [redialSeconds] while bytes are waiting for
+ * it. A link that carries anything at all is not stuck, however slowly it drains, and a session with
+ * nothing queued is idle, not stuck. Once stuck, its replacements are dialled every [retrySeconds],
+ * counted from when each dial began, until one goes live.
+ */
+class StreamStallWatch(redialSeconds: Double) {
+    /** How long a session may take nothing while bytes wait before it counts as stuck. */
+    val redialSeconds: Double = maxOf(redialSeconds, checkSeconds)
+    private var lastBytesSent: Long? = null
+    private var movedAt = 0.0
+
+    /** A session went live at [now]: it has moved as of then. */
+    fun live(now: Double) {
+        lastBytesSent = null
+        movedAt = now
+    }
+
+    /** One reading of the session: whether it is stuck now. */
+    fun check(now: Double, bytesSent: Long, queuedBytes: Int): Boolean {
+        val last = lastBytesSent
+        lastBytesSent = bytesSent
+        if (last == null) return now - movedAt >= redialSeconds && queuedBytes > 0
+        if (bytesSent != last || queuedBytes <= 0) {
+            movedAt = now
+            return false
+        }
+        return now - movedAt >= redialSeconds
+    }
+
+    companion object {
+        /** How often a live session's progress is read. */
+        const val checkSeconds = 1.0
+
+        /** How far apart the dials that replace a stuck session start. */
+        const val retrySeconds = 2.0
+
+        /** How long after a replacement dial failed, [dialledFor] seconds after it began, the next one goes. */
+        fun waitAfterFailedDial(dialledFor: Double): Double = maxOf(0.0, retrySeconds - maxOf(0.0, dialledFor))
+    }
+}
+
+/**
  * Thrown by a host's URL request when the server has ended the stream this device holds (a 410): the
  * controller stops redialling until its host starts streaming again.
  */
@@ -126,6 +171,13 @@ class StreamEndedError(
  * - A URL request that throws [StreamEndedError] is terminal: the controller goes to `IDLE` with
  *   [lastError] "ended" and dials nothing until its host calls [start] again.
  *
+ * - With [stallRedialSeconds] set, a live session whose socket has taken nothing for that long while
+ *   bytes wait for it ([StreamStallWatch]) is stuck: the controller goes to `RETRYING`, closes it and
+ *   dials a fresh one at once, rather than waiting for the system's TCP backoff or the server's
+ *   stale-publisher timeout to notice. Until a dial goes live, dials start every
+ *   [StreamStallWatch.retrySeconds], and one that has not gone live by then is given up for the next;
+ *   after that the normal waits apply again. A phone sets it; TS Director leaves it null.
+ *
  * The first dial of a [start] asks for the address with [DialReason.START]; every redial asks with
  * [DialReason.REDIAL], which a host passes on to the server so that an ended stream stays ended.
  *
@@ -138,6 +190,8 @@ class StreamSessionController(
     private val scope: CoroutineScope,
     scheduler: StreamRetryScheduling? = null,
     private val pathMonitor: NetworkPathMonitoring? = null,
+    /** How long a live session may take nothing while bytes wait before it is replaced; null: never. */
+    val stallRedialSeconds: Double? = null,
     private val now: () -> Double = { System.nanoTime() / 1e9 }
 ) {
     enum class Phase(val rawValue: String) {
@@ -202,7 +256,15 @@ class StreamSessionController(
     /** What the next redial waits. */
     val nextRetrySeconds: Double get() = schedule.next
 
+    /** From a stuck session until a dial goes live: dials then go every [StreamStallWatch.retrySeconds]. */
+    var replacingStall: Boolean = false
+        private set
+
     private val schedule = StreamRetrySchedule()
+    private var stallWatch: StreamStallWatch? = null
+    private var stallTimer: StreamRetryTimer? = null
+    private var dialTimer: StreamRetryTimer? = null
+    private var dialStartedAt = 0.0
     private val scheduler: StreamRetryScheduling = scheduler ?: StreamRetryScheduling { seconds, action ->
         val job: Job = scope.launch {
             delay((seconds * 1000).toLong())
@@ -224,6 +286,7 @@ class StreamSessionController(
         wanted = true
         schedule.started()
         lastError = null
+        replacingStall = false
         cancelRetry()
         pathMonitor?.start { scope.launch { networkRestored() } }
         dial(reason)
@@ -233,6 +296,7 @@ class StreamSessionController(
     fun stop() {
         wanted = false
         attempt += 1
+        replacingStall = false
         cancelRetry()
         pathMonitor?.cancel()
         liveSince = null
@@ -259,7 +323,14 @@ class StreamSessionController(
         val mine = attempt
         phase = Phase.CONNECTING
         retryInSeconds = null
+        dialStartedAt = now()
         host.willDial(reason)
+        if (replacingStall) {
+            // A replacement that has not gone live by the next one's turn is given up for it.
+            dialTimer = scheduler.schedule(StreamStallWatch.retrySeconds) {
+                if (mine == attempt && phase == Phase.CONNECTING) handleDrop(stalledDialError, mine)
+            }
+        }
         scope.launch {
             val url = try {
                 host.requestURL(reason)
@@ -282,11 +353,55 @@ class StreamSessionController(
             phase = Phase.LIVE
             liveSince = now()
             lastError = null
+            wentLive(mine)
         }
+    }
+
+    /** A dial went live: a stall being replaced is over, and this session's progress is watched. */
+    private fun wentLive(mine: Int) {
+        replacingStall = false
+        dialTimer?.cancel()
+        dialTimer = null
+        val seconds = stallRedialSeconds ?: return
+        stallWatch = StreamStallWatch(seconds).also { it.live(now()) }
+        scheduleStallCheck(mine)
+    }
+
+    private fun scheduleStallCheck(mine: Int) {
+        stallTimer = scheduler.schedule(StreamStallWatch.checkSeconds) { checkStall(mine) }
+    }
+
+    private fun checkStall(mine: Int) {
+        stallTimer = null
+        val watch = stallWatch
+        if (mine != attempt || phase != Phase.LIVE || !wanted || watch == null) return
+        val metrics = publisher.metrics
+        if (watch.check(now(), metrics.bytesSent, metrics.queuedBytes)) {
+            replaceStuckSession()
+        } else {
+            scheduleStallCheck(mine)
+        }
+    }
+
+    /** The live session stopped moving: it is closed, and a fresh one dialled at once. */
+    private fun replaceStuckSession() {
+        // A drop the stuck session reports later belongs to a session already replaced.
+        attempt += 1
+        stallWatch = null
+        lastError = stalledError
+        host.dropped(stalledError)
+        publisher.stop()
+        congestion = ProgramStreamer.Metrics()
+        liveSince = null
+        replacingStall = true
+        phase = Phase.RETRYING
+        retryInSeconds = 0.0
+        redial()
     }
 
     private fun handleDrop(message: String, dropped: Int) {
         if (dropped != attempt || (phase != Phase.CONNECTING && phase != Phase.LIVE)) return
+        cancelRetry()
         lastError = message
         host.dropped(message)
         publisher.stop()
@@ -296,13 +411,19 @@ class StreamSessionController(
         if (!wanted || !host.isRetryable(message)) {
             val wasWanted = wanted
             wanted = false
+            replacingStall = false
             phase = Phase.IDLE
             pathMonitor?.cancel()
             if (wasWanted) host.gaveUp(message)
             return
         }
-        // A session that held for long enough was a good one: its wait starts over.
-        val wait = schedule.dropped(liveFor)
+        // Replacing a stuck session, dials go every [StreamStallWatch.retrySeconds]; otherwise a
+        // session that held for long enough was a good one, and its wait starts over.
+        val wait = if (replacingStall) {
+            StreamStallWatch.waitAfterFailedDial(now() - dialStartedAt)
+        } else {
+            schedule.dropped(liveFor)
+        }
         phase = Phase.RETRYING
         retryInSeconds = wait
         retryTimer = scheduler.schedule(wait) {
@@ -319,6 +440,7 @@ class StreamSessionController(
 
     private fun end(message: String) {
         wanted = false
+        replacingStall = false
         cancelRetry()
         pathMonitor?.cancel()
         publisher.stop()
@@ -333,6 +455,11 @@ class StreamSessionController(
         retryTimer?.cancel()
         retryTimer = null
         retryInSeconds = null
+        dialTimer?.cancel()
+        dialTimer = null
+        stallTimer?.cancel()
+        stallTimer = null
+        stallWatch = null
     }
 
     companion object {
@@ -344,5 +471,11 @@ class StreamSessionController(
 
         /** [lastError] after the server ended the stream. */
         const val endedError = "ended"
+
+        /** [lastError] after a session stopped moving and was replaced. */
+        const val stalledError = "the stream server stopped taking the stream"
+
+        /** Why a replacement dial was given up for the next. */
+        const val stalledDialError = "the stream server did not answer in time"
     }
 }

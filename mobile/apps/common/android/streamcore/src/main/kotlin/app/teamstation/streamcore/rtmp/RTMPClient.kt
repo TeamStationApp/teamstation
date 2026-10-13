@@ -51,7 +51,12 @@ class RTMPClient(
          * Bytes handed to the sender that have not reached the socket. Pinned at the budget is the
          * signature of an upstream stall.
          */
-        val queuedBytes: Int = 0
+        val queuedBytes: Int = 0,
+        /**
+         * Every byte the socket has taken since the publish began. Standing still while bytes are
+         * queued is a connection that has stopped moving.
+         */
+        val bytesSent: Long = 0
     )
 
     /** What [sendVideo] / [sendAudio] did with a tag. */
@@ -139,7 +144,7 @@ class RTMPClient(
     val metrics: Metrics
         get() = lock.withLock {
             refreshMegabitsLocked()
-            Metrics(megabitsPerSecond, droppedPackets, queuedBytes)
+            Metrics(megabitsPerSecond, droppedPackets, queuedBytes, bytesSent)
         }
 
     val isLive: Boolean get() = lock.withLock { phase == Phase.LIVE }

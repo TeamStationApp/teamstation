@@ -143,6 +143,29 @@ class StreamFixtureTest {
     }
 
     @Test
+    fun theStallWatchEqualsDirectors() {
+        val fixture = MediaFixtures.json("stream-stall-redial.json")
+        assertEquals(fixture["checkSeconds"].double(), StreamStallWatch.checkSeconds, 0.0)
+        assertEquals(fixture["retrySeconds"].double(), StreamStallWatch.retrySeconds, 0.0)
+        val watch = StreamStallWatch(fixture["redialSeconds"].double())
+        var stuck = 0
+        for (event in fixture["events"].list().map { it.obj() }) {
+            when (event["event"]) {
+                "live" -> watch.live(event["at"].double())
+                "check" -> {
+                    val answer = watch.check(event["at"].double(), event["bytesSent"].long(), event["queuedBytes"].int())
+                    assertEquals("check at ${event["at"]}", event["stuck"] as Boolean, answer)
+                    if (answer) stuck += 1
+                }
+            }
+        }
+        assertEquals(3, stuck)
+        for (dial in fixture["failedDials"].list().map { it.obj() }) {
+            assertEquals(dial["waits"].double(), StreamStallWatch.waitAfterFailedDial(dial["dialledFor"].double()), 0.0)
+        }
+    }
+
+    @Test
     fun thePacerHoldsTheStreamRate() {
         val pacer = StreamFramePacer(30)
         val admitted = (0 until 120).count { pacer.admit(it / 60.0 + (if (it % 2 == 0) 0.002 else -0.002)) }
