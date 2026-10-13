@@ -401,14 +401,13 @@ async function main(): Promise<void> {
       // maestro-d's scroll swipes across the middle of the screen, which on
       // Android is the game's video player, and the player keeps the swipe:
       // swipe below it instead (the hierarchy holds only what is on screen).
-      for (
-        let i = 0;
-        i < 4 &&
-        // Off screen, or under the floating tab bar at the bottom.
-        ((await find(byText('Record video'), 1000))?.bounds?.y ?? 1e9) >
-          ((await m.hierarchy()).bounds?.height ?? 2400) * 0.7;
-        i++
-      ) {
+      const below = async (): Promise<boolean> => {
+        // Off screen, or reaching down to where the floating tab bar starts.
+        const bounds = (await find(byText('Record video'), 1000))?.bounds
+        const screen = (await m.hierarchy()).bounds?.height ?? 2400
+        return bounds == null || bounds.y + bounds.height > screen * 0.88
+      }
+      for (let i = 0; i < 10 && (await below()); i++) {
         say('$ swipe 50%,78% → 50%,30%')
         await (
           m as unknown as {
@@ -760,7 +759,10 @@ async function main(): Promise<void> {
     say('$ tapOn camera-close')
     await m.tapOn({ id: 'camera-close' })
     assert(
-      (await find(byText('Record video'), 10000)) != null,
+      // Android lists only what is on the screen, and the game page comes
+      // back at its top, with Record video below the fold.
+      (await find(byText(android ? 'Box score' : 'Record video'), 10000)) !=
+        null,
       'Close goes back to the game'
     )
     const recordingStat = await stat(hls.file)
@@ -769,8 +771,18 @@ async function main(): Promise<void> {
     )
 
     // 6. The game's video plays, with sound, now the camera has let go.
+    // Android's player is ExoPlayer's view, whose controls have its own ids.
+    const androidIds: Record<string, string> = {
+      Video: 'exo_content_frame',
+      'Play/Pause': 'exo_play_pause',
+      'Elapsed Time': 'exo_position',
+      'Mute/Unmute': 'exo_volume'
+    }
+    const isControl = (node: Node, id: string): boolean =>
+      node.id === id ||
+      (android && node.id === `${APP}:id/${androidIds[id] ?? id}`)
     const player = await find(
-      node => node.id === 'Video' || node.text === 'Video',
+      node => isControl(node, 'Video') || node.text === 'Video',
       10000
     )
     assert(player?.bounds != null, 'the Videos tab has a player')
@@ -780,14 +792,14 @@ async function main(): Promise<void> {
     const control = async (id: string): Promise<Node | undefined> => {
       for (let attempt = 0; attempt < 3; attempt++) {
         const shown = (await nodes()).find(
-          node => node.id === id && node.bounds != null
+          node => isControl(node, id) && node.bounds != null
         )
         if (shown != null) return shown
         say('$ tapOn the player (shows its controls)')
         await m.tapOn({ point: `${middle.x},${middle.y}` })
         await sleep(300)
       }
-      return (await nodes()).find(node => node.id === id)
+      return (await nodes()).find(node => isControl(node, id))
     }
     const press = async (want: string): Promise<void> => {
       const button = await control('Play/Pause')
@@ -812,7 +824,8 @@ async function main(): Promise<void> {
       elapsedSeconds(laterAt) > elapsedSeconds(startedAt),
       `the video plays: elapsed ${startedAt} → ${laterAt}`
     )
-    const volume = (await find(byId('Mute/Unmute'), 1000))?.text
+    const volume = (await find(node => isControl(node, 'Mute/Unmute'), 1000))
+      ?.text
     if (webcam == null) {
       results.push(
         `6 the game's video plays: elapsed “${startedAt}” → “${laterAt}”, volume button “${volume ?? '?'}”`
