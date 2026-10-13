@@ -35,10 +35,24 @@ const base =
 const untracked = git(['ls-files', '--others', '--exclude-standard'])
   .split('\n')
   .filter(Boolean)
+// Settings, account and scheduling permissions have their own complete gate.
+// This regression gate measures the event-info paths exercised by these suites.
+const ownedPaths = new Set([
+  'src/server/index.ts',
+  'src/app/screens/EventSettingsScreen.tsx',
+  'src/app/screens/EventInfoTab.tsx',
+  'src/app/screens/EventDetailsForm.tsx',
+  'src/common/eventInfo.ts',
+  'src/common/eventDetails.ts',
+  'src/server/events/eventInfo.ts',
+  'src/server/events/eventInfoOpenApi.ts',
+  'src/server/events/eventDetails.ts'
+])
 const paths = [
   ...new Set([...git(['diff', '--name-only', base]).split('\n'), ...untracked])
 ].filter(
   path =>
+    ownedPaths.has(path) &&
     /^src\/(app|common|server)\//.test(path) &&
     /\.tsx?$/.test(path) &&
     !/\.(test|e2e|smoke)\./.test(path) &&

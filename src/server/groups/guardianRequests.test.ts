@@ -1569,12 +1569,19 @@ describe('guardian invitations and requests', function () {
       f.advance(3600 * 1000)
       await decide(third.body.id, 'decline', f.people.teamCoach)
 
+      const retryOn = new Date(
+        f.clock.now().getTime() + 7 * DAY
+      ).toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+        timeZone: 'UTC'
+      })
       const fourth = await ask(201, f.people.scorekeeper)
       expect(fourth.status).equals(429)
       expect(fourth.body).deep.equals({
         code: 'rateLimited',
-        message:
-          'Three guardian requests were declined. You can ask again on October 13, 2026.',
+        message: `Three guardian requests were declined. You can ask again on ${retryOn}.`,
         details: { retryAfterSec: 7 * 24 * 3600 }
       })
       f.advance(7 * DAY - 1000)

@@ -21,6 +21,7 @@
     // browser page with the DOM's types. The rest of src/test is the
     // server's, in tsconfig.server.test.json.
     "src/test/fakeScoreboardSocket.ts",
+    "src/test/responderDrag.ts",
     "src/test/scoringHelpers.ts",
     "src/test/scoreboardServer.e2e.ts"
   ]
