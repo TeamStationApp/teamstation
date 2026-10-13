@@ -1281,14 +1281,14 @@ export function ConversationScreen(
     end?: 'drag' | 'momentum'
   ): void => {
     if (!mounted.current || !paneActive.current) return
-    rememberScroll(event)
     const input = nativeUserScroll.current
-    if (
-      Platform.OS !== 'web' &&
-      input != null &&
-      (end == null || end === input)
-    )
-      userScrolled()
+    const owned =
+      Platform.OS !== 'web' && input != null && (end == null || end === input)
+    // An authoritative user offset must not be discarded as an outstanding
+    // programmatic restoration acknowledgement.
+    if (owned) restoreTarget.current = undefined
+    rememberScroll(event)
+    if (owned) userScrolled()
     if (end != null && end === input) nativeUserScroll.current = undefined
     if (end === 'momentum' && input !== 'drag')
       nativeMomentumFromDrag.current = false
@@ -1542,6 +1542,8 @@ export function ConversationScreen(
                   view.hasEarlier === prepend.current?.hasEarlier
                 )
                   prepend.current?.positions.set(message.id, y)
+                if (message.id === prepend.current?.firstId)
+                  restoreExhaustedPage()
                 if (message.id === restoreAnchor.current?.id)
                   restoreReadingAnchor()
                 else recaptureLiveAnchor()

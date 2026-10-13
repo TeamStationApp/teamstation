@@ -1243,7 +1243,10 @@ class FakeEngine implements ChatScreenEngine {
 
 async function screen(
   engine: FakeEngine,
-  draft?: React.ComponentProps<typeof ConversationScreen>['draft']
+  draft?: React.ComponentProps<typeof ConversationScreen>['draft'],
+  onDraftChange?: React.ComponentProps<
+    typeof ConversationScreen
+  >['onDraftChange']
 ): Promise<void> {
   pointer(true)
   await render(
@@ -1257,6 +1260,7 @@ async function screen(
         swipe={false}
         embedded
         draft={draft}
+        onDraftChange={onDraftChange}
       />
     </ChatOverlayHost>
   )
@@ -2378,6 +2382,7 @@ describe('chat follow-up conversation message integration', function () {
     ['after-resolution', false],
     ['after-resolution-auto-anchor', false],
     ['after-resolution-growth', false],
+    ['after-resolution-equal-size', false],
     ['after-removal-no-row-layout', true],
     ['manual-overlap', true]
   ] as const) {
@@ -2579,12 +2584,19 @@ describe('chat follow-up conversation message integration', function () {
       if (
         cancelAt === 'after-resolution' ||
         cancelAt === 'after-resolution-auto-anchor' ||
+        cancelAt === 'after-resolution-equal-size' ||
         cancelAt === 'after-resolution-growth'
       ) {
         await userScroll()
         selectedY = anchor.getBoundingClientRect().top
       }
-      if (cancelAt === 'after-resolution-auto-anchor') {
+      if (cancelAt === 'after-resolution-equal-size') {
+        // Header removal and downstream growth cancel in total height.
+        // Only the genuine first-row layout reports the changed position.
+        anchorContentY -= 56
+        await measured(anchor, 640, 100, anchorContentY)
+        nativeAnchor.measureLayout = measureCurrentAnchor
+      } else if (cancelAt === 'after-resolution-auto-anchor') {
         // Browser anchoring adjusts the offset before content size is reported,
         // while position-only row movement does not emit ResizeObserver.
         anchorContentY -= 56
@@ -2617,13 +2629,16 @@ describe('chat follow-up conversation message integration', function () {
     })
   }
 
-  for (const phase of [
-    'ongoing',
-    'drag-end',
-    'momentum-end',
-    'programmatic'
+  for (const [phase, afterCompensation] of [
+    ['ongoing', false],
+    ['drag-end', false],
+    ['momentum-end', false],
+    ['programmatic', false],
+    ['ongoing', true],
+    ['drag-end', true],
+    ['momentum-end', true]
   ] as const) {
-    it(`preserves the native reader across exhausted header layout (${phase})`, async function () {
+    it(`preserves the native reader across exhausted header layout (${phase}, movement after compensation: ${afterCompensation})`, async function () {
       const engine = new FakeEngine()
       const reading = safeMessage({
         id: 'msg_native_page_reading',
@@ -2641,10 +2656,13 @@ describe('chat follow-up conversation message integration', function () {
         await new Promise(resolve => {
           finish = resolve
         })
-      await screen(engine, {
+      let saved: ChatDraft = {
         text: 'Current draft',
         picked: [],
         scrollOffset: 80
+      }
+      await screen(engine, saved, next => {
+        saved = next
       })
       const geometry = readingGeometry(reading.id, 400, 1000)
       await geometry.layout()
@@ -2759,7 +2777,8 @@ describe('chat follow-up conversation message integration', function () {
           })
         geometry.scroller.scrollTop = 240
         native(() => {
-          if (phase === 'ongoing') callbacks().onScroll(event(240))
+          if (phase === 'ongoing' || afterCompensation)
+            callbacks().onScroll(event(240))
           else if (phase === 'drag-end') callbacks().onScrollEndDrag(event(240))
           else callbacks().onMomentumScrollEnd(event(240))
         })
@@ -2776,10 +2795,30 @@ describe('chat follow-up conversation message integration', function () {
         finish!(engine.current)
         await wait(80)
       })
-      expect(geometry.row.getBoundingClientRect().top).equals(chosenY)
-      expect(geometry.scroller.scrollTop).equals(
-        phase === 'programmatic' ? 24 : 184
-      )
+      if (afterCompensation) {
+        await measured(geometry.row, 640, 800, geometry.geometry.y)
+        await act(async () => {
+          geometry.scroller.scrollTop = 220
+          native(() => {
+            if (phase === 'ongoing') callbacks().onScroll(event(220))
+            else if (phase === 'drag-end')
+              callbacks().onScrollEndDrag(event(220))
+            else callbacks().onMomentumScrollEnd(event(220))
+          })
+          await wait(5)
+        })
+        expect(saved.scrollOffset).equals(220)
+        expect(saved.scrollAnchor).deep.equals({
+          id: reading.id,
+          relativeY: 124
+        })
+        expect(geometry.row.getBoundingClientRect().top).equals(124)
+      } else {
+        expect(geometry.row.getBoundingClientRect().top).equals(chosenY)
+        expect(geometry.scroller.scrollTop).equals(
+          phase === 'programmatic' ? 24 : 184
+        )
+      }
       expect((labelled('Message') as HTMLTextAreaElement).value).equals(
         'Current draft'
       )
