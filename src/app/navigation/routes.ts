@@ -17,7 +17,17 @@ interface GroupRef {
   kind: GroupKind
   id: string
 }
+interface SettingsContext {
+  teamReturn?: { id: string; address: 'team' | 'group'; tab?: string }
+}
 export type CreationRoute =
+  | ({ name: 'groupAddPeople'; kind: GroupKind; id: string } & SettingsContext)
+  | ({ name: 'groupInvites'; kind: GroupKind; id: string } & SettingsContext)
+  | ({
+      name: 'groupLocation'
+      kind: 'team' | 'league'
+      id: string
+    } & SettingsContext)
   | { name: 'nodeAdministration' }
   | { name: 'createGame'; kind: 'team' | 'season'; id: string; gameId?: string }
   | { name: 'gameSettings'; gameId: string }
@@ -56,6 +66,9 @@ export function isCreationRoute(route: {
     'discover',
     'group',
     'groupSettings',
+    'groupLocation',
+    'groupAddPeople',
+    'groupInvites',
     'createGroup',
     'groupLink',
     'notifications',
@@ -275,10 +288,7 @@ export function parseRoute(path: string, search = ''): Route {
         const teamId = query.get('teamId')
         const address = query.get('teamAddress')
         const tab = query.get('teamTab')
-        return {
-          name: 'groupSettings',
-          kind: id,
-          id: groupId,
+        const context: SettingsContext = {
           ...(id === 'team' &&
           teamId != null &&
           teamId !== '' &&
@@ -292,6 +302,13 @@ export function parseRoute(path: string, search = ''): Route {
               }
             : {})
         }
+        if (parts[4] === 'people')
+          return { name: 'groupAddPeople', kind: id, id: groupId, ...context }
+        if (parts[4] === 'invites')
+          return { name: 'groupInvites', kind: id, id: groupId, ...context }
+        if (parts[4] === 'location' && id !== 'season')
+          return { name: 'groupLocation', kind: id, id: groupId, ...context }
+        return { name: 'groupSettings', kind: id, id: groupId, ...context }
       }
       if (parts[3] === 'invite-administrator' && id === 'team')
         return { name: 'promoteExternal', id: groupId }
@@ -464,6 +481,20 @@ export function parseRoute(path: string, search = ''): Route {
 }
 
 /** The address of a route, ready for the history. */
+function settingsChildPath(
+  route: { kind: GroupKind; id: string } & SettingsContext,
+  child: string
+): string {
+  const path = routePath({
+    name: 'groupSettings',
+    kind: route.kind,
+    id: route.id,
+    teamReturn: route.teamReturn
+  })
+  const [base, query] = path.split('?')
+  return `${base}/${child}${query == null ? '' : '?' + query}`
+}
+
 export function routePath(route: Route): string {
   switch (route.name) {
     case 'oauthApprove':
@@ -505,6 +536,12 @@ export function routePath(route: Route): string {
       }
       return `/groups/${route.kind}/${encodeURIComponent(route.id)}/settings${query.size === 0 ? '' : '?' + query.toString()}`
     }
+    case 'groupAddPeople':
+      return settingsChildPath(route, 'people')
+    case 'groupInvites':
+      return settingsChildPath(route, 'invites')
+    case 'groupLocation':
+      return settingsChildPath(route, 'location')
     case 'groupLink':
       return `/groups/${route.kind}/${encodeURIComponent(route.id)}/link?target=${route.targetKind}&relationship=${route.relationship}&direction=${route.direction}`
     case 'createGroup': {

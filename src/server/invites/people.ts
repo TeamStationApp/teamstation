@@ -40,6 +40,7 @@ export interface Grant {
   name: string
   /** `owner`, `manager` or `member` for a team; `member` above. */
   role: string
+  isPlayer?: boolean
 }
 
 export interface ScopePerson {
@@ -289,6 +290,7 @@ export async function peopleInScope(
         'memberships.user_id as userId',
         'memberships.team_id as teamId',
         'memberships.role as role',
+        'memberships.is_player as isPlayer',
         'users.display_name as displayName'
       ])
       .where('memberships.team_id', 'in', teamIds)
@@ -298,7 +300,8 @@ export async function peopleInScope(
       person(row.userId, row.displayName).teams.push({
         id: row.teamId,
         name: named.get(row.teamId) ?? row.teamId,
-        role: row.role
+        role: row.role,
+        isPlayer: row.isPlayer
       })
     }
   }

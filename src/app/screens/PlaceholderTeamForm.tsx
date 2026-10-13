@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Text } from 'react-native'
+import { Modal, Text } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { CreateGroup, GroupPicture } from '../../common/groupCreation'
@@ -7,8 +7,9 @@ import type { Locality } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
 import { Button, Card, TextField } from '../components'
 import { GroupPictureChooser } from '../components/GroupPictureChooser'
-import { LocalityPicker } from '../components/LocalityPicker'
+import { LocationRow } from '../components/LocationRow'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { LocationScreen } from './LocationScreen'
 
 /** A team on one side of a game, and a placeholder still to be made. */
 export interface TeamChoice {
@@ -78,7 +79,10 @@ export function PlaceholderTeamForm({
   const styles = getStyles(theme)
   const [step, setStep] = useState<Step>('name')
   const [name, setName] = useState('')
-  const [locality, setLocality] = useState<Locality>()
+  const [locality, setLocality] = useState<Locality | undefined>(
+    custodian.locality ?? undefined
+  )
+  const [locationOpen, setLocationOpen] = useState(false)
   const [picture, setPicture] = useState<GroupPicture>()
   const trimmed = name.trim()
   const named = trimmed.length > 0 && trimmed.length <= 120
@@ -134,12 +138,34 @@ export function PlaceholderTeamForm({
           <Text style={styles.hint}>
             Optional. Choose where this team plays, or skip it.
           </Text>
-          <LocalityPicker
-            client={client}
+          <LocationRow
             value={locality ?? null}
-            suggestion={custodian.locality ?? undefined}
-            onChange={setLocality}
+            onPress={() => {
+              setLocationOpen(true)
+            }}
           />
+          {locationOpen && (
+            <Modal
+              visible
+              animationType="slide"
+              presentationStyle="fullScreen"
+              onRequestClose={() => {
+                setLocationOpen(false)
+              }}
+            >
+              <LocationScreen
+                client={client}
+                current={locality ?? null}
+                onSave={async value => {
+                  setLocality(value)
+                  setLocationOpen(false)
+                }}
+                onCancel={() => {
+                  setLocationOpen(false)
+                }}
+              />
+            </Modal>
+          )}
         </>
       )}
       {step === 'logo' && (

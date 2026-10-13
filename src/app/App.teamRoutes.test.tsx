@@ -13,6 +13,34 @@ import { asGroupDetail } from '../common/publicGroups'
 import { App, stackFor } from './App'
 
 describe('team route frames', () => {
+  it('reconstructs Settings under every directly opened management child', () => {
+    for (const name of [
+      'groupLocation',
+      'groupAddPeople',
+      'groupInvites'
+    ] as const) {
+      for (const kind of ['team', 'league'] as const) {
+        const teamReturn =
+          kind === 'team'
+            ? { id: 'alias', address: 'team' as const, tab: 'schedule' }
+            : undefined
+        const route = { name, kind, id: 'canonical', teamReturn }
+        const stack = stackFor(route).home!
+        expect(stack.at(-1)).deep.equals(route)
+        expect(stack.at(-2)).deep.equals({
+          name: 'groupSettings',
+          kind,
+          id: 'canonical',
+          teamReturn
+        })
+        if (kind === 'team')
+          expect(stack[0]).deep.equals(
+            stackFor({ name: 'team', teamId: 'alias', tab: 'schedule' })
+              .home![0]
+          )
+      }
+    }
+  })
   it('retains the team or group return frame through settings address reconstruction', () => {
     for (const address of ['team', 'group'] as const) {
       const route = {
@@ -67,7 +95,7 @@ describe('team route frames', () => {
 describe('team settings browser history', () => {
   // Two visits of a dozen 60 ms settles each run past mocha's two seconds,
   // and a test that times out keeps acting under the ones after it.
-  it('returns to the original section after Back, Forward and Cancel or Save', async () => {
+  it('returns to the original section after Back and Forward while individual saves stay in settings', async () => {
     const proto = TeamStationClient.prototype
     const originals = Object.getOwnPropertyDescriptors(proto)
     const detail = asGroupDetail({
@@ -115,9 +143,9 @@ describe('team settings browser history', () => {
       await settle()
     }
     try {
-      for (const [path, tab, submit] of [
-        ['/teams/alias?tab=schedule', 'Schedule', 'Cancel'],
-        ['/groups/team/alias?tab=stats', 'Stats', 'Save settings']
+      for (const [path, tab] of [
+        ['/teams/alias?tab=schedule', 'Schedule'],
+        ['/groups/team/alias?tab=stats', 'Stats']
       ]) {
         window.history.replaceState(null, '', path)
         const host = document.createElement('div')
@@ -143,72 +171,21 @@ describe('team settings browser history', () => {
           expect(window.location.pathname).equals(
             '/groups/team/canonical/settings'
           )
-          await press(submit)
-          expect(window.location.pathname + window.location.search).equals(path)
-          expect(
-            document.querySelector(
-              '[aria-label="Team sections"] [aria-selected="true"]'
-            )?.textContent
-          ).equals(tab)
-          // Distinct visits can even have identical addresses. Completion
-          // belongs to the visit that submitted, never an earlier entry.
-          for (const laterTab of [tab, 'Team']) {
-            await press('Team settings')
-            const priorAddress =
-              window.location.pathname + window.location.search
-            const priorIndex = (
-              window.history.state as { tsRouteIndex: number }
-            ).tsRouteIndex
-            await press('Cancel')
-            if (laterTab !== tab) await press(laterTab)
-            await press('Team settings')
-            let finishSave!: () => void
-            proto.updateGroup = async () => {
-              await new Promise<void>(resolve => {
-                finishSave = resolve
-              })
-              return detail.group
-            }
-            await press('Save settings')
-            const currentIndex = (
-              window.history.state as { tsRouteIndex: number }
-            ).tsRouteIndex
-            await act(async () => {
-              window.history.go(priorIndex - currentIndex)
-              await new Promise(resolve => setTimeout(resolve, 60))
-            })
-            await settle()
-            expect(window.location.pathname + window.location.search).equals(
-              priorAddress
-            )
-            await act(async () => {
-              finishSave()
-            })
-            await settle()
-            expect(window.location.pathname + window.location.search).equals(
-              priorAddress
-            )
-            await press('Cancel')
-            expect(window.location.pathname + window.location.search).equals(
-              path
-            )
-          }
-          proto.updateGroup = async () => detail.group
-          await press('Team settings')
-          const earlierSettings =
-            window.location.pathname + window.location.search
-          await press('Cancel')
-          await press('Team')
-          await press('Team settings')
+          const input = document.querySelector<HTMLInputElement>(
+            '[aria-label="Name"]'
+          )!
           await act(async () => {
-            window.history.go(-3)
-            await new Promise(resolve => setTimeout(resolve, 60))
+            Object.getOwnPropertyDescriptor(
+              window.HTMLInputElement.prototype,
+              'value'
+            )!.set!.call(input, 'Wrens')
+            input.dispatchEvent(new window.Event('input', { bubbles: true }))
           })
-          await settle()
-          expect(window.location.pathname + window.location.search).equals(
-            earlierSettings
+          await press('Save name')
+          expect(window.location.pathname).equals(
+            '/groups/team/canonical/settings'
           )
-          await press('Cancel')
+          await press('Back')
           expect(window.location.pathname + window.location.search).equals(path)
           expect(
             document.querySelector(

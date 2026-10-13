@@ -10,6 +10,21 @@ const roundTrip = (route: Route): Route => {
 }
 
 describe('addresses', function () {
+  it('round-trips team return context on every settings child', () => {
+    for (const name of [
+      'groupLocation',
+      'groupAddPeople',
+      'groupInvites'
+    ] as const) {
+      const route = {
+        name,
+        kind: 'team' as const,
+        id: 'canonical',
+        teamReturn: { id: 'alias', address: 'team' as const, tab: 'schedule' }
+      }
+      expect(roundTrip(route)).deep.equals(route)
+    }
+  })
   it('round-trips team settings return addresses, including aliases and selected sections', () => {
     for (const address of ['team', 'group'] as const)
       for (const tab of [undefined, 'schedule', 'roster']) {

@@ -25,6 +25,12 @@ export const asServerConfig = asObject({
   buildsUrl: asOptional(asHttpsUrl),
   /** Browser-restricted display key; never a server or Android credential. */
   googleMaps: asOptional(asObject({ webApiKey: asString })),
+  googlePlaces: asOptional(
+    asObject({
+      apiKey: asString,
+      baseUrl: asOptional(asString, 'https://places.googleapis.com')
+    })
+  ),
   /** Where the API listens. */
   listenHost: asOptional(asString, '127.0.0.1'),
   listenPort: asOptional(asNumber, 9100),

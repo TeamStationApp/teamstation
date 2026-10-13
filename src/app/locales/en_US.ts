@@ -403,7 +403,7 @@ export const enUs = {
   standings_runs_against: 'RA',
 
   // Invites
-  invite_title: 'Invite people',
+  invite_title: 'Invite Spectators',
   invite_detail:
     'Anybody with the link can watch %s. They will be asked for their name and e-mail address.',
   invite_none: 'No invite links yet.',
@@ -416,7 +416,7 @@ export const enUs = {
   invite_cancel: 'Cancel',
   invite_copy: 'Copy link',
   invite_copied: 'Copied',
-  invite_revoke: 'Stop this link',
+  invite_revoke: 'Disable',
   invite_uses_none: 'Never used',
   invite_uses_one: 'Used once',
   invite_uses_many: 'Used %s times',

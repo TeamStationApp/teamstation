@@ -1,24 +1,54 @@
 import { Router } from 'express'
+import type { Kysely } from 'kysely'
 
-import { badRequest } from '../../common/errors'
+import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { checkLimits, recordAttempts } from '../auth/rateLimit'
+import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
+import type { Database } from '../db/database'
 import {
   EVENT_PLACE_ATTRIBUTION,
   type EventPlaceSearch,
   eventPlaceSearch
 } from '../location/eventPlaces'
+import type { GooglePlaces } from '../location/googlePlaces'
 import {
   findPlaces,
   nearestPlace,
   placeAttribution,
+  placeById,
   placeSnapshot
 } from '../location/places'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
 export function locationRoutes(
-  search: EventPlaceSearch = eventPlaceSearch()
+  search: EventPlaceSearch = eventPlaceSearch(),
+  cities?: { db: Kysely<Database>; googlePlaces?: GooglePlaces }
 ): Router {
   const router = Router()
+  async function limit(userId: number, details: boolean): Promise<void> {
+    if (cities == null) return
+    await atomic(cities.db, async db => {
+      await lockKeys(db, [`city-lookup:${userId}`])
+      const rules = [
+        {
+          scope: details ? 'city.details' : 'city.autocomplete',
+          key: String(userId),
+          limit: details ? 30 : 120,
+          windowSec: 60
+        }
+      ]
+      await checkLimits(db, rules)
+      await recordAttempts(db, rules)
+    })
+  }
+  const sessionToken = (value: unknown): string | undefined => {
+    if (value === undefined) return undefined
+    if (typeof value !== 'string' || value.length < 1 || value.length > 64)
+      throw badRequest('City search session is invalid')
+    return value
+  }
   router.get(
     '/locations',
     (req, res, next) => {
@@ -48,16 +78,67 @@ export function locationRoutes(
       })
     })
   )
-  router.get('/locations', (req, res) => {
-    const query = req.query.query
-    if (typeof query !== 'string' || query.length > 120)
-      throw badRequest('Enter a city or region')
-    res.json({
-      places: findPlaces(query),
-      attribution: placeAttribution,
-      snapshot: placeSnapshot
+  router.get(
+    '/locations',
+    withAsync(async (req, res) => {
+      const query = req.query.query
+      if (typeof query !== 'string' || query.length > 120)
+        throw badRequest('Enter a city or region')
+      const session = sessionToken(req.query.session)
+      const places = findPlaces(query)
+      const google = cities?.googlePlaces
+      const signedIn = req.actor != null && req.actor.apiTokenId == null
+      // Legacy callers omit session and keep their catalogue data and attribution.
+      if (
+        google != null &&
+        session != null &&
+        signedIn &&
+        query.trim().length >= 2
+      ) {
+        await limit(req.actor!.userId, false)
+        res.set('Cache-Control', 'no-store').json({
+          places,
+          suggestions: await google.autocomplete(query, session),
+          provider: 'google',
+          attribution: 'Powered by Google',
+          snapshot: placeSnapshot
+        })
+      } else
+        res.json({
+          places,
+          suggestions: places.slice(0, 8).map(place => ({
+            id: `geonames:${place.placeId}`,
+            primary: place.city,
+            secondary: `${place.region}, ${place.country}`
+          })),
+          provider: 'geonames',
+          attribution: placeAttribution,
+          snapshot: placeSnapshot
+        })
     })
-  })
+  )
+  router.get(
+    '/locations/:id',
+    withAsync(async (req, res) => {
+      const id = req.params.id
+      if (typeof id !== 'string')
+        throw badRequest('Location identifier is invalid')
+      const session = sessionToken(req.query.session)
+      if (id.startsWith('google:')) {
+        if (req.actor == null || req.actor.apiTokenId != null)
+          throw unauthorized()
+        if (cities?.googlePlaces == null) throw notFound()
+        await limit(req.actor.userId, true)
+        res.set('Cache-Control', 'no-store').json({
+          place: await cities.googlePlaces.locality(id.slice(7), session)
+        })
+      } else if (id.startsWith('geonames:')) {
+        const place = placeById(id.slice(9))
+        if (place == null) throw notFound()
+        res.json({ place })
+      } else throw notFound()
+    })
+  )
   // Coordinates stay in the POST body and are never attached to audit metadata.
   router.post('/location-suggestions', (req, res) => {
     const { latitude, longitude } = req.body ?? {}

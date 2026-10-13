@@ -75,13 +75,18 @@ export async function publicGroup(
           .where('id', '=', row.league_id)
           .executeTakeFirst()
       )?.locality ?? null
+  const visibleLocality = locality == null ? null : asLocality(locality)
+  // Older installed clients bound this optional reference to 30 characters.
+  // Keep full provider IDs in storage and the opt-in city lookup response.
+  if (visibleLocality?.placeId != null && visibleLocality.placeId.length > 30)
+    visibleLocality.placeId = null
   return {
     id: row.id,
     kind: ref.kind,
     name: row.name,
     parentNames,
     imageUrl: imageUrl(space, row.logo_path, PROFILE_SIZE),
-    locality: locality == null ? null : asLocality(locality),
+    locality: visibleLocality,
     startsOn: 'starts_on' in row ? calendarDateText(row.starts_on) : null,
     endsOn: 'ends_on' in row ? calendarDateText(row.ends_on) : null,
     timezone: 'timezone' in row ? row.timezone : 'UTC',

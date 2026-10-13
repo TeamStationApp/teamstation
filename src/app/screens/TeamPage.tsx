@@ -19,15 +19,22 @@ export function TeamPage({
   id,
   team: hint,
   onSettings,
+  onCreateGame,
   ...presentation
 }: Omit<
   TeamScreenProps,
-  'team' | 'onManage' | 'publicDetail' | 'nonMemberView' | 'managesPeople'
+  | 'team'
+  | 'onManage'
+  | 'publicDetail'
+  | 'nonMemberView'
+  | 'managesPeople'
+  | 'onCreateGame'
 > & {
   client: TeamStationClient
   id: string
   team?: TeamSummary
   onSettings?: (id: string) => void
+  onCreateGame?: (id: string) => void
 }): React.ReactElement {
   const theme = useTheme()
   const [refreshRevision, setRefreshRevision] = useState(0)
@@ -106,6 +113,13 @@ export function TeamPage({
       publicDetail={full ? undefined : detail}
       nonMemberView={detail.nonMemberView}
       managesPeople={detail.canManagePeople === true}
+      onCreateGame={
+        detail.canManagePeople === true && onCreateGame != null
+          ? () => {
+              onCreateGame(group.id)
+            }
+          : undefined
+      }
       onManage={
         detail.canManage && onSettings != null
           ? () => {
