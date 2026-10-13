@@ -1,3 +1,7 @@
+// The DOM these tests render into. `npm test` and `coverage.app` load it already; the server's
+// coverage scripts run every `src/**/*.test.ts` without it, so the file brings its own.
+import '../../test/scoringDomSetup.cjs'
+
 import Module from 'node:module'
 
 import { expect } from 'chai'
