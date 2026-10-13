@@ -144,6 +144,33 @@ class ProgrammeExportTest {
     }
 
     @Test
+    fun aPartThatOpensBeforeTheTakeKeepsItsSoundAndPictureUnderOneHead() {
+        // A phone's part opens on a picture captured a picture delay (0.15 s) before Record, so its
+        // timeline starts before the take's. Rebuilt, the output starts where that part does, with
+        // the picture and the part's first real sound both at 0: a reader that ignores the edit list
+        // (the server's remux) finds them starting together, and no sample is written before 0.
+        val first = part("program-20261012-100000.mp4", 10, priming = 2048)
+        val second = part("program-20261012-100000-2.mp4", 10, priming = 2048)
+        val anchors = anchors(start = 999.85, count = 4) + anchors(part = 2, start = 1_019.85, count = 4)
+        val output = File(folder.root, "early.mp4")
+        ProgrammeExport.export(listOf(first, second), anchors, 1, 1_000.0, 1_030.0, 30, silent, output)
+        val reader = FragmentedMp4Reader.read(output)!!
+        val video = reader.video!!
+        assertEquals(0.0, video.samples.first().ticks / 90_000.0, 1e-6)
+        assertEquals(20.0, video.samples[300].ticks / 90_000.0, 1e-4)
+        val audio = reader.audio!!
+        assertEquals(2048L, audio.mediaTime)
+        val playsAt = { ticks: Long -> (ticks - audio.mediaTime) / 48_000.0 }
+        val real = audio.samples.filter { reader.read(it).contentEquals(byteArrayOf(0x21, 0x55)) }
+        val packet = 1024.0 / 48_000
+        assertEquals(0.0, playsAt(real.first().ticks), packet / 2)
+        assertEquals(20.0, playsAt(real.first { playsAt(it.ticks) > 15 }.ticks), packet)
+        // Both run to the take's end, counted from that head.
+        assertEquals(30.15, video.endSeconds!!, 1e-4)
+        assertEquals(30.15, playsAt(audio.samples.last().ticks + audio.samples.last().duration), packet)
+    }
+
+    @Test
     fun aPartWithNoAnchorsIsLeftOutAndNoneIsAnError() {
         val first = part("program-20261012-100000.mp4", 2)
         val output = File(folder.root, "none.mp4")

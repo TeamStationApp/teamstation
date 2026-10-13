@@ -173,10 +173,15 @@ object ProgrammeExport {
     }
 
     /**
-     * Lays every part's samples at its wall start, counted from [windowStart]. A picture lasts until
-     * the next one, so across a hole the last picture before it is held as one sample; the sound is
-     * contiguous, with [silentPacket]s across every hole and out to the end. The last picture and the
-     * sound both run to [windowEnd], or to where the last part ends.
+     * Lays every part's samples at its wall start, counted from the output's head: [windowStart], or
+     * the first part's start when that is earlier. A phone's first part opens on a picture captured a
+     * picture delay before Record, so it starts before the take; counted from the window, its pictures
+     * went before 0 while its sound was cut at 0, and a reader that ignores the edit list (the
+     * server's remux) found the two starting apart. From the earlier head both tracks start together,
+     * as a copied part's do. A picture lasts until the next one, so across a hole the last picture
+     * before it is held as one sample; the sound is contiguous, with [silentPacket]s across every hole
+     * and out to the end. The last picture and the sound both run to [windowEnd], or to where the last
+     * part ends.
      */
     fun place(parts: List<Pair<Double, File>>, windowStart: Double, windowEnd: Double?, silentPacket: ByteArray, output: File) {
         val readings = parts.map { (start, file) -> Triple(start, file, FragmentedMp4Reader.read(file)) }
@@ -208,13 +213,14 @@ object ProgrammeExport {
             }
         )
         val packet = FragmentedMp4Writer.StreamPacketSamples.toDouble() / (sourceAudio?.timescale ?: 48_000)
+        val head = minOf(windowStart, readers.minOf { it.first })
         var lastPicture = Double.NEGATIVE_INFINITY
         // Where the sound written so far ends, on the output's timeline, priming included.
         var soundEnd = -(sourceAudio?.let { priming.toDouble() / it.timescale } ?: 0.0)
         var pictureEnd = 0.0
         var end = 0.0
         for ((start, reader) in readers) {
-            val offset = start - windowStart
+            val offset = start - head
             // One sample in memory at a time, read from the part as it is written out.
             reader.samples().use { source ->
                 reader.video?.let { track ->
@@ -244,7 +250,7 @@ object ProgrammeExport {
             }
         }
         // The window's end when the take has one; otherwise wherever the last part's media ends.
-        val finalEnd = windowEnd?.let { it - windowStart } ?: maxOf(pictureEnd, end)
+        val finalEnd = windowEnd?.let { it - head } ?: maxOf(pictureEnd, end)
         if (sourceAudio != null) {
             while (soundEnd + packet / 2 < finalEnd) {
                 writer.writeAudio(silentPacket)
