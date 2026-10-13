@@ -222,7 +222,9 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     onScroll: event => {
       const next = event.contentOffset.y
       if (jumpTo.value >= 0 && Math.abs(next - jumpTo.value) > 1) {
-        scrollTo(scrollRef, 0, jumpTo.value, false)
+        // A clamped native command can synchronously emit another scroll.
+        // Retrying here recurses before Fabric can mount the landing room.
+        // The bounded anchor/restore timers retry once layout can catch up.
         return
       }
       // Pulled back to the new end of content that shrank under a page at
