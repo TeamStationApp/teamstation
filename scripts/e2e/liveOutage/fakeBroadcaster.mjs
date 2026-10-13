@@ -1,0 +1,188 @@
+// A fake RTMP broadcaster: a camera, or TS Director's programme, for the live
+// playback tests, without an iPad or a phone.
+//
+//   node scripts/e2e/liveOutage/fakeBroadcaster.mjs \
+//     --url rtmp://127.0.0.1:1936/live/<key> [--duration 180] \
+//     [--outage <at>:<seconds>]... [--lead <seconds>] [--size 1280x720] \
+//     [--fps 30] [--ffmpeg /opt/homebrew/bin/ffmpeg]
+//
+// 1. Plans the start, T0, `--lead` seconds ahead (by default long enough to
+//    encode), and says so: `{"event":"planned","t0":…}`.
+// 2. Encodes `--duration` seconds of a test picture to HEVC with the local
+//    FFmpeg (libx265, a keyframe a second, no B-frames), every frame carrying
+//    its wall clock, T0 plus its presentation time, burned in as LIVE_MARKER's
+//    32 cells (mobile/apps/tsDirector/scripts/rtspLoopServer.js) at the
+//    picture's bottom-left. `readMarker.ts` reads them back. The same clock
+//    is written out in words at the top-left, for a person watching.
+// 3. At T0 publishes it at real speed with `ffmpeg -re -c copy -f flv`, which
+//    FFmpeg sends as enhanced RTMP for HEVC. Never `-tag:v hvc1` on the
+//    publish.
+// 4. `--outage 60:20` stops publishing 60 s in and starts again 20 s later
+//    from where the picture would be by then, as a camera that lost its
+//    network does: the twenty seconds in between are never sent, and the new
+//    publish's timestamps start again from zero. Repeat it for more outages.
+//
+// Several at once publish several angles. Each line it prints is one JSON
+// event; the last is `{"event":"done"}`. It exits 1 if a publish fails.
+import { execFileSync, spawn } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { parseArgs } from 'node:util'
+
+const require = createRequire(import.meta.url)
+const root = resolve(fileURLToPath(import.meta.url), '../../../..')
+const { LIVE_MARKER } = require(
+  join(root, 'mobile/apps/tsDirector/scripts/rtspLoopServer.js')
+)
+
+const { values } = parseArgs({
+  options: {
+    url: { type: 'string' },
+    duration: { type: 'string', default: '180' },
+    outage: { type: 'string', multiple: true, default: [] },
+    lead: { type: 'string' },
+    size: { type: 'string', default: '1280x720' },
+    fps: { type: 'string', default: '30' },
+    ffmpeg: { type: 'string', default: '/opt/homebrew/bin/ffmpeg' }
+  }
+})
+if (values.url == null)
+  throw new Error('Give --url rtmp://<host>:<port>/<app>/<key>')
+const duration = Number(values.duration)
+const fps = Number(values.fps)
+const [width, height] = values.size.split('x').map(Number)
+const outages = values.outage
+  .map(one => one.split(':').map(Number))
+  .map(([at, seconds]) => ({ at, seconds }))
+  .sort((a, b) => a.at - b.at)
+for (const { at, seconds } of outages)
+  if (!(at > 0 && seconds > 0 && at + seconds < duration))
+    throw new Error(`--outage ${at}:${seconds} is not inside the stream`)
+// libx265 runs several times faster than real time at this size; a quarter
+// of the length, and ten seconds to spare, covers the encode.
+const lead = values.lead == null ? 10 + duration / 4 : Number(values.lead)
+const t0 = Math.ceil((Date.now() + lead * 1000) / 1000) * 1000
+
+const say = event => console.log(JSON.stringify({ at: Date.now(), ...event }))
+const pause = async ms =>
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, ms)))
+
+/** LIVE_MARKER's cells for wall ms `t0 + t`, at the bottom-left. */
+function markerFilters() {
+  const { bits, originX, stride, cell, sentinelSlot } = LIVE_MARKER
+  const originY = height - 40 - cell
+  const filters = [
+    `drawbox=x=20:y=${originY - 20}:w=${originX + (sentinelSlot + 1) * stride - 16}:h=72:color=black:t=fill`
+  ]
+  for (let bit = 0; bit < bits; bit += 1) {
+    filters.push(
+      `drawbox=x=${originX + bit * stride}:y=${originY}:w=${cell}:h=${cell}:color=white:t=fill:` +
+        `enable='mod(floor((${t0}+t*1000)/pow(2\\,${bit}))\\,2)'`
+    )
+  }
+  filters.push(
+    `drawbox=x=${originX + sentinelSlot * stride}:y=${originY}:w=${cell}:h=${cell}:color=white:t=fill`
+  )
+  // T0 is a whole second, so the milliseconds are the picture's own.
+  const clock =
+    `%{pts\\:gmtime\\:${t0 / 1000}\\:%H\\\\\\:%M\\\\\\:%S}` +
+    `.%{eif\\:mod(t*1000\\,1000)\\:d\\:3} UTC`
+  filters.push(
+    `drawtext=text='${clock}':x=40:y=60:fontsize=48:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=12`
+  )
+  return filters.join(',')
+}
+
+const work = mkdtempSync(join(tmpdir(), 'tsFakeBroadcaster-'))
+let failed = false
+try {
+  say({
+    event: 'planned',
+    t0,
+    t0Iso: new Date(t0).toISOString(),
+    duration,
+    outages
+  })
+
+  const encoded = join(work, 'picture.mp4')
+  execFileSync(values.ffmpeg, [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-f',
+    'lavfi',
+    '-i',
+    `testsrc2=size=${width}x${height}:rate=${fps}:duration=${duration}`,
+    '-vf',
+    markerFilters(),
+    '-c:v',
+    'libx265',
+    '-preset',
+    'ultrafast',
+    '-crf',
+    '30',
+    '-x265-params',
+    `log-level=error:keyint=${fps}:min-keyint=${fps}:scenecut=0:bframes=0`,
+    '-pix_fmt',
+    'yuv420p',
+    '-tag:v',
+    'hvc1',
+    '-movflags',
+    'frag_keyframe+empty_moov+default_base_moof',
+    encoded
+  ])
+  const file = encoded
+  say({ event: 'encoded' })
+  if (Date.now() > t0)
+    throw new Error(`the encode ran past T0; give a longer --lead than ${lead}`)
+
+  // The stretches that are sent: from the start to the first outage, from
+  // the end of each outage to the next, and on to the end.
+  const parts = []
+  let from = 0
+  for (const { at, seconds } of outages) {
+    parts.push({ from, to: at })
+    from = at + seconds
+  }
+  parts.push({ from, to: duration })
+
+  for (const part of parts) {
+    await pause(t0 + part.from * 1000 - Date.now())
+    say({ event: 'publish', fromSec: part.from, toSec: part.to })
+    const code = await new Promise(resolve => {
+      const child = spawn(
+        values.ffmpeg,
+        [
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-re',
+          ...(part.from > 0 ? ['-ss', String(part.from)] : []),
+          '-i',
+          file,
+          '-t',
+          String(part.to - part.from),
+          '-c',
+          'copy',
+          '-f',
+          'flv',
+          values.url
+        ],
+        { stdio: ['ignore', 'ignore', 'inherit'] }
+      )
+      child.on('exit', resolve)
+    })
+    say({ event: 'stopped', fromSec: part.from, toSec: part.to, code })
+    if (code !== 0) {
+      failed = true
+      break
+    }
+  }
+} finally {
+  rmSync(work, { recursive: true, force: true })
+}
+say({ event: 'done', failed })
+process.exit(failed ? 1 : 0)

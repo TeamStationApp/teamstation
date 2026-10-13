@@ -38,6 +38,18 @@ export default [
     }
   },
 
+  // The browser tests' helpers, outside `src`: the marker reader runs in a
+  // page as well as in Node.
+  {
+    files: ['scripts/e2e/**/*.ts'],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: './tsconfig.e2eScripts.json'
+      }
+    }
+  },
+
   {
     files: ['Masonfile.ts'],
     languageOptions: {
