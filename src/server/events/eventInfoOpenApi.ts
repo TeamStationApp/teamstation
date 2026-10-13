@@ -91,7 +91,7 @@ export function eventInfoPaths(
         security: [{ bearer: [] }],
         parameters,
         description:
-          'Authorized saved-address lookup, preserving an explicit address unchanged and falling back to a saved venue qualified by team locality. Explicit-address coordinates take precedence; an absent location returns null coordinates. Lookup is bounded, timeout-protected and deduplicated. No arbitrary address query is accepted.',
+          'Authorized saved-address lookup, preserving an explicit address unchanged and falling back to a saved venue qualified by team locality. Explicit-address coordinates take precedence; an absent location returns null coordinates. Google Places is primary when configured, with Photon only on provider unavailability. Google lookups are limited per account, bounded, timeout-protected and deduplicated; Google coordinates are not cached indefinitely. No arbitrary address query is accepted.',
         responses: {
           ...responses,
           200: {

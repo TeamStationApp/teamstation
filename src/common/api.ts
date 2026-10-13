@@ -2120,12 +2120,18 @@ export class TeamStationClient {
     query: string,
     kind: EventPlaceKind
   ): Promise<EventPlace[]> {
-    const answer = await this.request(
+    return (await this.eventPlaceSuggestions(query, kind)).places
+  }
+
+  async eventPlaceSuggestions(
+    query: string,
+    kind: EventPlaceKind
+  ): Promise<ReturnType<typeof asEventPlaces>> {
+    return await this.request(
       'GET',
       `/locations?kind=${kind}&query=${encodeURIComponent(query)}`,
       asEventPlaces
     )
-    return answer.places
   }
 
   /** The seasons this person can see, which is what home leads with. */
