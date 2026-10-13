@@ -12,7 +12,8 @@ const path = require('path')
 
 const { resolveDevice } = require('./deviceTarget')
 
-const UDID = resolveDevice().udid
+// Resolved when the script runs, not when it is loaded, so a test can import `newestProgram`.
+let UDID
 const BUNDLE = 'app.teamstation.director'
 const OUT = path.join(__dirname, '..', 'artifacts', 'program')
 
@@ -52,7 +53,23 @@ function probe (file) {
   return JSON.parse(raw).streams || []
 }
 
+// The newest master by its stamp, then by its part: a resumed take's `program-…-2.mp4` sorts before
+// the part-one `program-….mp4` it continues as plain text, so the last name listed was part one.
+function newestProgram (names) {
+  const key = (name) => {
+    const match = /^program-(\d{8})-(\d{6})(?:-(\d+))?\.mp4$/.exec(name)
+    if (match == null) return [ '', 0 ]
+    return [ `${match[1]}${match[2]}`, Number(match[3] || 1) ]
+  }
+  return [ ...names ].sort((a, b) => {
+    const [ stampA, partA ] = key(a)
+    const [ stampB, partB ] = key(b)
+    return stampA === stampB ? partA - partB : stampA < stampB ? -1 : 1
+  })[names.length - 1]
+}
+
 function main () {
+  UDID = resolveDevice().udid
   rmSync(OUT, { recursive: true, force: true })
   mkdirSync(OUT, { recursive: true })
 
@@ -60,7 +77,7 @@ function main () {
   const unique = [ ...new Set(names) ]
   if (!unique.length) throw new Error('no program files on device')
 
-  const name = unique[unique.length - 1]
+  const name = newestProgram(unique)
   const local = path.join(OUT, name)
   pull(`Documents/Program/${name}`, local)
   if (!existsSync(local)) throw new Error(`copy produced nothing for ${name}`)
@@ -91,4 +108,6 @@ function main () {
   console.log(`\n  frame  ${frame}`)
 }
 
-main()
+if (require.main === module) main()
+
+module.exports = { newestProgram }
