@@ -17,9 +17,12 @@ import {
 } from '../../test/replayGameFixture'
 import {
   CATCH_UP_MS,
+  catchingUp,
   CELEBRATION_MS,
   HALF_MS,
   IN_PLAY_TAIL_MS,
+  LIVE_HALF_MS,
+  LIVE_SLOT_MS,
   replayCard,
   replayIdle,
   replayReducer,
@@ -93,6 +96,24 @@ function run(
     }
   }
   return { state: next, started, now }
+}
+
+/** When a replay's first pitch is thrown: after "Play ball!" has shown. */
+const FIRST = 100 + SLOT_MS.other
+
+/** A replay at its first pitch, having opened on "Play ball!". */
+function atFirstPitch(timeline: ReplayTimeline): ReplayState {
+  let state = replayReducer(startReplay('replay', timeline), {
+    type: 'TICK',
+    now: 100
+  })
+  expect(state.shown).equals(null)
+  expect(replayCard(state, WORDS).line).equals('Play ball!')
+  state = replayReducer(state, { type: 'TICK', now: FIRST - 100 })
+  expect(state.shown).equals(null)
+  state = replayReducer(state, { type: 'TICK', now: FIRST })
+  expect(state.shown?.key).equals('0-0')
+  return state
 }
 
 async function timelineOf(
@@ -199,14 +220,14 @@ describe('replay machine', function () {
 
   it('holds on pause, and restarts what was left of the slot on play', async function () {
     const timeline = await timelineOf(finalGame())
-    let state = startReplay('replay', timeline)
-    state = replayReducer(state, { type: 'TICK', now: 100 })
-    expect(state.shown?.key).equals('0-0')
-    state = replayReducer(state, { type: 'PAUSE', now: 1100 })
+    let state = atFirstPitch(timeline)
+    state = replayReducer(state, { type: 'PAUSE', now: FIRST + 1000 })
     expect(state.paused).equals(true)
     expect(replayCard(state, WORDS).detail).equals('Paused')
-    expect(replayReducer(state, { type: 'PAUSE', now: 1200 })).equals(state)
-    const held = run(state, () => false, 1100)
+    expect(replayReducer(state, { type: 'PAUSE', now: FIRST + 1100 })).equals(
+      state
+    )
+    const held = run(state, () => false, FIRST + 1000)
     expect(held.state.shown?.key).equals('0-0')
     state = replayReducer(held.state, { type: 'PLAY', now: held.now })
     expect(state.slotEndsAt).equals(held.now + SLOT_MS.pitch - 1000)
@@ -234,70 +255,17 @@ describe('replay machine', function () {
 
   it('waits for the announcer before the next step', async function () {
     const timeline = await timelineOf(finalGame())
-    let state = replayReducer(startReplay('replay', timeline), {
-      type: 'TICK',
-      now: 100
-    })
+    let state = atFirstPitch(timeline)
     state = replayReducer(state, { type: 'SPEAKING', speaking: true })
     expect(replayReducer(state, { type: 'SPEAKING', speaking: true })).equals(
       state
     )
-    const held = run(state, () => false, 100)
+    const held = run(state, () => false, FIRST)
     expect(held.state.shown?.key).equals('0-0')
     state = replayReducer(held.state, { type: 'SPEAKING', speaking: false })
     expect(
       run(state, next => next.shown?.key === '0-1', held.now).state.shown?.key
     ).equals('0-1')
-  })
-
-  it('goes to how a finished game ended when the game will not take a step, without blaming the scorer', async function () {
-    const timeline = await timelineOf(finalGame())
-    let state = run(
-      startReplay('replay', timeline),
-      next => next.shown != null
-    ).state
-    state = {
-      ...state,
-      queue: [
-        {
-          step: state.queue[0].step,
-          actions: [{ type: 'gameFlow', kind: 'closePlay' }]
-        },
-        ...state.queue.slice(1)
-      ]
-    }
-    state = run(state, next => next.queue.length === 0, 1e6).state
-    expect(state.mode).equals('replay')
-    expect(state.changed).equals(false)
-    expect(state.scoring.session.liveData.linescore.teams).deep.equals(
-      timeline.end.liveData.linescore.teams
-    )
-    state = replayReducer(state, { type: 'TICK', now: 1e9 })
-    expect(state.final).equals(true)
-  })
-
-  it('ends a game the server calls final though its plays record no end', async function () {
-    const actions = replayActions()
-    const timeline = replayTimelineOf(
-      await scored(actions.slice(0, -1)),
-      context
-    )
-    expect(timeline.end.final).equals(false)
-    // Not final: the view waits at the last play.
-    const waiting = run(
-      startReplay('replay', timeline),
-      state => state.queue.length === 0
-    )
-    expect(
-      replayReducer(waiting.state, { type: 'TICK', now: waiting.now + 1e6 })
-        .final
-    ).equals(false)
-    const done = run(
-      startReplay('replay', timeline, true),
-      state => state.final
-    )
-    expect(done.state.final).equals(true)
-    expect(done.state.queue).length(0)
   })
 
   it('writes where the game stands under the sentence', async function () {
@@ -431,6 +399,22 @@ describe('replay machine', function () {
       expect(replayCard(after.state, WORDS).line).not.contains('Play changed')
     })
 
+    it('keeps within a moment of the scorer: a short slot for each step', async function () {
+      const before = await timelineOf(scored(actions.slice(0, 1)))
+      let state = startReplay('live', before)
+      const next = extendTimeline(
+        before,
+        await scored(actions.slice(0, 2)),
+        context
+      )
+      state = replayReducer(state, { type: 'CHANGED', change: next })
+      state = replayReducer(state, { type: 'TICK', now: 100 })
+      expect(state.slotEndsAt).equals(100 + LIVE_SLOT_MS.pitch)
+      expect(LIVE_SLOT_MS.pitch).lessThan(SLOT_MS.pitch)
+      // A new half waits a little, not a replay's pause.
+      expect(LIVE_HALF_MS).lessThan(HALF_MS)
+    })
+
     it('catches up quickly when the scorer is several steps ahead', async function () {
       const before = await timelineOf(scored(actions.slice(0, 1)))
       let state = startReplay('live', before)
@@ -445,8 +429,73 @@ describe('replay machine', function () {
       expect(state.slotEndsAt).equals(100 + CATCH_UP_MS)
       // A pitch in catch-up is drawn without its presentation.
       expect(state.scoring.presentation).equals(null)
-      const caught = run(state, next => next.queue.length === 0, 100)
-      expect(caught.now).lessThan(9 * SLOT_MS.pitch)
+      // It keeps hurrying until one step is left, then paces as usual.
+      const hurried: number[] = []
+      let at = 100
+      while (state.queue.length > 0) {
+        const before = state.queue.length
+        at += 100
+        state = field(replayReducer(state, { type: 'TICK', now: at }))
+        if (state.queue.length < before) hurried.push(state.slotEndsAt! - at)
+      }
+      const last = hurried.length - 1
+      expect(hurried.slice(0, last).every(slot => slot === CATCH_UP_MS)).equals(
+        true
+      )
+      expect(hurried[last]).greaterThan(CATCH_UP_MS)
+      expect(state.hurrying).equals(false)
+    })
+
+    it('catches up without waiting for the announcer', async function () {
+      const before = await timelineOf(scored(actions.slice(0, 1)))
+      let state = startReplay('live', before)
+      state = replayReducer(state, {
+        type: 'CHANGED',
+        change: extendTimeline(
+          before,
+          await scored(actions.slice(0, 9)),
+          context
+        )
+      })
+      state = replayReducer(state, { type: 'TICK', now: 100 })
+      expect(catchingUp(state)).equals(true)
+      // The announcer is reading the step just shown.
+      state = replayReducer(state, { type: 'SPEAKING', speaking: true })
+      const queued = state.queue.length
+      state = field(
+        replayReducer(state, { type: 'TICK', now: 100 + CATCH_UP_MS })
+      )
+      expect(state.queue.length).equals(queued - 1)
+      expect(state.slotEndsAt).equals(100 + 2 * CATCH_UP_MS)
+      // Caught up to the last step, it waits for the sentence again.
+      while (catchingUp(state)) {
+        state = replayReducer(state, {
+          type: 'TICK',
+          now: (state.slotEndsAt ?? 0) + 1
+        })
+        state = field(field(field(state)))
+      }
+      state = replayReducer(state, { type: 'SPEAKING', speaking: true })
+      const waiting = state.queue.length
+      state = replayReducer(state, { type: 'TICK', now: 1e9 })
+      expect(state.queue.length).equals(waiting)
+    })
+
+    it('ends when the plays it reads end the game, though the server never says so', async function () {
+      const timeline = await timelineOf(inProgressGame())
+      let state = startReplay('live', timeline)
+      // The phone was away as the last out and the end were saved; reading
+      // the game again brings them, and no word that the game is final.
+      state = replayReducer(state, {
+        type: 'CHANGED',
+        change: extendTimeline(timeline, await finalGame(), context)
+      })
+      expect(state.gameOver).equals(true)
+      state = run(state, next => next.final, 100).state
+      expect(state.final).equals(true)
+      expect(replayCard(state, WORDS).line).equals(
+        "That's the ballgame! Valley Pines win, three to two."
+      )
     })
 
     it('snaps to the corrected game when the scorer changes a play', async function () {
@@ -461,6 +510,36 @@ describe('replay machine', function () {
         /^Play changed by the scorer\. /
       )
       expect(state.queue).length(0)
+    })
+
+    it('shows a fresh count while a decided play waits for the scorer\u2019s close', async function () {
+      const close = actions.findIndex(
+        (action, i) =>
+          i > 0 &&
+          action.type === 'gameFlow' &&
+          action.kind === 'closePlay' &&
+          actions[i - 1].type === 'pitch'
+      )
+      const state = startReplay(
+        'live',
+        await timelineOf(scored(actions.slice(0, close)))
+      )
+      expect(state.scoring.session.pending).not.equals(null)
+      expect(replayCard(state, WORDS).detail).match(/^0–0 · /)
+    })
+
+    it('stays paused, and over, through a correction', async function () {
+      const lastPitch = actions.findLastIndex(action => action.type === 'pitch')
+      const before = await timelineOf(scored(actions.slice(0, lastPitch + 1)))
+      let state = startReplay('live', before)
+      state = replayReducer(state, { type: 'PAUSE', now: 100 })
+      state = replayReducer(state, { type: 'GAME_OVER' })
+      const corrected = extendTimeline(before, await correctedGame(), context)
+      state = replayReducer(state, { type: 'CHANGED', change: corrected })
+      expect(state.changed).equals(true)
+      expect(state.paused).equals(true)
+      expect(state.gameOver).equals(true)
+      expect(replayCard(state, WORDS).detail).equals('Paused')
     })
 
     it('takes a step the game will not apply as a change by the scorer', async function () {
@@ -480,6 +559,59 @@ describe('replay machine', function () {
       expect(state.queue).length(0)
     })
 
+    it('goes to how a finished game ended when the game will not take a step, without blaming the scorer', async function () {
+      const timeline = await timelineOf(finalGame())
+      let state = atFirstPitch(timeline)
+      state = replayReducer(state, { type: 'PAUSE', now: FIRST + 100 })
+      state = {
+        ...state,
+        queue: [
+          {
+            step: state.queue[0].step,
+            actions: [{ type: 'gameFlow', kind: 'closePlay' }]
+          },
+          ...state.queue.slice(1)
+        ]
+      }
+      state = replayReducer(state, { type: 'PLAY', now: FIRST + 200 })
+      state = run(state, next => next.queue.length === 0, FIRST + 200).state
+      expect(state.mode).equals('replay')
+      expect(state.changed).equals(false)
+      expect(state.paused).equals(false)
+      expect(state.scoring.session.liveData.linescore.teams).deep.equals(
+        timeline.end.liveData.linescore.teams
+      )
+      state = replayReducer(state, { type: 'TICK', now: 1e9 })
+      expect(state.final).equals(true)
+      expect(replayCard(state, WORDS).line).equals(
+        "That's the ballgame! Valley Pines win, three to two."
+      )
+    })
+
+    it('ends a game the server calls final though its plays record no end', async function () {
+      const actions = replayActions()
+      const timeline = replayTimelineOf(
+        await scored(actions.slice(0, -1)),
+        context
+      )
+      expect(timeline.end.final).equals(false)
+      // Not final: the view waits at the last play.
+      const waiting = run(
+        startReplay('replay', timeline),
+        state => state.queue.length === 0
+      )
+      expect(
+        replayReducer(waiting.state, { type: 'TICK', now: waiting.now + 1e6 })
+          .final
+      ).equals(false)
+      const done = run(
+        startReplay('replay', timeline, true),
+        state => state.final
+      )
+      expect(done.state.final).equals(true)
+      expect(done.state.queue).length(0)
+    })
+
     it('ends on the final out once the server says the game is over', async function () {
       const timeline = await timelineOf(inProgressGame())
       let state = startReplay('live', timeline)
@@ -489,6 +621,12 @@ describe('replay machine', function () {
       expect(replayReducer(state, { type: 'GAME_OVER' })).equals(state)
       state = replayReducer(state, { type: 'TICK', now: 200 })
       expect(state.final).equals(true)
+      // Reading the game again with nothing new leaves it over.
+      const again = replayReducer(state, {
+        type: 'CHANGED',
+        change: extendTimeline(state.timeline, await inProgressGame(), context)
+      })
+      expect(again.final).equals(true)
       const over = startReplay('live', await timelineOf(finalGame()))
       expect(over.final).equals(true)
     })

@@ -319,12 +319,25 @@ describe('the pills across a game', function () {
       ).deep.equals(['boxScore', 'watch', 'replay', 'info'])
     })
 
-    it('is left out with nothing stored, for a non-member, before the end, or with no way to open it', function () {
+    it('is a red Live pill while the game is scored', function () {
+      const pills = gameTabs({
+        game: { ...finished, status: 'inProgress' },
+        onReplay
+      })
+      expect(pills.find(pill => pill.id === 'replay')).deep.equals({
+        id: 'replay',
+        label: 'Live',
+        role: 'button',
+        live: true
+      })
+    })
+
+    it('is left out with nothing stored, for a non-member, before the first pitch, or with no way to open it', function () {
       for (const game of [
         { ...finished, replayable: false },
         { ...finished, nonMemberView: true },
         { ...finished, status: 'scheduled' },
-        { ...finished, status: 'inProgress' }
+        { ...finished, status: 'inProgress', replayable: false }
       ])
         expect(ids(gameTabs({ game, onReplay }))).not.includes('replay')
       expect(ids(gameTabs({ game: finished }))).not.includes('replay')

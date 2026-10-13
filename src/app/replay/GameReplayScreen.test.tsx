@@ -4,22 +4,30 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { asGameDetail, type GameDetail } from '../../common/api'
+import type { GameSocketListener } from '../../common/gameSocket'
 import type { StoredGame } from '../../common/scoring/session'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   finalGame,
+  importedThenScoredGame,
   inProgressGame,
   REPLAY_GAME_ID,
   REPLAY_TEAMS,
+  replayActions,
   scored
 } from '../../test/replayGameFixture'
 import type { ScreenRect } from '../field/catcherBounds'
 import type { FieldCanvas } from '../field/FieldCanvas'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
+  CONTROLS_ROW,
+  CONTROLS_WIDTH,
   DECK_SHARE,
+  fieldTop,
   GameReplayScreen,
   type ReplayClient,
   replayLayout,
+  type ReplaySocket,
   SIDE_CARD_ROOM
 } from './GameReplayScreen'
 
@@ -35,7 +43,9 @@ interface Fiber {
 const announcer = {
   health: true as boolean | 'fails',
   audio: 'ok' as 'ok' | 'fails',
-  asked: [] as string[]
+  asked: [] as string[],
+  /** The steps whose sentences the page played, in order. */
+  played: [] as string[]
 }
 
 function fakeClient(
@@ -52,7 +62,7 @@ function fakeClient(
     narrationAudio: async (_gameId, step) => {
       announcer.asked.push(step.key)
       if (announcer.audio === 'fails') throw new Error('503')
-      return new Blob(['mp3'])
+      return Object.assign(new Blob(['mp3']), { stepKey: step.key })
     },
     narrationReady: async () => {
       throw new Error('a browser downloads the sentence')
@@ -75,40 +85,6 @@ const swaps = (): Array<[object, string]> => [
   [URL, 'createObjectURL'],
   [URL, 'revokeObjectURL']
 ]
-
-beforeEach(function () {
-  announcer.health = true
-  announcer.audio = 'ok'
-  announcer.asked = []
-  // jsdom plays no media and makes no object URLs.
-  const values: unknown[] = [
-    async () => undefined,
-    () => undefined,
-    () => 'blob:narration',
-    () => undefined
-  ]
-  swaps().forEach(([target, name], i) => {
-    saved.set(name, Object.getOwnPropertyDescriptor(target, name))
-    Object.defineProperty(target, name, {
-      configurable: true,
-      value: values[i]
-    })
-  })
-})
-
-afterEach(async function () {
-  for (const [target, name] of swaps()) {
-    const descriptor = saved.get(name)
-    if (descriptor == null) Reflect.deleteProperty(target, name)
-    else Object.defineProperty(target, name, descriptor)
-  }
-  await act(async () => {
-    root?.unmount()
-  })
-  container?.remove()
-  container = undefined
-  root = undefined
-})
 
 function find(
   fiber: Fiber | null | undefined,
@@ -189,7 +165,8 @@ interface Shown {
 async function show(
   game: GameDetail,
   stored: Promise<StoredGame> | StoredGame,
-  client?: ReplayClient
+  client?: ReplayClient,
+  live: { socket?: ReplaySocket; pollMs?: number } = {}
 ): Promise<Shown> {
   const events = await stored
   const reader =
@@ -205,6 +182,8 @@ async function show(
           <GameReplayScreen
             client={reader}
             gameId={game.id}
+            socket={live.socket}
+            pollMs={live.pollMs}
             onExit={() => {
               shown.exits++
             }}
@@ -223,6 +202,15 @@ async function show(
   root = createRoot(container)
   now = 0
   await render()
+  // Loading takes a moment, longer on a busy machine.
+  for (
+    let i = 0;
+    i < 100 &&
+    shown.notReplayable === 0 &&
+    document.querySelector('[data-testid="game-replay"]') == null;
+    i++
+  )
+    await wait(50)
   await wait(50)
   return shown
 }
@@ -245,6 +233,15 @@ async function press(label: string): Promise<void> {
 const card = (): string =>
   document.querySelector('[data-testid="replay-play-card"]')?.textContent ?? ''
 
+/** On to a replay's first pitch: it opens on "Play ball!" for a moment. */
+async function firstPitch(): Promise<void> {
+  now = 100
+  await wait(250)
+  expect(card()).includes('Play ball!')
+  now = 2200
+  await wait(250)
+}
+
 const CATCHER: ScreenRect = { x: 190, y: 300, width: 22, height: 30 }
 
 async function showCatcher(): Promise<void> {
@@ -255,6 +252,50 @@ async function showCatcher(): Promise<void> {
 
 describe('the replay screen', function () {
   this.timeout(30000)
+
+  beforeEach(function () {
+    announcer.health = true
+    announcer.audio = 'ok'
+    announcer.asked = []
+    announcer.played = []
+    // jsdom plays no media and makes no object URLs: a sentence "plays" for
+    // a moment and ends, and its URL names its step.
+    const values: unknown[] = [
+      async function (this: HTMLMediaElement) {
+        const src = this.src
+        if (src.startsWith('blob:')) {
+          announcer.played.push(src.slice('blob:'.length))
+          setTimeout(() => {
+            this.onended?.(new window.Event('ended'))
+          }, 20)
+        }
+      },
+      () => undefined,
+      (blob: Blob & { stepKey?: string }) => `blob:${blob.stepKey ?? ''}`,
+      () => undefined
+    ]
+    swaps().forEach(([target, name], i) => {
+      saved.set(name, Object.getOwnPropertyDescriptor(target, name))
+      Object.defineProperty(target, name, {
+        configurable: true,
+        value: values[i]
+      })
+    })
+  })
+
+  afterEach(async function () {
+    for (const [target, name] of swaps()) {
+      const descriptor = saved.get(name)
+      if (descriptor == null) Reflect.deleteProperty(target, name)
+      else Object.defineProperty(target, name, descriptor)
+    }
+    await act(async () => {
+      root?.unmount()
+    })
+    container?.remove()
+    container = undefined
+    root = undefined
+  })
 
   it('lays the box score below the field on a phone and beside it on a wide window', function () {
     expect(replayLayout(402, 874)).deep.equals({
@@ -291,8 +332,7 @@ describe('the replay screen', function () {
     resize(402, 874)
     await show(gameOf(), finalGame())
     await showCatcher()
-    now = 100
-    await wait(250)
+    await firstPitch()
     expect(card()).not.includes('Play ball!')
     await press('Pause replay')
     expect(byLabel('Play replay')).not.equals(undefined)
@@ -314,8 +354,7 @@ describe('the replay screen', function () {
     expect(field().presentationPaused).equals(true)
     await press('Play replay')
     await showCatcher()
-    now = 100
-    await wait(250)
+    await firstPitch()
     // With no WebGL the field ends each presentation as it gets it, so the
     // pitch has been thrown and answered.
     expect(field().presentation).equals(null)
@@ -327,6 +366,54 @@ describe('the replay screen', function () {
       field().onMovementComplete?.('stale', -1)
     })
     expect(card()).equals(pitched)
+  })
+
+  it('names players by first name and last initial on the field and the scoreboard', async function () {
+    resize(402, 874)
+    await show(gameOf(), finalGame())
+    await showCatcher()
+    await firstPitch()
+    const { players, scoreboard } = field()
+    const labels = players.map(player => player.displayName ?? '')
+    expect(labels).includes('Juan S')
+    expect(labels.some(label => /Soto|Betts|Judge/.test(label))).equals(false)
+    expect(scoreboard?.batter.firstName).equals('Juan S')
+    expect(scoreboard?.batter.lastName).equals('')
+    expect(scoreboard?.pitcher.firstName).match(/^\S+ \S{1,2}$/)
+  })
+
+  it('keeps Exit and the speaker off the scoreboard and the fielders', async function () {
+    // Room to the scoreboard's left: the field starts at the top.
+    expect(
+      fieldTop({ x: CONTROLS_WIDTH, y: 20, width: 300, height: 120 }, 47)
+    ).equals(0)
+    expect(fieldTop(null, 47)).equals(0)
+    // A phone's board spans the width: the field starts under the controls.
+    expect(fieldTop({ x: 30, y: 50, width: 340, height: 120 }, 47)).equals(
+      47 + CONTROLS_ROW
+    )
+    resize(402, 874)
+    await show(gameOf(), finalGame())
+    await showCatcher()
+    const fieldBox = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[data-testid="replay-field"]')
+    expect(['', '0px']).includes(fieldBox()?.style.marginTop ?? '')
+    await act(async () => {
+      field().onScoreboardBounds?.({ x: 30, y: 50, width: 340, height: 120 })
+    })
+    const moved = Number.parseFloat(fieldBox()?.style.marginTop ?? '0')
+    expect(moved).greaterThanOrEqual(CONTROLS_ROW)
+    // Measured again under the controls, the board does not move it twice.
+    await act(async () => {
+      field().onScoreboardBounds?.({ x: 30, y: 10, width: 340, height: 120 })
+    })
+    expect(Number.parseFloat(fieldBox()?.style.marginTop ?? '0')).equals(moved)
+    // The card still hangs below the catcher, where the field now is.
+    const cardTop = Number.parseFloat(
+      document.querySelector<HTMLElement>('[data-testid="replay-play-card"]')
+        ?.style.top ?? '0'
+    )
+    expect(cardTop).greaterThan(CATCHER.y + CATCHER.height + moved)
   })
 
   it('turns the announcer on and off', async function () {
@@ -357,32 +444,6 @@ describe('the replay screen', function () {
     expect(byLabel('Pause replay')).not.equals(undefined)
   })
 
-  it('reads the game once, however often the shell renders it', async function () {
-    resize(402, 874)
-    const reads = { game: 0, events: 0 }
-    const shown = await show(
-      gameOf(),
-      finalGame(),
-      fakeClient(
-        async () => {
-          reads.game++
-          return gameOf()
-        },
-        async () => {
-          reads.events++
-          return await finalGame()
-        }
-      )
-    )
-    await shown.rerender()
-    await shown.rerender()
-    await wait(100)
-    expect(reads).deep.equals({ game: 1, events: 1 })
-    expect(document.querySelector('[data-testid="game-replay"]')).not.equals(
-      null
-    )
-  })
-
   it('shows the game instead when there is nothing to replay', async function () {
     resize(402, 874)
     expect(
@@ -410,6 +471,32 @@ describe('the replay screen', function () {
       ).notReplayable
     ).equals(1)
     expect(document.querySelector('[data-testid="game-replay"]')).equals(null)
+  })
+
+  it('reads the game once, however often the shell renders it', async function () {
+    resize(402, 874)
+    const reads = { game: 0, events: 0 }
+    const shown = await show(
+      gameOf(),
+      finalGame(),
+      fakeClient(
+        async () => {
+          reads.game++
+          return gameOf()
+        },
+        async () => {
+          reads.events++
+          return await finalGame()
+        }
+      )
+    )
+    await shown.rerender()
+    await shown.rerender()
+    await wait(100)
+    expect(reads).deep.equals({ game: 1, events: 1 })
+    expect(document.querySelector('[data-testid="game-replay"]')).not.equals(
+      null
+    )
   })
 
   it('ends on the final score with the pause button gone', async function () {
@@ -444,12 +531,12 @@ describe('the replay screen', function () {
       expect(announcer.asked).deep.equals([])
       await press('Turn announcer on')
       expect(byLabel('Turn announcer off')).not.equals(undefined)
-      // The two steps ahead are fetched at once.
+      // The two steps ahead are fetched at once, and the next as each plays.
       await wait(50)
-      expect(announcer.asked).deep.equals(['0-1', '0-2'])
-      now = 100 + 4500
+      expect(announcer.asked).deep.equals(['0-0', '0-1'])
+      now = 2200
       await wait(300)
-      expect(announcer.asked.slice(0, 3)).deep.equals(['0-1', '0-2', '0-3'])
+      expect(announcer.asked).deep.equals(['0-0', '0-1', '0-2'])
       await press('Turn announcer off')
       expect(byLabel('Turn announcer on')).not.equals(undefined)
     })
@@ -460,8 +547,7 @@ describe('the replay screen', function () {
       await show(gameOf(), finalGame())
       await showCatcher()
       await press('Turn announcer on')
-      now = 100
-      await wait(300)
+      await firstPitch()
       // Each sentence fails as its step is shown; the third turns it off.
       expect(card()).not.includes('Announcer unavailable')
       for (
@@ -480,6 +566,30 @@ describe('the replay screen', function () {
       expect(card()).not.includes('Announcer unavailable')
     })
 
+    it('reads the final call when the replay reaches it', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await press('Turn announcer on')
+      for (let i = 0; i < 1200 && !announcer.played.includes('9999-1'); i++) {
+        now += 20000
+        await wait(120)
+        // jsdom draws no field: its runners arrive at once.
+        await act(async () => {
+          for (const player of field().players)
+            if (player.motion != null && !player.motion.reported)
+              field().onMovementComplete?.(
+                player.motion.id,
+                player.motion.generation
+              )
+        })
+      }
+      expect(card()).includes("That's the ballgame")
+      expect(announcer.played.at(-1)).equals('9999-1')
+      expect(announcer.played.at(-2)).equals('20-3')
+    })
+
     it('opens muted every time', async function () {
       resize(402, 874)
       await show(gameOf(), finalGame())
@@ -489,6 +599,250 @@ describe('the replay screen', function () {
       })
       await show(gameOf(), finalGame())
       expect(byLabel('Turn announcer on')).not.equals(undefined)
+    })
+  })
+
+  describe('following a game', function () {
+    /** A socket the test speaks for. */
+    class FakeSocket implements ReplaySocket {
+      connected = true
+      listeners = new Map<string, GameSocketListener>()
+      statuses = new Set<(connected: boolean) => void>()
+      onStatus(listener: (connected: boolean) => void): () => void {
+        this.statuses.add(listener)
+        return () => this.statuses.delete(listener)
+      }
+
+      subscribe(gameId: string, listener: GameSocketListener): () => void {
+        this.listeners.set(gameId, listener)
+        return () => this.listeners.delete(gameId)
+      }
+
+      async emit(event: Parameters<GameSocketListener>[0]): Promise<void> {
+        await act(async () => {
+          this.listeners.get(REPLAY_GAME_ID)?.(event)
+          await new Promise(resolve => setTimeout(resolve, 30))
+        })
+      }
+
+      async status(connected: boolean): Promise<void> {
+        this.connected = connected
+        await act(async () => {
+          for (const listener of this.statuses) listener(connected)
+        })
+      }
+    }
+
+    const actions = replayActions()
+    /** A change as the server sends it: a `plays` change carries the game. */
+    const change = (
+      kind: 'plays' | 'walkUpSong',
+      stored?: StoredGame
+    ): Parameters<GameSocketListener>[0] =>
+      kind === 'plays'
+        ? {
+            type: 'change',
+            gameId: REPLAY_GAME_ID,
+            kind,
+            at: '',
+            data:
+              stored == null
+                ? { plays: [{ broken: true }], currentPlay: null, digest: 'd0' }
+                : {
+                    plays: stored.plays.map((gumbo, index) => ({
+                      id: `evt_${index}`,
+                      gameId: REPLAY_GAME_ID,
+                      gumbo
+                    })),
+                    currentPlay: stored.currentPlay,
+                    digest: `d${stored.plays.length}`
+                  }
+          }
+        : {
+            type: 'change',
+            gameId: REPLAY_GAME_ID,
+            kind,
+            at: '',
+            data: { teamId: 't', userId: userIdOfGumbo(1), song: null }
+          }
+
+    async function following(
+      socket?: FakeSocket,
+      pollMs?: number
+    ): Promise<{
+      setStored: (count: number) => Promise<StoredGame>
+      reads: () => number
+      setStatus: (status: GameDetail['status']) => void
+    }> {
+      let stored = await scored(actions.slice(0, 10))
+      let reads = 0
+      let status: GameDetail['status'] = 'inProgress'
+      const game = gameOf({ status: 'inProgress' })
+      await show(
+        game,
+        stored,
+        fakeClient(
+          async () => ({ ...game, status }),
+          async () => {
+            reads++
+            return stored
+          }
+        ),
+        { socket, pollMs }
+      )
+      await showCatcher()
+      reads = 0
+      return {
+        setStored: async count => {
+          stored = await scored(actions.slice(0, count))
+          return stored
+        },
+        reads: () => reads,
+        setStatus: value => {
+          status = value
+        }
+      }
+    }
+
+    it('notes the imported innings under the box score once earlier plays are imported', async function () {
+      resize(402, 874)
+      const socket = new FakeSocket()
+      await following(socket)
+      const imported = 'earlier innings were imported'
+      expect(document.body.textContent).not.includes(imported)
+      await socket.emit(change('plays', await importedThenScoredGame()))
+      await wait(100)
+      expect(document.body.textContent).includes(imported)
+    })
+
+    it('subscribes on opening, plays what the scorer adds, and lets go on Exit', async function () {
+      resize(402, 874)
+      const socket = new FakeSocket()
+      const game = await following(socket)
+      expect(socket.listeners.has(REPLAY_GAME_ID)).equals(true)
+      const opened = card()
+      // The plays come with the change: nothing to read.
+      await socket.emit(change('plays', await game.setStored(11)))
+      expect(game.reads()).equals(0)
+      now = 100
+      await wait(250)
+      expect(card()).not.equals(opened)
+      // A change that carries no game it can use: read the game instead.
+      await game.setStored(12)
+      await socket.emit(change('plays'))
+      expect(game.reads()).equals(1)
+      // Nothing to read in a walk-up song.
+      await socket.emit(change('walkUpSong'))
+      expect(game.reads()).equals(1)
+      await socket.emit({ type: 'resync', gameId: REPLAY_GAME_ID })
+      expect(game.reads()).equals(2)
+      await act(async () => {
+        root?.unmount()
+      })
+      expect(socket.listeners.size).equals(0)
+      expect(socket.statuses.size).equals(0)
+    })
+
+    it('reads the game every few seconds while the socket is down or refused', async function () {
+      resize(402, 874)
+      const socket = new FakeSocket()
+      const game = await following(socket, 60)
+      await wait(200)
+      expect(game.reads()).equals(0)
+      await socket.status(false)
+      await wait(200)
+      expect(game.reads()).greaterThan(1)
+      await socket.status(true)
+      await socket.emit({ type: 'subscribed', gameId: REPLAY_GAME_ID })
+      const back = game.reads()
+      await wait(200)
+      expect(game.reads()).equals(back)
+      await socket.emit({
+        type: 'error',
+        gameId: REPLAY_GAME_ID,
+        code: 'tooMany',
+        message: ''
+      })
+      await wait(200)
+      expect(game.reads()).equals(back)
+      await socket.emit({
+        type: 'error',
+        gameId: REPLAY_GAME_ID,
+        code: 'internal',
+        message: ''
+      })
+      await wait(200)
+      expect(game.reads()).greaterThan(back)
+    })
+
+    it('ends on the final score when the game is over', async function () {
+      resize(402, 874)
+      const socket = new FakeSocket()
+      await following(socket)
+      expect(byLabel('Pause replay')).not.equals(undefined)
+      await socket.emit({
+        type: 'change',
+        gameId: REPLAY_GAME_ID,
+        kind: 'game',
+        at: '',
+        data: { status: 'inProgress', awayScore: 1, homeScore: 0 }
+      })
+      now = 100
+      await wait(250)
+      expect(byLabel('Pause replay')).not.equals(undefined)
+      await socket.emit({
+        type: 'change',
+        gameId: REPLAY_GAME_ID,
+        kind: 'game',
+        at: '',
+        data: { status: 'final', awayScore: 1, homeScore: 0 }
+      })
+      now = 200
+      await wait(250)
+      expect(byLabel('Pause replay')).equals(undefined)
+    })
+
+    it('ends the view when a read on reconnecting brings the end of the game, reading only where it lands', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      const socket = new FakeSocket()
+      const game = await following(socket)
+      await press('Turn announcer on')
+      // Away while the scorer finished the game; the game change was missed.
+      await game.setStored(actions.length)
+      await socket.emit({ type: 'subscribed', gameId: REPLAY_GAME_ID })
+      expect(game.reads()).equals(1)
+      for (let i = 0; i < 600 && byLabel('Pause replay') != null; i++) {
+        now += 2000
+        await wait(60)
+        await act(async () => {
+          for (const player of field().players)
+            if (player.motion != null && !player.motion.reported)
+              field().onMovementComplete?.(
+                player.motion.id,
+                player.motion.generation
+              )
+        })
+      }
+      expect(byLabel('Pause replay')).equals(undefined)
+      expect(card()).includes("That's the ballgame!")
+      // Hurrying through the missed steps, it read only the last.
+      expect(announcer.played).deep.equals(['9999-1'])
+    })
+
+    it('with no socket, reads the game until it is over', async function () {
+      resize(402, 874)
+      const game = await following(undefined, 60)
+      await wait(200)
+      expect(game.reads()).greaterThan(1)
+      game.setStatus('final')
+      now = 100
+      await wait(300)
+      expect(byLabel('Pause replay')).equals(undefined)
+      // Over: it stops reading.
+      const done = game.reads()
+      await wait(300)
+      expect(game.reads()).equals(done)
     })
   })
 })

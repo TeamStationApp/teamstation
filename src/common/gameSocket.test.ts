@@ -302,6 +302,32 @@ describe('GameSocket (U16)', function () {
       socket.close()
     })
 
+    it('keeps a game\u2019s other listener hearing when one goes, as DJ Game does when a replay of the same game closes', function () {
+      const { socket } = makeSocket()
+      const dj: GameSocketEvent[] = []
+      const replay: GameSocketEvent[] = []
+      socket.subscribe('g1', event => dj.push(event))
+      const closeReplay = socket.subscribe('g1', event => replay.push(event))
+      last().open()
+      expect(last().sent).lengthOf(1)
+      const plays = {
+        type: 'change',
+        gameId: 'g1',
+        kind: 'plays',
+        at: 'x',
+        data: { plays: [], currentPlay: null }
+      }
+      last().receive(plays)
+      expect(dj).deep.equals([plays])
+      expect(replay).deep.equals([plays])
+      closeReplay()
+      last().receive({ ...plays, at: 'y' })
+      expect(dj).deep.equals([plays, { ...plays, at: 'y' }])
+      expect(replay).deep.equals([plays])
+      expect(last().sent).lengthOf(1)
+      socket.close()
+    })
+
     it('sends unsubscribe when the last listener of a game goes', function () {
       const { socket } = makeSocket()
       const heard: GameSocketEvent[] = []

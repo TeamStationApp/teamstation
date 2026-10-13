@@ -701,6 +701,14 @@ export interface NarrationStepRef {
 }
 
 /**
+ * A game's stored plays and the at-bat in progress, from what `GET /events`
+ * answers or a game socket's `plays` change carries. Throws on anything else.
+ */
+export function parseStoredGame(raw: unknown): StoredGame {
+  return storedGameOf(asStoredGame(raw))
+}
+
+/**
  * A team this player has played for, in which season, and their number and
  * positions there: null and empty on a team they only have stats for.
  * `current` is whether they play on it now; a team they left is false.

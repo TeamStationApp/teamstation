@@ -25,6 +25,17 @@ export const SLOT_MS: Record<ReplayStepKind, number> = {
   inPlay: 5000,
   other: 2000
 }
+/**
+ * A live view's slots: long enough to read the card once the animation is
+ * done, short enough to stay within a moment of a quick scorer.
+ */
+export const LIVE_SLOT_MS: Record<ReplayStepKind, number> = {
+  pitch: 1500,
+  inPlay: 2500,
+  other: 1000
+}
+/** A live view's pause between halves. */
+export const LIVE_HALF_MS = 2000
 /** After a ball in play has settled, before the next step. */
 export const IN_PLAY_TAIL_MS = 1500
 /** Added to the slot of the step that ends a half. */
@@ -76,6 +87,8 @@ export interface ReplayState {
    * Once its queue is empty the view ends.
    */
   gameOver: boolean
+  /** A live view behind the scorer, hurrying until it has nearly caught up. */
+  hurrying: boolean
 }
 
 export type ReplayEvent =
@@ -134,7 +147,22 @@ function liveAt(timeline: ReplayTimeline, changed: boolean): ReplayState {
     celebrationEndsAt: null,
     pausedCelebration: null,
     final: timeline.end.final,
-    gameOver: timeline.end.final
+    gameOver: timeline.end.final,
+    hurrying: false
+  }
+}
+
+/**
+ * The view snapped to a corrected game: it starts again from where the game
+ * now stands, still paused if the viewer paused it, and still over if the
+ * server said so.
+ */
+function snapped(state: ReplayState, timeline: ReplayTimeline): ReplayState {
+  const next = liveAt(timeline, true)
+  return {
+    ...next,
+    paused: state.paused,
+    gameOver: next.gameOver || state.gameOver
   }
 }
 
@@ -169,7 +197,8 @@ export function startReplay(
     celebrationEndsAt: null,
     pausedCelebration: null,
     final: false,
-    gameOver: timeline.end.final || over
+    gameOver: timeline.end.final || over,
+    hurrying: false
   }
 }
 
@@ -190,19 +219,23 @@ function playNext(state: ReplayState, now: number): ReplayState {
     type: 'REPLAYED',
     actions: next.actions
   })
+  const live = state.mode === 'live'
   if (after.session === before.session && next.actions.length > 0)
     // The game would not take the step. Live, it has changed under this
     // view; a finished game goes to how it ended.
-    return state.mode === 'live'
-      ? liveAt(state.timeline, true)
+    return live
+      ? snapped(state, state.timeline)
       : {
           ...liveAt(state.timeline, false),
           mode: 'replay',
           paused: state.paused,
           gameOver: state.gameOver
         }
-  const slot = catchUp ? CATCH_UP_MS : SLOT_MS[next.step.kind]
+  const slot = catchUp
+    ? CATCH_UP_MS
+    : (live ? LIVE_SLOT_MS : SLOT_MS)[next.step.kind]
   const endedHalf = halfOf(state.scoring) !== halfOf(after)
+  const half = endedHalf && !catchUp ? (live ? LIVE_HALF_MS : HALF_MS) : 0
   const applied = {
     ...state.applied,
     [next.step.key]: (state.applied[next.step.key] ?? 0) + next.actions.length
@@ -214,15 +247,23 @@ function playNext(state: ReplayState, now: number): ReplayState {
     applied,
     shown: next.step,
     shownCount: applied[next.step.key],
+    hurrying: catchUp,
     changed: false,
-    slotEndsAt: now + slot + (endedHalf && !catchUp ? HALF_MS : 0),
+    slotEndsAt: now + slot + half,
     idleSince: null
   }
 }
 
-/** A live replay so far behind the scorer that it hurries to catch up. */
-function catchingUp(state: ReplayState): boolean {
-  return state.mode === 'live' && state.queue.length > CATCH_UP_QUEUE
+/**
+ * A live replay so far behind the scorer that it hurries to catch up: from
+ * more than CATCH_UP_QUEUE steps queued until one is left.
+ */
+export function catchingUp(state: ReplayState): boolean {
+  return (
+    state.mode === 'live' &&
+    (state.queue.length > CATCH_UP_QUEUE ||
+      (state.hurrying && state.queue.length > 1))
+  )
 }
 
 function tick(state: ReplayState, now: number): ReplayState {
@@ -251,7 +292,13 @@ function tick(state: ReplayState, now: number): ReplayState {
     return next
   }
   if (next.idleSince == null) next = { ...next, idleSince: now }
-  if (next.paused || next.speaking) return next
+  if (next.paused) return next
+  // A live view behind the scorer does not wait for the announcer: the
+  // screen reads nothing it shows while hurrying.
+  if (next.speaking && !catchingUp(next)) return next
+  // A replay opens on "Play ball!" for a moment before the first pitch.
+  if (next.shown == null && next.slotEndsAt == null && next.mode === 'replay')
+    return { ...next, slotEndsAt: now + SLOT_MS.other }
   if (next.queue.length === 0)
     return next.gameOver && !next.final ? { ...next, final: true } : next
   // A home run's lights run their full time before the next pitch, unless a
@@ -267,7 +314,7 @@ function tick(state: ReplayState, now: number): ReplayState {
 
 /** A newer copy of the game: new and grown steps queued, or a fresh start. */
 function changed(state: ReplayState, change: TimelineChange): ReplayState {
-  if (change.kind === 'rewrite') return liveAt(change.timeline, true)
+  if (change.kind === 'rewrite') return snapped(state, change.timeline)
   const queue = [...state.queue]
   for (const step of change.steps) {
     const played = state.applied[step.key] ?? 0
@@ -279,9 +326,13 @@ function changed(state: ReplayState, change: TimelineChange): ReplayState {
   return {
     ...state,
     timeline: change.timeline,
-    narrations: narrateTimeline(change.timeline),
+    narrations: narrateTimeline(change.timeline, state),
     queue,
-    final: false
+    // A read that brings nothing new leaves a finished game finished.
+    final: state.final && queue.length === 0,
+    // Plays that end the game end the view, whether or not the server's
+    // word that the game is final reaches it.
+    gameOver: state.gameOver || change.timeline.end.final
   }
 }
 
@@ -336,6 +387,19 @@ export function replayReducer(
   }
 }
 
+/**
+ * The sentence for a step, or for a step with nothing to say (the end of a
+ * game its last out already called), the last one that said something.
+ */
+function lastSaid(state: ReplayState, key: string): string {
+  const steps = state.timeline.steps
+  for (let i = steps.findIndex(step => step.key === key); i >= 0; i--) {
+    const text = state.narrations.get(steps[i].key)?.text ?? ''
+    if (text !== '') return text
+  }
+  return ''
+}
+
 /** What the card writes: the step's sentence and where the game stands. */
 export function replayCard(
   state: ReplayState,
@@ -351,7 +415,7 @@ export function replayCard(
       ? state.mode === 'replay'
         ? words.playBall
         : words.waiting
-      : (state.narrations.get(state.shown.key)?.text ?? '')
+      : lastSaid(state, state.shown.key)
   const linescore = state.scoring.session.liveData.linescore
   const offense = linescore.offense
   const runners = [
@@ -362,7 +426,11 @@ export function replayCard(
   const situation = state.scoring.session.final
     ? ''
     : [
-        `${linescore.balls}–${linescore.strikes}`,
+        // A play decided but not yet closed by the scorer (strike three,
+        // ball four) is a new count already, not 1–3 or 4–1.
+        state.scoring.session.pending == null
+          ? `${linescore.balls}–${linescore.strikes}`
+          : '0–0',
         `${linescore.outs} out${linescore.outs === 1 ? '' : 's'}`,
         runners.length === 0
           ? null

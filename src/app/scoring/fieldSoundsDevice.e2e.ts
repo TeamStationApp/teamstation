@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict'
-import { type ChildProcess, spawn } from 'node:child_process'
 import { join } from 'node:path'
 
 import {
   artifactsDir,
-  askForCode,
   connect,
   type Device,
-  loggedCode,
+  recordWebcam,
   required,
-  shot
+  shot,
+  signInPhone
 } from '../replay/kit.e2e'
 
 /**
@@ -37,71 +36,7 @@ const wait = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
 
-/** The bench camera, with its sound, for `seconds`, into `path`. */
-function record(path: string, seconds: number): ChildProcess {
-  return spawn(
-    'ffmpeg',
-    [
-      '-nostdin',
-      '-loglevel',
-      'error',
-      '-rtsp_transport',
-      'tcp',
-      '-tls_verify',
-      '0',
-      '-timeout',
-      '15000000',
-      '-i',
-      required('REPLAY_WEBCAM'),
-      '-t',
-      String(seconds),
-      '-c',
-      'copy',
-      '-y',
-      path
-    ],
-    { stdio: 'inherit' }
-  )
-}
-
 const SCORER = 'replay-scorer@example.test'
-
-const visible = async (
-  m: Device,
-  text: string,
-  timeout = 3000
-): Promise<boolean> =>
-  await m.assertVisible({ text, timeout }).then(
-    () => true,
-    () => false
-  )
-
-/**
- * Signs in as the seed's scorer with a code from the server's log, whichever
- * way the screen asks for one: a button that sends it, or a code field.
- */
-async function signIn(m: Device): Promise<void> {
-  if (!(await visible(m, 'Sign in to TeamStation', 8000))) return
-  await m.tapOn({ text: 'E-mail address' })
-  await m.eraseText({ characters: 60 })
-  await m.inputText({ text: SCORER })
-  await m.hideKeyboard().catch(() => undefined)
-  const code = await loggedCode(SCORER, async () => {
-    for (const button of ['Send me a sign-in code', 'E-mail me a code instead'])
-      if (await visible(m, button)) {
-        await m.tapOn({ text: button })
-        return
-      }
-    await askForCode(SCORER)
-  })
-  await m.tapOn({ text: '123456' })
-  await m.inputText({ text: code })
-  await m.hideKeyboard().catch(() => undefined)
-  // A full code signs in by itself on some screens.
-  if (await visible(m, '^Sign in$')) await m.tapOn({ text: '^Sign in$' })
-  // Android keeps the sign-in screen mounted under the next one; the
-  // scorer's own controls, asserted next, prove the session.
-}
 
 async function main(): Promise<void> {
   const platform = required('REPLAY_PLATFORM')
@@ -123,7 +58,7 @@ async function main(): Promise<void> {
     })
     await m.stopApp({ appId: APP_ID })
     await m.launchApp({ appId: APP_ID })
-    await signIn(m)
+    await signInPhone(m, SCORER)
     await m.openLink({ link: `teamstation://games/${GAME}/score` })
     await m.assertVisible({ text: 'Ball', timeout: 30000 })
     await shot(m, `scoring-sounds-${name}-${phase}-screen`)
@@ -131,7 +66,7 @@ async function main(): Promise<void> {
       await artifactsDir(),
       `scoring-sounds-${name}-${phase}.mp4`
     )
-    const camera = record(video, 5 + (PITCH_GAP_MS * 3) / 1000 + 2)
+    const camera = recordWebcam(video, 5 + (PITCH_GAP_MS * 3) / 1000 + 2)
     await wait(3000)
     for (const control of ['^Ball$', '^Called Strike$', '^Foul Ball$']) {
       await m.tapOn({ text: control })

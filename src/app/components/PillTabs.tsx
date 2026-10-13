@@ -11,6 +11,8 @@ export interface PillTab<Id extends string = string> {
   role?: 'tab' | 'button'
   /** Shown after the label, e.g. a count of videos. */
   badge?: string
+  /** Something happening now: a red dot before the label. */
+  live?: boolean
 }
 
 export interface PillTabsProps<Id extends string = string> {
@@ -93,6 +95,7 @@ export function PillTabs<Id extends string = string>(
           key={tab.id}
           label={tab.label}
           badge={tab.badge}
+          live={tab.live}
           role={tab.role ?? 'tab'}
           selected={tab.id === selected}
           size={size}
@@ -123,6 +126,7 @@ export function PillTabs<Id extends string = string>(
 export function PillButton({
   label,
   badge,
+  live = false,
   selected = true,
   size = 'compact',
   dense = false,
@@ -133,6 +137,7 @@ export function PillButton({
 }: {
   label: string
   badge?: string
+  live?: boolean
   selected?: boolean
   size?: 'regular' | 'compact'
   dense?: boolean
@@ -168,6 +173,7 @@ export function PillButton({
           selected ? styles.pillActive : styles.pillIdle
         ]}
       >
+        {live && <View testID="pill-live-dot" style={styles.liveDot} />}
         <Text
           selectable={false}
           numberOfLines={1}
@@ -195,6 +201,12 @@ export function PillButton({
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  liveDot: {
+    width: theme.rem(0.5),
+    height: theme.rem(0.5),
+    borderRadius: theme.rem(0.25),
+    backgroundColor: theme.liveColor
+  },
   scrollContent: {
     paddingHorizontal: theme.rem(theme.spaceXsRem),
     // Room for the shadow. Without it the strip's own overflow cuts the lift

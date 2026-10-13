@@ -15,6 +15,7 @@ export interface GameTabPill {
   id: GameTab
   label: string
   role?: 'button'
+  live?: boolean
 }
 
 export interface GameAction {
@@ -68,20 +69,21 @@ export function gameTabs(input: GameTabsInput): GameTabPill[] {
     id,
     label: sectionLabel[id]
   }))
-  // The game replayed in 3D, for a member, once it is over and something
-  // TeamStation scored is stored. It follows Videos, wherever the game's
-  // sections put Info.
-  if (
-    input.onReplay != null &&
-    game.status === 'final' &&
-    isReplayable(game, game.replayable)
-  ) {
+  // The game in 3D, for a member, once something TeamStation scored is
+  // stored: replayed once it is over, followed live while it is scored.
+  // It follows Videos, wherever the game's sections put Info.
+  if (input.onReplay != null && isReplayable(game, game.replayable)) {
+    const pill: GameTabPill =
+      game.status === 'inProgress'
+        ? {
+            id: 'replay',
+            label: lstrings.game_live,
+            role: 'button',
+            live: true
+          }
+        : { id: 'replay', label: lstrings.game_replay, role: 'button' }
     const videos = pills.findIndex(item => item.id === 'watch')
-    pills.splice(videos < 0 ? pills.length : videos + 1, 0, {
-      id: 'replay',
-      label: lstrings.game_replay,
-      role: 'button'
-    })
+    pills.splice(videos < 0 ? pills.length : videos + 1, 0, pill)
   }
   return pills
 }

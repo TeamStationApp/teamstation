@@ -2027,6 +2027,7 @@ function Shell(props: AppProps): React.ReactElement {
     ) : top.name === 'gameReplay' ? (
       <GameReplayScreen
         client={client}
+        socket={gameSocket}
         gameId={top.gameId}
         onExit={pop}
         onNotReplayable={() => {
