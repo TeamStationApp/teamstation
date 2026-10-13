@@ -1,8 +1,10 @@
 // E10, the bridge smoke test: the streaming TurboModule and preview are in
 // the build, and the native modules the codegen change touched still answer.
-// Through maestro-d's JavaScript client, on an iOS simulator or iPhone.
+// Through maestro-d's JavaScript client, on an iOS simulator or iPhone, or
+// on an Android phone with TS_STREAM_ANDROID_SERIAL in place of the UDID.
 //
-//   TS_STREAM_IOS_UDID=<device> MAESTRO_D=<this agent's daemon> \
+//   TS_STREAM_IOS_UDID=<device> | TS_STREAM_ANDROID_SERIAL=<adb serial> \
+//   MAESTRO_D=<this agent's daemon> \
 //   MAESTRO_D_CLIENT_ROOT=<maestro-d npm package> [MAESTRO_D_BIN=<binary>] \
 //   [TS_STREAM_TEAM_ID=<WebDriverAgent signing team, for a real device>] \
 //   [TS_STREAM_RELEASE_BUILD=1] \
@@ -31,10 +33,11 @@
 //      wheel moving the clip stands in for it.
 //   4. All angles: the multi-camera view turns with the device.
 import assert from 'node:assert/strict'
-import { type ChildProcess, spawn } from 'node:child_process'
+import { type ChildProcess, execFile, spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
 import { lstrings } from '../locales/strings'
 
@@ -73,7 +76,7 @@ interface Daemon {
   info: { runDir: string }
   attach: (options: {
     device: string
-    platform: 'ios'
+    platform: 'ios' | 'android'
     appId: string
     teamId?: string
   }) => Promise<Driver>
@@ -84,7 +87,13 @@ const required = (key: string): string => {
   assert(value != null && value !== '', `${key} is required`)
   return value
 }
-const device = required('TS_STREAM_IOS_UDID')
+// TS_STREAM_ANDROID_SERIAL drives an Android phone instead of an iOS device.
+const androidSerial = process.env.TS_STREAM_ANDROID_SERIAL
+const android = androidSerial != null && androidSerial !== ''
+const device = android ? androidSerial : required('TS_STREAM_IOS_UDID')
+const run = promisify(execFile)
+const adb = async (...args: string[]): Promise<string> =>
+  (await run('adb', ['-s', device, ...args])).stdout
 const daemonName = required('MAESTRO_D')
 const clientRoot = required('MAESTRO_D_CLIENT_ROOT')
 const api = required('TS_STREAM_API').replace(/\/$/, '')
@@ -111,18 +120,21 @@ const flatten = (node: Node): Node[] => [
 ]
 const labelOf = (node: Node): string =>
   node.text ?? node.accessibilityText ?? ''
+// Android names a view's testID as its resource id, which maestro-d calls `id`.
+const idOf = (node: Node): string | undefined => node.resourceId ?? node.id
 const centre = (bounds: Bounds): string =>
   `${Math.round(bounds.x + bounds.width / 2)},${Math.round(bounds.y + bounds.height / 2)}`
 
 /** A simulator's id is a UUID; a phone's hardware UDID is not. */
 const isSimulator =
+  !android &&
   /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i.test(device)
 
 /**
  * The app's JavaScript console and native log lines, as the device logs them:
- * a simulator's through `simctl`, a USB-attached phone's through
- * pymobiledevice3's syslog relay (run with `uvx`), since macOS's own `log`
- * reads a phone only as root.
+ * an Android phone's through `adb logcat`, a simulator's through `simctl`, a
+ * USB-attached iPhone's through pymobiledevice3's syslog relay (run with
+ * `uvx`), since macOS's own `log` reads a phone only as root.
  */
 function deviceLog(): {
   lines: string[]
@@ -130,41 +142,45 @@ function deviceLog(): {
   stop: () => void
 } {
   const lines: string[] = []
-  const child: ChildProcess = isSimulator
-    ? spawn(
-        'xcrun',
-        [
-          'simctl',
-          'spawn',
-          device,
-          'log',
-          'stream',
-          '--level',
-          'debug',
-          '--style',
-          'compact',
-          '--predicate',
-          'process == "TeamStation"'
-        ],
-        { stdio: ['ignore', 'pipe', 'ignore'] }
-      )
-    : spawn(
-        'uvx',
-        [
-          'pymobiledevice3',
-          'syslog',
-          'live',
-          '--udid',
-          device,
-          '--process-name',
-          'TeamStation'
-        ],
-        {
-          stdio: ['ignore', 'pipe', 'ignore'],
-          // Python buffers a pipe; the lines are wanted as they come.
-          env: { ...process.env, PYTHONUNBUFFERED: '1' }
-        }
-      )
+  const child: ChildProcess = android
+    ? spawn('adb', ['-s', device, 'logcat', '-T', '1', '-v', 'brief'], {
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    : isSimulator
+      ? spawn(
+          'xcrun',
+          [
+            'simctl',
+            'spawn',
+            device,
+            'log',
+            'stream',
+            '--level',
+            'debug',
+            '--style',
+            'compact',
+            '--predicate',
+            'process == "TeamStation"'
+          ],
+          { stdio: ['ignore', 'pipe', 'ignore'] }
+        )
+      : spawn(
+          'uvx',
+          [
+            'pymobiledevice3',
+            'syslog',
+            'live',
+            '--udid',
+            device,
+            '--process-name',
+            'TeamStation'
+          ],
+          {
+            stdio: ['ignore', 'pipe', 'ignore'],
+            // Python buffers a pipe; the lines are wanted as they come.
+            env: { ...process.env, PYTHONUNBUFFERED: '1' }
+          }
+        )
   let rest = ''
   child.stdout?.on('data', (chunk: Buffer) => {
     const text = rest + chunk.toString()
@@ -262,9 +278,9 @@ async function main(): Promise<void> {
   const daemon = await MaestroD.connect({ name: daemonName, spawn: true })
   const m = await daemon.attach({
     device,
-    platform: 'ios',
+    platform: android ? 'android' : 'ios',
     appId: APP,
-    ...(teamId == null ? {} : { teamId })
+    ...(teamId == null || android ? {} : { teamId })
   })
   const log = deviceLog()
   const results: string[] = []
@@ -282,7 +298,7 @@ async function main(): Promise<void> {
           node =>
             (prefix
               ? labelOf(node).startsWith(label)
-              : labelOf(node) === label || node.resourceId === label) &&
+              : labelOf(node) === label || idOf(node) === label) &&
             node.bounds != null &&
             node.bounds.width > 0
         )
@@ -335,155 +351,171 @@ async function main(): Promise<void> {
     results.push('1 Videos tab offers Record video')
     await shot('bridge-smoke-videos')
 
-    // 2a. The walk-up module: a song to report on, then its preview.
-    const token = await apiToken()
-    const song = await fetch(
-      `${api}/teams/${walkUpTeam}/players/${walkUpPlayer}/walk-up-song`,
-      {
-        method: 'PUT',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          provider: 'appleMusic',
-          providerId: '1000000001',
-          isrc: null,
-          title: 'Bridge Smoke',
-          artist: 'TeamStation Test',
-          album: null,
-          artworkUrl: null,
-          durationMs: 180000,
-          startMs: 30000,
-          endMs: 45000
-        })
-      }
-    )
-    assert.equal(song.status, 200, 'the walk-up song was set')
-    const beforeDj = log.since()
-    await tap('DJ Game', 3000)
-    // The first visit's Apple Music walkthrough, closed from its last page.
-    let walked = false
-    for (let page = 0; page < 6; page++) {
-      if ((await find('Next', 1500)) == null) break
-      walked = true
-      await tap('Next', 800)
-    }
-    if (walked) {
-      say('$ tapOn the walkthrough’s close button')
-      await m.tapOn({ point: '90%,9%' })
-    }
-    assert(
-      (await find('Bridge Smoke', 15000, true)) != null,
-      'the song is listed'
-    )
-    const reported = await logLine(log, /WalkUpMusicState \{/, beforeDj)
-    assert(reported != null, 'the walk-up module reported on the songs')
-    results.push(
-      `2 walk-up module: ${reported.slice(reported.indexOf('WalkUpMusicState'))}`
-    )
-    // The row's preview button: "Play <player>’s walk-up song".
-    const beforePlay = log.since()
-    const play = (await nodes()).find(
-      node => /^Play .*walk-up song$/.test(labelOf(node)) && node.bounds != null
-    )
-    assert(play?.bounds != null, 'the song offers a preview')
-    say(`$ tapOn ${labelOf(play)}`)
-    await m.tapOn({ point: centre(play.bounds) })
-    const played = await logLine(
-      log,
-      /WalkUpMusicState \{"kind":"(playing|error)"|WalkUpMusic (play|search) failed/,
-      beforePlay,
-      8000
-    )
-    results.push(
-      played == null
-        ? '2 walk-up preview: asked, no answer (the song is not on this device, so the preview is off)'
-        : `2 walk-up preview: ${played.slice(played.indexOf('WalkUpMusic'))}`
-    )
-
-    // 3. The jog wheel's haptics: requested, and no error.
-    const row = await find('Bridge Smoke', 5000, true)
-    assert(row?.bounds != null, 'the song is listed')
-    say('$ tapOn the song')
-    await m.tapOn({ point: centre(row.bounds) })
-    await sleep(3000)
-    const jog = await find(lstrings.walkup_jog, 10000)
-    assert(jog?.bounds != null, 'the clip editor has its jog wheel')
-    const clipStart = async (): Promise<string> =>
-      (await nodes()).find(node => node.id === 'walkup-start')?.text ?? ''
-    const startBefore = await clipStart()
-    const beforeJog = log.since()
-    const wdaPort = (
-      await readFile(path.join(daemon.info.runDir, 'daemon.log'), 'utf8')
-    )
-      .split('\n')
-      .filter(line => line.includes(`Starting WDA on device ${device} (port:`))
-      .at(-1)
-      ?.match(/\(port: (\d+)\)/)?.[1]
-    assert(
-      wdaPort != null,
-      'this device’s WebDriverAgent port is in the daemon log'
-    )
-    const wda = `http://127.0.0.1:${wdaPort}`
-    const status = await m.eval(`http.get(${JSON.stringify(`${wda}/status`)})`)
-    const { sessionId } = JSON.parse(status.body) as { sessionId: string }
-    const x = Math.round(jog.bounds.x + jog.bounds.width / 2 - 80)
-    const y = Math.round(jog.bounds.y + jog.bounds.height / 2)
-    const steps: Array<Record<string, unknown>> = [
-      { type: 'pointerMove', duration: 0, x, y, origin: 'viewport' },
-      { type: 'pointerDown', button: 0 },
-      { type: 'pause', duration: 150 }
-    ]
-    for (let i = 1; i <= 12; i++)
-      steps.push({
-        type: 'pointerMove',
-        duration: 160,
-        x: Math.round(x + (160 * i) / 12),
-        y,
-        origin: 'viewport'
-      })
-    steps.push({ type: 'pointerUp', button: 0 })
-    say('$ drag the jog wheel 160 pt')
-    const dragged = await m.eval(
-      `http.post(${JSON.stringify(`${wda}/session/${sessionId}/actions`)}, {body:${JSON.stringify(
-        JSON.stringify({
-          actions: [
-            {
-              type: 'pointer',
-              id: 'finger',
-              parameters: { pointerType: 'touch' },
-              actions: steps
-            }
-          ]
-        })
-      )}})`
-    )
-    assert.equal(dragged.status, 200, dragged.body)
-    const haptic = await logLine(
-      log,
-      /TSHaptics light request/,
-      beforeJog,
-      8000
-    )
-    const hapticError = log.lines
-      .slice(beforeJog)
-      .find(line =>
-        /TSHaptics.*(error|exception)|Unhandled.*Haptic/i.test(line)
-      )
-    assert(hapticError == null, `haptics raised ${hapticError}`)
-    if (haptic != null) {
-      results.push('3 haptics: TSHaptics light request, no error')
-    } else {
-      assert(
-        releaseBuild,
-        'the jog wheel asked for light haptics (a Release build logs no request: set TS_STREAM_RELEASE_BUILD=1)'
-      )
-      const startAfter = await clipStart()
-      assert.notEqual(startAfter, startBefore, 'the jog wheel moved the clip')
+    // DJ Game, and with it the walk-up preview and the jog wheel, is offered
+    // on an iPhone only (makeWalkUpMusic: djSupported is platform === 'ios').
+    if (android) {
       results.push(
-        `3 haptics: no error; the jog wheel moved the clip start ${startBefore} → ${startAfter} (a Release build logs no TSHaptics request)`
+        '2 walk-up preview: not offered on Android (DJ Game is iPhone-only)'
       )
+      results.push(
+        '3 haptics: the jog wheel is in DJ Game, which Android does not offer'
+      )
+    } else {
+      // 2a. The walk-up module: a song to report on, then its preview.
+      const token = await apiToken()
+      const song = await fetch(
+        `${api}/teams/${walkUpTeam}/players/${walkUpPlayer}/walk-up-song`,
+        {
+          method: 'PUT',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            provider: 'appleMusic',
+            providerId: '1000000001',
+            isrc: null,
+            title: 'Bridge Smoke',
+            artist: 'TeamStation Test',
+            album: null,
+            artworkUrl: null,
+            durationMs: 180000,
+            startMs: 30000,
+            endMs: 45000
+          })
+        }
+      )
+      assert.equal(song.status, 200, 'the walk-up song was set')
+      const beforeDj = log.since()
+      await tap('DJ Game', 3000)
+      // The first visit's Apple Music walkthrough, closed from its last page.
+      let walked = false
+      for (let page = 0; page < 6; page++) {
+        if ((await find('Next', 1500)) == null) break
+        walked = true
+        await tap('Next', 800)
+      }
+      if (walked) {
+        say('$ tapOn the walkthrough’s close button')
+        await m.tapOn({ point: '90%,9%' })
+      }
+      assert(
+        (await find('Bridge Smoke', 15000, true)) != null,
+        'the song is listed'
+      )
+      const reported = await logLine(log, /WalkUpMusicState \{/, beforeDj)
+      assert(reported != null, 'the walk-up module reported on the songs')
+      results.push(
+        `2 walk-up module: ${reported.slice(reported.indexOf('WalkUpMusicState'))}`
+      )
+      // The row's preview button: "Play <player>’s walk-up song".
+      const beforePlay = log.since()
+      const play = (await nodes()).find(
+        node =>
+          /^Play .*walk-up song$/.test(labelOf(node)) && node.bounds != null
+      )
+      assert(play?.bounds != null, 'the song offers a preview')
+      say(`$ tapOn ${labelOf(play)}`)
+      await m.tapOn({ point: centre(play.bounds) })
+      const played = await logLine(
+        log,
+        /WalkUpMusicState \{"kind":"(playing|error)"|WalkUpMusic (play|search) failed/,
+        beforePlay,
+        8000
+      )
+      results.push(
+        played == null
+          ? '2 walk-up preview: asked, no answer (the song is not on this device, so the preview is off)'
+          : `2 walk-up preview: ${played.slice(played.indexOf('WalkUpMusic'))}`
+      )
+
+      // 3. The jog wheel's haptics: requested, and no error.
+      const row = await find('Bridge Smoke', 5000, true)
+      assert(row?.bounds != null, 'the song is listed')
+      say('$ tapOn the song')
+      await m.tapOn({ point: centre(row.bounds) })
+      await sleep(3000)
+      const jog = await find(lstrings.walkup_jog, 10000)
+      assert(jog?.bounds != null, 'the clip editor has its jog wheel')
+      const clipStart = async (): Promise<string> =>
+        (await nodes()).find(node => node.id === 'walkup-start')?.text ?? ''
+      const startBefore = await clipStart()
+      const beforeJog = log.since()
+      const wdaPort = (
+        await readFile(path.join(daemon.info.runDir, 'daemon.log'), 'utf8')
+      )
+        .split('\n')
+        .filter(line =>
+          line.includes(`Starting WDA on device ${device} (port:`)
+        )
+        .at(-1)
+        ?.match(/\(port: (\d+)\)/)?.[1]
+      assert(
+        wdaPort != null,
+        'this device’s WebDriverAgent port is in the daemon log'
+      )
+      const wda = `http://127.0.0.1:${wdaPort}`
+      const status = await m.eval(
+        `http.get(${JSON.stringify(`${wda}/status`)})`
+      )
+      const { sessionId } = JSON.parse(status.body) as { sessionId: string }
+      const x = Math.round(jog.bounds.x + jog.bounds.width / 2 - 80)
+      const y = Math.round(jog.bounds.y + jog.bounds.height / 2)
+      const steps: Array<Record<string, unknown>> = [
+        { type: 'pointerMove', duration: 0, x, y, origin: 'viewport' },
+        { type: 'pointerDown', button: 0 },
+        { type: 'pause', duration: 150 }
+      ]
+      for (let i = 1; i <= 12; i++)
+        steps.push({
+          type: 'pointerMove',
+          duration: 160,
+          x: Math.round(x + (160 * i) / 12),
+          y,
+          origin: 'viewport'
+        })
+      steps.push({ type: 'pointerUp', button: 0 })
+      say('$ drag the jog wheel 160 pt')
+      const dragged = await m.eval(
+        `http.post(${JSON.stringify(`${wda}/session/${sessionId}/actions`)}, {body:${JSON.stringify(
+          JSON.stringify({
+            actions: [
+              {
+                type: 'pointer',
+                id: 'finger',
+                parameters: { pointerType: 'touch' },
+                actions: steps
+              }
+            ]
+          })
+        )}})`
+      )
+      assert.equal(dragged.status, 200, dragged.body)
+      const haptic = await logLine(
+        log,
+        /TSHaptics light request/,
+        beforeJog,
+        8000
+      )
+      const hapticError = log.lines
+        .slice(beforeJog)
+        .find(line =>
+          /TSHaptics.*(error|exception)|Unhandled.*Haptic/i.test(line)
+        )
+      assert(hapticError == null, `haptics raised ${hapticError}`)
+      if (haptic != null) {
+        results.push('3 haptics: TSHaptics light request, no error')
+      } else {
+        assert(
+          releaseBuild,
+          'the jog wheel asked for light haptics (a Release build logs no request: set TS_STREAM_RELEASE_BUILD=1)'
+        )
+        const startAfter = await clipStart()
+        assert.notEqual(startAfter, startBefore, 'the jog wheel moved the clip')
+        results.push(
+          `3 haptics: no error; the jog wheel moved the clip start ${startBefore} → ${startAfter} (a Release build logs no TSHaptics request)`
+        )
+      }
     }
 
     // 2b. Dictation's microphone.
@@ -503,6 +535,21 @@ async function main(): Promise<void> {
         .map(labelOf)
         .find(label => label.startsWith('The microphone is not available'))
       const lines = log.lines.slice(beforeDictation)
+      if (android) {
+        // The audio service lists each app recording now.
+        const audio = await adb('shell', 'dumpsys', 'audio').catch(() => '')
+        started ??= audio
+          .split('\n')
+          .find(
+            line =>
+              /rec|Record/i.test(line) && line.includes('app.teamstation.app')
+          )
+          ?.trim()
+        noInput ??= lines.find(line => line.includes('DictationMicrophone'))
+        if (started != null || (noInput != null && refused != null)) break
+        await sleep(250)
+        continue
+      }
       // A phone's syslog relay does not always carry the engine's lines; the
       // audio session switching to record (the module's first step) stands
       // in for them there, unless the module refused.
@@ -525,7 +572,7 @@ async function main(): Promise<void> {
       if (started != null || (noInput != null && refused != null)) break
       await sleep(250)
     }
-    if (started != null && !started.includes('AVAudioEngine')) {
+    if (!android && started != null && !started.includes('AVAudioEngine')) {
       // The session switches before the module can refuse: give a refusal
       // time to show.
       await sleep(3000)
@@ -538,9 +585,15 @@ async function main(): Promise<void> {
       started != null || noInput != null,
       `the dictation microphone was asked to start${refused == null ? '' : `: "${refused}"`}`
     )
+    const startedDetail =
+      started == null
+        ? ''
+        : android
+          ? `dumpsys audio: ${started.slice(0, 200)}`
+          : started.slice(Math.max(0, started.indexOf('>: ') + 3))
     results.push(
       started != null
-        ? `2 dictation: the microphone started (${started.slice(Math.max(0, started.indexOf('>: ') + 3)).replace(/\s+/g, ' ')})`
+        ? `2 dictation: the microphone started (${startedDetail.replace(/\s+/g, ' ')})`
         : `2 dictation: the native module was asked to start and refused (${noInput?.slice(noInput.indexOf('associating')) ?? ''})${refused == null ? '' : `: "${refused}"`}`
     )
     await shot('bridge-smoke-dictation')
