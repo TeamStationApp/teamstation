@@ -19,8 +19,12 @@ struct PhoneStreamTests {}
 
 // MARK: - Files
 
+/// A fresh directory for one test's files: under `PHONESTREAM_SCRATCH` when the run names one (the
+/// engine tests write gigabytes of recordings, and the simulator's own disk may not have the room),
+/// otherwise under the host's temporary directory.
 func scratchDirectory(_ name: String = #function) throws -> URL {
-  let url = FileManager.default.temporaryDirectory
+  let root = ProcessInfo.processInfo.environment["PHONESTREAM_SCRATCH"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+  let url = (root ?? FileManager.default.temporaryDirectory)
     .appendingPathComponent("phonestream-\(name.filter { $0.isLetter })-\(UUID().uuidString)", isDirectory: true)
   try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
   return url
@@ -35,6 +39,32 @@ func waitUntil(_ seconds: Double = 20, _ condition: @MainActor () throws -> Bool
     try? await Task.sleep(for: .milliseconds(50))
   }
   return try condition()
+}
+
+/// What each tick of a programme sent and the host uptime it ran at, from `observeTicks`.
+final class TickLog: @unchecked Sendable {
+  struct Entry {
+    let output: PhoneProgramme.TickOutput
+    let at: Double
+  }
+
+  private let lock = NSLock()
+  private var all: [Entry] = []
+
+  func add(_ output: PhoneProgramme.TickOutput, at: Double) {
+    lock.lock()
+    all.append(Entry(output: output, at: at))
+    lock.unlock()
+  }
+
+  var entries: [Entry] {
+    lock.lock()
+    defer { lock.unlock() }
+    return all
+  }
+
+  /// Ticks that had a picture due.
+  var picturesDue: Int { entries.filter { $0.output.pictureSequence != nil }.count }
 }
 
 // MARK: - Sample buffers
@@ -829,6 +859,9 @@ struct TrackReading {
   var hasAAC = false
   var bitsPerSecond: Float = 0
   var pictureTimes: [Double] = []
+  /// Every picture's coded size in bytes, and how many were key frames.
+  var pictureBytes: [Int] = []
+  var keyFrames = 0
 }
 
 /// What AVFoundation reads from a file: its tracks, their ends, and every picture's time.
@@ -855,6 +888,9 @@ func readBack(_ url: URL, pictures: Bool = false) async throws -> TrackReading {
       while let sample = output.copyNextSampleBuffer() {
         guard CMSampleBufferGetNumSamples(sample) > 0 else { continue }
         reading.pictureTimes.append(CMSampleBufferGetPresentationTimeStamp(sample).seconds)
+        reading.pictureBytes.append(CMSampleBufferGetTotalSampleSize(sample))
+        let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
+        if attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool != true { reading.keyFrames += 1 }
       }
       reading.pictureTimes.sort()
     }

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs PhoneStream's unit tests on an iPhone simulator, inside the test host in Tests/Host.
 #
-#   PHONESTREAM_SIMULATOR_UDID=<udid> [COVERAGE=1] [ONLY=PhoneStreamTests/<Suite>] ./scripts/test-unit.sh
+#   PHONESTREAM_SIMULATOR_UDID=<udid> [COVERAGE=1] [ONLY=PhoneStreamTests/<Suite>] \
+#     [PHONESTREAM_SCRATCH=<directory>] ./scripts/test-unit.sh
 #
 # The encoders need VideoToolbox on iOS, so the package is tested on a simulator rather than with
 # `swift test` on the Mac. With COVERAGE=1 the run gathers coverage and then holds every changed
@@ -32,6 +33,12 @@ SIM_UDID="${PHONESTREAM_SIMULATOR_UDID:-}"
 ARGS=()
 if [ -n "${ONLY:-}" ]; then
   ARGS+=(-only-testing:"$ONLY")
+fi
+# The engine tests write their recordings under PHONESTREAM_SCRATCH when it is set, rather than in
+# the simulator's own storage; xcodebuild hands TEST_RUNNER_ variables to the host without the prefix.
+if [ -n "${PHONESTREAM_SCRATCH:-}" ]; then
+  mkdir -p "$PHONESTREAM_SCRATCH"
+  export TEST_RUNNER_PHONESTREAM_SCRATCH="$PHONESTREAM_SCRATCH"
 fi
 COVERAGE="${COVERAGE:-}"
 if [ -n "$COVERAGE" ]; then
