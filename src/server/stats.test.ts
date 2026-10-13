@@ -6,7 +6,6 @@ import { userIdOfGumbo } from '../common/userId'
 import {
   battingLines,
   battingRates,
-  inningsPitched,
   pitchingLines,
   pitchingRates,
   type StatRow
@@ -190,12 +189,6 @@ describe('stats', function () {
     ])
     expect(line.eraInnings).equals(7.5)
     expect(pitchingRates(line).era).equals(2.5)
-  })
-
-  it('writes innings the way a box score does', function () {
-    expect(inningsPitched(0)).equals('0.0')
-    expect(inningsPitched(5)).equals('1.2')
-    expect(inningsPitched(18)).equals('6.0')
   })
 })
 

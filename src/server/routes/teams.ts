@@ -11,6 +11,7 @@ import {
 import type { PlayerRsvpCounts } from '../../common/eventInfo'
 import { shortNames } from '../../common/names'
 import { scoreboardOpen } from '../../common/scoreboard'
+import { inningsPitched } from '../../common/statExtras'
 import {
   adminScopes,
   canKeepSongs,
@@ -61,7 +62,6 @@ import { highlightSettings } from '../settings'
 import {
   battingLines,
   battingRates,
-  inningsPitched,
   pitchingLines,
   pitchingRates
 } from '../stats'

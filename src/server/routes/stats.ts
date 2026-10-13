@@ -4,6 +4,7 @@ import { type Kysely, sql } from 'kysely'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
 import { seasonStandings } from '../../common/seasonStandings'
+import { inningsPitched } from '../../common/statExtras'
 import { asUserId } from '../../common/userId'
 import { guardsPerson, visibleScopes } from '../access'
 import { onePerson } from '../admin/people'
@@ -15,7 +16,6 @@ import { withAsync } from '../middleware/withErrors'
 import {
   battingLines,
   battingRates,
-  inningsPitched,
   pitchingLines,
   pitchingRates
 } from '../stats'
