@@ -214,6 +214,8 @@ export function ConversationScreen(
     undefined
   )
   const gestureGeneration = useRef(0)
+  const nativeUserScroll = useRef<'drag' | 'momentum' | undefined>(undefined)
+  const nativeMomentumFromDrag = useRef(false)
   const messagePositions = useRef(new Map<string, number>())
   const messageRefs = useRef(new Map<string, React.ComponentRef<typeof View>>())
   const measuringJump = useRef<number | undefined>(undefined)
@@ -516,6 +518,8 @@ export function ConversationScreen(
       jumpGeneration.current += 1
       measuringJump.current = undefined
       prepend.current = undefined
+      nativeUserScroll.current = undefined
+      nativeMomentumFromDrag.current = false
       restoringAnchor.current = false
       restoreAnchorDirty.current = false
       clearTimeout(highlightTimer.current)
@@ -823,6 +827,8 @@ export function ConversationScreen(
       })
   }
   const jumpTo = (id: string): void => {
+    nativeUserScroll.current = undefined
+    nativeMomentumFromDrag.current = false
     restoreTarget.current = undefined
     restoreAnchor.current = undefined
     restoringAnchor.current = false
@@ -1270,6 +1276,24 @@ export function ConversationScreen(
     })
   }
 
+  const rememberNativeScroll = (
+    event: NativeSyntheticEvent<NativeScrollEvent>,
+    end?: 'drag' | 'momentum'
+  ): void => {
+    if (!mounted.current || !paneActive.current) return
+    rememberScroll(event)
+    const input = nativeUserScroll.current
+    if (
+      Platform.OS !== 'web' &&
+      input != null &&
+      (end == null || end === input)
+    )
+      userScrolled()
+    if (end != null && end === input) nativeUserScroll.current = undefined
+    if (end === 'momentum' && input !== 'drag')
+      nativeMomentumFromDrag.current = false
+  }
+
   const content = (
     <>
       <View style={[styles.fill, { paddingBottom: lift }]}>
@@ -1367,15 +1391,39 @@ export function ConversationScreen(
           keyboardShouldPersistTaps="handled"
           onScroll={event => {
             gestureGeneration.current += 1
-            rememberScroll(event)
+            rememberNativeScroll(event)
           }}
           // A throttled Android stream need not send its last edge offset.
           // End events carry the authoritative settled position.
-          onScrollEndDrag={rememberScroll}
-          onMomentumScrollEnd={rememberScroll}
+          onScrollEndDrag={event => {
+            rememberNativeScroll(event, 'drag')
+          }}
+          onMomentumScrollEnd={event => {
+            rememberNativeScroll(event, 'momentum')
+          }}
+          onMomentumScrollBegin={() => {
+            if (
+              Platform.OS !== 'web' &&
+              mounted.current &&
+              paneActive.current &&
+              nativeMomentumFromDrag.current &&
+              nativeUserScroll.current !== 'drag'
+            ) {
+              nativeUserScroll.current = 'momentum'
+              userScrolled()
+            }
+          }}
           onScrollBeginDrag={() => {
             gestureGeneration.current += 1
-            if (Platform.OS !== 'web') userScrolled()
+            if (
+              Platform.OS !== 'web' &&
+              mounted.current &&
+              paneActive.current
+            ) {
+              nativeUserScroll.current = 'drag'
+              nativeMomentumFromDrag.current = true
+              userScrolled()
+            }
           }}
           onLayout={event => {
             if (!mounted.current || !paneActive.current) return

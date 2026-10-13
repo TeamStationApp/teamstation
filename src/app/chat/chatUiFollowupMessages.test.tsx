@@ -4,6 +4,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
 
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { PickedFile } from './chatFileTypes'
@@ -2609,6 +2610,175 @@ describe('chat follow-up conversation message integration', function () {
           : cancel
             ? 184
             : 24
+      )
+      expect((labelled('Message') as HTMLTextAreaElement).value).equals(
+        'Current draft'
+      )
+    })
+  }
+
+  for (const phase of [
+    'ongoing',
+    'drag-end',
+    'momentum-end',
+    'programmatic'
+  ] as const) {
+    it(`preserves the native reader across exhausted header layout (${phase})`, async function () {
+      const engine = new FakeEngine()
+      const reading = safeMessage({
+        id: 'msg_native_page_reading',
+        seq: 19,
+        body: 'Current reading anchor'
+      })
+      engine.current = {
+        ...engine.current,
+        messages: [reading],
+        hasEarlier: true,
+        historyBefore: 19
+      }
+      let finish: ((next: ConversationView) => void) | undefined
+      engine.loadEarlier = async () =>
+        await new Promise(resolve => {
+          finish = resolve
+        })
+      await screen(engine, {
+        text: 'Current draft',
+        picked: [],
+        scrollOffset: 80
+      })
+      const geometry = readingGeometry(reading.id, 400, 1000)
+      await geometry.layout()
+      // Public native ref stand-ins: layout coordinates deliberately exclude
+      // scrolling, while window coordinates expose the actual visible row.
+      geometry.scroller.getBoundingClientRect = () => new window.DOMRect()
+      const windowRow = geometry.row as HTMLElement & {
+        measureInWindow: (
+          done: (x: number, y: number, width: number, height: number) => void
+        ) => void
+      }
+      windowRow.measureInWindow = done => {
+        done(
+          0,
+          40 + geometry.geometry.y - geometry.scroller.scrollTop,
+          640,
+          800
+        )
+      }
+      const windowPane = geometry.scroller as HTMLElement & {
+        measureInWindow: typeof windowRow.measureInWindow
+      }
+      windowPane.measureInWindow = done => {
+        done(0, 40, 640, 400)
+      }
+      await press('Load earlier messages')
+      interface ScrollEvent {
+        nativeEvent: {
+          contentOffset: { x: number; y: number }
+          contentSize: { width: number; height: number }
+          layoutMeasurement: { width: number; height: number }
+        }
+      }
+      interface Callbacks {
+        onContentSizeChange?: unknown
+        onScrollBeginDrag: () => void
+        onScroll: (event: ScrollEvent) => void
+        onScrollEndDrag: (event: ScrollEvent) => void
+        onMomentumScrollBegin?: () => void
+        onMomentumScrollEnd: (event: ScrollEvent) => void
+      }
+      const callbacks = (): Callbacks => {
+        interface Fiber {
+          memoizedProps?: Callbacks
+          return?: Fiber
+        }
+        const key = Object.keys(geometry.scroller).find(name =>
+          name.startsWith('__reactFiber$')
+        )!
+        let fiber = (
+          geometry.scroller as unknown as Record<string, Fiber | undefined>
+        )[key]
+        while (fiber != null) {
+          if (typeof fiber.memoizedProps?.onContentSizeChange === 'function')
+            return fiber.memoizedProps
+          fiber = fiber.return
+        }
+        throw Error('Rendered message ScrollView callbacks unavailable')
+      }
+      const native = (action: () => void): void => {
+        const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+        try {
+          Object.defineProperty(Platform, 'OS', { ...descriptor, value: 'ios' })
+          action()
+        } finally {
+          Object.defineProperty(Platform, 'OS', descriptor)
+        }
+      }
+      const event = (offset: number): ScrollEvent => ({
+        nativeEvent: {
+          contentOffset: { x: 0, y: offset },
+          contentSize: { width: 640, height: geometry.geometry.height },
+          layoutMeasurement: { width: 640, height: 400 }
+        }
+      })
+      if (phase !== 'programmatic')
+        await act(async () => {
+          native(() => {
+            callbacks().onScrollBeginDrag()
+          })
+          await wait(5)
+        })
+      await act(async () => {
+        engine.update({ ...engine.current, hasEarlier: false })
+        await wait()
+      })
+      // RNW refreshes host methods on render; reinstall the public native
+      // window stand-ins on this newly rendered native event sequence.
+      windowRow.measureInWindow = done => {
+        done(
+          0,
+          40 + geometry.geometry.y - geometry.scroller.scrollTop,
+          640,
+          800
+        )
+      }
+      windowPane.measureInWindow = done => {
+        done(0, 40, 640, 400)
+      }
+      await act(async () => {
+        if (phase === 'momentum-end') {
+          geometry.scroller.scrollTop = 160
+          native(() => {
+            callbacks().onScrollEndDrag(event(160))
+          })
+          native(() => {
+            callbacks().onMomentumScrollBegin?.()
+          })
+        } else if (phase === 'programmatic')
+          native(() => {
+            callbacks().onMomentumScrollBegin?.()
+          })
+        geometry.scroller.scrollTop = 240
+        native(() => {
+          if (phase === 'ongoing') callbacks().onScroll(event(240))
+          else if (phase === 'drag-end') callbacks().onScrollEndDrag(event(240))
+          else callbacks().onMomentumScrollEnd(event(240))
+        })
+        await wait(5)
+      })
+      const chosenY =
+        phase === 'programmatic'
+          ? 320
+          : geometry.row.getBoundingClientRect().top
+      geometry.geometry.y -= 56
+      geometry.geometry.height -= 56
+      await measured(geometry.body, 640, geometry.geometry.height)
+      await act(async () => {
+        finish!(engine.current)
+        await wait(80)
+      })
+      expect(geometry.row.getBoundingClientRect().top).equals(chosenY)
+      expect(geometry.scroller.scrollTop).equals(
+        phase === 'programmatic' ? 24 : 184
       )
       expect((labelled('Message') as HTMLTextAreaElement).value).equals(
         'Current draft'
