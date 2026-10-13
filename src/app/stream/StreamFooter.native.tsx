@@ -6,6 +6,8 @@ import { CameraAnglesPanel } from './CameraAnglesPanel.native'
 export interface StreamFooterProps {
   client: TeamStationClient
   gameId: string
+  /** The videos this game's cameras are publishing to, each time that changes. */
+  onPublishing?: (videoIds: string[]) => void
 }
 
 /**
@@ -14,6 +16,13 @@ export interface StreamFooterProps {
  * panel (`StreamFooter.tsx`).
  */
 export function StreamFooter(props: StreamFooterProps): React.ReactElement {
-  const { client, gameId } = props
-  return <CameraAnglesPanel key={gameId} client={client} gameId={gameId} />
+  const { client, gameId, onPublishing } = props
+  return (
+    <CameraAnglesPanel
+      key={gameId}
+      client={client}
+      gameId={gameId}
+      onPublishing={onPublishing}
+    />
+  )
 }

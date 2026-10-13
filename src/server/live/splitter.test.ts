@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import { execFileSync } from 'child_process'
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import { tmpdir } from 'os'
@@ -7,6 +8,7 @@ import { join } from 'path'
 import {
   attachSessionForTest,
   clearLive,
+  clearLiveSettled,
   codecName,
   codecRefusal,
   configureIngest,
@@ -16,12 +18,14 @@ import {
   keyFromSession,
   type LiveEvent,
   nextSegmentNumber,
+  playlistContinuation,
   publishArrivedForTest,
   publishGoneForTest,
   reopenPlaylist,
   resetForTest,
   restartDelay,
   setLive,
+  settleLastSegment,
   statusFor,
   type TestSession,
   tickSamplerForTest
@@ -771,5 +775,227 @@ describe('a stream that comes back', function () {
     writeFileSync(path, open)
     reopenPlaylist(dir)
     expect(readFileSync(path, 'utf8')).equals(open)
+  })
+})
+
+describe('a live playlist through a reconnect', function () {
+  this.timeout(30000)
+  const dir = spec().hlsDir
+  const argsFile = join(tmpdir(), 'ts-live-test-reconnect-args.txt')
+
+  /** The arguments the stand-in ffmpeg was started with, once it has been. */
+  async function writerArgs(): Promise<string[]> {
+    let args: string[] = []
+    for (let i = 0; i < 100 && args.at(-1) !== join(dir, 'master.m3u8'); i++) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+      try {
+        args = readFileSync(argsFile, 'utf8').trim().split('\n')
+      } catch {}
+    }
+    return args
+  }
+  const argAfter = (args: string[], flag: string): string | undefined => {
+    const at = args.indexOf(flag)
+    return at < 0 ? undefined : args[at + 1]
+  }
+
+  beforeEach(function () {
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir, { recursive: true })
+    rmSync(argsFile, { force: true })
+    writeFileSync(
+      FAKE_FFMPEG,
+      `#!/bin/sh\nprintf '%s\\n' "$@" > ${argsFile}\nexec sleep 30\n`
+    )
+    chmodSync(FAKE_FFMPEG, 0o755)
+    resetForTest()
+    configure()
+  })
+
+  afterEach(function () {
+    resetForTest()
+    writeFileSync(FAKE_FFMPEG, '#!/bin/sh\nexec sleep 30\n')
+    rmSync(argsFile, { force: true })
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('never lets the writer close the playlist, and dates every segment', async function () {
+    setLive(KEY, spec())
+    forcePublishForTest(KEY, true)
+    const args = await writerArgs()
+    const flags = argAfter(args, '-hls_flags')?.split('+') ?? []
+    expect(flags).includes('omit_endlist')
+    expect(flags).includes('program_date_time')
+    // A first run starts a playlist rather than continuing one.
+    expect(flags).not.includes('append_list')
+    expect(flags).not.includes('discont_start')
+    expect(argAfter(args, '-start_number')).equals('0')
+    expect(args).not.includes('-output_ts_offset')
+  })
+
+  it('carries on the playlist it finds, under the same numbers, from where it stopped', async function () {
+    writeFileSync(
+      join(dir, 'master.m3u8'),
+      [
+        '#EXTM3U',
+        '#EXT-X-VERSION:7',
+        '#EXT-X-TARGETDURATION:4',
+        '#EXT-X-MEDIA-SEQUENCE:0',
+        '#EXT-X-PLAYLIST-TYPE:EVENT',
+        '#EXT-X-MAP:URI="init.mp4"',
+        '#EXTINF:4.000000,',
+        'seg000000.m4s',
+        '#EXTINF:4.000000,',
+        'seg000001.m4s',
+        '#EXTINF:3.960000,',
+        'seg000002.m4s',
+        // Closed past the reconnect grace, and now the publisher is back.
+        '#EXT-X-ENDLIST',
+        ''
+      ].join('\n')
+    )
+    for (const name of ['seg000000.m4s', 'seg000001.m4s', 'seg000002.m4s'])
+      writeFileSync(join(dir, name), 'x')
+
+    setLive(KEY, spec())
+    forcePublishForTest(KEY, true)
+    const args = await writerArgs()
+    const flags = argAfter(args, '-hls_flags')?.split('+') ?? []
+    expect(flags).includes('append_list')
+    // The join is marked by `append_list` itself; this would also mark one
+    // above segments a player already has.
+    expect(flags).not.includes('discont_start')
+    // The playlist's own first number, so nothing already in it is
+    // renumbered, and the new timestamps start where the old ones stopped.
+    expect(argAfter(args, '-start_number')).equals('0')
+    expect(argAfter(args, '-output_ts_offset')).equals('11.960000')
+    expect(readFileSync(join(dir, 'master.m3u8'), 'utf8')).not.contains(
+      '#EXT-X-ENDLIST'
+    )
+  })
+
+  it('works out where a playlist carries on from', function () {
+    expect(playlistContinuation(undefined, 7)).deep.equals({
+      startNumber: 7,
+      offsetSec: 0
+    })
+    expect(playlistContinuation('#EXTM3U\n', 3)).deep.equals({
+      startNumber: 3,
+      offsetSec: 0
+    })
+    const listed = (sequence: number, numbers: number[]): string =>
+      [
+        '#EXTM3U',
+        `#EXT-X-MEDIA-SEQUENCE:${sequence}`,
+        ...numbers.flatMap(n => [
+          '#EXTINF:4.000000,',
+          `seg${String(n).padStart(6, '0')}.m4s`
+        ])
+      ].join('\n')
+    expect(playlistContinuation(listed(0, [0, 1, 2]), 3)).deep.equals({
+      startNumber: 0,
+      offsetSec: 12
+    })
+    // Numbering an older writer broke: the media sequence is kept, as long as
+    // no new segment can land on a listed one.
+    expect(
+      playlistContinuation(listed(454, [89, 90, 209, 210]), 211).startNumber
+    ).equals(454)
+    // Where keeping it would overwrite one, it moves just far enough.
+    expect(playlistContinuation(listed(0, [5, 6, 7]), 8).startNumber).equals(5)
+  })
+
+  it('lists the last segment a writer closed at its true length', function () {
+    let ffmpeg = process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
+    try {
+      execFileSync(ffmpeg, ['-version'])
+    } catch {
+      ffmpeg = ''
+    }
+    if (ffmpeg === '') this.skip()
+    // Five seconds at 30 frames a second, a keyframe a second, through FLV
+    // as RTMP brings it, copied into 4 s segments: the second segment is the
+    // last second, the one the writer closed.
+    const flv = join(dir, 'in.flv')
+    execFileSync(ffmpeg, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=size=160x120:rate=30:duration=5',
+      '-c:v',
+      'libx265',
+      '-x265-params',
+      'log-level=none:bframes=0',
+      '-g',
+      '30',
+      '-f',
+      'flv',
+      flv
+    ])
+    execFileSync(ffmpeg, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-i',
+      flv,
+      '-c',
+      'copy',
+      '-tag:v',
+      'hvc1',
+      '-f',
+      'hls',
+      '-hls_time',
+      '4',
+      '-hls_playlist_type',
+      'event',
+      '-hls_segment_type',
+      'fmp4',
+      '-hls_fmp4_init_filename',
+      'init.mp4',
+      '-hls_flags',
+      'omit_endlist',
+      '-hls_segment_filename',
+      join(dir, 'seg%06d.m4s'),
+      join(dir, 'master.m3u8')
+    ])
+    const path = join(dir, 'master.m3u8')
+    const written = readFileSync(path, 'utf8')
+    // FFmpeg's own account falls short of the second.
+    expect(written).contains('seg000001.m4s')
+    expect(written).not.contains('#EXTINF:1.000000,')
+    settleLastSegment(dir)
+    const settled = readFileSync(path, 'utf8')
+    expect(settled).contains('#EXTINF:1.000000,\nseg000001.m4s')
+    expect(settled).contains('#EXTINF:4.000000,\nseg000000.m4s')
+    // Once right, it is left alone.
+    settleLastSegment(dir)
+    expect(readFileSync(path, 'utf8')).equals(settled)
+    // Nothing it can read, nothing it changes.
+    writeFileSync(join(dir, 'seg000001.m4s'), 'x')
+    writeFileSync(path, written)
+    settleLastSegment(dir)
+    expect(readFileSync(path, 'utf8')).equals(written)
+    rmSync(path)
+    settleLastSegment(dir)
+  })
+
+  it('waits for the writer to finish its last word before a stream is closed', async function () {
+    const last = join(dir, 'last-word.txt')
+    // A writer that, told to stop, takes a moment and then writes once more.
+    writeFileSync(
+      FAKE_FFMPEG,
+      `#!/bin/sh\ntrap 'sleep 0.3; echo done > ${last}; exit 0' TERM\nsleep 30 &\nwait\n`
+    )
+    setLive(KEY, spec())
+    forcePublishForTest(KEY, true)
+    await new Promise(resolve => setTimeout(resolve, 300))
+    await clearLiveSettled(KEY, 'the stream was ended')
+    expect(readFileSync(last, 'utf8').trim()).equals('done')
+    expect(statusFor(KEY)).equals(undefined)
+    // A key it does not hold is nothing to wait for.
+    await clearLiveSettled(OTHER_KEY, 'never held')
   })
 })
