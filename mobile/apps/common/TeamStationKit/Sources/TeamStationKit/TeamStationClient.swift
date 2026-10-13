@@ -347,6 +347,34 @@ public struct TeamStationClient: Sendable {
     )
   }
 
+  private struct ServerTime: Decodable {
+    let serverTime: Double
+  }
+
+  /// What to add to `now` to read TeamStation's clock (`ServerClock`), from `samples` round trips
+  /// to `GET /time`. `now` is the clock the caller's instants are on. Throws only when no round trip
+  /// came back.
+  public func serverClockOffset(
+    samples: Int = ServerClock.samples,
+    now: @Sendable () -> Double = { Date().timeIntervalSince1970 }
+  ) async throws -> Double {
+    var taken: [ServerClock.Sample] = []
+    var failure: (any Error)?
+    for _ in 0 ..< max(1, samples) {
+      let sent = now()
+      do {
+        let reply: ServerTime = try await send("time", method: "GET", timeout: 5)
+        taken.append(ServerClock.Sample(sent: sent, server: reply.serverTime / 1_000, received: now()))
+      } catch {
+        failure = error
+      }
+    }
+    guard let offset = ServerClock.offset(from: taken) else {
+      throw failure ?? TeamStationError.server("no answer from the server's clock")
+    }
+    return offset
+  }
+
   // MARK: - The wire
 
   private func escape(_ value: String) -> String {

@@ -693,6 +693,9 @@ final class StubServer: URLProtocol, @unchecked Sendable {
     /// Every `PATCH …/live-streams/:id` body, and how many to answer 503 first.
     var streamChanges: [[String: Any]] = []
     var streamChangeFailures = 0
+    /// How far the server's clock reads ahead of this machine's, and how often it was read.
+    var clockSkew = 3.0
+    var clockReads = 0
   }
 
   private static let lock = NSLock()
@@ -741,6 +744,14 @@ final class StubServer: URLProtocol, @unchecked Sendable {
       } else {
         reply(200, #"{"id":"lst_0001","gameId":"gam_0001","label":"Home Plate","state":"idle","url":"\#(url)"}"#)
       }
+      return
+    }
+    if path.hasSuffix("/time"), method == "GET" {
+      let skew = Self.with { state -> Double in
+        state.clockReads += 1
+        return state.clockSkew
+      }
+      reply(200, #"{"serverTime":\#(((Date().timeIntervalSince1970 + skew) * 1_000).rounded())}"#)
       return
     }
     if path.contains("/live-streams/"), method == "PATCH" {

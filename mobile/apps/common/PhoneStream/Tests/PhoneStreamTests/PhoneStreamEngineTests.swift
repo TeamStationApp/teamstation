@@ -73,8 +73,9 @@ extension PhoneStreamTests {
       #expect(await waitUntil { sink.snapshot.keyframes > 0 && sink.snapshot.audioMessages > 0 })
       let firstPictureSeen = Date()
       #expect(sink.snapshot.fourCcList == [ "hvc1" ])
-      // TeamStation is told when the first picture sent was captured: a picture delay before it
-      // went out, after the camera opened. Refused once, the same moment is offered again.
+      // TeamStation is told when the first picture sent was captured, on its own clock, which here
+      // reads 3 s ahead: a picture delay before it went out, after the camera opened. Refused once,
+      // the same moment is offered again.
       #expect(await waitUntil(10) { StubServer.read { $0.streamChanges }.count == 2 })
       let starts = StubServer.read { $0.streamChanges }.map { $0["liveStartedAt"] as? String }
       #expect(starts.count == 2 && starts.first == starts.last)
@@ -82,11 +83,14 @@ extension PhoneStreamTests {
       instant.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
       let liveStartText = try #require(starts.first ?? nil)
       let liveStart = try #require(instant.date(from: liveStartText))
-      #expect(liveStart > opened, "first picture captured \(liveStart) before the camera opened \(opened)")
+      let skew = StubServer.read { $0.clockSkew }
+      let local = liveStart.addingTimeInterval(-skew)
+      #expect(local > opened.addingTimeInterval(-0.05), "first picture captured \(local) before the camera opened \(opened)")
       let delay = PhoneStreamProfile.pictureDelaySeconds
-      #expect(liveStart < firstPictureSeen.addingTimeInterval(-delay + 0.1), "first picture captured \(liveStart), seen \(firstPictureSeen)")
+      #expect(local < firstPictureSeen.addingTimeInterval(-delay + 0.1), "first picture captured \(local), seen \(firstPictureSeen)")
       let streamed = try #require(engine.streamer.liveTimelineStart)
-      #expect(abs(streamed.date.timeIntervalSince(liveStart)) < 0.001)
+      #expect(abs(streamed.date.timeIntervalSince(local)) < 0.05)
+      #expect(StubServer.read { $0.clockReads } == ServerClock.samples)
       #expect(sink.snapshot.publishNames == [ "key-0000" ])
       // The first dial used the URL it was given: the server was not asked.
       #expect(StubServer.read { $0.streamRequests }.isEmpty)
@@ -441,15 +445,16 @@ extension PhoneStreamTests {
       #expect(opened["wholeStream"] as? Bool == true)
       #expect(opened["kind"] as? String == "program")
       #expect(opened["gameId"] as? String == Self.game)
-      // The upload starts where part 1's first picture was captured, a picture delay before Record.
+      // The upload starts where part 1's first picture was captured, not where Record was pressed.
       let startAt = try #require(opened["startAt"] as? String)
       let reader = ISO8601DateFormatter()
       reader.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
       let partOne = try #require(starts[1])
       #expect(PhoneStreamEngine.uploadStart(anchors: anchors, startedAt: take.startedAt) == partOne)
-      #expect(abs(try #require(reader.date(from: startAt)).timeIntervalSince(partOne.date)) < 0.001)
-      #expect(partOne.seconds < take.startedAt.seconds)
-      #expect(partOne.seconds > take.startedAt.seconds - PhoneStreamProfile.pictureDelaySeconds - 1)
+      // On the server's clock, 3 s ahead of this machine's.
+      #expect(abs(try #require(reader.date(from: startAt)).timeIntervalSince(partOne.date) - 3) < 0.05)
+      #expect(partOne != take.startedAt)
+      #expect(abs(partOne.seconds - take.startedAt.seconds) < PhoneStreamProfile.pictureDelaySeconds + 1)
       await engine.close()
 
       // Relaunched again: the cut-off upload is still the take's, and Record on its stream refuses.

@@ -621,7 +621,13 @@ public final class TeamStationAccount: TeamStationEventService {
   public func reportLiveStart(startedAt: Date) async -> Bool {
     guard let current = chosen, let streamId = current.streamId else { return false }
     do {
-      try await client.reportLiveStart(gameId: current.gameId, streamId: streamId, startedAt: startedAt)
+      // On the server's clock (`ServerClock`); an iPad's own is usually right, but not always.
+      let offset = try await client.serverClockOffset()
+      try await client.reportLiveStart(
+        gameId: current.gameId,
+        streamId: streamId,
+        startedAt: startedAt.addingTimeInterval(offset)
+      )
       return true
     } catch {
       return false

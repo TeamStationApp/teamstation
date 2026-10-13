@@ -672,10 +672,20 @@ public final class PhoneStreamEngine {
     )
     let gameId = take.gameId
     let streamId = take.liveStreamId
+    let clock = environment.clock
     liveStartReport = Task {
+      // On the server's clock: this phone's can be a second out (`ServerClock`).
+      var offset: Double?
       for attempt in 1 ... Self.liveStartAttempts {
         do {
-          try await client.reportLiveStart(gameId: gameId, streamId: streamId, startedAt: started.date)
+          let known: Double
+          if let offset {
+            known = offset
+          } else {
+            known = try await client.serverClockOffset(now: { clock.now.seconds })
+            offset = known
+          }
+          try await client.reportLiveStart(gameId: gameId, streamId: streamId, startedAt: (started + known).date)
           return
         } catch TeamStationError.streamEnded {
           return
@@ -886,15 +896,18 @@ public final class PhoneStreamEngine {
 
     let catalog = self.catalog
     let recordingID = recording.recordingID
-    let service = UploadService(
-      client: TeamStationClient(baseURL: server, token: token, session: environment.urlSession)
-    )
+    let client = TeamStationClient(baseURL: server, token: token, session: environment.urlSession)
+    // The start goes on the server's clock, set again for every upload: this phone's can be a
+    // second out (`ServerClock`). Unreachable, the upload's own request fails anyway.
+    let clock = environment.clock
+    let offset = (try? await client.serverClockOffset(now: { clock.now.seconds })) ?? 0
+    let service = UploadService(client: client)
     let videoId = try await service.send(
       file: file,
       gameId: recording.gameId,
       title: recording.uploadTitle ?? title,
       kind: "program",
-      startedAt: start.date,
+      startedAt: (start + offset).date,
       uploadId: recording.uploadId,
       liveStreamId: liveStreamId,
       wholeStream: recording.coversWholeStream ? true : nil,
