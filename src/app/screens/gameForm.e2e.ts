@@ -28,10 +28,12 @@ import {
  *   base branch;
  * - `schedule`: the team schedule with a practice, an Other event and a
  *   game, run on the base branch;
+ * - `pickers`: the time zone and month pickers, run on the code before
+ *   they became rows;
  * - `api`: the suggestions API only, with no browser;
  * - `all` (the default): the API, then every scene in Chromium.
  */
-type Mode = 'before' | 'schedule' | 'api' | 'all'
+type Mode = 'before' | 'schedule' | 'pickers' | 'api' | 'all'
 
 interface Browser {
   openBrowser: (body: { url: string }) => Promise<unknown>
@@ -223,6 +225,43 @@ async function seed(f: GroupFixture): Promise<Seeded> {
       })
       .execute()
   return { sameSeason, recentOpponent, staleOpponent, sameRegion, gameId }
+}
+
+/** The time zone list and the month chooser, as the create scene opens them. */
+async function pickerShots(
+  f: GroupFixture,
+  m: Browser,
+  artifacts: string,
+  when: 'before' | 'after'
+): Promise<void> {
+  const shot = async (file: string): Promise<void> => {
+    await new Promise(resolve => setTimeout(resolve, 500))
+    writeFileSync(join(artifacts, file), await m.screenshot())
+    console.log(`Captured ${file}`)
+  }
+  await m.openBrowser({
+    url: `${f.h.origin}/groups/team/${encodeURIComponent(f.teamA)}/create-game`
+  })
+  await m.assertVisible({ text: 'Create Game', timeout: 20000 })
+  await m.evalBrowserScript({
+    script: `document.querySelector('[data-testid="event-schedule-timezone"]').scrollIntoView({block:'center'})`
+  })
+  await m.tapOn({ id: 'event-schedule-timezone' })
+  await m.assertVisible({ text: 'Choose time zone', timeout: 10000 })
+  await shot(`timezone-picker-${when}.png`)
+  await m.evalBrowserScript({
+    script: `Array.from(document.querySelectorAll('[role="button"]')).find(node=>(node.getAttribute('aria-label')??node.textContent)==="Cancel time zone picker").click()`
+  })
+  await m.tapOn({ id: 'event-schedule-date' })
+  await m.assertVisible({ text: 'Choose date', timeout: 10000 })
+  await m.evalBrowserScript({
+    script: `document.querySelector('[aria-label^="Choose month:"]').click()`
+  })
+  await m.assertVisible({ text: 'June', timeout: 10000 })
+  await shot(`month-picker-${when}.png`)
+  await m.evalBrowserScript({
+    script: `Array.from(document.querySelectorAll('[role="button"]')).find(node=>(node.getAttribute('aria-label')??node.textContent)==="Cancel date picker").click()`
+  })
 }
 
 /** The Hawks schedule, with its practice, Other event and game. */
@@ -843,6 +882,21 @@ async function scenes({ f, seeded, m, page, artifacts }: Scene): Promise<void> {
   assert(!firstLines.includes('Morning drills'))
   assert(firstLines.some(line => line.includes('Demo Eagles')))
   console.log('E15 PASS')
+
+  // E16: the time zone and month pickers are rows and plain cells, with a
+  // red Cancel, never walls of pills.
+  await pickerShots(f, m, artifacts, 'after')
+  await open(createRoute, 'Create Game')
+  await m.tapOn({ id: 'event-schedule-timezone' })
+  await see('Choose time zone')
+  const zone = await evaluate<{ rows: number; pills: number; cancel: string }>(
+    `(()=>{const rows=Array.from(document.querySelectorAll('[aria-label^="Use time zone "]'));return{rows:rows.length,pills:rows.filter(row=>parseFloat(getComputedStyle(row).borderRadius)>=20).length,cancel:getComputedStyle(Array.from(document.querySelector('[aria-label="Cancel time zone picker"]').querySelectorAll('div')).find(node=>node.textContent==='Cancel')).color}})()`
+  )
+  assert(zone.rows > 10, 'Time zones are listed')
+  assert.equal(zone.pills, 0, 'No time zone is a pill')
+  assert.equal(zone.cancel, 'rgb(186, 26, 26)', 'Cancel is red text')
+  await tap('Cancel time zone picker')
+  console.log('E16 PASS')
 }
 
 function monthName(date: string): string {
@@ -865,7 +919,7 @@ function monthName(date: string): string {
 async function main(): Promise<void> {
   const mode = (process.env.GAME_FORM_MODE ?? 'all') as Mode
   assert(
-    ['before', 'schedule', 'api', 'all'].includes(mode),
+    ['before', 'schedule', 'pickers', 'api', 'all'].includes(mode),
     `Unknown GAME_FORM_MODE ${mode}`
   )
   const artifacts = resolve(required('GAME_FORM_ARTIFACTS'))
@@ -956,6 +1010,10 @@ async function main(): Promise<void> {
     }
     if (mode === 'schedule') {
       await scheduleShot(f, m, artifacts, 'schedule-events-before.png')
+      return
+    }
+    if (mode === 'pickers') {
+      await pickerShots(f, m, artifacts, 'before')
       return
     }
     await scenes({ f, seeded, m, page, artifacts }).catch(

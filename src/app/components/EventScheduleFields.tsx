@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   KeyboardAvoidingView,
   Modal,
@@ -16,9 +16,11 @@ import {
 } from '../../common/eventSchedule'
 import { nearestFiveMinutes, viewerTimezone } from '../../common/eventTime'
 import timezones from '../../common/eventTimezones.json'
+import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { Icon } from './Icon'
+import { RadioMark } from './RadioMark'
 import { TextField } from './TextField'
 
 type Picker = 'date' | 'time' | 'endDate' | 'endTime' | 'timezone'
@@ -113,7 +115,30 @@ export function EventScheduleFields({
           {error}
         </Text>
       )}
-      {picker != null && (
+      {picker === 'timezone' && (
+        // Hundreds of zones and a search: a scene of its own that slides up.
+        <Modal
+          visible
+          animationType="slide"
+          presentationStyle="fullScreen"
+          onRequestClose={() => {
+            setPicker(undefined)
+          }}
+        >
+          <TimezonePicker
+            value={value.timezone}
+            savedTimezone={value.savedTimezone}
+            onChoose={timezone => {
+              update({ timezone })
+              setPicker(undefined)
+            }}
+            onCancel={() => {
+              setPicker(undefined)
+            }}
+          />
+        </Modal>
+      )}
+      {picker != null && picker !== 'timezone' && (
         <Modal
           transparent
           animationType="fade"
@@ -137,19 +162,7 @@ export function EventScheduleFields({
                 style={{ flexShrink: 1 }}
                 keyboardShouldPersistTaps="handled"
               >
-                {picker === 'timezone' ? (
-                  <TimezonePicker
-                    value={value.timezone}
-                    savedTimezone={value.savedTimezone}
-                    onChoose={timezone => {
-                      update({ timezone })
-                      setPicker(undefined)
-                    }}
-                    onCancel={() => {
-                      setPicker(undefined)
-                    }}
-                  />
-                ) : picker === 'date' || picker === 'endDate' ? (
+                {picker === 'date' || picker === 'endDate' ? (
                   <CalendarPicker
                     value={value[picker]}
                     onChoose={date => {
@@ -219,7 +232,8 @@ export function CalendarPicker({
   onChoose: (date: string) => void
   onCancel: () => void
 }): React.ReactElement {
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
   const [yearText, setYearText] = useState(value.slice(0, 4))
   const [month, setMonth] = useState(Number(value.slice(5, 7)) - 1)
   const [choosingMonth, setChoosingMonth] = useState(false)
@@ -278,18 +292,33 @@ export function CalendarPicker({
         onChangeText={setYearText}
       />
       {choosingMonth ? (
+        // Twelve choices in rows: a grid of plain cells, never pills.
         <View style={styles.months}>
           {months.map((name, index) => (
-            <Button
+            <Pressable
               key={name}
-              label={name}
-              kind="secondary"
-              compact
+              accessibilityRole="button"
+              accessibilityLabel={name}
+              aria-selected={index === month}
               onPress={() => {
                 setMonth(index)
                 setChoosingMonth(false)
               }}
-            />
+              style={({ pressed }) => [
+                styles.monthCell,
+                index === month && styles.selected,
+                pressed && index !== month && styles.cellPressed
+              ]}
+            >
+              <Text
+                style={[
+                  styles.monthText,
+                  index === month && styles.selectedText
+                ]}
+              >
+                {name.slice(0, 3)}
+              </Text>
+            </Pressable>
           ))}
         </View>
       ) : (
@@ -341,7 +370,13 @@ export function CalendarPicker({
           onChoose(selected)
         }}
       />
-      <Button label="Cancel date picker" kind="secondary" onPress={onCancel} />
+      <Button
+        label="Cancel"
+        accessibilityLabel="Cancel date picker"
+        kind="text"
+        textColor={theme.dangerColor}
+        onPress={onCancel}
+      />
     </View>
   )
 }
@@ -490,7 +525,8 @@ export function TimePicker({
   onChoose: (time: string, dayOffset: number) => void
   onCancel: () => void
 }): React.ReactElement {
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
   const [hour, minute] = nearestFiveMinutes(value).split(':').map(Number)
   const [hours, setHours] = useState(hour % 12 === 0 ? 12 : hour % 12)
   const [minutes, setMinutes] = useState(minute)
@@ -537,9 +573,99 @@ export function TimePicker({
           onChoose(chosen, dayOffset)
         }}
       />
-      <Button label="Cancel time picker" kind="secondary" onPress={onCancel} />
+      <Button
+        label="Cancel"
+        accessibilityLabel="Cancel time picker"
+        kind="text"
+        textColor={theme.dangerColor}
+        onPress={onCancel}
+      />
     </View>
   )
+}
+
+interface ZoneFormatters {
+  /** Absent where the engine has no `shortOffset`, as older Hermes. */
+  offset?: Intl.DateTimeFormat
+  wall: Intl.DateTimeFormat
+  time: Intl.DateTimeFormat
+}
+// One set per zone for as long as the app runs: the picker lists hundreds.
+const zoneFormatters = new Map<string, ZoneFormatters | null>()
+function formattersFor(zone: string): ZoneFormatters | null {
+  if (zoneFormatters.has(zone)) return zoneFormatters.get(zone)!
+  let made: ZoneFormatters | null
+  try {
+    let offset: Intl.DateTimeFormat | undefined
+    try {
+      offset = new Intl.DateTimeFormat('en-US', {
+        timeZone: zone,
+        timeZoneName: 'shortOffset'
+      })
+    } catch {
+      offset = undefined
+    }
+    made = {
+      offset,
+      wall: new Intl.DateTimeFormat('en-US', {
+        timeZone: zone,
+        hourCycle: 'h23',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      }),
+      time: new Intl.DateTimeFormat('en-US', {
+        timeZone: zone,
+        hour: 'numeric',
+        minute: '2-digit'
+      })
+    }
+  } catch {
+    made = null
+  }
+  zoneFormatters.set(zone, made)
+  return made
+}
+
+/**
+ * A zone's offset as `GMT-7` or `GMT+5:30`, worked out from its wall clock
+ * when the engine cannot name it.
+ */
+export function offsetFromWallClock(
+  wall: Intl.DateTimeFormat,
+  now: Date
+): string {
+  const part = (type: string): number =>
+    Number(wall.formatToParts(now).find(item => item.type === type)?.value)
+  const local = Date.UTC(
+    part('year'),
+    part('month') - 1,
+    part('day'),
+    part('hour'),
+    part('minute')
+  )
+  const minutes = Math.round(
+    (local - Math.floor(now.getTime() / 60_000) * 60_000) / 60_000
+  )
+  if (minutes === 0) return 'GMT'
+  const sign = minutes < 0 ? '-' : '+'
+  const hours = Math.floor(Math.abs(minutes) / 60)
+  const rest = Math.abs(minutes) % 60
+  return `GMT${sign}${hours}${rest === 0 ? '' : ':' + String(rest).padStart(2, '0')}`
+}
+
+/** A zone's offset from UTC and its time now: `GMT-7 · 2:15 PM now`. */
+export function zoneDetail(zone: string, now = new Date()): string {
+  const formatters = formattersFor(zone)
+  if (formatters == null) return ''
+  const offset =
+    formatters.offset
+      ?.formatToParts(now)
+      .find(part => part.type === 'timeZoneName')?.value ??
+    offsetFromWallClock(formatters.wall, now)
+  return `${offset} · ${formatters.time.format(now)} now`
 }
 
 export function TimezonePicker({
@@ -553,7 +679,9 @@ export function TimezonePicker({
   onChoose: (zone: string) => void
   onCancel: () => void
 }): React.ReactElement {
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
+  const insets = useInsets()
   const [query, setQuery] = useState('')
   let saved: string[] = []
   if (savedTimezone !== undefined) {
@@ -564,46 +692,89 @@ export function TimezonePicker({
       // Invalid legacy metadata never becomes a selectable zone.
     }
   }
-  const zones = [
-    ...new Set([viewerTimezone(), value, 'UTC', ...saved, ...timezones])
-  ]
+  const zones = useMemo(
+    () => [
+      ...new Set([viewerTimezone(), value, 'UTC', ...saved, ...timezones])
+    ],
+    // `saved` follows from `savedTimezone`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [value, savedTimezone]
+  )
+  // Each zone's line is worked out once while the picker is open, not on
+  // every keystroke.
+  const [openedAt] = useState(() => new Date())
+  const details = useMemo(
+    () => new Map(zones.map(zone => [zone, zoneDetail(zone, openedAt)])),
+    [zones, openedAt]
+  )
   const normalized = query.trim().toLowerCase().replace(/_/g, ' ')
   const matches = zones.filter(zone =>
     zone.toLowerCase().replace(/_/g, ' ').includes(normalized)
   )
   return (
-    <View style={styles.fields}>
-      <Text accessibilityRole="header" style={styles.title}>
-        Choose time zone
-      </Text>
-      <TextField
-        label="Find time zone"
-        placeholder="City or time zone"
-        autoFocus
-        value={query}
-        onChangeText={setQuery}
-      />
-      <ScrollView style={styles.zoneList} keyboardShouldPersistTaps="handled">
-        {matches.map(zone => (
-          <Button
+    <View
+      style={[
+        styles.scene,
+        { paddingTop: insets.top, paddingBottom: insets.bottom }
+      ]}
+      testID="timezone-picker"
+    >
+      <View style={styles.sceneHeader}>
+        <Text accessibilityRole="header" style={styles.sceneTitle}>
+          Choose time zone
+        </Text>
+        <Button
+          label="Cancel"
+          accessibilityLabel="Cancel time zone picker"
+          kind="text"
+          textColor={theme.dangerColor}
+          onPress={onCancel}
+        />
+      </View>
+      <View style={styles.sceneSearch}>
+        <TextField
+          label="Find time zone"
+          placeholder="City or time zone"
+          autoFocus
+          value={query}
+          onChangeText={setQuery}
+        />
+      </View>
+      <ScrollView
+        style={styles.zoneList}
+        contentContainerStyle={styles.zoneListContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        {matches.map((zone, index) => (
+          <Pressable
             key={zone}
-            label={zone.replace(/_/g, ' ')}
+            accessibilityRole="button"
             accessibilityLabel={`Use time zone ${zone}`}
-            kind={zone === value ? 'primary' : 'secondary'}
+            aria-selected={zone === value}
             onPress={() => {
               onChoose(zone)
             }}
-          />
+            style={({ pressed }) => [
+              styles.zoneRow,
+              index > 0 && styles.zoneDivider,
+              pressed && styles.cellPressed
+            ]}
+          >
+            <View style={styles.zoneText}>
+              <Text style={styles.zoneName} numberOfLines={1}>
+                {zone.replace(/_/g, ' ')}
+              </Text>
+              <Text style={styles.hint} numberOfLines={1}>
+                {details.get(zone)}
+              </Text>
+            </View>
+            <RadioMark on={zone === value} />
+          </Pressable>
         ))}
         {matches.length === 0 && (
           <Text style={styles.hint}>No matching time zones</Text>
         )}
       </ScrollView>
-      <Button
-        label="Cancel time zone picker"
-        kind="secondary"
-        onPress={onCancel}
-      />
     </View>
   )
 }
@@ -684,7 +855,38 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   selected: { backgroundColor: theme.activeColor },
   selectedText: { color: '#ffffff' },
-  months: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.rem(0.5) },
+  months: { flexDirection: 'row', flexWrap: 'wrap' },
+  monthCell: {
+    width: '33.333333%',
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: theme.rem(0.5)
+  },
+  monthText: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(1),
+    color: theme.primaryTextColor
+  },
+  cellPressed: { backgroundColor: theme.highlightRowActiveBackground },
+  zoneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.rem(0.75),
+    minHeight: 56,
+    paddingHorizontal: theme.rem(0.25),
+    paddingVertical: theme.rem(0.5)
+  },
+  zoneDivider: {
+    borderTopWidth: 1,
+    borderTopColor: theme.defaultBorderColor
+  },
+  zoneText: { flex: 1, gap: theme.rem(0.125) },
+  zoneName: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(1),
+    color: theme.primaryTextColor
+  },
   wheels: { flexDirection: 'row', gap: theme.rem(0.5) },
   wheelColumn: { flex: 1, gap: theme.rem(0.5), alignItems: 'center' },
   // Nested native ScrollViews need a bounded viewport rather than growing to content.
@@ -703,5 +905,34 @@ const getStyles = cacheStyles((theme: Theme) => ({
     backgroundColor: theme.containerBackgroundColor
   },
   wheelText: { fontFamily: theme.semiBoldTextFont, color: theme.activeColor },
-  zoneList: { maxHeight: 260 }
+  scene: { flex: 1, backgroundColor: theme.backgroundColor },
+  sceneHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: theme.rem(1),
+    paddingVertical: theme.rem(0.5),
+    borderBottomWidth: 1,
+    borderBottomColor: theme.defaultBorderColor
+  },
+  sceneTitle: {
+    flex: 1,
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(1.25),
+    color: theme.primaryTextColor
+  },
+  sceneSearch: {
+    width: '100%',
+    maxWidth: theme.rem(36),
+    alignSelf: 'center',
+    padding: theme.rem(1)
+  },
+  zoneList: { flex: 1 },
+  zoneListContent: {
+    width: '100%',
+    maxWidth: theme.rem(36),
+    alignSelf: 'center',
+    paddingHorizontal: theme.rem(1),
+    paddingBottom: theme.rem(1)
+  }
 }))

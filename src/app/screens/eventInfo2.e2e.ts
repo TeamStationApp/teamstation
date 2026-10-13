@@ -445,8 +445,22 @@ async function main(): Promise<void> {
       if (capture) await shot('time-picker.png')
       await tap({ text: 'Use time' })
     }
+    // The time zone picker slides up as a scene of its own: type into it
+    // once it has come to rest, or the tap lands on a row sliding past.
+    const settleTimezoneScene = async (): Promise<void> => {
+      await m.assertVisible({
+        css: '[data-testid="timezone-picker"]',
+        timeout: 10000
+      })
+      await m.waitForAnimationToEnd()
+      await wait(
+        `(()=>{const node=document.querySelector('[aria-label="Find time zone"]');if(!node)return false;const r=node.getBoundingClientRect();window.__tzTop=window.__tzTop??[];window.__tzTop.push(r.top);const seen=window.__tzTop.slice(-3);return seen.length===3&&seen.every(top=>top===seen[0])})()`
+      )
+      await m.evalBrowserScript({ script: 'window.__tzTop=undefined' })
+    }
     const chooseZone = async (zone: string, capture = false): Promise<void> => {
       await tap({ id: 'event-schedule-timezone' })
+      await settleTimezoneScene()
       await fill('Find time zone', zone.replace(/_/g, ' '))
       if (capture) await shot('timezone-picker.png')
       await tap({
@@ -946,6 +960,7 @@ async function main(): Promise<void> {
     await chooseDate('date', '2032-02-29', true)
     await chooseTime('time', '23:30', true)
     await tap({ id: 'event-schedule-timezone' })
+    await settleTimezoneScene()
     await fill('Find time zone', 'America/')
     assert.equal(
       await evaluate(
