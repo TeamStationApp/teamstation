@@ -585,6 +585,11 @@ class PhoneStreamEngineTest {
         val first = opened()
         start(first)
         val startedAt = wall
+        // The stream's first picture goes out, and the take keeps the server's clock offset (3 s).
+        streamOutput.liveTimelineStart = wall
+        on { first.publishStatus() }
+        runBlocking { first.liveStartReport!!.join() }
+        assertEquals(3.0, runBlocking { first.recordings() }.single().serverClockOffset!!, 0.05)
         capture(4.0)
         // The process dies: nothing is finished.
         runBlocking { first.abandonForTesting() }
@@ -604,7 +609,7 @@ class PhoneStreamEngineTest {
         // The resume redials the stream it held, never the URL from before the kill as a start.
         waitFor { streamOutput.starts.size == 1 }
         assertEquals("rtmp://ingest.example.test/live/key-0002", streamOutput.starts.single())
-        assertEquals("s1", JSONObject(requests.first { it.path!!.contains("/live-streams") }.body.readUtf8()).getString("heldStreamId"))
+        assertEquals("s1", JSONObject(requests.first { it.method == "POST" && it.path!!.contains("/live-streams") }.body.readUtf8()).getString("heldStreamId"))
         capture(3.0)
         runBlocking { second.stopRecording() }
         val endedAt = wall
@@ -618,6 +623,9 @@ class PhoneStreamEngineTest {
         val starts = app.teamstation.streamcore.record.RecordingCatalog.partStarts(anchors)
         assertEquals(24.0, starts.getValue(2) - starts.getValue(1), 0.1)
 
+        // The server's clock now reads 5 s ahead, as a phone's drifting clock would make it: the take
+        // kept the offset from its recording, and the upload uses that one.
+        clockSkew = 5.0
         val video = runBlocking { second.uploadRecording("s1", server.url("/api/v1/").toString(), "token-0000", "Home Plate") }
         assertEquals("v1", video)
         val open = requests.first { it.method == "POST" && it.path!!.endsWith("/director/uploads") }

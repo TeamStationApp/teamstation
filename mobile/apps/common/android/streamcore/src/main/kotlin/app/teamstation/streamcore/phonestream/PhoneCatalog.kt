@@ -27,7 +27,13 @@ data class PhoneRecording(
     /** A part stopped because the phone ran out of space while the stream carried on. */
     val stoppedForLowStorage: Boolean = false,
     /** The stream published at a moment no part was recording. */
-    val publishedOutsideParts: Boolean = false
+    val publishedOutsideParts: Boolean = false,
+    /**
+     * What to add to this phone's clock to read the server's, measured while the take was recorded
+     * ([ServerClock]). A phone's clock wanders by several parts in a million, so an upload hours later
+     * places the take by this one rather than by a reading taken then.
+     */
+    val serverClockOffset: Double? = null
 ) {
     val isUploaded: Boolean get() = uploadedAt != null
 
@@ -65,10 +71,18 @@ class PhoneCatalog(val index: RecordingCatalog) {
               uploaded_at REAL,
               video_id TEXT,
               low_storage_stop INTEGER NOT NULL DEFAULT 0,
-              published_outside_parts INTEGER NOT NULL DEFAULT 0
+              published_outside_parts INTEGER NOT NULL DEFAULT 0,
+              server_clock_offset REAL
             );
             """.trimIndent()
         )
+        // A catalog made before the take kept its clock offset.
+        val columns = database.rawQuery("PRAGMA table_info(phone_recordings);", null).use { cursor ->
+            buildList { while (cursor.moveToNext()) add(cursor.getString(1)) }
+        }
+        if ("server_clock_offset" !in columns) {
+            database.execSQL("ALTER TABLE phone_recordings ADD COLUMN server_clock_offset REAL;")
+        }
         // The stream this phone is on the air with, while it is: what a relaunch after a kill puts
         // back. The live session says whether, and for how long the app was away; this says which.
         database.execSQL(
@@ -116,7 +130,7 @@ class PhoneCatalog(val index: RecordingCatalog) {
         return database.rawQuery(
             """
             SELECT recording_id, live_stream_id, game_id, angle_name, upload_id, upload_title,
-              uploaded_at, video_id, low_storage_stop, published_outside_parts
+              uploaded_at, video_id, low_storage_stop, published_outside_parts, server_clock_offset
             FROM phone_recordings;
             """.trimIndent(),
             null
@@ -138,7 +152,8 @@ class PhoneCatalog(val index: RecordingCatalog) {
                             uploadedAt = if (cursor.isNull(6)) null else cursor.getDouble(6),
                             videoId = cursor.text(7),
                             stoppedForLowStorage = cursor.getInt(8) != 0,
-                            publishedOutsideParts = cursor.getInt(9) != 0
+                            publishedOutsideParts = cursor.getInt(9) != 0,
+                            serverClockOffset = if (cursor.isNull(10)) null else cursor.getDouble(10)
                         )
                     )
                 }
@@ -170,6 +185,14 @@ class PhoneCatalog(val index: RecordingCatalog) {
             put("video_id", videoId)
         }
     )
+
+    /** Keeps the first clock offset measured for a take; see [PhoneRecording.serverClockOffset]. */
+    fun setServerClockOffset(offset: Double, recordingID: Long) {
+        database.execSQL(
+            "UPDATE phone_recordings SET server_clock_offset = ? WHERE recording_id = ? AND server_clock_offset IS NULL;",
+            arrayOf<Any>(offset, recordingID)
+        )
+    }
 
     fun markStoppedForLowStorage(recordingID: Long) = update(recordingID, ContentValues().apply { put("low_storage_stop", 1) })
 

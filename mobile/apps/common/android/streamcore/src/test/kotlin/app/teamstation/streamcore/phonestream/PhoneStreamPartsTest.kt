@@ -199,6 +199,24 @@ class PhoneStreamPartsTest {
     }
 
     @Test
+    fun aCatalogMadeBeforeTakesKeptTheirClockOffsetGainsTheColumn() {
+        val storage = PhoneStorage(File(folder.root, "phoneStream")).apply { prepare() }
+        val index = RecordingCatalog(storage.index)
+        index.database.execSQL(
+            "CREATE TABLE phone_recordings (recording_id INTEGER PRIMARY KEY, live_stream_id TEXT NOT NULL, " +
+                "game_id TEXT NOT NULL, angle_name TEXT NOT NULL, upload_id TEXT, upload_title TEXT, uploaded_at REAL, " +
+                "video_id TEXT, low_storage_stop INTEGER NOT NULL DEFAULT 0, published_outside_parts INTEGER NOT NULL DEFAULT 0);"
+        )
+        val catalog = PhoneCatalog(index)
+        val take = index.beginRecording(1_000.0)
+        catalog.add(take, "s1", "g1", "Home Plate")
+        catalog.setServerClockOffset(-0.25, take)
+        assertEquals(-0.25, catalog.recording(take)!!.serverClockOffset!!, 0.0)
+        // Opening it again finds the column there.
+        assertEquals(-0.25, PhoneCatalog(index).recording(take)!!.serverClockOffset!!, 0.0)
+    }
+
+    @Test
     fun theCatalogFilesEachTakeUnderItsStreamAndFollowsItsUpload() {
         val (catalog, storage) = catalog()
         val index = catalog.index
@@ -229,6 +247,11 @@ class PhoneStreamPartsTest {
         assertFalse(catalog.recording(take)!!.coversWholeStream)
         catalog.markPublishedOutsideParts(take)
         assertTrue(catalog.recording(take)!!.publishedOutsideParts)
+        // The first clock offset measured for a take holds: it is the one taken while recording.
+        assertNull(catalog.recording(take)!!.serverClockOffset)
+        catalog.setServerClockOffset(1.04, take)
+        catalog.setServerClockOffset(1.14, take)
+        assertEquals(1.04, catalog.recording(take)!!.serverClockOffset!!, 0.0)
         catalog.markUploaded(take, "v1", 2_000.0)
         recording = catalog.recording(take)!!
         assertTrue(recording.isUploaded)

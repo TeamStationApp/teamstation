@@ -558,7 +558,11 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
             var offset: Double? = null
             for (attempt in 1..LIVE_START_ATTEMPTS) {
                 try {
-                    val known = offset ?: client.serverClockOffset(now = environment.clock::now).also { offset = it }
+                    val known = offset ?: client.serverClockOffset(now = environment.clock::now).also { measured ->
+                        offset = measured
+                        // Kept with the take, whose upload may come hours later.
+                        held.recordingID?.let { onEngine { catalog.setServerClockOffset(measured, it) } }
+                    }
                     client.reportLiveStart(held.gameId, held.liveStreamId, started + known)
                     return@launch
                 } catch (ended: LiveStreamClient.Error.StreamEnded) {
@@ -744,9 +748,10 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                 )
             }
         }
-        // The start goes on the server's clock, set again for every upload: this phone's can be a second
-        // out ([ServerClock]). Unreachable, the upload's own request fails anyway.
-        val offset = try {
+        // The start goes on the server's clock: this phone's can be a second out ([ServerClock]). The
+        // offset measured while the take was recorded is the one that fits it; a take that never had one
+        // is read now. Unreachable, the upload's own request fails anyway.
+        val offset = recording.serverClockOffset ?: try {
             LiveStreamClient(server, token, environment.http).serverClockOffset(now = environment.clock::now)
         } catch (error: LiveStreamClient.Error) {
             0.0
