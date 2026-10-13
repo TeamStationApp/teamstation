@@ -643,7 +643,7 @@ describe('list screens', function () {
       }
       expect(final.text).includes(dated.month)
       expect(final.text).includes(dated.day)
-      expect(final.text).includes(dated.when)
+      expect(final.text).includes(dated.time)
       expect(final.text).includes('4–0')
       expect(final.video).equals(true)
       expect(now.text).includes('LIVE')
