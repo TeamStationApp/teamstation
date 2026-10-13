@@ -103,7 +103,8 @@ describe('migrations', function () {
       [
         'highlights.lagSec',
         'highlights.leadSecByEventType',
-        'highlights.leadSec'
+        'highlights.leadSec',
+        'mail.accountMessages'
       ].sort()
     )
   })

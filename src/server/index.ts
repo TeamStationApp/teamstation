@@ -16,8 +16,11 @@ import { modelsOf } from './dictation/models'
 import { attachDictation } from './dictation/route'
 import { purgeReplacedRecordings } from './director/purge'
 import { reopenInterruptedUploads } from './director/uploads'
+import { deliverAccountMail } from './email/accountMail'
 import {
+  type AddedNotice,
   addedNoticeSender,
+  type GuardianInvitation,
   guardianInviteSender,
   mailConfigured,
   sendInvitation,
@@ -479,14 +482,42 @@ function runWorker(): void {
     })
   )
   app.use('/api/v1', inviteRoutes(db, { sendCode, publicUrl, appOrigins }))
-  const sendAdded = addedNoticeSender(serverConfig.smtp)
-  app.use('/api/v1', manageRoutes(db, { sendInvite, sendAdded, publicUrl }))
+  const sendAccountInvite = async (
+    email: string,
+    invitation: { scopeName: string; invitedBy: string; link: string }
+  ): Promise<void> => {
+    await deliverAccountMail(db, email, async () => {
+      await sendInvite(email, invitation)
+    })
+  }
+  const sendAddedMail = addedNoticeSender(serverConfig.smtp)
+  const sendAdded = async (
+    email: string,
+    notice: AddedNotice
+  ): Promise<void> => {
+    await deliverAccountMail(db, email, async () => {
+      await sendAddedMail(email, notice)
+    })
+  }
+  const sendGuardianMail = guardianInviteSender(serverConfig.smtp)
+  const sendGuardianInvite = async (
+    email: string,
+    invitation: GuardianInvitation
+  ): Promise<void> => {
+    await deliverAccountMail(db, email, async () => {
+      await sendGuardianMail(email, invitation)
+    })
+  }
+  app.use(
+    '/api/v1',
+    manageRoutes(db, { sendInvite: sendAccountInvite, sendAdded, publicUrl })
+  )
   app.use('/api/v1', peopleRoutes(db, mediaContext, { sendAdded, publicUrl }))
   app.use(
     '/api/v1',
     groupRoutes(db, mediaContext, undefined, {
-      sendInvite,
-      sendGuardianInvite: guardianInviteSender(serverConfig.smtp),
+      sendInvite: sendAccountInvite,
+      sendGuardianInvite,
       sendAdded,
       publicUrl
     })

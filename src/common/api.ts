@@ -1391,6 +1391,18 @@ export class TeamStationClient {
     )
   }
 
+  async accountMail(): Promise<{ accountMessages: boolean }> {
+    return await this.request(
+      'GET',
+      '/node/mail',
+      asObject({ accountMessages: asBoolean })
+    )
+  }
+
+  async setAccountMail(accountMessages: boolean): Promise<void> {
+    await this.request('PUT', '/node/mail', asUnknownOk, { accountMessages })
+  }
+
   /** Where the API is, which is also where its sockets are. */
   readonly baseUrl: string
   private readonly doFetch: typeof fetch
