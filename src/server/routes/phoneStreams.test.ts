@@ -33,6 +33,7 @@ import {
 } from '../notifications/recordingReminders'
 import { directorRoutes } from './director'
 import { directorUploadRoutes, replaceLiveRecording } from './directorUploads'
+import { healthRoutes } from './health'
 import { liveRoutes } from './live'
 import { notificationRoutes } from './notifications'
 
@@ -881,6 +882,22 @@ describe('phones and Directors asking for their streams by device', function () 
       ).equals(404)
       expect((await video(made.body.id)).source).equals(null)
       expect((await video(theirs.body.id)).source).equals(null)
+    })
+
+    it('tells a device the server’s clock', async function () {
+      const app = express()
+      app.use('/api/v1', healthRoutes(db!, '0.0.0'))
+      const timeServer = app.listen(0, '127.0.0.1')
+      await new Promise<void>(resolve => timeServer.once('listening', resolve))
+      const before = Date.now()
+      const response = await fetch(
+        `http://127.0.0.1:${(timeServer.address() as AddressInfo).port}/api/v1/time`
+      )
+      const after = Date.now()
+      timeServer.close()
+      expect(response.headers.get('cache-control')).equals('no-store')
+      const { serverTime } = (await response.json()) as { serverTime: number }
+      expect(serverTime).within(before, after)
     })
 
     it('places nothing for a stream with no video', async function () {

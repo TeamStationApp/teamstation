@@ -2389,6 +2389,27 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/time': {
+        get: {
+          summary: "The server's clock, for a device to correct its own by",
+          description:
+            "Answers without authentication. A device times the request both ways and takes serverTime as the midpoint, then sends the instants it reports (a live stream's first picture, an upload's start) on the server's clock.",
+          responses: {
+            200: {
+              description: 'Milliseconds since 1970 on the server',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['serverTime'],
+                    properties: { serverTime: { type: 'integer' } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       '/auth/password/parameters': {
         post: {
           summary: 'Get client Argon2id parameters for password sign-in',
@@ -5671,7 +5692,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'active device streams\u2019 on the game (409). ' +
             '`localRecording` takes only `recorded`, and only on a device ' +
             'stream; the first change from `none` records an upload reminder ' +
-            'for me.',
+            'for me. `liveStartedAt` says when the stream\u2019s first picture ' +
+            'was captured, on the server\u2019s clock (`GET /time`): the live ' +
+            'video is placed there unless a publisher already placed it, or ' +
+            'the instant is too far from when the publish arrived to be of it.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam, streamIdParam],
           requestBody: {
@@ -5682,7 +5706,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                   type: 'object',
                   properties: {
                     label: { type: 'string' },
-                    localRecording: { type: 'string', enum: ['recorded'] }
+                    localRecording: { type: 'string', enum: ['recorded'] },
+                    liveStartedAt: { type: 'string', format: 'date-time' }
                   }
                 }
               }
