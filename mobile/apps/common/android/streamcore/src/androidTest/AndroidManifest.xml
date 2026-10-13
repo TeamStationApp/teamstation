@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The device suites' own app: the camera, the microphone and a LAN TeamStation server over plain
-     HTTP, and a screen to hold the camera in the foreground while PhoneStreamEngineDeviceTest runs. -->
+     HTTP, and a screen to hold the camera in the foreground while PhoneStreamEngineDeviceTest runs,
+     landscape whichever way up the phone stands, as the app's streaming screen is. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -12,7 +13,7 @@
         <activity
             android:name="app.teamstation.streamcore.phonestream.PhoneStreamTestActivity"
             android:exported="false"
-            android:screenOrientation="landscape"
+            android:screenOrientation="sensorLandscape"
             android:showWhenLocked="true"
             android:turnScreenOn="true" />
     </application>
