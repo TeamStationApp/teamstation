@@ -134,8 +134,6 @@ export interface Command {
   capture?: boolean
   captureStderr?: boolean
 }
-/** How much of a tool's latest output is kept, unprinted, for its failure. */
-
 /** How many of a failed tool's last lines the build log shows. */
 const reportedLines = 80
 
