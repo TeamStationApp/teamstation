@@ -72,6 +72,8 @@ public final class PhoneProgramme: @unchecked Sendable {
   public private(set) var ticks: UInt64 = 0
   public private(set) var recordingFramesSent: UInt64 = 0
   public private(set) var streamFramesSent: UInt64 = 0
+  /// Told what each tick of the running clock sent, and the host uptime it ran at.
+  private var tickObserver: (@Sendable (TickOutput, Double) -> Void)?
 
   public init(
     recording: any ProgrammeRecordingTarget,
@@ -191,7 +193,21 @@ public final class PhoneProgramme: @unchecked Sendable {
   // MARK: - The tick
 
   private func tickNow() {
-    _ = tick(at: Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000, wallNow: clock.now.seconds)
+    let now = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
+    guard let output = tick(at: now, wallNow: clock.now.seconds) else { return }
+    lock.lock()
+    let observer = tickObserver
+    lock.unlock()
+    observer?(output, now)
+  }
+
+  /// Calls `observer` after every tick of the running clock with what the tick sent and the host
+  /// uptime it ran at, or stops calling it on nil. A test judges the grid by the ticks that actually
+  /// ran, which a loaded machine delays, rather than by the time a wall clock says has passed.
+  public func observeTicks(_ observer: (@Sendable (TickOutput, Double) -> Void)?) {
+    lock.lock()
+    tickObserver = observer
+    lock.unlock()
   }
 
   /// One tick of the programme clock at host uptime `now` and steady wall `wallNow`: the picture due
