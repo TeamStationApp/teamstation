@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
@@ -27,33 +27,46 @@ export function NodeAdministrationScreen({
   const [accountMessages, setAccountMessages] = useState<boolean | null>(null)
   const [mailBusy, setMailBusy] = useState(false)
   const begin = useLatestRequest()
+  /** A write moves this so a read that started earlier cannot restore the switch. */
+  const mailRevision = useRef(0)
   const [confirmation, setConfirmation] = useState<{
     account: NodeAccount
     change: NodeAccountChange
     label: string
   }>()
-  const load = useCallback(async (): Promise<void> => {
-    const current = begin()
-    try {
-      const [found, mail] = await Promise.all([
+  const load = useCallback(
+    async (reportMailError = true): Promise<void> => {
+      const seen = mailRevision.current
+      const current = begin()
+      const [found, mail] = await Promise.allSettled([
         client.nodeAccounts(query),
         client.accountMail()
       ])
       if (!current()) return
-      setAccounts(found)
-      setAccountMessages(mail.accountMessages)
-      setError('')
-      setLoaded(true)
-    } catch (error) {
-      if (!current()) return
-      setAccounts([])
+      if (found.status === 'fulfilled') {
+        setAccounts(found.value)
+        setLoaded(true)
+      } else {
+        setAccounts([])
+      }
+      if (mail.status === 'fulfilled' && mailRevision.current === seen)
+        setAccountMessages(mail.value.accountMessages)
+      const reason =
+        found.status === 'rejected'
+          ? found.reason
+          : reportMailError && mail.status === 'rejected'
+            ? mail.reason
+            : undefined
       setError(
-        error instanceof Error
-          ? error.message
-          : 'Accounts could not load. Retry.'
+        reason instanceof Error
+          ? reason.message
+          : reason == null
+            ? ''
+            : 'Accounts could not load. Retry.'
       )
-    }
-  }, [client, query, begin])
+    },
+    [client, query, begin]
+  )
   useForegroundRefresh(load)
   const save = async (): Promise<void> => {
     if (confirmation == null || busy) return
@@ -67,7 +80,7 @@ export function NodeAdministrationScreen({
       const id = confirmation.account.userId
       setConfirmation(undefined)
       onChanged(id)
-      await load()
+      await load(false)
     } catch (error) {
       setError(
         error instanceof Error
@@ -117,15 +130,20 @@ export function NodeAdministrationScreen({
               busy={mailBusy}
               disabled={busy}
               onPress={() => {
+                if (mailBusy || accountMessages == null) return
                 const next = !accountMessages
+                const revision = ++mailRevision.current
                 setMailBusy(true)
                 setError('')
                 client
                   .setAccountMail(next)
                   .then(() => {
+                    if (mailRevision.current !== revision) return
+                    mailRevision.current = revision + 1
                     setAccountMessages(next)
                   })
                   .catch((error: unknown) => {
+                    if (mailRevision.current !== revision) return
                     setError(
                       error instanceof Error
                         ? error.message

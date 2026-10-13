@@ -683,6 +683,8 @@ describe('creation and organization interface behavior', () => {
         canRemoveNodeRole: false
       }
     ]
+    api.accountMail = async () => ({ accountMessages: false })
+    api.setAccountMail = async () => {}
     let changed = 0
     api.changeNodeAccount = async () => {
       throw new Error('Replacement needed')
@@ -722,6 +724,83 @@ describe('creation and organization interface behavior', () => {
     }
     await press('Refresh accounts')
     expect(document.body.textContent).includes('Lookup offline')
+  })
+  it('keeps a saved account-mail switch when an older refresh finishes later', async () => {
+    const api = client()
+    api.nodeAccounts = async () => []
+    let hang = false
+    let release!: (value: { accountMessages: boolean }) => void
+    api.accountMail = async () => {
+      if (!hang) return { accountMessages: false }
+      return await new Promise(resolve => {
+        release = resolve
+      })
+    }
+    api.setAccountMail = async () => {}
+    await mount(<NodeAdministrationScreen client={api} onChanged={() => {}} />)
+    expect(document.body.textContent).includes('Turn on account emails')
+    hang = true
+    await press('Refresh accounts')
+    await press('Turn on account emails')
+    expect(document.body.textContent).includes('Turn off account emails')
+    await act(async () => {
+      release({ accountMessages: false })
+    })
+    expect(document.body.textContent).includes('Turn off account emails')
+    expect(document.body.textContent).not.includes('Turn on account emails')
+  })
+  it('keeps the account list when account mail cannot load', async () => {
+    const api = client()
+    const account: NodeAccount = {
+      userId: 106,
+      displayName: 'Demo Keeper',
+      email: 'keeper@example.com',
+      isNodeAdmin: false,
+      suspended: false,
+      loginEnabled: true,
+      canRemoveNodeRole: true
+    }
+    api.nodeAccounts = async () => [account]
+    api.accountMail = async () => {
+      throw new Error('Mail offline')
+    }
+    await mount(<NodeAdministrationScreen client={api} onChanged={() => {}} />)
+    expect(document.body.textContent).includes('Demo Keeper')
+    expect(document.body.textContent).includes('Mail offline')
+  })
+  it('does not report a mail refresh failure after an account change has been saved', async () => {
+    const api = client()
+    const account: NodeAccount = {
+      userId: 106,
+      displayName: 'Demo Keeper',
+      email: 'keeper@example.com',
+      isNodeAdmin: false,
+      suspended: false,
+      loginEnabled: true,
+      canRemoveNodeRole: true
+    }
+    api.nodeAccounts = async () => [account]
+    let reads = 0
+    api.accountMail = async () => {
+      if (++reads > 1) throw new Error('Mail offline')
+      return { accountMessages: false }
+    }
+    api.setAccountMail = async () => {}
+    let changed = 0
+    api.changeNodeAccount = async () => {}
+    await mount(
+      <NodeAdministrationScreen
+        client={api}
+        onChanged={id => {
+          changed = id
+        }}
+      />
+    )
+    await press('Grant node role to Demo Keeper')
+    await press('Confirm account change')
+    expect(changed).equals(106)
+    expect(document.body.textContent).includes('Demo Keeper')
+    expect(document.body.textContent).not.includes('Mail offline')
   })
   it('retries an external-team administrator email invitation without claiming ownership until acceptance', async () => {
     const api = client()
