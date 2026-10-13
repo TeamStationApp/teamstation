@@ -1089,7 +1089,8 @@ export type Redeemed = ReturnType<typeof asRedeemed>
 export const asScopeGrant = asObject({
   id: asString,
   name: asString,
-  role: asString
+  role: asString,
+  isPlayer: asOptional(asBoolean, false)
 })
 export type ScopeGrant = ReturnType<typeof asScopeGrant>
 
@@ -2222,13 +2223,34 @@ export class TeamStationClient {
     await this.request('PUT', '/me/onboarding/photo', asUnknownOk, picture)
   }
 
-  async locations(query: string): Promise<Locality[]> {
+  async citySuggestions(
+    query: string,
+    session: string
+  ): Promise<{
+    suggestions: Array<{ id: string; primary: string; secondary: string }>
+    provider: 'google' | 'geonames'
+    attribution: string
+  }> {
+    return await this.request(
+      'GET',
+      `/locations?query=${encodeURIComponent(query)}&session=${encodeURIComponent(session)}`,
+      asObject({
+        suggestions: asArray(
+          asObject({ id: asString, primary: asString, secondary: asString })
+        ),
+        provider: asLiteral('google', 'geonames'),
+        attribution: asString
+      })
+    )
+  }
+
+  async location(id: string, session: string): Promise<Locality> {
     const answer = await this.request(
       'GET',
-      `/locations?query=${encodeURIComponent(query)}`,
-      asObject({ places: asArray(asLocality) })
+      `/locations/${encodeURIComponent(id)}?session=${encodeURIComponent(session)}`,
+      asObject({ place: asLocality })
     )
-    return answer.places
+    return answer.place
   }
 
   async eventPlaces(
@@ -2241,19 +2263,6 @@ export class TeamStationClient {
       asEventPlaces
     )
     return answer.places
-  }
-
-  async locationSuggestion(
-    latitude: number,
-    longitude: number
-  ): Promise<Locality | null> {
-    const answer = await this.request(
-      'POST',
-      '/location-suggestions',
-      asObject({ place: asNullable(asLocality) }),
-      { latitude, longitude }
-    )
-    return answer.place
   }
 
   /** The seasons this person can see, which is what home leads with. */

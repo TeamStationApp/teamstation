@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { Platform, Pressable, Text, TextInput, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { Icon } from './Icon'
+import { Icon, type IconName } from './Icon'
 
 export interface TextFieldProps {
   label: string
@@ -22,6 +22,8 @@ export interface TextFieldProps {
   disabled?: boolean
   multiline?: boolean
   maxLength?: number
+  leadingIcon?: IconName
+  inputRef?: React.Ref<React.ComponentRef<typeof TextInput>>
 }
 
 /**
@@ -70,7 +72,13 @@ export function TextField(props: TextFieldProps): React.ReactElement {
         )}
       </View>
       <View style={styles.inputRow}>
+        {props.leadingIcon != null && (
+          <View style={styles.leading} pointerEvents="none">
+            <Icon name={props.leadingIcon} size={1.25} />
+          </View>
+        )}
         <TextInput
+          ref={props.inputRef}
           accessibilityLabel={label}
           value={value}
           editable={props.disabled !== true}
@@ -110,6 +118,7 @@ export function TextField(props: TextFieldProps): React.ReactElement {
           }}
           style={[
             styles.input,
+            props.leadingIcon != null && { paddingLeft: theme.rem(3) },
             props.multiline === true && {
               minHeight: theme.rem(6),
               paddingVertical: theme.rem(0.75),
@@ -164,6 +173,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   inputRow: {
     justifyContent: 'center'
   },
+  leading: { position: 'absolute', left: theme.rem(1), zIndex: 1 },
   clear: {
     position: 'absolute',
     right: theme.rem(theme.spaceSmRem),

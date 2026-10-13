@@ -44,23 +44,10 @@ const config = {
   // source, so a new value is a new transform rather than a cached old one.
   cacheVersion: JSON.stringify([
     process.env.TS_API_BASE_URL ?? 'production',
-    appOrigin(),
-    process.env.TS_CREATION_NATIVE_LOCATION_FAILURE ?? 'provider'
+    appOrigin()
   ]),
   resolver: {
     resolveRequest: (context, moduleName, platform) => {
-      // An explicit test build can exercise provider failures through the real
-      // native locality screen. Release bundles still call the native provider.
-      if (
-        ['unavailable', 'timeout'].includes(
-          process.env.TS_CREATION_NATIVE_LOCATION_FAILURE
-        ) &&
-        /\/platform\/getRoughLocation$/.test(moduleName)
-      )
-        return {
-          type: 'sourceFile',
-          filePath: path.resolve(__dirname, 'src/test/nativeLocationFailure.ts')
-        }
       if (/^expo-(asset|file-system)(\/legacy)?$/.test(moduleName))
         return { type: 'sourceFile', filePath: expoStandIn }
       if (moduleName === 'three')

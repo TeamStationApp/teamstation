@@ -5,6 +5,11 @@ export interface Locality {
   placeId: string | null
   timezone: string
 }
+export interface CitySuggestion {
+  id: string
+  primary: string
+  secondary: string
+}
 
 function text(raw: unknown, name: string, max = 120): string {
   if (typeof raw !== 'string' || raw.trim() === '' || raw.trim().length > max)
@@ -26,7 +31,8 @@ export function asLocality(raw: unknown): Locality {
     city: text(value.city, 'city'),
     region: text(value.region, 'state or region'),
     country: text(value.country, 'country', 80),
-    placeId: value.placeId == null ? null : text(value.placeId, 'place id', 30),
+    placeId:
+      value.placeId == null ? null : text(value.placeId, 'place id', 300),
     timezone
   }
 }

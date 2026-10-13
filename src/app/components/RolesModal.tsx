@@ -1,10 +1,11 @@
 import React, { useState } from 'react'
-import { Modal, Pressable, Switch, Text, View } from 'react-native'
+import { Modal, Pressable, Text, View } from 'react-native'
 
 import { type Role, ROLE_FLAGS, type RoleFlag } from '../../common/roles'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { RoleSwitches } from './RoleSwitches'
 
 export interface RolesModalProps {
   /** Whose roles are being changed. */
@@ -57,62 +58,9 @@ export function RolesModal(props: RolesModalProps): React.ReactElement {
     ROLE_FLAGS.filter(flag => held.includes(flag))
   )
 
-  const adminAbove = inherited.admin
-  const isAdmin = admin || adminAbove != null
-  // A scorekeeper keeps the songs too, so Songkeeper shows on and fixed while
-  // Scorekeeper is, whether set here or above.
-  const isScorekeeper =
-    flags.includes('scorekeeper') || inherited.scorekeeper != null
   const changed =
     admin !== held.includes('admin') ||
     ROLE_FLAGS.some(flag => flags.includes(flag) !== held.includes(flag))
-
-  const rows: Array<{
-    role: Role
-    label: string
-    detail: string
-    on: boolean
-    /** Why the switch cannot be moved, when it cannot. */
-    fixedBy?: string
-    onChange: (next: boolean) => void
-  }> = [
-    {
-      role: 'admin',
-      label: adminLabel(scopeKind),
-      detail: sprintf(lstrings.role_admin_detail, scopeName),
-      on: isAdmin,
-      fixedBy:
-        adminAbove == null
-          ? undefined
-          : sprintf(lstrings.role_from, adminAbove),
-      onChange: setAdmin
-    },
-    ...ROLE_FLAGS.map(flag => {
-      const above = inherited[flag]
-      const byScorekeeper = flag === 'songkeeper' && isScorekeeper
-      return {
-        role: flag,
-        label: flagLabel(flag),
-        detail: sprintf(flagDetail(flag), scopeName),
-        on: isAdmin || byScorekeeper || above != null || flags.includes(flag),
-        fixedBy: isAdmin
-          ? lstrings.role_admin_all
-          : byScorekeeper
-            ? lstrings.role_scorekeeper_all
-            : above == null
-              ? undefined
-              : sprintf(lstrings.role_from, above),
-        onChange: (next: boolean) => {
-          setFlags(now =>
-            ROLE_FLAGS.filter(item =>
-              item === flag ? next : now.includes(item)
-            )
-          )
-        }
-      }
-    })
-  ]
-
   return (
     <Modal transparent animationType="fade" visible onRequestClose={onClose}>
       <View style={styles.scrim}>
@@ -132,25 +80,18 @@ export function RolesModal(props: RolesModalProps): React.ReactElement {
             {sprintf(lstrings.role_scope, scopeName)}
           </Text>
 
-          {rows.map(row => (
-            <View key={row.role} style={styles.choice}>
-              <View style={styles.choiceText}>
-                <Text style={styles.choiceLabel}>{row.label}</Text>
-                <Text style={styles.detail}>{row.detail}</Text>
-                {row.fixedBy != null && (
-                  <Text style={styles.fixed}>{row.fixedBy}</Text>
-                )}
-              </View>
-              <Switch
-                accessibilityLabel={row.label}
-                value={row.on}
-                disabled={busy === true || row.fixedBy != null}
-                onValueChange={next => {
-                  row.onChange(next)
-                }}
-              />
-            </View>
-          ))}
+          <RoleSwitches
+            scopeKind={scopeKind}
+            scopeName={scopeName}
+            admin={admin}
+            flags={flags}
+            inherited={inherited}
+            busy={busy}
+            onChange={roles => {
+              setAdmin(roles.admin)
+              setFlags(roles.flags)
+            }}
+          />
 
           <Button
             label={lstrings.role_save}
@@ -167,30 +108,7 @@ export function RolesModal(props: RolesModalProps): React.ReactElement {
   )
 }
 
-/** `Team admin`, `Season admin`, `League admin`. */
-export function adminLabel(scopeKind: 'league' | 'season' | 'team'): string {
-  if (scopeKind === 'team') return lstrings.role_team_admin
-  if (scopeKind === 'season') return lstrings.role_season_admin
-  return lstrings.role_league_admin
-}
-
-/** `Coach`, `Assistant`, `Scorekeeper`, `Songkeeper`, `Videographer`. */
-export function flagLabel(flag: RoleFlag): string {
-  if (flag === 'coach') return lstrings.role_coach
-  if (flag === 'assistant') return lstrings.role_assistant
-  if (flag === 'scorekeeper') return lstrings.role_scorekeeper
-  if (flag === 'songkeeper') return lstrings.role_songkeeper
-  return lstrings.role_videographer
-}
-
-/** What a flag allows, with a `%s` for the level it is set on. */
-function flagDetail(flag: RoleFlag): string {
-  if (flag === 'coach') return lstrings.role_coach_detail
-  if (flag === 'assistant') return lstrings.role_assistant_detail
-  if (flag === 'scorekeeper') return lstrings.role_scorekeeper_detail
-  if (flag === 'songkeeper') return lstrings.role_songkeeper_detail
-  return lstrings.role_videographer_detail
-}
+export { adminLabel, flagLabel } from './roleLabels'
 
 const getStyles = cacheStyles((theme: Theme) => ({
   scrim: {

@@ -33,6 +33,7 @@ import {
   stopLiveController
 } from './live/controller'
 import { livingWorkers } from './livingWorkers'
+import { googlePlaces } from './location/googlePlaces'
 import type { MediaContext } from './media/mediaContext'
 import { spaceConfigured } from './media/spacesHls'
 import { withAudit } from './middleware/withAudit'
@@ -551,7 +552,16 @@ function runWorker(): void {
   app.use('/api/v1', meRoutes(db, serverConfig.buildsUrl))
   app.use('/api/v1', pictureRoutes(db, mediaContext.space))
   app.use('/api/v1', onboardingRoutes(db, mediaContext))
-  app.use('/api/v1', locationRoutes())
+  app.use(
+    '/api/v1',
+    locationRoutes(undefined, {
+      db,
+      googlePlaces:
+        serverConfig.googlePlaces == null
+          ? undefined
+          : googlePlaces(serverConfig.googlePlaces)
+    })
+  )
   app.use(
     '/api/v1',
     deviceEventControlRoutes(db, {

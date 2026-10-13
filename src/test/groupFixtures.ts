@@ -3,6 +3,7 @@ import { expect } from 'chai'
 import type { Actor } from '../server/auth/sessions'
 import { createSession } from '../server/auth/sessions'
 import type { Clock } from '../server/groups/requests'
+import type { GooglePlaces } from '../server/location/googlePlaces'
 import type { AccountHarness, MountExtra } from './accountHarness'
 import { creationHarness } from './creationHarness'
 
@@ -37,12 +38,19 @@ export interface GroupFixture {
 export async function groupFixture(
   webRoot?: string,
   bindHost?: string,
-  mountExtra?: MountExtra
+  mountExtra?: MountExtra,
+  cityLookup?: GooglePlaces
 ): Promise<GroupFixture> {
   let timestamp = Date.parse('2026-10-06T19:00:00Z')
   let key = 0
   const clock = { now: () => new Date(timestamp) }
-  const h = await creationHarness(webRoot, clock, bindHost, mountExtra)
+  const h = await creationHarness(
+    webRoot,
+    clock,
+    bindHost,
+    mountExtra,
+    cityLookup
+  )
   try {
     await h.db
       .updateTable('memberships')

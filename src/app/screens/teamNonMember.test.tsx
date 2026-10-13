@@ -279,11 +279,17 @@ describe('a non-member’s team page', function () {
     expect(text()).not.includes('GAME VIDEO LIBRARY')
   })
 
-  it('draws the schedule with thumbnails and opens a game without playing it', async function () {
+  it('marks recorded schedule rows and opens a game without playing it', async function () {
     const { opened } = await team('schedule')
-    expect(text()).includes('1 video')
-    expect(document.body.innerHTML).includes(POSTER)
-    await press('Demo Hawks vs Demo Visitors')
+    expect(document.querySelector('svg[aria-label="Video"]')).not.equals(null)
+    expect(document.body.innerHTML).not.includes(POSTER)
+    const row = document.querySelector<HTMLElement>(
+      '[data-testid="schedule-display-row"][role="button"]'
+    )
+    expect(row).not.equals(null)
+    await act(async () => {
+      row!.click()
+    })
     expect(opened).deep.equals([{ gameId: 'g1', options: { autoPlay: false } }])
   })
 })
