@@ -2372,8 +2372,10 @@ describe('chat follow-up conversation message integration', function () {
     [undefined, true],
     ['before-removal', false],
     ['before-removal', true],
+    ['native-window', true],
     ['after-removal', true],
     ['after-resolution', false],
+    ['after-resolution-auto-anchor', false],
     ['after-resolution-growth', false],
     ['after-removal-no-row-layout', true],
     ['manual-overlap', true]
@@ -2471,6 +2473,28 @@ describe('chat follow-up conversation message integration', function () {
       expect(button('Load earlier messages').textContent).equals(
         'Load earlier messages'
       )
+      if (cancelAt === 'native-window') {
+        // Native measureLayout excludes the ScrollView content offset; only
+        // the public window measurements establish the visible row position.
+        scroller.getBoundingClientRect = () => new window.DOMRect()
+        nativeAnchor.measureLayout = (_relative, success) => {
+          success(0, anchorContentY, 640, 100)
+        }
+        const windowRow = nativeAnchor as typeof nativeAnchor & {
+          measureInWindow: (
+            done: (x: number, y: number, width: number, height: number) => void
+          ) => void
+        }
+        windowRow.measureInWindow = done => {
+          done(0, 40 + anchorContentY - scroller.scrollTop, 640, 100)
+        }
+        const windowPane = scroller as HTMLElement & {
+          measureInWindow: typeof windowRow.measureInWindow
+        }
+        windowPane.measureInWindow = done => {
+          done(0, 40, 640, 400)
+        }
+      }
       const measurements: Array<() => void> = []
       if (cancelAt === 'manual-overlap') {
         nativeAnchor.measureLayout = (_relative, success) => {
@@ -2494,10 +2518,11 @@ describe('chat follow-up conversation message integration', function () {
           )
           scroller.scrollTop = 240
           scroller.dispatchEvent(new window.Event('scroll', { bubbles: true }))
-          await wait(120)
+          await wait(cancelAt === 'after-resolution-auto-anchor' ? 120 : 5)
         })
       }
-      if (cancelAt === 'before-removal') await userScroll()
+      if (cancelAt === 'before-removal' || cancelAt === 'native-window')
+        await userScroll()
       let selectedY = anchor.getBoundingClientRect().top
       const next = { ...engine.current, hasEarlier: false }
       await act(async () => {
@@ -2552,12 +2577,24 @@ describe('chat follow-up conversation message integration', function () {
       }
       if (
         cancelAt === 'after-resolution' ||
+        cancelAt === 'after-resolution-auto-anchor' ||
         cancelAt === 'after-resolution-growth'
       ) {
         await userScroll()
         selectedY = anchor.getBoundingClientRect().top
       }
-      if (!layoutBeforeResolution) await removeHeaderGeometry()
+      if (cancelAt === 'after-resolution-auto-anchor') {
+        // Browser anchoring adjusts the offset before content size is reported,
+        // while position-only row movement does not emit ResizeObserver.
+        anchorContentY -= 56
+        contentHeight -= 56
+        await act(async () => {
+          scroller.scrollTop -= 56
+          scroller.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+          await wait()
+        })
+        await measured(body, 640, contentHeight)
+      } else if (!layoutBeforeResolution) await removeHeaderGeometry()
       await act(async () => {
         await wait(80)
       })
@@ -2578,6 +2615,85 @@ describe('chat follow-up conversation message integration', function () {
       )
     })
   }
+
+  it('recaptures the reading anchor after hiding during an exhaustion header measurement', async function () {
+    const engine = new FakeEngine()
+    const reading = safeMessage({
+      id: 'msg_hidden_page_reading',
+      seq: 19,
+      body: 'Current reading anchor'
+    })
+    engine.current = {
+      ...engine.current,
+      messages: [reading],
+      hasEarlier: true,
+      historyBefore: 19
+    }
+    let finish: ((next: ConversationView) => void) | undefined
+    engine.loadEarlier = async () =>
+      await new Promise(resolve => {
+        finish = resolve
+      })
+    let saved: ChatDraft = {
+      text: 'Current draft',
+      picked: [],
+      scrollOffset: 80
+    }
+    const show = async (active = true): Promise<void> => {
+      await render(
+        <ChatOverlayHost>
+          <ConversationScreen
+            engine={engine}
+            conversationId="cnv_fixture"
+            userId={1}
+            onMembers={() => {}}
+            files={files}
+            swipe={false}
+            embedded
+            active={active}
+            draft={saved}
+            onDraftChange={next => {
+              saved = next
+            }}
+          />
+        </ChatOverlayHost>
+      )
+    }
+    await show()
+    let geometry = readingGeometry(reading.id, 400, 1000)
+    await geometry.layout()
+    await geometry.userScroll(80)
+    await press('Load earlier messages')
+    let complete:
+      | ((x: number, y: number, width: number, height: number) => void)
+      | undefined
+    const nativeRow = geometry.row as HTMLElement & {
+      measureLayout: (
+        relative: unknown,
+        success: NonNullable<typeof complete>
+      ) => void
+    }
+    nativeRow.measureLayout = (_relative, success) => {
+      complete = success
+    }
+    await act(async () => {
+      engine.update({ ...engine.current, hasEarlier: false })
+      finish!(engine.current)
+      await wait(10)
+    })
+    expect(complete).not.equals(undefined)
+    await show(false)
+    await act(async () => {
+      complete!(0, 344, 640, 800)
+      await wait()
+    })
+    await show(true)
+    geometry = readingGeometry(reading.id, 344, 944)
+    await geometry.layout()
+    await geometry.userScroll(80)
+    await measured(geometry.row, 640, 800, 444)
+    expect(saved.scrollAnchor).deep.equals({ id: reading.id, relativeY: 364 })
+  })
 
   it('retires an exhausted page without prior row geometry so a later layout can capture the reading anchor', async function () {
     const engine = new FakeEngine()
@@ -2615,6 +2731,10 @@ describe('chat follow-up conversation message integration', function () {
       </ChatOverlayHost>
     )
     const geometry = readingGeometry(reading.id, 400, 1000)
+    const visibleRowBounds = geometry.row.getBoundingClientRect.bind(
+      geometry.row
+    )
+    geometry.row.getBoundingClientRect = () => new window.DOMRect()
     await measured(geometry.scroller, 640, 400)
     await measured(geometry.body, 640, 1000)
     await act(async () => {
@@ -2628,6 +2748,7 @@ describe('chat follow-up conversation message integration', function () {
     expect(engine.current.hasEarlier).equals(false)
     geometry.geometry.y = 344
     geometry.geometry.height = 944
+    geometry.row.getBoundingClientRect = visibleRowBounds
     await measured(geometry.body, 640, 944)
     await measured(geometry.row, 640, 800, 344)
     expect(saved?.scrollAnchor).deep.equals({

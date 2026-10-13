@@ -43,6 +43,7 @@ import {
   isFinePointer,
   isRestoringPopupFocus,
   readDocumentActive,
+  readMessageScrollPosition,
   watchReadDocumentActive
 } from './chatWebInteractions'
 import {
@@ -436,6 +437,11 @@ export function ConversationScreen(
     if (!mounted.current || !paneActive.current) return
     const generation = ++jumpGeneration.current
     measuringJump.current = undefined
+    const visible = readMessageScrollPosition(
+      scroller.current,
+      messageRefs.current
+    )
+    if (visible != null) scrolled.current.offset = visible.offset
     // Cancel the jump, not the older page's position compensation. The
     // response still adds rows above the position the person now chose.
     const pending = prepend.current
@@ -444,15 +450,15 @@ export function ConversationScreen(
       latestView.current?.messages[0]?.seq === pending.firstSeq
     ) {
       pending.offset = scrolled.current.offset
-      pending.hasEarlier = latestView.current?.hasEarlier
       pending.positions = new Map([
         ...pending.positions,
         ...messagePositions.current
       ])
-      const anchor = readingAnchor(pending.positions)
+      const anchor =
+        visible == null ? readingAnchor(pending.positions) : visible.anchor
       pending.anchor = anchor
       pending.capturingAnchor = false
-      if (anchor != null) {
+      if (visible == null && anchor != null) {
         pending.capturingAnchor = true
         const cancelled = (): boolean =>
           generation !== jumpGeneration.current ||
@@ -461,14 +467,11 @@ export function ConversationScreen(
           !paneActive.current
         // A position-only web layout need not emit a row onLayout event.
         // Capture the position the person chose from the mounted row.
-        measurePosition(anchor.id, cancelled)
-          .then(y => {
+        measurePosition(anchor.id, cancelled, true)
+          .then(relativeY => {
             if (cancelled()) return
             pending.anchor =
-              y == null
-                ? undefined
-                : { id: anchor.id, relativeY: y - scrolled.current.offset }
-            if (y != null) pending.positions.set(anchor.id, y)
+              relativeY == null ? undefined : { id: anchor.id, relativeY }
           })
           .catch(() => {
             if (!cancelled()) pending.anchor = undefined
@@ -486,7 +489,8 @@ export function ConversationScreen(
     restoringAnchor.current = false
     restoreAnchorDirty.current = false
     scrolled.current.hasPosition = true
-    scrolled.current.anchor = readingAnchor(messagePositions.current)
+    scrolled.current.anchor =
+      visible == null ? readingAnchor(messagePositions.current) : visible.anchor
     onDraftChange?.({
       text: textNow.current,
       replyTo: replyNow.current,
@@ -500,13 +504,20 @@ export function ConversationScreen(
     explicitRead()
   }, [onDraftChange, explicitRead, readingAnchor])
   useEffect(
-    () => bindUserScroll(scroller.current, userScrolled),
+    () =>
+      bindUserScroll(scroller.current, userScrolled, offset => {
+        scrolled.current.offset = offset
+        userScrolled()
+      }),
     [userScrolled, hasView]
   )
   useEffect(
     () => () => {
       jumpGeneration.current += 1
       measuringJump.current = undefined
+      prepend.current = undefined
+      restoringAnchor.current = false
+      restoreAnchorDirty.current = false
       clearTimeout(highlightTimer.current)
     },
     [conversationId, props.active]
@@ -617,8 +628,12 @@ export function ConversationScreen(
         })
         .catch(() => undefined)
         .finally(() => {
-          if (cancelled()) return
           pending.checkingHeader = false
+          if (cancelled()) {
+            pending.headerCheckDirty = false
+            if (prepend.current === pending) prepend.current = undefined
+            return
+          }
           if (pending.headerRemoved || pending.headerCheckDirty)
             restoreExhaustedPage()
         })
@@ -639,12 +654,15 @@ export function ConversationScreen(
   exhaustedPageRestorer.current = restoreExhaustedPage
   const measurePosition = async (
     id: string,
-    cancelled: () => boolean
+    cancelled: () => boolean,
+    relativeToViewport = false
   ): Promise<number | undefined> => {
     const deadline = Date.now() + 2000
     while (!cancelled() && Date.now() < deadline) {
       const row = messageRefs.current.get(id)
-      const content = scroller.current?.getInnerViewRef()
+      const content = relativeToViewport
+        ? scroller.current?.getNativeScrollRef()
+        : scroller.current?.getInnerViewRef()
       const y = await new Promise<number | undefined>(resolve => {
         const timer = setTimeout(() => {
           resolve(undefined)
@@ -652,6 +670,26 @@ export function ConversationScreen(
         if (row == null || content == null) {
           clearTimeout(timer)
           resolve(undefined)
+          return
+        }
+        if (relativeToViewport) {
+          let rowY: number | undefined
+          let viewportY: number | undefined
+          const finish = (): void => {
+            if (rowY == null || viewportY == null) return
+            clearTimeout(timer)
+            resolve(rowY - viewportY)
+          }
+          // Native measureLayout excludes the ScrollView content transform.
+          // Window measurements include the actual visible scroll position.
+          row.measureInWindow((_x, top, width, height) => {
+            if (Number.isFinite(top) && width > 0 && height > 0) rowY = top
+            finish()
+          })
+          content.measureInWindow((_x, top, width, height) => {
+            if (Number.isFinite(top) && width > 0 && height > 0) viewportY = top
+            finish()
+          })
           return
         }
         row.measureLayout(

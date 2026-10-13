@@ -83,6 +83,38 @@ function scrollElement(view: unknown): HTMLElement | undefined {
   return element instanceof HTMLElement ? element : undefined
 }
 
+/** Read the mounted viewport before RNW's throttled scroll callback arrives. */
+export function readMessageScrollPosition(
+  view: unknown,
+  rows: ReadonlyMap<string, unknown>
+):
+  | { offset: number; anchor: { id: string; relativeY: number } | undefined }
+  | undefined {
+  const element = scrollElement(view)
+  if (element == null) return undefined
+  const pane = element.getBoundingClientRect()
+  if (pane.width <= 0 || pane.height <= 0) return undefined
+  const positions = [...rows]
+    .flatMap(([id, row]) => {
+      if (!(row instanceof HTMLElement) || !element.contains(row)) return []
+      const bounds = row.getBoundingClientRect()
+      return bounds.width > 0 && bounds.height > 0
+        ? [{ id, y: bounds.top }]
+        : []
+    })
+    .sort((a, b) => a.y - b.y)
+  const chosen =
+    positions.find(row => row.y >= pane.top && row.y < pane.bottom) ??
+    positions.filter(row => row.y <= pane.top).at(-1)
+  return {
+    offset: Math.max(0, element.scrollTop),
+    anchor:
+      chosen == null
+        ? undefined
+        : { id: chosen.id, relativeY: chosen.y - pane.top }
+  }
+}
+
 export function cancelUserScroll(view: unknown): void {
   const element = scrollElement(view)
   if (element != null) scrollCancels.get(element)?.()

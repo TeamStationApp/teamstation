@@ -35,6 +35,15 @@ export function bindUserScroll(
 ): () => void {
   return () => {}
 }
+/** Native rows are measured relative to the native scroll viewport instead. */
+export function readMessageScrollPosition(
+  _view: unknown,
+  _rows: ReadonlyMap<string, unknown>
+):
+  | { offset: number; anchor: { id: string; relativeY: number } | undefined }
+  | undefined {
+  return undefined
+}
 export function cancelUserScroll(_view: unknown): void {}
 export function bindMessageHover(
   _view: unknown,
