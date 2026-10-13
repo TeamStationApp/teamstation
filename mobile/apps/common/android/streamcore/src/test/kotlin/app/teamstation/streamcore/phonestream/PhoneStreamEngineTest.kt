@@ -471,6 +471,8 @@ class PhoneStreamEngineTest {
         assertEquals(listOf("rtmp://ingest.example.test/live/key-0001"), streamOutput.starts)
         assertEquals(PhoneStreamProfile.streamSettings, streamOutput.settings)
         assertEquals(StreamSessionController.Phase.LIVE, engine.streamController.phase)
+        // The phone replaces a connection that stops moving, which TS Director does not.
+        assertEquals(PhoneStreamProfile.stallRedialSeconds, engine.streamController.stallRedialSeconds)
         assertTrue(engine.isRecording)
         assertTrue(engine.isStreaming)
         assertEquals(listOf("recording Home Plate"), foreground.calls)

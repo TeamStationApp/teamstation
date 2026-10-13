@@ -25,6 +25,9 @@ import app.teamstation.streamcore.core.StreamSettings as CaptureSettings
  *   newest picture at once rather than holding a second of 1080p textures on the GPU. The recording's
  *   mix still waits [recordingMixDelaySeconds] for its sound, and the stream's mix only as long as
  *   the microphone's own buffering ([liveMixDelaySeconds]).
+ * - A stream whose connection has taken nothing for 6 s while the stream waits on it is replaced by a
+ *   fresh dial ([stallRedialSeconds]). Android's TCP backoff can sit on a dead connection far longer
+ *   than that, and the stream would come back only when the server gives up on it.
  */
 object PhoneStreamProfile {
     val codec: StreamCodec = StreamCodec.HEVC
@@ -48,6 +51,9 @@ object PhoneStreamProfile {
 
     /** How long the app may be away before an interrupted take is closed rather than resumed. */
     const val resumeDowntimeLimitSeconds = 3_600.0
+
+    /** How long the stream's connection may take nothing, with the stream waiting on it, before it is replaced. */
+    const val stallRedialSeconds = 6.0
 
     /** The recording's encoding, kept with every take so its export is made the way it was recorded. */
     val recordingEncoding: EncodeSettings

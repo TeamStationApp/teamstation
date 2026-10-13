@@ -148,6 +148,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
             scope = scope,
             scheduler = environment.makeRetryScheduler(),
             pathMonitor = environment.makePathMonitor(),
+            stallRedialSeconds = PhoneStreamProfile.stallRedialSeconds,
             now = environment.uptime
         )
         stream.onInputSurface { surface -> attachEncoder(PhoneProgramme.STREAM_KEY, surface) }

@@ -52,6 +52,7 @@ class PhoneStreamUnitTest {
         assertEquals(192_000, PhoneStreamProfile.recordingAudioBitrate)
         assertEquals(1.0, PhoneStreamProfile.pictureDelaySeconds, 0.0)
         assertEquals(1.0, PhoneStreamProfile.recordingMixDelaySeconds, 0.0)
+        assertEquals(6.0, PhoneStreamProfile.stallRedialSeconds, 0.0)
         val capture = PhoneStreamProfile.captureSettings(setOf("lens-0"), CameraPosition.FRONT)
         assertEquals(30.0, capture.frameRate, 0.0)
         assertEquals(setOf("lens-0"), capture.disabledLensIDs)
