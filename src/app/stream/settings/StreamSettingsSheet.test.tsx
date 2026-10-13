@@ -481,7 +481,8 @@ describe('the stream settings sheet', function () {
             serial: 'TAG-0000000000000000000000000001',
             batteryPercent: 100,
             pitchMph: 101.4,
-            exitMph: 112.6
+            exitMph: 112.6,
+            readingAt: undefined
           }
         ]
       }
