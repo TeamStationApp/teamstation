@@ -73,6 +73,8 @@ const STEP_LABEL = {
 
 export interface RecordingUploadRowProps {
   recording: PhoneRecording
+  /** The angle's name now: the server's, after any rename, else the take's own. */
+  name: string
   state: UploadRowState
   onUpload: () => void
   onCancel: () => void
@@ -87,13 +89,13 @@ export interface RecordingUploadRowProps {
 export function RecordingUploadRow(
   props: RecordingUploadRowProps
 ): React.ReactElement | null {
-  const { recording, state, onUpload, onCancel } = props
+  const { recording, name, state, onUpload, onCancel } = props
   const styles = getStyles(useTheme())
   if (state.kind === 'done') return null
   const id = recording.liveStreamId
   return (
     <View style={styles.row} testID={`upload-row-${id}`}>
-      <Text style={styles.name}>{recording.angleName}</Text>
+      <Text style={styles.name}>{name}</Text>
       {state.kind === 'ready' && (
         <>
           <Button

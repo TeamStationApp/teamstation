@@ -713,6 +713,25 @@ describe('the cameras on a game, on a phone', function () {
     expect(byTestId('upload-row-liv_1')).equals(null)
   })
 
+  it('names a take by its angle as the server calls it now, after a rename', async function () {
+    const native = fakePhoneStreamModule({
+      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      recordings: [
+        take({ angleName: 'Second Base' }),
+        take({ liveStreamId: 'liv_gone', angleName: 'Left Field' })
+      ]
+    })
+    const fake = fakeClient()
+    fake.mine = [stream({ id: 'liv_1', label: 'Third Base' })]
+    await mount(fake, undefined, native)
+    expect(byTestId('upload-row-liv_1')?.textContent).contains('Third Base')
+    expect(byTestId('upload-row-liv_1')?.textContent).not.contains(
+      'Second Base'
+    )
+    // A stream the server no longer lists keeps the take's own name.
+    expect(byTestId('upload-row-liv_gone')?.textContent).contains('Left Field')
+  })
+
   it('keeps an uploading angle closed, and Record video under its name says so', async function () {
     const native = fakePhoneStreamModule({
       capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },

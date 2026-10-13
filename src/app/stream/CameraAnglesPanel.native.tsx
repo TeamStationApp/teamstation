@@ -220,12 +220,20 @@ export function CameraAnglesPanel(
       progress[recording.liveStreamId],
       Object.hasOwn(cancelled, recording.liveStreamId)
     )
+  /**
+   * A take's angle as it is called now. A rename goes to the server, not to the
+   * take this phone holds, so the take's own name is only the fallback for a
+   * stream the list no longer has.
+   */
+  const nameOf = (recording: PhoneRecording): string =>
+    angles.find(angle => angle.stream.id === recording.liveStreamId)?.stream
+      .label ?? recording.angleName
   /** The take of an angle by this name that is still uploading, if any. */
   const uploadingNamed = (name: string): boolean =>
     recordings.some(
       recording =>
         recording.gameId === gameId &&
-        recording.angleName.toLowerCase() === name.toLowerCase() &&
+        nameOf(recording).toLowerCase() === name.toLowerCase() &&
         uploading(recording)
     )
 
@@ -405,6 +413,7 @@ export function CameraAnglesPanel(
         <RecordingUploadRow
           key={recording.liveStreamId}
           recording={recording}
+          name={nameOf(recording)}
           state={uploadRowState(
             recording,
             progress[recording.liveStreamId],
