@@ -2367,162 +2367,276 @@ describe('chat follow-up conversation message integration', function () {
     expect(getComputedStyle(row).backgroundColor).equals(before)
   })
 
-  it('preserves the reading anchor when an empty older page removes the paging header, including a cancelled jump', async function () {
-    this.timeout(10000)
-    for (const cancelAt of [undefined, 'before-removal', 'after-removal']) {
-      for (const layoutBeforeResolution of [false, true]) {
-        if (cancelAt === 'after-removal' && !layoutBeforeResolution) continue
-        const cancel = cancelAt != null
-        if (root != null) {
-          await act(async () => {
-            root!.unmount()
-          })
-          root = undefined
-        }
-        const engine = new FakeEngine()
-        const reading = safeMessage({
-          id: 'msg_empty_page_reading',
-          seq: 19,
-          body: 'Current reading anchor'
-        })
-        const reply = safeMessage({
-          id: 'msg_empty_page_reply',
-          seq: 20,
-          quote: {
-            id: 'msg_unavailable_original',
-            authorId: 2,
-            authorName: undefined,
-            snippet: 'Message unavailable',
-            status: 'unavailable'
-          }
-        })
-        engine.current = {
-          ...engine.current,
-          messages: [reading, reply],
-          historyBefore: 19,
-          hasEarlier: true
-        }
-        let finish: ((next: ConversationView) => void) | undefined
-        engine.loadEarlier = async () =>
-          await new Promise(resolve => {
-            finish = resolve
-          })
-        await screen(engine, {
-          text: 'Current draft',
-          picked: [],
-          scrollOffset: 80
-        })
-        const scroller = [
-          ...document.querySelectorAll<HTMLElement>('div')
-        ].find(node => getComputedStyle(node).overflowY === 'auto')!
-        const body = scroller.firstElementChild as HTMLElement
-        const anchor = positionWrapper(reading.id)
-        let contentHeight = 1000
-        let anchorContentY = 400
-        scroller.getBoundingClientRect = () =>
-          new window.DOMRect(0, 0, 640, 400)
-        body.getBoundingClientRect = () =>
-          new window.DOMRect(0, -scroller.scrollTop, 640, contentHeight)
-        anchor.getBoundingClientRect = () =>
-          new window.DOMRect(0, anchorContentY - scroller.scrollTop, 640, 100)
-        Object.defineProperties(scroller, {
-          offsetHeight: { value: 400, configurable: true },
-          offsetWidth: { value: 640, configurable: true },
-          scrollHeight: { get: () => contentHeight, configurable: true }
-        })
-        Object.defineProperties(body, {
-          offsetParent: { value: scroller, configurable: true },
-          offsetHeight: { get: () => contentHeight, configurable: true },
-          offsetWidth: { value: 640, configurable: true }
-        })
-        Object.defineProperties(anchor, {
-          offsetParent: { value: body, configurable: true },
-          offsetTop: { get: () => anchorContentY, configurable: true },
-          offsetHeight: { value: 100, configurable: true },
-          offsetWidth: { value: 640, configurable: true }
-        })
-        scroller.scroll = options => {
-          scroller.scrollTop = (options as ScrollToOptions).top ?? 0
-          scroller.dispatchEvent(new window.Event('scroll', { bubbles: true }))
-        }
-        await measured(scroller, 640, 400)
-        await measured(body, 640, contentHeight)
-        const nativeAnchor = anchor as HTMLElement & {
-          measureLayout: (
-            relative: unknown,
-            success: (
-              x: number,
-              y: number,
-              width: number,
-              height: number
-            ) => void
-          ) => void
-        }
-        const measureCurrentAnchor = nativeAnchor.measureLayout
-        await measured(anchor, 640, 100, anchorContentY)
-        nativeAnchor.measureLayout = measureCurrentAnchor
-        expect(scroller.scrollTop).equals(80)
-        expect(button('Load earlier messages').textContent).equals(
-          'Load earlier messages'
-        )
-        await press('Jump to message from Former member: Message unavailable')
-        expect(finish).not.equals(undefined)
-        const userScroll = async (): Promise<void> => {
-          await act(async () => {
-            scroller.dispatchEvent(
-              new window.WheelEvent('wheel', { bubbles: true, deltaY: 160 })
-            )
-            scroller.scrollTop = 240
-            scroller.dispatchEvent(
-              new window.Event('scroll', { bubbles: true })
-            )
-            await wait(120)
-          })
-        }
-        if (cancelAt === 'before-removal') await userScroll()
-        let selectedY = anchor.getBoundingClientRect().top
-        const next = { ...engine.current, hasEarlier: false }
+  for (const [cancelAt, layoutBeforeResolution] of [
+    [undefined, false],
+    [undefined, true],
+    ['before-removal', false],
+    ['before-removal', true],
+    ['after-removal', true],
+    ['after-resolution', false],
+    ['after-resolution-growth', false],
+    ['after-removal-no-row-layout', true],
+    ['manual-overlap', true]
+  ] as const) {
+    it(`preserves the reading anchor when an empty older page removes the paging header (${cancelAt ?? 'no cancellation'}, layout first: ${layoutBeforeResolution})`, async function () {
+      this.timeout(10000)
+      const cancel = cancelAt != null && cancelAt !== 'manual-overlap'
+      if (root != null) {
         await act(async () => {
-          engine.update(next)
-          await wait()
+          root!.unmount()
         })
-        expect(
-          [...document.querySelectorAll<HTMLElement>('[role="button"]')].some(
-            node => node.textContent === 'Load earlier messages'
+        root = undefined
+      }
+      const engine = new FakeEngine()
+      const reading = safeMessage({
+        id: 'msg_empty_page_reading',
+        seq: 19,
+        body: 'Current reading anchor'
+      })
+      const reply = safeMessage({
+        id: 'msg_empty_page_reply',
+        seq: 20,
+        quote: {
+          id: 'msg_unavailable_original',
+          authorId: 2,
+          authorName: undefined,
+          snippet: 'Message unavailable',
+          status: 'unavailable'
+        }
+      })
+      engine.current = {
+        ...engine.current,
+        messages: [reading, reply],
+        historyBefore: 19,
+        hasEarlier: true
+      }
+      let finish: ((next: ConversationView) => void) | undefined
+      engine.loadEarlier = async () =>
+        await new Promise(resolve => {
+          finish = resolve
+        })
+      await screen(engine, {
+        text: 'Current draft',
+        picked: [],
+        scrollOffset: 80,
+        scrollAnchor:
+          cancelAt === 'manual-overlap'
+            ? { id: reading.id, relativeY: 320 }
+            : undefined
+      })
+      const scroller = [...document.querySelectorAll<HTMLElement>('div')].find(
+        node => getComputedStyle(node).overflowY === 'auto'
+      )!
+      const body = scroller.firstElementChild as HTMLElement
+      const anchor = positionWrapper(reading.id)
+      let contentHeight = 1000
+      let anchorContentY = 400
+      scroller.getBoundingClientRect = () => new window.DOMRect(0, 0, 640, 400)
+      body.getBoundingClientRect = () =>
+        new window.DOMRect(0, -scroller.scrollTop, 640, contentHeight)
+      anchor.getBoundingClientRect = () =>
+        new window.DOMRect(0, anchorContentY - scroller.scrollTop, 640, 100)
+      Object.defineProperties(scroller, {
+        offsetHeight: { value: 400, configurable: true },
+        offsetWidth: { value: 640, configurable: true },
+        scrollHeight: { get: () => contentHeight, configurable: true }
+      })
+      Object.defineProperties(body, {
+        offsetParent: { value: scroller, configurable: true },
+        offsetHeight: { get: () => contentHeight, configurable: true },
+        offsetWidth: { value: 640, configurable: true }
+      })
+      Object.defineProperties(anchor, {
+        offsetParent: { value: body, configurable: true },
+        offsetTop: { get: () => anchorContentY, configurable: true },
+        offsetHeight: { value: 100, configurable: true },
+        offsetWidth: { value: 640, configurable: true }
+      })
+      scroller.scroll = options => {
+        scroller.scrollTop = (options as ScrollToOptions).top ?? 0
+        scroller.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      }
+      await measured(scroller, 640, 400)
+      await measured(body, 640, contentHeight)
+      const nativeAnchor = anchor as HTMLElement & {
+        measureLayout: (
+          relative: unknown,
+          success: (x: number, y: number, width: number, height: number) => void
+        ) => void
+      }
+      const measureCurrentAnchor = nativeAnchor.measureLayout
+      await measured(anchor, 640, 100, anchorContentY)
+      nativeAnchor.measureLayout = measureCurrentAnchor
+      expect(scroller.scrollTop).equals(80)
+      expect(button('Load earlier messages').textContent).equals(
+        'Load earlier messages'
+      )
+      const measurements: Array<() => void> = []
+      if (cancelAt === 'manual-overlap') {
+        nativeAnchor.measureLayout = (_relative, success) => {
+          measurements.push(() => {
+            success(0, anchorContentY, 640, 100)
+          })
+        }
+        // A saved anchor is still being measured when manual paging starts.
+        await measured(body, 640, contentHeight)
+      }
+      await press(
+        cancelAt === 'manual-overlap'
+          ? 'Load earlier messages'
+          : 'Jump to message from Former member: Message unavailable'
+      )
+      expect(finish).not.equals(undefined)
+      const userScroll = async (): Promise<void> => {
+        await act(async () => {
+          scroller.dispatchEvent(
+            new window.WheelEvent('wheel', { bubbles: true, deltaY: 160 })
           )
-        ).equals(false)
-        const removeHeaderGeometry = async (): Promise<void> => {
-          anchorContentY -= 56
-          contentHeight -= 56
+          scroller.scrollTop = 240
+          scroller.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+          await wait(120)
+        })
+      }
+      if (cancelAt === 'before-removal') await userScroll()
+      let selectedY = anchor.getBoundingClientRect().top
+      const next = { ...engine.current, hasEarlier: false }
+      await act(async () => {
+        engine.update(next)
+        await wait()
+      })
+      expect(
+        [...document.querySelectorAll<HTMLElement>('[role="button"]')].some(
+          node => node.textContent === 'Load earlier messages'
+        )
+      ).equals(false)
+      const removeHeaderGeometry = async (): Promise<void> => {
+        anchorContentY -= 56
+        contentHeight -= 56
+        if (
+          cancelAt !== 'after-removal-no-row-layout' &&
+          cancelAt !== 'manual-overlap'
+        ) {
           await measured(anchor, 640, 100, anchorContentY)
           nativeAnchor.measureLayout = measureCurrentAnchor
-          await measured(body, 640, contentHeight)
         }
-        if (layoutBeforeResolution) await removeHeaderGeometry()
-        if (cancelAt === 'after-removal') {
-          await userScroll()
-          selectedY = anchor.getBoundingClientRect().top
-        }
-        await act(async () => {
-          finish!(next)
-          await wait(80)
-        })
-        if (!layoutBeforeResolution) await removeHeaderGeometry()
-        await act(async () => {
-          await wait(80)
-        })
-        expect(
-          anchor.getBoundingClientRect().top,
-          `cancel at: ${cancelAt}, layout before resolution: ${layoutBeforeResolution}`
-        ).equals(selectedY)
-        expect(scroller.scrollTop).equals(
-          cancelAt === 'after-removal' ? 240 : cancel ? 184 : 24
-        )
-        expect((labelled('Message') as HTMLTextAreaElement).value).equals(
-          'Current draft'
-        )
+        await measured(body, 640, contentHeight)
       }
+      if (layoutBeforeResolution) await removeHeaderGeometry()
+      if (
+        cancelAt === 'after-removal' ||
+        cancelAt === 'after-removal-no-row-layout'
+      ) {
+        await userScroll()
+        selectedY = anchor.getBoundingClientRect().top
+      }
+      await act(async () => {
+        if (cancelAt === 'manual-overlap')
+          nativeAnchor.measureLayout = measureCurrentAnchor
+        finish!(next)
+        if (cancelAt === 'manual-overlap') {
+          // Let paging replace the anchor while the earlier measurement is
+          // still pending, then retire that earlier measurement.
+          await wait(10)
+          expect(measurements.length).equals(1)
+          measurements.forEach(finishMeasurement => {
+            finishMeasurement()
+          })
+        }
+        await wait(cancelAt === 'manual-overlap' ? 20 : 80)
+      })
+      if (cancelAt === 'after-resolution-growth') {
+        // An append or image below this row can grow content before the
+        // paging header's delayed layout. It must not retire compensation.
+        contentHeight += 100
+        await measured(body, 640, contentHeight)
+      }
+      if (
+        cancelAt === 'after-resolution' ||
+        cancelAt === 'after-resolution-growth'
+      ) {
+        await userScroll()
+        selectedY = anchor.getBoundingClientRect().top
+      }
+      if (!layoutBeforeResolution) await removeHeaderGeometry()
+      await act(async () => {
+        await wait(80)
+      })
+      expect(
+        anchor.getBoundingClientRect().top,
+        `cancel at: ${cancelAt}, layout before resolution: ${layoutBeforeResolution}`
+      ).equals(selectedY)
+      expect(scroller.scrollTop).equals(
+        cancelAt === 'after-removal' ||
+          cancelAt === 'after-removal-no-row-layout'
+          ? 240
+          : cancel
+            ? 184
+            : 24
+      )
+      expect((labelled('Message') as HTMLTextAreaElement).value).equals(
+        'Current draft'
+      )
+    })
+  }
+
+  it('retires an exhausted page without prior row geometry so a later layout can capture the reading anchor', async function () {
+    const engine = new FakeEngine()
+    const reading = safeMessage({
+      id: 'msg_later_reading_anchor',
+      seq: 19,
+      body: 'Current reading anchor'
+    })
+    engine.current = {
+      ...engine.current,
+      messages: [reading],
+      historyBefore: 19,
+      hasEarlier: true
     }
+    engine.loadEarlier = async () => {
+      engine.update({ ...engine.current, hasEarlier: false })
+      return engine.current
+    }
+    let saved: ChatDraft | undefined
+    await render(
+      <ChatOverlayHost>
+        <ConversationScreen
+          engine={engine}
+          conversationId="cnv_fixture"
+          userId={1}
+          onMembers={() => {}}
+          files={files}
+          swipe={false}
+          embedded
+          draft={{ text: 'Current draft', picked: [], scrollOffset: 80 }}
+          onDraftChange={next => {
+            saved = next
+          }}
+        />
+      </ChatOverlayHost>
+    )
+    const geometry = readingGeometry(reading.id, 400, 1000)
+    await measured(geometry.scroller, 640, 400)
+    await measured(geometry.body, 640, 1000)
+    await act(async () => {
+      geometry.scroller.dispatchEvent(
+        new window.WheelEvent('wheel', { bubbles: true, deltaY: 1 })
+      )
+      await wait()
+    })
+    expect(saved?.scrollAnchor).equals(undefined)
+    await press('Load earlier messages')
+    expect(engine.current.hasEarlier).equals(false)
+    geometry.geometry.y = 344
+    geometry.geometry.height = 944
+    await measured(geometry.body, 640, 944)
+    await measured(geometry.row, 640, 800, 344)
+    expect(saved?.scrollAnchor).deep.equals({
+      id: reading.id,
+      relativeY: 264
+    })
+    expect((labelled('Message') as HTMLTextAreaElement).value).equals(
+      'Current draft'
+    )
   })
 
   it('leaves position unchanged when the original is unavailable or paging fails', async function () {
