@@ -1,5 +1,6 @@
 import { type Kysely, sql } from 'kysely'
 
+import type { GameRequestTerms } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
 import { shortName } from '../../common/names'
 import type { RequestTerms } from '../../common/notifications'
@@ -7,6 +8,93 @@ import type { Role } from '../../common/roles'
 import type { Database } from '../db/database'
 import { isGuardianRequest } from '../groups/guardianLimits'
 import type { StoredRequest } from '../groups/requests'
+
+function eventDetails(terms: GameRequestTerms): string {
+  const { game, previous } = terms
+  let details = ''
+  if (Object.hasOwn(game, 'notes') || Object.hasOwn(previous ?? {}, 'notes')) {
+    const proposed = Object.hasOwn(game, 'notes') ? game.notes : previous?.notes
+    const cleared =
+      Object.hasOwn(game, 'notes') &&
+      proposed == null &&
+      previous?.notes != null
+    details += `\nProposed notes: ${proposed ?? 'Not set'}${cleared ? ' (cleared)' : ''}.`
+    if (previous != null)
+      details += `\nPrevious notes: ${previous.notes ?? 'Not set'}.`
+  }
+  if (
+    Object.hasOwn(game, 'arrivalTimeDelta') ||
+    Object.hasOwn(previous ?? {}, 'arrivalTimeDelta')
+  ) {
+    const proposed = Object.hasOwn(game, 'arrivalTimeDelta')
+      ? game.arrivalTimeDelta
+      : previous?.arrivalTimeDelta
+    const arrival = (minutes?: number | null): string =>
+      minutes == null
+        ? 'Not set'
+        : `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} before start`
+    const cleared =
+      Object.hasOwn(game, 'arrivalTimeDelta') &&
+      proposed == null &&
+      previous?.arrivalTimeDelta != null
+    details += `\nProposed arrival: ${arrival(proposed)}${cleared ? ' (cleared)' : ''}.`
+    if (previous != null)
+      details += `\nPrevious arrival: ${arrival(previous.arrivalTimeDelta)}.`
+  }
+  return details
+}
+
+async function scheduleDetails(
+  db: Kysely<Database>,
+  terms: GameRequestTerms
+): Promise<string> {
+  const { game, previous } = terms
+  let details = ''
+  if (
+    Object.hasOwn(game, 'address') ||
+    Object.hasOwn(previous ?? {}, 'address')
+  ) {
+    const proposed = Object.hasOwn(game, 'address')
+      ? game.address
+      : previous?.address
+    const cleared =
+      Object.hasOwn(game, 'address') &&
+      proposed == null &&
+      previous?.address != null
+    details += `\nProposed address: ${proposed ?? 'Not set'}${cleared ? ' (cleared)' : ''}.`
+    if (previous != null)
+      details += `\nPrevious address: ${previous.address ?? 'Not set'}.`
+  }
+  if (Object.hasOwn(game, 'endAt') || Object.hasOwn(previous ?? {}, 'endAt')) {
+    const end = async (
+      intent: GameRequestTerms['game'],
+      value?: string | null
+    ): Promise<string> => {
+      if (value == null) return 'Not set (defaults to three hours after start)'
+      const zone =
+        intent.timezone ??
+        (intent.seasonId == null
+          ? 'UTC'
+          : ((
+              await db
+                .selectFrom('seasons')
+                .select('timezone')
+                .where('id', '=', intent.seasonId)
+                .executeTakeFirst()
+            )?.timezone ?? 'UTC'))
+      return `${new Intl.DateTimeFormat('en', { timeZone: zone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))} (${zone})`
+    }
+    const proposed = Object.hasOwn(game, 'endAt') ? game.endAt : previous?.endAt
+    const cleared =
+      Object.hasOwn(game, 'endAt') &&
+      proposed == null &&
+      previous?.endAt != null
+    details += `\nProposed end: ${await end(game, proposed)}${cleared ? ' (cleared)' : ''}.`
+    if (previous != null)
+      details += `\nPrevious end: ${await end(previous, previous.endAt)}.`
+  }
+  return details
+}
 
 export async function titleAndDescription(
   db: Kysely<Database>,
@@ -25,6 +113,8 @@ export async function titleAndDescription(
         requestTitle?: string
         requestDescription?: string
         gameClassificationIncluded?: boolean
+        gameEventDetailsIncluded?: boolean
+        gameScheduleDetailsIncluded?: boolean
       }
     | undefined
   const terms = request.terms as RequestTerms
@@ -37,6 +127,12 @@ export async function titleAndDescription(
         metadata.requestDescription +
         (terms.kind === 'game' && metadata.gameClassificationIncluded !== true
           ? ` Proposed ${exhibition(terms.game.exhibition)}.${terms.previous == null ? '' : ` Previous ${exhibition(terms.previous.exhibition)}.`}`
+          : '') +
+        (terms.kind === 'game' && metadata.gameEventDetailsIncluded !== true
+          ? eventDetails(terms)
+          : '') +
+        (terms.kind === 'game' && metadata.gameScheduleDetailsIncluded !== true
+          ? await scheduleDetails(db, terms)
           : '')
     }
   const sender = metadata?.senderName ?? 'An administrator'
@@ -91,7 +187,7 @@ export async function titleAndDescription(
         terms.gameId == null
           ? `${away} invited to game vs. ${home}`
           : `${away} vs. ${home}: ${terms.game.status === 'cancelled' ? 'cancellation' : 'game change'}`,
-      description: `${sender} from ${organization} proposed ${away} at ${home} ${competition}, ${await when(terms.game.startAt, terms.game.seasonId, terms.game.timezone)}${terms.game.venue == null ? '' : ' at ' + terms.game.venue}, ${terms.game.status}, ${exhibition(terms.game.exhibition)}.${prior} This changes neither management parents nor season participation.`
+      description: `${sender} from ${organization} proposed ${away} at ${home} ${competition}, ${await when(terms.game.startAt, terms.game.seasonId, terms.game.timezone)}${terms.game.venue == null ? '' : ' at ' + terms.game.venue}, ${terms.game.status}, ${exhibition(terms.game.exhibition)}.${prior} This changes neither management parents nor season participation.${eventDetails(terms)}${await scheduleDetails(db, terms)}`
     }
   }
   if (terms.kind === 'person') {
@@ -213,7 +309,7 @@ export async function snapshotRequestInformation(
   await db
     .updateTable('notification_events')
     .set({
-      metadata: sql`metadata || jsonb_build_object('requestTitle', ${information.title}::text, 'requestDescription', ${information.description}::text, 'gameClassificationIncluded', ${(request.terms as RequestTerms).kind === 'game'}::boolean)`
+      metadata: sql`metadata || jsonb_build_object('requestTitle', ${information.title}::text, 'requestDescription', ${information.description}::text, 'gameClassificationIncluded', ${(request.terms as RequestTerms).kind === 'game'}::boolean, 'gameEventDetailsIncluded', ${(request.terms as RequestTerms).kind === 'game'}::boolean, 'gameScheduleDetailsIncluded', ${(request.terms as RequestTerms).kind === 'game'}::boolean)`
     })
     .where('source_type', '=', 'groupRequest')
     .where('source_id', '=', id)

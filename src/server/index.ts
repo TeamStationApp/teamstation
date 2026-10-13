@@ -48,6 +48,7 @@ import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { devMediaRoutes } from './routes/devMedia'
 import { directorRoutes } from './routes/director'
 import { directorUploadRoutes } from './routes/directorUploads'
+import { eventInfoRoutes } from './routes/eventInfo'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
 import { gameApprovalRoutes } from './routes/gameApprovals'
@@ -498,6 +499,7 @@ function runWorker(): void {
     '/api/v1',
     eventListRoutes(db, mediaContext, { store: scoreboard.store })
   )
+  app.use('/api/v1', eventInfoRoutes(db, mediaContext))
   app.use('/api/v1', teamRoutes(db, mediaContext, scoreboard.store))
   app.use('/api/v1', scheduleRoutes(db))
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))

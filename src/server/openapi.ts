@@ -15,6 +15,7 @@ import {
   CLIP_MIN_MS,
   WALK_UP_PROVIDERS
 } from '../common/walkUpSong'
+import { createEventOperation, eventInfoPaths } from './events/eventInfoOpenApi'
 import { creationPaths } from './groups/openApi'
 import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
 
@@ -2048,6 +2049,7 @@ export function openApiDocument(version: string): OpenApiDocument {
     paths: {
       ...creationPaths(errorResponse),
       ...gameApprovalPaths(errorResponse),
+      ...eventInfoPaths(errorResponse),
       ...accountPaths,
       '/me/builds': {
         get: {
@@ -2298,6 +2300,8 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/locations': {
         get: {
           summary: 'Search public city and region reference data',
+          description:
+            'Omitting kind keeps the city-reference response. Authenticated venue/address searches return up to five {id,name,address} mapping suggestions and OpenStreetMap attribution. Venue mode suggests named points of interest rather than streets or house numbers. Free text remains valid if lookup fails.',
           parameters: [
             {
               name: 'query',
@@ -2305,7 +2309,14 @@ export function openApiDocument(version: string): OpenApiDocument {
               required: true,
               schema: { type: 'string', maxLength: 120 },
               description:
-                'City, region and/or country; blank returns no suggestions'
+                'City, region and/or country, or place/address when kind is supplied; blank returns no suggestions'
+            },
+            {
+              name: 'kind',
+              in: 'query',
+              schema: { type: 'string', enum: ['venue', 'address'] },
+              description:
+                'Optional; omitted defaults to local city-reference search.'
             }
           ],
           responses: {
@@ -2313,7 +2324,9 @@ export function openApiDocument(version: string): OpenApiDocument {
               description:
                 'Up to fifteen locality suggestions and GeoNames attribution'
             },
-            400: errorResponse
+            400: errorResponse,
+            401: errorResponse,
+            503: errorResponse
           }
         }
       },
@@ -2819,7 +2832,10 @@ export function openApiDocument(version: string): OpenApiDocument {
           security: [{ bearer: [] }],
           parameters: [teamIdParam],
           responses: {
-            200: { description: 'Games, newest first, with a video count' },
+            200: {
+              description:
+                'Games, newest first, with a video count. Authorized team views also include playerRsvps {yes,unknown,no}, counting active current team players only; unknown combines Maybe and No reply. Pending proposals and non-member views omit playerRsvps.'
+            },
             404: errorResponse
           }
         },
@@ -5676,8 +5692,9 @@ export function openApiDocument(version: string): OpenApiDocument {
         }
       },
       '/events': {
+        post: createEventOperation(errorResponse),
         get: {
-          summary: 'Games, filtered by the query string',
+          summary: 'Games and team events, filtered by the query string',
           description:
             'The one list. `scope=visible` (the default) is every game you ' +
             'may see: your teams, and every game of a season opened to you. ' +
