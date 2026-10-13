@@ -108,7 +108,7 @@ describe('account settings in the finished desktop application', function () {
     await h?.close()
   })
   it('saves name and photo through the real API, Space uploads and reload', async () => {
-    await fill('Name', 'Alex Rivera')
+    await fill('Name', 'Mookie Betts')
     await press('Save name')
     await waitText('Name saved')
     const picture = path.join(artifacts, 'support', 'profile.webp')
@@ -121,12 +121,12 @@ describe('account settings in the finished desktop application', function () {
     ])
     await chooser.accept([picture])
     await waitText('Your photo is selected')
-    await press('Save profile picture')
-    await waitText('Profile picture saved')
+    await press('Save photo')
+    await waitText('Photo saved')
     expect(h.objects.size).equals(2)
     await page.reload({ waitUntil: 'networkidle0' })
-    await waitText('Change photo')
-    await waitText('Alex Rivera')
+    await page.waitForSelector('[aria-label="Change photo"]')
+    await waitText('Mookie Betts')
     expect(
       await page.evaluate(() =>
         [...document.images].some(
@@ -139,14 +139,14 @@ describe('account settings in the finished desktop application', function () {
     ).equals(true)
     await page.screenshot({ path: path.join(artifacts, 'account-after.png') })
     await press('Back')
-    await page.waitForSelector('[aria-label="Account, Alex Rivera"]')
-    await press('Account, Alex Rivera')
+    await page.waitForSelector('[aria-label="Account, Mookie Betts"]')
+    await press('Account, Mookie Betts')
     await waitText('Email addresses')
     const player = (await (await h.request('GET', '/players/101')).json()) as {
       name: string
       avatarUrl: string
     }
-    expect(player.name).equals('Alex R')
+    expect(player.name).equals('Mookie B')
     expect((await fetch(player.avatarUrl)).status).equals(200)
   })
   it('sets and changes a password, signs in again, and keeps code login', async () => {
@@ -175,8 +175,8 @@ describe('account settings in the finished desktop application', function () {
     await waitText('Verifying your email creates an')
     await fill('Sign-in code', h.mail.get('alex@example.com')!)
     await press('Sign in')
-    await page.waitForSelector('[aria-label="Account, Alex Rivera"]')
-    await press('Account, Alex Rivera')
+    await page.waitForSelector('[aria-label="Account, Mookie Betts"]')
+    await press('Account, Mookie Betts')
     await waitText('Email addresses')
   })
   it('upgrades a legacy password only after email verification and resets forgotten passwords', async () => {
@@ -345,7 +345,7 @@ describe('account settings in the finished desktop application', function () {
       path.join(artifacts, 'account-api.log'),
       [
         '$ accountSettings.e2e.ts: real HTTP API and desktop browser scenarios (credential values omitted)',
-        'PUT /me/account/name → 200; account Alex Rivera, player Alex R, header Alex Rivera; persisted on reload',
+        'PUT /me/account/name → 200; account Mookie Betts, player Mookie B, header Mookie Betts; persisted on reload',
         'PUT /me/account/photo → 200; two PNG objects uploaded to S3-compatible Space; GET signed object → 200; persisted on reload',
         'PUT /me/account/password → 200 setup; incorrect current password → 400; correct current password → 200',
         'POST /auth/password → 200 after setup/change; POST /auth/email-code/verify → 200 afterward',
