@@ -169,9 +169,12 @@ extension PhoneStreamTests {
       #expect(sent.map { $0.streamFrame } == (1 ... 30).map { Int64($0) })
       #expect(recording.frames.map { $0.value } == (1 ... 30).map { Int64($0) })
       #expect(stream.frames.map { $0.value } == (1 ... 30).map { Int64($0) })
-      // The first recording frame of a picture carries its capture time; its repeats do not.
+      // The first recording frame of a picture carries its capture time; its repeats do not. So
+      // does the stream's, which places the live video by it.
       #expect(recording.captures.first == WallClock(seconds: 999))
       #expect(recording.captures.dropFirst().allSatisfy { $0 == nil })
+      #expect(stream.captures.first == WallClock(seconds: 999))
+      #expect(stream.captures.dropFirst().allSatisfy { $0 == nil })
       #expect(recording.onGrid.allSatisfy { $0 })
       // A late timer: the recording frames it skipped are written as repeats.
       let late = try #require(programme.tick(at: 10 + 34.0 / 30, wallNow: 1_002))
@@ -266,14 +269,17 @@ final class FakeStream: ProgrammeStreamTarget, @unchecked Sendable {
   private let lock = NSLock()
   var isRunning = true
   private var _frames: [CMTime] = []
+  private var _captures: [WallClock?] = []
   private var _sounds = 0
   var running: Bool { isRunning }
   var frames: [CMTime] { lock.lock(); defer { lock.unlock() }; return _frames }
+  var captures: [WallClock?] { lock.lock(); defer { lock.unlock() }; return _captures }
   var sounds: Int { lock.lock(); defer { lock.unlock() }; return _sounds }
 
-  func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+  func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, captureWall: WallClock?) {
     lock.lock()
     _frames.append(presentationTime)
+    _captures.append(captureWall)
     lock.unlock()
   }
 

@@ -690,6 +690,9 @@ final class StubServer: URLProtocol, @unchecked Sendable {
     var received: Set<Int> = []
     /// Parts from this index on are never answered, as on a link that died.
     var holdFromPart: Int?
+    /// Every `PATCH …/live-streams/:id` body, and how many to answer 503 first.
+    var streamChanges: [[String: Any]] = []
+    var streamChangeFailures = 0
   }
 
   private static let lock = NSLock()
@@ -737,6 +740,20 @@ final class StubServer: URLProtocol, @unchecked Sendable {
         reply(410, #"{"code":"gone","message":"This camera was ended. Start streaming again to go live"}"#)
       } else {
         reply(200, #"{"id":"lst_0001","gameId":"gam_0001","label":"Home Plate","state":"idle","url":"\#(url)"}"#)
+      }
+      return
+    }
+    if path.contains("/live-streams/"), method == "PATCH" {
+      let failing = Self.with { state -> Bool in
+        state.streamChanges.append(body)
+        let failing = state.streamChangeFailures > 0
+        if failing { state.streamChangeFailures -= 1 }
+        return failing
+      }
+      if failing {
+        reply(503, #"{"code":"unavailable","message":"try again"}"#)
+      } else {
+        reply(200, #"{"id":"lst_0001","gameId":"gam_0001","label":"Home Plate","state":"publishing"}"#)
       }
       return
     }

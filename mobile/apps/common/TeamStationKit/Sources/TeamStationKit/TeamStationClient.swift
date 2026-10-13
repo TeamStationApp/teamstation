@@ -327,6 +327,26 @@ public struct TeamStationClient: Sendable {
     )
   }
 
+  /// Says when the first picture of a stream's first publish was captured, on this device's wall
+  /// clock: TeamStation places the stream's live video there, where the angle grid lines it up with
+  /// the game's other cameras, instead of at the moment the publish reached it. The first account
+  /// holds; one of a later publish is ignored.
+  @discardableResult
+  public func reportLiveStart(
+    gameId: String,
+    streamId: String,
+    startedAt: Date
+  ) async throws -> TeamStationDeviceStream {
+    let instant = ISO8601DateFormatter()
+    instant.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
+    return try await send(
+      "games/\(escape(gameId))/live-streams/\(escape(streamId))",
+      method: "PATCH",
+      body: [ "liveStartedAt": instant.string(from: startedAt) ],
+      goneIsEnded: true
+    )
+  }
+
   // MARK: - The wire
 
   private func escape(_ value: String) -> String {

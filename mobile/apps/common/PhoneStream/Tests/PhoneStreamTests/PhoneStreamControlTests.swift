@@ -380,6 +380,20 @@ extension PhoneStreamTests {
         .serverURL.absoluteString == "https://ts.example.test")
     }
 
+    @Test("An upload starts at part 1's first picture, or at the take's start with no anchor for it")
+    func uploadStart() {
+      let pressed = WallClock(seconds: 1_000)
+      #expect(PhoneStreamEngine.uploadStart(anchors: [], startedAt: pressed) == pressed)
+      let anchors = [
+        ArchiveIndex.ProgramAnchor(part: 1, programSeconds: 3, wall: WallClock(seconds: 1_002.1)),
+        ArchiveIndex.ProgramAnchor(part: 1, programSeconds: 6, wall: WallClock(seconds: 1_005.1)),
+        ArchiveIndex.ProgramAnchor(part: 2, programSeconds: 3, wall: WallClock(seconds: 1_100))
+      ]
+      #expect(abs(PhoneStreamEngine.uploadStart(anchors: anchors, startedAt: pressed).seconds - 999.1) < 0.000_1)
+      let laterParts = [ ArchiveIndex.ProgramAnchor(part: 2, programSeconds: 3, wall: WallClock(seconds: 1_100)) ]
+      #expect(PhoneStreamEngine.uploadStart(anchors: laterParts, startedAt: pressed) == pressed)
+    }
+
     @Test("The phone's telemetry keeps its counters and last errors")
     func telemetry() {
       let telemetry = PhoneMediaTelemetry()

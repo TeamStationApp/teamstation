@@ -327,6 +327,25 @@ struct ChooseTests {
     #expect(account.lastError == "This game is not yours to stream")
   }
 
+  @Test func reportsWhenAStreamsFirstPictureWasCapturedWithAPatch() async throws {
+    StreamServer.reset()
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ StreamServer.self ]
+    let client = TeamStationClient(
+      baseURL: URL(string: "https://teamstation.example")!,
+      token: "tok",
+      session: URLSession(configuration: configuration)
+    )
+    let answer = try await client.reportLiveStart(
+      gameId: "g1",
+      streamId: "lst_1",
+      startedAt: Date(timeIntervalSince1970: 1_790_000_000.375)
+    )
+    #expect(answer.id == "lst_1")
+    #expect(StreamServer.asked == [ "PATCH /api/v1/games/g1/live-streams/lst_1" ])
+    #expect(StreamServer.bodies == [ [ "liveStartedAt": "2026-09-21T14:13:20.375Z" ] ])
+  }
+
   @Test func forgetsTheChosenGameEverywhere() async {
     let keychain = KeychainStore.inMemory()
     let account = makeAccount(keychain: keychain)

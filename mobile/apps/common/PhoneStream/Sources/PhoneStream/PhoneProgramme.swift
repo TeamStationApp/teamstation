@@ -15,7 +15,8 @@ public protocol ProgrammeRecordingTarget: AnyObject, Sendable {
 /// Where the programme's stream frames go: `ProgramStreamer`, or a fake in a test.
 public protocol ProgrammeStreamTarget: AnyObject, Sendable {
   var running: Bool { get }
-  func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime)
+  /// `captureWall` is when a picture new to the stream was captured; nil for a repeat.
+  func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, captureWall: WallClock?)
   func append(audio frame: AudioFrame)
 }
 
@@ -59,6 +60,7 @@ public final class PhoneProgramme: @unchecked Sendable {
   private var programmeClock: ProgrammeClock
   private var pictures: ProgrammePictureQueue<Picture>
   private var lastRecordedSequence: UInt64?
+  private var lastStreamedSequence: UInt64?
   private var timer: DispatchSourceTimer?
   private let queue = DispatchQueue(label: "app.teamstation.phonestream.programme", qos: .userInteractive)
   private var soundEnabled = true
@@ -142,6 +144,7 @@ public final class PhoneProgramme: @unchecked Sendable {
     let rate = PhoneStreamProfile.frameRate
     programmeClock = ProgrammeClock(recordingRate: rate, streamRate: rate)
     lastRecordedSequence = nil
+    lastStreamedSequence = nil
     lock.unlock()
     timer?.cancel()
     liveMix.stop()
@@ -212,6 +215,11 @@ public final class PhoneProgramme: @unchecked Sendable {
       fresh = entry.sequence != lastRecordedSequence
       lastRecordedSequence = entry.sequence
     }
+    var freshToStream = false
+    if tick.streamFrame != nil {
+      freshToStream = entry.sequence != lastStreamedSequence
+      lastStreamedSequence = entry.sequence
+    }
     let rate = programmeClock.recordingRate
     let streamRate = programmeClock.streamRate
     let feedsRecording = self.feedsRecording
@@ -238,7 +246,11 @@ public final class PhoneProgramme: @unchecked Sendable {
       output.recordingFrames.append(frame)
     }
     if let frame = tick.streamFrame, stream.running {
-      stream.append(picture.buffer, presentationTime: CMTime(value: frame, timescale: CMTimeScale(streamRate)))
+      stream.append(
+        picture.buffer,
+        presentationTime: CMTime(value: frame, timescale: CMTimeScale(streamRate)),
+        captureWall: freshToStream ? picture.capture : nil
+      )
       output.streamFrame = frame
     }
     lock.lock()

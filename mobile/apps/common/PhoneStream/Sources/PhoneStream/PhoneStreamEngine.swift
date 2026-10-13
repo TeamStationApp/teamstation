@@ -49,7 +49,10 @@ public struct PhoneLens: Sendable, Equatable {
  *   and the stream redials.
  * - A take finishes its part cleanly when free space falls under 500 MB, and the stream goes on.
  * - `uploadRecording` exports the take's programme (placed by wall clock across parts) and sends it
- *   with `UploadService`, keeping the upload id on the take so a killed upload resumes.
+ *   with `UploadService`, keeping the upload id on the take so a killed upload resumes. The export
+ *   starts at part 1's first picture, and its `startAt` is when that picture was captured.
+ * - Once a session's first publish has sent a picture, TeamStation is told when that picture was
+ *   captured (`reportLiveStart`), which is where it places the stream's live video.
  */
 @MainActor
 public final class PhoneStreamEngine {
@@ -108,6 +111,11 @@ public final class PhoneStreamEngine {
   private var lastError: PhoneStreamError?
   /// A part being finished: its hold fill and its writer's close take a second or more.
   private var finishing: Task<Void, Never>?
+  /// Set as a session starts streaming, until TeamStation has been told when its first published
+  /// picture was captured; see `reportLiveStartIfReady`.
+  private var liveStartWanted = false
+  /// The report of the live start, while it is being sent.
+  private(set) var liveStartReport: Task<Void, Never>?
   private var statusLoop: Task<Void, Never>?
   private var storageLoop: Task<Void, Never>?
   private var observers: [UUID: (PhoneStreamEvent) -> Void] = [:]
@@ -349,6 +357,7 @@ public final class PhoneStreamEngine {
       cachedURL: rtmpUrl
     )
     recordingTakeID = recordingID
+    liveStartWanted = true
     beginLiveSession(recording: recordingID)
     streamController.start(reason: .start)
     startStorageLoop()
@@ -359,6 +368,7 @@ public final class PhoneStreamEngine {
   public func stopRecording() async {
     guard stream != nil else { return }
     stream = nil
+    liveStartWanted = false
     suspendedInBackground = false
     streamController.stop()
     storageLoop?.cancel()
@@ -510,6 +520,7 @@ public final class PhoneStreamEngine {
       }
     }
     suspendedInBackground = false
+    liveStartWanted = true
     beginLiveSession(recording: recordingTakeID)
     streamController.start(reason: .redial)
     startStorageLoop()
@@ -638,7 +649,41 @@ public final class PhoneStreamEngine {
     if streamController.phase == .live, recordingTakeID == nil, let id = stream?.recordingID {
       try? catalog.markPublishedOutsideParts(id)
     }
+    reportLiveStartIfReady()
     emit(.status(status))
+  }
+
+  /// How many times the live start is offered to TeamStation, two seconds apart, before it is left to
+  /// the server's own placement.
+  static let liveStartAttempts = 3
+
+  /// Tells TeamStation when the first picture of this session's first publish was captured, once it
+  /// has gone out: TeamStation places the stream's live video there, so it lines up on the wall clock
+  /// with the game's other cameras. Placed by when the publish reached the server instead, this
+  /// phone's angle played as far behind as its picture delay and dial put it. The server keeps the
+  /// first account a stream gets, so a resumed session's, of a later publish, changes nothing there.
+  private func reportLiveStartIfReady() {
+    guard liveStartWanted, let take = stream, let started = streamer.liveTimelineStart else { return }
+    liveStartWanted = false
+    let client = TeamStationClient(
+      baseURL: take.request.serverURL,
+      token: take.request.token,
+      session: environment.urlSession
+    )
+    let gameId = take.gameId
+    let streamId = take.liveStreamId
+    liveStartReport = Task {
+      for attempt in 1 ... Self.liveStartAttempts {
+        do {
+          try await client.reportLiveStart(gameId: gameId, streamId: streamId, startedAt: started.date)
+          return
+        } catch TeamStationError.streamEnded {
+          return
+        } catch {
+          if attempt < Self.liveStartAttempts { try? await Task.sleep(for: .seconds(2)) }
+        }
+      }
+    }
   }
 
   static func lensLabel(_ state: CameraSession.State) -> String {
@@ -821,13 +866,20 @@ public final class PhoneStreamEngine {
       programDirectory: storage.program,
       fallbackEncoding: { PhoneStreamProfile.takeEncoding }
     )
+    // From part 1's first picture, placed where it was captured: the upload says when its first
+    // frame happened, and the server lines it up with the game's other angles by nothing else.
+    let start = Self.uploadStart(
+      anchors: (try? index.programAnchors(recordingID: recording.recordingID)) ?? [],
+      startedAt: recording.startedAt
+    )
     let files = try await export.exportRecording(
       summary,
       cameras: [],
       includeProgram: true,
       programDirectory: storage.program,
       preparedRoot: storage.prepared,
-      reprocess: recording.uploadId == nil
+      reprocess: recording.uploadId == nil,
+      window: ExportWindow(start: start, end: export.exportWindow(summary, sourceIDs: []).end)
     )
     guard let file = files.first else { throw PhoneStreamError.noRecording }
     try Task.checkCancellation()
@@ -842,7 +894,7 @@ public final class PhoneStreamEngine {
       gameId: recording.gameId,
       title: recording.uploadTitle ?? title,
       kind: "program",
-      startedAt: recording.startedAt.date,
+      startedAt: start.date,
       uploadId: recording.uploadId,
       liveStreamId: liveStreamId,
       wholeStream: recording.coversWholeStream ? true : nil,
@@ -869,6 +921,15 @@ public final class PhoneStreamEngine {
     ))
     emit(.upload(PhoneUploadProgress(liveStreamId: liveStreamId, state: .uploaded, fraction: 1, videoId: videoId)))
     return videoId
+  }
+
+  /// Where an upload of the take with `anchors` starts on the wall clock: when part 1's first picture
+  /// was captured, which is the same origin its sound was placed by (`ProgrammeSoundOrigin`). The
+  /// take's own start is when Record was pressed, a picture delay or more from any picture in the
+  /// file, so the phones' uploads sat on the wall clock as far apart as their delays. A take with no
+  /// anchors for its first part has nothing better than its start.
+  static func uploadStart(anchors: [ArchiveIndex.ProgramAnchor], startedAt: WallClock) -> WallClock {
+    ArchiveIndex.partStarts(anchors)[1] ?? startedAt
   }
 
   /// Everything stops where it is, as a killed process would leave it: nothing is finished, no
