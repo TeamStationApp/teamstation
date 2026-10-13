@@ -6,6 +6,8 @@ import { StreamPanel } from '../components/StreamPanel'
 export interface StreamFooterProps {
   client: TeamStationClient
   gameId: string
+  /** The videos this game's cameras are publishing to, each time that changes. */
+  onPublishing?: (videoIds: string[]) => void
 }
 
 /**
@@ -15,6 +17,13 @@ export interface StreamFooterProps {
  * (`StreamFooter.native.tsx`).
  */
 export function StreamFooter(props: StreamFooterProps): React.ReactElement {
-  const { client, gameId } = props
-  return <StreamPanel key={gameId} client={client} gameId={gameId} />
+  const { client, gameId, onPublishing } = props
+  return (
+    <StreamPanel
+      key={gameId}
+      client={client}
+      gameId={gameId}
+      onPublishing={onPublishing}
+    />
+  )
 }

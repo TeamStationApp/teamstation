@@ -58,7 +58,13 @@ import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
 import { MultiCamView } from '../player/MultiCamView'
 import { PlayerSurface } from '../player/PlayerSurface'
+import { isStillLive } from '../player/stillLive'
 import { useVideoAspect } from '../player/useVideoAspect'
+import {
+  openingVideo,
+  sameVideos,
+  useVideoListRefresh
+} from '../player/useVideoListRefresh'
 import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
@@ -259,6 +265,12 @@ const HEADER_SCORE_WIDTH = 201
 
 /** How long a chosen highlight's full account stays under the video. */
 const DESCRIPTION_SECONDS = 90
+/**
+ * How long a live video the server has no files for yet waits before the page
+ * asks for it again: its first segment is written a few seconds after the
+ * stream starts publishing.
+ */
+const LIVE_PLAYBACK_RETRY_MS = 2000
 
 /**
  * One game: its videos, the highlights under them, and the box score.
@@ -366,10 +378,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           ? current
           : (found.videos.find(
               item => item.id === videoHints.current.initialVideoId
-            ) ??
-            found.videos.find(item => item.status === 'live') ??
-            found.videos.find(item => item.status === 'ready') ??
-            found.videos[0])
+            ) ?? openingVideo(found.videos))
       )
     } catch (error) {
       if (
@@ -684,6 +693,33 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [refreshGame])
 
+  /** The videos the cameras panel has seen publishing on this game. */
+  const [publishing, setPublishing] = useState<string[]>([])
+  const gameIdRef = useRef(gameId)
+  gameIdRef.current = gameId
+  const refreshVideos = useCallback((): void => {
+    const forGame = gameId
+    client
+      .game(forGame)
+      .then(found => {
+        if (gameIdRef.current !== forGame) return
+        setGame(current =>
+          current == null || sameVideos(current.videos, found.videos)
+            ? current
+            : { ...current, videos: found.videos }
+        )
+        // A page that had nothing to play opens on what there is now. One
+        // already playing something is left on it.
+        setVideo(current => current ?? openingVideo(found.videos))
+      })
+      .catch(() => undefined)
+  }, [client, gameId])
+  useVideoListRefresh({
+    videos: game?.videos,
+    publishing,
+    refresh: refreshVideos
+  })
+
   const seasonId = game?.seasonId
   const awayTeamId = game?.awayTeamId
   const homeTeamId = game?.homeTeamId
@@ -752,6 +788,42 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [client, video, nonMemberView])
 
+  /** How many times a live video without files has been asked for again. */
+  const [playbackAsks, setPlaybackAsks] = useState(0)
+  // A live video is listed the moment its stream starts publishing, a few
+  // seconds before its first segment is written, and until then the server
+  // says its files are not there. The page that picked it up then — the
+  // publishing phone's own, or a viewer's — asks again rather than saying
+  // for good that the video is not available.
+  useEffect(() => {
+    if (
+      video?.status !== 'live' ||
+      playbackFor !== video.id ||
+      playback == null ||
+      playback.url != null
+    )
+      return
+    const forVideoId = video.id
+    let live = true
+    const askAgain = (): void => {
+      if (live) setPlaybackAsks(asks => asks + 1)
+    }
+    const timer = setTimeout(() => {
+      client
+        .playback(forVideoId)
+        .then(found => {
+          if (!live) return
+          if (found.url == null) askAgain()
+          else setPlayback(found)
+        })
+        .catch(askAgain)
+    }, LIVE_PLAYBACK_RETRY_MS)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [client, video, playback, playbackFor, playbackAsks])
+
   // Fetched when the tab is first opened, not with the game: most people come
   // here to watch, and the box score is a second query against every play.
   // After the game, too, which says whether this is a non-member's, whose
@@ -801,8 +873,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   startAtSecRef.current = startAtSec
   const autoPlayRef = useRef(autoPlay)
   autoPlayRef.current = autoPlay
-  const placeFor = useRef<{ videoId?: string; playbackFor?: string }>({})
-  placeFor.current = { videoId: video?.id, playbackFor }
+  const placeFor = useRef<{
+    videoId?: string
+    playbackFor?: string
+    /** Asks the server, for a video that was live when it was opened. */
+    isLive?: () => Promise<boolean>
+  }>({})
+  placeFor.current = {
+    videoId: video?.id,
+    playbackFor,
+    isLive:
+      video?.status === 'live'
+        ? async () => await isStillLive(client, gameId, video.id)
+        : undefined
+  }
 
   /**
    * What the viewer wants the single player to be doing, and who paused it.
@@ -881,7 +965,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       () => {
         setAddressAttempt(attempt => attempt + 1)
       },
-      { wantsToPlay: () => !suspended.current && viewerWants.current }
+      {
+        wantsToPlay: () => !suspended.current && viewerWants.current,
+        isLive: placeFor.current.isLive
+      }
     )
 
     const resume = resumeAtRef.current
@@ -1425,6 +1512,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <MultiCamView
       client={client}
       videos={game.videos}
+      isLive={async videoId => await isStillLive(client, gameId, videoId)}
       order={angles ?? defaultAngles(game.videos)}
       audioId={audioId ?? null}
       // No zoom for now: the double tap that made one tile fill the screen
@@ -1504,7 +1592,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                     here at all. A browser lists stream URLs; a phone records
                     with its own camera.
                   */}
-                  <StreamFooter client={client} gameId={gameId} />
+                  <StreamFooter
+                    client={client}
+                    gameId={gameId}
+                    onPublishing={setPublishing}
+                  />
                 </>
               }
               layout={layout}
