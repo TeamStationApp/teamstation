@@ -30,6 +30,7 @@ const suites = [
   ...globSync('src/server/schedule/**/*.test.ts'),
   ...globSync('src/server/routes/schedule.test.ts'),
   ...globSync('src/server/events/events.test.ts'),
+  ...globSync('src/server/events/eventInfo.test.ts'),
   ...globSync('src/server/routes/events.test.ts'),
   ...globSync('src/server/access.test.ts'),
   ...globSync('src/server/routes/teams.test.ts'),
@@ -51,6 +52,8 @@ const suites = [
   ...globSync('src/server/routes/pictures.test.ts'),
   ...globSync('src/server/routes/location.test.ts'),
   ...globSync('src/server/routes/cityLookup.test.ts'),
+  ...globSync('src/server/routes/googleEventLookup.test.ts'),
+  ...globSync('src/app/components/googleMapDocument.test.ts'),
   ...globSync('src/common/publicStaffName.test.ts'),
   ...globSync('src/common/seasonTimeFrames.test.ts'),
   ...globSync('src/common/gameTime.test.ts'),
@@ -98,6 +101,16 @@ const paths = [...globSync('src/server/groups/**/*.ts')]
     'src/app/screens/TeamPage.tsx',
     'src/app/screens/TeamSelectorScene.tsx',
     'src/server/location/googlePlaces.ts',
+    'src/server/location/coordinateTimezone.ts',
+    'src/server/location/googleLookupLimits.ts',
+    'src/server/location/eventGeocoder.ts',
+    'src/server/routes/eventInfo.ts',
+    'src/common/eventPlaces.ts',
+    'src/app/components/EventVenueFields.tsx',
+    'src/app/components/googleMapDocument.ts',
+    'src/app/components/EventMap.tsx',
+    'src/app/components/EventMap.native.tsx',
+    'src/app/components/EventMap.android.tsx',
     'src/app/components/Button.tsx',
     'src/app/components/Badge.tsx',
     'src/app/components/PillTabs.tsx',
@@ -149,6 +162,9 @@ const paths = [...globSync('src/server/groups/**/*.ts')]
     'src/app/components/CreationCard.tsx'
   ])
 const uiSuites = [
+  'src/app/components/EventVenueFields.test.tsx',
+  'src/app/components/EventMap.native.test.tsx',
+  'src/app/components/EventMap.android.test.tsx',
   'src/app/screens/LocationScreen.test.tsx',
   'src/app/screens/TeamPage.test.tsx',
   'src/app/screens/TeamSelectorScene.test.tsx',
@@ -178,6 +194,11 @@ mkdirSync('lib', { recursive: true })
 if (!reportOnly)
   await build({
     ...webSettings,
+    alias: {
+      ...webSettings.alias,
+      'react-native-webview': './src/test/eventWebViewStub.tsx',
+      'react-native-maps': './src/test/eventNativeMapStub.tsx'
+    },
     stdin: {
       contents: uiSuites.map(file => `import './${file}'`).join('\n'),
       resolveDir: process.cwd(),
@@ -230,6 +251,11 @@ if (!reportOnly) {
       scenario
     ])
   run('node', ['-r', 'sucrase/register', 'src/app/settingsPillSweep.e2e.ts'])
+  run('node', [
+    '-r',
+    'sucrase/register',
+    'src/app/googleProviderConsistency.e2e.ts'
+  ])
 }
 for (const file of readdirSync(temp)) {
   const location = resolve(temp, file)
@@ -316,7 +342,8 @@ for (const file of [
   'settings-E8-browser.json',
   'settings-E11-browser.json',
   'settings-E14-browser.json',
-  'settings-sweep-browser.json'
+  'settings-sweep-browser.json',
+  'google-provider-browser.json'
 ])
   map.merge(JSON.parse(readFileSync(resolve(report, file), 'utf8')))
 

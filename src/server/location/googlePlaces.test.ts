@@ -135,4 +135,86 @@ describe('Google city lookup', () => {
       }
     }
   })
+  it('searches named venues and addresses with bounded results and no caching', async () => {
+    const client = googlePlaces({
+      apiKey: 'placeholder-key',
+      baseUrl: stub.baseUrl
+    })
+    expect(await client.eventPlaces('x', 'venue')).deep.equals([])
+    expect(stub.calls).length(0)
+    expect(await client.eventPlaces('Harbor', 'venue')).deep.equals([
+      {
+        id: 'google:harbor-field',
+        name: 'Harbor Field',
+        address: '1 Demo Way, Demo City'
+      }
+    ])
+    const addresses = await client.eventPlaces('Demo Way', 'address')
+    expect(addresses).length(5)
+    expect(addresses[1].name).equals(null)
+    await client.eventPlaces('Harbor', 'venue')
+    expect(stub.calls).length(3)
+    expect(stub.calls[0]).include({
+      key: 'placeholder-key',
+      mask: 'places.id,places.displayName,places.formattedAddress,places.primaryType'
+    })
+    expect(stub.calls[0].body).deep.equals({
+      textQuery: 'Harbor',
+      languageCode: 'en',
+      pageSize: 5
+    })
+  })
+  it('looks up coordinates without persisting them and distinguishes no match from outage', async () => {
+    const client = googlePlaces({
+      apiKey: 'placeholder-key',
+      baseUrl: stub.baseUrl,
+      timeoutMs: 25
+    })
+    expect(await client.coordinates('1 Demo Way')).deep.equals({
+      latitude: 34,
+      longitude: 12
+    })
+    await client.coordinates('1 Demo Way')
+    expect(stub.calls).length(2)
+    expect(stub.calls[0].mask).equals('places.location')
+    expect(stub.calls[0].body).deep.equals({
+      textQuery: '1 Demo Way',
+      languageCode: 'en',
+      pageSize: 1
+    })
+    stub.controls.empty = true
+    expect(await client.eventPlaces('No match', 'venue')).deep.equals([])
+    try {
+      await client.coordinates('No match')
+      expect.fail('must reject')
+    } catch (error) {
+      expect(error).property('code', 'notFound')
+    }
+    stub.controls.empty = false
+    stub.controls.invalidCoordinates = true
+    try {
+      await client.coordinates('Invalid point')
+      expect.fail('must reject')
+    } catch (error) {
+      expect(error).property('code', 'unavailable')
+    }
+    stub.controls.invalidCoordinates = false
+    for (const mode of ['malformed', 'fail', 'delay'] as const) {
+      stub.controls.malformed = mode === 'malformed'
+      stub.controls.fail = mode === 'fail'
+      stub.controls.delay = mode === 'delay' ? 100 : 0
+      for (const lookup of [
+        async () => await client.eventPlaces('Harbor', 'venue'),
+        async () => await client.coordinates('1 Demo Way')
+      ]) {
+        try {
+          await lookup()
+          expect.fail('must reject')
+        } catch (error) {
+          expect(error).property('code', 'unavailable')
+          expect(String(error)).not.includes('placeholder-key')
+        }
+      }
+    }
+  })
 })

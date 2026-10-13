@@ -1,16 +1,19 @@
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import { badRequest, notFound, unauthorized } from '../../common/errors'
-import { checkLimits, recordAttempts } from '../auth/rateLimit'
-import { lockKeys } from '../db/advisoryLocks'
-import { atomic } from '../db/atomic'
+import {
+  badRequest,
+  HttpError,
+  notFound,
+  unauthorized
+} from '../../common/errors'
 import type { Database } from '../db/database'
 import {
   EVENT_PLACE_ATTRIBUTION,
   type EventPlaceSearch,
   eventPlaceSearch
 } from '../location/eventPlaces'
+import { limitGoogleLookup } from '../location/googleLookupLimits'
 import type { GooglePlaces } from '../location/googlePlaces'
 import {
   findPlaces,
@@ -29,19 +32,7 @@ export function locationRoutes(
   const router = Router()
   async function limit(userId: number, details: boolean): Promise<void> {
     if (cities == null) return
-    await atomic(cities.db, async db => {
-      await lockKeys(db, [`city-lookup:${userId}`])
-      const rules = [
-        {
-          scope: details ? 'city.details' : 'city.autocomplete',
-          key: String(userId),
-          limit: details ? 30 : 120,
-          windowSec: 60
-        }
-      ]
-      await checkLimits(db, rules)
-      await recordAttempts(db, rules)
-    })
+    await limitGoogleLookup(cities.db, userId, details)
   }
   const sessionToken = (value: unknown): string | undefined => {
     if (value === undefined) return undefined
@@ -72,8 +63,25 @@ export function locationRoutes(
         throw badRequest(
           'Choose venue or address and enter at most 120 characters'
         )
+      const google = cities?.googlePlaces
+      if (google != null) {
+        if (query.trim().length >= 2) await limit(req.actor!.userId, false)
+        try {
+          const places = await google.eventPlaces(query, kind)
+          res.set('Cache-Control', 'no-store').json({
+            places,
+            provider: 'google',
+            attribution: 'Powered by Google'
+          })
+          return
+        } catch (error) {
+          if (!(error instanceof HttpError) || error.code !== 'unavailable')
+            throw error
+        }
+      }
       res.set('Cache-Control', 'no-store').json({
         places: await search.search(query, kind),
+        provider: 'openstreetmap',
         attribution: EVENT_PLACE_ATTRIBUTION
       })
     })

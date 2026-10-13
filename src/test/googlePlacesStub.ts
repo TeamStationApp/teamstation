@@ -7,6 +7,9 @@ export async function googlePlacesStub(): Promise<{
   controls: {
     fail: boolean
     delay: number
+    empty: boolean
+    invalidCoordinates: boolean
+    malformed: boolean
     timeZoneFail: boolean
     timeZoneDelay: number
   }
@@ -21,6 +24,9 @@ export async function googlePlacesStub(): Promise<{
   const controls = {
     fail: false,
     delay: 0,
+    empty: false,
+    invalidCoordinates: false,
+    malformed: false,
     timeZoneFail: false,
     timeZoneDelay: 0
   }
@@ -78,6 +84,40 @@ export async function googlePlacesStub(): Promise<{
         if (controls.fail) {
           res.writeHead(503)
           res.end('{}')
+          return
+        }
+        if (req.url === '/v1/places:searchText') {
+          if (controls.malformed) {
+            res.end(JSON.stringify({ places: [{}] }))
+            return
+          }
+          const query = (body as { textQuery: string }).textQuery
+          res.end(
+            JSON.stringify({
+              places:
+                controls.empty || query === 'No match'
+                  ? []
+                  : [
+                      {
+                        id: 'harbor-field',
+                        displayName: { text: 'Harbor Field' },
+                        formattedAddress: '1 Demo Way, Demo City',
+                        primaryType: 'park',
+                        location: {
+                          latitude: controls.invalidCoordinates ? 100 : 34,
+                          longitude: 12
+                        }
+                      },
+                      ...Array.from({ length: 6 }, (_, index) => ({
+                        id: `street-${index}`,
+                        displayName: { text: `Demo Way ${index}` },
+                        formattedAddress: `${index + 2} Demo Way, Demo City`,
+                        primaryType: 'street_address',
+                        location: { latitude: 34, longitude: 12 }
+                      }))
+                    ]
+            })
+          )
           return
         }
         if (req.url === '/v1/places:autocomplete') {

@@ -1,14 +1,16 @@
 import type { Kysely } from 'kysely'
 
-import { unavailable } from '../../common/errors'
+import { HttpError, unavailable } from '../../common/errors'
 import { isRecord } from '../../common/groupCreation'
 import type { Database } from '../db/database'
+import type { GooglePlaces } from './googlePlaces'
 
 export interface Coordinates {
   latitude: number
   longitude: number
 }
 export interface EventGeocoder {
+  usesGoogle?: boolean
   lookup: (address: string) => Promise<Coordinates>
 }
 
@@ -43,6 +45,7 @@ export function eventGeocoder(
     timeoutMs?: number
     failureTtlMs?: number
     now?: () => number
+    googlePlaces?: GooglePlaces
   } = {}
 ): EventGeocoder {
   const provider =
@@ -51,13 +54,37 @@ export function eventGeocoder(
     'https://photon.komoot.io/api/'
   const doFetch = options.fetch ?? fetch
   const now = options.now ?? Date.now
+  // This cache belongs to the fallback provider. Google lookups always precede it
+  // and their coordinates never enter its indefinite positive cache.
+  const google = options.googlePlaces
+  const fallback =
+    google == null
+      ? undefined
+      : eventGeocoder(db, { ...options, googlePlaces: undefined })
   const inFlight = new Map<string, Promise<Coordinates>>()
   const failed = new Map<string, number>()
   let tail: Promise<unknown> = Promise.resolve()
   let lastStart = 0
   return {
+    usesGoogle: google != null,
     async lookup(address) {
       const key = address.trim().toLowerCase()
+      if (google != null) {
+        const existing = inFlight.get(key)
+        if (existing != null) return await existing
+        if (inFlight.size >= 8)
+          throw unavailable('The map is busy. Try again shortly.')
+        const work = google
+          .coordinates(address)
+          .catch(async (error: unknown) => {
+            if (!(error instanceof HttpError) || error.code !== 'unavailable')
+              throw error
+            return await fallback!.lookup(address)
+          })
+          .finally(() => inFlight.delete(key))
+        inFlight.set(key, work)
+        return await work
+      }
       const cached = await db
         .selectFrom('event_geocodes')
         .select(['latitude', 'longitude'])

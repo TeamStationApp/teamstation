@@ -2324,7 +2324,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'Search public city and region reference data',
           description:
-            'Omitting kind keeps the city-reference response. Authenticated venue/address searches return up to five {id,name,address} mapping suggestions and OpenStreetMap attribution. Venue mode suggests named points of interest rather than streets or house numbers. Free text remains valid if lookup fails.',
+            'Omitting kind keeps the city-reference response. Authenticated venue/address searches return up to five {id,name,address} suggestions, provider and attribution. Google Places is primary when configured; unavailable Google uses OpenStreetMap/Photon fallback. Valid empty Google results stay empty. Venue mode suggests named points of interest rather than streets or house numbers. Free text remains valid if lookup fails.',
           parameters: [
             {
               name: 'session',

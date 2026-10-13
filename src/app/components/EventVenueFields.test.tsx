@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Linking } from 'react-native'
 
 import { TeamStationClient } from '../../common/api'
 import type { EventPlace } from '../../common/eventPlaces'
@@ -78,6 +79,50 @@ async function press(label: string): Promise<void> {
   })
 }
 describe('shared optional venue autocomplete and notes fields', () => {
+  it('opens the displayed provider attribution and keeps editing usable if the link fails', async () => {
+    const original = Object.getOwnPropertyDescriptor(Linking, 'openURL')
+    const opened: string[] = []
+    let provider: 'google' | 'openstreetmap' = 'google'
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.eventPlaceSuggestions = async () => ({
+      places: [place],
+      provider,
+      attribution:
+        provider === 'google'
+          ? 'Powered by Google'
+          : '© OpenStreetMap contributors'
+    })
+    Linking.openURL = async url => {
+      opened.push(url)
+      if (opened.length === 3) throw new Error('Link unavailable')
+    }
+    const follow = async (): Promise<void> => {
+      await act(async () => {
+        document.querySelector<HTMLElement>('[role="link"]')!.click()
+      })
+    }
+    try {
+      await render(client)
+      await input('Venue name (optional)', 'Demo')
+      await tick()
+      await follow()
+      provider = 'openstreetmap'
+      await input('Venue name (optional)', 'Another')
+      await tick()
+      await follow()
+      await follow()
+      expect(opened).deep.equals([
+        'https://maps.google.com/',
+        'https://www.openstreetmap.org/copyright',
+        'https://www.openstreetmap.org/copyright'
+      ])
+      await input('Venue name (optional)', 'Next')
+      expect(draft.venue).equals('Next')
+    } finally {
+      if (original == null) Reflect.deleteProperty(Linking, 'openURL')
+      else Object.defineProperty(Linking, 'openURL', original)
+    }
+  })
   afterEach(async () => {
     await act(async () => root?.unmount())
     root = undefined
@@ -86,9 +131,13 @@ describe('shared optional venue autocomplete and notes fields', () => {
   it('does not look up loaded text and fills names/addresses only after a suggestion is chosen', async () => {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     const queries: string[] = []
-    client.eventPlaces = async (q, kind) => {
+    client.eventPlaceSuggestions = async (q, kind) => {
       queries.push(`${kind}:${q}`)
-      return [place]
+      return {
+        places: [place],
+        provider: 'google',
+        attribution: 'Powered by Google'
+      }
     }
     await render(client)
     await tick()
@@ -96,6 +145,9 @@ describe('shared optional venue autocomplete and notes fields', () => {
     await input('Venue name (optional)', 'Demo')
     await tick()
     expect(draft.venue).equals('Demo')
+    expect(document.body.textContent)
+      .includes('Powered by Google')
+      .and.not.includes('OpenStreetMap')
     await press('Choose Demo Park')
     expect(draft).includes({ venue: 'Demo Park', address: place.address })
     await input('Venue name (optional)', 'Custom field')
@@ -119,8 +171,13 @@ describe('shared optional venue autocomplete and notes fields', () => {
   it('invalidates late results on edits, focus changes, selection and unmount; preserves manual text', async () => {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     const completions: Array<(places: EventPlace[]) => void> = []
-    client.eventPlaces = async () =>
-      await new Promise(resolve => completions.push(resolve))
+    client.eventPlaceSuggestions = async () => ({
+      places: await new Promise<EventPlace[]>(resolve =>
+        completions.push(resolve)
+      ),
+      provider: 'google',
+      attribution: 'Powered by Google'
+    })
     await render(client)
     await input('Venue name (optional)', 'Old')
     await tick()
@@ -168,10 +225,14 @@ describe('shared optional venue autocomplete and notes fields', () => {
   it('shows empty/failure states with retry and permits manual values; skips short/long/disabled queries', async () => {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     let calls = 0
-    client.eventPlaces = async () => {
+    client.eventPlaceSuggestions = async () => {
       calls++
       if (calls === 1) throw new Error('offline')
-      return []
+      return {
+        places: [],
+        provider: 'google',
+        attribution: 'Powered by Google'
+      }
     }
     await render(client)
     await input('Venue name (optional)', 'D')
@@ -200,5 +261,21 @@ describe('shared optional venue autocomplete and notes fields', () => {
         .querySelector('[aria-label="Venue name (optional)"]')
         ?.getAttribute('readonly')
     ).not.equals(null)
+  })
+  it('shows fallback attribution only for its provider and clears it before another query', async () => {
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.eventPlaceSuggestions = async () => ({
+      places: [place],
+      provider: 'openstreetmap',
+      attribution: '© OpenStreetMap contributors'
+    })
+    await render(client)
+    await input('Venue name (optional)', 'Demo')
+    await tick()
+    expect(document.body.textContent)
+      .includes('OpenStreetMap')
+      .and.not.includes('Powered by Google')
+    await input('Venue name (optional)', 'Another')
+    expect(document.body.textContent).not.includes('OpenStreetMap')
   })
 })

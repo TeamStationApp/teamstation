@@ -15,6 +15,9 @@ const suites = [
   'src/app/screens/GameFormScreen.edit.test.tsx',
   'src/app/screens/GameFormScreen.create.test.tsx',
   'src/app/screens/TeamSelectorScene.test.tsx',
+  'src/app/components/EventVenueFields.test.tsx',
+  'src/app/components/EventMap.native.test.tsx',
+  'src/app/components/EventMap.android.test.tsx',
   'src/app/screens/gameDraft.test.ts',
   'src/app/screens/EventSettingsScreen.test.tsx',
   'src/app/screens/eventAttendance.test.tsx',
@@ -56,6 +59,7 @@ await build({
   alias: {
     ...webSettings.alias,
     'react-native-webview': './src/test/eventWebViewStub.tsx',
+    'react-native-maps': './src/test/eventNativeMapStub.tsx',
     '@react-native-clipboard/clipboard': './src/test/eventClipboardStub.ts'
   },
   stdin: {
