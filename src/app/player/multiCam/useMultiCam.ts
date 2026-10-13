@@ -3,9 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TeamStationClient, VideoSummary } from '../../../common/api'
 import { lstrings } from '../../locales/strings'
 import { FLASH_MS, type SeekFlash, useFlash } from '../GestureFeedback'
+import { livePlaybackRetryDelay } from '../liveRejoin'
 import type { BufferControl, PlayIntent } from '../playIntent'
 import { SLOW_RATE } from '../slowMotion'
 import { useKeyboardShortcuts } from '../useKeyboardShortcuts'
+import { HAVE_CURRENT_DATA } from '../videoHandle'
 import { secondsAt, wallAt, type Window, windowOf } from '../wallClock'
 import {
   type AngleZone,
@@ -23,6 +25,7 @@ import {
   isFinished,
   isOurSilence,
   JOIN_LEAD_SEC,
+  liveOpeningMs,
   liveTargetMs,
   masterOf,
   NUDGE_MAX_SEC,
@@ -75,6 +78,11 @@ export interface MultiCamProps {
   /** Where the viewer now is, so the address can say so. */
   onMoment?: (wallMs: number) => void
   onClose: () => void
+  /**
+   * Whether the server still lists a video as live, for a tile whose live
+   * playlist was closed under it (`PlayIntent.isLive`).
+   */
+  isLive?: (videoId: string) => Promise<boolean>
 }
 
 export interface MultiCamOptions {
@@ -88,6 +96,11 @@ export interface MultiCamOptions {
    * can animate the change it is about to draw.
    */
   beforeShuffle?: () => void
+  /**
+   * How long to wait before asking again for a live angle that has no
+   * address yet, after so many asks; undefined to stop. Tests shorten it.
+   */
+  liveRetryDelay?: (asks: number) => number | undefined
 }
 
 /**
@@ -248,7 +261,13 @@ export function useMultiCam(
 ): MultiCam {
   const { client, videos, order, audioId, zoomedId, atMs, onChange, onMoment } =
     props
-  const { width, height, debug = false, beforeShuffle } = options
+  const {
+    width,
+    height,
+    debug = false,
+    beforeShuffle,
+    liveRetryDelay = livePlaybackRetryDelay
+  } = options
 
   const chosen = useMemo(
     () =>
@@ -349,6 +368,8 @@ export function useMultiCam(
   const flowing = useRef(false)
   /** When each tile the grid is waiting for was first seen short of enough. */
   const shortSince = useRef(new Map<string, number>())
+  /** When the first live tile had a picture, for a grid with no moment yet. */
+  const liveSince = useRef<number | null>(null)
   /**
    * Tiles the grid has stopped waiting for: one that kept the rest standing
    * still too long, or one that arrived while the rest were already playing.
@@ -487,6 +508,33 @@ export function useMultiCam(
       live = false
     }
   }, [chosen, client, urls])
+
+  // A live angle is listed the moment its stream starts publishing, a few
+  // seconds before its first segment is written, and until then `playback`
+  // has no address for it. A grid opened in that moment drew the tile "not
+  // available" and never asked again, so a viewer who opened All angles as a
+  // camera came on saw it dead until a reload. Like the single player, the
+  // grid asks again, backing off from 2 s to 30 s and giving up after ten
+  // minutes, when a refused publish has plainly never written a segment.
+  const [liveAsks, setLiveAsks] = useState<Record<string, number>>({})
+  useEffect(() => {
+    const timers: Array<ReturnType<typeof setTimeout>> = []
+    for (const video of chosen) {
+      if (video.status !== 'live' || urls[video.id] !== null) continue
+      const asks = liveAsks[video.id] ?? 0
+      const wait = liveRetryDelay(asks)
+      if (wait == null) continue
+      timers.push(
+        setTimeout(() => {
+          setLiveAsks(current => ({ ...current, [video.id]: asks + 1 }))
+          askAgain(video.id)
+        }, wait)
+      )
+    }
+    return () => {
+      for (const timer of timers) clearTimeout(timer)
+    }
+  }, [askAgain, chosen, liveAsks, liveRetryDelay, urls])
 
   const takeElement = useCallback(
     (id: string) =>
@@ -1127,6 +1175,28 @@ export function useMultiCam(
         })
       }
 
+      // A live grid opens on the moment its tiles have reached
+      // (`liveOpeningMs`), once they have pictures to say where that is.
+      if (atWallRef.current == null) {
+        const at = chosen
+          .filter(video => video.status === 'live' && urls[video.id] !== null)
+          .map(video => {
+            const element = elements.current.get(video.id)
+            if (element == null || element.readyState < HAVE_CURRENT_DATA) {
+              return null
+            }
+            return wallAt(video, element.currentTime)
+          })
+        if (liveSince.current == null && at.some(one => one != null)) {
+          liveSince.current = now
+        }
+        const opening = liveOpeningMs(at, now - (liveSince.current ?? now))
+        if (opening != null) {
+          atWallRef.current = opening
+          setAtWallMs(opening)
+        }
+      }
+
       /**
        * Who the clock is read from.
        *
@@ -1300,7 +1370,8 @@ export function useMultiCam(
     playing,
     runningDry,
     chosen,
-    tiles
+    tiles,
+    urls
   ])
 
   /**

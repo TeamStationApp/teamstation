@@ -280,6 +280,35 @@ async function firstBox(
 }
 
 /**
+ * How long a segment's picture really lasts, in seconds: the durations of its
+ * video samples added up, read from its `moof` headers with the timescale its
+ * init segment gives. Null when either cannot be read or there is no picture.
+ *
+ * Not what the playlist says. FFmpeg lists the last segment a writer closes
+ * as running to its last picture's *start*, a frame short of its end, and a
+ * writer appending after it then starts that frame too early.
+ */
+export function segmentPictureSec(
+  init: Buffer,
+  segment: Buffer
+): number | null {
+  const moov = childBox(init, 'moov')
+  if (moov == null) return null
+  const tracks = readTracks(moov)
+  let total = 0
+  let found = false
+  for (const box of boxesIn(segment)) {
+    if (box.type !== 'moof') continue
+    for (const run of readFragment(box.payload, tracks)) {
+      if (run.kind !== 'video') continue
+      total += run.durationSec
+      found = true
+    }
+  }
+  return found ? total : null
+}
+
+/**
  * The payload of every top-level box of one type in a file, read one at a
  * time and skipping everything else unread.
  */

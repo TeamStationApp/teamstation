@@ -1,4 +1,5 @@
-import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
+import { readFileSync, writeFileSync } from 'fs'
+import { mkdir, readFile, rm, stat } from 'fs/promises'
 import { type Kysely, sql } from 'kysely'
 import { join } from 'path'
 
@@ -25,6 +26,7 @@ import { isRecordingShape, toRecording } from './finishVideo'
 import { openSecret } from './secrets'
 import {
   clearLive,
+  clearLiveSettled,
   configureIngest,
   LIVE_PLAYLIST_NAME,
   type LiveEvent,
@@ -32,6 +34,7 @@ import {
   type LiveStatus,
   setLive,
   startIngest,
+  statusFor,
   stopIngest
 } from './splitter'
 
@@ -65,6 +68,24 @@ export const REPLACED_BY_UPLOAD =
  * everybody's home screen until the window runs out hours later.
  */
 const SILENCE_LIMIT_MS = 100 * 365 * 24 * 60 * 60 * 1000
+/**
+ * How long a publisher may be away before its viewers are told the stream
+ * has finished.
+ *
+ * The writer never closes the playlist itself, because every player — hls.js,
+ * Safari and AVPlayer, ExoPlayer — reads `EXT-X-ENDLIST` as the end of the
+ * broadcast and stops asking for more, for good: a phone that lost its signal
+ * for twenty seconds froze everybody watching it, even after it was back.
+ * So while the publisher may yet come back the playlist stays open, and the
+ * players wait at the end of it.
+ *
+ * Past this, the playlist is closed so the people watching are not left
+ * waiting on a stream that has stopped. It is not the end of the stream: the
+ * key still works, a publisher coming back reopens the playlist and carries on
+ * in it, and the web player, which knows the video is still live, picks it up
+ * again. The stream itself finishes as it always has, when somebody ends it.
+ */
+export const RECONNECT_GRACE_MS = 60_000
 /**
  * How long a video's files stay on this machine after the Space has them.
  *
@@ -121,6 +142,11 @@ let syncing: Promise<void> | undefined
 /** Live stream id → what the ingest was last told, so it can be untold. */
 const tracked = new Map<string, Tracked>()
 const lastStatusWrite = new Map<string, number>()
+/**
+ * Live stream id → the absence its playlist was closed for, as the
+ * `last_published_at` it was measured from, so one absence closes it once.
+ */
+const closedAfterGrace = new Map<string, number>()
 /** One chain per stream, so two events for one stream cannot interleave. */
 const work = new Map<string, Promise<void>>()
 
@@ -333,6 +359,7 @@ export function stopLiveController(): void {
   stopIngest()
   tracked.clear()
   lastStatusWrite.clear()
+  closedAfterGrace.clear()
 }
 
 /**
@@ -676,6 +703,8 @@ export async function sync(
         ])
       ])
     )
+    // In a fixed order, so one tick goes through the streams as the last did.
+    .orderBy('live_streams.id')
     .execute()
 
   // One syscall a second, and only asked at all when there is something that
@@ -690,89 +719,157 @@ export async function sync(
         )
 
   const wanted = new Set<string>()
-  for (const row of rows) {
-    if (row.state === 'revoked') {
-      await finishStream(
-        current,
-        row.id,
-        row.localRecording === 'uploaded'
-          ? REPLACED_BY_UPLOAD
-          : (row.lastError ?? 'streaming permission was removed')
+  // Streams being finished, side by side rather than one after another: each
+  // waits for its own writer to exit, and angles ended together should not
+  // hold up every other stream's tick for the sum of those waits.
+  //
+  // Each is caught the moment it starts, and what it threw is kept: one that
+  // fails while a later row is still being looked at would otherwise be a
+  // rejection nobody is waiting on yet, and Node ends the whole server for
+  // that.
+  const finishing: Array<Promise<{ error: unknown } | undefined>> = []
+  const finish = (liveStreamId: string, reason: string): void => {
+    finishing.push(
+      finishStream(current, liveStreamId, reason).then(
+        () => undefined,
+        (error: unknown) => ({ error })
       )
-      continue
-    }
-    if (!(await mayPublish(db, row))) {
-      await revokePublishing(db, row.id, now)
-      await finishStream(current, row.id, 'streaming permission was removed')
-      continue
-    }
-    // `closes_at` is now the moment somebody ended it rather than a window
-    // shutting on its own, so this is what End stream, a rotation and a
-    // removal all come through.
-    const closesAt = row.closesAt == null ? null : new Date(row.closesAt)
-    if (closesAt != null && now >= closesAt) {
-      await finishStream(current, row.id, 'the stream was ended')
-      continue
-    }
-    // Nothing has arrived for a long time, and something did once. The game is
-    // over, whether or not anybody pressed anything.
-    if (row.state === 'idle' && row.lastPublishedAt != null) {
-      const silentFor = now.getTime() - new Date(row.lastPublishedAt).getTime()
-      if (silentFor > SILENCE_LIMIT_MS) {
-        await finishStream(current, row.id, 'the stream stopped arriving')
+    )
+  }
+  let failure: { error: unknown } | undefined
+  try {
+    for (const row of rows) {
+      if (row.state === 'revoked') {
+        finish(
+          row.id,
+          row.localRecording === 'uploaded'
+            ? REPLACED_BY_UPLOAD
+            : (row.lastError ?? 'streaming permission was removed')
+        )
         continue
       }
-    }
-    if (row.videoId == null) continue
+      if (!(await mayPublish(db, row))) {
+        await revokePublishing(db, row.id, now)
+        finish(row.id, 'streaming permission was removed')
+        continue
+      }
+      // `closes_at` is now the moment somebody ended it rather than a window
+      // shutting on its own, so this is what End stream, a rotation and a
+      // removal all come through.
+      const closesAt = row.closesAt == null ? null : new Date(row.closesAt)
+      if (closesAt != null && now >= closesAt) {
+        finish(row.id, 'the stream was ended')
+        continue
+      }
+      // Nothing has arrived for a long time, and something did once. The game is
+      // over, whether or not anybody pressed anything.
+      if (row.state === 'idle' && row.lastPublishedAt != null) {
+        const silentFor =
+          now.getTime() - new Date(row.lastPublishedAt).getTime()
+        if (silentFor > SILENCE_LIMIT_MS) {
+          finish(row.id, 'the stream stopped arriving')
+          continue
+        }
+      }
+      if (row.videoId == null) continue
+      await closeAfterGrace(current, row, now)
 
-    // A stream already running is left alone: cutting a game off part way
-    // through is worse than letting it use the last of the disk, and ffmpeg
-    // will say so itself if it truly runs out.
-    if (!room.ok && row.state !== 'publishing') {
-      await sayOnce(db, row.id, row.lastError, room.reason ?? null, now)
-      continue
+      // A stream already running is left alone: cutting a game off part way
+      // through is worse than letting it use the last of the disk, and ffmpeg
+      // will say so itself if it truly runs out.
+      if (!room.ok && row.state !== 'publishing') {
+        await sayOnce(db, row.id, row.lastError, room.reason ?? null, now)
+        continue
+      }
+
+      let key: string
+      try {
+        key = openSecret(sessionSecret, row.keyCipher)
+      } catch {
+        // The server's secret changed under a key that was already issued. Say
+        // so on the row rather than leaving a stream that can never be used.
+        await sayOnce(
+          db,
+          row.id,
+          row.lastError,
+          'This key cannot be read any more. Rotate it.',
+          now
+        )
+        continue
+      }
+
+      // A key that has been rotated is a key somebody wanted stopped — that is
+      // the whole point of rotating one — so the old key goes now, taking any
+      // stream publishing with it, rather than lasting until the game ends. The
+      // sweep below cannot do it: this row's entry is about to be overwritten
+      // with the new key, and the old one would never be looked at again.
+      const known = tracked.get(row.id)
+      if (known != null && known.key !== key) {
+        clearLive(known.key, 'the key was replaced')
+      }
+
+      const hlsDir = liveVideoDir(mediaRoot, row.videoId)
+      await mkdir(hlsDir, { recursive: true })
+      setLive(key, { liveStreamId: row.id, hlsDir, destinations: [] })
+      tracked.set(row.id, { key, videoId: row.videoId })
+      wanted.add(key)
     }
 
-    let key: string
-    try {
-      key = openSecret(sessionSecret, row.keyCipher)
-    } catch {
-      // The server's secret changed under a key that was already issued. Say
-      // so on the row rather than leaving a stream that can never be used.
-      await sayOnce(
-        db,
-        row.id,
-        row.lastError,
-        'This key cannot be read any more. Rotate it.',
-        now
-      )
-      continue
+    // Anything the ingest still holds that this pass did not ask for: a revoked
+    // key, a rotated one, a window that closed.
+    for (const [liveStreamId, entry] of tracked) {
+      if (wanted.has(entry.key)) continue
+      clearLive(entry.key, 'no longer open')
+      tracked.delete(liveStreamId)
     }
-
-    // A key that has been rotated is a key somebody wanted stopped — that is
-    // the whole point of rotating one — so the old key goes now, taking any
-    // stream publishing with it, rather than lasting until the game ends. The
-    // sweep below cannot do it: this row's entry is about to be overwritten
-    // with the new key, and the old one would never be looked at again.
-    const known = tracked.get(row.id)
-    if (known != null && known.key !== key) {
-      clearLive(known.key, 'the key was replaced')
-    }
-
-    const hlsDir = liveVideoDir(mediaRoot, row.videoId)
-    await mkdir(hlsDir, { recursive: true })
-    setLive(key, { liveStreamId: row.id, hlsDir, destinations: [] })
-    tracked.set(row.id, { key, videoId: row.videoId })
-    wanted.add(key)
+  } catch (error) {
+    failure = { error }
   }
 
-  // Anything the ingest still holds that this pass did not ask for: a revoked
-  // key, a rotated one, a window that closed.
-  for (const [liveStreamId, entry] of tracked) {
-    if (wanted.has(entry.key)) continue
-    clearLive(entry.key, 'no longer open')
-    tracked.delete(liveStreamId)
+  // Every finish runs to its end before the tick does, even a tick that
+  // failed part way, so nothing it started is left running unwatched. The
+  // tick's own failure is the one it reports, and otherwise the first
+  // finish's, as it was when they ran in turn.
+  const finished = await Promise.all(finishing)
+  failure ??= finished.find(one => one != null)
+  if (failure != null) throw failure.error
+}
+
+/**
+ * Closes the playlist of a stream whose publisher has been away for longer
+ * than `RECONNECT_GRACE_MS`, once per absence.
+ *
+ * Measured from `last_published_at`, which moves while video arrives and is
+ * stamped when the publisher goes, so it holds across a restart of this
+ * process too. A stream the ingest says is publishing again is left alone
+ * whatever the row says: the row learns of a reconnect a moment after the
+ * ingest does, and closing the playlist then would put an `ENDLIST` under a
+ * writer that has just started appending to it.
+ */
+async function closeAfterGrace(
+  current: LiveControllerOptions,
+  row: {
+    id: string
+    state: string
+    videoId: string | null
+    lastPublishedAt: Date | string | null
+  },
+  now: Date
+): Promise<void> {
+  if (row.state !== 'idle' || row.lastPublishedAt == null) {
+    closedAfterGrace.delete(row.id)
+    return
   }
+  const leftAt = new Date(row.lastPublishedAt).getTime()
+  if (now.getTime() - leftAt <= RECONNECT_GRACE_MS) return
+  if (closedAfterGrace.get(row.id) === leftAt) return
+  const key = tracked.get(row.id)?.key
+  const away = (): boolean =>
+    key == null || statusFor(key)?.ingress.publishing !== true
+  if (!away()) return
+  if (row.videoId == null) return
+  closedAfterGrace.set(row.id, leftAt)
+  await closePlaylist(current.mediaRoot, row.videoId, away)
 }
 
 /** A key belongs to an active account filming a current side of this game. */
@@ -863,9 +960,12 @@ export async function finishStream(
 ): Promise<void> {
   const { db, mediaRoot, ffmpegPath } = current
   const entry = tracked.get(liveStreamId)
+  closedAfterGrace.delete(liveStreamId)
   if (entry != null) {
-    clearLive(entry.key, reason)
     tracked.delete(liveStreamId)
+    // The writer's last segment and its last playlist land before the
+    // playlist is closed below, not on top of it.
+    await clearLiveSettled(entry.key, reason)
   }
 
   const now = new Date()
@@ -1157,16 +1257,21 @@ async function toTheSpace(
 }
 
 /**
- * Writes `EXT-X-ENDLIST` if ffmpeg did not.
+ * Writes `EXT-X-ENDLIST`, once.
  *
- * It writes one itself when it exits cleanly, and does not when it is killed —
- * which is every case where the stream was cut off rather than stopped. A
- * playlist without it keeps every player waiting for a segment that is never
- * coming, and the video is unseekable to its own end.
+ * The writer never does (`omit_endlist`): a publisher going away is not the
+ * end of the game. This is, at the end of a stream and past the reconnect
+ * grace. A playlist without it keeps every player waiting for a segment that
+ * is never coming, and the video is unseekable to its own end.
  */
 async function closePlaylist(
   mediaRoot: string,
-  videoId: string
+  videoId: string,
+  /**
+   * Whether the publisher is still away. Asked again at the last moment,
+   * when it may have come back while the playlist was being read.
+   */
+  stillAway: () => boolean = () => true
 ): Promise<void> {
   const path = join(liveVideoDir(mediaRoot, videoId), LIVE_PLAYLIST_NAME)
   let playlist: string
@@ -1176,8 +1281,21 @@ async function closePlaylist(
     return
   }
   if (playlist.includes('#EXT-X-ENDLIST')) return
+  // The last look, the read and the write happen together, with nothing
+  // awaited between them. A publisher coming back reopens the playlist the
+  // same way (`reopenPlaylist`), so it either came back before this, which
+  // the look sees, or comes back after, and finds an `ENDLIST` to take off.
+  // An awaited write here could land after the new writer had started
+  // appending, and put the `ENDLIST` back under it.
+  if (!stillAway()) return
+  try {
+    playlist = readFileSync(path, 'utf8')
+  } catch {
+    return
+  }
+  if (playlist.includes('#EXT-X-ENDLIST')) return
   const ended = playlist.endsWith('\n')
     ? `${playlist}#EXT-X-ENDLIST\n`
     : `${playlist}\n#EXT-X-ENDLIST\n`
-  await writeFile(path, ended)
+  writeFileSync(path, ended)
 }
