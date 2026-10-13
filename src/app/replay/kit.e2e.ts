@@ -21,6 +21,10 @@ export interface Device {
   stopApp: (params: Record<string, unknown>) => Promise<unknown>
   openBrowser: (params: Record<string, unknown>) => Promise<unknown>
   tapOn: (params: Record<string, unknown>) => Promise<unknown>
+  inputText: (params: Record<string, unknown>) => Promise<unknown>
+  eraseText: (params?: Record<string, unknown>) => Promise<unknown>
+  hideKeyboard: () => Promise<unknown>
+  openLink: (params: Record<string, unknown>) => Promise<unknown>
   assertVisible: (params: Record<string, unknown>) => Promise<unknown>
   assertNotVisible: (params: Record<string, unknown>) => Promise<unknown>
   scrollUntilVisible: (params: Record<string, unknown>) => Promise<unknown>
@@ -82,28 +86,48 @@ async function until<T>(
 
 const tokens = new Map<string, string>()
 
-/** A session token for a seeded account, signed in with the logged code. */
-export async function sessionFor(email: string): Promise<string> {
-  const known = tokens.get(email)
-  if (known != null) return known
-  const api = required('REPLAY_API')
+/**
+ * The sign-in code the server logs for `email` after `ask` asks for one:
+ * the API, or the app's own button.
+ */
+export async function loggedCode(
+  email: string,
+  ask: () => Promise<unknown>
+): Promise<string> {
   const log = required('REPLAY_SERVER_LOG')
   const before = readFileSync(log, 'utf8').length
-  const asked = await fetch(`${api}/auth/email-code`, {
+  await ask()
+  const pattern = new RegExp(`sign-in code for ${email}: (\\d{6})`)
+  return await until('the sign-in code in the log', () =>
+    pattern.exec(readFileSync(log, 'utf8').slice(before))?.at(1)
+  )
+}
+
+/** Asks the API to send `email` a sign-in code. */
+export async function askForCode(email: string): Promise<void> {
+  const asked = await fetch(`${required('REPLAY_API')}/auth/email-code`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email })
   })
   assert.equal(asked.status, 202, 'email-code')
-  const pattern = new RegExp(`sign-in code for ${email}: (\\d{6})`)
-  const code = await until('the sign-in code in the log', () =>
-    pattern.exec(readFileSync(log, 'utf8').slice(before))?.at(1)
-  )
-  const verified = await fetch(`${api}/auth/email-code/verify`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, code })
+}
+
+/** A session token for a seeded account, signed in with the logged code. */
+export async function sessionFor(email: string): Promise<string> {
+  const known = tokens.get(email)
+  if (known != null) return known
+  const code = await loggedCode(email, async () => {
+    await askForCode(email)
   })
+  const verified = await fetch(
+    `${required('REPLAY_API')}/auth/email-code/verify`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, code })
+    }
+  )
   assert.equal(verified.status, 200, 'verify')
   const token = ((await verified.json()) as { token: string }).token
   tokens.set(email, token)

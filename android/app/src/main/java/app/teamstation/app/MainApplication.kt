@@ -2,6 +2,7 @@ package app.teamstation.app
 
 import android.app.Application
 import app.teamstation.app.browser.ExternalBrowserPackage
+import app.teamstation.app.cues.CueSoundsPackage
 import app.teamstation.app.feedback.HapticsPackage
 import app.teamstation.app.glass.GlassPackage
 import app.teamstation.app.orientation.OrientationPackage
@@ -40,6 +41,7 @@ class MainApplication : Application(), ReactApplication {
           add(PhoneStreamPackage())
           // Share Lineup's QR code camera.
           add(QrScannerPackage())
+          add(CueSoundsPackage())
         },
     )
   }

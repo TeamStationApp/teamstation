@@ -20,7 +20,8 @@
         "WalkUpMusic": "RCTWalkUpMusic",
         "DictationMicrophone": "RCTDictationMicrophone",
         "TSHaptics": "RCTHaptics",
-        "TSPhoneStream": "RCTPhoneStream"
+        "TSPhoneStream": "RCTPhoneStream",
+        "CueSounds": "RCTCueSounds"
       },
       "componentProvider": {
         "TSPhoneStreamPreview": "TSPhoneStreamPreviewComponentView",
