@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import type { FollowableTeam, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
 import { App } from '../App'
 import { routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
@@ -120,11 +121,11 @@ function fakeClient(
       calls.myFollows += 1
       return [owls]
     },
-    follow: async (teamId: string) => {
+    followTeam: async (teamId: string) => {
       calls.follows.push(teamId)
       return true
     },
-    unfollow: async (teamId: string) => {
+    unfollowTeam: async (teamId: string) => {
       calls.unfollows.push(teamId)
       return false
     },
@@ -214,7 +215,7 @@ describe('FollowTeamScreen', function () {
     const { client } = fakeClient({
       searchTeams: async () => [],
       myFollows: async () => [],
-      follow: async () => {
+      followTeam: async () => {
         throw new HttpError('notFound', 'Not found')
       }
     })
@@ -238,7 +239,7 @@ describe('FollowTeamScreen', function () {
           throw new HttpError('offline', 'Cannot reach TeamStation')
         return [hawks]
       },
-      follow: async () => {
+      followTeam: async () => {
         throw new HttpError('notFound', 'Not found')
       }
     })
@@ -269,104 +270,124 @@ describe('following a team in the app', function () {
     globalThis.fetch = originalFetch
   })
 
-  /** The API as a signed-in Eagles parent who follows nothing yet. */
+  /** Current public discovery/follow APIs; team membership remains private. */
   function fakeApi(): { asked: string[] } {
     const asked: string[] = []
     let following = false
+    const group = asPublicGroup({
+      id: 'tem_hawks',
+      kind: 'team',
+      name: 'Hawks',
+      imageUrl: null,
+      locality: null,
+      parentNames: ['QPLL Spring 2027']
+    })
+    const detail = asGroupDetail({
+      group,
+      parents: [],
+      children: [],
+      participatingSeasons: [],
+      competingTeams: [],
+      staff: [],
+      games: [],
+      canViewPrivate: false,
+      nonMemberView: true,
+      canManage: false
+    })
     globalThis.fetch = async (input, init) => {
-      const url =
+      const raw =
         typeof input === 'string'
           ? input
           : input instanceof URL
             ? input.href
             : input.url
-      const path = url.split('?')[0].replace(/^.*\/api\/v1/, '')
+      const parsed = new URL(raw, 'http://localhost')
+      const path = parsed.pathname.replace(/^.*\/api\/v1/, '')
       const method = init?.method ?? 'GET'
       asked.push(`${method} ${path}`)
-      const user = { id: 100, displayName: 'Drew Dalton', isAdmin: false }
-      if (path === '/auth/me') return Response.json(user)
+      if (path === '/auth/me')
+        return Response.json({
+          id: 100,
+          displayName: 'Drew Dalton',
+          isAdmin: false
+        })
       if (path === '/me/roles') return Response.json({ teams: {} })
-      if (path === '/teams/search') {
-        return Response.json([{ ...hawks, following }])
-      }
-      if (path === '/teams/tem_hawks/follow') {
+      if (path === '/me/groups') return Response.json([])
+      if (path === '/me/follows') return Response.json(following ? [group] : [])
+      if (path === '/me/follows/team/tem_hawks') {
         following = method === 'PUT'
-        return Response.json({ following })
+        return Response.json(method === 'PUT' ? group : { ok: true })
       }
-      if (path === '/me/follows') {
-        return Response.json(following ? [{ ...hawks, following }] : [])
-      }
-      if (path === '/teams') {
-        return Response.json(
-          following
-            ? [
-                {
-                  id: 'tem_hawks',
-                  name: 'Hawks',
-                  shortName: null,
-                  logoPath: null,
-                  logoUrl: null,
-                  record: null,
-                  externalIds: [],
-                  access: 'fan',
-                  following: true,
-                  onTeam: false
-                }
-              ]
-            : []
-        )
-      }
-      if (path === '/teams/tem_hawks/schedule') {
-        return Response.json([
-          {
-            gameId: 'gam_final',
-            startsAt: '2027-04-03T17:00:00.000Z',
-            homeTeam: { id: 'tem_hawks', name: 'Hawks' },
-            awayTeam: { id: 'tem_owls', name: 'Owls' },
-            venue: 'Northpoint Field 1'
-          }
-        ])
-      }
-      if (path === '/teams/tem_hawks/staff') {
-        return Response.json([
-          { userId: 12, shortName: 'Hank C', avatarUrl: null, roles: ['coach'] }
-        ])
-      }
+      if (path === '/teams' && parsed.searchParams.get('view') === 'public')
+        return Response.json([group])
+      if (path === '/teams/tem_hawks') return Response.json(detail)
       return Response.json([])
     }
     return { asked }
   }
 
-  it('goes from home to the follow screen, follows Hawks and opens it as a fan', async function () {
+  async function search(value: string): Promise<void> {
+    await act(async () => {
+      const input = labelled('Search by name or city')
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(input, value)
+      input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    await settle()
+  }
+
+  it('goes from Home to Search, follows Hawks, opens its public team page and returns', async function () {
     const { asked } = fakeApi()
     showRoute({ name: 'home' }, true)
     await render(<App />)
     await settle()
-    await press('Follow a team')
-    expect(currentRoute()).deep.equals({ name: 'followTeam' })
-    expect(text()).contains('Follow a team')
-    await type('Haw')
+    const tabs = [
+      ...document.querySelectorAll<HTMLElement>(
+        '[role="tab"][aria-label="Search"]'
+      )
+    ]
+    expect(tabs).length(1)
+    await act(async () => {
+      tabs[0].click()
+      await delay(10)
+    })
     await settle()
+    expect(currentRoute()).deep.equals({ name: 'discover' })
+    expect(text()).contains('Discover')
+    await search('Haw')
     await press('Follow Hawks')
-    expect(asked).to.include('PUT /teams/tem_hawks/follow')
-    await press('Hawks, QPLL Spring 2027')
+    expect(asked).includes('PUT /me/follows/team/tem_hawks')
+    expect(asked).not.includes('PUT /teams/tem_hawks/follow')
+    await press('Open Hawks')
     await settle()
-    // A fan's team page opens on its schedule, at the team's own address.
-    expect(currentRoute()).deep.include({ name: 'team', teamId: 'tem_hawks' })
-    expect(routePath(currentRoute())).equals('/teams/tem_hawks')
-    expect(text()).contains('vs Owls')
-    expect(text()).contains('Following')
-    expect(asked).not.to.include('GET /teams/tem_hawks/games')
-    expect(asked).not.to.include('GET /teams/tem_hawks/stats')
+    expect(routePath(currentRoute())).equals('/groups/team/tem_hawks')
+    expect(text()).contains('Hawks')
+    expect(asked).includes('GET /teams/tem_hawks')
+    expect(asked).not.includes('GET /teams/tem_hawks/stats')
     await press('Back')
-    expect(currentRoute()).deep.equals({ name: 'followTeam' })
+    await settle()
+    expect(currentRoute()).deep.equals({ name: 'discover' })
+    expect(button('Unfollow Hawks')).not.equals(undefined)
   })
 
-  it('opens the follow screen from its address', async function () {
-    fakeApi()
-    showRoute({ name: 'discover', kind: 'team', follow: true }, true)
+  it('opens the current following discovery address and uses its current APIs', async function () {
+    const { asked } = fakeApi()
+    const route = {
+      name: 'discover' as const,
+      kind: 'team' as const,
+      follow: true
+    }
+    showRoute(route, true)
     await render(<App />)
-    expect(currentRoute()).deep.equals({ name: 'followTeam' })
-    expect(text()).contains('You follow no teams yet')
+    await settle()
+    expect(currentRoute()).deep.equals(route)
+    expect(text()).contains('Discover')
+    expect(text()).contains('Follow leagues, seasons and teams')
+    expect(labelled('Search by name or city')).not.equals(null)
+    expect(asked).includes('GET /me/follows')
+    expect(asked).includes('GET /me/groups')
+    expect(asked).not.includes('GET /teams/search')
   })
 })
