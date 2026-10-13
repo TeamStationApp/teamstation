@@ -40,6 +40,7 @@ import {
   webStyle,
   WideTable
 } from '../components'
+import { AddEventCard } from '../components/AddEventCard'
 import { FollowButton } from '../components/FollowButton'
 import {
   inheritedPill,
@@ -87,6 +88,7 @@ export interface TeamScreenProps {
   refreshRevision?: number
   /** The gear in the card's corner, for somebody who administers this team. */
   onManage?: () => void
+  onCreateGame?: () => void
   onOpenGame: (
     gameId: string,
     title: string,
@@ -170,6 +172,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     initialTab,
     onTab,
     onManage,
+    onCreateGame,
     publicDetail,
     nonMemberView = false,
     refreshRevision
@@ -497,6 +500,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                   </View>
                 ))
               )}
+              {onCreateGame != null && <AddEventCard onPress={onCreateGame} />}
             </View>
           )}
 
@@ -631,6 +635,8 @@ function GameCard(props: {
           videoCount={game.videoCount}
           result={result}
           pendingApproval={game.pendingApproval}
+          cancellationReason={game.cancellationReason}
+          withdrawnByTeamName={game.withdrawnByTeamName}
           onPress={
             options == null
               ? undefined

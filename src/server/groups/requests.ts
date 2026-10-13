@@ -32,7 +32,12 @@ import { snapshotRequestInformation } from '../notifications/requestInformation'
 import { authorizePersonChange } from './adminGuard'
 import { checkGuardianLimits, isGuardianRequest } from './guardianLimits'
 import { applyParents, previewParents } from './relationships'
-import { canAdminister, currentActor, requireGroupAdmin } from './rights'
+import {
+  canAdminister,
+  canScheduleFor,
+  currentActor,
+  requireGroupAdmin
+} from './rights'
 
 function invitationHash(body: RelationshipInvitation): string {
   const terms = body.terms
@@ -215,6 +220,8 @@ export async function approvesSide(
         .executeTakeFirst()) != null
     )
   }
+  if (request.kind === 'game' || request.kind === 'gameChange')
+    return await canScheduleFor(db, fresh, { kind: side.kind, id: side.id })
   const team =
     side.kind === 'team'
       ? await db
@@ -370,6 +377,8 @@ export async function speaksForSender(
     kind: request.sender_scope_type,
     id: request.sender_scope_id
   }
+  if (request.kind === 'game' || request.kind === 'gameChange')
+    return await canScheduleFor(db, actor, sender)
   if (request.kind === 'guardian')
     return await coachesTeam(db, await currentActor(db, actor), sender.id)
   return await canAdminister(db, actor, sender)

@@ -27,7 +27,7 @@ import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, TeamEventsTable } from '../db/database'
-import { canAdminister, currentActor } from '../groups/rights'
+import { canScheduleFor, currentActor } from '../groups/rights'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import type { ScheduleRow } from '../routes/seasons'
@@ -78,7 +78,7 @@ export async function resolveEvent(
       longitude: event.longitude,
       status: event.status,
       canViewAttendance: true,
-      canManage: await canAdminister(db, fresh, {
+      canManage: await canScheduleFor(db, fresh, {
         kind: 'team',
         id: event.team_id
       })
@@ -123,7 +123,12 @@ export async function resolveEvent(
     canViewAttendance,
     canManage:
       mayScheduleIn(rights, game.home_team_id, game.season_id) ||
-      mayScheduleIn(rights, game.away_team_id, game.season_id)
+      mayScheduleIn(rights, game.away_team_id, game.season_id) ||
+      (await canScheduleFor(db, fresh, {
+        kind: 'team',
+        id: game.home_team_id
+      })) ||
+      (await canScheduleFor(db, fresh, { kind: 'team', id: game.away_team_id }))
   }
 }
 
@@ -477,10 +482,14 @@ export async function createTeamEvent(
       .where('id', '=', body.teamId)
       .executeTakeFirst()
     if (team == null || team.merged_into != null) throw notFound()
-    if (!(await canAdminister(trx, fresh, { kind: 'team', id: body.teamId }))) {
+    if (
+      !(await canScheduleFor(trx, fresh, { kind: 'team', id: body.teamId }))
+    ) {
       const scopes = await visibleScopes(trx, fresh.userId, fresh.isAdmin)
       if (!canSeeTeam(scopes, body.teamId)) throw notFound()
-      throw forbidden('Only team administrators may schedule an event')
+      throw forbidden(
+        'Only team administrators, coaches and assistants may schedule an event'
+      )
     }
     if (team.kind !== 'full')
       throw forbidden('Choose a team with its own schedule')
@@ -543,7 +552,9 @@ export async function updateEventInfo(
     await lockKeys(trx, ['creation:parent-graph'])
     const event = await resolveEvent(trx, actor, id)
     if (!event.canManage)
-      throw forbidden('Only event administrators may edit these details')
+      throw forbidden(
+        'Only team administrators, coaches and assistants may edit these details'
+      )
     const startAt =
       event.eventKind === 'event' && raw.startAt !== undefined
         ? eventDate(raw.startAt, 'Start time')

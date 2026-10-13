@@ -225,6 +225,21 @@ describe('team selector scene', () => {
     expect(text()).includes('Team gone')
   })
 
+  it('retains staff scheduling authority when choosing another managed team', async () => {
+    const { client } = api()
+    const group = client.group.bind(client)
+    client.group = async ref =>
+      asGroupDetail({
+        ...(await group(ref)),
+        canManage: false,
+        canManagePeople: true
+      })
+    const { chosen } = await open(client)
+    await press('Choose Demo Herons')
+    await settle(20)
+    expect(chosen.map(choice => choice.canManage)).deep.equals([true])
+  })
+
   it('reports a failed load and retries it', async () => {
     let fail = true
     const { client, asked } = api({

@@ -130,7 +130,10 @@ export function GameFormScreen({
         const own = await client.group({ kind: sourceKind, id: sourceId })
         if (!current()) return
         setEventType('game')
-        setPermitted(own.canManage)
+        setPermitted(
+          own.canManage ||
+            (sourceKind === 'team' && own.canManagePeople === true)
+        )
         setSourceName(own.group.name)
         setSourceGroupId(own.group.id)
         setEventTeam(
@@ -139,7 +142,12 @@ export function GameFormScreen({
         setDraft(
           newGameDraft(
             { kind: 'create', source: { kind: sourceKind, id: own.group.id } },
-            { group: own.group, canManage: own.canManage }
+            {
+              group: own.group,
+              canManage:
+                own.canManage ||
+                (sourceKind === 'team' && own.canManagePeople === true)
+            }
           )
         )
         return
@@ -159,8 +167,14 @@ export function GameFormScreen({
       setDraft(
         loadedGameDraft(
           state,
-          { group: home.group, canManage: home.canManage },
-          { group: away.group, canManage: away.canManage }
+          {
+            group: home.group,
+            canManage: home.canManage || home.canManagePeople === true
+          },
+          {
+            group: away.group,
+            canManage: away.canManage || away.canManagePeople === true
+          }
         )
       )
       setConfirmation(undefined)
@@ -585,7 +599,8 @@ export function GameFormScreen({
             )}
             {problem == null && missing.length > 0 && (
               <Text style={styles.hint}>
-                An admin of {missing.join(' and ')} must approve
+                An administrator, coach or assistant of {missing.join(' and ')}{' '}
+                must approve
                 {creating ? ' this game.' : ' changes.'}
               </Text>
             )}
