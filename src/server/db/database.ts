@@ -806,10 +806,16 @@ export function makeDatabase(connectionString: string): Kysely<Database> {
 }
 
 /**
- * The pool, with a listener for the error an idle connection raises when the
- * database goes away under it: a Postgres restart, a full disk. Unheard, that
- * error took the whole server down; heard, the pool drops the dead connection
- * and the next query opens a fresh one.
+ * The pool, with every connection it opens listening for its own `'error'`.
+ *
+ * Postgres can drop a connection at any time: a restart, a full disk, an
+ * administrator's `pg_terminate_backend`. pg raises that as an `'error'` event
+ * on the connection's `Client`, and an event nobody hears takes the whole
+ * process down. The pool listens on a connection only while it sits idle, so a
+ * connection lost while a request has it checked out went unheard. Here each
+ * connection listens from the moment it opens: the query in flight rejects,
+ * the request answers its error, and the pool drops the dead connection and
+ * opens a fresh one for the next query.
  */
 export function makePool(
   connectionString: string,
@@ -818,8 +824,13 @@ export function makePool(
   }
 ): Pool {
   const pool = new Pool({ connectionString, max: 10 })
-  pool.on('error', (error: Error) => {
-    log(`database: idle connection lost: ${error.message}`)
+  pool.on('connect', client => {
+    client.on('error', (error: Error) => {
+      log(`database: connection lost: ${error.message}`)
+    })
   })
+  // The pool repeats an idle connection's error here, which the connection's
+  // own listener has already logged. Unheard, the repeat would be fatal too.
+  pool.on('error', () => undefined)
   return pool
 }
