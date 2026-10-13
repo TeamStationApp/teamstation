@@ -51,10 +51,16 @@ class ProgrammeExportTest {
 
     private val silent = byteArrayOf(0x21, 0x10, 0x04, 0x60, 0x8C.toByte(), 0x1C)
 
-    /** A part of [seconds] at 30 fps with its sound, as the recording writes it. */
-    private fun part(name: String, seconds: Int): File {
+    /**
+     * A part of [seconds] at 30 fps with its sound, as the recording writes it: with [priming], the
+     * encoder's priming packets come first and the edit list skips them, so the first real sample
+     * plays with the first picture.
+     */
+    private fun part(name: String, seconds: Int, priming: Int = 0): File {
         val file = folder.newFile(name)
-        val writer = FragmentedMp4Writer(file, FragmentedMp4WriterTest.videoTrack, FragmentedMp4WriterTest.audioTrack)
+        val audio = FragmentedMp4Writer.AudioTrack(byteArrayOf(0x11, 0x90.toByte()), primingSamples = priming)
+        val writer = FragmentedMp4Writer(file, FragmentedMp4WriterTest.videoTrack, if (priming == 0) FragmentedMp4WriterTest.audioTrack else audio)
+        repeat(priming / 1024) { writer.writeAudio(primingPacket) }
         var packets = 0
         for (frame in 0 until seconds * 30) {
             writer.writeVideo(byteArrayOf(0, 0, 0, 3, 0x26, 1, frame.toByte()), frame / 30.0, frame % 60 == 0)
@@ -105,6 +111,36 @@ class ProgrammeExportTest {
         assertTrue(inHole.all { reader.read(it).contentEquals(silent) })
         val partTwo = audio.samples.filter { it.ticks / 48_000.0 in 20.05..29.9 }
         assertTrue(partTwo.none { reader.read(it).contentEquals(silent) })
+    }
+
+    private val primingPacket = byteArrayOf(0x21, 0x77)
+
+    @Test
+    fun partsThatStartAfterTheTakeKeepEachPartsSoundWithItsPicture() {
+        // Each part's first picture came 0.24 s after it was asked for (the camera starting), and the
+        // AAC encoder primes with two packets: the picture track starts 0.24 s in, after the take's
+        // silence, and each part's first real sound plays with its first picture.
+        val first = part("program-20261012-100000.mp4", 10, priming = 2048)
+        val second = part("program-20261012-100000-2.mp4", 10, priming = 2048)
+        val anchors = anchors(start = 1_000.24, count = 4) + anchors(part = 2, start = 1_020.24, count = 4)
+        val output = File(folder.root, "late.mp4")
+        ProgrammeExport.export(listOf(first, second), anchors, 1, 1_000.0, 1_030.24, 30, silent, output)
+        val reader = FragmentedMp4Reader.read(output)!!
+        val video = reader.video!!
+        assertEquals(0.24, video.samples.first().ticks / 90_000.0, 1e-4)
+        assertEquals(20.24, video.samples[300].ticks / 90_000.0, 1e-4)
+        val audio = reader.audio!!
+        // The output skips the first part's priming as the part did.
+        assertEquals(2048L, audio.mediaTime)
+        val playsAt = { ticks: Long -> (ticks - audio.mediaTime) / 48_000.0 }
+        val real = audio.samples.filter { reader.read(it).contentEquals(byteArrayOf(0x21, 0x55)) }
+        val packet = 1024.0 / 48_000
+        assertEquals(0.24, playsAt(real.first().ticks), packet)
+        assertEquals(20.24, playsAt(real.first { playsAt(it.ticks) > 15 }.ticks), packet)
+        // Before the first part only silence and its priming; the second part's priming is in the hole.
+        assertTrue(audio.samples.takeWhile { it !== real.first() }.all { sample ->
+            reader.read(sample).let { it.contentEquals(silent) || it.contentEquals(primingPacket) }
+        })
     }
 
     @Test
