@@ -139,7 +139,7 @@ async function main(): Promise<void> {
           if (body && Math.abs((body.getBoundingClientRect().left-date.right)-parseFloat(getComputedStyle(row.parentElement).paddingLeft))>1) return false;
           return weekday && separator && weekday.getBoundingClientRect().bottom<=separator.getBoundingClientRect().top && separator.getBoundingClientRect().height===3 &&
             getComputedStyle(separator).marginTop==='8px' && getComputedStyle(separator).marginBottom==='8px' &&
-            Array.from(node.querySelectorAll('[dir="auto"]')).slice(0,-1).every(text=>getComputedStyle(text).fontSize==='20px') &&
+            getComputedStyle(weekday).fontSize==='15px' && getComputedStyle(node.querySelectorAll('[dir="auto"]')[1]).fontSize==='20px' &&
             getComputedStyle(node.lastElementChild).fontSize==='32px';
         })};
     })()`)
@@ -154,7 +154,8 @@ async function main(): Promise<void> {
       await evaluate<boolean>(`(()=>{
       const footer=document.querySelector('[data-testid="schedule-rsvps-gam_upcoming"]');
       const row=footer.closest('[data-testid="schedule-row"]'), date=row.querySelector('[data-testid="schedule-date"]');
-      return footer.getBoundingClientRect().bottom<=date.getBoundingClientRect().bottom+2 && row.getBoundingClientRect().height<=date.getBoundingClientRect().height+2;
+      const details=row.querySelector('[data-testid="schedule-details"]').getBoundingClientRect(), needed=Math.max(date.getBoundingClientRect().height, footer.getBoundingClientRect().bottom-details.top);
+      return Math.abs(row.getBoundingClientRect().height-needed)<2;
     })()`)
     )
     console.log(
@@ -298,7 +299,7 @@ async function main(): Promise<void> {
       await evaluate<boolean>(`Array.from(document.querySelectorAll('[data-testid="schedule-display-row"]')).every(row=>{
       const date=row.querySelector('[data-testid="schedule-date"]'), weekday=date.querySelector('[data-testid="schedule-weekday"]'), day=date.lastElementChild;
       const ratio=parseFloat(getComputedStyle(day).fontSize)/parseFloat(getComputedStyle(weekday).fontSize);
-      return Math.abs(ratio-1.6)<.01 && parseFloat(getComputedStyle(weekday).fontSize)<20 && row.querySelector('[data-testid^="schedule-rsvps-"]')==null;
+      return Math.abs(ratio-32/15)<.01 && parseFloat(getComputedStyle(weekday).fontSize)<15 && row.querySelector('[data-testid^="schedule-rsvps-"]')==null;
     })`)
     )
     writeFileSync(join(artifacts, 'display-schedule.png'), await m.screenshot())

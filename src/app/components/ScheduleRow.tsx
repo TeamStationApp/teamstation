@@ -6,7 +6,8 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
 import { SideCamera } from './SideCamera'
 
-export const SCHEDULE_DATE_WIDTH_REM = 2.75
+/** Wide enough for the widest month and two-digit day, with iOS's wider digits. */
+export const SCHEDULE_DATE_WIDTH_REM = 3.25
 
 export interface ScheduleRowProps {
   /**
@@ -71,9 +72,10 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
   const styles = getStyles(theme)
   const dated = scheduleDate(startAt)
   const [detailsHeight, setDetailsHeight] = useState(0)
-  // Two 1.5rem text lines, the 2.4rem day, 1rem separator spacing and its 3px rule.
+  // The 1.125rem weekday, the 1.5rem month, the 2.4rem day, 1rem separator
+  // spacing and its 3px rule.
   const calendarHeight =
-    dated.weekday === '' ? theme.rem(1.5) : theme.rem(6.4) + 3
+    dated.weekday === '' ? theme.rem(1.5) : theme.rem(6.025) + 3
   const scale =
     detailsHeight > 0 ? Math.min(1, detailsHeight / calendarHeight) : 1
   const inProgress = status === 'inProgress'
@@ -112,10 +114,11 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
             style={[
               styles.month,
               {
-                fontSize: theme.rem(1.25) * scale,
-                lineHeight: theme.rem(1.5) * scale
+                fontSize: theme.rem(0.9375) * scale,
+                lineHeight: theme.rem(1.125) * scale
               }
             ]}
+            numberOfLines={1}
             testID="schedule-weekday"
           >
             {dated.weekday}
@@ -137,6 +140,7 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
             lineHeight: theme.rem(1.5) * scale
           }
         ]}
+        numberOfLines={1}
       >
         {dated.month}
       </Text>
@@ -149,6 +153,9 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
               lineHeight: theme.rem(2.4) * scale
             }
           ]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.75}
         >
           {dated.day}
         </Text>

@@ -6,7 +6,8 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
 import { SideCamera } from './SideCamera'
 
-export const SCHEDULE_DATE_WIDTH_REM = 2.75
+/** Wide enough for the widest month and two-digit day, with iOS's wider digits. */
+export const SCHEDULE_DATE_WIDTH_REM = 3.25
 
 export interface RsvpScheduleRowProps {
   /**
@@ -101,14 +102,27 @@ export function RsvpScheduleRow(
     <View style={styles.date} testID="schedule-date">
       {dated.weekday !== '' && (
         <>
-          <Text style={styles.month} testID="schedule-weekday">
+          <Text
+            style={styles.weekday}
+            numberOfLines={1}
+            testID="schedule-weekday"
+          >
             {dated.weekday}
           </Text>
           <View style={styles.dateSeparator} testID="schedule-date-separator" />
         </>
       )}
-      <Text style={styles.month}>{dated.month}</Text>
-      <Text style={styles.day}>{dated.day}</Text>
+      <Text style={styles.month} numberOfLines={1}>
+        {dated.month}
+      </Text>
+      <Text
+        style={styles.day}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.75}
+      >
+        {dated.day}
+      </Text>
     </View>
   )
   const details = (
@@ -207,6 +221,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
   date: {
     width: theme.rem(SCHEDULE_DATE_WIDTH_REM),
     alignItems: 'center'
+  },
+  weekday: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.9375),
+    fontWeight: '600',
+    color: theme.secondaryTextColor
   },
   month: {
     fontFamily: theme.semiBoldTextFont,
