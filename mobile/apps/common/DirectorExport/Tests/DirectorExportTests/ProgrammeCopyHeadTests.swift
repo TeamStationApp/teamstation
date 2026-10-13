@@ -81,6 +81,25 @@ struct ProgrammeCopyHeadTests {
     #expect(abs(heard - Self.click) <= Self.packet)
   }
 
+  @Test("A window that runs to the part's end copies every sample from the key frame on, in sync")
+  func copyToTheEnd() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("programme-head-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let part = root.appendingPathComponent("program.mp4")
+    try await Self.writePart(to: part, seconds: 3)
+    let copy = root.appendingPathComponent("copy.mov")
+    try await ArchiveRemux.copyProgramme(part: part, offset: 1.5, length: nil, destination: copy)
+    let asset = AVURLAsset(url: copy)
+    let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
+    let pictures = try await video.load(.timeRange)
+    #expect(abs(pictures.duration.seconds - 1.5) <= 1.0 / Double(Self.fps) + 0.001, "pictures last \(pictures.duration.seconds)")
+    let heard = try #require(try await Self.firstLoud(in: copy))
+    #expect(abs(heard - (Self.click - 1.5)) <= Self.packet)
+    #expect(abs(try await Self.headSeconds(of: video) - 0.5) <= 1.0 / Double(Self.fps) + 0.001)
+  }
+
   @Test("A part with no pictures is refused rather than copied as sound alone")
   func noPicturesIsRefused() async throws {
     let root = FileManager.default.temporaryDirectory
