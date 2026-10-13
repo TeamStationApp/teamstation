@@ -24,6 +24,8 @@ export function NodeAdministrationScreen({
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [accountMessages, setAccountMessages] = useState<boolean | null>(null)
+  const [mailBusy, setMailBusy] = useState(false)
   const begin = useLatestRequest()
   const [confirmation, setConfirmation] = useState<{
     account: NodeAccount
@@ -33,9 +35,13 @@ export function NodeAdministrationScreen({
   const load = useCallback(async (): Promise<void> => {
     const current = begin()
     try {
-      const found = await client.nodeAccounts(query)
+      const [found, mail] = await Promise.all([
+        client.nodeAccounts(query),
+        client.accountMail()
+      ])
       if (!current()) return
       setAccounts(found)
+      setAccountMessages(mail.accountMessages)
       setError('')
       setLoaded(true)
     } catch (error) {
@@ -92,6 +98,46 @@ export function NodeAdministrationScreen({
           <Text accessibilityRole="alert" style={styles.error}>
             {error}
           </Text>
+        )}
+        {accountMessages != null && (
+          <Card style={styles.card}>
+            <Text style={styles.name}>Account emails</Text>
+            <Text style={styles.hint}>
+              {accountMessages
+                ? 'Invitations and notices that someone was added are sent. Sign-in codes are sent either way.'
+                : 'Invitations and notices that someone was added are not sent. Sign-in codes still go out.'}
+            </Text>
+            <Button
+              label={
+                accountMessages
+                  ? 'Turn off account emails'
+                  : 'Turn on account emails'
+              }
+              kind="secondary"
+              busy={mailBusy}
+              disabled={busy}
+              onPress={() => {
+                const next = !accountMessages
+                setMailBusy(true)
+                setError('')
+                client
+                  .setAccountMail(next)
+                  .then(() => {
+                    setAccountMessages(next)
+                  })
+                  .catch((error: unknown) => {
+                    setError(
+                      error instanceof Error
+                        ? error.message
+                        : 'Account emails could not be changed. Retry.'
+                    )
+                  })
+                  .finally(() => {
+                    setMailBusy(false)
+                  })
+              }}
+            />
+          </Card>
         )}
         <Button
           label="Refresh accounts"
