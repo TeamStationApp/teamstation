@@ -416,8 +416,10 @@ extension PhoneStreamTests {
       #expect(abs(reading.videoSeconds - span) <= 1.0 / 30 + 0.001, "export \(reading.videoSeconds) s, take \(span) s")
       #expect(reading.videoCodec == kCMVideoCodecType_HEVC)
 
-      // A Record on the stream while its upload is cut off would add a part after the export.
+      // A Record on the stream while its upload is cut off would add a part after the export. The
+      // server's clock now reads 5 s ahead, as a phone's drifting clock would make it.
       StubServer.with { $0.holdFromPart = 2 }
+      StubServer.with { $0.clockSkew = 5 }
       let log = EventLog(engine)
       let upload = Task { @MainActor in
         try await engine.uploadRecording(
@@ -451,8 +453,11 @@ extension PhoneStreamTests {
       reader.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
       let partOne = try #require(starts[1])
       #expect(PhoneStreamEngine.uploadStart(anchors: anchors, startedAt: take.startedAt) == partOne)
-      // On the server's clock, 3 s ahead of this machine's.
+      // On the server's clock, 3 s ahead of this machine's, by the offset the take kept from its
+      // recording rather than one read at the upload.
       #expect(abs(try #require(reader.date(from: startAt)).timeIntervalSince(partOne.date) - 3) < 0.05)
+      let kept = try #require(try engine.recordings().first?.serverClockOffset)
+      #expect(abs(kept - 3) < 0.05)
       #expect(partOne != take.startedAt)
       #expect(abs(partOne.seconds - take.startedAt.seconds) < PhoneStreamProfile.pictureDelaySeconds + 1)
       await engine.close()

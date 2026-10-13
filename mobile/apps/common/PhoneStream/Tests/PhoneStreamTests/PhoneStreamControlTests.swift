@@ -292,6 +292,11 @@ extension PhoneStreamTests {
       #expect(recording.stoppedForLowStorage)
       #expect(recording.publishedOutsideParts)
       #expect(!recording.coversWholeStream)
+      // The first clock offset measured for a take holds: it is the one taken while recording.
+      #expect(recording.serverClockOffset == nil)
+      try catalog.setServerClockOffset(1.04, for: id)
+      try catalog.setServerClockOffset(1.14, for: id)
+      #expect(try catalog.recording(id)?.serverClockOffset == 1.04)
       try catalog.markUploaded(id, videoId: "vid_0001", at: WallClock(seconds: 2_000))
       recording = try #require(try catalog.recording(id))
       #expect(recording.isUploaded)
@@ -314,6 +319,28 @@ extension PhoneStreamTests {
       #expect(try catalog.live() == nil)
       try catalog.delete(id)
       #expect(try catalog.recordings().isEmpty)
+    }
+
+    @Test("A catalog made before takes kept their clock offset gains the column")
+    func catalogGainsTheOffsetColumn() throws {
+      let storage = PhoneStorage(root: try scratchDirectory())
+      try storage.prepare()
+      let store = try SQLiteStore(url: storage.index)
+      let index = try ArchiveIndex(store: store)
+      try store.execute("""
+        CREATE TABLE phone_recordings (
+          recording_id INTEGER PRIMARY KEY, live_stream_id TEXT NOT NULL, game_id TEXT NOT NULL,
+          angle_name TEXT NOT NULL, upload_id TEXT, upload_title TEXT, uploaded_at REAL, video_id TEXT,
+          low_storage_stop INTEGER NOT NULL DEFAULT 0, published_outside_parts INTEGER NOT NULL DEFAULT 0
+        );
+        """)
+      let catalog = try PhoneCatalog(store: store, index: index)
+      let id = try index.beginRecording(at: WallClock(seconds: 1_000))
+      try catalog.add(recordingID: id, liveStreamId: "lst_0001", gameId: "gam_0001", angleName: "Home Plate")
+      try catalog.setServerClockOffset(-0.25, for: id)
+      #expect(try catalog.recording(id)?.serverClockOffset == -0.25)
+      // Opening it again finds the column there.
+      #expect(try PhoneCatalog(store: store, index: index).recording(id)?.serverClockOffset == -0.25)
     }
 
     @Test("The device is named by model, and every iPhone the app installs on can stream")

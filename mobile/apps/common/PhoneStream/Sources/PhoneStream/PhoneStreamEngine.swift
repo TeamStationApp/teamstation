@@ -672,7 +672,9 @@ public final class PhoneStreamEngine {
     )
     let gameId = take.gameId
     let streamId = take.liveStreamId
+    let recordingID = take.recordingID
     let clock = environment.clock
+    let catalog = self.catalog
     liveStartReport = Task {
       // On the server's clock: this phone's can be a second out (`ServerClock`).
       var offset: Double?
@@ -684,6 +686,8 @@ public final class PhoneStreamEngine {
           } else {
             known = try await client.serverClockOffset(now: { clock.now.seconds })
             offset = known
+            // Kept with the take, whose upload may come hours later.
+            if let recordingID { try? catalog.setServerClockOffset(known, for: recordingID) }
           }
           try await client.reportLiveStart(gameId: gameId, streamId: streamId, startedAt: (started + known).date)
           return
@@ -897,17 +901,19 @@ public final class PhoneStreamEngine {
     let catalog = self.catalog
     let recordingID = recording.recordingID
     let client = TeamStationClient(baseURL: server, token: token, session: environment.urlSession)
-    // The start goes on the server's clock, set again for every upload: this phone's can be a
-    // second out (`ServerClock`). Unreachable, the upload's own request fails anyway.
+    // The start goes on the server's clock: this phone's can be a second out (`ServerClock`). The
+    // offset measured while the take was recorded is the one that fits it; a take that never had
+    // one is read now. Unreachable, the upload's own request fails anyway.
     let clock = environment.clock
-    let offset = (try? await client.serverClockOffset(now: { clock.now.seconds })) ?? 0
+    var offset = recording.serverClockOffset
+    if offset == nil { offset = try? await client.serverClockOffset(now: { clock.now.seconds }) }
     let service = UploadService(client: client)
     let videoId = try await service.send(
       file: file,
       gameId: recording.gameId,
       title: recording.uploadTitle ?? title,
       kind: "program",
-      startedAt: (start + offset).date,
+      startedAt: (start + (offset ?? 0)).date,
       uploadId: recording.uploadId,
       liveStreamId: liveStreamId,
       wholeStream: recording.coversWholeStream ? true : nil,

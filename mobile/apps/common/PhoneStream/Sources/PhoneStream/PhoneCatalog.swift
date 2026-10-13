@@ -24,6 +24,10 @@ public struct PhoneRecording: Sendable, Equatable {
   public var stoppedForLowStorage: Bool
   /// The stream published at a moment no part was recording.
   public var publishedOutsideParts: Bool
+  /// What to add to this phone's clock to read the server's, measured while the take was recorded
+  /// (`ServerClock`). A phone's clock wanders by several parts in a million, so an upload hours later
+  /// places the take by this one rather than by a reading taken then.
+  public var serverClockOffset: Double?
 
   public init(
     recordingID: Int64,
@@ -38,7 +42,8 @@ public struct PhoneRecording: Sendable, Equatable {
     uploadedAt: WallClock? = nil,
     videoId: String? = nil,
     stoppedForLowStorage: Bool = false,
-    publishedOutsideParts: Bool = false
+    publishedOutsideParts: Bool = false,
+    serverClockOffset: Double? = nil
   ) {
     self.recordingID = recordingID
     self.liveStreamId = liveStreamId
@@ -53,6 +58,7 @@ public struct PhoneRecording: Sendable, Equatable {
     self.videoId = videoId
     self.stoppedForLowStorage = stoppedForLowStorage
     self.publishedOutsideParts = publishedOutsideParts
+    self.serverClockOffset = serverClockOffset
   }
 
   public var isUploaded: Bool { uploadedAt != nil }
@@ -88,9 +94,15 @@ public final class PhoneCatalog: @unchecked Sendable {
         uploaded_at REAL,
         video_id TEXT,
         low_storage_stop INTEGER NOT NULL DEFAULT 0,
-        published_outside_parts INTEGER NOT NULL DEFAULT 0
+        published_outside_parts INTEGER NOT NULL DEFAULT 0,
+        server_clock_offset REAL
       );
       """)
+    // A catalog made before the take kept its clock offset.
+    let columns = try store.query("PRAGMA table_info(phone_recordings);").map { $0.string(1) }
+    if !columns.contains("server_clock_offset") {
+      try store.execute("ALTER TABLE phone_recordings ADD COLUMN server_clock_offset REAL;")
+    }
     // The stream this phone is on the air with, while it is: what a relaunch after a kill puts back.
     // The live session says whether, and for how long the app was away; this says which.
     try store.execute("""
@@ -155,7 +167,7 @@ public final class PhoneCatalog: @unchecked Sendable {
     let rows = try store.query(
       """
       SELECT recording_id, live_stream_id, game_id, angle_name, upload_id, upload_title,
-        uploaded_at, video_id, low_storage_stop, published_outside_parts
+        uploaded_at, video_id, low_storage_stop, published_outside_parts, server_clock_offset
       FROM phone_recordings;
       """
     )
@@ -177,7 +189,8 @@ public final class PhoneCatalog: @unchecked Sendable {
         uploadedAt: row.values[6] == .null ? nil : WallClock(seconds: row.double(6)),
         videoId: Self.optionalText(row, 7),
         stoppedForLowStorage: row.int(8) != 0,
-        publishedOutsideParts: row.int(9) != 0
+        publishedOutsideParts: row.int(9) != 0,
+        serverClockOffset: row.values[10] == .null ? nil : row.double(10)
       )
     }
     .sorted { $0.startedAt > $1.startedAt }
@@ -205,6 +218,14 @@ public final class PhoneCatalog: @unchecked Sendable {
     try store.execute(
       "UPDATE phone_recordings SET uploaded_at = ?, video_id = ? WHERE recording_id = ?;",
       [ .real(wall.seconds), .text(videoId), .integer(recordingID) ]
+    )
+  }
+
+  /// Keeps the first clock offset measured for a take; see `PhoneRecording.serverClockOffset`.
+  public func setServerClockOffset(_ offset: Double, for recordingID: Int64) throws {
+    try store.execute(
+      "UPDATE phone_recordings SET server_clock_offset = ? WHERE recording_id = ? AND server_clock_offset IS NULL;",
+      [ .real(offset), .integer(recordingID) ]
     )
   }
 
