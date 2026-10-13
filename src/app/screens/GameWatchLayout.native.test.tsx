@@ -4,8 +4,10 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
+import { NAV_CLEARANCE_REM } from '../components/AppNav'
+import { useScreenBottom } from '../components/Screen'
 import { watchLayout } from '../layout/watch'
-import { ThemeProvider } from '../theme/ThemeContext'
+import { ThemeProvider, useTheme } from '../theme/ThemeContext'
 import { GameWatchLayout } from './GameWatchLayout.native'
 
 let root: Root | undefined
@@ -68,5 +70,35 @@ describe('the watch tab on a phone', function () {
   it('moves the sections and the description into the column held sideways', async function () {
     const host = await render(true, true)
     expect(host.textContent).equals('playersectionsdescriptionhighlightsfooter')
+  })
+
+  it('leaves the floating capsule’s clearance under the last row, as every other screen does', async function () {
+    let expected = -1
+    let clearance = -1
+    const Probe = (): null => {
+      expected = useScreenBottom()
+      clearance = useTheme().rem(NAV_CLEARANCE_REM)
+      return null
+    }
+    const host = await render(false, false)
+    await act(async () => {
+      createRoot(document.createElement('div')).render(
+        <ThemeProvider>
+          <Probe />
+        </ThemeProvider>
+      )
+      await delay(10)
+    })
+    // The scroller's content: the element that holds the first row.
+    const content = [...host.querySelectorAll('div')].find(
+      element => element.firstElementChild?.textContent === 'head'
+    )
+    expect(content, 'the scroll content').not.equals(undefined)
+    const paddingBottom = parseFloat(getComputedStyle(content!).paddingBottom)
+    // A phone's capsule needs its full clearance: the inset alone, which is
+    // all an Android phone's navigation leaves, put Record video under it.
+    expect(clearance).greaterThan(0)
+    expect(expected).equals(clearance)
+    expect(paddingBottom).equals(expected)
   })
 })

@@ -102,6 +102,8 @@ export function AngleNamePrompt(
             }}
             placeholder={lstrings.stream_prompt_placeholder}
             autoFocus
+            // A phone may be held sideways already, ready to film.
+            disableFullscreenUI
             error={problem ?? refused}
             onSubmitEditing={start}
           />

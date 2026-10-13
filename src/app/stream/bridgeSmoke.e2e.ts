@@ -344,6 +344,19 @@ async function main(): Promise<void> {
     // 1. Record video, which the Videos tab offers once the module says
     // this phone can record.
     await openGame()
+    if (android) {
+      // Android's hierarchy holds only what is on the screen. Swipe below the
+      // player, which would take a swipe across it for itself.
+      for (
+        let i = 0;
+        i < 8 && (await find('Record video', 1000)) == null;
+        i++
+      ) {
+        say('$ swipe 50%,78% → 50%,30%')
+        await m.swipe({ start: '50%, 78%', end: '50%, 30%', duration: 600 })
+        await sleep(800)
+      }
+    }
     assert(
       (await find('Record video', 10000)) != null,
       'the Videos tab offers Record video'

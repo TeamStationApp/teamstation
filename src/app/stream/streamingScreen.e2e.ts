@@ -1,8 +1,10 @@
 // E11 and E12: Record video opens the streaming screen with the Cameraman
 // overlay, records and streams, and rides out an outage on a real phone.
-// Through maestro-d's JavaScript client, on an iOS simulator or an iPhone.
+// Through maestro-d's JavaScript client, on an iOS simulator or an iPhone, or
+// on an Android phone with TS_STREAM_ANDROID_SERIAL in place of the UDID.
 //
-//   TS_STREAM_IOS_UDID=<device> MAESTRO_D=<this agent's daemon> \
+//   TS_STREAM_IOS_UDID=<device> | TS_STREAM_ANDROID_SERIAL=<adb serial> \
+//   MAESTRO_D=<this agent's daemon> \
 //   MAESTRO_D_CLIENT_ROOT=<maestro-d npm package> [MAESTRO_D_BIN=<binary>] \
 //   [TS_STREAM_TEAM_ID=<WebDriverAgent signing team, for a real device>] \
 //   TS_STREAM_API=http://<LAN address>:<port>/api/v1 \
@@ -90,7 +92,7 @@ interface Daemon {
   info: { runDir: string }
   attach: (options: {
     device: string
-    platform: 'ios'
+    platform: 'ios' | 'android'
     appId: string
     teamId?: string
   }) => Promise<Driver>
@@ -101,7 +103,10 @@ const required = (key: string): string => {
   assert(value != null && value !== '', `${key} is required`)
   return value
 }
-const device = required('TS_STREAM_IOS_UDID')
+// TS_STREAM_ANDROID_SERIAL drives an Android phone instead of an iOS device.
+const androidSerial = process.env.TS_STREAM_ANDROID_SERIAL
+const android = androidSerial != null && androidSerial !== ''
+const device = android ? androidSerial : required('TS_STREAM_IOS_UDID')
 const daemonName = required('MAESTRO_D')
 const clientRoot = required('MAESTRO_D_CLIENT_ROOT')
 const api = required('TS_STREAM_API').replace(/\/$/, '')
@@ -320,7 +325,7 @@ async function main(): Promise<void> {
   const daemon = await MaestroD.connect({ name: daemonName, spawn: true })
   const m = await daemon.attach({
     device,
-    platform: 'ios',
+    platform: android ? 'android' : 'ios',
     appId: APP,
     ...(teamId == null ? {} : { teamId })
   })
@@ -392,13 +397,47 @@ async function main(): Promise<void> {
     say(`$ openLink teamstation://games/${game}`)
     await m.openLink({ link: `teamstation://games/${game}` })
     await sleep(3000)
-    say('$ scrollUntilVisible Record video')
-    await m.scrollUntilVisible({
-      element: { text: 'Record video' },
-      centerElement: true
-    })
+    if (android) {
+      // maestro-d's scroll swipes across the middle of the screen, which on
+      // Android is the game's video player, and the player keeps the swipe:
+      // swipe below it instead (the hierarchy holds only what is on screen).
+      for (
+        let i = 0;
+        i < 4 &&
+        // Off screen, or under the floating tab bar at the bottom.
+        ((await find(byText('Record video'), 1000))?.bounds?.y ?? 1e9) >
+          ((await m.hierarchy()).bounds?.height ?? 2400) * 0.7;
+        i++
+      ) {
+        say('$ swipe 50%,78% → 50%,30%')
+        await (
+          m as unknown as {
+            swipe: (gesture: unknown) => Promise<unknown>
+          }
+        ).swipe({ start: '50%, 78%', end: '50%, 30%', duration: 600 })
+        await sleep(800)
+      }
+    } else {
+      say('$ scrollUntilVisible Record video')
+      await m.scrollUntilVisible({
+        element: { text: 'Record video' },
+        centerElement: true
+      })
+    }
     say('$ tapOn Record video')
-    await m.tapOn({ text: 'Record video' })
+    const recordVideo = android
+      ? await find(byText('Record video'), 3000)
+      : undefined
+    if (recordVideo?.bounds != null) {
+      // In the middle: the watch tab leaves room under its last row for the
+      // floating tab bar, so the whole button is clear of it.
+      const { x, y, width, height } = recordVideo.bounds
+      await m.tapOn({
+        point: `${Math.round(x + width / 2)},${Math.round(y + height / 2)}`
+      })
+    } else {
+      await m.tapOn({ text: 'Record video' })
+    }
     assert(
       (await find(byText('Name this camera angle'))) != null,
       'Record video asks for the angle’s name'
@@ -493,20 +532,65 @@ async function main(): Promise<void> {
 
     // 4. Pinch out from the middle of the picture, with two fingers.
     const before = await textOf('zoom-label')
-    const port = (
-      await readFile(path.join(daemon.info.runDir, 'daemon.log'), 'utf8')
+    // The W3C actions endpoint of the driver behind maestro-d: WebDriverAgent
+    // on iOS, the UIAutomator2 server (through maestro-d's adb socket) on
+    // Android. maestro-d has no two-finger gesture of its own.
+    const daemonLog = await readFile(
+      path.join(daemon.info.runDir, 'daemon.log'),
+      'utf8'
     )
-      .split('\n')
-      .filter(line => line.includes(`Starting WDA on device ${device} (port:`))
-      .at(-1)
-      ?.match(/\(port: (\d+)\)/)?.[1]
-    assert(
-      port != null,
-      'this device’s WebDriverAgent port is in the daemon log'
-    )
-    const wda = `http://127.0.0.1:${port}`
-    const status = await m.eval(`http.get(${JSON.stringify(`${wda}/status`)})`)
-    const { sessionId } = JSON.parse(status.body) as { sessionId: string }
+    let postActions: (body: string) => Promise<{ status: number; body: string }>
+    if (android) {
+      const sessionId = daemonLog
+        .split('\n')
+        .filter(line => line.includes('Session created successfully: '))
+        .at(-1)
+        ?.split('Session created successfully: ')[1]
+        ?.trim()
+      assert(sessionId != null, 'the UIAutomator2 session is in the daemon log')
+      postActions = async body => {
+        const { stdout } = await run('curl', [
+          '-s',
+          '-w',
+          '\n%{http_code}',
+          '--unix-socket',
+          `/tmp/uia2-${device}.sock`,
+          '-H',
+          'content-type: application/json',
+          '-d',
+          body,
+          `http://localhost/session/${sessionId}/actions`
+        ])
+        const lines = stdout.trim().split('\n')
+        return {
+          status: Number(lines.at(-1)),
+          body: lines.slice(0, -1).join('\n')
+        }
+      }
+    } else {
+      const port = (
+        await readFile(path.join(daemon.info.runDir, 'daemon.log'), 'utf8')
+      )
+        .split('\n')
+        .filter(line =>
+          line.includes(`Starting WDA on device ${device} (port:`)
+        )
+        .at(-1)
+        ?.match(/\(port: (\d+)\)/)?.[1]
+      assert(
+        port != null,
+        'this device’s WebDriverAgent port is in the daemon log'
+      )
+      const wda = `http://127.0.0.1:${port}`
+      const status = await m.eval(
+        `http.get(${JSON.stringify(`${wda}/status`)})`
+      )
+      const { sessionId } = JSON.parse(status.body) as { sessionId: string }
+      postActions = async body =>
+        await m.eval(
+          `http.post(${JSON.stringify(`${wda}/session/${sessionId}/actions`)}, {body:${JSON.stringify(body)}})`
+        )
+    }
     const screen = (await m.hierarchy()).bounds ?? {
       x: 0,
       y: 0,
@@ -545,10 +629,8 @@ async function main(): Promise<void> {
       ]
     })
     say('$ pinch out from the middle of the picture')
-    const pinched = await m.eval(
-      `http.post(${JSON.stringify(`${wda}/session/${sessionId}/actions`)}, {body:${JSON.stringify(
-        JSON.stringify({ actions: [finger('left', -1), finger('right', 1)] })
-      )}})`
+    const pinched = await postActions(
+      JSON.stringify({ actions: [finger('left', -1), finger('right', 1)] })
     )
     assert.equal(pinched.status, 200, pinched.body)
     await sleep(1500)

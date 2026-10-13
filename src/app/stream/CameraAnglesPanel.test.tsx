@@ -207,6 +207,26 @@ async function type(value: string): Promise<void> {
   })
 }
 
+/**
+ * The props a React Native field was given, read off the rendered input's
+ * fiber: the web renderer drops Android-only props such as
+ * `disableFullscreenUI` from the DOM.
+ */
+function fieldProps(input: Element | null): Record<string, unknown> {
+  const key = Object.keys(input ?? {}).find(name =>
+    name.startsWith('__reactFiber$')
+  )
+  interface Fiber {
+    memoizedProps?: Record<string, unknown>
+    return?: Fiber
+  }
+  let fiber = (key == null ? undefined : (input as never)[key]) as
+    Fiber | undefined
+  while (fiber != null && fiber.memoizedProps?.onChangeText == null)
+    fiber = fiber.return
+  return fiber?.memoizedProps ?? {}
+}
+
 describe('Record video on a phone', function () {
   afterEach(async function () {
     await act(async () => {
@@ -252,6 +272,11 @@ describe('Record video on a phone', function () {
         .querySelector('input[aria-label="Camera angle"]')
         ?.getAttribute('placeholder')
     ).equals('Home Plate')
+    // Held sideways, an Android phone edits the name in place.
+    expect(
+      fieldProps(document.querySelector('input[aria-label="Camera angle"]'))
+        .disableFullscreenUI
+    ).equals(true)
     // Nothing to send yet: Start waits.
     await press(button('Start'))
     expect(fake.added).deep.equals([])
