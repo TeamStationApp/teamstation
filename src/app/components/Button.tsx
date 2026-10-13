@@ -16,6 +16,11 @@ export interface ButtonProps {
   label: string
   shape?: 'pill' | 'rounded'
   compact?: boolean
+  /**
+   * A smaller label at the full 48-point height, for a long label in a
+   * narrow column: the words fit and the target stays as large.
+   */
+  small?: boolean
   accessibilityLabel?: string
   color?: string
   textColor?: string
@@ -53,6 +58,7 @@ export function Button(props: ButtonProps): React.ReactElement {
     label,
     shape = 'pill',
     compact = false,
+    small = false,
     accessibilityLabel,
     color,
     textColor,
@@ -112,6 +118,7 @@ export function Button(props: ButtonProps): React.ReactElement {
               styles.label,
               styles[`${kind}Label`],
               compact && { fontSize: 14 },
+              small && styles.smallLabel,
               textColor != null && { color: textColor }
             ]}
           >
@@ -170,6 +177,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(1),
     fontWeight: '600'
+  },
+  smallLabel: {
+    fontSize: theme.rem(0.875)
   },
 
   primary: { backgroundColor: theme.primaryButtonColor },
