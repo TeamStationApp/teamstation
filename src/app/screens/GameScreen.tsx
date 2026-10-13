@@ -54,11 +54,18 @@ import { useInsets } from '../platform/safeArea'
 import { sameMoment } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
 import { playerEngine } from '../player/engine'
+import { livePlaybackRetryDelay } from '../player/liveRejoin'
 import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
 import { MultiCamView } from '../player/MultiCamView'
 import { PlayerSurface } from '../player/PlayerSurface'
+import { isStillLive } from '../player/stillLive'
 import { useVideoAspect } from '../player/useVideoAspect'
+import {
+  openingVideo,
+  sameVideos,
+  useVideoListRefresh
+} from '../player/useVideoListRefresh'
 import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
@@ -366,10 +373,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           ? current
           : (found.videos.find(
               item => item.id === videoHints.current.initialVideoId
-            ) ??
-            found.videos.find(item => item.status === 'live') ??
-            found.videos.find(item => item.status === 'ready') ??
-            found.videos[0])
+            ) ?? openingVideo(found.videos))
       )
     } catch (error) {
       if (
@@ -684,6 +688,33 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [refreshGame])
 
+  /** The videos the cameras panel has seen publishing on this game. */
+  const [publishing, setPublishing] = useState<string[]>([])
+  const gameIdRef = useRef(gameId)
+  gameIdRef.current = gameId
+  const refreshVideos = useCallback((): void => {
+    const forGame = gameId
+    client
+      .game(forGame)
+      .then(found => {
+        if (gameIdRef.current !== forGame) return
+        setGame(current =>
+          current == null || sameVideos(current.videos, found.videos)
+            ? current
+            : { ...current, videos: found.videos }
+        )
+        // A page that had nothing to play opens on what there is now. One
+        // already playing something is left on it.
+        setVideo(current => current ?? openingVideo(found.videos))
+      })
+      .catch(() => undefined)
+  }, [client, gameId])
+  useVideoListRefresh({
+    videos: game?.videos,
+    publishing,
+    refresh: refreshVideos
+  })
+
   const seasonId = game?.seasonId
   const awayTeamId = game?.awayTeamId
   const homeTeamId = game?.homeTeamId
@@ -731,12 +762,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   // The app never builds a media URL: the server knows where the video is and
   // checks membership while it looks, so asking is the only way to find out.
+  /** How many times a live video without files has been asked for again. */
+  const [playbackAsks, setPlaybackAsks] = useState(0)
   useEffect(() => {
     if (video == null || nonMemberView) return
     const forVideoId = video.id
     let live = true
     setPlayback(undefined)
     setPlaybackFor(undefined)
+    // Each video's asks back off from the first wait, not from where the
+    // last video's had got to.
+    setPlaybackAsks(0)
     client
       .playback(forVideoId)
       .then(found => {
@@ -751,6 +787,44 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       live = false
     }
   }, [client, video, nonMemberView])
+
+  // A live video is listed the moment its stream starts publishing, a few
+  // seconds before its first segment is written, and until then the server
+  // says its files are not there. The page that picked it up then — the
+  // publishing phone's own, or a viewer's — asks again rather than saying
+  // for good that the video is not available.
+  useEffect(() => {
+    if (
+      video?.status !== 'live' ||
+      playbackFor !== video.id ||
+      playback == null ||
+      playback.url != null
+    )
+      return
+    // Backing off, and given up after ten minutes: a refused publish never
+    // writes a segment.
+    const wait = livePlaybackRetryDelay(playbackAsks)
+    if (wait == null) return
+    const forVideoId = video.id
+    let live = true
+    const askAgain = (): void => {
+      if (live) setPlaybackAsks(asks => asks + 1)
+    }
+    const timer = setTimeout(() => {
+      client
+        .playback(forVideoId)
+        .then(found => {
+          if (!live) return
+          if (found.url == null) askAgain()
+          else setPlayback(found)
+        })
+        .catch(askAgain)
+    }, wait)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [client, video, playback, playbackFor, playbackAsks])
 
   // Fetched when the tab is first opened, not with the game: most people come
   // here to watch, and the box score is a second query against every play.
@@ -801,8 +875,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   startAtSecRef.current = startAtSec
   const autoPlayRef = useRef(autoPlay)
   autoPlayRef.current = autoPlay
-  const placeFor = useRef<{ videoId?: string; playbackFor?: string }>({})
-  placeFor.current = { videoId: video?.id, playbackFor }
+  const placeFor = useRef<{
+    videoId?: string
+    playbackFor?: string
+    /** Asks the server, for a video that was live when it was opened. */
+    isLive?: () => Promise<boolean>
+  }>({})
+  placeFor.current = {
+    videoId: video?.id,
+    playbackFor,
+    isLive:
+      video?.status === 'live'
+        ? async () => await isStillLive(client, gameId, video.id)
+        : undefined
+  }
 
   /**
    * What the viewer wants the single player to be doing, and who paused it.
@@ -881,7 +967,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       () => {
         setAddressAttempt(attempt => attempt + 1)
       },
-      { wantsToPlay: () => !suspended.current && viewerWants.current }
+      {
+        wantsToPlay: () => !suspended.current && viewerWants.current,
+        isLive: placeFor.current.isLive
+      }
     )
 
     const resume = resumeAtRef.current
@@ -1425,6 +1514,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     <MultiCamView
       client={client}
       videos={game.videos}
+      isLive={async videoId => await isStillLive(client, gameId, videoId)}
       order={angles ?? defaultAngles(game.videos)}
       audioId={audioId ?? null}
       // No zoom for now: the double tap that made one tile fill the screen
@@ -1504,7 +1594,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                     here at all. A browser lists stream URLs; a phone records
                     with its own camera.
                   */}
-                  <StreamFooter client={client} gameId={gameId} />
+                  <StreamFooter
+                    client={client}
+                    gameId={gameId}
+                    onPublishing={setPublishing}
+                  />
                 </>
               }
               layout={layout}
