@@ -47,6 +47,7 @@ interface SoundSink {
  *   uptime with 1.5 frames of slack ([gridSlot]), so camera timing never reaches the file.
  * - [ProgrammeSoundOrigin] takes the part's start wall from the median of content wall less programme
  *   seconds over the first 1.5 s, and sound captured at a wall time goes at wall less that origin.
+ *   Sound that comes before the origin has settled is held and placed once it has.
  * - Sound is laid contiguously from where the track has got to ([drainAudio]): a shortfall is
  *   covered with silence first, sound the track has passed is dropped.
  * - At Stop the hold fills from the sound actually written to the take's length or the last picture,
@@ -81,6 +82,9 @@ class ProgramEncoder(
     /** One run of the mix waiting for the track, with where the wall clock says it belongs. */
     private class PendingSound(val samples: ShortArray, val target: Double, val duration: Double)
 
+    /** One run of the mix that came while the part's origin was still being sampled, with when it was captured. */
+    private class HeldSound(val samples: ShortArray, val wall: Double, val duration: Double)
+
     private val lock = ReentrantLock()
     private var settings = settings
     private var anchorSink: AnchorSink? = null
@@ -98,6 +102,12 @@ class ProgramEncoder(
     private var contentLagSeconds: Double? = null
     private val soundOrigin = ProgrammeSoundOrigin()
     private val pendingAudio = ArrayDeque<PendingSound>()
+
+    /**
+     * Sound the mix handed over while the part's origin was still being sampled. Placed the moment the
+     * origin settles; see [placeHeldSoundLocked].
+     */
+    private val heldSound = ArrayDeque<HeldSound>()
     private var isDraining = false
     private var writtenFrames = 0L
     private var writtenAudioEnd = 0.0
@@ -109,6 +119,7 @@ class ProgramEncoder(
     private var audioOffered = 0
     private var audioUnseeded = 0
     private var audioBeforePart = 0
+    private var audioFirstTarget = -1.0
     private var startedAt: Double? = null
     private var previousPartsDuration = 0.0
     private var resumedAwaitingPicture = false
@@ -206,6 +217,7 @@ class ProgramEncoder(
             resetSoundDiagnosticsLocked()
             soundOrigin.reset()
             pendingAudio.clear()
+            heldSound.clear()
             isRunning = true
             outputFile = file
             outputFiles += file
@@ -273,6 +285,8 @@ class ProgramEncoder(
                 null
             }
             sink = anchorSink
+            // Once the opening has settled the origin, the sound that came while it was sampled goes in.
+            placeHeldSoundLocked()
         }
         // Outside the lock: the sink writes to the catalog.
         if (anchor != null) sink?.anchor(anchor.first, anchor.second, anchor.third.first, anchor.third.second)
@@ -349,20 +363,54 @@ class ProgramEncoder(
         lock.withLock {
             if (!isRunning || baseTime == null || audio.frameCount <= 0) return
             audioOffered += 1
-            val target = soundOrigin.timeline(audio.wallClock)
-            if (target == null) {
-                if (soundOrigin.isSettled) audioBeforePart += 1 else audioUnseeded += 1
+            // Sound that arrives while the opening is still being sampled is held, not dropped, and
+            // placed once the origin settles. The phone's recording mix waits one second against a
+            // 1.5 s opening, so the start of its part arrives before the origin is known; dropping it
+            // left the first half second or more of every phone take coded silence.
+            if (!soundOrigin.isSettled) {
+                audioUnseeded += 1
+                heldSound.addLast(HeldSound(audio.samples, audio.wallClock, audio.durationSeconds))
+                if (heldSound.size > maximumPendingAudio) {
+                    val lost = heldSound.size - maximumPendingAudio
+                    audioQueueDrops += lost
+                    repeat(lost) { heldSound.removeFirst() }
+                }
                 return
             }
-            pendingAudio.addLast(PendingSound(audio.samples, target, audio.durationSeconds))
-            if (pendingAudio.size > maximumPendingAudio) {
-                val lost = pendingAudio.size - maximumPendingAudio
-                audioQueueDrops += lost
-                repeat(lost) { pendingAudio.removeFirst() }
-                telemetry.recordError("program sound queue overflowed, $lost buffer(s) of sound lost")
-            }
+            queueSoundLocked(audio.samples, audio.wallClock, audio.durationSeconds)
         }
         drainAudio(limit = 8)
+    }
+
+    /**
+     * Queues the held sound once the origin has settled, in the order it arrived and ahead of anything
+     * later. Called with [lock] held; the next drain writes it.
+     */
+    private fun placeHeldSoundLocked() {
+        if (!soundOrigin.isSettled || heldSound.isEmpty()) return
+        val held = heldSound.toList()
+        heldSound.clear()
+        for (chunk in held) queueSoundLocked(chunk.samples, chunk.wall, chunk.duration)
+    }
+
+    /**
+     * Places one run captured at [wall] on the part's timeline and queues it for the track, or counts
+     * it as before the part. Called with [lock] held and the origin settled.
+     */
+    private fun queueSoundLocked(samples: ShortArray, wall: Double, duration: Double) {
+        val target = soundOrigin.timeline(wall)
+        if (target == null) {
+            audioBeforePart += 1
+            return
+        }
+        if (audioFirstTarget < 0) audioFirstTarget = target
+        pendingAudio.addLast(PendingSound(samples, target, duration))
+        if (pendingAudio.size > maximumPendingAudio) {
+            val lost = pendingAudio.size - maximumPendingAudio
+            audioQueueDrops += lost
+            repeat(lost) { pendingAudio.removeFirst() }
+            telemetry.recordError("program sound queue overflowed, $lost buffer(s) of sound lost")
+        }
     }
 
     /**
@@ -435,10 +483,26 @@ class ProgramEncoder(
         }
     }
 
+    /** What the sound path did with the part's sound so far: TS Director's `soundDiagnosticsForTesting`. */
+    internal class SoundDiagnostics(
+        val origin: Double,
+        val offered: Int,
+        val unseeded: Int,
+        val beforePart: Int,
+        val first: Double,
+        val silence: Int
+    )
+
+    internal val soundDiagnosticsForTesting: SoundDiagnostics
+        get() = lock.withLock {
+            SoundDiagnostics(soundOrigin.partStartWall ?: -1.0, audioOffered, audioUnseeded, audioBeforePart, audioFirstTarget, silenceQueued)
+        }
+
     private fun resetSoundDiagnosticsLocked() {
         audioOffered = 0
         audioUnseeded = 0
         audioBeforePart = 0
+        audioFirstTarget = -1.0
         audioBehindTrack = 0
         silenceQueued = 0
         audioAppendFailures = 0
@@ -449,6 +513,7 @@ class ProgramEncoder(
     internal val soundOriginForTesting: Double? get() = lock.withLock { soundOrigin.partStartWall }
     internal val acceptedSoundCountForTesting: Int get() = lock.withLock { acceptedAudioCount }
     internal val audioBehindTrackForTesting: Int get() = lock.withLock { audioBehindTrack }
+
 
     private fun drainAudioUntilEmpty(seconds: Double) {
         val deadline = System.nanoTime() + (seconds * 1e9).toLong()
@@ -475,10 +540,10 @@ class ProgramEncoder(
             heldPicture = fillHold(target)
             drainAudioUntilEmpty(10.0)
             lastProgramFinishDetail = lock.withLock {
-                "target %.3f picture %.3f sound %.3f->%.3f queued %d refused %d dropped %d accepted %d behind %d silence %d offered %d unseeded %d beforePart %d origin %.3f".format(
+                "target %.3f picture %.3f sound %.3f->%.3f queued %d refused %d dropped %d accepted %d behind %d silence %d offered %d unseeded %d beforePart %d origin %.3f first %.3f".format(
                     Locale.US, target, pictureAt, soundAt, writtenAudioEnd, pendingAudio.size, audioAppendFailures,
                     audioQueueDrops, acceptedAudioCount, audioBehindTrack, silenceQueued, audioOffered, audioUnseeded,
-                    audioBeforePart, soundOrigin.partStartWall ?: -1.0
+                    audioBeforePart, soundOrigin.partStartWall ?: -1.0, audioFirstTarget
                 )
             }
             telemetry.recordProgramFinish(lastProgramFinishDetail)
@@ -497,6 +562,7 @@ class ProgramEncoder(
             aac = null
             soundOrigin.reset()
             pendingAudio.clear()
+            heldSound.clear()
             outputFile
         }
 

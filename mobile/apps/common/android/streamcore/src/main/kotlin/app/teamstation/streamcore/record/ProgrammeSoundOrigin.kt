@@ -45,7 +45,11 @@ class ProgrammeSoundOrigin {
     }
 
     companion object {
-        /** How long the opening is sampled before the origin is fixed. */
+        /**
+     * How long the opening is sampled before the origin is fixed. Sound that reaches the encoder before
+     * this has settled is held there and placed once it has (a phone's mix waits only a second), so
+     * the wait costs latency and never sound.
+     */
         const val seedSeconds = 1.5
 
         /** A ceiling on the samples held while seeding. */

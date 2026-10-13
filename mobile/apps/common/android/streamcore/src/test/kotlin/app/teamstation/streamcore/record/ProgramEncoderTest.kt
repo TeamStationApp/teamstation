@@ -208,7 +208,7 @@ class ProgramEncoderTest {
         val sink = GateSink()
         encoder.soundSinkOverride = sink
         encoder.start(wall)
-        // Before the origin is settled, sound has nowhere to go.
+        // Before the origin is settled, sound is held rather than written.
         encoder.append(presentationTime = host, captureWall = wall)
         encoder.append(AudioFrame(ShortArray(960 * 2), wallClock = wall))
         assertTrue(sink.runs.isEmpty())
@@ -217,12 +217,13 @@ class ProgramEncoderTest {
             host += 1.0 / 30
             encoder.append(presentationTime = host, captureWall = wall)
         }
-        // Sound for 0.1 s into the part: silence up to it first, then the run.
+        // The held run goes at the head of the track. Sound for 0.1 s into the part: silence up to it
+        // first, then the run.
         val origin = 1_000.0
         encoder.append(AudioFrame(ShortArray(960 * 2), wallClock = origin + 0.1))
-        assertEquals(listOf(1024, 1024, 1024, 1024, 1024, 960), sink.runs)
+        assertEquals(listOf(960, 1024, 1024, 1024, 1024, 960), sink.runs)
         val end = encoder.writtenSoundEndForTesting
-        assertEquals(5 * 1024.0 / 48_000 + 0.02, end, 1e-9)
+        assertEquals(4 * 1024.0 / 48_000 + 0.04, end, 1e-9)
         // Sound for a moment the track has passed is dropped.
         encoder.append(AudioFrame(ShortArray(960 * 2), wallClock = origin + 0.0))
         assertEquals(1, encoder.audioBehindTrackForTesting)
@@ -233,7 +234,7 @@ class ProgramEncoderTest {
         sink.accept = true
         encoder.drainAudio(limit = 4)
         assertEquals(end + 0.02, encoder.writtenSoundEndForTesting, 1e-9)
-        assertEquals(2, encoder.acceptedSoundCountForTesting)
+        assertEquals(3, encoder.acceptedSoundCountForTesting)
         // A sink that is not ready holds the queue, which is bounded.
         sink.ready = false
         repeat(ProgramEncoder.maximumPendingAudio + 3) {
@@ -241,6 +242,152 @@ class ProgramEncoderTest {
         }
         assertTrue(telemetry.errors.any { it.contains("sound queue overflowed") })
         encoder.soundSinkOverride = null
+    }
+
+    /** Twenty milliseconds of the mix: a quiet tone, or silence. */
+    private fun run(wall: Double, loud: Boolean = true) =
+        AudioFrame(ShortArray(960 * 2) { if (loud) 800 else 0 }, wallClock = wall)
+
+    /**
+     * A phone's recording mix waits one second against an opening sampled for one and a half, so the
+     * start of its part reaches the encoder before the origin is known. Dropped, it left the first half
+     * second or more of every phone take coded silence; held, the track starts with it. TS Director's
+     * `soundBeforeTheOriginIsHeld`.
+     */
+    @Test
+    fun soundBeforeTheOriginIsHeldAndPlacedWhenItSettles() {
+        val encoder = encoder()
+        val sink = GateSink()
+        encoder.soundSinkOverride = sink
+        // Captured five seconds ago, so each picture's age reads as its content lag and the part's
+        // origin is `origin` exactly.
+        val origin = wall - 5
+        encoder.start(origin)
+        fun pictures(range: IntRange) {
+            for (index in range) encoder.append(index.toDouble() / 30, captureWall = origin + index.toDouble() / 30, onClockGrid = true)
+        }
+        fun sound(range: IntRange) {
+            for (index in range) encoder.append(run(origin + index * 0.02))
+        }
+
+        // A third of a second of picture, then the part's first second of sound, all before the origin
+        // has had its 1.5 s: none of it can be placed yet, and none of it is written.
+        pictures(0 until 10)
+        sound(0 until 50)
+        assertTrue(encoder.soundDiagnosticsForTesting.origin < 0)
+        assertTrue(sink.runs.isEmpty())
+        // The opening settles, and the held second goes in at the head of the track, ahead of what
+        // follows.
+        pictures(10 until 60)
+        sound(50 until 100)
+
+        val d = encoder.soundDiagnosticsForTesting
+        assertEquals(origin, d.origin, 1e-6)
+        assertEquals(100, d.offered)
+        assertEquals(50, d.unseeded)
+        assertEquals(0, d.beforePart)
+        assertEquals("chunks of silence ahead of the sound", 0, d.silence)
+        assertEquals(0.0, d.first, 1e-6)
+        assertEquals(List(100) { 960 }, sink.runs)
+        assertEquals(100, encoder.acceptedSoundCountForTesting)
+        assertEquals(2.0, encoder.writtenSoundEndForTesting, 1e-9)
+        encoder.soundSinkOverride = null
+        encoder.finish()
+    }
+
+    /**
+     * TS Director's mix waits far longer than the opening, so what reaches it that early was captured
+     * before the part began: held, it is still left out once the origin says so.
+     */
+    @Test
+    fun heldSoundThatBelongsBeforeThePartIsLeftOut() {
+        val encoder = encoder()
+        val sink = GateSink()
+        encoder.soundSinkOverride = sink
+        val origin = wall - 5
+        encoder.start(origin)
+        encoder.append(0.0, captureWall = origin, onClockGrid = true)
+        // Captured four seconds before the part began.
+        for (index in 0 until 50) encoder.append(run(origin - 4 + index * 0.02))
+        for (index in 1 until 60) encoder.append(index.toDouble() / 30, captureWall = origin + index.toDouble() / 30, onClockGrid = true)
+        val d = encoder.soundDiagnosticsForTesting
+        assertEquals(50, d.unseeded)
+        assertEquals(50, d.beforePart)
+        assertEquals(-1.0, d.first, 0.0)
+        assertEquals(0, encoder.acceptedSoundCountForTesting)
+        encoder.drainAudio(limit = 8)
+        assertTrue(sink.runs.isEmpty())
+        encoder.soundSinkOverride = null
+        encoder.finish()
+    }
+
+    /** One AAC packet per 1024 samples of mix, saying whether any of them was sound. */
+    private class MarkingAac : StreamAudioEncoding {
+        override val audioSpecificConfig = byteArrayOf(0x11, 0x90.toByte())
+        override val primingSamples = 0
+        private val pending = mutableListOf<Short>()
+
+        override fun encode(samples: ShortArray): List<ByteArray> {
+            pending += samples.asList()
+            val out = mutableListOf<ByteArray>()
+            while (pending.size >= 1024 * 2) {
+                val packet = pending.subList(0, 1024 * 2)
+                out += byteArrayOf(0x21, if (packet.any { it.toInt() != 0 }) 1 else 0)
+                packet.clear()
+            }
+            return out
+        }
+
+        override fun finish(): List<ByteArray> = if (pending.isEmpty()) emptyList() else listOf(byteArrayOf(0x21, 0)).also { pending.clear() }
+
+        override fun reset() = pending.clear()
+
+        override fun close() = Unit
+    }
+
+    /**
+     * Q10 on the phone's own timing: pictures a picture delay (0.15 s) old when the programme places
+     * them, the recording's mix handing each run over a second after it was captured, and the room's
+     * sound from before Record. The first sound in the file sits within one AAC packet of where its
+     * capture puts it, the head of the part, and the track has no silent packet after it.
+     */
+    @Test
+    fun aPhoneTakeHasTheRoomsSoundFromItsFirstPacket() {
+        val encoder = ProgramEncoder(telemetry, EncodeSettings(), folder.root, clock = { wall }, uptime = { host }, audioEncoderFactory = { MarkingAac() })
+        val record = wall
+        encoder.start(record)
+        // The mix has been running since the screen opened, two seconds before Record.
+        var mixWall = record - 2.0
+        var origin: Double? = null
+        var firstCaptured: Double? = null
+        for (index in 0 until 4 * 30) {
+            wall += 1.0 / 30
+            host += 1.0 / 30
+            val slot = encoder.append(presentationTime = host, captureWall = wall - 0.15)
+            if (slot != null) encoder.appendEncoded(frame(slot, key = index % 60 == 0))
+            if (origin == null) origin = wall - 0.15
+            while (mixWall + 0.02 <= wall - 1.0) {
+                encoder.append(run(mixWall))
+                if (firstCaptured == null && mixWall >= origin) firstCaptured = mixWall
+                mixWall += 0.02
+            }
+        }
+        // The opening's sound came while the origin was being sampled.
+        assertTrue(encoder.soundDiagnosticsForTesting.unseeded > 0)
+        val file = encoder.finish(until = wall)!!
+        val packet = 1024.0 / 48_000
+        val audio = FragmentedMp4Reader.read(file)!!.audio!!
+        val marks = FragmentedMp4Reader.read(file)!!.samples().use { source -> audio.samples.map { source.read(it)[1].toInt() } }
+        val heard = marks.indexOf(1)
+        assertTrue("no sound in the file", heard >= 0)
+        val firstHeard = heard * packet
+        val placed = firstCaptured!! - origin!!
+        assertEquals("first heard at $firstHeard s, captured for $placed s", placed, firstHeard, packet)
+        assertTrue("first heard at $firstHeard s", firstHeard < 0.05)
+        // From there on the room is never silent until the sound the mix had not yet handed over.
+        val heardUntil = marks.lastIndexOf(1)
+        assertTrue(marks.subList(heard, heardUntil + 1).all { it == 1 })
+        assertTrue("sound ends at ${(heardUntil + 1) * packet} s", (heardUntil + 1) * packet > 4.0 - 1.0 - 0.15 - packet)
     }
 
     @Test
