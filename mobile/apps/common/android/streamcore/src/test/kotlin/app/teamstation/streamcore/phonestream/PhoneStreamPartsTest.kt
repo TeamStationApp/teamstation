@@ -82,6 +82,39 @@ class PhoneStreamPartsTest {
     }
 
     @Test
+    fun theLiveStartIsSentAsAnInstantOnTheStreamItPlaces() {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"s1"}"""))
+        server.enqueue(MockResponse().setResponseCode(410))
+        server.enqueue(MockResponse().setResponseCode(410).setBody("""{"message":"Ended"}"""))
+        server.enqueue(MockResponse().setResponseCode(503))
+        runBlocking { client().reportLiveStart("g1", "s1", 1_790_000_000.375) }
+        val request = server.takeRequest(1, TimeUnit.SECONDS)!!
+        assertEquals("PATCH", request.method)
+        assertEquals("/api/v1/games/g1/live-streams/s1", request.path)
+        assertEquals("Bearer token-0000", request.getHeader("authorization"))
+        assertEquals("2026-09-21T14:13:20.375Z", JSONObject(request.body.readUtf8()).getString("liveStartedAt"))
+        val errors = (1..3).map {
+            try {
+                runBlocking { client().reportLiveStart("g1", "s1", 1_790_000_000.0) }
+                null
+            } catch (error: LiveStreamClient.Error) {
+                error
+            }
+        }
+        assertEquals(LiveStreamClient.endedMessage, (errors[0] as LiveStreamClient.Error.StreamEnded).message)
+        assertEquals("Ended", (errors[1] as LiveStreamClient.Error.StreamEnded).message)
+        assertEquals(503, (errors[2] as LiveStreamClient.Error.Server).status)
+        val closed = java.net.ServerSocket(0).use { it.localPort }
+        val offline = try {
+            runBlocking { LiveStreamClient("http://127.0.0.1:$closed", "token-0000").reportLiveStart("g1", "s1", 1.0) }
+            null
+        } catch (error: LiveStreamClient.Error) {
+            error
+        }
+        assertEquals(LiveStreamClient.Error.Offline, offline)
+    }
+
+    @Test
     fun aStartSendsNoHeldStreamAndAnAnswerWithoutAUrlHasNone() {
         server.enqueue(MockResponse().setResponseCode(201).setBody("""{"id":"s1","url":null}"""))
         val stream = runBlocking { client().requestLiveStream("g1", "Home Plate", "d1", "Google Pixel 10") }

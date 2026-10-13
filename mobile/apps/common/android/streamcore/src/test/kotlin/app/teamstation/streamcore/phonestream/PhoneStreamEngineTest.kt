@@ -36,6 +36,7 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -69,6 +70,9 @@ class PhoneStreamEngineTest {
 
     private val server = MockWebServer()
     private val requests = ConcurrentLinkedQueue<RecordedRequest>()
+
+    /** What the next `PATCH …/live-streams/:id` are answered, in turn; then 200. */
+    private val patchAnswers = ConcurrentLinkedQueue<MockResponse>()
     private val parts = mutableMapOf<Int, ByteArray>()
 
     /** What the stand-in server answers next to a live-stream request: a URL, or a status. */
@@ -105,6 +109,7 @@ class PhoneStreamEngineTest {
                 requests += request
                 val path = request.path ?: ""
                 return when {
+                    request.method == "PATCH" && path.contains("/live-streams/") -> patchAnswers.poll() ?: json("{}")
                     path.contains("/live-streams") -> liveStreamAnswer
                     request.method == "POST" && path.endsWith("/director/uploads") ->
                         json("""{"uploadId":"u1","partSize":65536,"parts":${partsFor(JSONObject(request.body.clone().readUtf8()).getLong("sizeBytes"))},"received":[]}""")
@@ -271,6 +276,7 @@ class PhoneStreamEngineTest {
         var sound = 0
         var settings: StreamSettings? = null
         override var running = false
+        override var liveTimelineStart: Double? = null
         override val metrics = ProgramStreamer.Metrics(rate = app.teamstation.streamcore.stream.StreamRateTelemetry(bitrate = 2_000_000))
 
         override suspend fun start(urlString: String, settings: StreamSettings, onFailure: ((String) -> Unit)?) {
@@ -615,7 +621,12 @@ class PhoneStreamEngineTest {
         assertTrue(body.getBoolean("wholeStream"))
         assertEquals("g1", body.getString("gameId"))
         assertEquals("program", body.getString("kind"))
-        assertEquals(app.teamstation.streamcore.upload.UploadClient.instant(take.startedAt), body.getString("startAt"))
+        // It starts where part 1's first picture was captured, not where Record was pressed.
+        val partOne = starts.getValue(1)
+        assertEquals(partOne, PhoneStreamEngine.uploadStart(anchors, take.startedAt), 0.0)
+        assertNotEquals(take.startedAt, partOne, 1e-6)
+        assertEquals(take.startedAt, partOne, 0.5)
+        assertEquals(app.teamstation.streamcore.upload.UploadClient.instant(partOne), body.getString("startAt"))
         val uploaded = runBlocking { second.recordings() }.single()
         assertTrue(uploaded.isUploaded)
         assertEquals("v1", uploaded.videoId)
@@ -627,7 +638,7 @@ class PhoneStreamEngineTest {
         val sent = ByteArrayOutputStream().apply { synchronized(parts) { parts.toSortedMap().values.forEach { write(it) } } }.toByteArray()
         val export = folder.newFile("export.mp4").apply { writeBytes(sent) }
         val reading = FragmentedMp4Reader.read(export)!!
-        assertEquals(endedAt - startedAt, reading.video!!.endSeconds!!, 1.0 / 30 + 1e-6)
+        assertEquals(endedAt - partOne, reading.video!!.endSeconds!!, 1.0 / 30 + 1e-6)
         // Uploaded, it is not sent again, and the stream's next take is a new one.
         assertEquals("v1", runBlocking { second.uploadRecording("s1", server.url("/").toString(), "token-0000", "Home Plate") })
         requests.clear()
@@ -635,6 +646,41 @@ class PhoneStreamEngineTest {
         runBlocking { second.startRecording("rtmp://ingest.example.test/live/key-0003", "s1", "g1", "Home Plate", request) }
         assertEquals(2, runBlocking { second.recordings() }.size)
         runBlocking { second.stopRecording() }
+    }
+
+    @Test
+    fun theLiveVideoIsPlacedByTheFirstPublishedPictureOncePerSession() {
+        val engine = opened()
+        start(engine)
+        // Nothing has gone out yet: nothing to say.
+        on { engine.publishStatus() }
+        assertTrue(requests.none { it.method == "PATCH" })
+        // The first picture went out, captured a picture delay before; the server is away once.
+        val captured = wall - 0.15
+        streamOutput.liveTimelineStart = captured
+        patchAnswers += MockResponse().setResponseCode(503)
+        on { engine.publishStatus() }
+        on { engine.publishStatus() }
+        runBlocking { engine.liveStartReport!!.join() }
+        val patches = requests.filter { it.method == "PATCH" }
+        assertEquals(2, patches.size)
+        for (patch in patches) {
+            assertEquals("/api/v1/games/g1/live-streams/s1", patch.path)
+            assertEquals(app.teamstation.streamcore.upload.UploadClient.instant(captured), JSONObject(patch.body.clone().readUtf8()).getString("liveStartedAt"))
+        }
+        // A redial in the same session says nothing more.
+        on { engine.publishStatus() }
+        assertEquals(2, requests.count { it.method == "PATCH" })
+        runBlocking { engine.stopRecording() }
+
+        // A new session on an ended stream says it once, and stops at the 410.
+        start(engine, "s2")
+        patchAnswers += MockResponse().setResponseCode(410)
+        on { engine.publishStatus() }
+        runBlocking { engine.liveStartReport!!.join() }
+        assertEquals(1, requests.count { it.method == "PATCH" && it.path!!.endsWith("/s2") })
+        runBlocking { engine.stopRecording() }
+        assertEquals(PhoneStreamEngine.uploadStart(emptyList(), 12.5), 12.5, 0.0)
     }
 
     @Test

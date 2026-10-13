@@ -26,6 +26,9 @@ import java.util.concurrent.Executors
 interface PhoneStreamOutput : StreamPublishing, ProgrammeStreamTarget {
     /** Told of every new encoder input surface, and of null when the session closes. */
     fun onInputSurface(listener: ((Surface?) -> Unit)?)
+
+    /** When the first picture this publish sent was captured, in wall seconds; null before one has gone. */
+    val liveTimelineStart: Double?
 }
 
 /** [ProgramStreamer] as the phone's stream. */
@@ -33,6 +36,7 @@ class ProgramStreamerOutput(val streamer: ProgramStreamer) : PhoneStreamOutput, 
     override fun admit(presentationTime: Double): Boolean = streamer.append(presentationTime)
     override fun append(audio: AudioFrame) = streamer.append(audio)
     override fun onInputSurface(listener: ((Surface?) -> Unit)?) = streamer.onInputSurface(listener)
+    override val liveTimelineStart: Double? get() = streamer.liveTimelineStart
 }
 
 /**

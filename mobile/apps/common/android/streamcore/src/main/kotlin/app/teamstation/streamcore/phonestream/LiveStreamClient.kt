@@ -6,6 +6,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import app.teamstation.streamcore.upload.UploadClient
 import org.json.JSONObject
 import java.io.IOException
 import java.net.URLEncoder
@@ -80,6 +81,36 @@ class LiveStreamClient(
                     label = json.optStringOrNull("label"),
                     state = json.optStringOrNull("state")
                 )
+            }
+        }
+    }
+
+    /**
+     * Says when the first picture of the stream's first publish was captured, in wall seconds:
+     * `PATCH …/live-streams/:id { liveStartedAt }`. TeamStation places the stream's live video there,
+     * where the angle grid lines it up with the game's other cameras, instead of where the publish
+     * reached it. The first account holds; one of a later publish is ignored.
+     */
+    suspend fun reportLiveStart(gameId: String, streamId: String, startedAt: Double) {
+        val body = JSONObject().put("liveStartedAt", UploadClient.instant(startedAt))
+        val request = Request.Builder()
+            .url("$base/api/v1/games/${escape(gameId)}/live-streams/${escape(streamId)}")
+            .header("accept", "application/json")
+            .header("authorization", "Bearer $token")
+            .patch(body.toString().toRequestBody(jsonType))
+            .build()
+        withContext(Dispatchers.IO) {
+            val response = try {
+                http.newCall(request).execute()
+            } catch (error: IOException) {
+                throw Error.Offline
+            }
+            response.use { answer ->
+                val status = answer.code
+                when {
+                    status == 410 -> throw Error.StreamEnded(reason(answer.body?.string().orEmpty()) ?: endedMessage)
+                    !answer.isSuccessful -> throw Error.Server(status, "TeamStation answered $status")
+                }
             }
         }
     }

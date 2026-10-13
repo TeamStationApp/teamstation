@@ -56,7 +56,10 @@ import java.util.concurrent.CopyOnWriteArrayList
  * - A take finishes its part cleanly when free space falls under 500 MB, and the stream goes on.
  * - [uploadRecording] exports the take's programme (copied when unbroken, placed by wall clock across
  *   parts) and sends it with [UploadService], keeping the upload id on the take so a killed upload
- *   resumes; [resumePendingUploads] restarts every such upload not already running here.
+ *   resumes; [resumePendingUploads] restarts every such upload not already running here. The export
+ *   starts at part 1's first picture, and its `startAt` is when that picture was captured.
+ * - Once a session's first publish has sent a picture, TeamStation is told when that picture was
+ *   captured ([LiveStreamClient.reportLiveStart]), which is where it places the stream's live video.
  */
 class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     private val scope = CoroutineScope(SupervisorJob() + environment.dispatcher)
@@ -103,6 +106,17 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
 
     /** The take a part is being written for, null between parts. */
     private var recordingTakeID: Long? = null
+
+    /**
+     * Set as a session starts streaming, until TeamStation has been told when its first published
+     * picture was captured; see [reportLiveStartIfReady].
+     */
+    @Volatile
+    private var liveStartWanted = false
+
+    /** The report of the live start, while it is being sent. */
+    internal var liveStartReport: Job? = null
+        private set
     private var recordingVideo: StreamVideoEncoding? = null
     private var lastError: PhoneStreamError? = null
     private var statusJob: Job? = null
@@ -271,6 +285,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         catalog.setLive(PhoneCatalog.LiveContext(liveStreamId, gameId, angleName))
         take = StreamTake(liveStreamId, gameId, angleName, request, recordingID, firstURL = rtmpUrl, cachedURL = rtmpUrl)
         recordingTakeID = recordingID
+        liveStartWanted = true
         beginLiveSession(recordingID)
         streamController.start(StreamSessionController.DialReason.START)
         startStorageLoop()
@@ -285,6 +300,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         if (take == null) return
         val endedAt = environment.clock.now()
         take = null
+        liveStartWanted = false
         streamController.stop()
         storageJob?.cancel()
         storageJob = null
@@ -436,6 +452,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
             }
         }
         beginLiveSession(recordingTakeID)
+        liveStartWanted = true
         streamController.start(StreamSessionController.DialReason.REDIAL)
         startStorageLoop()
         environment.foreground.recordingStarted(live.angleName)
@@ -519,7 +536,35 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         if (streamController.phase == StreamSessionController.Phase.LIVE && recordingTakeID == null && held?.recordingID != null) {
             catalog.markPublishedOutsideParts(held.recordingID)
         }
+        reportLiveStartIfReady()
         emit(PhoneStreamEvent.Status(status))
+    }
+
+    /**
+     * Tells TeamStation when the first picture of this session's first publish was captured, once it
+     * has gone out: TeamStation places the stream's live video there, so it lines up on the wall clock
+     * with the game's other cameras. Placed by when the publish reached the server instead, this
+     * phone's angle played as far behind as its picture delay and dial put it. The server keeps the
+     * first account a stream gets, so a resumed session's, of a later publish, changes nothing there.
+     */
+    private fun reportLiveStartIfReady() {
+        if (!liveStartWanted) return
+        val held = take ?: return
+        val started = stream.liveTimelineStart ?: return
+        liveStartWanted = false
+        val client = LiveStreamClient(held.request.apiBase, held.request.token, environment.http)
+        liveStartReport = scope.launch {
+            for (attempt in 1..LIVE_START_ATTEMPTS) {
+                try {
+                    client.reportLiveStart(held.gameId, held.liveStreamId, started)
+                    return@launch
+                } catch (ended: LiveStreamClient.Error.StreamEnded) {
+                    return@launch
+                } catch (error: LiveStreamClient.Error) {
+                    if (attempt < LIVE_START_ATTEMPTS) delay(LIVE_START_RETRY_MILLIS)
+                }
+            }
+        }
     }
 
     // MARK: - Camera
@@ -671,6 +716,9 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         if (recording.endedAt == null) catalog.closeAtLastAnchor(id)
         val summary = index.recording(id) ?: throw PhoneStreamException(PhoneStreamError.NO_RECORDING)
         val output = environment.storage.export(id)
+        // From part 1's first picture, placed where it was captured: the upload says when its first
+        // frame happened, and the server lines it up with the game's other angles by nothing else.
+        val start = uploadStart(index.programAnchors(id), summary.startedAt)
         // A resumed upload sends the bytes the server already has part of: the export it was opened on.
         if (recording.uploadId == null || !output.isFile) {
             withContext(environment.ioDispatcher) {
@@ -685,7 +733,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                     parts = summary.programFilenames.map { File(environment.storage.program, it) },
                     anchors = index.programAnchors(id),
                     resumeCount = summary.resumeCount,
-                    windowStart = summary.startedAt,
+                    windowStart = start,
                     windowEnd = summary.endedAt,
                     frameRate = PhoneStreamProfile.frameRate,
                     silentPacket = silence,
@@ -701,7 +749,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
             gameId = recording.gameId,
             title = uploadTitle,
             kind = "program",
-            startedAt = recording.startedAt,
+            startedAt = start,
             uploadId = recording.uploadId,
             liveStreamId = liveStreamId,
             wholeStream = if (recording.coversWholeStream) true else null,
@@ -760,6 +808,23 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     companion object {
         /** How long a part's encoder has to hand over its last pictures at a stop. */
         const val finishInputMillis = 1_000L
+
+        /**
+         * How many times the live start is offered to TeamStation, [LIVE_START_RETRY_MILLIS] apart,
+         * before it is left to the server's own placement.
+         */
+        const val LIVE_START_ATTEMPTS = 3
+        const val LIVE_START_RETRY_MILLIS = 2_000L
+
+        /**
+         * Where an upload of the take with [anchors] starts on the wall clock: when part 1's first
+         * picture was captured, the same origin its sound was placed by. The take's own start is when
+         * Record was pressed, which is not when any picture in the file was taken, so the phones'
+         * uploads sat on the wall clock as far apart as their picture delays and encoder starts. A
+         * take with no anchor for its first part has nothing better than its start.
+         */
+        fun uploadStart(anchors: List<RecordingCatalog.ProgramAnchor>, startedAt: Double): Double =
+            RecordingCatalog.partStarts(anchors)[1] ?: startedAt
 
         @Volatile
         private var instance: PhoneStreamEngine? = null
