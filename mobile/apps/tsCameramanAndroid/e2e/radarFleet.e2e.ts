@@ -59,8 +59,11 @@ async function main(): Promise<void> {
   try {
     await m.launchApp({ appId: APP_ID, clearState: false, stopApp: true })
     await m.extendedWaitUntil({ visible: { id: 'broadcast-button' }, timeout: 30000 })
-    await m.tapOn({ id: 'broadcast-button' })
-    await m.extendedWaitUntil({ visible: { id: 'broadcasting-pill' }, timeout: 30000 })
+    // Cameraman comes back broadcasting if it was when it stopped; the button would then stop it.
+    if (!(await shows(m, { id: 'broadcasting-pill' }))) {
+      await m.tapOn({ id: 'broadcast-button' })
+      await m.extendedWaitUntil({ visible: { id: 'broadcasting-pill' }, timeout: 30000 })
+    }
 
     await m.tapOn({ id: 'settings-button' })
     await m.scrollUntilVisible({ element: { id: 'settings-radar-enabled' }, direction: 'DOWN', timeout: 10000 })
