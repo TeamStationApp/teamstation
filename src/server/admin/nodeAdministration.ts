@@ -16,11 +16,11 @@ import { currentActor } from '../groups/rights'
 
 export async function requireNodeAdmin(
   db: Kysely<Database>,
-  actor: Actor
+  actor: Actor,
+  message = 'Only a node administrator can manage accounts'
 ): Promise<Actor> {
   const fresh = await currentActor(db, actor)
-  if (!fresh.isAdmin)
-    throw forbidden('Only a node administrator can manage accounts')
+  if (!fresh.isAdmin) throw forbidden(message)
   return fresh
 }
 async function activeNodeIds(db: Kysely<Database>): Promise<number[]> {

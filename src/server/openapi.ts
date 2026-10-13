@@ -4352,6 +4352,69 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/node/mail': {
+        get: {
+          summary:
+            'Whether a node administrator is sending invitations and added notices',
+          description:
+            'Sign-in codes are not this setting. False, the default, sends none of the other mail.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description: 'The current account-mail switch',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['accountMessages'],
+                    properties: { accountMessages: { type: 'boolean' } }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            403: errorResponse
+          }
+        },
+        put: {
+          summary: 'A node administrator turns account mail on or off',
+          description:
+            'Invitations and notices that somebody was added follow this switch. Sign-in codes keep sending either way.',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['accountMessages'],
+                  properties: { accountMessages: { type: 'boolean' } }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The switch after the change',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['accountMessages'],
+                    properties: { accountMessages: { type: 'boolean' } }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse
+          }
+        }
+      },
       '/users/{userId}/administration': {
         patch: {
           summary:
