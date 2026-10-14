@@ -231,4 +231,27 @@ class FragmentedMp4WriterTest {
         assertEquals(20.0, reader.video!!.endSeconds!!, 1e-6)
         assertTrue(reader.fragments >= 3)
     }
+
+    @Test
+    fun aForceTheStorageRefusesSaysSoAndAClosedFileHasNothingToForce() {
+        val file = folder.newFile("refused.mp4")
+        var refuse = true
+        val writer = FragmentedMp4Writer(file, videoTrack, audioTrack, syncEachFragment = false, forceToStorage = {
+            if (refuse) throw java.io.SyncFailedException("sync failed")
+        })
+        repeat(4) { writer.writeVideo(bytes(0, 0, 0, 1, if (it == 0) 0x26 else 0x02), it * 1.5, it == 0) }
+        assertTrue(writer.hasPendingSync)
+        assertFalse(writer.syncPending())
+        // Not forced, so still pending.
+        assertTrue(writer.hasPendingSync)
+        refuse = false
+        assertTrue(writer.syncPending())
+        assertFalse(writer.hasPendingSync)
+        // Closed meanwhile: its owner forced it as it finished, or let it go.
+        repeat(3) { writer.writeVideo(bytes(0, 0, 0, 1, 0x02), 6.0 + it * 1.5, false) }
+        assertTrue(writer.hasPendingSync)
+        writer.abandon()
+        refuse = true
+        assertTrue(writer.syncPending())
+    }
 }
