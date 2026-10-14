@@ -710,7 +710,14 @@ extension PhoneStreamTests {
       #expect(work.ended == [ finishTask ])
       #expect(await waitUntil { engine.status.phase == "live" })
       try await Task.sleep(for: .seconds(3))
-      await engine.stopRecording()
+      // Home or lock straight after Stop: the Stop's finish runs under a background task of its own.
+      let stopping = Task { @MainActor in await engine.stopRecording() }
+      #expect(await waitUntil { engine.isFinishingPart })
+      #expect(work.begun.filter { $0 == "Finish part" }.count == 2)
+      let stopTask = try #require(work.id(of: "Finish part"))
+      #expect(!work.ended.contains(stopTask))
+      await stopping.value
+      #expect(work.ended == [ finishTask, stopTask ])
       #expect(try engine.recordings().first?.parts == 2)
       await engine.enterForeground()
       #expect(!engine.isRecording)

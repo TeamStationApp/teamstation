@@ -428,7 +428,15 @@ public final class PhoneStreamEngine {
   /// Finishes the part being written: out to `endedAt` plus the picture delay, so its file reaches
   /// the moment of the stop, with the recording's mix flushed so its sound reaches its picture.
   /// `closingTake` writes the take's end; the background leaves it open for the resume.
+  ///
+  /// Every finish runs under a background task, not only the background's own: its tail and its
+  /// writer's close take a second or more, and Home or lock straight after Stop, or after a
+  /// low-storage stop, otherwise suspended it with the part file unclosed and the take's end
+  /// unwritten until the next launch. Nothing is cut short when the time runs out: a part its
+  /// writer did not close is closed by the resume or the next launch as a kill's would be.
   private func finishPart(endedAt: WallClock, closingTake: Bool) async {
+    let work = environment.backgroundWork.begin("Finish part") {}
+    defer { environment.backgroundWork.end(work) }
     recordingTakeID = nil
     recordingSession.detachAnchors()
     finishGeneration += 1
@@ -580,8 +588,6 @@ public final class PhoneStreamEngine {
 
   /// The app went to the background: capture ends, so the part is finished, the heartbeat stops and
   /// the stream drops. The take stays open for the foreground to continue.
-  /// The part is finished under a background task: its tail and its writer's close take a second or
-  /// more, and the system suspends an app in the background long before that without one.
   public func enterBackground() async {
     guard stream != nil else { return }
     suspendedInBackground = true
@@ -590,11 +596,7 @@ public final class PhoneStreamEngine {
     storageLoop = nil
     recordingSession.stopHeartbeat()
     if recordingTakeID != nil {
-      // Nothing to cut short when the time runs out: the take stays open either way, and a part
-      // its writer did not close is closed by the resume as a kill's would be.
-      let work = environment.backgroundWork.begin("Finish part") {}
       await finishPart(endedAt: environment.clock.now, closingTake: false)
-      environment.backgroundWork.end(work)
     }
     publishStatus()
   }
