@@ -51,6 +51,8 @@ const rem = (size: number): number => Math.round(BASE_REM * size)
 
 export const tsDark: Theme = {
   scoringSurface,
+  chatAttentionBackgroundColor: '#0065D1',
+  chatAttentionTextColor: '#FFFFFF',
   rem,
   isDark: true,
 
