@@ -259,10 +259,15 @@ public final class PhoneStreamEngine {
     )
   }
 
-  /// Ends the capture and the programme, stopping a recording first.
+  /// Ends the capture and the programme, stopping a recording first. A part still finishing after
+  /// Stop is waited for: stopping the programme under it stopped the recording's mix before the
+  /// finish flushed it, and the take lost its last second of sound.
   public func close() async {
     guard isOpen else { return }
     if stream != nil { await stopRecording() }
+    await partFinished()
+    // A second close that waited for the same finish finds this one done.
+    guard isOpen else { return }
     statusLoop?.cancel()
     statusLoop = nil
     captureRestart?.cancel()

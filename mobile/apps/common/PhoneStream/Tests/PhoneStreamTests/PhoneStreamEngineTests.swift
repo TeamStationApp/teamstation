@@ -771,6 +771,37 @@ extension PhoneStreamTests {
       sink.drop()
     }
 
+    @Test("""
+      Close straight after Stop waits for the part to finish, so the take's sound reaches its last \
+      picture
+      """)
+    func closeStraightAfterStop() async throws {
+      StubServer.reset()
+      let sink = TestRTMPSink()
+      try sink.start()
+      let rig = EngineRig(root: try scratchDirectory())
+      let (engine, _) = try await recording(rig, sink: sink)
+      try await Task.sleep(for: .seconds(3))
+      // Slide to stop, then Close as soon as the screen allows it, while the finish is running.
+      let stopping = Task { @MainActor in await engine.stopRecording() }
+      #expect(await waitUntil { engine.isFinishingPart })
+      let closings = [
+        Task { @MainActor in await engine.close() },
+        Task { @MainActor in await engine.close() }
+      ]
+      for closing in closings { await closing.value }
+      #expect(!engine.isFinishingPart)
+      #expect(!engine.isOpen)
+      await stopping.value
+      let take = try #require(try engine.recordings().first)
+      #expect(take.endedAt != nil)
+      let part = try await readBack(try #require(try partFiles(engine, take).first))
+      // The mix was flushed through the tail: its sound runs to within a packet or two of the picture.
+      #expect(part.hasAAC)
+      #expect(part.audioEnd >= part.videoEnd - 0.1, "sound ends at \(part.audioEnd) s, picture at \(part.videoEnd) s")
+      sink.drop()
+    }
+
     @Test("A foreground resume that cannot run says so in the status instead of going quiet")
     func foregroundResumeThatFails() async throws {
       StubServer.reset()
