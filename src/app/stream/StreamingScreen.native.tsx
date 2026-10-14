@@ -234,7 +234,8 @@ function StreamingOverlay(
         localRecording: 'recorded'
       })
       .catch(() => {
-        // Said again when the next part ends.
+        // Said again when the next part ends, and, after the last part, by
+        // `useResumePendingUploads` when the app next opens or comes back.
         reported.current = false
       })
   }, [client, session])

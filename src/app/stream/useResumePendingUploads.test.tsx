@@ -227,6 +227,68 @@ describe('resuming recording uploads', function () {
     expect(signedIn.listed).deep.equals([GAME])
   })
 
+  it('tells the server about a take whose report failed after its last part', async function () {
+    // A slide to stop on a weak signal, then Close: the screen's report
+    // failed, and no further part ends to say it again.
+    const native = fakePhoneStreamModule({
+      capabilities: SUPPORTED,
+      recordings: [
+        cutOff('liv_unreported', { uploadTitle: undefined }),
+        cutOff('liv_reported', { uploadTitle: undefined }),
+        cutOff('liv_theirs', { uploadTitle: undefined }),
+        cutOff('liv_landed', {
+          uploadTitle: undefined,
+          uploadedAt: 1_790_000_100_000
+        }),
+        cutOff('liv_opened', {
+          gameId: OTHER_GAME,
+          uploadId: 'dup_00000000000000000001'
+        })
+      ]
+    })
+    const listed: string[] = []
+    const reported: unknown[] = []
+    const signedIn = {
+      baseUrl: API,
+      token: 'token-0000',
+      liveStreams: async (gameId: string): Promise<GameLiveStreams> => {
+        listed.push(gameId)
+        return {
+          gameId,
+          mine: [
+            { id: 'liv_unreported', localRecording: 'none' },
+            { id: 'liv_reported', localRecording: 'recorded' },
+            { id: 'liv_landed', localRecording: 'none' }
+          ],
+          others: [{ id: 'liv_theirs', localRecording: 'none' }],
+          canAdd: 4,
+          maxCameras: 4
+        } as unknown as GameLiveStreams
+      },
+      updateLiveStream: async (
+        gameId: string,
+        streamId: string,
+        change: unknown
+      ): Promise<unknown> => {
+        reported.push([gameId, streamId, change])
+        return {}
+      }
+    } as unknown as TeamStationClient
+    const appState = fakeAppState()
+    await mount({
+      client: signedIn,
+      signedInAs: 7,
+      phone: makePhoneStream(native),
+      appState
+    })
+    const once = [[GAME, 'liv_unreported', { localRecording: 'recorded' }]]
+    expect(reported).deep.equals(once)
+    // A take whose upload the server opened is not asked about.
+    expect(listed).deep.equals([GAME])
+    await appState.turn('active')
+    expect(reported).deep.equals([...once, ...once])
+  })
+
   it('does nothing signed out, without a token, or on a phone that cannot record', async function () {
     const native = fakePhoneStreamModule({
       capabilities: SUPPORTED,

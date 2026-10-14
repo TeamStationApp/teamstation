@@ -33,6 +33,14 @@ export interface AppStateLike {
  * somebody else who used this phone, or cannot be told apart from one, and is
  * left waiting for them. Opened under the wrong account it would land as that
  * account's upload, and its maker's reminder would never settle.
+ *
+ * It also tells the server about every take of this account's it has not
+ * heard of. The streaming screen says so when a part ends, and a failed
+ * report is said again only when another part ends: after a take's last
+ * part, a slide to stop on a weak signal and then Close, nothing would say
+ * it again, and the take would never get its upload reminder. So any take
+ * never uploaded nor opened for upload, on a stream the camera list still
+ * says holds no recording (`localRecording: 'none'`), is reported here.
  */
 export function useResumePendingUploads(
   client: TeamStationClient,
@@ -48,28 +56,54 @@ export function useResumePendingUploads(
       if (token == null || token === '') return
       const found = await phone.capabilities()
       if (!alive || !found.supported) return
-      const pending = (await phone.recordings()).filter(
+      const recordings = await phone.recordings()
+      const pending = recordings.filter(
         recording =>
           recording.hasPendingUpload &&
           !recording.uploadRunning &&
           recording.uploadedAt == null
       )
-      const games = new Map<string, PhoneRecording[]>()
-      for (const recording of pending) {
-        games.set(recording.gameId, [
-          ...(games.get(recording.gameId) ?? []),
-          recording
-        ])
+      // Takes the server has not opened an upload for: what it knows of them
+      // is only what the streaming screen managed to tell it.
+      const unopened = recordings.filter(
+        recording => recording.uploadedAt == null && recording.uploadId == null
+      )
+      const games = new Map<
+        string,
+        { pending: PhoneRecording[]; unopened: PhoneRecording[] }
+      >()
+      const gameOf = (
+        gameId: string
+      ): { pending: PhoneRecording[]; unopened: PhoneRecording[] } => {
+        const found = games.get(gameId) ?? { pending: [], unopened: [] }
+        games.set(gameId, found)
+        return found
       }
-      for (const [gameId, takes] of games) {
+      for (const recording of pending) {
+        gameOf(recording.gameId).pending.push(recording)
+      }
+      for (const recording of unopened) {
+        gameOf(recording.gameId).unopened.push(recording)
+      }
+      for (const [gameId, { pending: takes, unopened: unreported }] of games) {
         // Only takes the server has not opened yet need the camera list.
         // Unreadable, or not this account's game to film: whose those takes
         // are is unknown, so they wait.
-        const streams = takes.every(take => take.uploadId != null)
-          ? undefined
-          : await client.liveStreams(gameId).catch(() => undefined)
+        const streams =
+          unreported.length === 0
+            ? undefined
+            : await client.liveStreams(gameId).catch(() => undefined)
         if (!alive) return
         const mine = new Set(streams?.mine.map(stream => stream.id) ?? [])
+        for (const take of unreported) {
+          const stream = streams?.mine.find(
+            item => item.id === take.liveStreamId
+          )
+          if (stream?.localRecording !== 'none') continue
+          client
+            .updateLiveStream(gameId, stream.id, { localRecording: 'recorded' })
+            .catch(() => undefined)
+        }
         for (const take of takes) {
           if (take.uploadId == null && !mine.has(take.liveStreamId)) continue
           phone
