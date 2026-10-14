@@ -10,10 +10,13 @@ import { Button } from './Button'
 import { Emblem } from './Emblem'
 import { initialsOf } from './initials'
 import { PhotoGrid } from './PhotoGrid'
+import { TeamEmblem } from './TeamEmblem'
+import { teamInitialsOf } from './teamTile'
 
 export function GroupPictureChooser({
   client,
   name,
+  team = false,
   allowCatalog = false,
   value,
   onChange,
@@ -21,12 +24,15 @@ export function GroupPictureChooser({
 }: {
   client: TeamStationClient
   name: string
+  team?: boolean
   allowCatalog?: boolean
   value?: GroupPicture
   onChange: (picture: GroupPicture) => void
   pickPhoto?: typeof pickAccountPhoto
 }): React.ReactElement {
   const styles = getStyles(useTheme())
+  const initials = team ? teamInitialsOf(name) : initialsOf(name)
+  const letters = initials === '' && team ? 'T' : initials
   const [entries, setEntries] = useState<AvailablePicture[]>([])
   const [error, setError] = useState('')
   const load = useCallback(async (): Promise<void> => {
@@ -118,9 +124,13 @@ export function GroupPictureChooser({
       {value != null && value.catalogId == null && value.image == null && (
         <View
           style={styles.initials}
-          accessibilityLabel={`Initials preview: ${initialsOf(name)}`}
+          accessibilityLabel={`Initials preview: ${letters}`}
         >
-          <Emblem fallback={initialsOf(name)} size={6} />
+          {team ? (
+            <TeamEmblem name={name} size={6} />
+          ) : (
+            <Emblem fallback={initialsOf(name)} size={6} />
+          )}
           <Text style={styles.hint}>Initials selected.</Text>
         </View>
       )}

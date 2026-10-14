@@ -29,7 +29,7 @@ export function teamInitialsOf(name: string): string {
 }
 
 /**
- * Eight colours a tile can be, each dark enough under white letters to read
+ * Thirty-two colours a tile can be, each dark enough under white letters to read
  * at 4.5:1 or better.
  */
 export const TEAM_TINTS = [
@@ -40,20 +40,44 @@ export const TEAM_TINTS = [
   '#0F766E', // teal
   '#1D4ED8', // blue
   '#6D28D9', // violet
-  '#BE185D' // pink
+  '#BE185D', // pink
+  '#991B1B',
+  '#9A3412',
+  '#92400E',
+  '#166534',
+  '#115E59',
+  '#1E40AF',
+  '#5B21B6',
+  '#9D174D',
+  '#7F1D1D',
+  '#7C2D12',
+  '#78350F',
+  '#14532D',
+  '#134E4A',
+  '#1E3A8A',
+  '#4C1D95',
+  '#831843',
+  '#9F1239',
+  '#854D0E',
+  '#3F6212',
+  '#065F46',
+  '#155E75',
+  '#075985',
+  '#3730A3',
+  '#86198F'
 ] as const
 
 /**
  * The colour of a team's tile.
  *
- * Picked by a hash of the team's id, so it looks random across a list and is
+ * Picked by a hash of the team's trimmed name, so it is
  * the same for a team on every visit, every screen, and every platform. A
- * rename does not change it.
+ * rename may change it.
  */
 export function teamTint(key: string): string {
   // 32-bit FNV-1a.
   let hash = 0x811c9dc5
-  for (const unit of Array.from(key)) {
+  for (const unit of Array.from(key.trim())) {
     const code = unit.codePointAt(0) ?? 0
     hash ^= code
     hash = Math.imul(hash, 0x01000193) >>> 0

@@ -12,6 +12,7 @@ import { GroupPictureChooser } from './GroupPictureChooser'
 export function PictureSheet({
   client,
   name,
+  team = false,
   allowCatalog = false,
   pickPhoto,
   onSave,
@@ -19,6 +20,7 @@ export function PictureSheet({
 }: {
   client: TeamStationClient
   name: string
+  team?: boolean
   allowCatalog?: boolean
   pickPhoto?: typeof pickAccountPhoto
   onSave: (choice: GroupPicture) => Promise<void>
@@ -69,6 +71,7 @@ export function PictureSheet({
             <GroupPictureChooser
               client={client}
               name={name}
+              team={team}
               allowCatalog={allowCatalog}
               pickPhoto={pickPhoto}
               value={choice}

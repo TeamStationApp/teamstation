@@ -917,6 +917,7 @@ describe('creation and organization interface behavior', () => {
     await settle()
     await press('Open Demo Hawks')
     expect(opened).equals('team_demo')
+    api.discoverGroups = async () => [{ ...group, kind: 'league' }]
     await press('Leagues')
     await settle()
     await press('Seasons')

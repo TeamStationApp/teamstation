@@ -5,8 +5,16 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
 import { Emblem } from './Emblem'
 import { Icon, type IconName } from './Icon'
+import { TeamEmblem } from './TeamEmblem'
 
 export interface ListRowProps {
+  teamName?: string
+  detailTestID?: string
+  detail?: string
+  testID?: string
+  accessibilityLabel?: string
+  selected?: boolean
+  disabled?: boolean
   title: string
   subtitle?: string
   subtitleNumberOfLines?: number
@@ -64,13 +72,17 @@ export function ListRow(props: ListRowProps): React.ReactElement {
 
   const content = (
     <>
-      {(emblem != null || emblemIcon != null) && (
-        <Emblem
-          uri={emblemUri}
-          fallback={emblem ?? ''}
-          icon={emblemIcon}
-          shape={emblemShape}
-        />
+      {props.teamName != null ? (
+        <TeamEmblem name={props.teamName} uri={emblemUri} />
+      ) : (
+        (emblem != null || emblemIcon != null) && (
+          <Emblem
+            uri={emblemUri}
+            fallback={emblem ?? ''}
+            icon={emblemIcon}
+            shape={emblemShape}
+          />
+        )
       )}
       <View style={styles.text}>
         <Text style={styles.title} numberOfLines={1}>
@@ -79,6 +91,15 @@ export function ListRow(props: ListRowProps): React.ReactElement {
         {subtitle != null && (
           <Text style={styles.subtitle} numberOfLines={subtitleNumberOfLines}>
             {subtitle}
+          </Text>
+        )}
+        {props.detail != null && (
+          <Text
+            style={styles.subtitle}
+            numberOfLines={1}
+            testID={props.detailTestID}
+          >
+            {props.detail}
           </Text>
         )}
       </View>
@@ -99,8 +120,18 @@ export function ListRow(props: ListRowProps): React.ReactElement {
 
   return (
     <Pressable
+      testID={props.testID}
       accessibilityRole="button"
-      accessibilityLabel={subtitle == null ? title : `${title}, ${subtitle}`}
+      aria-selected={props.selected}
+      accessibilityState={{
+        disabled: props.disabled,
+        selected: props.selected
+      }}
+      disabled={props.disabled}
+      accessibilityLabel={
+        props.accessibilityLabel ??
+        (subtitle == null ? title : `${title}, ${subtitle}`)
+      }
       onPress={onPress}
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >

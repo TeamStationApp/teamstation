@@ -170,6 +170,7 @@ export function PlaceholderTeamForm({
       )}
       {step === 'logo' && (
         <GroupPictureChooser
+          team
           client={client}
           name={trimmed}
           value={picture}

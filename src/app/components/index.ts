@@ -28,6 +28,7 @@ export { Button, type ButtonKind } from './Button'
 export { Card, CardContent, CardDivider } from './Card'
 export { ListCard } from './ListCard'
 export { Emblem, type EmblemProps } from './Emblem'
+export { TeamEmblem } from './TeamEmblem'
 export {
   GameHeroCard,
   type TeamStatLine,

@@ -1083,8 +1083,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         homeRecord={game.homeRecord}
         awayLogoUrl={game.awayLogoUrl}
         homeLogoUrl={game.homeLogoUrl}
-        awayTeamId={game.awayTeamId}
-        homeTeamId={game.homeTeamId}
+
         dateLines={
           game.startAt == null
             ? undefined

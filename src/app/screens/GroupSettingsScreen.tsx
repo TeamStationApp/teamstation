@@ -172,6 +172,7 @@ export function GroupSettingsScreen({
         ) : (
           <>
             <HeroCard
+              team={kind === 'team'}
               name={detail.group.name}
               uri={detail.group.imageUrl}
               secondary={
@@ -188,6 +189,7 @@ export function GroupSettingsScreen({
             />
             {photo && (
               <PictureSheet
+                team={kind === 'team'}
                 client={client}
                 name={detail.group.name}
                 onSave={async picture => {
