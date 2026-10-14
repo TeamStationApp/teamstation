@@ -252,4 +252,21 @@ class ProgrammeExportTest {
         val pictureAtTwoMinutes = video.samples.first { it.ticks >= 120 * 90_000 }
         assertTrue(soundAtOneMinute.offset < pictureAtTwoMinutes.offset)
     }
+
+    @Test
+    fun aPhoneHoleIsWallClockAndDoesNotRepeatTheLastPicture() {
+        val first = part("program-20261012-100000.mp4", 2)
+        val second = part("program-20261012-100000-2.mp4", 2)
+        val anchors = anchors(count = 2) + anchors(part = 2, start = 1_032.0, count = 2)
+        val output = File(folder.root, "hole.mp4")
+        ProgrammeExport.export(listOf(first, second), anchors, 1, 1_000.0, 1_034.0, 60, silent, output, blankHoles = true)
+        val video = FragmentedMp4Reader.read(output)!!.video!!
+        val gaps = video.samples.zipWithNext().map { (a, b) -> (b.ticks - a.ticks).toDouble() / video.timescale }
+        val hole = gaps.max()
+        // The last picture of the first part starts one frame before that part ends, so the
+        // start-to-start gap is the 30 s absence plus that frame.
+        assertEquals(30.0 + 1.0 / 30, hole, 1e-4)
+        val before = video.samples.zipWithNext().maxBy { (a, b) -> b.ticks - a.ticks }.first
+        assertEquals(1.0 / 60, before.duration.toDouble() / video.timescale, 1e-4)
+    }
 }

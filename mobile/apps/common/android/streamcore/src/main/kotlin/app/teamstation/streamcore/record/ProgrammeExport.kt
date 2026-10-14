@@ -11,8 +11,10 @@ import java.util.Locale
  * it is. Anything that makes its timeline doubtful (a second part, a resume, anchors that disagree, a
  * part that does not reach one end of the window or does not read to its end) has it rebuilt. TS
  * Director rebuilds by re-encoding; here every part's coded samples are placed by its own wall start
- * in a new [FragmentedMp4Writer] file, nothing re-encoded: across a hole the last picture is held as
- * one sample lasting the gap, and the sound is filled with coded silence ([SilentAac]).
+ * in a new [FragmentedMp4Writer] file, nothing re-encoded. Across a hole the last picture is held
+ * for the whole gap, except when the export leaves the hole blank: then that picture is held for
+ * one frame at the take's frame rate, and the next part keeps its wall-clock time. The sound is
+ * filled with coded silence ([SilentAac]).
  */
 object ProgrammeExport {
     /** Why a master has to be rebuilt. */
@@ -149,7 +151,8 @@ object ProgrammeExport {
         windowEnd: Double?,
         frameRate: Int,
         silentPacket: ByteArray,
-        output: File
+        output: File,
+        blankHoles: Boolean = false
     ): Result {
         val existing = parts.filter { it.isFile && it.length() > 0 }
         val plan = plan(
@@ -172,7 +175,7 @@ object ProgrammeExport {
             val start = starts[part] ?: return@mapIndexedNotNull null
             start to file
         }.sortedBy { it.first }
-        val peak = place(placed, windowStart, windowEnd, silentPacket, output)
+        val peak = place(placed, windowStart, windowEnd, silentPacket, output, frameRate, blankHoles)
         return Result(plan, output, peak)
     }
 
@@ -191,8 +194,9 @@ object ProgrammeExport {
      * server's remux) found the two starting apart. From the earlier head both tracks start together,
      * as a copied part's do. A picture lasts until the next one, so across a hole the last picture
      * before it is held as one sample; the sound is contiguous, with [silentPacket]s across every hole
-     * and out to the end. The last picture and the sound both run to [windowEnd], or to where the last
-     * part ends.
+     * and out to the end. [blankHoles] leaves that picture at one frame of [frameRate] instead, and the
+     * next part's timestamp is the absence. The last picture and the sound both run to [windowEnd], or
+     * to where the last part ends.
      *
      * Each part's pictures and sound are written interleaved by time, so the writer holds about one
      * fragment's samples at a time however long the part is. Where parts overlap, a picture at or
@@ -200,7 +204,15 @@ object ProgrammeExport {
      * keyframe: the ones between depend on what was left out. Every part must share the first part's
      * picture configuration ([MismatchedParts]). Answers the most samples held for one fragment.
      */
-    fun place(parts: List<Pair<Double, File>>, windowStart: Double, windowEnd: Double?, silentPacket: ByteArray, output: File): Int {
+    fun place(
+        parts: List<Pair<Double, File>>,
+        windowStart: Double,
+        windowEnd: Double?,
+        silentPacket: ByteArray,
+        output: File,
+        frameRate: Int,
+        blankHoles: Boolean = false
+    ): Int {
         val readings = parts.map { (start, file) -> Triple(start, file, FragmentedMp4Reader.read(file)) }
         val readers = readings.mapNotNull { (start, file, reader) -> reader?.let { Triple(start, file, it) } }
         require(readers.isNotEmpty()) {
@@ -275,7 +287,11 @@ object ProgrammeExport {
                             }
                             if (awaitingKeyframe && !sample.sync) continue
                             awaitingKeyframe = false
-                            if (writer.writeVideo(source.read(sample), pictureAt, sample.sync)) lastPicture = pictureAt
+                            // One frame is the hold across a hole. The writer
+                            // treats a gap within one and a half of that as the
+                            // next picture, so timestamp jitter is not a hole.
+                            val held = if (blankHoles) 1.0 / maxOf(1, frameRate) else Double.POSITIVE_INFINITY
+                            if (writer.writeVideo(source.read(sample), pictureAt, sample.sync, held)) lastPicture = pictureAt
                             pictureEnd = maxOf(pictureEnd, pictureAt + sample.duration.toDouble() / video!!.timescale)
                         } else if (leadIn) {
                             if (soundEnd + packet / 2 < soundAt) {

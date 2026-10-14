@@ -20,6 +20,9 @@ extension ArchiveRemux {
   /// that lasts minutes. Every output frame is its own sample here, so a gap is a run of identical
   /// pictures, which the encoder compresses to almost nothing between keyframes.
   ///
+  /// `blankGaps` leaves the hole empty instead. The outgoing picture keeps the one frame it was
+  /// encoded on, and every frame until the next part is left out.
+  ///
   /// Without `startWalls` the files are laid end to end from the start of the output. `length` nil
   /// runs to the end of the last file.
   ///
@@ -39,6 +42,7 @@ extension ArchiveRemux {
     length: TimeInterval? = nil,
     settings: EncodeSettings,
     destination: URL,
+    blankGaps: Bool = false,
     progress: (@Sendable (Double) -> Void)? = nil
   ) async throws {
     guard !files.isEmpty else { throw Error.empty }
@@ -69,6 +73,7 @@ extension ArchiveRemux {
         length: span,
         settings: settings,
         to: pictures,
+        blankGaps: blankGaps,
         progress: progress.map { report in { @Sendable fraction in report(fraction * pictureShare) } }
       )
       let hasRendered = withSound
@@ -111,12 +116,21 @@ extension ArchiveRemux {
   /// rounding.
   static let pictureTolerance: TimeInterval = 0.001
 
+  /// Whether an output frame in a blank gap is left out.
+  ///
+  /// The picture already encoded keeps its one frame. Every later frame until the next part is
+  /// left blank, including the one immediately before that part.
+  public static func leavesGapFrameBlank(hasNewPicture: Bool, hasShownPicture: Bool) -> Bool {
+    !hasNewPicture && hasShownPicture
+  }
+
   /// Every output frame of `placements`, encoded into `url` at `settings`.
   private static func encodePictures(
     _ placements: [Placement],
     length: CMTime,
     settings: EncodeSettings,
     to url: URL,
+    blankGaps: Bool = false,
     progress: (@Sendable (Double) -> Void)?
   ) async throws {
     try? FileManager.default.removeItem(at: url)
@@ -132,6 +146,7 @@ extension ArchiveRemux {
         length: length,
         transform: transform,
         feed: PictureFeed(placements),
+        blankGaps: blankGaps,
         progress: progress
       )
       try await encoder.run()
@@ -168,6 +183,8 @@ private final class PictureEncoder: @unchecked Sendable {
   private let length: CMTime
   private let transform: CGAffineTransform
   private let progress: (@Sendable (Double) -> Void)?
+  /// A frame with no new picture is left out. The picture already encoded keeps its one frame.
+  private let blankGaps: Bool
   /// Made empty and filled in `init`. A semaphore made with a count traps if it is freed holding less
   /// than that count, which is exactly what a cancelled encode leaves -- a place taken for a frame
   /// that never went in. Made at zero, it can go at any count.
@@ -189,6 +206,7 @@ private final class PictureEncoder: @unchecked Sendable {
     length: CMTime,
     transform: CGAffineTransform,
     feed: PictureFeed,
+    blankGaps: Bool = false,
     progress: (@Sendable (Double) -> Void)?
   ) throws {
     let rate = max(1, settings.frameRate)
@@ -234,6 +252,7 @@ private final class PictureEncoder: @unchecked Sendable {
     self.length = length
     self.transform = transform
     self.progress = progress
+    self.blankGaps = blankGaps
     for _ in 0 ..< Self.inFlight { slots.signal() }
   }
 
@@ -370,6 +389,15 @@ private final class PictureEncoder: @unchecked Sendable {
           waiting = nil
         }
         if let latest { shown = try fitter.fit(latest) }
+        if blankGaps, ArchiveRemux.leavesGapFrameBlank(hasNewPicture: latest != nil, hasShownPicture: shown != nil) {
+          slots.signal()
+          let fraction = Double(frame + 1) / Double(frames)
+          if fraction - reported >= 0.005 {
+            reported = fraction
+            progress?(fraction)
+          }
+          continue
+        }
         let status = VTCompressionSessionEncodeFrame(
           session,
           imageBuffer: shown ?? black,
