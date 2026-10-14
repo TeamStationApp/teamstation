@@ -110,7 +110,8 @@ const serverSuites = [
   ...globSync('src/server/notifications/*.test.ts')
 ].filter(path => globSync(path).length > 0)
 const uiSuites = [
-  'src/app/screens/GameSettingsScreen.test.tsx',
+  'src/app/screens/GameFormScreen.edit.test.tsx',
+  'src/app/screens/GameFormScreen.create.test.tsx',
   'src/app/components/SuccessToast.test.tsx',
   'src/app/screens/gameTabs.test.ts',
   'src/app/navigation/routes.test.ts',

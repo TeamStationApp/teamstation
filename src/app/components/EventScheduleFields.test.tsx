@@ -15,7 +15,11 @@ import {
   typeSchedule
 } from '../../test/eventScheduleDom'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { EventScheduleFields } from './EventScheduleFields'
+import {
+  EventScheduleFields,
+  offsetFromWallClock,
+  zoneDetail
+} from './EventScheduleFields'
 
 let root: Root | undefined
 let draft: EventScheduleDraft
@@ -202,6 +206,67 @@ describe('shared calendar, five-minute wheels and timezone autocomplete', () => 
     expect(draft.timezone).equals('America/Los_Angeles')
     await chooseSchedule('Time zone', 'US/Pacific')
     expect(draft.timezone).equals('US/Pacific')
+  })
+  it('lists time zones as rows with their offset, marks the chosen one and cancels in red text', async () => {
+    await render()
+    await pressSchedule('[data-testid="event-schedule-timezone"]')
+    await typeSchedule('Find time zone', 'Los Angeles')
+    const row = document.querySelector<HTMLElement>(
+      '[aria-label="Use time zone America/Los_Angeles"]'
+    )!
+    expect(row.textContent).match(/America\/Los Angeles.*GMT-[78] · .* now/)
+    // A row, never a pill: no button shell, and the chosen zone is marked.
+    expect(getComputedStyle(row).borderRadius).not.equals('24px')
+    await typeSchedule('Find time zone', 'UTC')
+    const chosen = document.querySelector<HTMLElement>(
+      '[aria-label="Use time zone UTC"]'
+    )!
+    expect(chosen.getAttribute('aria-selected')).equals('true')
+    const cancel = document.querySelector<HTMLElement>(
+      '[aria-label="Cancel time zone picker"]'
+    )!
+    expect(cancel.textContent).equals('Cancel')
+    const label = [...cancel.querySelectorAll('div')].find(
+      node => node.textContent === 'Cancel'
+    )!
+    expect(getComputedStyle(label).color).equals('rgb(186, 26, 26)')
+    await pressSchedule('Cancel time zone picker')
+    expect(draft.timezone).equals('UTC')
+    expect(zoneDetail('Not/AZone')).equals('')
+    // Where the engine cannot name an offset, the wall clock gives it.
+    const wall = (zone: string): Intl.DateTimeFormat =>
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: zone,
+        hourCycle: 'h23',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    const summer = new Date('2027-07-01T12:00:00Z')
+    expect(offsetFromWallClock(wall('America/Los_Angeles'), summer)).equals(
+      'GMT-7'
+    )
+    expect(offsetFromWallClock(wall('Asia/Kolkata'), summer)).equals('GMT+5:30')
+    expect(offsetFromWallClock(wall('UTC'), summer)).equals('GMT')
+    expect(zoneDetail('Asia/Kolkata', summer)).equals('GMT+5:30 · 5:30 PM now')
+    expect(zoneDetail('UTC', new Date('2027-04-10T23:30:00Z'))).equals(
+      'GMT+0 · 11:30 PM now'
+    )
+  })
+  it('chooses a month from a grid of plain cells', async () => {
+    await render()
+    await pressSchedule('[data-testid="event-schedule-date"]')
+    await pressSchedule('[aria-label^="Choose month:"]')
+    const april = document.querySelector<HTMLElement>('[aria-label="April"]')!
+    expect(april.getAttribute('aria-selected')).equals('true')
+    expect(april.textContent).equals('Apr')
+    await pressSchedule('June')
+    expect(
+      document.querySelector('[aria-label^="Choose month:"]')?.textContent
+    ).equals('June')
+    await pressSchedule('Cancel date picker')
   })
   it('snaps a scrolled minute wheel to five-minute values', async () => {
     await render()

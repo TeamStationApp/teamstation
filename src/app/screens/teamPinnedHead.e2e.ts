@@ -82,6 +82,9 @@ interface Layout {
   rowTexts: string[]
   /** The header's copy of the team's (or player's) name, 0 hidden to 1 shown. */
   name: number
+  /** The room after the tab's content, and whether the page is at its end. */
+  spacer: number
+  atEnd: boolean
 }
 
 let browser: Browser | undefined
@@ -93,6 +96,22 @@ function check(ok: boolean, message: string): void {
   observed.push(`${ok ? 'ok' : ASSERTING ? 'FAIL' : 'observed'}: ${message}`)
   if (ASSERTING) expect(ok, message).equals(true)
 }
+/**
+ * Where a schedule opens on its anchored row: right under the pills, or,
+ * when there is not that much schedule after it, at the page's natural end
+ * with no room added after the last row and the anchored row still showing
+ * below the pills.
+ */
+const anchoredUnder = (
+  layout: Layout,
+  top: number | undefined,
+  start: number
+): boolean =>
+  near(top, start) ||
+  (layout.atEnd &&
+    layout.spacer <= 1 &&
+    top != null &&
+    top >= start - TOLERANCE)
 const near = (a: number | undefined, b: number | undefined): boolean =>
   a != null && b != null && Math.abs(a - b) <= TOLERANCE
 
@@ -182,6 +201,12 @@ const READ_IN_PAGE = `(function (teamName, playerName) {
   var cards = Array.prototype.slice.call(
     document.querySelectorAll('[data-testid="scheduleGame"]')
   )
+  var spacerNode = document.querySelector('[data-testid="pinnedSpacer"]')
+  var spacer = spacerNode == null ? 0 : spacerNode.getBoundingClientRect().height
+  var page = content
+  while (page != null && !/(auto|scroll)/.test(getComputedStyle(page).overflowY))
+    page = page.parentElement
+  var atEnd = page != null && page.scrollTop + page.clientHeight >= page.scrollHeight - 1
   var rows = {}
   leaves.forEach(function (leaf) {
     var text = leaf.textContent || ''
@@ -225,7 +250,9 @@ const READ_IN_PAGE = `(function (teamName, playerName) {
     content: box(content),
     rows: rows,
     rowTexts: cards.map(function (card) { return card.textContent || '' }),
-    name: name
+    name: name,
+    spacer: spacer,
+    atEnd: atEnd
   }
 })`
 
@@ -361,8 +388,12 @@ describe('team screen: pinned pills and the schedule', function () {
         `${at} E2: no row repeats the team’s own name`
       )
       check(
-        near(anchored.rows[NEXT_ROW]?.top, contentStart(anchored)),
-        `${at} E2: ${NEXT_ROW} starts right under the pills`
+        anchoredUnder(
+          anchored,
+          anchored.rows[NEXT_ROW]?.top,
+          contentStart(anchored)
+        ),
+        `${at} E2: ${NEXT_ROW} starts right under the pills, or as near as the schedule after it allows`
       )
       check(
         (anchored.rows[PREVIOUS_ROW]?.top ?? 0) < anchored.pill.bottom,
@@ -488,7 +519,9 @@ describe('team screen: pinned pills and the schedule', function () {
         const start =
           name === 'Schedule' ? now.rows[NEXT_ROW]?.top : now.content?.top
         check(
-          near(start, now.pill.top + lead),
+          name === 'Schedule'
+            ? anchoredUnder(now, start, now.pill.top + lead)
+            : near(start, now.pill.top + lead),
           `${at} E7: ${name} starts directly under the pills`
         )
         if (name === 'Videos') await shot(page, size, 'tabs')
@@ -532,8 +565,8 @@ describe('team screen: pinned pills and the schedule', function () {
       const now = await settle(page)
       const lead = (rest.content?.top ?? rest.pill.bottom) - rest.pill.top
       check(
-        near(now.rows[NEXT_ROW]?.top, now.pill.top + lead),
-        `${at} E8: ${NEXT_ROW} starts right under the pills`
+        anchoredUnder(now, now.rows[NEXT_ROW]?.top, now.pill.top + lead),
+        `${at} E8: ${NEXT_ROW} starts right under the pills, or as near as the schedule after it allows`
       )
       check(
         near(now.card?.top, rest.card?.top),
@@ -553,7 +586,8 @@ describe('team screen: pinned pills and the schedule', function () {
       await page.waitForFunction(() => document.body.innerText.includes('@ '))
       const lines = await page.evaluate(() =>
         [...document.querySelectorAll<HTMLElement>('[role="button"]')].map(
-          node => node.innerText.split('\n').slice(0, 4).join(' | ')
+          // The date column's weekday, month and day, then the two teams.
+          node => node.innerText.split('\n').slice(0, 5).join(' | ')
         )
       )
       observed.push(`${at} feed rows: ${lines.slice(0, 4).join(' / ')}`)
@@ -593,8 +627,10 @@ describe('team screen: pinned pills and the schedule', function () {
         const now = await settle(page)
         const top = row == null ? now.content?.top : now.rows[row]?.top
         check(
-          near(top, now.pill.top + lead),
-          `${at} E12 ${season}: ${row ?? 'the heading'} starts right under the pills`
+          row == null
+            ? near(top, now.pill.top + lead)
+            : anchoredUnder(now, top, now.pill.top + lead),
+          `${at} E12 ${season}: ${row ?? 'the heading'} starts right under the pills, or as near as the schedule after it allows`
         )
         if (season === 'empty') {
           const empty = await page.evaluate(() =>
@@ -631,28 +667,34 @@ describe('team screen: pinned pills and the schedule', function () {
           if (near(now.pill.top, before.pill.top)) pinned = before
           before = now
         }
+        // With too little schedule after its row to pin them, the page
+        // stops at its own end instead: no room is added under the last row.
+        const ended =
+          pinned != null && pinned.atEnd && pinned.spacer <= 1 && row != null
         check(
-          pinned != null &&
+          (pinned != null &&
             pinned.pill.top > 0 &&
-            pinned.pill.top < rest.pill.top - TOLERANCE,
-          `${at} E13 ${season}: dragging up from the anchor pins the pills`
+            pinned.pill.top < rest.pill.top - TOLERANCE) ||
+            ended,
+          `${at} E13 ${season}: dragging up from the anchor pins the pills, or the page ends first`
         )
         const top = row == null ? pinned?.content?.top : pinned?.rows[row]?.top
         const start = pinned == null ? undefined : pinned.pill.top + lead
         check(
           top != null &&
             start != null &&
-            top <= start + TOLERANCE &&
-            top >= start - 100 - TOLERANCE,
-          `${at} E13 ${season}: ${row ?? 'the heading'} is at the content start under the pinned pills`
+            (ended
+              ? top >= start - TOLERANCE
+              : top <= start + TOLERANCE && top >= start - 100 - TOLERANCE),
+          `${at} E13 ${season}: ${row ?? 'the heading'} is at the content start under the pinned pills, or showing below them at the page's end`
         )
         check(
-          (pinned?.name ?? 0) > 0.9,
-          `${at} E13 ${season}: the name is in the header`
+          (pinned?.name ?? 0) > 0.9 || ended,
+          `${at} E13 ${season}: the name is in the header, unless the page ended with the card still showing`
         )
-        // A season too short to fill the screen stops with its anchored row
-        // still right under the pinned pills; a full one goes on scrolling,
-        // so its last games can be reached.
+        // A season too short to fill the screen stops at its own end, with no
+        // room under its last row; a full one goes on scrolling, so its last
+        // games can be reached.
         const end = await scrollToEnd(page, size, 100)
         if (season === 'normal') {
           const last = end.rows[LAST_ROW]
@@ -667,8 +709,10 @@ describe('team screen: pinned pills and the schedule', function () {
         }
         const endTop = row == null ? end.content?.top : end.rows[row]?.top
         check(
-          near(endTop, end.pill.top + lead),
-          `${at} E13 ${season}: the page stops with ${row ?? 'the heading'} under the pinned pills`
+          row == null
+            ? near(endTop, end.pill.top + lead)
+            : anchoredUnder(end, endTop, end.pill.top + lead),
+          `${at} E13 ${season}: the page stops with ${row ?? 'the heading'} under the pinned pills, or at its own end with no room under it`
         )
         if (season === 'over') await shot(page, size, 'season-over-pinned')
         await page.close()

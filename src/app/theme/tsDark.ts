@@ -119,6 +119,7 @@ export const tsDark: Theme = {
   neutralBadgeTextColor: palette.tsPaleGreen,
 
   pillBackground: palette.tsDarkOlive,
+  sliderTrackBackground: palette.tsDarkOlive,
   pillPressedBackground: palette.tsMediumOlive,
   pillTextColor: palette.tsBeige,
   pillActiveBackground: palette.tsLightOlive,

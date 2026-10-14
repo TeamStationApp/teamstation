@@ -21,7 +21,8 @@ let root: Root | undefined
 
 async function render(
   client: TeamStationClient,
-  info?: EventInfo
+  info?: EventInfo,
+  hideTitle = false
 ): Promise<string[]> {
   const saved: string[] = []
   const host = document.createElement('div')
@@ -34,6 +35,7 @@ async function render(
           client={client}
           teamId="tem_demo"
           info={info}
+          hideTitle={hideTitle}
           onSaved={id => {
             saved.push(id)
           }}
@@ -139,6 +141,79 @@ describe('title event creation and event detail editing', () => {
       expect(writes).equals(1)
       expect(saved).deep.equals([info.id])
     })
+  it('asks a practice for no title, and saves its settings as they were titled', async () => {
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    let sent: Record<string, unknown> | undefined
+    client.updateEventInfo = async (_id, body) => {
+      sent = body
+      return info
+    }
+    const info = asEventInfo({
+      id: 'tev_practice',
+      eventKind: 'event',
+      eventType: 'practice',
+      title: 'Morning drills',
+      teamId: 'tem_demo',
+      teamName: 'Owls',
+      startAt: '2027-04-10T18:00:00Z',
+      timezone: 'UTC',
+      venue: null,
+      address: null,
+      latitude: null,
+      longitude: null,
+      status: 'scheduled',
+      canManage: true,
+      replyUserIds: [],
+      attendees: []
+    })
+    const saved = await render(client, info)
+    expect(document.querySelector('input[aria-label="Title"]')).equals(null)
+    await click('Save event details')
+    expect(sent).includes({ eventType: 'practice', title: 'Morning drills' })
+    expect(saved).deep.equals(['tev_practice'])
+  })
+  it('asks a practice called Practice for a real title when it becomes Other', async () => {
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    const info = asEventInfo({
+      id: 'tev_untitled',
+      eventKind: 'event',
+      eventType: 'practice',
+      title: 'Practice',
+      teamId: 'tem_demo',
+      teamName: 'Owls',
+      startAt: '2027-04-10T18:00:00Z',
+      timezone: 'UTC',
+      venue: null,
+      address: null,
+      latitude: null,
+      longitude: null,
+      status: 'scheduled',
+      canManage: true,
+      replyUserIds: [],
+      attendees: []
+    })
+    await render(client, info)
+    const other = [
+      ...document.querySelectorAll<HTMLElement>('[role="radio"]')
+    ].find(node => node.textContent === 'Other')!
+    await act(async () => {
+      other.click()
+    })
+    const title = document.querySelector<HTMLInputElement>(
+      'input[aria-label="Title"]'
+    )!
+    expect(title.value).equals('')
+    const save = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(node => node.textContent === 'Save event details')!
+    expect(save.getAttribute('aria-disabled')).equals('true')
+  })
+  it('leaves its title to a scene that names itself', async () => {
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    await render(client, undefined, true)
+    expect(document.body.textContent).not.includes('Create Event')
+    expect(document.querySelector('input[aria-label="Title"]')).not.equals(null)
+  })
   it('creates an opponent-free event with an address and supports retry keys for failed delivery', async () => {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     const sent: TeamEventInput[] = []

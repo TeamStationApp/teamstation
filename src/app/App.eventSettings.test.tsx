@@ -112,12 +112,9 @@ describe('actual app event Settings navigation', () => {
           root.render(<App />)
         })
         await settle()
+        // A game saves with Save whether or not another team must approve.
         await pressSchedule(
-          status === 'eventUpdated'
-            ? 'Save event details'
-            : status === 'accepted'
-              ? 'Save'
-              : 'Send Game Proposal'
+          status === 'eventUpdated' ? 'Save event details' : 'Save'
         )
         await settle()
         expect(window.location.pathname).equals(

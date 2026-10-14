@@ -1179,4 +1179,43 @@ describe('api client', function () {
     )
     expect(await offline.issuer()).equals(undefined)
   })
+  it('asks for team suggestions around a team, a season or both, and keeps search rows', async () => {
+    const row = {
+      id: 'tem_owls',
+      kind: 'team',
+      name: 'Demo Owls',
+      imageUrl: null,
+      locality: null,
+      seasonNames: ['Demo Regular'],
+      staffNames: ['Ichiro']
+    }
+    const stub = stubFetch(200, [row])
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: stub.fetch
+    })
+    const [found] = await client.relatedTeams({ teamId: 'tem a' })
+    expect(found.seasonNames).deep.equals(['Demo Regular'])
+    expect(found.staffNames).deep.equals(['Ichiro'])
+    await client.relatedTeams({ seasonId: 'sea_b' })
+    await client.relatedTeams({ teamId: 'tem_a', seasonId: 'sea_b' })
+    await client.relatedTeams({})
+    expect(stub.calls.map(call => call.url)).deep.equals([
+      'https://example.test/api/v1/teams?view=public&relatedTeam=tem+a',
+      'https://example.test/api/v1/teams?view=public&relatedSeason=sea_b',
+      'https://example.test/api/v1/teams?view=public&relatedTeam=tem_a&relatedSeason=sea_b',
+      'https://example.test/api/v1/teams?view=public'
+    ])
+    const [searched] = await client.discoverGroups('team', 'Owls')
+    expect(searched.staffNames).deep.equals(['Ichiro'])
+    const bare = stubFetch(200, [
+      { ...row, seasonNames: undefined, staffNames: undefined }
+    ])
+    const [plain] = await new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: bare.fetch
+    }).discoverGroups('team')
+    expect(plain.seasonNames).equals(undefined)
+    expect(plain.staffNames).equals(undefined)
+  })
 })

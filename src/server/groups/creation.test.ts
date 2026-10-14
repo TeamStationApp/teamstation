@@ -94,6 +94,48 @@ describe('minimal group creation HTTP service', function () {
       ).status
     ).equals(401)
   })
+  it('lets a placeholder team be created without a location, and nothing else', async () => {
+    const placeholder = async (
+      name: string,
+      locality?: typeof demoLocality
+    ): Promise<string> => {
+      const response = await f.h.request('POST', '/teams', {
+        name,
+        idempotencyKey: `placeholder-${name}`,
+        external: true,
+        custodian: { kind: 'team', id: f.teamA },
+        ...(locality == null ? {} : { locality })
+      })
+      expect(response.status, await response.clone().text()).equals(201)
+      return ((await response.json()) as { id: string }).id
+    }
+    const unplaced = await placeholder('Demo Unplaced')
+    const placed = await placeholder('Demo Placed', demoLocality)
+    const stored = await f.h.db
+      .selectFrom('teams')
+      .select(['id', 'locality', 'kind'])
+      .where('id', 'in', [unplaced, placed])
+      .orderBy('name', 'desc')
+      .execute()
+    expect(stored).deep.equals([
+      { id: unplaced, locality: null, kind: 'external' },
+      { id: placed, locality: demoLocality, kind: 'external' }
+    ])
+    for (const body of [
+      { kind: 'team', name: 'Demo Full', idempotencyKey: 'full-no-place' },
+      { kind: 'league', name: 'Demo League', idempotencyKey: 'league-no-place' }
+    ])
+      expect(() => asCreateGroup(body)).throws(TypeError)
+    expect(
+      asCreateGroup({
+        kind: 'team',
+        name: 'Demo Unplaced',
+        idempotencyKey: 'unplaced-key',
+        external: true,
+        custodian: { kind: 'team', id: f.teamA }
+      })
+    ).not.have.property('locality')
+  })
   it('validates kind, names, dates, timezone, picture and permitted parent kinds', () => {
     expect(() => asGroupKind('player')).throws(TypeError)
     expect(() => asGroupRef({ kind: 'team', id: '' })).throws(TypeError)

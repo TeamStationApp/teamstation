@@ -23,6 +23,21 @@ export function canScheduleRsvp(game: GameSummary, now = Date.now()): boolean {
   )
 }
 
+/**
+ * Whether a schedule card has an RSVP line to draw: the RSVP button while
+ * the event is still to come, or any players' replies to count.
+ */
+export function hasScheduleRsvpLine(
+  game: GameSummary,
+  now = Date.now()
+): boolean {
+  const counts = game.playerRsvps
+  return (
+    counts != null &&
+    (canScheduleRsvp(game, now) || counts.yes + counts.unknown + counts.no > 0)
+  )
+}
+
 /** The schedule's compact family response entry and player totals. */
 export function ScheduleRsvpControl({
   client,

@@ -122,7 +122,7 @@ export async function createGroup(
           id,
           name: body.name,
           league_id: leagueId,
-          locality: body.locality,
+          locality: body.locality ?? null,
           picture_catalog_id: picture?.id ?? null,
           logo_path: prefix,
           logo_sha256: picture?.sha256 ?? null,

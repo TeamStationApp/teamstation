@@ -29,18 +29,23 @@ const delay = async (ms: number): Promise<void> => {
 }
 
 /** A client that answers from the fixture, as the fixture's server does. */
-function fixtureClient(season: FixtureSeason = 'normal'): TeamStationClient {
+function fixtureClient(
+  season: FixtureSeason = 'normal',
+  extra: (games: Array<Record<string, unknown>>) => unknown[] = games => games
+): TeamStationClient {
   const get = (path: string): unknown =>
     teamScheduleAnswer('GET', `/api/v1${path}`, NOW, undefined, season).body
   return {
-    teamGames: async (teamId: string) => get(`/teams/${teamId}/games`),
+    teamGames: async (teamId: string) =>
+      extra(get(`/teams/${teamId}/games`) as Array<Record<string, unknown>>),
     roster: async (teamId: string) => get(`/teams/${teamId}/roster`),
     teamStats: async (teamId: string) => get(`/teams/${teamId}/stats`),
     teamPitchingStats: async (teamId: string) =>
       get(`/teams/${teamId}/stats?kind=pitching`),
     standings: async (seasonId: string) =>
       get(`/seasons/${seasonId}/standings`),
-    invites: async () => get('/invites')
+    invites: async () => get('/invites'),
+    follows: async () => []
   } as unknown as TeamStationClient
 }
 
@@ -64,7 +69,9 @@ interface Opened {
 
 async function mount(
   season: FixtureSeason = 'normal',
-  initialTab = 'schedule'
+  initialTab = 'schedule',
+  client: TeamStationClient = fixtureClient(season),
+  nonMemberView = false
 ): Promise<Opened[]> {
   const opened: Opened[] = []
   host = document.createElement('div')
@@ -74,9 +81,10 @@ async function mount(
     root?.render(
       <ThemeProvider>
         <TeamScreen
-          client={fixtureClient(season)}
+          client={client}
           team={TEAM}
           initialTab={initialTab}
+          nonMemberView={nonMemberView}
           onOpenGame={(gameId, title, options) => {
             opened.push({ gameId, title, options })
           }}
@@ -129,6 +137,173 @@ describe('a team’s schedule', function () {
       'vs Lynx',
       '@ Marlins'
     ])
+  })
+
+  it('names a practice Practice and another event by its title, in place of the teams', async function () {
+    const event = (
+      game: Record<string, unknown>,
+      id: string,
+      eventType: string,
+      title: string
+    ): Record<string, unknown> => ({
+      ...game,
+      id,
+      eventKind: 'event',
+      eventType,
+      title,
+      awayTeamName: '',
+      status: 'scheduled',
+      homeScore: null,
+      awayScore: null,
+      videoCount: 0
+    })
+    const opened = await mount(
+      'normal',
+      'schedule',
+      fixtureClient('normal', games => [
+        ...games,
+        {
+          ...event(games[0], 'tev_practice', 'practice', 'Morning drills'),
+          // Replies are taken for what is still to come.
+          startAt: new Date(NOW + 7 * 86_400_000).toISOString(),
+          playerRsvps: { yes: 2, unknown: 1, no: 0 }
+        },
+        event(games[0], 'tev_dinner', 'other', 'Team dinner')
+      ])
+    )
+    // Its RSVP control is named for the practice, not its stored title.
+    expect(document.querySelector('[aria-label="RSVP: Practice"]')).not.equals(
+      null
+    )
+    const named = rows().map(row => linesOf(row))
+    expect(named.some(lines => lines.includes('Practice'))).equals(true)
+    expect(named.some(lines => lines.includes('Morning drills'))).equals(false)
+    expect(named.some(lines => lines.includes('Team dinner'))).equals(true)
+    const practice = rows().find(row => linesOf(row).includes('Practice'))!
+    await act(async () => {
+      practice.querySelector<HTMLElement>('[role="button"]')!.click()
+      await delay(10)
+    })
+    expect(opened.map(item => item.title)).deep.equals(['Practice'])
+  })
+
+  it('draws a card with nothing to answer or count compact, with the weekday on its time line', async function () {
+    await mount(
+      'live',
+      'schedule',
+      fixtureClient('live', games =>
+        games.map(game =>
+          game.status === 'inProgress'
+            ? { ...game, playerRsvps: { yes: 0, unknown: 0, no: 0 } }
+            : game.status === 'scheduled'
+              ? { ...game, playerRsvps: { yes: 1, unknown: 1, no: 0 } }
+              : game
+        )
+      )
+    )
+    const card = (name: string): HTMLElement =>
+      rows().find(row => linesOf(row).some(line => line.endsWith(name)))!
+    const live = card('Owls')
+    const next = card('Falcons')
+    // The live game has nothing to answer and no replies to count: no RSVP
+    // line, no weekday over a rule, and the weekday leads its time.
+    expect(live.querySelector('[data-testid^="schedule-rsvps-"]')).equals(null)
+    expect(live.querySelector('[data-testid="schedule-weekday"]')).equals(null)
+    expect(
+      live.querySelector('[data-testid="schedule-date-separator"]')
+    ).equals(null)
+    const liveTime = live.querySelector('[data-testid="schedule-time"]')!
+    expect(liveTime.textContent).match(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d/)
+    // A game still to come keeps the RSVP line and the full date column.
+    expect(next.querySelector('[data-testid^="schedule-rsvps-"]')).not.equals(
+      null
+    )
+    expect(next.querySelector('[data-testid="schedule-weekday"]')).not.equals(
+      null
+    )
+    expect(
+      next.querySelector('[data-testid="schedule-time"]')!.textContent
+    ).match(/^\d/)
+    // In both, the time and the address are bold.
+    for (const row of [live, next]) {
+      const time = row.querySelector('[data-testid="schedule-time"]')!
+      const venue = [...row.querySelectorAll('[dir="auto"]')].find(node =>
+        /Park|Field/.test(node.textContent ?? '')
+      )!
+      expect(getComputedStyle(time).fontWeight).equals('700')
+      expect(getComputedStyle(venue).fontWeight).equals('700')
+    }
+  })
+
+  it('keeps a recorded game’s result at the card’s right edge, the camera clear of its time and address', async function () {
+    await mount(
+      'normal',
+      'schedule',
+      fixtureClient('normal', games =>
+        games.map(game => ({
+          ...game,
+          playerRsvps: { yes: 1, unknown: 1, no: 0 }
+        }))
+      )
+    )
+    const recorded = rows().find(
+      row =>
+        row.querySelector('[aria-label="Video"]') != null &&
+        row.querySelector('[data-testid^="schedule-rsvps-"]') != null
+    )!
+    expect(recorded).not.equals(undefined)
+    const badge = [...recorded.querySelectorAll<HTMLElement>('div')].find(
+      node =>
+        /^[WL] \d/.test(node.textContent ?? '') && node.childElementCount === 0
+    )!
+    // Nothing between the badge's line and the card's body holds it off the
+    // edge (the badge's own padding is inside it).
+    const body = recorded.querySelector('[data-testid="schedule-body"]')!
+    let line: HTMLElement | null = badge
+    while (line != null && !/^(vs|@) /.test(line.textContent ?? ''))
+      line = line.parentElement
+    for (
+      let node: HTMLElement | null = line;
+      node != null && node !== body;
+      node = node.parentElement
+    )
+      expect(getComputedStyle(node).paddingRight, node.textContent!).oneOf([
+        '',
+        '0px'
+      ])
+    // The lines beside the camera make room for it.
+    const time = recorded.querySelector('[data-testid="schedule-time"]')!
+    expect(getComputedStyle(time).paddingRight).equals('24px')
+  })
+
+  it('names events the same way on a visitor’s schedule', async function () {
+    const opened = await mount(
+      'normal',
+      'schedule',
+      fixtureClient('normal', games => [
+        ...games,
+        {
+          ...games[0],
+          id: 'tev_visitor_practice',
+          eventKind: 'event',
+          eventType: 'practice',
+          title: 'Morning drills',
+          awayTeamName: '',
+          status: 'scheduled',
+          homeScore: null,
+          awayScore: null,
+          videoCount: 0
+        }
+      ]),
+      true
+    )
+    const practice = rows().find(row => linesOf(row).includes('Practice'))!
+    expect(linesOf(practice)).not.includes('Morning drills')
+    await act(async () => {
+      practice.querySelector<HTMLElement>('[role="button"]')!.click()
+      await delay(10)
+    })
+    expect(opened.map(item => item.title)).deep.equals(['Practice'])
   })
 
   it('says only who it is against, never the team’s own name', async function () {
@@ -203,6 +378,7 @@ describe('a team’s tabs, each started under the pills', function () {
   /** The page's scroll offset, as the stubbed scroller keeps it. */
   let scrollTop = 0
   const ROW = 100
+  const VIEWPORT = 400
   const original = {
     // eslint-disable-next-line @typescript-eslint/unbound-method -- restored onto the prototype it came from
     rect: HTMLElement.prototype.getBoundingClientRect,
@@ -218,12 +394,18 @@ describe('a team’s tabs, each started under the pills', function () {
   beforeEach(function () {
     scrollTop = 0
     // jsdom lays nothing out: each schedule row stands ROW below the last,
-    // and everything else sits at the top.
+    // what holds them ends with the last, and everything else sits at the top.
     HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
       const games = [
         ...document.querySelectorAll('[data-testid="scheduleGame"]')
       ]
       const at = games.indexOf(this)
+      if (at < 0 && games.length > 0 && this.contains(games[0]))
+        return {
+          top: 0,
+          bottom: games.length * ROW,
+          height: games.length * ROW
+        } as unknown as DOMRect
       if (at < 0) return original.rect.call(this)
       return {
         top: at * ROW,
@@ -243,7 +425,7 @@ describe('a team’s tabs, each started under the pills', function () {
     Object.defineProperty(Element.prototype, 'clientHeight', {
       configurable: true,
       get(this: Element) {
-        return scrolls(this) ? 800 : 0
+        return scrolls(this) ? VIEWPORT : 0
       }
     })
   })
@@ -278,14 +460,69 @@ describe('a team’s tabs, each started under the pills', function () {
     expect(scrollTop).equals(0)
   })
 
+  it('opens the schedule at a practice or other event when it is the next thing on it', async function () {
+    for (const [eventType, title] of [
+      ['practice', 'Morning drills'],
+      ['other', 'Team dinner']
+    ] as const) {
+      await mount(
+        'normal',
+        'schedule',
+        fixtureClient('normal', games => [
+          ...games,
+          {
+            ...games[0],
+            id: `tev_next_${eventType}`,
+            eventKind: 'event',
+            eventType,
+            title,
+            awayTeamId: '',
+            awayTeamName: '',
+            status: 'scheduled',
+            homeScore: null,
+            awayScore: null,
+            videoCount: 0,
+            // Two days out: before vs Falcons, a week out.
+            startAt: new Date(NOW + 2 * 86_400_000).toISOString()
+          }
+        ])
+      )
+      expect(linesOf(rows()[8]).join(' ')).includes(
+        eventType === 'practice' ? 'Practice' : title
+      )
+      expect(scrollTop, eventType).equals(8 * ROW)
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+      host?.remove()
+      host = undefined
+      scrollTop = 0
+    }
+  })
+
   it('opens at the next game on first load when the address says schedule', async function () {
     await mount('normal', 'schedule')
     expect(scrollTop).equals(8 * ROW)
   })
 
-  it('opens a finished season at its last game', async function () {
+  it('opens a finished season toward its last game, with no room under it', async function () {
     await mount('over', 'schedule')
-    expect(scrollTop).equals(13 * ROW)
+    // The last game is the anchor, but the page stops where that game rests
+    // just above the nav bar: no further, so the games before it still show.
+    expect(scrollTop)
+      .greaterThan(9 * ROW)
+      .and.lessThan(13 * ROW)
+  })
+
+  it('scrolls a schedule that fits on the screen not at all', async function () {
+    await mount(
+      'normal',
+      'schedule',
+      fixtureClient('normal', games => games.slice(7, 9))
+    )
+    expect(rows()).length(2)
+    expect(scrollTop).equals(0)
   })
 
   it('opens an empty schedule at its top', async function () {

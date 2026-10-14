@@ -64,12 +64,14 @@ import { ScoringPlayerSettingsFlow } from './scoring/ScoringPlayerSettingsFlow'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
-import { CreateGameScreen } from './screens/CreateGameScreen'
 import { CreateGroupScreen } from './screens/CreateGroupScreen'
 import { DiscoverScreen } from './screens/DiscoverScreen'
 import { EventSettingsScreen } from './screens/EventSettingsScreen'
+import {
+  GameFormScreen,
+  type GameSettingsResult
+} from './screens/GameFormScreen'
 import { GameScreen } from './screens/GameScreen'
-import type { GameSettingsResult } from './screens/GameSettingsScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
 import { GroupLinkScreen } from './screens/GroupLinkScreen'
 import { GroupScreen } from './screens/GroupScreen'
@@ -1528,15 +1530,21 @@ function Shell(props: AppProps): React.ReactElement {
         onCancel={pop}
       />
     ) : top.name === 'createGame' ? (
-      <CreateGameScreen
+      <GameFormScreen
         client={client}
-        source={{ kind: top.kind, id: top.id }}
-        gameId={top.gameId}
+        mode={{ kind: 'create', source: { kind: top.kind, id: top.id } }}
         onEventCreated={id => {
           replace({ name: 'game', gameId: id, title: '' })
         }}
-        onSent={id => {
-          replace({ name: 'notification', id })
+        onSaved={result => {
+          setSuccessNotice({
+            id: Date.now(),
+            message:
+              result.status === 'accepted'
+                ? 'Game scheduled'
+                : 'Game proposal sent'
+          })
+          replace({ name: 'notification', id: result.id })
           refreshRoles()
           refreshNotifications().catch(() => undefined)
         }}

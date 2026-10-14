@@ -348,6 +348,84 @@ describe('the pinned head in a browser', function () {
     }
   })
 
+  it('holds a row anchor as the rows above it settle, with no room after the last row, until somebody scrolls', async function () {
+    const watchers: Array<() => void> = []
+    const globals = globalThis as { ResizeObserver?: unknown }
+    const before = globals.ResizeObserver
+    globals.ResizeObserver = class {
+      constructor(callback: () => void) {
+        watchers.push(callback)
+      }
+
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    const heightOf = Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      'scrollHeight'
+    )
+    Object.defineProperty(Element.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.dataset.name !== 'scroller') return 0
+        const room = named('spacer').style.height
+        return (
+          LAYOUT.content.top +
+          LAYOUT.content.height +
+          TAIL +
+          (room === '' ? 0 : Number.parseFloat(room))
+        )
+      }
+    })
+    const saved = { content: LAYOUT.content.height, row: LAYOUT.row.top }
+    const resized = async (): Promise<void> => {
+      await act(async () => {
+        for (const watcher of watchers) watcher()
+      })
+    }
+    try {
+      await mount()
+      await select('schedule', true)
+      expect(named('scroller').scrollTop).equals(500)
+      expect(named('spacer').style.height).equals('0px')
+      // The rows above it settle 100 shorter: the page follows its row.
+      LAYOUT.content.height -= 100
+      LAYOUT.row.top -= 100
+      await resized()
+      expect(named('scroller').scrollTop).equals(400)
+      expect(named('spacer').style.height).equals('0px')
+      // Shorter again, so the page cannot reach the row, and the browser
+      // pulls the page back to its new end before the tab is measured: the
+      // page stays at its end, with no room under the last row.
+      await setScroll(named('scroller').scrollTop)
+      LAYOUT.content.height = 300
+      LAYOUT.row.top = LAYOUT.content.top + 250
+      await setScroll(30)
+      expect(named('scroller').scrollTop).equals(30)
+      expect(named('spacer').style.height).equals('0px')
+      // That was the browser, not somebody scrolling: still held, so when
+      // the rows grow back the page goes to its row again.
+      LAYOUT.content.height = 900
+      await resized()
+      expect(named('scroller').scrollTop).equals(250)
+      // Once somebody scrolls, the page is theirs.
+      await setScroll(0)
+      LAYOUT.row.top -= 50
+      await resized()
+      expect(named('scroller').scrollTop).equals(0)
+    } finally {
+      LAYOUT.content.height = saved.content
+      LAYOUT.row.top = saved.row
+      globals.ResizeObserver = before
+      if (heightOf != null)
+        Object.defineProperty(Element.prototype, 'scrollHeight', heightOf)
+      else
+        delete (Element.prototype as unknown as Record<string, unknown>)
+          .scrollHeight
+    }
+  })
+
   it('keeps the page and pinned pills put when the tab shrinks under them', async function () {
     const watchers: Array<() => void> = []
     const globals = globalThis as { ResizeObserver?: unknown }

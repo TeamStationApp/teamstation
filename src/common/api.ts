@@ -75,8 +75,10 @@ import type { PersonSettings, PlayerSettings } from './playerSettings'
 import {
   asGroupDetail,
   asPublicGroup,
+  asSearchRow,
   type GroupDetail,
-  type PublicGroup
+  type PublicGroup,
+  type SearchRow
 } from './publicGroups'
 import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
 import {
@@ -1736,13 +1738,31 @@ export class TeamStationClient {
     return await this.request('GET', '/teams', asArray(asTeamSummary))
   }
 
-  async discoverGroups(kind: GroupKind, query = ''): Promise<PublicGroup[]> {
+  async discoverGroups(kind: GroupKind, query = ''): Promise<SearchRow[]> {
     const collection =
       kind === 'league' ? 'leagues' : kind === 'season' ? 'seasons' : 'teams'
     return await this.request(
       'GET',
       `/${collection}?view=public&query=${encodeURIComponent(query)}`,
-      asArray(asPublicGroup)
+      asArray(asSearchRow)
+    )
+  }
+
+  /**
+   * Teams a game is likely to be against: the anchor team's season, league,
+   * recent opponents and region, in that order, around `seasonId` too.
+   */
+  async relatedTeams(anchor: {
+    teamId?: string
+    seasonId?: string
+  }): Promise<SearchRow[]> {
+    const query = new URLSearchParams({ view: 'public' })
+    if (anchor.teamId != null) query.set('relatedTeam', anchor.teamId)
+    if (anchor.seasonId != null) query.set('relatedSeason', anchor.seasonId)
+    return await this.request(
+      'GET',
+      `/teams?${query.toString()}`,
+      asArray(asSearchRow)
     )
   }
 

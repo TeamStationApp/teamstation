@@ -11,6 +11,7 @@ import {
   eventDate,
   type EventInfo,
   eventText,
+  PRACTICE_TITLE,
   type Rsvp,
   sortedAttendees,
   type TeamEventInput
@@ -368,8 +369,37 @@ export async function readEventInfo(
       affiliations.add(id)
     }
   }
-  if (requested == null)
-    selected = event.teamIds.find(id => affiliations.has(id)) ?? selected
+  if (requested == null && affiliations.size > 0) {
+    // Of the viewer's own teams, the one they most likely mean: a point each
+    // for guarding a child there, being on its staff and being a member.
+    // A tie keeps the event's own team order.
+    const viewer = await onePerson(db, fresh.userId)
+    const memberOf = new Set(
+      (
+        await db
+          .selectFrom('memberships')
+          .select('team_id')
+          .where('team_id', 'in', [...affiliations])
+          .where('user_id', 'in', viewer.userIds)
+          .execute()
+      ).map(row => row.team_id)
+    )
+    let best = -1
+    for (const id of event.teamIds) {
+      if (!affiliations.has(id)) continue
+      const own = projections
+        .get(id)!
+        .attendees.find(row => row.userId === fresh.userId)
+      const points =
+        ((own?.guardianOf ?? []).length > 0 ? 1 : 0) +
+        ((own?.staffRoles ?? []).length > 0 ? 1 : 0) +
+        (memberOf.has(id) ? 1 : 0)
+      if (points > best) {
+        best = points
+        selected = id
+      }
+    }
+  }
   const people =
     projections.get(selected) ??
     (await eventPeople(db, { ...event, teamId: selected }, fresh, media))
@@ -572,9 +602,27 @@ export async function updateEventInfo(
         .where('id', '=', id)
         .execute()
     } else {
+      const askedType =
+        raw.eventType === undefined
+          ? undefined
+          : asLiteral('practice', 'other')(raw.eventType)
+      const eventType = askedType ?? event.eventType
+      // A practice keeps a title of its own or is called Practice; any other
+      // event needs one.
       let title = event.title!
       if (raw.title !== undefined)
-        title = eventText(raw.title, 'Title', 200, true)!
+        title =
+          eventType === 'practice'
+            ? (eventText(raw.title, 'Title', 200) ?? PRACTICE_TITLE)
+            : eventText(raw.title, 'Title', 200, true)!
+      // A practice called Practice only because nobody titled it has no
+      // title to become another event with.
+      else if (
+        eventType === 'other' &&
+        event.eventType === 'practice' &&
+        title === PRACTICE_TITLE
+      )
+        throw new TypeError('Title is required')
       if (
         raw.status !== undefined &&
         raw.status !== 'scheduled' &&
@@ -586,9 +634,7 @@ export async function updateEventInfo(
         .set({
           ...location,
           title,
-          ...(raw.eventType === undefined
-            ? {}
-            : { event_type: asLiteral('practice', 'other')(raw.eventType) }),
+          ...(askedType === undefined ? {} : { event_type: askedType }),
           start_at: new Date(startAt),
           timezone:
             raw.timezone === undefined

@@ -2,8 +2,9 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Animated } from 'react-native'
+import { Animated, View } from 'react-native'
 
+import { recordAnimationStarts, responderDrag } from '../../test/responderDrag'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { SegmentedPill } from './SegmentedPill'
 
@@ -81,6 +82,91 @@ function fill(): HTMLElement {
 }
 
 describe('one sliding standings capsule', () => {
+  it('keeps a drag that strays well below the rail, and slides on from where it is let go', async () => {
+    const selected = await render()
+    await measure(300)
+    const tab = host.querySelector<HTMLElement>('[role="tab"]')!
+    const animations = recordAnimationStarts()
+    restoreAnimation = animations.restore
+    // The pill takes the drag at x 40; 90 of the 150 px to the other half
+    // later, the finger is 150 px below the rail.
+    await responderDrag(tab, [
+      [20, 10],
+      [40, 12],
+      [90, 80],
+      [130, 160]
+    ])
+    expect(selected).deep.equals(['all'])
+    // It slides on from where it was let go, 90 of 150 px across, and never
+    // starts again from the left.
+    expect(animations.starts.length).greaterThan(0)
+    expect(animations.starts[0]).closeTo(90 / 150, 0.01)
+    expect(animations.starts.every(start => start > 0.5)).equals(true)
+    await finishAnimation()
+    expect(fill().style.transform).equals('translateX(150px)')
+  })
+  it('lets go short of the middle and slides back from there', async () => {
+    const selected = await render()
+    await measure(300)
+    const tab = host.querySelector<HTMLElement>('[role="tab"]')!
+    const animations = recordAnimationStarts()
+    restoreAnimation = animations.restore
+    await responderDrag(tab, [
+      [20, 10],
+      [40, 12],
+      [80, 14]
+    ])
+    expect(selected).deep.equals([])
+    expect(animations.starts).deep.equals([40 / 150])
+    await finishAnimation()
+    expect(fill().style.transform).equals('translateX(0px)')
+  })
+  it('keeps its drag when a scrolling parent asks for it mid-way', async () => {
+    const selected: string[] = []
+    let asked = 0
+    let taken = 0
+    function Harness(): React.ReactElement {
+      const [value, setValue] = useState<'inSeason' | 'all'>('inSeason')
+      return (
+        <View
+          onMoveShouldSetResponderCapture={() => ++asked > 1}
+          onResponderGrant={() => {
+            taken++
+          }}
+        >
+          <SegmentedPill
+            options={OPTIONS}
+            selected={value}
+            accessibilityLabel="Standings games"
+            onSelect={next => {
+              selected.push(next)
+              setValue(next)
+            }}
+          />
+        </View>
+      )
+    }
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <Harness />
+        </ThemeProvider>
+      )
+    })
+    await measure(300)
+    await responderDrag(host.querySelector<HTMLElement>('[role="tab"]')!, [
+      [20, 10],
+      [40, 12],
+      [100, 90],
+      [200, 200]
+    ])
+    expect(asked).greaterThan(1)
+    expect(taken).equals(0)
+    expect(selected).deep.equals(['all'])
+  })
   it('keeps disabled choices selected without issuing a change', async () => {
     const changes = await render('inSeason', true)
     await select('Include Exhibitions')

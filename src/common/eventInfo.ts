@@ -20,6 +20,30 @@ export const asRsvp = asLiteral('yes', 'maybe', 'no')
 export const asEventType = asLiteral('game', 'practice', 'other')
 export type EventType = ReturnType<typeof asEventType>
 
+/** What a practice is called when nobody titled it. */
+export const PRACTICE_TITLE = 'Practice'
+
+/**
+ * What a schedule calls an event in place of its teams: `Practice` for a
+ * practice, the title of any other event, and nothing for a game. A row with
+ * no `eventType` is a game.
+ */
+export function eventName(event: {
+  eventKind?: 'game' | 'event'
+  eventType?: string | null
+  title?: string | null
+}): string | undefined {
+  if (
+    event.eventKind !== 'event' &&
+    event.eventType !== 'practice' &&
+    event.eventType !== 'other'
+  )
+    return undefined
+  if (event.eventType === 'practice') return PRACTICE_TITLE
+  const title = event.title?.trim() ?? ''
+  return title === '' ? 'Event' : title
+}
+
 const asCount = (raw: unknown): number => {
   const value = asNumber(raw)
   if (!Number.isSafeInteger(value) || value < 0)
@@ -216,7 +240,15 @@ export function asTeamEventInput(raw: unknown): TeamEventInput {
     raw.teamId.length > 100
   )
     throw new TypeError('Choose a team')
-  const title = eventText(raw.title, 'Title', 200, true)!
+  const eventType =
+    raw.eventType === undefined
+      ? undefined
+      : asLiteral('practice', 'other')(raw.eventType)
+  // A practice is called Practice; any other event needs its own title.
+  const title =
+    eventType === 'practice'
+      ? (eventText(raw.title, 'Title', 200) ?? PRACTICE_TITLE)
+      : eventText(raw.title, 'Title', 200, true)!
   const startAt = eventDate(raw.startAt, 'Start time')
   const timezone = raw.timezone ?? 'UTC'
   if (typeof timezone !== 'string' || timezone.length > 100)
@@ -240,9 +272,7 @@ export function asTeamEventInput(raw: unknown): TeamEventInput {
     throw new TypeError('Saving needs a retry key')
   return {
     teamId: raw.teamId,
-    ...(raw.eventType === undefined
-      ? {}
-      : { eventType: asLiteral('practice', 'other')(raw.eventType) }),
+    ...(eventType === undefined ? {} : { eventType }),
     title,
     startAt,
     timezone,

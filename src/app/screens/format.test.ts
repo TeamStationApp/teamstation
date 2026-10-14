@@ -42,6 +42,27 @@ describe('how a fixture is written', function () {
   it('falls back to the fixture for a team that is not playing', function () {
     expect(matchupLines(game, 'tem_someone_else').second).equals('@ Bay Stars')
   })
+
+  it('names a practice Practice and any other event by its title, in place of the teams', function () {
+    const event = {
+      ...game,
+      awayTeamName: '',
+      eventKind: 'event' as const,
+      title: 'Morning drills'
+    }
+    expect(
+      matchupLines({ ...event, eventType: 'practice' }, 'tem_home')
+    ).deep.equals({ first: 'Practice', second: '' })
+    expect(
+      matchupLines({ ...event, eventType: 'other', title: 'Team dinner' })
+    ).deep.equals({ first: 'Team dinner', second: '' })
+    expect(
+      matchupLines({ ...event, eventType: 'other', title: '  ' })
+    ).deep.equals({ first: 'Event', second: '' })
+    expect(
+      matchupLines({ ...game, eventType: 'game' }, 'tem_home')
+    ).deep.equals({ first: 'Bay Stars', second: 'vs Alta Hawks' })
+  })
 })
 
 describe('the word between the two scores', function () {

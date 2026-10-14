@@ -29,6 +29,20 @@ export const asPublicGroup = asObject({
   leagueId: asOptional(nullable(asString), null)
 })
 export type PublicGroup = ReturnType<typeof asPublicGroup>
+/**
+ * A row of a public search or suggestion: a group, and for a team the seasons
+ * it is in, newest first, and its staff as public short names, coaches first.
+ * No other answer carries these, and absent means not loaded, not none.
+ */
+export const asSearchRow = asObject({
+  ...asPublicGroup.shape,
+  seasonNames: asOptional(asArray(asString)),
+  staffNames: asOptional(asArray(asString))
+})
+export type SearchRow = PublicGroup & {
+  seasonNames?: string[]
+  staffNames?: string[]
+}
 export const asPublicGame = asObject({
   id: asString,
   homeTeam: asObject({ id: asString, name: asString }),

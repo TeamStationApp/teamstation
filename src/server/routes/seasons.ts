@@ -562,6 +562,8 @@ export async function scheduleOf(
           .map(
             ({ existingGameId, affectedTeamIds, hostSeasonIds, ...row }) => ({
               ...row,
+              // A proposal is always for a game.
+              eventType: 'game',
               pendingApproval: true,
               status: 'scheduled',
               cancellationReason: null,

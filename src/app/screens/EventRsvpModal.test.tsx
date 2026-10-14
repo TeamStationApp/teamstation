@@ -178,6 +178,19 @@ describe('quick event RSVP and player pills', () => {
         .querySelector('[data-testid="event-rsvp-104-0"]')!
         .getAttribute('aria-checked')
     ).equals('true')
+    // Every line of the sheet is bold: title, time and place, names, errors
+    // and the capsule labels. Only the Done button keeps its own weight.
+    const lines = [
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-testid="event-rsvp-modal"] [dir="auto"]'
+      )
+    ].filter(node => node.textContent !== 'Done')
+    expect(lines.map(node => node.textContent))
+      .includes('vs Demo Eagles')
+      .and.includes('Save unavailable')
+      .and.includes('No reply')
+    for (const node of lines)
+      expect(getComputedStyle(node).fontWeight, node.textContent!).equals('700')
   })
   it('names away, practice and titled events and recovers a failed load', async () => {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })

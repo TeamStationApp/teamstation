@@ -87,7 +87,8 @@
     "coverage.creation": "node scripts/creation-coverage.mjs",
     "coverage.refinements": "node scripts/refinements-coverage.mjs",
     "coverage.guardian": "node scripts/guardian-coverage.mjs",
-    "coverage.eventInfo": "node scripts/event-info-coverage.mjs"
+    "coverage.eventInfo": "node scripts/event-info-coverage.mjs",
+    "coverage.gameForm": "node scripts/game-form-coverage.mjs"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",

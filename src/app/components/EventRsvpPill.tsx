@@ -6,6 +6,7 @@ import {
   Platform,
   Pressable,
   Text,
+  type TextProps,
   useWindowDimensions,
   View
 } from 'react-native'
@@ -21,6 +22,21 @@ import {
 } from './eventRsvpPosition'
 import { useMotionPreference } from './useMotionPreference'
 
+/**
+ * What a one-line label adds to its `Text`. A phone shrinks the label a
+ * little before it would wrap. A browser cannot shrink it, and would cut it
+ * off instead, so there it fits at its own size and wraps only when the text
+ * is enlarged.
+ */
+export function oneLineLabelProps(
+  oneLine: boolean,
+  os: string = Platform.OS
+): Partial<TextProps> {
+  return oneLine && os !== 'web'
+    ? { numberOfLines: 1, adjustsFontSizeToFit: true, minimumFontScale: 0.85 }
+    : {}
+}
+
 /** A continuous three-position response capsule, shared by browser and phones. */
 export function EventRsvpPill({
   value,
@@ -34,7 +50,9 @@ export function EventRsvpPill({
   testID,
   widthRem = 14.25,
   disabledChoices = [],
-  labelSizeRem
+  labelSizeRem,
+  oneLineLabels = false,
+  boldLabels = false
 }: {
   value: RsvpChoice
   onChange: (response: Rsvp) => void
@@ -48,6 +66,14 @@ export function EventRsvpPill({
   widthRem?: number
   disabledChoices?: readonly number[]
   labelSizeRem?: number
+  /**
+   * Each label stays on one line: the capsule is given the width its longest
+   * label needs, and on phones a label shrinks a little before it would wrap.
+   * Its padding stays the fill's radius, so no glyph reaches the rounded ends.
+   */
+  oneLineLabels?: boolean
+  /** Labels in the bold face, for a capsule that must read at a glance. */
+  boldLabels?: boolean
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -104,6 +130,23 @@ export function EventRsvpPill({
       return
     if (index !== held.selected) held.onChange(rsvpAtPosition(index))
   }
+  /** From where the finger let go to the nearest choice it may take. */
+  const release = (): void => {
+    const next = Math.round(dragged.current)
+    const held = current.current
+    setDragging(false)
+    if (
+      !held.disabled &&
+      !held.disabledChoices.includes(next) &&
+      (held.value != null || next !== 1) &&
+      next !== held.selected
+    ) {
+      held.onChange(rsvpAtPosition(next))
+      settle(next)
+    } else settle(held.selected)
+  }
+  const released = useRef(release)
+  released.current = release
   const pan = useMemo(
     () =>
       PanResponder.create({
@@ -124,21 +167,14 @@ export function EventRsvpPill({
           )
           position.setValue(dragged.current)
         },
+        // Once grabbed, the capsule keeps the finger however far it strays
+        // up or down, until it lets go; a scroll view cannot take it.
+        onPanResponderTerminationRequest: () => false,
         onPanResponderRelease: () => {
-          const next = Math.round(dragged.current)
-          setDragging(false)
-          if (
-            !current.current.disabled &&
-            !current.current.disabledChoices.includes(next) &&
-            (current.current.value != null || next !== 1) &&
-            next !== current.current.selected
-          )
-            current.current.onChange(rsvpAtPosition(next))
-          else position.setValue(current.current.selected)
+          released.current()
         },
         onPanResponderTerminate: () => {
-          setDragging(false)
-          position.setValue(current.current.selected)
+          released.current()
         }
       }),
     [position]
@@ -242,12 +278,14 @@ export function EventRsvpPill({
             choose(index)
             if (!disabled && !(value == null && index === 1)) settle(index)
           }}
-          style={styles.choice}
+          style={[styles.choice, oneLineLabels && styles.oneLineChoice]}
         >
           <Text
             selectable={false}
+            {...oneLineLabelProps(oneLineLabels)}
             style={[
               styles.label,
+              boldLabels && styles.boldLabel,
               labelSizeRem == null
                 ? undefined
                 : { fontSize: theme.rem(labelSizeRem) },
@@ -278,7 +316,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     top: theme.rem(0.375),
     bottom: theme.rem(0.375),
     borderRadius: theme.rem(1),
-    backgroundColor: theme.pillBackground
+    backgroundColor: theme.sliderTrackBackground
   },
   fill: {
     position: 'absolute',
@@ -297,6 +335,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     justifyContent: 'center'
   },
+  oneLineChoice: { paddingHorizontal: theme.rem(1) },
   label: {
     maxWidth: '100%',
     flexShrink: 1,
@@ -306,6 +345,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor,
     textAlign: 'center'
   },
+  boldLabel: { fontFamily: theme.boldTextFont, fontWeight: '700' },
   selected: { color: '#ffffff' },
   disabled: { opacity: 0.65 }
 }))

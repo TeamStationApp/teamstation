@@ -7,6 +7,7 @@ import { TeamStationClient } from '../../common/api'
 import { asEventInfo, type EventInfo } from '../../common/eventInfo'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { EventInfoTab } from './EventInfoTab'
+import type { RsvpEvent } from './EventRsvpModal'
 
 let root: Root | undefined
 afterEach(async () => {
@@ -70,6 +71,15 @@ const initial = (): EventInfo =>
       }
     ]
   })
+const EVENT: RsvpEvent = {
+  id: 'g1',
+  homeTeamId: 'home',
+  homeTeamName: 'Owls',
+  awayTeamName: 'Demo Eagles',
+  eventKind: 'game',
+  eventType: 'game',
+  title: ''
+}
 async function render(client: TeamStationClient): Promise<void> {
   const host = document.createElement('div')
   document.body.append(host)
@@ -77,11 +87,23 @@ async function render(client: TeamStationClient): Promise<void> {
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <EventInfoTab client={client} eventId="g1" />
+        <EventInfoTab client={client} eventId="g1" event={EVENT} />
       </ThemeProvider>
     )
   })
 }
+/** Opens the RSVP modal from anywhere in the card, as the schedule does. */
+async function openReplies(): Promise<void> {
+  await click('[data-testid="event-replies-open"]')
+  await act(async () => {
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  expect(document.querySelector('[data-testid="event-rsvp-modal"]')).not.equals(
+    null
+  )
+}
+const status = (userId: number): HTMLElement =>
+  document.querySelector(`[data-testid="event-reply-status-${userId}"]`)!
 async function click(selector: string): Promise<void> {
   const button = selector.startsWith('[')
     ? document.querySelector<HTMLElement>(selector)
@@ -96,13 +118,19 @@ async function click(selector: string): Promise<void> {
 }
 const clientFor = (info = initial()): TeamStationClient => {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
+  // Replies are kept, so a reload shows what was saved.
   client.eventInfo = async () => structuredClone(info)
   client.eventLocation = async () => ({
     latitude: 34,
     longitude: 12,
     tileUrl: 'https://example.test/{z}/{x}/{y}'
   })
-  client.saveRsvp = async (_id, userId, response) => ({ userId, response })
+  client.saveRsvp = async (_id, userId, response) => {
+    info.attendees = info.attendees.map(row =>
+      row.userId === userId ? { ...row, response } : row
+    )
+    return { userId, response }
+  }
   return client
 }
 describe('event Info location and family controls', () => {
@@ -156,7 +184,7 @@ describe('event Info location and family controls', () => {
       .not.includes('UTC')
       .and.not.includes('2027')
   })
-  it('renders one independent family row each, omits absent maps, and groups replies in order', async () => {
+  it('lists each family reply as coloured text, opens the RSVP modal from anywhere in the card, and groups replies in order', async () => {
     const client = clientFor()
     let locations = 0
     client.eventLocation = async () => {
@@ -165,12 +193,20 @@ describe('event Info location and family controls', () => {
     }
     await render(client)
     expect(document.body.textContent).includes('ARE YOU GOING?')
-    expect(document.querySelectorAll('[role="radiogroup"]')).length(3)
+    // No capsules on the page: one line a person, the reply on the right.
+    expect(document.querySelectorAll('[role="radiogroup"]')).length(0)
     const card = document.querySelector('[data-testid="event-replies"]')!
     expect(card.querySelectorAll('[data-testid^="event-reply-row-"]')).length(3)
     expect(document.querySelectorAll('[data-testid="event-replies"]')).length(1)
+    expect([101, 103, 104].map(id => status(id).textContent)).deep.equals([
+      'No reply',
+      'No reply',
+      'No reply'
+    ])
     expect(document.querySelector('iframe')).equals(null)
     expect(locations).equals(0)
+    await openReplies()
+    expect(document.querySelectorAll('[role="radiogroup"]')).length(3)
     await click('[data-testid="event-rsvp-101-0"]')
     await click('[data-testid="event-rsvp-103-2"]')
     await click('[data-testid="event-rsvp-104-0"]')
@@ -180,16 +216,24 @@ describe('event Info location and family controls', () => {
         .querySelector('[data-testid="event-rsvp-101-1"]')
         ?.getAttribute('aria-checked')
     ).equals('true')
-    expect(
-      document
-        .querySelector('[data-testid="event-rsvp-103-2"]')
-        ?.getAttribute('aria-checked')
-    ).equals('true')
-    expect(
-      document
-        .querySelector('[data-testid="event-rsvp-104-0"]')
-        ?.getAttribute('aria-checked')
-    ).equals('true')
+    await click('Done')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 400))
+    })
+    expect(document.querySelector('[data-testid="event-rsvp-modal"]')).equals(
+      null
+    )
+    expect([101, 103, 104].map(id => status(id).textContent)).deep.equals([
+      'Maybe',
+      'No',
+      'Yes'
+    ])
+    // Blue, red and green, as on the capsule.
+    expect([101, 103, 104].map(id => status(id).style.color)).deep.equals([
+      'rgb(35, 118, 207)',
+      'rgb(203, 57, 65)',
+      'rgb(32, 138, 75)'
+    ])
     expect(
       document.querySelector('[data-testid="attendance-players-yes"]')
         ?.textContent
@@ -221,6 +265,7 @@ describe('event Info location and family controls', () => {
           })
         : { userId, response }
     await render(client)
+    await openReplies()
     await click('[data-testid="event-rsvp-101-0"]')
     expect(
       document
@@ -245,6 +290,10 @@ describe('event Info location and family controls', () => {
     expect(document.body.textContent).not.includes(
       'Your guardian access changed'
     )
+    await click('Done')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 400))
+    })
   })
   it('shows recoverable initial load and map failures, then renders the actual map document on retry', async () => {
     const info = {
@@ -308,54 +357,6 @@ describe('event Info location and family controls', () => {
       'L.map'
     )
     expect(document.body.textContent).includes('1 Demo Way')
-  })
-  it('retries a team switch discarded while a family reply is being saved', async () => {
-    const value = {
-      ...initial(),
-      attendanceTeams: [
-        { id: 'home', name: 'Demo Hawks', isParticipant: true },
-        { id: 'away', name: 'Demo Eagles', isParticipant: true }
-      ]
-    }
-    const client = clientFor(value)
-    let finishTeam!: (info: EventInfo) => void
-    let finishReply!: () => void
-    let awayLoads = 0
-    client.eventInfo = async (_id, team) => {
-      if (team !== 'away') return value
-      awayLoads++
-      return awayLoads === 1
-        ? await new Promise(resolve => {
-            finishTeam = resolve
-          })
-        : { ...value, teamId: 'away' }
-    }
-    client.saveRsvp = async (_id, userId, response) => {
-      await new Promise<void>(resolve => {
-        finishReply = resolve
-      })
-      return { userId, response }
-    }
-    await render(client)
-    await click('[aria-label="RSVP teams"] [aria-label="Demo Eagles"]')
-    await click('[data-testid="event-rsvp-101-0"]')
-    await act(async () => {
-      finishTeam({ ...value, teamId: 'away' })
-    })
-    expect(
-      document
-        .querySelector('[aria-label="Demo Hawks"]')
-        ?.getAttribute('aria-selected')
-    ).equals('true')
-    await act(async () => {
-      finishReply()
-    })
-    expect(awayLoads).equals(2)
-    expect(
-      document
-        .querySelector('[aria-label="Demo Eagles"]')
-        ?.getAttribute('aria-selected')
-    ).equals('true')
   })
   it('keeps the visitor location view free of private attendance and RSVP controls', async () => {
     const client = clientFor({

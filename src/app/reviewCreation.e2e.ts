@@ -574,10 +574,20 @@ async function main(): Promise<void> {
     })
     await press(league, 'Manage')
     await press(league, 'Create Game')
-    await press(league, 'Choose a different season')
-    await press(league, 'Host: Demo Regular')
+    // A team page's game is a scrimmage or exhibition in no season, however
+    // many seasons its administrator keeps; seasons schedule their own games.
+    await text(league, 'always creates a scrimmage/exhibition game')
+    expect(
+      await league.evaluate(() =>
+        // No `??` here: the browser runs this without sucrase's helpers.
+        [...document.querySelectorAll('[role="button"]')].some(node => {
+          const label = node.getAttribute('aria-label')
+          return label !== null && /season/i.test(label)
+        })
+      )
+    ).equals(false)
     lines.push(
-      'E4/E6 review PASS: an administrator with more than fifty newer owned seasons can still select the original host in the real game form'
+      'E4/E6 review PASS: an administrator with more than fifty owned seasons creates a team game as an exhibition, with no season to choose'
     )
 
     const frozenGame = await f.h.request(

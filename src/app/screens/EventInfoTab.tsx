@@ -6,8 +6,7 @@ import {
   type EventInfo,
   type EventLocation,
   playerRsvpCounts,
-  type Rsvp,
-  sortedAttendees
+  type Rsvp
 } from '../../common/eventInfo'
 import {
   Button,
@@ -19,7 +18,7 @@ import {
   SectionHeader
 } from '../components'
 import { EventMap } from '../components/EventMap'
-import { EventRsvpPill } from '../components/EventRsvpPill'
+import { RSVP_COLORS } from '../components/eventRsvpPosition'
 import { PlayerRsvpCounts } from '../components/PlayerRsvpCounts'
 import { SegmentedPill } from '../components/SegmentedPill'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
@@ -29,14 +28,33 @@ import {
 } from '../platform/eventDirections'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attendanceSections, attendanceSubtitle } from './eventAttendance'
+import { EventRsvpModal, type RsvpEvent } from './EventRsvpModal'
+
+/** How a reply reads, and its colour on the RSVP capsule. */
+export function replyLabel(response: Rsvp | null): {
+  label: string
+  color: string
+} {
+  return response === 'yes'
+    ? { label: 'Yes', color: RSVP_COLORS[0] }
+    : response === 'no'
+      ? { label: 'No', color: RSVP_COLORS[2] }
+      : {
+          label: response === 'maybe' ? 'Maybe' : 'No reply',
+          color: RSVP_COLORS[1]
+        }
+}
 
 export function EventInfoTab({
   client,
   eventId,
+  event,
   onLoaded
 }: {
   client: TeamStationClient
   eventId: string
+  /** The event the RSVP card's modal answers for; without it the card is read-only. */
+  event?: RsvpEvent
   onLoaded?: (info: EventInfo) => void
 }): React.ReactElement {
   const theme = useTheme()
@@ -44,13 +62,11 @@ export function EventInfoTab({
   const [info, setInfo] = useState<EventInfo>()
   const [error, setError] = useState('')
   const [selectedTeam, setSelectedTeam] = useState<string>()
-  const [busy, setBusy] = useState<Record<number, boolean>>({})
-  const [replyErrors, setReplyErrors] = useState<Record<number, string>>({})
+  const [replying, setReplying] = useState(false)
   const [notice, setNotice] = useState('')
   const [location, setLocation] = useState<EventLocation>()
   const [mapError, setMapError] = useState('')
   const [mapRetry, setMapRetry] = useState(0)
-  const writes = useRef(new Set<number>())
   const generation = useRef(0)
   const live = useRef(true)
   useEffect(() => {
@@ -64,11 +80,7 @@ export function EventInfoTab({
     const request = ++generation.current
     try {
       const found = await client.eventInfo(eventId, selectedTeam)
-      if (
-        live.current &&
-        request === generation.current &&
-        writes.current.size === 0
-      ) {
+      if (live.current && request === generation.current) {
         setInfo(found)
         onLoaded?.(found)
         setError('')
@@ -82,8 +94,6 @@ export function EventInfoTab({
         )
     }
   }, [client, eventId, selectedTeam, onLoaded])
-  const latestRefresh = useRef({ refresh, selectedTeam, teamId: info?.teamId })
-  latestRefresh.current = { refresh, selectedTeam, teamId: info?.teamId }
   useForegroundRefresh(refresh)
   const address =
     info?.address?.trim() !== '' && info?.address != null
@@ -114,56 +124,6 @@ export function EventInfoTab({
       active = false
     }
   }, [address, latitude, longitude, client, eventId, mapRetry])
-  const change = async (userId: number, response: Rsvp): Promise<void> => {
-    if (writes.current.has(userId) || info == null) return
-    const previous =
-      info.attendees.find(row => row.userId === userId)?.response ?? null
-    writes.current.add(userId)
-    generation.current++
-    setBusy(held => ({ ...held, [userId]: true }))
-    setReplyErrors(held => ({ ...held, [userId]: '' }))
-    const update = (reply: Rsvp | null): void => {
-      setInfo(held =>
-        held == null
-          ? held
-          : {
-              ...held,
-              attendees: sortedAttendees(
-                held.attendees.map(row =>
-                  row.userId === userId ? { ...row, response: reply } : row
-                )
-              )
-            }
-      )
-    }
-    update(response)
-    try {
-      await client.saveRsvp(eventId, userId, response)
-    } catch (error) {
-      if (live.current) {
-        update(previous)
-        setReplyErrors(held => ({
-          ...held,
-          [userId]:
-            error instanceof Error
-              ? error.message
-              : 'Your RSVP could not be saved. Try again.'
-        }))
-      }
-    } finally {
-      writes.current.delete(userId)
-      generation.current++
-      if (live.current) setBusy(held => ({ ...held, [userId]: false }))
-      const pendingTeam = latestRefresh.current
-      if (
-        live.current &&
-        writes.current.size === 0 &&
-        pendingTeam.selectedTeam != null &&
-        pendingTeam.selectedTeam !== pendingTeam.teamId
-      )
-        pendingTeam.refresh().catch(() => undefined)
-    }
-  }
   const directions = (): void => {
     if (address == null) return
     const venueOnly = (info?.address?.trim() ?? '') === ''
@@ -219,6 +179,18 @@ export function EventInfoTab({
   )
   return (
     <View style={styles.section} testID="event-info">
+      {replying && event != null && (
+        <EventRsvpModal
+          client={client}
+          game={event}
+          teamId={info.teamId}
+          onClose={() => {
+            setReplying(false)
+            refresh().catch(() => undefined)
+          }}
+          onCounts={() => undefined}
+        />
+      )}
       {notice !== '' && (
         <Text accessibilityLiveRegion="polite" style={styles.detail}>
           {notice}
@@ -230,41 +202,51 @@ export function EventInfoTab({
             <SectionHeader title="Are you going?" />
             <PlayerRsvpCounts counts={playerRsvpCounts(info.attendees)} />
           </View>
-          <Card style={styles.attendance} testID="event-replies">
-            {own.map((row, index) => (
-              <View
-                key={row.userId}
-                style={[styles.replyItem, index > 0 && styles.replyDivider]}
-                testID={`event-reply-row-${row.userId}`}
-              >
-                <View style={styles.replyRow}>
-                  <Emblem
-                    uri={row.avatarUrl}
-                    fallback={initialsOf(row.name)}
-                    shape="circle"
-                    size={2}
-                  />
-                  <Text style={styles.replyName}>{row.name}</Text>
-                  <View style={styles.replyControl}>
-                    <EventRsvpPill
-                      userId={row.userId}
-                      name={row.name}
-                      value={row.response}
-                      disabled={busy[row.userId]}
-                      onChange={response => {
-                        change(row.userId, response).catch(() => undefined)
-                      }}
+          <Card style={styles.replies} testID="event-replies">
+            <Pressable
+              testID="event-replies-open"
+              accessibilityRole="button"
+              accessibilityLabel="RSVP"
+              accessibilityHint={own
+                .map(row => `${row.name}: ${replyLabel(row.response).label}`)
+                .join(', ')}
+              disabled={event == null}
+              onPress={() => {
+                setReplying(true)
+              }}
+              style={({ pressed }) => pressed && styles.pressed}
+            >
+              {own.map((row, index) => {
+                const reply = replyLabel(row.response)
+                return (
+                  <View
+                    key={row.userId}
+                    style={[styles.replyRow, index > 0 && styles.replyDivider]}
+                    testID={`event-reply-row-${row.userId}`}
+                  >
+                    <Emblem
+                      uri={row.avatarUrl}
+                      fallback={initialsOf(row.name)}
+                      shape="circle"
+                      size={1.5}
                     />
-                  </View>
-                </View>
-                {replyErrors[row.userId] != null &&
-                  replyErrors[row.userId] !== '' && (
-                    <Text accessibilityRole="alert" style={styles.error}>
-                      {replyErrors[row.userId]}
+                    <Text
+                      style={styles.replyName}
+                      numberOfLines={1}
+                      testID={`event-reply-name-${row.userId}`}
+                    >
+                      {row.name}
                     </Text>
-                  )}
-              </View>
-            ))}
+                    <Text
+                      style={[styles.replyStatus, { color: reply.color }]}
+                      testID={`event-reply-status-${row.userId}`}
+                    >
+                      {reply.label}
+                    </Text>
+                  </View>
+                )
+              })}
+            </Pressable>
           </Card>
         </View>
       )}
@@ -349,7 +331,6 @@ export function EventInfoTab({
               ]}
               selected={info.teamId}
               accessibilityLabel="RSVP teams"
-              disabled={Object.values(busy).some(value => value)}
               onSelect={setSelectedTeam}
             />
           </View>
@@ -452,7 +433,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     justifyContent: 'center'
   },
-  attendance: { padding: theme.rem(0.5) },
   replySection: { gap: theme.rem(0.375) },
   replyHeader: {
     flexDirection: 'row',
@@ -460,22 +440,29 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     gap: theme.rem(0.5)
   },
-  replyItem: { paddingVertical: theme.rem(0.5) },
+  replies: { paddingVertical: theme.rem(0.125) },
+  pressed: { opacity: 0.7 },
   replyDivider: { borderTopWidth: 1, borderTopColor: theme.defaultBorderColor },
   replyRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     alignItems: 'center',
-    gap: theme.rem(0.5)
+    gap: theme.rem(0.5),
+    paddingVertical: theme.rem(0.375)
   },
   replyName: {
     flex: 1,
-    minWidth: theme.rem(3),
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(1),
+    minWidth: 0,
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.875),
+    fontWeight: '600',
     color: theme.primaryTextColor
   },
-  replyControl: { marginLeft: 'auto', maxWidth: '100%' },
+  replyStatus: {
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.875),
+    fontWeight: '600',
+    textAlign: 'right'
+  },
   group: { gap: theme.rem(0.75) },
   teamChoices: {
     flexDirection: 'row',

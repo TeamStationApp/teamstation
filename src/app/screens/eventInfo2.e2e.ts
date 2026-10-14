@@ -445,8 +445,22 @@ async function main(): Promise<void> {
       if (capture) await shot('time-picker.png')
       await tap({ text: 'Use time' })
     }
+    // The time zone picker slides up as a scene of its own: type into it
+    // once it has come to rest, or the tap lands on a row sliding past.
+    const settleTimezoneScene = async (): Promise<void> => {
+      await m.assertVisible({
+        css: '[data-testid="timezone-picker"]',
+        timeout: 10000
+      })
+      await m.waitForAnimationToEnd()
+      await wait(
+        `(()=>{const node=document.querySelector('[aria-label="Find time zone"]');if(!node)return false;const r=node.getBoundingClientRect();window.__tzTop=window.__tzTop??[];window.__tzTop.push(r.top);const seen=window.__tzTop.slice(-3);return seen.length===3&&seen.every(top=>top===seen[0])})()`
+      )
+      await m.evalBrowserScript({ script: 'window.__tzTop=undefined' })
+    }
     const chooseZone = async (zone: string, capture = false): Promise<void> => {
       await tap({ id: 'event-schedule-timezone' })
+      await settleTimezoneScene()
       await fill('Find time zone', zone.replace(/_/g, ' '))
       if (capture) await shot('timezone-picker.png')
       await tap({
@@ -514,6 +528,10 @@ async function main(): Promise<void> {
       ),
       false
     )
+    // The Info card lists replies; a tap opens the schedule's RSVP modal,
+    // whose capsules the replies below are made with.
+    await tap({ id: 'event-replies-open' })
+    await m.assertVisible({ id: 'event-rsvp-modal', timeout: 20000 })
     await tap({ id: 'event-rsvp-101-0' })
     await tap({ id: 'event-rsvp-101-1' })
     await tap({ id: 'event-rsvp-103-2' })
@@ -522,7 +540,7 @@ async function main(): Promise<void> {
       `document.querySelector('[data-testid="event-rsvp-101-1"]').getAttribute('aria-disabled')!=='true'`
     )
     await shape()
-    await see({ id: 'event-reply-row-101' }, 'UP')
+    await see({ id: 'quick-rsvp-row-101' }, 'UP')
     await shot('info-after.png')
     await m.evalBrowserScript({
       script: `window.__tracks=[];for(const track of document.querySelectorAll('[role="radiogroup"]')){window.__tracks.push([track,track.style.width]);track.style.width=(parseFloat(getComputedStyle(track).width)*2)+'px'}window.__fonts=[];for(const label of document.querySelectorAll('[role="radiogroup"] [role="radio"] > div')){window.__fonts.push([label,label.style.fontSize,label.style.lineHeight]);label.style.fontSize=(parseFloat(getComputedStyle(label).fontSize)*2)+'px';label.style.lineHeight=(parseFloat(getComputedStyle(label).lineHeight)*2)+'px'}`
@@ -579,6 +597,10 @@ async function main(): Promise<void> {
     await tap({ id: 'event-rsvp-101-1' })
     console.log(
       'Independent self/child replies, continuous gradient, keyboard and Maybe persistence passed'
+    )
+    await m.tapOn({ text: 'Done' })
+    await wait(
+      `document.querySelector('[data-testid="event-rsvp-modal"]')==null && document.querySelector('[data-testid="event-reply-status-101"]')?.textContent==='Maybe'`
     )
     const persisted = asEventInfo(
       await (await f.h.request('GET', `/events/${gameId}/info`)).json()
@@ -696,6 +718,10 @@ async function main(): Promise<void> {
       `document.querySelector('iframe').contentDocument.querySelector('#error').style.display==='none'`
     )
     await see({ id: 'event-address' })
+    // Clear of the floating tab bar, wherever the cards above leave it.
+    await m.evalBrowserScript({
+      script: `document.querySelector('[data-testid="event-address"]').scrollIntoView({block:'center'})`
+    })
     await m.longPressOn({ id: 'event-address' })
     await m.assertVisible({ text: 'Address copied', timeout: 10000 })
     console.log(
@@ -706,7 +732,9 @@ async function main(): Promise<void> {
         `create function fail_event_rsvp_fixture() returns trigger language plpgsql as $$begin if new.user_id=103 then raise exception 'Synthetic RSVP write failure'; end if; return new; end$$;create trigger fail_event_rsvp_fixture before insert or update on game_rsvps for each row execute function fail_event_rsvp_fixture();`
       )
       .execute(f.h.db)
-    await tap({ id: 'event-rsvp-103-0' }, 'UP')
+    await tap({ id: 'event-replies-open' }, 'UP')
+    await m.assertVisible({ id: 'event-rsvp-modal', timeout: 20000 })
+    await tap({ id: 'event-rsvp-103-0' })
     await m.assertVisible({ text: 'Something went wrong', timeout: 10000 })
     assert.equal(
       await evaluate(
@@ -729,9 +757,9 @@ async function main(): Promise<void> {
     await open(`/games/${gameId}`)
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-rsvp-101-1"]').getAttribute('aria-checked')`
+        `document.querySelector('[data-testid="event-reply-status-101"]').textContent`
       ),
-      'true'
+      'Maybe'
     )
     console.log(
       'Actual failed write isolates rollback; refreshed replies persist'
@@ -782,7 +810,7 @@ async function main(): Promise<void> {
     )
     assert(
       await evaluate<boolean>(
-        `document.querySelector('[data-testid="event-rsvp-103"]')!=null`
+        `document.querySelector('[data-testid="event-reply-row-103"]')!=null`
       ),
       'An out-of-selected-team child keeps a private control'
     )
@@ -924,7 +952,11 @@ async function main(): Promise<void> {
       ),
       '0'
     )
-    await fill('Title', 'Demo practice')
+    // A practice is called Practice; only other events take a title.
+    assert.equal(
+      await evaluate(`document.querySelector('[aria-label="Title"]')==null`),
+      true
+    )
     await shot('practice-create.png')
     await see({ css: '[aria-label="Arrival minutes (optional)"]' })
     await shot('practice-arrival-default.png')
@@ -942,6 +974,7 @@ async function main(): Promise<void> {
     await chooseDate('date', '2032-02-29', true)
     await chooseTime('time', '23:30', true)
     await tap({ id: 'event-schedule-timezone' })
+    await settleTimezoneScene()
     await fill('Find time zone', 'America/')
     assert.equal(
       await evaluate(
@@ -1219,7 +1252,7 @@ async function main(): Promise<void> {
         )
       ).includes('2:00 PM')
     )
-    await tap({ text: 'Send Game Proposal' })
+    await tap({ text: 'Save' })
     assert.equal(
       (
         await f.h.db
@@ -1243,7 +1276,7 @@ async function main(): Promise<void> {
     await fill('Venue name (optional)', 'Demo New Park')
     await see({ id: 'event-schedule-date' }, 'UP')
     await shot('game-settings-after.png')
-    await tap({ text: 'Send Game Proposal' })
+    await tap({ text: 'Save' })
     await m.assertVisible({ id: 'event-reply-row-101', timeout: 20000 })
     const request = await f.h.db
       .selectFrom('group_requests')
@@ -1293,19 +1326,28 @@ async function main(): Promise<void> {
     await open(`/games/${gameId}`)
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-rsvp-101-1"]').getAttribute('aria-checked')`
+        `document.querySelector('[data-testid="event-reply-status-101"]').textContent`
       ),
-      'true'
+      'Maybe'
     )
     await m.openBrowser({
       url: f.h.origin + `/groups/team/${f.teamA}/create-game`
     })
     await m.assertVisible({ text: 'Create Game', timeout: 20000 })
-    await tap({ text: 'Choose Demo Eagles' })
+    // The opponent is chosen in the team selector that slides up.
+    await tap({ text: 'Choose Away Team, Away' })
+    // The selector slides up; tap its row once it has come to rest.
+    await m.assertVisible({
+      css: `[data-testid="team-result-${f.teamB}"]`,
+      timeout: 20000
+    })
+    await m.waitForAnimationToEnd()
+    await tap({ css: `[data-testid="team-result-${f.teamB}"]` })
+    await wait(`document.querySelector('[data-testid="team-selector"]')==null`)
     await chooseZone('UTC')
     await chooseDate('date', '2032-03-06')
     await chooseTime('time', '18:05')
-    await tap({ text: 'Send game proposal' })
+    await tap({ text: 'Save' })
     await wait(`window.location.pathname.startsWith('/notifications/')`)
     const newRequest = await f.h.db
       .selectFrom('group_requests')
@@ -1574,7 +1616,7 @@ async function main(): Promise<void> {
     )
     assert(
       await evaluate<boolean>(
-        `document.querySelector('[data-testid="event-rsvp-103"]')!=null`
+        `document.querySelector('[data-testid="event-reply-row-103"]')!=null`
       )
     )
     console.log(

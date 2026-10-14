@@ -26,6 +26,7 @@ import {
   pillsOffset,
   type PinnedHead,
   type PinnedHeadOptions,
+  rowAnchored,
   scrolled,
   spacerFor
 } from './pinnedHead'
@@ -116,6 +117,24 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   >(undefined)
   /** True once a taken-over page still has the landing room under it. */
   const roomAfterDrag = useSharedValue(false)
+  /**
+   * A row anchor, held until a finger takes the page: the head it was
+   * anchored from. Rows above it that settle their height after it lands
+   * would otherwise carry it away, and the room kept for the page would leave
+   * empty space under the last row.
+   */
+  const rowFrom = useRef<{ y: number; collapse: number } | undefined>(undefined)
+  const holdRow = useSharedValue(false)
+  /** `tryAnchor`, for the callbacks written above it. */
+  const anchorAgain = useRef<() => void>(() => undefined)
+  /** Still held on its row: anchor on it again, as it is laid out now. */
+  const reanchor = useCallback((): boolean => {
+    if (!holdRow.value || rowFrom.current == null) return false
+    if (pending.current != null || growing.current != null) return true
+    pending.current = rowFrom.current
+    anchorAgain.current()
+    return true
+  }, [holdRow])
   /** Timers a jump leaves running; the next select, jump or unmount ends them. */
   const timers = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const clearTimers = useCallback((): void => {
@@ -204,6 +223,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     onBeginDrag: () => {
       // A finger on the page: from here the page goes where it is taken.
       dragging.value = true
+      holdRow.value = false
       jumpTo.value = -1
       if (holding.value) takenOver.value = true
     },
@@ -281,6 +301,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
    * ResizeObserver does, so the page still stops where the pills pin over it.
    */
   const resizeRoom = useCallback((): void => {
+    if (reanchor()) return
     const anchor = lastAnchor.current
     const { viewport, pinAt: pin, content } = measured.current
     if (pending.current != null || roomAfterDrag.value) return
@@ -301,7 +322,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
         spacerFor(y.value, contentBottom, viewport)
       )
     )
-  }, [roomAfterDrag, y])
+  }, [reanchor, roomAfterDrag, y])
 
   /** The hand-off's ref, forwarded as it is now, whatever it was before. */
   const cardRef = useCallback((node: unknown): void => {
@@ -320,21 +341,33 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     if (from == null || !ready || growing.current != null) return
     if (viewport == null || pin == null || content == null) return
     if (anchorOnRow && rowY == null) return
-    const offset = anchorOnRow
-      ? (measured.current.sectionY ?? 0) + (rowY ?? 0)
-      : 0
-    const target = anchored(from, offset, pin)
     const contentBottom = headerHeight + content.y + content.height + tail
+    const target = anchorOnRow
+      ? rowAnchored(
+          from,
+          (measured.current.sectionY ?? 0) + (rowY ?? 0),
+          pin,
+          contentBottom,
+          viewport
+        )
+      : anchored(from, 0, pin)
+    // A tab at its top keeps room to drag up until the pills pin; a row
+    // anchor keeps none past where it lands.
+    const reach = anchorOnRow ? target.y : pin
+    const offset = reach - pin
     const jump = (): void => {
       growing.current = undefined
       pending.current = undefined
       clearTimers()
       lastAnchor.current = {
         offset,
-        reach: offset + pin,
+        reach,
         contentBottom,
         viewport
       }
+      // Held on its row until a finger takes the page, unless one already has.
+      rowFrom.current = anchorOnRow && !takenOver.value ? from : undefined
+      holdRow.value = rowFrom.current != null
       // eslint-disable-next-line @typescript-eslint/no-deprecated -- scheduleOnUI lives in react-native-worklets, which reanimated does not re-export
       runOnUI((to: number, held: number, room: number) => {
         'worklet'
@@ -387,7 +420,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       )
       notify()
     }
-    const room = spacerFor(offset + pin, contentBottom, viewport)
+    const room = spacerFor(reach, contentBottom, viewport)
     // Room for the jump first, then the jump. Room within a pixel of what is
     // laid out already lays out to nothing new, so no layout would say so.
     const needed = Math.max(spaceNow.current, room)
@@ -407,6 +440,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     clearTimers,
     collapse,
     dragging,
+    holdRow,
     holding,
     jumpTo,
     notify,
@@ -416,6 +450,8 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     takenOver,
     y
   ])
+
+  anchorAgain.current = tryAnchor
 
   // A tab selected again, already laid out, needs no new layout to anchor;
   // the first load waits here for its data.
@@ -429,6 +465,8 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       holding.value = true
       takenOver.value = false
       roomAfterDrag.value = false
+      holdRow.value = false
+      rowFrom.current = undefined
       growing.current = undefined
       clearTimers()
       // A tab other than the one measured lays out anew before it anchors —
@@ -449,7 +487,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       setSpace(y.value + PROVISIONAL_ROOM)
       setGeneration(generation => generation + 1)
     },
-    [clearTimers, collapse, holding, roomAfterDrag, takenOver, y]
+    [clearTimers, collapse, holdRow, holding, roomAfterDrag, takenOver, y]
   )
 
   return useMemo(
@@ -485,13 +523,13 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       nextRow: {
         handleLayout: (event: LayoutChangeEvent) => {
           measured.current.rowY = event.nativeEvent.layout.y
-          tryAnchor()
+          if (!reanchor()) tryAnchor()
         }
       },
       rowSection: {
         handleLayout: (event: LayoutChangeEvent) => {
           measured.current.sectionY = event.nativeEvent.layout.y
-          tryAnchor()
+          if (!reanchor()) tryAnchor()
         }
       },
       spacer: {
@@ -514,6 +552,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       onScroll,
       pillStyle,
       pinAt,
+      reanchor,
       resizeRoom,
       scrollRef,
       select,

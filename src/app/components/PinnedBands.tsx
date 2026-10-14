@@ -105,6 +105,7 @@ export function PinnedSpacer(props: {
     <View
       ref={part.ref}
       onLayout={part.handleLayout}
+      testID="pinnedSpacer"
       style={[styles.spacer, part.style]}
     />
   )

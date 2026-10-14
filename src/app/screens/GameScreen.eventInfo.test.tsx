@@ -12,6 +12,7 @@ import {
 import { asEventInfo } from '../../common/eventInfo'
 import { eventArrivalTime, eventHeroLines } from '../../common/eventTime'
 import type { GameSocketEvent } from '../../common/gameSocket'
+import { HeaderSlotProvider } from '../components/headerSlot'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { GameScreen } from './GameScreen'
 
@@ -398,6 +399,50 @@ describe('the event page’s automatic and explicit sections', () => {
     } finally {
       Intl.DateTimeFormat.prototype.resolvedOptions = original
     }
+  })
+  it('calls a titled practice Practice in its hero and in the header', async () => {
+    const { client, game } = fixture()
+    game.eventKind = 'event'
+    game.eventType = 'practice'
+    game.title = 'Pitching clinic'
+    const handed: React.ReactNode[] = []
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <HeaderSlotProvider
+            headerHeight={56}
+            onHandoff={node => {
+              handed.push(node)
+            }}
+          >
+            <GestureHandlerRootView>
+              <GameScreen client={client} gameId="g1" initialTab="info" />
+            </GestureHandlerRootView>
+          </HeaderSlotProvider>
+        </ThemeProvider>
+      )
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    })
+    const hero = document.querySelector('[data-testid="event-hero"]')!
+    expect(hero.textContent).includes('Practice')
+    expect(hero.textContent).not.includes('Pitching clinic')
+    const header = document.createElement('div')
+    document.body.append(header)
+    const headerRoot = createRoot(header)
+    await act(async () => {
+      headerRoot.render(
+        <ThemeProvider>{handed.filter(Boolean).at(-1)}</ThemeProvider>
+      )
+    })
+    expect(header.textContent).equals('Practice')
+    await act(async () => {
+      headerRoot.unmount()
+    })
   })
   for (const kind of ['game', 'event'] as const)
     for (const delta of [null, 0, 45])

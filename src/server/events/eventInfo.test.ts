@@ -113,6 +113,72 @@ describe('real event info and guardian attendance', function () {
     expect(response.status).equals(200)
     return asEventInfo(await response.json())
   }
+  it('calls an untitled practice Practice, and keeps every other event titled', async () => {
+    const { title, ...untitled } = body()
+    const created = await f.h.request('POST', '/events', {
+      ...untitled,
+      eventType: 'practice',
+      idempotencyKey: 'untitled-practice'
+    })
+    expect(created.status, await created.clone().text()).equals(201)
+    const { id } = (await created.json()) as { id: string }
+    const stored = async (): Promise<{ title: string; event_type: string }> =>
+      await f.h.db
+        .selectFrom('team_events')
+        .select(['title', 'event_type'])
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+    expect(await stored()).deep.equals({
+      title: 'Practice',
+      event_type: 'practice'
+    })
+    // Clearing a practice's title calls it Practice again.
+    expect(
+      (await f.h.request('PUT', `/events/${id}/info`, { title: 'Drills' }))
+        .status
+    ).equals(200)
+    expect((await stored()).title).equals('Drills')
+    expect(
+      (await f.h.request('PUT', `/events/${id}/info`, { title: '' })).status
+    ).equals(200)
+    expect((await stored()).title).equals('Practice')
+    // An Other event needs a title, made or changed into one.
+    expect(
+      (
+        await f.h.request('PUT', `/events/${id}/info`, {
+          title: '',
+          eventType: 'other'
+        })
+      ).status
+    ).equals(400)
+    // Called Practice only by default, it has no title to become Other with.
+    expect(
+      (await f.h.request('PUT', `/events/${id}/info`, { eventType: 'other' }))
+        .status
+    ).equals(400)
+    expect(
+      (
+        await f.h.request('PUT', `/events/${id}/info`, {
+          eventType: 'other',
+          title: 'Team dinner'
+        })
+      ).status
+    ).equals(200)
+    expect(await stored()).deep.equals({
+      title: 'Team dinner',
+      event_type: 'other'
+    })
+    expect(
+      (
+        await f.h.request('POST', '/events', {
+          ...untitled,
+          eventType: 'other',
+          idempotencyKey: 'untitled-other'
+        })
+      ).status
+    ).equals(400)
+    expect(title).equals('Team dinner')
+  })
   it('maps legacy venues with locality and keeps explicit address coordinates authoritative', async () => {
     const path = `/fixture/events/${gameId}/location`
     expect(await (await f.h.request('GET', path)).json()).includes({
@@ -363,6 +429,78 @@ describe('real event info and guardian attendance', function () {
         t => t.isParticipant === true
       )
     ).equals(true)
+  })
+  it('defaults to the team a viewer has most to do with: a point each for guardian, staff and member', async () => {
+    await seedEventInfo2People(f, gameId)
+    const member = async (
+      userId: number,
+      teamId: string,
+      isPlayer = false
+    ): Promise<void> => {
+      await f.h.db
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: userId,
+          team_id: teamId,
+          is_player: isPlayer
+        })
+        .execute()
+    }
+    const guardian = async (child: number): Promise<void> => {
+      await f.h.db
+        .insertInto('user_links')
+        .values({
+          id: makeId('userLink'),
+          user_id: 107,
+          related_user_id: child,
+          kind: 'guardian',
+          can_manage: false
+        })
+        .execute()
+    }
+    // A member of the home team; then of the away team too, a tie that keeps
+    // the game's own order.
+    expect((await info(gameId, 107)).teamId).equals(f.teamA)
+    await member(107, f.teamB)
+    expect((await info(gameId, 107)).teamId).equals(f.teamA)
+    // Coaching away as well: two points to one.
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: makeId('scopeRole'),
+        user_id: 107,
+        scope_type: 'team',
+        scope_id: f.teamB,
+        role: 'coach'
+      })
+      .execute()
+    expect((await info(gameId, 107)).teamId).equals(f.teamB)
+    // Guardian of a home player: two each, and home again.
+    await guardian(108)
+    expect((await info(gameId, 107)).teamId).equals(f.teamA)
+    // That child playing away too gives away all three points.
+    await member(108, f.teamB, true)
+    const read = await info(gameId, 107)
+    expect(read.teamId).equals(f.teamB)
+    expect(
+      (read.attendanceTeams ?? [])
+        .filter(team => team.isParticipant === true)
+        .map(team => team.id)
+    ).members([f.teamA, f.teamB])
+    // Asking for a team still answers that team.
+    expect(
+      asEventInfo(
+        await (
+          await f.h.request(
+            'GET',
+            `/events/${gameId}/info?teamId=${f.teamA}`,
+            undefined,
+            107
+          )
+        ).json()
+      ).teamId
+    ).equals(f.teamA)
   })
   it('drops removed team people and disabled players’ guardians without widening from old replies', async () => {
     await seedEventInfo2People(f, gameId)

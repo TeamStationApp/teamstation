@@ -137,9 +137,15 @@ async function main(): Promise<void> {
           const weekday=node.querySelector('[data-testid="schedule-weekday"]'),separator=node.querySelector('[data-testid="schedule-date-separator"]');
           const date=node.getBoundingClientRect(), row=node.closest('[data-testid="schedule-row"]'), body=row?.querySelector('[data-testid="schedule-body"]');
           if (body && Math.abs((body.getBoundingClientRect().left-date.right)-parseFloat(getComputedStyle(row.parentElement).paddingLeft))>1) return false;
+          // A card with no RSVP line is compact: month and day only, and
+          // the weekday leads its bold time.
+          if (row && !row.querySelector('[data-testid^="schedule-rsvps-"]')) {
+            const time=row.querySelector('[data-testid="schedule-time"]');
+            return !weekday && !separator && /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) /.test(time.textContent) && getComputedStyle(time).fontWeight==='700';
+          }
           return weekday && separator && weekday.getBoundingClientRect().bottom<=separator.getBoundingClientRect().top && separator.getBoundingClientRect().height===3 &&
             getComputedStyle(separator).marginTop==='8px' && getComputedStyle(separator).marginBottom==='8px' &&
-            Array.from(node.querySelectorAll('[dir="auto"]')).slice(0,-1).every(text=>getComputedStyle(text).fontSize==='20px') &&
+            getComputedStyle(weekday).fontSize==='15px' && getComputedStyle(node.querySelectorAll('[dir="auto"]')[1]).fontSize==='20px' &&
             getComputedStyle(node.lastElementChild).fontSize==='32px';
         })};
     })()`)
@@ -154,8 +160,22 @@ async function main(): Promise<void> {
       await evaluate<boolean>(`(()=>{
       const footer=document.querySelector('[data-testid="schedule-rsvps-gam_upcoming"]');
       const row=footer.closest('[data-testid="schedule-row"]'), date=row.querySelector('[data-testid="schedule-date"]');
-      return footer.getBoundingClientRect().bottom<=date.getBoundingClientRect().bottom+2 && row.getBoundingClientRect().height<=date.getBoundingClientRect().height+2;
+      const details=row.querySelector('[data-testid="schedule-details"]').getBoundingClientRect(), needed=Math.max(date.getBoundingClientRect().height, footer.getBoundingClientRect().bottom-details.top);
+      return Math.abs(row.getBoundingClientRect().height-needed)<2;
     })()`)
+    )
+    // A card's badge (LIVE, Canceled, a result) and its RSVP count bubbles
+    // end at the same right edge, as the camera does.
+    const edges = await evaluate<Array<{ badge: number; counts: number }>>(
+      `Array.from(document.querySelectorAll('[data-testid="schedule-row"]')).flatMap(row=>{
+        const counts=row.querySelector('[data-testid="player-rsvp-counts"]'), label=Array.from(row.querySelectorAll('div')).find(node=>node.childElementCount===0&&/^(LIVE|Canceled|Pending approval|[WLT] \\d)/.test(node.textContent));
+        return counts&&label&&counts.childElementCount>0?[{badge:label.parentElement.getBoundingClientRect().right,counts:counts.getBoundingClientRect().right}]:[];
+      })`
+    )
+    assert(edges.length > 0, 'A card has both a badge and RSVP counts')
+    assert(
+      edges.every(edge => Math.abs(edge.badge - edge.counts) < 1.5),
+      `Badges end where the RSVP counts do: ${JSON.stringify(edges)}`
     )
     console.log(
       'All calendar columns show weekday above separator; RSVP button aligns with event details'
@@ -257,6 +277,11 @@ async function main(): Promise<void> {
     )
     assert(spacing >= 0 && spacing <= 8)
     await m.evalBrowserScript({
+      script: `document.querySelector('[data-testid="event-replies"]').scrollIntoView({block:'center'})`
+    })
+    await new Promise(resolve => setTimeout(resolve, 400))
+    writeFileSync(join(artifacts, 'event-replies.png'), await m.screenshot())
+    await m.evalBrowserScript({
       script: `document.querySelector('[aria-label="RSVP teams"]').scrollIntoView({block:'center'})`
     })
     const points = await evaluate<Array<{ x: number; y: number }>>(
@@ -282,6 +307,108 @@ async function main(): Promise<void> {
     await wait(
       `document.querySelectorAll('[aria-label="RSVP teams"] [role="tab"]')[0]?.getAttribute('aria-selected')==='true'`
     )
+    // A finger that strays well below the rail keeps the drag, and the pill
+    // goes on from where it was let go: it never jumps back to where it began.
+    await m.evalBrowserScript({
+      script: `window.__pillTrace=[];(function tick(){const fill=document.querySelector('[aria-label="RSVP teams"] [data-testid="segmented-pill-fill"]');window.__pillTrace.push(new DOMMatrix(getComputedStyle(fill).transform).m41);if(window.__pillTrace.length<3000)requestAnimationFrame(tick)})()`
+    })
+    await m.dragAndDrop({
+      from: {
+        point: `${Math.round(points[0].x)},${Math.round(points[0].y)}`
+      },
+      to: {
+        point: `${Math.round(points[1].x)},${Math.round(points[1].y + 120)}`
+      },
+      holdDuration: 100,
+      duration: 800
+    })
+    await wait(
+      `document.querySelectorAll('[aria-label="RSVP teams"] [role="tab"]')[1]?.getAttribute('aria-selected')==='true'`
+    )
+    await new Promise(resolve => setTimeout(resolve, 600))
+    const trace = await evaluate<{ half: number; values: number[] }>(
+      `({half:document.querySelector('[aria-label="RSVP teams"]').getBoundingClientRect().width/2,values:window.__pillTrace})`
+    )
+    const moved = trace.values.findIndex(value => value > trace.half / 4)
+    assert(moved >= 0, 'The team pill follows the finger')
+    assert(
+      trace.values.slice(moved).every(value => value > trace.half / 8),
+      'The team pill never jumps back after it is let go'
+    )
+    assert(Math.abs(trace.values[trace.values.length - 1] - trace.half) < 2)
+    await drag(1, 0)
+    await wait(
+      `document.querySelectorAll('[aria-label="RSVP teams"] [role="tab"]')[0]?.getAttribute('aria-selected')==='true'`
+    )
+    // "Are you going?" is a card of compact lines: avatar, a bold name the
+    // size of the pill text, and the reply in its capsule colour at the right.
+    assert(
+      await evaluate<boolean>(`(()=>{
+      const replies=document.querySelector('[data-testid="event-replies"]'), colours=['rgb(32, 138, 75)','rgb(35, 118, 207)','rgb(203, 57, 65)'];
+      const rows=Array.from(replies.querySelectorAll('[data-testid^="event-reply-row-"]'));
+      return getComputedStyle(replies).backgroundColor!=='rgba(0, 0, 0, 0)' && replies.querySelector('[role="radiogroup"]')==null && rows.length>0 && rows.every(row=>{
+        const id=row.getAttribute('data-testid').slice(16), status=row.querySelector('[data-testid="event-reply-status-'+id+'"]'), name=row.querySelector('[data-testid="event-reply-name-'+id+'"]');
+        return row.getBoundingClientRect().height<=40 && Math.abs(status.getBoundingClientRect().right-row.getBoundingClientRect().right)<1 &&
+          colours.includes(getComputedStyle(status).color) && ['Yes','Maybe','No','No reply'].includes(status.textContent) &&
+          getComputedStyle(name).fontSize==='14px' && Number(getComputedStyle(name).fontWeight)>=600;
+      });
+    })()`)
+    )
+    // A tap anywhere in it opens the schedule's RSVP modal.
+    const replyIds = await evaluate<string[]>(
+      `Array.from(document.querySelectorAll('[data-testid^="event-reply-row-"]')).map(row=>row.getAttribute('data-testid').slice(16))`
+    )
+    await tap(`event-reply-row-${replyIds[replyIds.length - 1]}`)
+    await wait(
+      `document.querySelector('[data-testid="event-rsvp-modal"] [role="radiogroup"]')!=null`
+    )
+    // In it, an RSVP capsule keeps a finger that strays below it: Yes to No.
+    const rsvpId = await evaluate<string>(
+      `document.querySelector('[data-testid="event-rsvp-modal"] [role="radiogroup"]').getAttribute('data-testid')`
+    )
+    await tap(`${rsvpId}-0`)
+    await wait(
+      `document.querySelector('[data-testid="${rsvpId}-0"]').getAttribute('aria-checked')==='true'`
+    )
+    const rsvp = await evaluate<{
+      yes: { x: number; y: number }
+      no: { x: number; y: number }
+    }>(
+      `(()=>{const radios=document.querySelectorAll('[data-testid="${rsvpId}"] [role="radio"]'),at=n=>{const r=n.getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2}};return{yes:at(radios[0]),no:at(radios[2])}})()`
+    )
+    await m.dragAndDrop({
+      from: { point: `${Math.round(rsvp.yes.x)},${Math.round(rsvp.yes.y)}` },
+      to: {
+        point: `${Math.round(rsvp.no.x)},${Math.round(rsvp.no.y + 120)}`
+      },
+      holdDuration: 100,
+      duration: 800
+    })
+    await wait(
+      `document.querySelector('[data-testid="${rsvpId}-2"]').getAttribute('aria-checked')==='true'`
+    )
+    // No reply has room for one line in the label's own font, and both
+    // slider rails are dark enough to show on the page.
+    assert(
+      await evaluate<boolean>(`(()=>{
+      const modal=document.querySelector('[data-testid="event-rsvp-modal"]'), canvas=document.createElement('canvas').getContext('2d'), rail='rgb(205, 213, 194)';
+      const pills=Array.from(modal.querySelectorAll('[role="radiogroup"]')), teams=document.querySelector('[aria-label="RSVP teams"]');
+      return pills.every(pill=>{
+        const middle=pill.querySelectorAll('[role="radio"]')[1], label=middle.querySelector('[dir="auto"]'), style=getComputedStyle(middle);
+        canvas.font=getComputedStyle(label).font;
+        const room=middle.getBoundingClientRect().width-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);
+        return canvas.measureText('No reply').width*1.1<=room && getComputedStyle(pill.firstElementChild).backgroundColor===rail;
+      }) && getComputedStyle(teams).backgroundColor===rail && getComputedStyle(document.body).backgroundColor!==rail;
+    })()`)
+    )
+    writeFileSync(join(artifacts, 'rsvp-modal.png'), await m.screenshot())
+    await m.tapOn({ text: 'Done' })
+    await wait(
+      `document.querySelector('[data-testid="event-rsvp-modal"]')==null && document.querySelector('[data-testid="event-reply-status-${rsvpId.slice(11)}"]')?.textContent==='No'`
+    )
+    console.log(
+      'Replies read as one coloured line each; the card opens the RSVP modal, whose capsules keep a straying finger'
+    )
     writeFileSync(join(artifacts, 'info-after.png'), await m.screenshot())
     console.log(
       'Empty sections omitted, compact family spacing and two-way team pill drag passed'
@@ -298,7 +425,7 @@ async function main(): Promise<void> {
       await evaluate<boolean>(`Array.from(document.querySelectorAll('[data-testid="schedule-display-row"]')).every(row=>{
       const date=row.querySelector('[data-testid="schedule-date"]'), weekday=date.querySelector('[data-testid="schedule-weekday"]'), day=date.lastElementChild;
       const ratio=parseFloat(getComputedStyle(day).fontSize)/parseFloat(getComputedStyle(weekday).fontSize);
-      return Math.abs(ratio-1.6)<.01 && parseFloat(getComputedStyle(weekday).fontSize)<20 && row.querySelector('[data-testid^="schedule-rsvps-"]')==null;
+      return Math.abs(ratio-32/15)<.01 && parseFloat(getComputedStyle(weekday).fontSize)<15 && row.querySelector('[data-testid^="schedule-rsvps-"]')==null;
     })`)
     )
     writeFileSync(join(artifacts, 'display-schedule.png'), await m.screenshot())

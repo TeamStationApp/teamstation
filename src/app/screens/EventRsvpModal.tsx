@@ -12,6 +12,7 @@ import type { GameSummary, TeamStationClient } from '../../common/api'
 import {
   type EventAttendee,
   type EventInfo,
+  eventName,
   type PlayerRsvpCounts,
   playerRsvpCounts,
   type Rsvp
@@ -51,6 +52,17 @@ export async function loadEventReplyInfos(
   )
   return [primary, ...others]
 }
+/** What the modal needs of a game or event: its id and how to name it. */
+export type RsvpEvent = Pick<
+  GameSummary,
+  | 'id'
+  | 'homeTeamId'
+  | 'homeTeamName'
+  | 'awayTeamName'
+  | 'eventKind'
+  | 'eventType'
+  | 'title'
+>
 export function EventRsvpModal({
   client,
   game,
@@ -60,7 +72,7 @@ export function EventRsvpModal({
   onReplies
 }: {
   client: TeamStationClient
-  game: GameSummary
+  game: RsvpEvent
   teamId: string
   onClose: () => void
   onCounts: (counts: PlayerRsvpCounts) => void
@@ -144,13 +156,10 @@ export function EventRsvpModal({
   }
   const info = infos[0]
   const title =
-    game.eventKind === 'event'
-      ? game.eventType === 'practice'
-        ? 'Practice'
-        : (game.title ?? 'Event')
-      : game.homeTeamId === teamId
-        ? `vs ${game.awayTeamName}`
-        : `at ${game.homeTeamName}`
+    eventName(game) ??
+    (game.homeTeamId === teamId
+      ? `vs ${game.awayTeamName}`
+      : `at ${game.homeTeamName}`)
   return (
     <Modal transparent visible animationType="fade" onRequestClose={onClose}>
       <View style={styles.scrim}>
@@ -215,6 +224,9 @@ export function EventRsvpModal({
                           userId={row.userId}
                           name={row.name}
                           value={row.response}
+                          widthRem={16.5}
+                          oneLineLabels
+                          boldLabels
                           disabled={busy[row.userId]}
                           onChange={response => {
                             change(row.userId, response).catch(() => undefined)
@@ -257,15 +269,18 @@ const getStyles = cacheStyles((theme: Theme) => ({
     padding: theme.rem(1),
     gap: theme.rem(0.75)
   },
+  // Every line here is bold, so the sheet reads at a glance.
   title: {
     color: theme.primaryTextColor,
-    fontFamily: theme.semiBoldTextFont,
+    fontFamily: theme.boldTextFont,
+    fontWeight: '700',
     fontSize: theme.rem(1.25),
     marginBottom: theme.rem(0.5)
   },
   detail: {
     color: theme.secondaryTextColor,
-    fontFamily: theme.regularTextFont,
+    fontFamily: theme.boldTextFont,
+    fontWeight: '700',
     fontSize: theme.rem(0.875),
     marginBottom: theme.rem(0.5)
   },
@@ -282,13 +297,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flex: 1,
     minWidth: theme.rem(3),
     color: theme.primaryTextColor,
-    fontFamily: theme.regularTextFont,
+    fontFamily: theme.boldTextFont,
+    fontWeight: '700',
     fontSize: theme.rem(1)
   },
   control: { marginLeft: 'auto', maxWidth: '100%' as const },
   error: {
     color: theme.dangerColor,
-    fontFamily: theme.regularTextFont,
+    fontFamily: theme.boldTextFont,
+    fontWeight: '700',
     fontSize: theme.rem(0.875)
   }
 }))

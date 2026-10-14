@@ -65,12 +65,12 @@ async function main(): Promise<void> {
       waitUntil: 'networkidle0'
     })
     await press(host, 'Create Game')
-    await press(host, 'Home: Choose team')
-    await fill(host, 'Find a team', 'Demo Eagles')
+    await press(host, 'Choose Home Team, Home')
+    await fill(host, 'Search all teams', 'Demo Eagles')
     await press(host, 'Choose Demo Eagles')
-    await press(host, 'Away: Choose team')
-    await fill(host, 'Find a team', 'Demo Hawks')
-    await press(host, 'Choose Demo Hawks, Demo City, Demo Region, US')
+    await press(host, 'Choose Away Team, Away')
+    await fill(host, 'Search all teams', 'Demo Hawks')
+    await press(host, 'Choose Demo Hawks')
     await fill(host, 'Date', '2029-07-01')
     await fill(host, 'Time', '18:30')
     await fill(host, 'Venue (optional)', 'Demo Field')
@@ -99,7 +99,7 @@ async function main(): Promise<void> {
         node.scrollTop = 0
     })
     await shot(host, 'game-creation-after.png')
-    await press(host, 'Send game proposal')
+    await press(host, 'Save')
     await text(host, 'Pending')
     const requestId = new URL(host.url()).pathname.split('/').at(-1)!
     await shot(host, 'schedule-before-approval.png')
@@ -185,7 +185,7 @@ async function main(): Promise<void> {
     )
     await text(host, 'Propose game change')
     await fill(host, 'Venue (optional)', 'Demo Revised Field')
-    await press(host, 'Send game proposal')
+    await press(host, 'Save')
     await text(host, 'Pending')
     const revisionId = new URL(host.url()).pathname.split('/').at(-1)!
     expect(
@@ -221,8 +221,9 @@ async function main(): Promise<void> {
       waitUntil: 'networkidle0'
     })
     await press(team, 'Create Game')
-    await text(team, 'Outside a TeamStation season')
-    await fill(team, 'Find a team', 'Demo Visitors')
+    await text(team, 'always creates a scrimmage/exhibition game')
+    await press(team, 'Choose Away Team, Away')
+    await fill(team, 'Search all teams', 'Demo Visitors')
     await press(team, 'Choose Demo Visitors')
     await fill(team, 'Date', '2029-07-02')
     await fill(team, 'Time', '17:00')
@@ -231,7 +232,7 @@ async function main(): Promise<void> {
       'Outside tournament (optional)',
       'Demo Off-platform Classic'
     )
-    await press(team, 'Send game proposal')
+    await press(team, 'Save')
     await text(team, 'Pending')
     const outsideId = new URL(team.url()).pathname.split('/').at(-1)!
     await opponent.bringToFront()
@@ -267,13 +268,12 @@ async function main(): Promise<void> {
       waitUntil: 'domcontentloaded'
     })
     await press(team, 'Create Game')
-    await press(team, 'Choose a different season')
-    await press(team, 'Host: Demo Regular')
-    await fill(team, 'Find a team', 'Demo Visitors')
+    await press(team, 'Choose Away Team, Away')
+    await fill(team, 'Search all teams', 'Demo Visitors')
     await press(team, 'Choose Demo Visitors')
     await fill(team, 'Date', '2029-07-03')
     await fill(team, 'Venue (optional)', 'Demo Team Season Field')
-    await press(team, 'Send game proposal')
+    await press(team, 'Save')
     await text(team, 'Pending')
     const teamSeasonId = new URL(team.url()).pathname.split('/').at(-1)!
     expect(
@@ -298,17 +298,11 @@ async function main(): Promise<void> {
     await frameText(team, 'Declined')
     await shot(team, 'team-origin-season-declined.png')
     await press(team, 'Delete declined entry')
-    await team.goto(f.h.origin + `/groups/season/${f.seasonA}`, {
-      waitUntil: 'domcontentloaded'
-    })
-    await text(team, 'Demo Team Season Field')
-    await text(team, 'Declined')
-    await press(team, 'Delete declined entry')
     await team.waitForFunction(
       () => !document.body.textContent!.includes('Demo Team Season Field')
     )
     lines.push(
-      'E15/E20 review regression PASS: a team-origin season proposal retains its initiating-team identity and declined team schedule entry; the outside-range warning can be dismissed without changing the selected date or blocking scheduling'
+      'E15/E20 review regression PASS: a team-origin exhibition proposal retains its initiating-team identity and declined team schedule entry'
     )
     const staleSent = await f.h.request(
       'POST',
