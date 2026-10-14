@@ -20,10 +20,17 @@ import {
   saveFile
 } from './chatFiles'
 import { ChatGate } from './ChatGate'
+import { ChatInfoScreen } from './ChatInfoScreen'
 import { ChatLinks } from './ChatLinks'
 import { ChatListScreen } from './ChatListScreen'
-import { ChatInfoScreen } from './ChatInfoScreen'
-import { chat, member, message, view } from './chatViews.test.helpers'
+import {
+  chat,
+  measureChatTestViewport,
+  member,
+  message,
+  settleChatMessageActions,
+  view
+} from './chatViews.test.helpers'
 import { Composer } from './Composer'
 import {
   type ConversationFiles,
@@ -53,12 +60,15 @@ import { swipeHandlers, SwipeToReply } from './SwipeToReply'
 let root: Root | undefined
 let oldMatchMedia: PropertyDescriptor | undefined
 let touchFixture = false
+let restoreViewport: (() => void) | undefined
 
 afterEach(async function () {
   await act(async () => {
     root?.unmount()
   })
   root = undefined
+  restoreViewport?.()
+  restoreViewport = undefined
   if (touchFixture) {
     if (oldMatchMedia == null)
       delete (globalThis as { matchMedia?: unknown }).matchMedia
@@ -74,6 +84,7 @@ const delay = async (ms: number): Promise<void> => {
 const text = (): string => document.body.textContent ?? ''
 
 async function render(element: React.ReactElement): Promise<void> {
+  restoreViewport ??= measureChatTestViewport()
   if (!touchFixture) {
     oldMatchMedia = Object.getOwnPropertyDescriptor(globalThis, 'matchMedia')
     Object.defineProperty(globalThis, 'matchMedia', {
@@ -93,6 +104,7 @@ async function render(element: React.ReactElement): Promise<void> {
     root!.render(<ThemeProvider>{element}</ThemeProvider>)
     await delay(20)
   })
+  await settleChatMessageActions()
 }
 
 async function settle(ms = 30): Promise<void> {
@@ -143,6 +155,7 @@ async function press(label: string): Promise<void> {
     found!.click()
     await delay(20)
   })
+  await settleChatMessageActions()
 }
 
 /** Types into a field the way React hears it. */
