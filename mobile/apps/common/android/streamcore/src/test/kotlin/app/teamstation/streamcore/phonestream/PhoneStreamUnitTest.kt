@@ -296,6 +296,19 @@ class PhoneStreamUnitTest {
     }
 
     @Test
+    fun anOutputWhoseSinkThrowsDoesNotStarveTheOthers() {
+        val mix = PhoneSoundMix(sampleRate = 1_000, runSeconds = 0.02, capacitySeconds = 2.0)
+        val recorded = mutableListOf<AudioFrame>()
+        mix.add(PhoneSoundMix.Output(0.0) { throw IllegalStateException("stream encoder failed") })
+        mix.add(PhoneSoundMix.Output(0.0) { recorded += it })
+        mix.start(100.0)
+        mix.write(ShortArray(100) { 4 }, 100.0)
+        mix.pump(100.1)
+        assertEquals(5, recorded.size)
+        assertTrue(recorded.all { run -> run.samples.all { it == 4.toShort() } })
+    }
+
+    @Test
     fun theSoundBusReadsEachOutputContiguouslyAtItsDelay() {
         val live = mutableListOf<AudioFrame>()
         val recorded = mutableListOf<AudioFrame>()

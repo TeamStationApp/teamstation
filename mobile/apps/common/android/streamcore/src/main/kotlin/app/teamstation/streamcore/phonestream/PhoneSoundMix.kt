@@ -159,14 +159,23 @@ class PhoneSoundMix(
         }
     }
 
-    /** Sends every output the runs its delay has let through by [wall]. */
+    /**
+     * Sends every output the runs its delay has let through by [wall]. Each output is fed on its
+     * own: one whose sink throws loses that run, and the others still get theirs.
+     */
     fun pump(wall: Double) {
         delivery.withLock {
             val due = lock.withLock {
                 if (!started) return
                 outputs.flatMap { output -> runsFor(output, index(wall - output.delaySeconds)).map { output to it } }
             }
-            for ((output, frame) in due) output.sink(frame)
+            for ((output, frame) in due) {
+                try {
+                    output.sink(frame)
+                } catch (error: RuntimeException) {
+                    android.util.Log.w("PhoneSoundMix", "an output refused its sound", error)
+                }
+            }
         }
     }
 
