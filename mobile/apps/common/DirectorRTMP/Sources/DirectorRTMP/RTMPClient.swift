@@ -115,8 +115,10 @@ public final class RTMPClient: @unchecked Sendable {
   private var videoCodec = RTMPVideoCodec.h264
   /// When the publish went live, so a hang-up soon after can be told from one much later.
   private var liveSince: CFAbsoluteTime = 0
-  /// Set when video is shed, cleared by the first keyframe that fits under budget, so playback
-  /// downstream resumes on an IDR instead of mid-GOP.
+  /// Set when a shed leaves no picture queued, so the next P-frame would reference one the ingest
+  /// never got; cleared by the next keyframe. Until then pictures are dropped as
+  /// `.droppedAwaitingKeyframe`, which asks the encoder for an IDR, so playback downstream resumes on
+  /// an IDR instead of mid-GOP.
   private var awaitingKeyframe = false
   /// True from `stop()` onward. Tearing the socket down makes an in-flight `send` fail with
   /// EPIPE, and that error would otherwise win the race against the cancellation and reach the
@@ -803,7 +805,7 @@ public final class RTMPClient: @unchecked Sendable {
       : FLVTag.isAudioSequenceHeader(payload)
     let isKeyframe = isVideo && FLVTag.isVideoKeyframe(payload)
     lock.unlock()
-    write(
+    return write(
       RTMPChunk.encode(
         RTMPMessage(streamID: streamID, type: type, timestamp: timestamp, payload: payload),
         chunkStreamID: chunkStreamID,
@@ -813,7 +815,6 @@ public final class RTMPClient: @unchecked Sendable {
       isKeyframe: isKeyframe,
       isSequenceHeader: isSequenceHeader
     )
-    return .sent
   }
 
   /// Throws the oldest waiting messages away until the queue fits the budget again.
@@ -826,9 +827,10 @@ public final class RTMPClient: @unchecked Sendable {
   ///
   /// Sequence headers are never thrown away: they are the decoder's only key to what follows. What
   /// is left has to start on a keyframe, so whole groups go rather than the front of one, and the
-  /// ingest gets pictures it can decode instead of a run of references to frames it never saw.
+  /// ingest gets pictures it can decode instead of a run of references to frames it never saw. When
+  /// no picture is left at all, video waits for the next keyframe (`awaitingKeyframe`).
   ///
-  /// Called with the lock held.
+  /// Called with the lock held. Answers whether the newest message went too.
   /// Whether the first picture still queued is one the ingest can decode on its own. For the tests
   /// that hold the shed policy to leaving a decodable queue behind.
   var firstQueuedVideoIsKeyframeForTesting: Bool {
@@ -838,7 +840,7 @@ public final class RTMPClient: @unchecked Sendable {
     return first.isKeyframe
   }
 
-  private func shedOldestLocked() {
+  private func shedOldestLocked() -> Bool {
     let now = Self.monotonicNow()
     let dropped = Self.shedIndices(
       sendQueue.map {
@@ -853,17 +855,23 @@ public final class RTMPClient: @unchecked Sendable {
       budget: sendBudgetBytes,
       delayExceeded: ledger.queueDelay(at: now) > bufferSeconds
     )
-    guard !dropped.isEmpty else { return }
+    guard !dropped.isEmpty else { return false }
     for index in dropped {
       queuedBytes = max(0, queuedBytes - sendQueue[index].data.count)
     }
     let gone = Set(dropped)
+    let shedPicture = dropped.contains { sendQueue[$0].isVideo && !sendQueue[$0].isSequenceHeader }
+    let newestGone = gone.contains(sendQueue.count - 1)
     sendQueue = sendQueue.enumerated().filter { !gone.contains($0.offset) }.map(\.element)
     droppedPackets += UInt64(dropped.count)
+    if shedPicture, !sendQueue.contains(where: { $0.isVideo && !$0.isSequenceHeader }) {
+      awaitingKeyframe = true
+    }
     ledger.resetWaiting(
       bytes: sendQueue.map { $0.data.count },
       since: sendQueue.map { $0.submittedAt }
     )
+    return newestGone
   }
 
   /// One waiting message, as the shed policy sees it.
@@ -909,8 +917,11 @@ public final class RTMPClient: @unchecked Sendable {
     write(data, isVideo: false, isKeyframe: false, isSequenceHeader: true)
   }
 
-  private func write(_ data: Data, isVideo: Bool, isKeyframe: Bool, isSequenceHeader: Bool) {
-    guard !data.isEmpty else { return }
+  /// Queues one message and sheds what no longer fits. A picture that arrives while video waits for
+  /// a keyframe is dropped here, before it is queued; a keyframe ends the wait.
+  @discardableResult
+  private func write(_ data: Data, isVideo: Bool, isKeyframe: Bool, isSequenceHeader: Bool) -> SendOutcome {
+    guard !data.isEmpty else { return .sent }
     // Counted here, at submission, rather than on the serial queue. A chunk submitted while the
     // sender is blocked never reaches `sendQueue` — it waits as a pending `queue.async` block —
     // so counting any later than this cannot see a backlog at all.
@@ -926,26 +937,39 @@ public final class RTMPClient: @unchecked Sendable {
     // the serial queue is blocked with it, so anything handed to it waits as a pending block that
     // nothing can look at or throw away — the backlog would be invisible and unbounded. Holding it
     // here is what lets the oldest of it be shed.
+    let isPicture = isVideo && !isSequenceHeader
+    var outcome = SendOutcome.sent
     lock.lock()
     guard phase != .failed else {
       queuedBytes = 0
       ledger.clear()
       lock.unlock()
-      return
+      return .sent
+    }
+    if isPicture, awaitingKeyframe {
+      guard isKeyframe else {
+        droppedPackets += 1
+        lock.unlock()
+        return .droppedAwaitingKeyframe
+      }
+      awaitingKeyframe = false
     }
     queuedBytes += data.count
     ledger.submitted(bytes: data.count, at: now)
     sendQueue.append(item)
-    shedOldestLocked()
+    if shedOldestLocked() {
+      outcome = isPicture && awaitingKeyframe ? .droppedAwaitingKeyframe : .droppedOverBudget
+    }
     let sending = isSending
     if !sending { isSending = true }
     lock.unlock()
-    guard !sending else { return }
+    guard !sending else { return outcome }
     if DispatchQueue.getSpecific(key: Self.queueKey) != nil {
       flush()
     } else {
       queue.async { self.flush() }
     }
+    return outcome
   }
 
   private func flush() {
