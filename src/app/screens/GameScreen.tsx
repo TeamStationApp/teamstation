@@ -704,8 +704,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             : { ...current, videos: found.videos }
         )
         // A page that had nothing to play opens on what there is now. One
-        // already playing something is left on it.
-        setVideo(current => current ?? openingVideo(found.videos))
+        // already playing something is left on it, but takes that video's
+        // fresh entry: a camera that ended reads as no longer live, and a
+        // start the phone corrected is the one an angle switch maps through.
+        setVideo(current => {
+          if (current == null) return openingVideo(found.videos)
+          const listed = found.videos.find(item => item.id === current.id)
+          return listed == null || sameVideos([current], [listed])
+            ? current
+            : listed
+        })
       })
       .catch(() => undefined)
   }, [client, gameId])
@@ -741,11 +749,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [awayTeamId, client, homeTeamId, seasonId])
 
+  // Keyed by the video's id, not its entry: a refresh that brings the same
+  // video with a new status or start neither reloads its highlights nor
+  // restarts its player.
+  const videoId = video?.id
+  const videoStatus = video?.status
   useEffect(() => {
-    if (video == null) return
+    if (videoId == null) return
     let live = true
     client
-      .highlights(video.id)
+      .highlights(videoId)
       .then(found => {
         if (!live) return
         setHighlights(found.highlights)
@@ -758,15 +771,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, video, addressAttempt])
+  }, [client, videoId, addressAttempt])
 
   // The app never builds a media URL: the server knows where the video is and
   // checks membership while it looks, so asking is the only way to find out.
   /** How many times a live video without files has been asked for again. */
   const [playbackAsks, setPlaybackAsks] = useState(0)
   useEffect(() => {
-    if (video == null || nonMemberView) return
-    const forVideoId = video.id
+    if (videoId == null || nonMemberView) return
+    const forVideoId = videoId
     let live = true
     setPlayback(undefined)
     setPlaybackFor(undefined)
@@ -786,7 +799,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, video, nonMemberView])
+  }, [client, videoId, nonMemberView])
 
   // A live video is listed the moment its stream starts publishing, a few
   // seconds before its first segment is written, and until then the server
@@ -795,8 +808,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // for good that the video is not available.
   useEffect(() => {
     if (
-      video?.status !== 'live' ||
-      playbackFor !== video.id ||
+      videoId == null ||
+      videoStatus !== 'live' ||
+      playbackFor !== videoId ||
       playback == null ||
       playback.url != null
     )
@@ -805,7 +819,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // writes a segment.
     const wait = livePlaybackRetryDelay(playbackAsks)
     if (wait == null) return
-    const forVideoId = video.id
+    const forVideoId = videoId
     let live = true
     const askAgain = (): void => {
       if (live) setPlaybackAsks(asks => asks + 1)
@@ -824,7 +838,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       live = false
       clearTimeout(timer)
     }
-  }, [client, video, playback, playbackFor, playbackAsks])
+  }, [client, videoId, videoStatus, playback, playbackFor, playbackAsks])
 
   // Fetched when the tab is first opened, not with the game: most people come
   // here to watch, and the box score is a second query against every play.
