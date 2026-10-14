@@ -49,7 +49,7 @@
 //   6. Back on the Videos tab, a finished video of the game plays: the
 //      player's elapsed time moves. It is opened by its id, from its start:
 //      the tab opens on the stream just stopped, which stays live for the
-//      server's 60 s reconnect grace, so its player holds the last picture at
+//      server's eight-minute reconnect grace, so its player holds the last picture at
 //      the live edge. The game needs a finished video with sound; with
 //      TS_STREAM_WEBCAM_URL, the camera's frame is kept and its sound must be
 //      louder while the video plays than once it is paused.
