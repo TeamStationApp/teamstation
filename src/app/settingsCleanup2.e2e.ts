@@ -33,7 +33,7 @@ async function main(): Promise<void> {
   await mkdir(artifacts!, { recursive: true })
   const stub = await googlePlacesStub()
   const f = await groupFixture(
-    resolve('dist'),
+    resolve(process.env.TS_SETTINGS2_WEB_ROOT ?? 'dist'),
     undefined,
     undefined,
     googlePlaces({ apiKey: 'placeholder-key', baseUrl: stub.baseUrl })
@@ -159,12 +159,18 @@ async function main(): Promise<void> {
     await go('/node', 'Node administration')
     await shot('node')
     if (before) {
-      await fill(m, 'Find an account', 'alex@example.com')
+      await fill(m, 'Find an account', 'fixture106')
+      await contains(page, 'Tim Raines')
       await shot('node-search')
+      await tap(m, 'Grant node role to Tim Raines')
       await m.scrollUntilVisible({
-        element: { text: 'Remove node role from Babe Ruth' }
+        element: { text: 'Confirm account change' }
       })
-      await tap(m, 'Remove node role from Babe Ruth')
+      await tap(m, 'Confirm account change')
+      await m.scrollUntilVisible({
+        element: { text: 'Remove node role from Tim Raines' }
+      })
+      await tap(m, 'Remove node role from Tim Raines')
       await m.scrollUntilVisible({
         element: { text: 'Confirm account change' }
       })
@@ -191,6 +197,7 @@ async function main(): Promise<void> {
     await note(
       `E4 ${phase}: node access list${before ? '' : ', email search, Add, canceled and confirmed Revoke'}`
     )
+    if (process.argv.includes('M2')) return
     // Layout fixtures use the same realistic game/player responses in both phases.
     let fixtureMode = false
     const now = Date.parse('2027-04-10T17:00:00Z')
@@ -303,11 +310,12 @@ async function main(): Promise<void> {
     if (!before) assert((await page.$('[aria-label="Filter stats"]')) != null)
     await note(`E8 ${phase}: player Stats selected-filter control`)
   } finally {
-    await recordBrowserCoverage(
-      [page],
-      f.h.origin,
-      resolve(`coverage/settingsCleanup2/browser-${phase}.json`)
-    )
+    if (!before)
+      await recordBrowserCoverage(
+        [page],
+        f.h.origin,
+        resolve(`coverage/settingsCleanup2/browser-${phase}.json`)
+      )
     await m.detach()
     await browser.disconnect()
     await daemon.shutdown()

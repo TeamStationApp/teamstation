@@ -9,7 +9,7 @@ import {
 } from '../../test/groupFixtures'
 import { roleScopes, visibleScopes } from '../access'
 import { hashToken } from '../auth/tokens'
-import { changeNodeAccount } from './nodeAdministration'
+import { changeNodeAccount, nodeAccounts } from './nodeAdministration'
 
 describe('protected node account administration', function () {
   this.timeout(60000)
@@ -19,6 +19,60 @@ describe('protected node account administration', function () {
   })
   afterEach(async () => {
     await f?.h.close()
+  })
+  it('returns all name/email matches and filters current admins only when requested', async () => {
+    await f.h.db
+      .insertInto('users')
+      .values(
+        Array.from({ length: 55 }, (_, i) => ({
+          id: 1000 + i,
+          legacyId: `usr_node_search_${i}`,
+          display_name: `Aaron ${i}`,
+          login_enabled: true,
+          is_admin: i === 54
+        }))
+      )
+      .execute()
+    const matches = await nodeAccounts(f.h.db, actor(105), 'Aaron')
+    expect(matches).length(55)
+    expect(
+      (await nodeAccounts(f.h.db, actor(105), 'Aaron', true)).map(
+        row => row.userId
+      )
+    ).deep.equals([1054])
+    const all = await f.h.request(
+      'GET',
+      '/users?view=administration&nodeAdmin=true',
+      undefined,
+      105
+    )
+    const rows = (await all.json()) as Array<{ isNodeAdmin: boolean }>
+    expect(rows.length).greaterThan(0)
+    expect(rows.every(row => row.isNodeAdmin)).equals(true)
+    const byEmail = await nodeAccounts(f.h.db, actor(105), 'fixture106@')
+    expect(byEmail.map(row => row.userId)).deep.equals([106])
+    expect(await nodeAccounts(f.h.db, actor(105), '%')).length(0)
+    for (const value of ['yes', 'true&nodeAdmin=false'])
+      expect(
+        (
+          await f.h.request(
+            'GET',
+            `/users?view=administration&nodeAdmin=${value}`,
+            undefined,
+            105
+          )
+        ).status
+      ).equals(400)
+    expect(
+      (
+        await f.h.request(
+          'GET',
+          '/users?view=administration&nodeAdmin=false',
+          undefined,
+          105
+        )
+      ).status
+    ).equals(200)
   })
   it('requires a signed-in node administrator for account lookup and every global role or suspension change', async () => {
     for (const user of [101, 106, null])

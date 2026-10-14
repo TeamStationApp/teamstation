@@ -29,7 +29,20 @@ export function nodeAdministrationRoutes(db: Kysely<Database>): Router {
       if (req.actor == null) throw unauthorized()
       if (req.query.query != null && typeof req.query.query !== 'string')
         throw badRequest('Enter one account search')
-      res.json(await nodeAccounts(db, req.actor, req.query.query ?? ''))
+      if (
+        req.query.nodeAdmin != null &&
+        req.query.nodeAdmin !== 'true' &&
+        req.query.nodeAdmin !== 'false'
+      )
+        throw badRequest('nodeAdmin must be true or false')
+      res.json(
+        await nodeAccounts(
+          db,
+          req.actor,
+          req.query.query ?? '',
+          req.query.nodeAdmin === 'true'
+        )
+      )
     })
   )
   router.patch(
