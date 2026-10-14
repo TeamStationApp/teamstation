@@ -36,6 +36,9 @@ import kotlinx.coroutines.launch
  */
 class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStreamSpec(reactContext) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Zoom, pinch and rotation, which must reach the engine in the order they were made. */
+    private val ordered = OrderedCalls(scope) { Log.w(TAG, "zoom or rotation", it) }
     private val main = Handler(Looper.getMainLooper())
     private var stopObserving: (() -> Unit)? = null
     private var displayListener: DisplayManager.DisplayListener? = null
@@ -164,11 +167,11 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
     }
 
     override fun setZoom(displayed: Double) {
-        scope.launch { engine.setZoom(displayed) }
+        ordered.run { engine.setZoom(displayed) }
     }
 
     override fun pinch(scale: Double, ended: Boolean) {
-        scope.launch { engine.pinch(scale, ended) }
+        ordered.run { engine.pinch(scale, ended) }
     }
 
     override fun zoomScale(promise: Promise) = settle(promise) { PhoneStreamMaps.zoomScale(engine.zoomScale()) }
@@ -239,7 +242,7 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
     private fun applyRotation(displays: DisplayManager) {
         val rotation = displays.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: return
         val degrees = PhoneStreamMaps.rotationDegrees(rotation)
-        scope.launch { engine.setDisplayRotation(degrees) }
+        ordered.run { engine.setDisplayRotation(degrees) }
     }
 
     companion object {
