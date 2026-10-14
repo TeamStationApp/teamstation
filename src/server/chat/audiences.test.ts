@@ -11,7 +11,13 @@ import {
   scopeTypeOf
 } from './audiences'
 import { type ChatFixture, openChatFixture } from './chatTestFixture'
-import { seasonTitle, titlesOf } from './titles'
+import {
+  scopeIdentities,
+  scopesOf,
+  seasonTitle,
+  type Titled,
+  titlesOf
+} from './titles'
 
 /**
  * U5, the seven audiences and their titles, on the chat fixture: QPLL (L),
@@ -313,7 +319,7 @@ describe('chat audiences (U5)', function () {
       .insertInto('seasons')
       .values({ id: loose, name: 'Fall Ball', year: 2027 })
       .execute()
-    const titles = await titlesOf(db, [
+    const conversations: Titled[] = [
       {
         id: 'a',
         kind: 'teamStaff',
@@ -359,7 +365,11 @@ describe('chat audiences (U5)', function () {
       { id: 'h', kind: 'seasonStaff', scopeType: 'season', scopeId: loose },
       { id: 'i', kind: 'dm', scopeType: null, scopeId: null },
       { id: 'j', kind: 'teamStaff', scopeType: 'team', scopeId: 'tem_gone' }
-    ])
+    ]
+    const titles = titlesOf(
+      conversations,
+      await scopeIdentities(db, scopesOf(conversations))
+    )
     expect(Object.fromEntries(titles)).deep.equals({
       a: 'Hawks Staff',
       b: 'Hawks Members',

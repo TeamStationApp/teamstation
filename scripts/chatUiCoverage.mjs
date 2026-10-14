@@ -34,7 +34,11 @@ run('node', ['scripts/chatCryptoBuild.mjs', 'node', 'wasm'])
 await build({
   ...webSettings,
   stdin: {
-    contents: globSync('src/app/chat/**/*.test.tsx')
+    contents: [
+      ...globSync('src/app/chat/**/*.test.tsx'),
+      'src/app/components/Emblem.test.tsx',
+      'src/app/components/GlassView.test.tsx'
+    ]
       .map(path => `import './${path}'`)
       .join('\n'),
     resolveDir: process.cwd(),
@@ -76,6 +80,9 @@ const specs = [
   'src/server/socket/gameSocket.test.ts',
   'src/server/socket/fanout.test.ts',
   'src/common/api.test.ts',
+  'src/common/chatContent.test.ts',
+  'src/app/components/teamTile.test.ts',
+  'src/app/navigation/routes.test.ts',
   'src/common/gameSocket.test.ts',
   'src/server/openapi.test.ts',
   'src/test/nativeBabel.test.ts',

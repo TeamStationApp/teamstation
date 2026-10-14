@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 import type { FollowableTeam, ScheduleEntry } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { canReadFollowedTeam, canSeeTeam, visibleScopes } from '../access'
+import { seasonTitle } from '../chat/titles'
 import type { Database } from '../db/database'
 import { setFollow } from '../groups/follows'
 import { imageUrl } from '../media/imageUrls'
@@ -253,18 +254,10 @@ async function followable(
       .filter(season => season.teamId === team.id)
       .map(season => ({
         id: season.id,
-        title: seasonTitle(season.leagueName, season.name)
+        title: seasonTitle(season.name, season.leagueName)
       })),
     following: followed.has(team.id)
   }))
-}
-
-/** `<league> <season>` when the season has a league, the season alone if not. */
-export function seasonTitle(
-  leagueName: string | null,
-  seasonName: string
-): string {
-  return leagueName == null ? seasonName : `${leagueName} ${seasonName}`
 }
 
 /** `query` as literal text inside an `ilike` pattern. */

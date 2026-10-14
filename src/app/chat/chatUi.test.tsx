@@ -124,6 +124,8 @@ function button(label: string): HTMLElement | undefined {
   return [...document.querySelectorAll<HTMLElement>('[role="button"]')].find(
     node =>
       (node.getAttribute('aria-label') ?? '') === label ||
+      // A chat row is named "title, preview, unread".
+      (node.getAttribute('aria-label') ?? '').startsWith(label + ', ') ||
       (node.getAttribute('aria-label') == null &&
         (node.textContent ?? '').endsWith(label))
   )
@@ -416,13 +418,11 @@ describe('the chat list', function () {
     ]
     const opened: string[] = []
     let newMessage = 0
-    let follow = 0
     await render(
       <ChatListScreen
         engine={engine}
         onOpen={item => opened.push(item.id)}
         onNewMessage={() => (newMessage += 1)}
-        onFollowTeam={() => (follow += 1)}
       />
     )
     await until('the list', () => button('Hawks Fans') != null)
@@ -434,12 +434,12 @@ describe('the chat list', function () {
     expect(labelled('3 unread')).not.equals(null)
     expect(words).contains('Locked')
     expect(words).contains('Closed')
-    expect(words).contains('No messages yet')
+    expect(words).not.contains('No messages yet')
     await press('Pat P')
     expect(opened).deep.equals(['c'])
     await press('New message')
-    await press('Follow a team')
-    expect([newMessage, follow]).deep.equals([1, 1])
+    expect(words).not.contains('Follow a team')
+    expect(newMessage).equals(1)
 
     // A new list from the engine redraws it.
     engine.list = [chat({ id: 'a', title: 'Hawks Members', unread: 0 })]
@@ -486,7 +486,6 @@ describe('the chat list', function () {
         engine={engine}
         onOpen={item => opened.push(item.id)}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
       />
     )
     await until('the list', () => text().includes('Eli C (left)'))
@@ -504,12 +503,11 @@ describe('the chat list', function () {
         engine={engine}
         onOpen={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
       />
     )
     await until('the list', () => button('Hawks Fans') != null)
     expect(button('New message')).equals(undefined)
-    expect(button('Follow a team')).not.equals(undefined)
+    expect(button('Follow a team')).equals(undefined)
   })
 
   it('says so when there are no chats, or the list will not load', async function () {
@@ -519,7 +517,6 @@ describe('the chat list', function () {
         engine={engine}
         onOpen={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
       />
     )
     await until('the empty list', () =>
@@ -536,7 +533,6 @@ describe('the chat list', function () {
         engine={engine}
         onOpen={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
       />
     )
     await until('the failure', () =>
@@ -1267,6 +1263,8 @@ describe('starting a direct message', function () {
         title: null,
         scope: null,
         scopeName: null,
+        avatarName: null,
+        avatarUrl: null,
         lastSeq: 0,
         lastMessageAt: null,
         lastPostAt: null,

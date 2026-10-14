@@ -62,6 +62,8 @@ function fixture(): {
     title: null,
     scope: null,
     scopeName: null,
+    avatarName: null,
+    avatarUrl: null,
     lastSeq: 1,
     lastMessageAt: null,
     lastPostAt: null,

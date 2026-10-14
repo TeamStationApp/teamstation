@@ -280,7 +280,6 @@ async function workspace(
         onOpen={() => {}}
         onMembers={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
         onTitle={() => {}}
       />
     </ChatOverlayHost>
@@ -697,7 +696,6 @@ describe('chat review list return restoration', function () {
         onOffset={offset => offsets.push(offset)}
         onOpen={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
       />
     )
     const scroll = [...document.querySelectorAll<HTMLElement>('div')].find(
@@ -890,7 +888,6 @@ async function returningList(
       onAnchor={anchor => anchors.push(anchor)}
       onOpen={() => {}}
       onNewMessage={() => {}}
-      onFollowTeam={() => {}}
     />
   )
   const node = [...document.querySelectorAll<HTMLElement>('div')].find(
@@ -983,7 +980,6 @@ async function returningList(
           onAnchor={anchor => anchors.push(anchor)}
           onOpen={() => {}}
           onNewMessage={() => {}}
-          onFollowTeam={() => {}}
         />
       )
     },
@@ -1001,7 +997,6 @@ async function returningList(
           onAnchor={anchor => anchors.push(anchor)}
           onOpen={() => {}}
           onNewMessage={() => {}}
-          onFollowTeam={() => {}}
         />
       )
     },
@@ -1635,7 +1630,6 @@ describe('chat review native-time narrow conversation row', function () {
               narrow
               onOpen={conversation => opened.push(conversation.id)}
               onNewMessage={() => {}}
-              onFollowTeam={() => {}}
             />
           </ChatOverlayHost>,
           false
@@ -1984,7 +1978,6 @@ describe('review4 selected clone controls', function () {
           onOpen={() => {}}
           onMembers={() => {}}
           onNewMessage={() => {}}
-          onFollowTeam={() => {}}
           onTitle={() => {}}
         />
       </ChatOverlayHost>,
@@ -3676,7 +3669,6 @@ describe('review4 quiet preview recovery', function () {
         engine={engine}
         onOpen={chat => opened.push(chat.id)}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
       />
     )
     const row = document.querySelector(

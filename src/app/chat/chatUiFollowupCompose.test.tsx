@@ -62,7 +62,10 @@ function button(label: string): HTMLElement {
     ...document.querySelectorAll<HTMLElement>('[role="button"],button')
   ].find(
     node =>
-      node.getAttribute('aria-label') === label || node.textContent === label
+      node.getAttribute('aria-label') === label ||
+      // A chat row is named "title, preview, unread".
+      node.getAttribute('aria-label')?.startsWith(label + ', ') === true ||
+      node.textContent === label
   )
   expect(found, label).not.equals(undefined)
   return found!
@@ -610,7 +613,6 @@ async function showWorkspace(
       onOpen={() => {}}
       onMembers={() => {}}
       onNewMessage={() => {}}
-      onFollowTeam={() => {}}
       onTitle={() => {}}
     />
   )
@@ -1006,7 +1008,6 @@ describe('chat repeated offscreen announcements', function () {
         onOpen={() => {}}
         onMembers={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
         onTitle={() => {}}
       />
     )
@@ -1086,7 +1087,6 @@ describe('chat repeated offscreen announcements', function () {
         narrow
         onOpen={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
       />
     )
     const region = document.querySelector<HTMLElement>('[aria-live="polite"]')!

@@ -398,7 +398,6 @@ describe('chat UI follow-up conversation hold', function () {
         }}
         onOpen={onOpen}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
       />
     )
     mock.timers.enable({ apis: ['setTimeout'] })
