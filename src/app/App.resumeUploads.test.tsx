@@ -28,6 +28,7 @@ describe('the app at launch', () => {
     })
     phoneStream.resumePendingUploads = async (apiBase, token) => {
       resumed.push([apiBase, token])
+      return 0
     }
     proto.whoAmI = async () =>
       asSessionUser({ id: 1, displayName: 'Demo Fan', isAdmin: false })
