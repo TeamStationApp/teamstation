@@ -189,6 +189,7 @@ export function GroupSettingsScreen({
             />
             {photo && (
               <PictureSheet
+                fitInitials
                 team={kind === 'team'}
                 client={client}
                 name={detail.group.name}
