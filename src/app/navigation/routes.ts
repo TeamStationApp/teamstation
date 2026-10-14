@@ -191,6 +191,7 @@ export type Route =
   | { name: 'conversation'; conversationId: string }
   /** A chat's members, safety numbers and approvals. */
   | { name: 'chatMembers'; conversationId: string }
+  | { name: 'chatInfo'; conversationId: string }
   /** Reported chat messages, for site administrators. */
   | { name: 'chatReports' }
 
@@ -477,11 +478,13 @@ export function parseRoute(path: string, search = ''): Route {
     }
     case 'chat':
       if (id == null) return { name: 'chat' }
-      if (parts[2] === 'members' && parts[3] == null) {
+      if ((parts[2] === 'members' || parts[2] === 'info') && parts[3] == null) {
         if (id === 'devices' || id === 'link' || id === 'new') {
           return { name: 'home' }
         }
-        return { name: 'chatMembers', conversationId: id }
+        return parts[2] === 'info'
+          ? { name: 'chatInfo', conversationId: id }
+          : { name: 'chatMembers', conversationId: id }
       }
       if (parts[2] != null) return { name: 'home' }
       if (id === 'devices') return { name: 'chatDevices' }
@@ -674,6 +677,8 @@ export function routePath(route: Route): string {
       return '/chat/new'
     case 'conversation':
       return `/chat/${encodeURIComponent(route.conversationId)}`
+    case 'chatInfo':
+      return `/chat/${encodeURIComponent(route.conversationId)}/info`
     case 'chatMembers':
       return `/chat/${encodeURIComponent(route.conversationId)}/members`
     case 'chatReports':
