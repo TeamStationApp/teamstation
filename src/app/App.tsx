@@ -28,8 +28,8 @@ import { ChatCoreGate } from './chat/ChatCoreGate'
 import { chatCoreLog } from './chat/chatCoreLog'
 import { ChatDevicesScreen } from './chat/ChatDevicesScreen'
 import { ChatGate } from './chat/ChatGate'
+import { ChatInfoScreen } from './chat/ChatInfoScreen'
 import type { ChatLink } from './chat/ChatLinks'
-import { ChatMembersScreen } from './chat/ChatMembersScreen'
 import { hasUnread } from './chat/chatModel'
 import { ChatOverlayHost } from './chat/ChatOverlayHost'
 import { ChatWorkspace } from './chat/ChatWorkspace'
@@ -269,8 +269,9 @@ type Pushed =
   | { name: 'chatNew' }
   /** One chat, and what it is called once known. */
   | { name: 'conversation'; conversationId: string; title: string }
-  /** A chat's members, safety numbers and approvals. */
+  /** Information and member security, including compatible member links. */
   | { name: 'chatMembers'; conversationId: string }
+  | { name: 'chatInfo'; conversationId: string }
   /** Reported chat messages, for site administrators. */
   | { name: 'chatReports' }
   /**
@@ -1953,7 +1954,7 @@ function Shell(props: AppProps): React.ReactElement {
             push({ name: 'chatNew' })
           }}
           onMembers={conversationId => {
-            push({ name: 'chatMembers', conversationId })
+            push({ name: 'chatInfo', conversationId })
           }}
           onTitle={(conversationId, title) => {
             setStacks(current => {
@@ -2394,9 +2395,10 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'game', gameId, title: '', tab: 'watch' })
         }}
       />
-    ) : top.name === 'chatMembers' ? (
+    ) : top.name === 'chatMembers' || top.name === 'chatInfo' ? (
       gated(
-        <ChatMembersScreen
+        <ChatInfoScreen
+          showMembers={top.name === 'chatMembers'}
           engine={chatEngine!}
           client={client}
           conversationId={top.conversationId}
@@ -2407,7 +2409,9 @@ function Shell(props: AppProps): React.ReactElement {
               ...current,
               [tab]: current[tab].filter(
                 step =>
-                  step.name !== 'chatMembers' && step.name !== 'conversation'
+                  step.name !== 'chatMembers' &&
+                  step.name !== 'chatInfo' &&
+                  step.name !== 'conversation'
               )
             }))
           }}
@@ -3256,7 +3260,11 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
 
   if (route.name === 'chatReports') return { [tab]: [{ name: 'chatReports' }] }
   if (route.name === 'chatNew') return { [tab]: [{ name: 'chatNew' }] }
-  if (route.name === 'conversation' || route.name === 'chatMembers') {
+  if (
+    route.name === 'conversation' ||
+    route.name === 'chatMembers' ||
+    route.name === 'chatInfo'
+  ) {
     const conversation: Pushed = {
       name: 'conversation',
       conversationId: route.conversationId,
@@ -3268,7 +3276,9 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
           ? [conversation]
           : [
               conversation,
-              { name: 'chatMembers', conversationId: route.conversationId }
+              route.name === 'chatInfo'
+                ? { name: 'chatInfo', conversationId: route.conversationId }
+                : { name: 'chatMembers', conversationId: route.conversationId }
             ]
     }
   }
@@ -3319,7 +3329,8 @@ function tabOf(route: Route): NavTabId {
     route.name === 'chat' ||
     route.name === 'chatNew' ||
     route.name === 'conversation' ||
-    route.name === 'chatMembers'
+    route.name === 'chatMembers' ||
+    route.name === 'chatInfo'
   ) {
     return 'chat'
   }
@@ -3363,6 +3374,9 @@ function routeOf(
     if (top.name === 'chatNew') return { name: 'chatNew' }
     if (top.name === 'conversation') {
       return { name: 'conversation', conversationId: top.conversationId }
+    }
+    if (top.name === 'chatInfo') {
+      return { name: 'chatInfo', conversationId: top.conversationId }
     }
     if (top.name === 'chatMembers') {
       return { name: 'chatMembers', conversationId: top.conversationId }
@@ -3443,7 +3457,8 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
     if (top.name === 'conversation') {
       return top.title === '' ? lstrings.chat_title : top.title
     }
-    if (top.name === 'chatMembers') return lstrings.chat_members
+    if (top.name === 'chatMembers' || top.name === 'chatInfo')
+      return lstrings.chat_information
     if (top.name === 'djGame') return lstrings.dj_game
     if (top.name === 'walkUpSong') {
       return sprintf(lstrings.walkup_title, top.playerName)
