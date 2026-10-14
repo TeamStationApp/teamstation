@@ -348,7 +348,7 @@ describe('the event page’s automatic and explicit sections', () => {
     })
     await render({ client, gameId: 'g1', onSettings: () => undefined })
     const action = document.querySelector(
-      '[aria-label="Settings"][role="button"]'
+      '[aria-label="Event settings"][role="button"]'
     )!
     expect(action).not.equals(null)
     let finish: (value: typeof state) => void = () => undefined
@@ -365,7 +365,7 @@ describe('the event page’s automatic and explicit sections', () => {
       await pending
     })
     expect(
-      document.querySelector('[aria-label="Settings"][role="button"]')
+      document.querySelector('[aria-label="Event settings"][role="button"]')
     ).equals(null)
   })
   it('refreshes the viewer-local hero zone on foreground even while offline', async () => {

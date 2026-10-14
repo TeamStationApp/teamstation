@@ -220,6 +220,42 @@ async function main(): Promise<void> {
           await contains(page, 'Winter Wolves')
         }
         await shot(name)
+        if (!before && name.endsWith('-gear')) {
+          const label = name.startsWith('game-')
+            ? 'Event settings'
+            : name.startsWith('team-')
+              ? 'Manage'
+              : name.startsWith('league-')
+                ? 'League settings'
+                : name.startsWith('season-')
+                  ? 'Season settings'
+                  : 'Player settings'
+          await page.waitForSelector(`[aria-label="${label}"]`)
+          const metrics = await page.$eval(`[aria-label="${label}"]`, node => {
+            const box = node.getBoundingClientRect()
+            return { width: box.width, height: box.height }
+          })
+          assert(
+            metrics.width >= 48 && metrics.height >= 48,
+            label + ' full touch target'
+          )
+          assert.equal(
+            await page.$('[role="tab"][aria-label="Settings"]'),
+            null
+          )
+          await tap(m, label)
+          await contains(
+            page,
+            name === 'player-gear'
+              ? 'FIRST NAME'
+              : name.startsWith('game-')
+                ? 'Game Settings'
+                : 'DETAILS'
+          )
+          await note(
+            `${name} PASS: hero gear opens authorized settings; no Settings pill`
+          )
+        }
       }
     }
     if (only === 'events') {

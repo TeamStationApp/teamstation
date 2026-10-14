@@ -340,9 +340,9 @@ describe('the team card’s right-hand column', function () {
     return { end: end!, parts }
   }
 
-  it('stacks the place over the gear for an administrator, as tall as the row, never on top of each other', async function () {
+  it('keeps the administrator gear in its top-right column beside the place', async function () {
     const { end, parts } = await card('admin')
-    expect(parts).deep.equals(['1st Place', 'gear'])
+    expect(parts).deep.equals(['gear'])
     const style = getComputedStyle(end)
     expect(style.alignSelf).equals('stretch')
     expect(style.justifyContent).equals('space-between')
@@ -351,7 +351,7 @@ describe('the team card’s right-hand column', function () {
       '[data-testid="team-card-gear"]'
     )!
     expect(getComputedStyle(gear).position).not.equals('absolute')
-    expect(getComputedStyle(gear).marginTop).equals('auto')
+    expect(getComputedStyle(gear).alignSelf).equals('flex-start')
     // The team's name keeps the rest of the row.
     const name = [...document.querySelectorAll<HTMLElement>('div')].find(
       node => node.textContent === 'Demo Hawks'
