@@ -308,6 +308,11 @@ public final class StreamSessionController {
   /// Counts dials, so a drop reported for a session already replaced is not acted on twice.
   private var attempt = 0
   private var liveSince: Double?
+  /// The publish being opened, and what follows it, while it is: the next dial waits for it, so one
+  /// publish never opens over another that is still opening.
+  private var opening: Task<Void, Never>?
+  /// Counts publishes opened, so one clears `opening` only while it is still its own.
+  private var openings = 0
 
   public init(
     publisher: any StreamPublishing,
@@ -395,27 +400,47 @@ public final class StreamSessionController {
         return
       }
       guard mine == self.attempt, self.wanted else { return }
-      do {
-        try await self.publisher.start(urlString: url, settings: self.host.settings()) { [weak self] message in
-          Task { @MainActor in self?.handleDrop(message, attempt: mine) }
-        }
-      } catch {
-        let message = await self.host.explainDialFailure(error)
-        self.handleDrop(message, attempt: mine)
-        return
+      // A publish still opening from before a stop is let settle, and taken down, before this one
+      // opens. Opened over it, the old session came up after the new one, on the new dial's attempt
+      // with the old one's drop handler, so its drops were ignored and nothing redialled.
+      while let previous = self.opening {
+        await previous.value
       }
-      guard mine == self.attempt else {
-        // Stopped while this publish was opening: the stop found nothing running yet, so the
-        // session that has just come up is taken down here, or the phone goes on publishing after
-        // Stop or the background.
-        if !self.wanted { self.publisher.stop() }
-        return
+      guard mine == self.attempt, self.wanted else { return }
+      self.openings += 1
+      let number = self.openings
+      self.opening = Task { @MainActor [weak self] in
+        await self?.open(url, attempt: mine)
+        // Inside the task, so whoever waits for it resumes to find it gone.
+        if self?.openings == number { self?.opening = nil }
       }
-      self.phase = .live
-      self.liveSince = self.now()
-      self.lastError = nil
-      self.wentLive(attempt: mine)
     }
+  }
+
+  /// Opens the publish for dial `mine`. Nothing else opens until this returns.
+  private func open(_ url: String, attempt mine: Int) async {
+    do {
+      try await publisher.start(urlString: url, settings: host.settings()) { [weak self] message in
+        Task { @MainActor in self?.handleDrop(message, attempt: mine) }
+      }
+    } catch {
+      // A dial already replaced has nothing to report, and the next one is waiting.
+      guard mine == attempt else { return }
+      let message = await host.explainDialFailure(error)
+      handleDrop(message, attempt: mine)
+      return
+    }
+    guard mine == attempt else {
+      // Stopped while this publish was opening: the stop found nothing running yet, so the session
+      // that has just come up is taken down here, or the phone goes on publishing after Stop or the
+      // background. No newer publish has opened over it, since the next dial waits for this one.
+      publisher.stop()
+      return
+    }
+    phase = .live
+    liveSince = now()
+    lastError = nil
+    wentLive(attempt: mine)
   }
 
   /// A dial went live: a stall being replaced is over, and this session's progress is watched.

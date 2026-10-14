@@ -383,6 +383,59 @@ struct StreamSessionControllerTests {
     #expect(rig.scheduler.waiting.isEmpty)
   }
 
+  @Test("""
+    A stop and a new start while the first publish is still opening: the new publish opens once the \
+    old one is down, and its drops redial
+    """)
+  func stopThenStartWhileOpening() async {
+    let rig = StreamRig()
+    rig.publisher.holdNextStart = true
+    rig.controller.start()
+    await rig.settle()
+    #expect(rig.publisher.isHoldingStart)
+    rig.controller.stop()
+    rig.controller.start()
+    await rig.settle()
+    // The new dial has its address, and waits for the old publish rather than opening over it.
+    #expect(rig.reasons == [ .start, .start ])
+    #expect(rig.publisher.dialled.isEmpty)
+    #expect(rig.controller.phase == .connecting)
+    let stops = rig.publisher.stops
+    rig.publisher.releaseStart()
+    await rig.settle()
+    // The old session came up after its stop and was taken down; then the new one opened.
+    #expect(rig.publisher.dialled.count == 2)
+    #expect(rig.publisher.stops == stops + 1)
+    #expect(rig.publisher.running)
+    #expect(rig.controller.phase == .live)
+    // The session on the air is the new start's, so its drop is heard and redials.
+    rig.publisher.drop()
+    await rig.settle()
+    #expect(rig.dropped == [ "send timed out" ])
+    #expect(rig.controller.phase == .retrying)
+    rig.scheduler.fire()
+    await rig.settle()
+    #expect(rig.controller.phase == .live)
+    #expect(rig.reasons == [ .start, .start, .redial ])
+  }
+
+  @Test("A publish that fails after a newer dial began is not explained, and the newer dial goes on")
+  func staleFailureWhileOpening() async {
+    let rig = StreamRig()
+    rig.publisher.holdNextStart = true
+    rig.publisher.refuseNext = URLError(.cancelled)
+    rig.controller.start()
+    await rig.settle()
+    rig.controller.stop()
+    rig.controller.start()
+    await rig.settle()
+    rig.publisher.releaseStart()
+    await rig.settle()
+    #expect(rig.dropped.isEmpty)
+    #expect(rig.controller.phase == .live)
+    #expect(rig.publisher.running)
+  }
+
   @Test("Without a stall setting nothing watches the session, as Director has it")
   func directorRidesItOut() async {
     let rig = StreamRig()
