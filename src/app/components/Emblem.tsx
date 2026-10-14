@@ -45,7 +45,7 @@ export function Emblem(props: EmblemProps): React.ReactElement {
   const { uri, fallback, icon, shape = 'rounded', size = 2.5, tint } = props
   const theme = useTheme()
   const styles = getStyles(theme)
-  const [failed, setFailed] = useState(false)
+  const [failedUri, setFailedUri] = useState<string | null>()
 
   const box = {
     width: theme.rem(size),
@@ -54,7 +54,7 @@ export function Emblem(props: EmblemProps): React.ReactElement {
       shape === 'circle' ? theme.radiusPill : theme.rem(theme.radiusRem)
   }
 
-  if (uri == null || uri === '' || failed) {
+  if (uri == null || uri === '' || failedUri === uri) {
     return (
       <View
         style={[styles.tile, box, tint != null && { backgroundColor: tint }]}
@@ -87,7 +87,7 @@ export function Emblem(props: EmblemProps): React.ReactElement {
       source={{ uri }}
       style={[styles.picture, box]}
       onError={() => {
-        setFailed(true)
+        setFailedUri(uri)
       }}
     />
   )

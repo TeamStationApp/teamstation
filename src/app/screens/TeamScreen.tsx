@@ -17,10 +17,8 @@ import {
   Badge,
   Card,
   CardBand,
-  Emblem,
   GameRow,
   HandoffView,
-  initialsOf,
   ManageGear,
   PillBand,
   PillTabs,
@@ -33,6 +31,7 @@ import {
   SettingsGear,
   type Stat,
   StatGrid,
+  TeamEmblem,
   useBreakpoint,
   useHeaderHandoff,
   usePinnedHandoff,
@@ -197,11 +196,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
             and the name the width of one, and a team is easier to recognise by
             its badge than by the first twenty characters of its name.
           */}
-          <Emblem
-            uri={team.logoUrl}
-            fallback={initialsOf(team.name)}
-            size={1.75}
-          />
+          <TeamEmblem uri={team.logoUrl} name={team.name} size={1.75} />
           <Text style={styles.headerName} numberOfLines={1}>
             {team.name}
           </Text>
@@ -361,11 +356,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
               setIdentityWidth(event.nativeEvent.layout.width)
             }}
           >
-            <Emblem
-              uri={team.logoUrl}
-              fallback={initialsOf(team.name)}
-              size={3.5}
-            />
+            <TeamEmblem uri={team.logoUrl} name={team.name} size={3.5} />
             {nameBelowControls ? (
               <View style={styles.identitySpace} />
             ) : (
@@ -382,7 +373,9 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                   place == null && onManage == null && styles.identityEndLevel
                 ]}
               >
-                {place != null && onManage == null && <Badge label={placeLabel(place)} tone="honour" />}
+                {place != null && onManage == null && (
+                  <Badge label={placeLabel(place)} tone="honour" />
+                )}
                 {follows && (
                   <FollowButton
                     client={client}

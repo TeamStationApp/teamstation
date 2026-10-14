@@ -521,8 +521,8 @@ describe('a player’s Teams tab', function () {
       ...document.querySelectorAll<HTMLElement>('[role="button"]')
     ].filter(node => /Hawks|Owls/.test(node.textContent ?? ''))
     expect(rows.map(row => row.textContent)).deep.equals([
-      'HHawksSpring 2026 · CF · LF#4chevron_right',
-      'OOwlschevron_right'
+      'HAHawksSpring 2026 · CF · LF#4chevron_right',
+      'OWOwlschevron_right'
     ])
     await act(async () => {
       rows[1].click()
@@ -549,7 +549,7 @@ describe('a player’s Teams tab', function () {
     const owlsRow = [
       ...document.querySelectorAll<HTMLElement>('[role="button"]')
     ].find(node => (node.textContent ?? '').includes('Owls'))
-    expect(owlsRow?.textContent).equals('OOwlschevron_right')
+    expect(owlsRow?.textContent).equals('OWOwlschevron_right')
   })
 
   it('says so when there are none', async function () {

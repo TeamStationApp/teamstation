@@ -283,6 +283,7 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
           {teams.map(team => (
             <ChildCard
               key={team.id}
+              kind="team"
               title={team.name}
               imageUrl={team.imageUrl}
               subtitle={team.external ? 'Placeholder team' : undefined}
