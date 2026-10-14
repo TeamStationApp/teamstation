@@ -7,6 +7,8 @@
 //   [DIRECTOR_DEVICE_UDID=<the iPad Pro M4 running Director>]
 //   [TS_STREAM_DIRECTOR_WAIT=<seconds to wait for Director, 300>]
 //   [TS_STREAM_RECORD_SECONDS=<with no Pixel, how long the iPhone's take runs>]
+//   TS_STREAM_WEB_URL=<the web app, on the API's host, for the game page>
+//   [TS_STREAM_CHROME=<a Chrome that decodes HEVC, for puppeteer>]
 //     node -r sucrase/register src/app/stream/twoDevices.e2e.ts
 //
 //   1. The iPhone: Record video "Home Plate", on the air.
@@ -22,6 +24,9 @@
 //      films) reads Home Plate and Center Field with their models.
 //   4. Every phone lists all three angles with their models; the game has a
 //      live video for each, which is what its angle pills are drawn from.
+//   5. The web game page (puppeteer) shows a pill per angle, and All angles
+//      → Watch plays the three in the multi-camera view: every picture's
+//      time moves. The browser is closed at the end.
 //      With the Pixel, both phones stay on the air for E16, and the server's
 //      list names every device.
 //      With no Pixel, the iPhone stops and closes its camera to read its
@@ -30,10 +35,15 @@
 //
 // Screenshots: two-devices-angle-list.png (the list on the device that is
 // not filming), videos-tab-native-after.png (the Videos tab framed as
-// videos-tab-native-before.png).
+// videos-tab-native-before.png), two-devices-web-angles.png (the web
+// multi-camera view).
 import assert from 'node:assert/strict'
+import path from 'node:path'
+
+import puppeteer, { type Browser, type Page } from 'puppeteer'
 
 import {
+  api,
   apiToken,
   cameras,
   clearAngles,
@@ -84,6 +94,101 @@ async function waitForDirector(token: string): Promise<StreamRow> {
     await sleep(2000)
   }
   throw new Error('Director never streamed as Center Field')
+}
+
+/** Clicks the first element with `role` whose words are `text`. */
+async function clickRole(
+  page: Page,
+  role: string,
+  text: string
+): Promise<void> {
+  const handle = await page.waitForFunction(
+    (wantRole: string, wantText: string) =>
+      [...document.querySelectorAll(`[role="${wantRole}"], button`)].find(
+        element => element.textContent?.trim() === wantText
+      ) ?? false,
+    { timeout: 20000 },
+    role,
+    text
+  )
+  await (handle as unknown as { click: () => Promise<void> }).click()
+}
+
+/**
+ * Step 5: the web game page, as a member watching it in a browser. Its angle
+ * pills name the three angles, and the multi-camera view plays them.
+ */
+async function webMultiCam(token: string, angles: string[]): Promise<string> {
+  const web = required('TS_STREAM_WEB_URL').replace(/\/$/, '')
+  let browser: Browser | undefined
+  try {
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: optional('TS_STREAM_CHROME'),
+      args: ['--autoplay-policy=no-user-gesture-required']
+    })
+    const page = await browser.newPage()
+    page.setDefaultTimeout(30000)
+    await page.setViewport({ width: 1440, height: 900 })
+    await browser.setCookie({
+      name: 'ts_session',
+      value: encodeURIComponent(token),
+      domain: new URL(api()).hostname,
+      path: '/'
+    })
+    say(`$ puppeteer goto ${web}/games/${game()}?tab=watch`)
+    await page.goto(`${web}/games/${game()}?tab=watch`, {
+      waitUntil: 'networkidle2'
+    })
+    const pills = async (): Promise<string[]> =>
+      await page.$$eval('[role="tab"]', tabs =>
+        tabs.map(tab => tab.textContent?.trim() ?? '')
+      )
+    let shown: string[] = []
+    for (const until = Date.now() + 30000; Date.now() < until;) {
+      shown = await pills()
+      if (angles.every(angle => shown.includes(angle))) break
+      await sleep(1000)
+    }
+    assert(
+      angles.every(angle => shown.includes(angle)),
+      `the web page has a pill per angle: ${shown.join(', ')}`
+    )
+    say('$ click All angles, then Watch')
+    await clickRole(page, 'tab', 'All angles')
+    await clickRole(page, 'button', 'Watch')
+    const times = async (): Promise<number[]> =>
+      await page.$$eval('video', videos =>
+        videos.map(video => video.currentTime)
+      )
+    let first: number[] = []
+    for (const until = Date.now() + 30000; Date.now() < until;) {
+      first = await times()
+      // The single player stays mounted behind the view, paused.
+      if (first.filter(time => time > 0).length >= angles.length) break
+      await sleep(1000)
+    }
+    assert(
+      first.length >= angles.length,
+      `the multi-camera view shows ${angles.length} pictures (${first.length})`
+    )
+    await sleep(4000)
+    const later = await times()
+    const moving = later.filter((time, index) => time > (first[index] ?? 0))
+    assert(
+      moving.length >= angles.length,
+      `every picture plays: ${first.map(time => time.toFixed(1)).join(', ')} → ${later.map(time => time.toFixed(1)).join(', ')}`
+    )
+    const dir = optional('TS_STREAM_ARTIFACT_DIR')
+    if (dir != null) {
+      await page.screenshot({
+        path: path.join(dir, 'two-devices-web-angles.png')
+      })
+    }
+    return `5 the web page's pills read ${shown.join(', ')}; the multi-camera view plays ${moving.length} pictures (${first.map(time => time.toFixed(1)).join(', ')} → ${later.map(time => time.toFixed(1)).join(', ')} s)`
+  } finally {
+    await browser?.close()
+  }
 }
 
 async function main(): Promise<void> {
@@ -267,6 +372,7 @@ async function main(): Promise<void> {
     )
     assert.deepEqual(pills, [HOME, FIRST, CENTER], 'a live video per angle')
     results.push(`5 the game has a live video for ${pills.join(', ')}`)
+    results.push(await webMultiCam(token, [HOME, FIRST, CENTER]))
 
     // The Videos tab, framed as videos-tab-native-before.png. The game's
     // videos are read when its screen mounts: start the app again so the

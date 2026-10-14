@@ -6,6 +6,7 @@
 //   TS_STREAM_ANDROID_SERIAL=<the Pixel 10>, or TS_STREAM_IOS_UDID=<an iPhone
 //     or its simulator> when there is no Pixel
 //   [TS_STREAM_ANGLE=<the angle that phone recorded, First Base>]
+//   [TS_STREAM_OTHER_ANGLE=<another phone's angle, whose live copy stays, Home Plate>]
 //   [TS_STREAM_KILL_AT=<the upload's percentage at which the app is stopped, 30;
 //     past the first 32 MB part's share, so the server holds a part to resume
 //     from>]
@@ -24,9 +25,13 @@
 //      no new Center Field stream exists, and Director stays off the air until
 //      it is uploaded from Director's Upload menu and started again by hand,
 //      which this waits for (step 5: a fresh Center Field stream id).
-//   Expect: the angle's stream is replaced (`localRecording` "uploaded"); the
-//   game's video for the angle is a new one, which ffprobe reads at its
-//   playback URL (HEVC 1920×1080); the other phone shows no "not uploaded".
+//   Expect: the angle's stream is replaced (`localRecording` "uploaded", read
+//   through `reveal`, since a replaced stream is no longer listed); the game's
+//   video for the angle is a new one, which ffprobe reads at its playback URL
+//   as HEVC 1920×1080 at about 6 Mbit/s with no gap of more than a frame
+//   between its pictures; the other angle's live copy (TS_STREAM_OTHER_ANGLE,
+//   Home Plate) is still on the game; the other phone shows no "not
+//   uploaded".
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import path from 'node:path'
@@ -66,6 +71,42 @@ async function progressOf(phone: Phone, id: string): Promise<number | null> {
   )
   const match = /(\d+)%/.exec(node?.text ?? '')
   return match == null ? null : Number(match[1])
+}
+
+/** The recording's bitrate, which ProgramEncoder writes at 6 Mbit/s. */
+const RECORDING_MBIT = 6
+
+/**
+ * The longest step between two pictures of a video at `url`, against its
+ * usual step, from the packets ffprobe reads there (no decoding).
+ */
+async function longestStep(
+  url: string
+): Promise<{ frames: number; step: number; longest: number }> {
+  const { stdout } = await run(
+    'ffprobe',
+    [
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'packet=pts_time',
+      '-of',
+      'csv=p=0',
+      url
+    ],
+    { timeout: 600000, maxBuffer: 1 << 28 }
+  )
+  const times = stdout
+    .split('\n')
+    .map(line => Number(line.split(',')[0]))
+    .filter(time => Number.isFinite(time))
+    .sort((a, b) => a - b)
+  assert(times.length > 1, 'the uploaded copy has pictures')
+  const steps = times.slice(1).map((time, index) => time - times[index])
+  const step = [...steps].sort((a, b) => a - b)[Math.floor(steps.length / 2)]
+  return { frames: times.length, step, longest: Math.max(...steps) }
 }
 
 async function main(): Promise<void> {
@@ -269,8 +310,40 @@ async function main(): Promise<void> {
     say(probe)
     assert(probe.includes('codec_name=hevc'), 'the uploaded copy is HEVC')
     assert(probe.includes('width=1920|height=1080'), 'and 1920×1080')
+    const bitRate = Number(/bit_rate=(\d+)/.exec(probe)?.[1] ?? 'NaN') / 1e6
+    assert(
+      bitRate >= RECORDING_MBIT * 0.75 && bitRate <= RECORDING_MBIT * 1.25,
+      `the uploaded copy is about ${RECORDING_MBIT} Mbit/s (${bitRate.toFixed(2)})`
+    )
+    const { frames, step, longest } = await longestStep(url)
+    say(
+      `$ ffprobe -show_entries packet=pts_time: ${frames} pictures, step ${(step * 1000).toFixed(1)} ms, longest ${(longest * 1000).toFixed(1)} ms`
+    )
+    assert(
+      longest <= step * 2 + 0.001,
+      `no gap of more than a frame in the uploaded copy (longest step ${(longest * 1000).toFixed(1)} ms)`
+    )
+    const revealed = await request(
+      'POST',
+      `/games/${game()}/live-streams/${stream.id}/reveal`,
+      {},
+      token
+    )
+    assert.equal(revealed.status, 200, `the replaced stream ${stream.id}`)
+    const { localRecording } = (await revealed.json()) as {
+      localRecording?: string
+    }
+    assert.equal(localRecording, 'uploaded', 'the stream says it was uploaded')
+    const other = optional('TS_STREAM_OTHER_ANGLE') ?? 'Home Plate'
+    const others = (await gameVideos(token)).filter(video =>
+      video.title.endsWith(` — ${other}`)
+    )
+    assert(
+      others.length > 0,
+      `${other}'s live copy is still on the game: only ${angle}'s was replaced`
+    )
     results.push(
-      `5 ${angle} plays ${videos[0].id} (live copy ${liveVideo ?? '-'} replaced): ${probe.split('\n').join(' ; ')}`
+      `5 ${angle} plays ${videos[0].id} (live copy ${liveVideo ?? '-'} replaced, localRecording ${localRecording}): ${probe.split('\n').join(' ; ')}; ${bitRate.toFixed(2)} Mbit/s; ${frames} pictures, longest step ${(longest * 1000).toFixed(1)} ms; ${other} still has ${others.map(video => video.id).join(', ')}`
     )
     const dir = optional('TS_STREAM_ARTIFACT_DIR')
     if (dir != null) {
