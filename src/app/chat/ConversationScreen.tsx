@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -19,6 +26,23 @@ import { lstrings, sprintf } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { ChatFileOps } from './AttachmentView'
+import { ChatAttentionControl } from './ChatAttentionControl'
+import {
+  AttentionCancelled,
+  ChatHistoryCoordinator,
+  discoverAttentionHistory
+} from './chatAttentionHistory'
+import {
+  attentionBodyBelow,
+  attentionBodyViewed,
+  attentionMessages,
+  attentionReferences,
+  type ChatAttentionSession,
+  projectAttentionHistory,
+  recordAttentionPage,
+  revealAttentionEarlier,
+  revealAttentionTarget
+} from './chatAttentionModel'
 import { copyChatText } from './chatClipboard'
 import { attachmentProblem, sendAllowed } from './chatComposeModel'
 import { ChatConversationIdentity } from './ChatConversationIdentity'
@@ -163,7 +187,47 @@ export function ConversationScreen(
     return new ChatDraftOwner(state)
   })
   const draftOwner = props.draftOwner ?? localDraftOwner
+  const attentionSession = useRef<ChatAttentionSession | undefined>(
+    draftOwner.attention(conversationId)
+  )
+  const historyCoordinator = useRef(new ChatHistoryCoordinator())
+  const historyGeneration = useRef(0)
+  const readingVisit = useRef<object>({})
+  const foregroundHistory = useRef<
+    { conversationId: string; visit: object } | undefined
+  >(undefined)
+  const backgroundReading = useRef<
+    | {
+        anchor: { id: string; relativeY: number } | undefined
+        offset: number
+        lastSeq: number
+        following: boolean
+      }
+    | undefined
+  >(undefined)
+  const [attentionRevision, setAttentionRevision] = useState(0)
+  const [attentionLoading, setAttentionLoading] = useState(false)
+  const [attentionFailed, setAttentionFailed] = useState(false)
+  const [attentionCount, setAttentionCount] = useState(0)
+  const attentionTargets = useRef<string[]>([])
+  const discovering = useRef(false)
+  const retryDiscovery = useRef(false)
+  const discoveryPaused = useRef(false)
+  const [composerOverlay, setComposerOverlay] = useState(false)
+  const bodyRefs = useRef(new Map<string, React.ComponentRef<typeof View>>())
+  const refreshAttention = useRef<(manual?: boolean) => void>(() => {})
+  const committed = useRef(0)
+  const publishView = (next: ConversationView | undefined): void => {
+    setView(
+      next == null
+        ? undefined
+        : projectAttentionHistory(next, attentionSession.current)
+    )
+  }
   const [view, setView] = useState<ConversationView | undefined>(undefined)
+  useLayoutEffect(() => {
+    committed.current += 1
+  }, [view])
   const latestView = useRef<ConversationView | undefined>(undefined)
   latestView.current = view
   const hasPins = (view?.pins?.length ?? 0) > 0
@@ -243,7 +307,10 @@ export function ConversationScreen(
     }
   }, [props.active])
   const [pinsOpen, setPinsOpen] = useState(false)
-  const [jumpRetry, setJumpRetry] = useState<string>()
+  const [jumpRetry, setJumpRetry] = useState<{
+    id: string
+    attention: boolean
+  }>()
   const [resolvingJump, setResolvingJump] = useState(false)
   useEffect(() => {
     setResolvingJump(false)
@@ -359,6 +426,7 @@ export function ConversationScreen(
       ? scrolled.current.anchor
       : undefined
   )
+  const historyRestorations = useRef(0)
   const restoringAnchor = useRef(false)
   const restoreAnchorDirty = useRef(false)
   const exhaustedPageRestorer = useRef<() => void>(() => {})
@@ -467,6 +535,7 @@ export function ConversationScreen(
     const current = latestView.current
     if (
       current == null ||
+      attentionSession.current == null ||
       props.active === false ||
       !readDocumentActive() ||
       menu != null ||
@@ -491,6 +560,10 @@ export function ConversationScreen(
   const hasView = view != null
   const userScrolled = useCallback(() => {
     if (!mounted.current || !paneActive.current) return
+    historyGeneration.current += 1
+    discoveryPaused.current = true
+    setAttentionLoading(false)
+    if (attentionSession.current?.complete === false) setAttentionFailed(true)
     const generation = ++jumpGeneration.current
     measuringJump.current = undefined
     const visible = readMessageScrollPosition(
@@ -559,6 +632,7 @@ export function ConversationScreen(
       scrollAnchor: scrolled.current.anchor
     })
     explicitRead()
+    refreshAttention.current(true)
   }, [onDraftChange, explicitRead, readingAnchor])
   useEffect(
     () =>
@@ -570,6 +644,7 @@ export function ConversationScreen(
   )
   useEffect(
     () => () => {
+      historyGeneration.current += 1
       jumpGeneration.current += 1
       measuringJump.current = undefined
       prepend.current = undefined
@@ -582,12 +657,13 @@ export function ConversationScreen(
     [conversationId, props.active]
   )
 
-  const loadOlder = async (
+  const loadOlderPage = async (
     cancelled: () => boolean = () => false
   ): Promise<ConversationView> => {
-    const before = engine.view(conversationId)
+    const before = latestView.current
     if (before == null) throw new Error('Conversation unavailable')
     if (cancelled()) return before
+    const owner = { conversationId, visit: readingVisit.current }
     const pending = {
       offset: scrolled.current.offset,
       content: scrolled.current.content,
@@ -623,11 +699,24 @@ export function ConversationScreen(
             !mounted.current ||
             !paneActive.current
         )
-      if (cancelled()) {
+      if (cancelled() || owner.visit !== readingVisit.current) {
         if (prepend.current === pending) prepend.current = undefined
         return before
       }
-      const next = await engine.loadEarlier(conversationId)
+      foregroundHistory.current = owner
+      const raw = await engine.loadEarlier(conversationId)
+      const session = attentionSession.current
+      const liveOwner =
+        foregroundHistory.current === owner &&
+        owner.visit === readingVisit.current &&
+        mounted.current &&
+        paneActive.current
+      if (session != null && liveOwner) {
+        recordAttentionPage(session, raw)
+        revealAttentionEarlier(session, raw)
+      }
+      const next = projectAttentionHistory(raw, session)
+      if (liveOwner) publishView(raw)
       // A cancelled jump must still preserve the reader when this response
       // removes the paging header or changes existing row geometry.
       const firstSeq = next.messages[0]?.seq
@@ -659,7 +748,11 @@ export function ConversationScreen(
       return next
     } catch (error) {
       if (prepend.current === pending) prepend.current = undefined
+      if (owner.visit !== readingVisit.current) throw new AttentionCancelled()
       throw error
+    } finally {
+      if (foregroundHistory.current === owner)
+        foregroundHistory.current = undefined
     }
   }
   const restoreExhaustedPage = (): void => {
@@ -724,11 +817,12 @@ export function ConversationScreen(
   const measurePosition = async (
     id: string,
     cancelled: () => boolean,
-    relativeToViewport = false
+    relativeToViewport = false,
+    body = false
   ): Promise<number | undefined> => {
     const deadline = Date.now() + 2000
     while (!cancelled() && Date.now() < deadline) {
-      const row = messageRefs.current.get(id)
+      const row = (body ? bodyRefs : messageRefs).current.get(id)
       const content = relativeToViewport
         ? scroller.current?.getNativeScrollRef()
         : scroller.current?.getInnerViewRef()
@@ -771,7 +865,7 @@ export function ConversationScreen(
           },
           () => {
             clearTimeout(timer)
-            resolve(messagePositions.current.get(id))
+            resolve(body ? undefined : messagePositions.current.get(id))
           }
         )
       })
@@ -794,7 +888,7 @@ export function ConversationScreen(
     const target = reachableOffset(requestedOffset)
     if (anchor != null && target !== requestedOffset)
       anchor = {
-        id: anchor.id,
+        ...anchor,
         relativeY: anchor.relativeY + requestedOffset - target
       }
     restoreTarget.current = target
@@ -823,6 +917,7 @@ export function ConversationScreen(
       current?.conversation.id !== conversationId ||
       !scrolled.current.hasPosition ||
       menuReading.current != null ||
+      backgroundReading.current != null ||
       scrolled.current.followNewest ||
       restoreTarget.current != null ||
       restoreAnchor.current != null ||
@@ -892,7 +987,131 @@ export function ConversationScreen(
         }
       })
   }
-  const jumpTo = (id: string): void => {
+  const waitForReading = async (): Promise<void> => {
+    const deadline = Date.now() + 2200
+    while (
+      prepend.current != null ||
+      restoringAnchor.current ||
+      historyRestorations.current > 0
+    ) {
+      if (!mounted.current || !paneActive.current)
+        throw new AttentionCancelled()
+      if (Date.now() >= deadline) throw new Error('History layout is not ready')
+      await new Promise<void>(resolve => setTimeout(resolve, 20))
+    }
+  }
+  const waitForCommit = async (previous: number): Promise<void> => {
+    const deadline = Date.now() + 2200
+    while (committed.current <= previous) {
+      if (!mounted.current || !paneActive.current)
+        throw new AttentionCancelled()
+      if (Date.now() >= deadline) throw new Error('History layout is not ready')
+      await new Promise<void>(resolve => setTimeout(resolve, 10))
+    }
+  }
+  const loadOlder = async (
+    cancelled: () => boolean = () => false
+  ): Promise<ConversationView> => {
+    const visit = readingVisit.current
+    const stopped = (): boolean =>
+      cancelled() ||
+      visit !== readingVisit.current ||
+      !mounted.current ||
+      !paneActive.current
+    return await historyCoordinator.current.run(stopped, async () => {
+      await waitForReading()
+      if (stopped()) throw new AttentionCancelled()
+      const raw = engine.view(conversationId)
+      const session = attentionSession.current
+      if (raw == null) throw new Error('Conversation unavailable')
+      if (session != null && revealAttentionEarlier(session, raw)) {
+        const revision = committed.current
+        const anchor = scrolled.current.anchor
+        publishView(raw)
+        await waitForCommit(revision)
+        if (stopped()) throw new AttentionCancelled()
+        if (anchor != null) {
+          restoreAnchor.current = anchor
+          restoreReadingAnchor()
+        }
+        await waitForReading()
+        return engine.view(conversationId) ?? raw
+      }
+      const next = await loadOlderPage(stopped)
+      if (visit !== readingVisit.current) throw new AttentionCancelled()
+      await waitForReading()
+      return next
+    })
+  }
+  const discoverPage = async (
+    cancelled: () => boolean
+  ): Promise<ConversationView> =>
+    await historyCoordinator.current.run(cancelled, async () => {
+      await waitForReading()
+      if (cancelled()) throw new AttentionCancelled()
+      const before = engine.view(conversationId)
+      if (before == null) throw new Error('Conversation unavailable')
+      const physical = readMessageScrollPosition(
+        scroller.current,
+        messageRefs.current
+      )
+      const anchor =
+        physical?.anchor ??
+        scrolled.current.anchor ??
+        readingAnchor(messagePositions.current)
+      const offset = physical?.offset ?? scrolled.current.offset
+      const held = {
+        anchor,
+        offset,
+        lastSeq: before.conversation.lastSeq,
+        following: scrolled.current.followNewest || atBottom.current
+      }
+      backgroundReading.current = held
+      try {
+        const next = await engine.loadEarlier(conversationId)
+        const session = attentionSession.current
+        if (session != null) recordAttentionPage(session, next)
+        const revision = committed.current
+        publishView(next)
+        await waitForCommit(revision)
+        // A new user position or followed arrival owns the reader after cancellation.
+        const chosen = cancelled() ? scrolled.current.anchor : held.anchor
+        const arrival =
+          (engine.view(conversationId)?.conversation.lastSeq ?? 0) >
+          held.lastSeq
+        if (
+          menuReading.current == null &&
+          !(
+            arrival &&
+            (cancelled() ? scrolled.current.followNewest : held.following)
+          ) &&
+          !(cancelled() && scrolled.current.followNewest) &&
+          chosen != null
+        ) {
+          const y = await measurePosition(
+            chosen.id,
+            () => !mounted.current || !paneActive.current
+          )
+          if (y == null) throw new Error('History layout is not ready')
+          const currentAnchor = cancelled() ? scrolled.current.anchor : chosen
+          if (currentAnchor?.id === chosen.id) {
+            const target = rememberPosition(
+              Math.max(0, y - currentAnchor.relativeY),
+              currentAnchor
+            )
+            scroller.current?.scrollTo({ y: target, animated: false })
+          }
+        }
+        return next
+      } finally {
+        if (backgroundReading.current === held)
+          backgroundReading.current = undefined
+      }
+    })
+  const jumpTo = (id: string, attention = false): void => {
+    historyGeneration.current += 1
+    discoveryPaused.current = true
+    setAttentionLoading(false)
     if (
       !mounted.current ||
       !paneActive.current ||
@@ -932,10 +1151,17 @@ export function ConversationScreen(
         if (original?.status !== 'ok') {
           measuringJump.current = undefined
           setResolvingJump(false)
-          setJumpRetry(id)
+          setJumpRetry({ id, attention })
           setError(lstrings.chat_message_unavailable)
           restoreReadingAnchor()
           return
+        }
+        const session = attentionSession.current
+        if (session != null && original.seq < session.floor) {
+          revealAttentionTarget(session, original)
+          const revision = committed.current
+          publishView(engine.view(conversationId))
+          await waitForCommit(revision)
         }
         // Measure the mounted row relative to scroll content. Paging resolves
         // before native/DOM layout, so wait for actual geometry, not a guessed delay.
@@ -945,29 +1171,34 @@ export function ConversationScreen(
           !mounted.current ||
           !paneActive.current ||
           engine.view(conversationId) == null
-        const y = await measurePosition(id, cancelled)
+        const y = await measurePosition(id, cancelled, false, attention)
         if (cancelled()) {
           if (measuringJump.current === generation)
             measuringJump.current = undefined
           return
         }
-        measuringJump.current = undefined
-        setResolvingJump(false)
         const current = engine
           .view(conversationId)
           ?.messages.find(message => message.id === id)
-        if (y == null || current?.status !== 'ok') {
-          setJumpRetry(id)
-          setError(lstrings.chat_message_unavailable)
-          return
-        }
-        const target = rememberPosition(
-          Math.max(0, y - readableTop.current - theme.rem(0.5)),
-          {
-            id,
-            relativeY: readableTop.current + theme.rem(0.5)
-          }
+        if (y == null || current?.status !== 'ok')
+          throw new Error('Message unavailable')
+        const requested = Math.max(0, y - readableTop.current - theme.rem(0.5))
+        const rowY = attention ? await measurePosition(id, cancelled) : y
+        if (cancelled()) return
+        if (
+          rowY == null ||
+          engine
+            .view(conversationId)
+            ?.messages.find(message => message.id === id)?.status !== 'ok'
         )
+          throw new Error('Message unavailable')
+        measuringJump.current = undefined
+        setResolvingJump(false)
+        const target = rememberPosition(requested, {
+          id,
+          relativeY: rowY - requested,
+          ...(attention ? { bodyInset: y - rowY } : {})
+        })
         scroller.current?.scrollTo({
           y: target,
           animated: true
@@ -982,7 +1213,7 @@ export function ConversationScreen(
         if (generation === jumpGeneration.current) {
           measuringJump.current = undefined
           setResolvingJump(false)
-          setJumpRetry(id)
+          setJumpRetry({ id, attention })
           setError(lstrings.chat_message_unavailable)
           restoreReadingAnchor()
         }
@@ -1090,12 +1321,13 @@ export function ConversationScreen(
     if (anchor != null) {
       restoreAnchor.current = {
         ...anchor,
-        relativeY: anchorAfterChromeChange(
-          anchor.relativeY,
-          previous.top,
-          viewport.readableTop,
-          theme.rem(0.5)
-        )
+        relativeY:
+          anchorAfterChromeChange(
+            anchor.relativeY + (anchor.bodyInset ?? 0),
+            previous.top,
+            viewport.readableTop,
+            theme.rem(0.5)
+          ) - (anchor.bodyInset ?? 0)
       }
       restoreForGeometry.current()
     }
@@ -1107,6 +1339,8 @@ export function ConversationScreen(
   // every few seconds until then.
   useEffect(() => {
     if (!mounted.current || !paneActive.current) return
+    const visit = {}
+    readingVisit.current = visit
     restoreTarget.current =
       scrolled.current.hasPosition && !scrolled.current.followNewest
         ? scrolled.current.offset
@@ -1118,6 +1352,9 @@ export function ConversationScreen(
     restoringAnchor.current = false
     restoreAnchorDirty.current = false
     atBottom.current = restoreTarget.current == null
+    attentionSession.current = draftOwner.attention(conversationId)
+    discoveryPaused.current = false
+    setAttentionFailed(false)
     let live = true
     let opened = false
     let opening = false
@@ -1134,7 +1371,7 @@ export function ConversationScreen(
       if (known != null && live) {
         readRevision.current ??=
           known.conversation.preferences?.manualUnreadRevision ?? 0
-        setView(known)
+        publishView(known)
       }
     }
     const tryOpen = (): void => {
@@ -1147,7 +1384,12 @@ export function ConversationScreen(
         .then(next => {
           opened = true
           if (live) {
-            setView(next)
+            attentionSession.current = draftOwner.beginAttention(
+              conversationId,
+              next
+            )
+            setAttentionRevision(value => value + 1)
+            publishView(next)
             readRevision.current ??=
               next.conversation.preferences?.manualUnreadRevision ?? 0
             setFailed(false)
@@ -1173,8 +1415,21 @@ export function ConversationScreen(
           return
         }
         const next = engine.view(conversationId)
-        if (next != null) setView(next)
-        else {
+        if (next != null) {
+          const session = attentionSession.current
+          if (
+            foregroundHistory.current?.conversationId === conversationId &&
+            foregroundHistory.current.visit === readingVisit.current &&
+            session != null
+          ) {
+            // An explicit page may publish verified rows before its promise settles.
+            recordAttentionPage(session, next)
+            revealAttentionEarlier(session, next)
+          }
+          publishView(next)
+        } else {
+          draftOwner.forgetAttention(conversationId)
+          attentionSession.current = undefined
           setView(undefined)
           setFailed(true)
           setMenu(undefined)
@@ -1185,11 +1440,14 @@ export function ConversationScreen(
     const timer = setInterval(tryOpen, OPEN_RETRY_MS)
     return () => {
       live = false
+      if (readingVisit.current === visit) readingVisit.current = {}
+      if (foregroundHistory.current?.visit === visit)
+        foregroundHistory.current = undefined
       clearInterval(timer)
       unsubscribe()
       engine.close(conversationId)
     }
-  }, [engine, conversationId, userId, props.active])
+  }, [engine, conversationId, userId, props.active, draftOwner])
 
   const title = view?.conversation.title
   useEffect(() => {
@@ -1222,6 +1480,7 @@ export function ConversationScreen(
   const manualUnread = view?.conversation.preferences?.manualUnread === true
   useEffect(() => {
     if (
+      attentionSession.current == null ||
       props.active === false ||
       !documentActive ||
       menu != null ||
@@ -1243,7 +1502,8 @@ export function ConversationScreen(
     menu,
     mentionChoosing,
     pinsOpen,
-    reacting
+    reacting,
+    attentionRevision
   ])
   useEffect(() => {
     readRevision.current = undefined
@@ -1251,16 +1511,216 @@ export function ConversationScreen(
     if (current == null) return
     readRevision.current =
       current.conversation.preferences?.manualUnreadRevision ?? 0
-    if (!paneActive.current || !readDocumentActive()) return
+    if (
+      attentionSession.current == null ||
+      !paneActive.current ||
+      !readDocumentActive()
+    )
+      return
     engine.markRead(conversationId, readRevision.current).catch(() => undefined)
   }, [props.readingSession, engine, conversationId])
 
+  const lastAttentionOffset = useRef(scrolled.current.offset)
+  const pendingManualPass = useRef({
+    offset: scrolled.current.offset,
+    past: false
+  })
+  const visibilityGeneration = useRef(0)
+  refreshAttention.current = (manual = false): void => {
+    const offset = scrolled.current.offset
+    const passed = manual && offset > lastAttentionOffset.current + 1
+    lastAttentionOffset.current = offset
+    const generation = ++visibilityGeneration.current
+    const session = attentionSession.current
+    const raw = engine.view(conversationId)
+    if (
+      session == null ||
+      raw == null ||
+      !session.complete ||
+      props.active === false ||
+      !documentActive ||
+      menuReading.current != null ||
+      menu != null ||
+      pinsOpen ||
+      mentionChoosing != null ||
+      reacting != null ||
+      composerOverlay ||
+      discovering.current ||
+      resolvingJump
+    ) {
+      pendingManualPass.current = { offset, past: false }
+      return
+    }
+    if (pendingManualPass.current.offset !== offset)
+      pendingManualPass.current = { offset, past: passed }
+    else if (passed) pendingManualPass.current.past = true
+    // Capturing input and the bubbling ScrollView callback share one observation.
+    const manualPast = pendingManualPass.current.past
+    const targets = attentionMessages(raw, userId, session)
+    const measure = async (
+      node: React.ComponentRef<typeof View> | null | undefined
+    ): Promise<{ top: number; height: number } | undefined> =>
+      await new Promise(resolve => {
+        if (node == null) {
+          resolve(undefined)
+          return
+        }
+        const timer = setTimeout(() => {
+          resolve(undefined)
+        }, 150)
+        node.measureInWindow((_x, top, width, height) => {
+          clearTimeout(timer)
+          resolve(
+            Number.isFinite(top) && width > 0 && height > 0
+              ? { top, height }
+              : undefined
+          )
+        })
+      })
+    ;(async () => {
+      const frame = await measure(viewport.frame.current)
+      if (frame == null) return
+      const area = {
+        top: frame.top + viewport.readableTop,
+        bottom: frame.top + frame.height - viewport.contentBottom
+      }
+      const measured = await Promise.all(
+        targets.map(async target => ({
+          target,
+          body: await measure(bodyRefs.current.get(target.id))
+        }))
+      )
+      if (
+        generation !== visibilityGeneration.current ||
+        !mounted.current ||
+        !paneActive.current ||
+        session !== attentionSession.current ||
+        !session.complete ||
+        discovering.current ||
+        menuReading.current != null
+      )
+        return
+      const below: string[] = []
+      for (const { target, body } of measured) {
+        // Unmounted cached rows precede the visible history frontier.
+        if (body == null) continue
+        const current = engine.view(conversationId)
+        if (
+          current == null ||
+          !attentionMessages(current, userId, session).some(
+            message => message.id === target.id
+          )
+        )
+          continue
+        if (attentionBodyViewed(body, area, manualPast))
+          session.seen.add(target.id)
+        else if (attentionBodyBelow(body, area)) below.push(target.id)
+      }
+      if (pendingManualPass.current.offset === offset)
+        pendingManualPass.current.past = false
+      attentionTargets.current = below
+      setAttentionCount(below.length)
+    })().catch(() => undefined)
+  }
+  useEffect(() => {
+    refreshAttention.current()
+    return () => {
+      visibilityGeneration.current += 1
+    }
+  }, [
+    view,
+    documentActive,
+    menu,
+    pinsOpen,
+    mentionChoosing,
+    reacting,
+    composerOverlay,
+    resolvingJump,
+    viewport.readableTop,
+    viewport.contentBottom,
+    attentionRevision
+  ])
+  const discoverPageNow = useRef(discoverPage)
+  discoverPageNow.current = discoverPage
+  useEffect(() => {
+    const session = attentionSession.current
+    const raw = engine.view(conversationId)
+    if (
+      session == null ||
+      raw == null ||
+      view == null ||
+      props.active === false ||
+      discovering.current
+    )
+      return
+    const needsPages =
+      raw.conversation.lastSeq > session.boundary &&
+      raw.hasEarlier &&
+      (raw.historyBefore == null || raw.historyBefore > session.boundary + 1)
+    const missing = attentionReferences(
+      raw,
+      userId,
+      session.boundary,
+      session.seen
+    ).some(id => !raw.messages.some(message => message.id === id))
+    if (!raw.unverified && !needsPages && (!missing || !raw.hasEarlier)) {
+      session.complete = true
+      setAttentionLoading(false)
+      setAttentionFailed(false)
+      refreshAttention.current()
+      return
+    }
+    session.complete = false
+    setAttentionCount(0)
+    if (discoveryPaused.current) {
+      setAttentionLoading(false)
+      setAttentionFailed(true)
+      return
+    }
+    const generation = ++historyGeneration.current
+    const cancelled = (): boolean =>
+      generation !== historyGeneration.current ||
+      !mounted.current ||
+      !paneActive.current ||
+      engine.view(conversationId) == null
+    discovering.current = true
+    setAttentionLoading(true)
+    setAttentionFailed(false)
+    discoverAttentionHistory({
+      conversationId,
+      userId,
+      session,
+      view: engine.view.bind(engine),
+      loadEarlier: async () => await discoverPageNow.current(cancelled),
+      cancelled
+    })
+      .then(() => {
+        if (!cancelled()) session.complete = true
+      })
+      .catch((error: unknown) => {
+        if (!cancelled() && !(error instanceof AttentionCancelled)) {
+          discoveryPaused.current = true
+          setAttentionFailed(true)
+        }
+      })
+      .finally(() => {
+        discovering.current = false
+        if (mounted.current && paneActive.current) {
+          setAttentionLoading(false)
+          refreshAttention.current()
+          if (retryDiscovery.current || cancelled()) {
+            retryDiscovery.current = false
+            setAttentionRevision(value => value + 1)
+          }
+        }
+      })
+  }, [view, engine, conversationId, userId, props.active, attentionRevision])
   const run = useCallback(
     (work: () => Promise<unknown>, failure = lstrings.chat_send_failed) => {
       setError(undefined)
       setReported(false)
-      work().catch(() => {
-        setError(failure)
+      work().catch((error: unknown) => {
+        if (!(error instanceof AttentionCancelled)) setError(failure)
       })
     },
     []
@@ -1377,7 +1837,7 @@ export function ConversationScreen(
     setText(next)
     readRevision.current =
       view.conversation.preferences?.manualUnreadRevision ?? 0
-    if (readDocumentActive())
+    if (attentionSession.current != null && readDocumentActive())
       engine
         .markRead(conversationId, readRevision.current)
         .catch(() => undefined)
@@ -1588,6 +2048,7 @@ export function ConversationScreen(
     if (owned) restoreTarget.current = undefined
     rememberScroll(event)
     if (owned) userScrolled()
+    else refreshAttention.current()
     if (end != null && end === input) nativeUserScroll.current = undefined
     if (end === 'momentum' && input !== 'drag')
       nativeMomentumFromDrag.current = false
@@ -1714,6 +2175,18 @@ export function ConversationScreen(
           scrollEventThrottle={100}
           onContentSizeChange={(_width, height) => {
             if (!mounted.current || !paneActive.current) return
+            const background = backgroundReading.current
+            if (background != null) {
+              scrolled.current.content = height
+              const arrival = view.conversation.lastSeq > background.lastSeq
+              if (
+                arrival &&
+                (scrolled.current.followNewest || atBottom.current) &&
+                menuReading.current == null
+              )
+                scroller.current?.scrollToEnd({ animated: false })
+              return
+            }
             if (prepend.current != null) {
               const previous = prepend.current
               const firstSeq = view.messages[0]?.seq
@@ -1735,6 +2208,7 @@ export function ConversationScreen(
                     !mounted.current ||
                     !paneActive.current ||
                     engine.view(conversationId) == null
+                  historyRestorations.current += 1
                   // Total height also includes quote/image changes below the
                   // reader. Preserve the same existing row's viewport position.
                   measurePosition(anchor.id, cancelled)
@@ -1750,6 +2224,9 @@ export function ConversationScreen(
                       })
                     })
                     .catch(() => undefined)
+                    .finally(() => {
+                      historyRestorations.current -= 1
+                    })
                 }
                 return
               }
@@ -1830,6 +2307,9 @@ export function ConversationScreen(
               onPress={() => {
                 atBottom.current = false
                 run(async () => {
+                  historyGeneration.current += 1
+                  discoveryPaused.current = true
+                  setAttentionLoading(false)
                   await loadOlder()
                 })
               }}
@@ -1843,6 +2323,7 @@ export function ConversationScreen(
           {view.messages.map((message, index) => (
             <View
               key={message.id}
+              testID={`chat-message-row-${message.id}`}
               ref={node => {
                 if (node == null) messageRefs.current.delete(message.id)
                 else messageRefs.current.set(message.id, node)
@@ -1866,6 +2347,13 @@ export function ConversationScreen(
             >
               {notices.get(index)?.map(renderNotice)}
               <MessageBubble
+                bodyRef={node => {
+                  if (node == null) bodyRefs.current.delete(message.id)
+                  else bodyRefs.current.set(message.id, node)
+                }}
+                onBodyLayout={() => {
+                  refreshAttention.current()
+                }}
                 message={message}
                 conversation={view.conversation}
                 members={view.members}
@@ -1919,6 +2407,37 @@ export function ConversationScreen(
           ))}
           {notices.get(view.messages.length)?.map(renderNotice)}
         </ScrollView>
+        <ChatAttentionControl
+          count={attentionCount}
+          loading={attentionLoading}
+          failed={attentionFailed}
+          disabled={resolvingJump}
+          bottom={viewport.contentBottom}
+          right={Math.max(margin, insets.right)}
+          onLatest={() => {
+            historyGeneration.current += 1
+            discoveryPaused.current = true
+            setAttentionLoading(false)
+            jumpGeneration.current += 1
+            measuringJump.current = undefined
+            setResolvingJump(false)
+            restoreTarget.current = undefined
+            restoreAnchor.current = undefined
+            atBottom.current = true
+            scrolled.current.followNewest = true
+            scroller.current?.scrollToEnd({ animated: true })
+          }}
+          onNext={() => {
+            const next = attentionTargets.current[0]
+            if (next != null && !resolvingJump) jumpTo(next, true)
+          }}
+          onRetry={() => {
+            discoveryPaused.current = false
+            retryDiscovery.current = discovering.current
+            setAttentionFailed(false)
+            setAttentionRevision(value => value + 1)
+          }}
+        />
         <View
           testID="chat-composer-band"
           pointerEvents="box-none"
@@ -1947,7 +2466,7 @@ export function ConversationScreen(
               label={lstrings.common_retry}
               kind="text"
               onPress={() => {
-                jumpTo(jumpRetry)
+                jumpTo(jumpRetry.id, jumpRetry.attention)
               }}
             />
           )}
@@ -1993,9 +2512,11 @@ export function ConversationScreen(
             </View>
           ) : (
             <Composer
+              onOverlay={setComposerOverlay}
               registerFocus={registerComposerFocus}
               onRead={() => {
                 if (
+                  attentionSession.current == null ||
                   props.active === false ||
                   !readDocumentActive() ||
                   isRestoringPopupFocus()

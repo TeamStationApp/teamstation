@@ -1182,6 +1182,15 @@ class FakeEngine implements ChatScreenEngine {
   }
 
   async open(): Promise<ConversationView> {
+    // These ordinary paging fixtures begin with their loaded posts already read.
+    this.current = {
+      ...this.current,
+      readsReady: true,
+      ownReadSeq: Math.max(
+        this.current.conversation.lastSeq,
+        ...this.current.messages.map(message => message.seq)
+      )
+    }
     return this.current
   }
 
@@ -2578,6 +2587,20 @@ describe('chat follow-up conversation message integration', function () {
           ? 'Load earlier messages'
           : 'Jump to message from Former member: Message unavailable'
       )
+      if (cancelAt === 'manual-overlap') {
+        expect(
+          finish,
+          'A new page waits for the prior saved-anchor measurement'
+        ).equals(undefined)
+        expect(measurements).length(1)
+        await act(async () => {
+          nativeAnchor.measureLayout = measureCurrentAnchor
+          measurements.splice(0).forEach(finishMeasurement => {
+            finishMeasurement()
+          })
+          await wait(30)
+        })
+      }
       expect(finish).not.equals(undefined)
       const userScroll = async (): Promise<void> => {
         await act(async () => {
@@ -2626,15 +2649,6 @@ describe('chat follow-up conversation message integration', function () {
         if (cancelAt === 'manual-overlap')
           nativeAnchor.measureLayout = measureCurrentAnchor
         finish!(next)
-        if (cancelAt === 'manual-overlap') {
-          // Let paging replace the anchor while the earlier measurement is
-          // still pending, then retire that earlier measurement.
-          await wait(10)
-          expect(measurements.length).equals(1)
-          measurements.forEach(finishMeasurement => {
-            finishMeasurement()
-          })
-        }
         await wait(cancelAt === 'manual-overlap' ? 20 : 80)
       })
       if (cancelAt === 'after-resolution-growth') {
