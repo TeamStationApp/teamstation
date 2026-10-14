@@ -42,56 +42,125 @@ type Peer = Awaited<ReturnType<typeof fixturePeer>>
 type Json = Record<string, unknown>
 
 /** Compare one public selector coordinate space without assuming native raster scale. */
-export async function observeMentionHeader(ui: Chat2UI): Promise<Json> {
-  await ui.present('chat-picker-scene')
-  await ui.present('chat-picker-header')
-  const header = await ui.observedBounds({
-    id: 'chat-picker-header',
-    childOf: { id: 'chat-picker-scene' }
-  })
-  const title = await ui.observedBounds({
-    text: exactText('Mention a member'),
-    childOf: { id: 'chat-picker-header' }
-  })
-  const cancel = await ui.observedBounds({
-    text: exactText('Cancel'),
-    childOf: { id: 'chat-picker-header' }
-  })
-  const search = await ui.observedBounds({
-    text: exactText('Search members'),
-    childOf: { id: 'chat-picker-content' }
-  })
-  for (const box of [header, title, cancel, search])
-    assert(
-      [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
-        box.width > 0 &&
-        box.height > 0,
-      'Actual measured chooser header and Search bounds required'
-    )
-  for (const box of [title, cancel])
-    assert(
-      box.y >= header.y &&
-        box.y + box.height <= header.y + header.height &&
-        box.x >= header.x &&
-        box.x + box.width <= header.x + header.width,
-      'Chooser title and Cancel must be contained in the measured header'
-    )
-  assert(
-    header.y + header.height <= search.y,
-    'Chooser title and Cancel header must be above Search, never a footer'
-  )
-  return {
-    mentionHeaderGeometry: {
-      header,
-      title,
-      cancel,
-      search,
-      coordinateSpace: ui.native
-        ? 'Native public scoped element bounds; no raster conversion assumed'
-        : 'Public DOM CSS pixels',
-      titleScope: 'chat-picker-header',
-      searchScope: 'chat-picker-content'
+export async function observeMentionHeader(
+  ui: Chat2UI,
+  timeout = 8000
+): Promise<Json> {
+  type Box = NonNullable<PublicNode['bounds']>
+  type Geometry = Record<'header' | 'title' | 'cancel' | 'search', Box>
+  const samples: Array<{
+    startedAt: string
+    completedAt?: string
+    bounds: Partial<Geometry>
+  }> = []
+  const coordinateSpace = ui.native
+    ? 'Native public scoped element bounds; no raster conversion assumed'
+    : 'Public DOM CSS pixels'
+  const observation: Json = {
+    name: 'Settled mention chooser header geometry',
+    outcome: 'failed',
+    coordinateSpace,
+    containmentTolerance: 1,
+    stabilityTolerance: 0.01,
+    stableForMs: 200,
+    timeoutMs: timeout,
+    samples
+  }
+  ui.steps.push(observation)
+  try {
+    await ui.present('chat-picker-scene')
+    await ui.present('chat-picker-header')
+    const deadline = Date.now() + timeout
+    let reference: Geometry | undefined
+    let stableSince = Date.now()
+    for (;;) {
+      const sample: (typeof samples)[number] = {
+        startedAt: new Date().toISOString(),
+        bounds: {}
+      }
+      samples.push(sample)
+      if (samples.length > 24) samples.splice(1, 1)
+      sample.bounds.header = {
+        ...(await ui.observedBounds({
+          id: 'chat-picker-header',
+          childOf: { id: 'chat-picker-scene' }
+        }))
+      }
+      sample.bounds.title = {
+        ...(await ui.observedBounds({
+          text: exactText('Mention a member'),
+          childOf: { id: 'chat-picker-header' }
+        }))
+      }
+      sample.bounds.cancel = {
+        ...(await ui.observedBounds({
+          text: exactText('Cancel'),
+          childOf: { id: 'chat-picker-header' }
+        }))
+      }
+      sample.bounds.search = {
+        ...(await ui.observedBounds({
+          text: exactText('Search members'),
+          childOf: { id: 'chat-picker-content' }
+        }))
+      }
+      sample.completedAt = new Date().toISOString()
+      const geometry = sample.bounds as Geometry
+      for (const box of Object.values(geometry))
+        assert(
+          [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+            box.width > 0 &&
+            box.height > 0,
+          'Actual measured chooser header and Search bounds required'
+        )
+      const before = reference
+      const stable =
+        before != null &&
+        (Object.keys(geometry) as Array<keyof Geometry>).every(name =>
+          (['x', 'y', 'width', 'height'] as const).every(
+            key => Math.abs(geometry[name][key] - before[name][key]) <= 0.01
+          )
+        )
+      if (!stable) {
+        reference = geometry
+        stableSince = Date.now()
+      }
+      assert(
+        Date.now() < deadline,
+        'Timed out waiting for stable chooser geometry'
+      )
+      if (stable && Date.now() - stableSince >= 200) {
+        const { header, title, cancel, search } = geometry
+        // The shared header centers a minimum hit target across a subpixel border.
+        // Allow at most one measured coordinate unit, without assuming raster scale.
+        for (const box of [title, cancel])
+          assert(
+            box.y >= header.y - 1 &&
+              box.y + box.height <= header.y + header.height + 1 &&
+              box.x >= header.x - 1 &&
+              box.x + box.width <= header.x + header.width + 1,
+            'Chooser title and Cancel must be contained in the measured header'
+          )
+        assert(
+          header.y + header.height <= search.y,
+          'Chooser title and Cancel header must be above Search, never a footer'
+        )
+        observation.outcome = 'passed'
+        return {
+          mentionHeaderGeometry: {
+            ...geometry,
+            coordinateSpace,
+            containmentTolerance: 1,
+            titleScope: 'chat-picker-header',
+            searchScope: 'chat-picker-content'
+          }
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 50))
     }
+  } catch (error) {
+    observation.error = error instanceof Error ? error.message : String(error)
+    throw error
   }
 }
 
