@@ -15,7 +15,8 @@ public struct PhoneRecording: Sendable, Equatable {
   public var parts: Int
   /// The server's upload, once one has been opened. Kept so a killed upload resumes.
   public var uploadId: String?
-  /// What the upload was titled, so a resumed upload says the same.
+  /// What the upload was titled, so a resumed upload says the same. Written as the upload starts,
+  /// before its export, so it also marks an upload wanted that the server has not opened yet.
   public var uploadTitle: String?
   /// When the server said the upload was ready.
   public var uploadedAt: WallClock?
@@ -62,8 +63,10 @@ public struct PhoneRecording: Sendable, Equatable {
   }
 
   public var isUploaded: Bool { uploadedAt != nil }
-  /// An upload was opened and has not landed: running, or cut off and waiting to resume.
-  public var hasPendingUpload: Bool { uploadId != nil && uploadedAt == nil }
+  /// An upload was started and has not landed: running, or cut off and waiting to resume, whether
+  /// or not the server had opened it (an export cut off by the background's time running out, or by
+  /// a kill, has no upload id yet).
+  public var hasPendingUpload: Bool { (uploadId != nil || uploadTitle != nil) && uploadedAt == nil }
 
   /// Whether the recording covers every moment the stream published, so the server may hide the
   /// stream's live copy whatever its coverage test says: no part stopped for low storage, and no
