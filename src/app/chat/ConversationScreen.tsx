@@ -3,7 +3,6 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
-  Pressable,
   ScrollView,
   Text,
   useWindowDimensions,
@@ -59,6 +58,7 @@ import { findOriginal, replyExcerpt } from './engine/reply'
 import { MessageBubble } from './MessageBubble'
 import { MessageMenu } from './MessageMenu'
 import { PinnedMessages } from './PinnedMessages'
+import { PinnedMessageSummary } from './PinnedMessageSummary'
 import type { ChatScreenEngine } from './screenEngine'
 
 /** What the screen needs of the platform's file twin. */
@@ -123,9 +123,11 @@ export function ConversationScreen(
   const margin = theme.rem(edgeMarginRem(theme, breakpoint))
   const [paneHeaderHeight, setPaneHeaderHeight] = useState(theme.rem(3.5))
   const [composerHeight, setComposerHeight] = useState(theme.rem(3.25))
+  const [pinHeight, setPinHeight] = useState(0)
   const viewport = useChatViewport({
     paneHeader: props.paneHeader === true ? paneHeaderHeight : 0,
-    composer: composerHeight
+    composer: composerHeight,
+    pins: pinHeight
   })
   const readableTop = useRef(viewport.readableTop)
   readableTop.current = viewport.readableTop
@@ -152,6 +154,13 @@ export function ConversationScreen(
   const [view, setView] = useState<ConversationView | undefined>(undefined)
   const latestView = useRef<ConversationView | undefined>(undefined)
   latestView.current = view
+  const hasPins = (view?.pins?.length ?? 0) > 0
+  useEffect(() => {
+    if (!hasPins) {
+      setPinHeight(0)
+      setPinsOpen(false)
+    }
+  }, [hasPins])
   const [failed, setFailed] = useState(false)
   const [text, setText] = useState(props.draft?.text ?? '')
   const textNow = useRef(text)
@@ -200,6 +209,12 @@ export function ConversationScreen(
     }
   }, [props.active])
   const [pinsOpen, setPinsOpen] = useState(false)
+  const [jumpRetry, setJumpRetry] = useState<string>()
+  const [resolvingJump, setResolvingJump] = useState(false)
+  useEffect(() => {
+    setResolvingJump(false)
+    setJumpRetry(undefined)
+  }, [conversationId, props.active])
   const [highlight, setHighlight] = useState<string | undefined>(undefined)
   const jumpGeneration = useRef(0)
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -312,7 +327,11 @@ export function ConversationScreen(
     !scrolled.current.hasPosition || scrolled.current.followNewest
   )
   const menuReading = useRef<
-    | { offset: number; anchor: { id: string; relativeY: number } | undefined }
+    | {
+        offset: number
+        anchor: { id: string; relativeY: number } | undefined
+        top: number
+      }
     | undefined
   >(undefined)
   const readingAnchor = useCallback(
@@ -472,6 +491,7 @@ export function ConversationScreen(
           })
       }
     }
+    setResolvingJump(false)
     atBottom.current = false
     restoreTarget.current = undefined
     restoreAnchor.current = undefined
@@ -834,6 +854,14 @@ export function ConversationScreen(
       })
   }
   const jumpTo = (id: string): void => {
+    if (
+      !mounted.current ||
+      !paneActive.current ||
+      engine.view(conversationId) == null
+    )
+      return
+    setJumpRetry(undefined)
+    setResolvingJump(true)
     nativeUserScroll.current = undefined
     nativeMomentumFromDrag.current = false
     restoreTarget.current = undefined
@@ -862,8 +890,10 @@ export function ConversationScreen(
     )
       .then(async original => {
         if (generation !== jumpGeneration.current) return
-        if (original == null) {
+        if (original?.status !== 'ok') {
           measuringJump.current = undefined
+          setResolvingJump(false)
+          setJumpRetry(id)
           setError(lstrings.chat_message_unavailable)
           restoreReadingAnchor()
           return
@@ -883,7 +913,12 @@ export function ConversationScreen(
           return
         }
         measuringJump.current = undefined
-        if (y == null) {
+        setResolvingJump(false)
+        const current = engine
+          .view(conversationId)
+          ?.messages.find(message => message.id === id)
+        if (y == null || current?.status !== 'ok') {
+          setJumpRetry(id)
           setError(lstrings.chat_message_unavailable)
           return
         }
@@ -907,6 +942,8 @@ export function ConversationScreen(
       .catch(() => {
         if (generation === jumpGeneration.current) {
           measuringJump.current = undefined
+          setResolvingJump(false)
+          setJumpRetry(id)
           setError(lstrings.chat_message_unavailable)
           restoreReadingAnchor()
         }
@@ -946,18 +983,38 @@ export function ConversationScreen(
         view?.messages.some(message => message.id === menu.id) === true)
     )
       return
+    const held = menuReading.current
     menuReading.current = undefined
     restoreTarget.current = undefined
     restoreAnchor.current = undefined
     restoringAnchor.current = false
     restoreAnchorDirty.current = false
+    const adjusted =
+      held.anchor == null
+        ? undefined
+        : {
+            ...held.anchor,
+            relativeY: anchorAfterChromeChange(
+              held.anchor.relativeY,
+              held.top,
+              readableTop.current,
+              theme.rem(0.5)
+            )
+          }
+    if (adjusted != null && adjusted.relativeY !== held.anchor?.relativeY) {
+      // Chrome that arrived during the lift only uncovers the row after exit.
+      restoreAnchor.current = adjusted
+      atBottom.current = false
+      restoreForGeometry.current()
+      return
+    }
     // Dismissal resumes following only if the reader still occupies the end.
     // Arrivals while the actions were open must remain below that reader.
     scrolled.current.followNewest =
       scrolled.current.offset + scrolled.current.height >=
       scrolled.current.content - 48
     atBottom.current = scrolled.current.followNewest
-  }, [menu, view?.messages, props.active])
+  }, [menu, view?.messages, props.active, theme])
   const previousClearances = useRef({
     top: viewport.readableTop,
     bottom: viewport.contentBottom
@@ -1448,6 +1505,34 @@ export function ConversationScreen(
             />
           </GlassView>
         )}
+        {hasPins && props.active !== false && (
+          <View
+            pointerEvents="box-none"
+            testID="chat-pinned-band"
+            onLayout={event => {
+              setPinHeight(event.nativeEvent.layout.height)
+            }}
+            style={{
+              position: 'absolute',
+              top:
+                viewport.header +
+                (props.paneHeader === true ? paneHeaderHeight : 0),
+              left: Math.max(margin, insets.left),
+              right: Math.max(margin, insets.right),
+              paddingVertical: theme.rem(0.25),
+              zIndex: 3
+            }}
+          >
+            <PinnedMessageSummary
+              pins={view.pins ?? []}
+              messages={view.messages}
+              onJump={jumpTo}
+              onOpenList={() => {
+                setPinsOpen(true)
+              }}
+            />
+          </View>
+        )}
         <ScrollView
           testID="chat-message-history"
           ref={scroller}
@@ -1603,20 +1688,6 @@ export function ConversationScreen(
             else recaptureLiveAnchor()
           }}
         >
-          {(view.pins?.length ?? 0) > 0 && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`${lstrings.chat_pinned_messages}: ${view.pins!.length}`}
-              onPress={() => {
-                setPinsOpen(true)
-              }}
-              style={{ paddingVertical: theme.rem(0.25) }}
-            >
-              <Text style={shared.small}>
-                ⌖ {lstrings.chat_pinned_messages} ({view.pins!.length})
-              </Text>
-            </Pressable>
-          )}
           {view.historyLocked && (
             <View style={[shared.banner, shared.bannerWarning]}>
               <Icon name="lock" color={theme.warningColor} />
@@ -1715,6 +1786,7 @@ export function ConversationScreen(
                     )
                     menuReading.current = {
                       offset: visible?.offset ?? scrolled.current.offset,
+                      top: readableTop.current,
                       anchor:
                         visible?.anchor ??
                         readingAnchor(messagePositions.current)
@@ -1763,6 +1835,41 @@ export function ConversationScreen(
             </Text>
           )}
           {error != null && <Text style={shared.error}>{error}</Text>}
+          {jumpRetry != null && !resolvingJump && (
+            <Button
+              testID="chat-history-jump-retry"
+              label={lstrings.common_retry}
+              kind="text"
+              onPress={() => {
+                jumpTo(jumpRetry)
+              }}
+            />
+          )}
+          {resolvingJump && (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: theme.rem(0.5)
+              }}
+            >
+              <Text style={shared.small} accessibilityLiveRegion="polite">
+                {lstrings.common_loading}
+              </Text>
+              <Button
+                testID="chat-history-jump-cancel"
+                label={lstrings.chat_cancel}
+                kind="text"
+                textColor={theme.dangerColor}
+                onPress={() => {
+                  jumpGeneration.current += 1
+                  measuringJump.current = undefined
+                  setResolvingJump(false)
+                  restoreReadingAnchor()
+                }}
+              />
+            </View>
+          )}
           {reported && (
             <Text style={shared.muted} accessibilityLiveRegion="polite">
               {lstrings.chat_reported}
@@ -1924,7 +2031,7 @@ export function ConversationScreen(
           }}
         />
       )}
-      {pinsOpen && (
+      {pinsOpen && hasPins && props.active !== false && (
         <PinnedMessages
           pins={view.pins ?? []}
           messages={view.messages}

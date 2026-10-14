@@ -1169,6 +1169,107 @@ function terminalDraft(): ChatDraft {
 }
 
 describe('chat measured chrome reader anchors', function () {
+  for (const initialY of [56, -700])
+    it(`defers newly covering first-pin clearance until spotlight exit and preserves a clipped reader (${initialY})`, async function () {
+      const engine = new ReviewEngine()
+      engine.update('cnv_aurora', { messages: [original()], pins: [] })
+      const state = newChatWorkspaceState()
+      state.drafts.set('cnv_aurora', { ...terminalDraft(), scrollOffset: 1000 })
+      await render(
+        <HeaderSlotProvider
+          headerHeight={48}
+          navigationHeight={0}
+          onHandoff={() => {}}
+        >
+          <ChatOverlayHost>
+            <ChatWorkspace
+              engine={engine}
+              userId={1}
+              state={state}
+              conversationId="cnv_aurora"
+              onOpen={() => {}}
+              onMembers={() => {}}
+              onNewMessage={() => {}}
+              onTitle={() => {}}
+            />
+          </ChatOverlayHost>
+        </HeaderSlotProvider>,
+        false
+      )
+      await layout(
+        document.querySelector('[data-testid="chat-workspace"]')!,
+        390,
+        844
+      )
+      const reading = terminalReadingPane()
+      await reading.measure()
+      const row = document.querySelector<HTMLElement>(
+        '[data-testid="chat-message-msg_original"]'
+      )!.parentElement!
+      const contentY = 1000 + initialY
+      Object.defineProperty(row, 'offsetTop', {
+        configurable: true,
+        value: contentY
+      })
+      row.getBoundingClientRect = () =>
+        new window.DOMRect(0, contentY - reading.node.scrollTop, 640, 1000)
+      document.querySelector<HTMLElement>(
+        '[data-testid="chat-bubble-msg_original"]'
+      )!.getBoundingClientRect = () =>
+        new window.DOMRect(42, initialY, 210, 1000)
+      await layout(row, 640, 1000, contentY)
+      await act(async () => {
+        reading.node.scrollTop = 1000
+        reading.node.dispatchEvent(
+          new window.WheelEvent('wheel', { bubbles: true, deltaY: 1 })
+        )
+        await wait()
+      })
+      await reading.deliver(
+        renderedReadingCallbacks(reading.node),
+        'onScroll',
+        1000
+      )
+      await press('More message actions')
+      await act(async () => {
+        button('Pin').click()
+        await wait(20)
+        engine.update('cnv_aurora', {
+          pins: [
+            { messageId: 'msg_original', pinnedAt: '2027-04-01T17:00:00Z' }
+          ]
+        })
+        await wait(20)
+      })
+      await layout(
+        document.querySelector('[data-testid="chat-pinned-band"]')!,
+        640,
+        64
+      )
+      expect(
+        row.getBoundingClientRect().top,
+        'Background remains fixed during exit'
+      ).equals(initialY)
+      await settleChatMessageActions('closed')
+      await act(async () => {
+        await wait(80)
+      })
+      const expected = initialY === 56 ? 120 : initialY
+      expect(
+        row.getBoundingClientRect().top,
+        'Only the newly covered leading edge is revealed after exit'
+      ).equals(expected)
+      await act(async () => {
+        engine.update('cnv_aurora', { pins: [] })
+        await wait(80)
+      })
+      expect(
+        row.getBoundingClientRect().top,
+        'Last unpin keeps the current reader'
+      ).equals(expected)
+      expect(state.drafts.get('cnv_aurora')!.text).equals('Current unsent body')
+    })
+
   it('holds the actual reader through spotlight opening arrivals composer growth and closing, then leaves new posts below', async function () {
     const engine = new ReviewEngine()
     engine.update('cnv_aurora', { messages: [original()] })
@@ -1316,7 +1417,7 @@ describe('chat measured chrome reader anchors', function () {
     ).equals(3000)
   })
 
-  it('keeps the same partially visible tall row when only the measured composer grows', async function () {
+  it('keeps the same partially visible tall row when the composer grows and floating pins appear or disappear', async function () {
     const engine = new ReviewEngine()
     engine.update('cnv_aurora', { messages: [original()] })
     const state = newChatWorkspaceState()
@@ -1358,6 +1459,30 @@ describe('chat measured chrome reader anchors', function () {
       id: 'msg_original',
       relativeY: -700
     })
+    await act(async () => {
+      engine.update('cnv_aurora', {
+        pins: [{ messageId: 'msg_original', pinnedAt: '2027-04-01T17:00:00Z' }]
+      })
+      await wait()
+    })
+    await layout(
+      document.querySelector('[data-testid="chat-pinned-band"]')!,
+      640,
+      64
+    )
+    expect(
+      relative(),
+      'A measured floating pin preserves the partially visible row'
+    ).equals(-700)
+    await act(async () => {
+      engine.update('cnv_aurora', { pins: [] })
+      await wait(60)
+    })
+    expect(document.querySelector('[data-testid="chat-pinned-band"]')).equals(
+      null
+    )
+    expect(relative(), 'Last unpin preserves the same reader').equals(-700)
+    expect(reading.node.scrollTop).equals(700)
   })
 })
 
@@ -3815,10 +3940,7 @@ describe('review4 no-event clamps and reachable jumps', function () {
       reading.moves.length = 0
       if (route === 'quote')
         await press('Jump to message from Shohei Ohtani: Practice notes')
-      else {
-        await press('Pinned messages: 1')
-        await press('Practice notes')
-      }
+      else await press('Pinned messages: 1')
       expect(reading.moves.at(-1)).equals(800)
       await act(async () => {
         reading.node.scrollTop = 800
