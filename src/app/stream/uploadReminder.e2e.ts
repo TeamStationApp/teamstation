@@ -11,7 +11,9 @@
 //   TS_STREAM_API=http://<address>:<port>/api/v1 \
 //   TS_STREAM_SERVER_LOG=<the local server's log> \
 //   TS_STREAM_EMAIL=<a seeded user who may film> TS_STREAM_GAME=<a game> \
-//   TS_STREAM_UPLOAD_FILE=<a short .mp4 to upload as the recording> \
+//   TS_STREAM_UPLOAD_FILE=<a short .mp4 to upload as the recording; not
+//     needed after E15> \
+//   [TS_STREAM_AFTER_E15=1] \
 //   [TS_STREAM_ANGLE=Home Plate] [TS_STREAM_SECOND_ANGLE=First Base] \
 //   [TS_STREAM_DEVICE_MODEL=iPhone 13 Pro] \
 //   [TS_STREAM_TOKEN=<session>] [TS_STREAM_ARTIFACT_DIR=<dir>] \
@@ -34,6 +36,13 @@
 //      invitation; this run's reminder, opened by its address, too.
 //   6. A second angle's reminder is listed, then an upload naming its stream
 //      with `wholeStream` clears it with nothing pressed.
+//
+// With TS_STREAM_AFTER_E15=1 it runs as the plan has it, on the simulator
+// after E15 and E16, and makes nothing of its own: the reminder is the one
+// E15's stop left for TS_STREAM_ANGLE (only other reminders are dismissed
+// first), and step 6 finds the reminder for TS_STREAM_SECOND_ANGLE, the
+// Pixel's, settled by E16's upload with nothing pressed: in History, not in
+// Pending.
 import assert from 'node:assert/strict'
 import { mkdir, readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -80,7 +89,8 @@ const api = required('TS_STREAM_API').replace(/\/$/, '')
 const serverLog = required('TS_STREAM_SERVER_LOG')
 const email = required('TS_STREAM_EMAIL')
 const game = required('TS_STREAM_GAME')
-const uploadFile = required('TS_STREAM_UPLOAD_FILE')
+const afterE15 = process.env.TS_STREAM_AFTER_E15 === '1'
+const uploadFile = afterE15 ? '' : required('TS_STREAM_UPLOAD_FILE')
 const angle = process.env.TS_STREAM_ANGLE ?? 'Home Plate'
 const secondAngle = process.env.TS_STREAM_SECOND_ANGLE ?? 'First Base'
 const model = process.env.TS_STREAM_DEVICE_MODEL ?? 'iPhone 13 Pro'
@@ -174,22 +184,28 @@ interface StreamRow {
   id: string
   label: string
   deviceId?: string | null
+  localRecording?: string
 }
 interface Reminder {
   requestId: string
   type: string
   description: string
+  status?: string
   liveStreamId?: string
 }
 
-/** Every pending notification of this person, page by page. */
-async function pending(token: string): Promise<Reminder[]> {
+/** Every pending notification of this person, or with `history` every settled one. */
+async function pending(token: string, history = false): Promise<Reminder[]> {
   const found: Reminder[] = []
   let cursor: string | null = null
   do {
+    const query = [
+      ...(history ? ['history=1'] : []),
+      ...(cursor == null ? [] : [`cursor=${encodeURIComponent(cursor)}`])
+    ]
     const answer = await request(
       'GET',
-      `/me/notifications${cursor == null ? '' : `?cursor=${encodeURIComponent(cursor)}`}`,
+      `/me/notifications${query.length === 0 ? '' : `?${query.join('&')}`}`,
       undefined,
       token
     )
@@ -270,6 +286,29 @@ async function remind(token: string, name: string): Promise<Reminder> {
     item => item.liveStreamId === stream.id
   )
   assert(reminder != null, `${name}'s reminder is pending`)
+  assert.equal(reminder.description, describe(name))
+  return reminder
+}
+
+/** The reminder E15's stop left for `name`: its stream, recorded, still pending. */
+async function reminderFromE15(token: string, name: string): Promise<Reminder> {
+  const listed = await request(
+    'GET',
+    `/games/${game}/live-streams`,
+    undefined,
+    token
+  )
+  assert.equal(listed.status, 200, 'the game’s cameras were listed')
+  const stream = ((await listed.json()) as { mine: StreamRow[] }).mine.find(
+    row =>
+      row.label.toLowerCase() === name.toLowerCase() &&
+      row.localRecording === 'recorded'
+  )
+  assert(stream != null, `E15 left ${name} recorded and not uploaded`)
+  const reminder = (await pending(token)).find(
+    item => item.liveStreamId === stream.id
+  )
+  assert(reminder != null, `${name}'s reminder from E15 is pending`)
   assert.equal(reminder.description, describe(name))
   return reminder
 }
@@ -358,8 +397,10 @@ async function main(): Promise<void> {
   }
 
   // Earlier runs' reminders would sit above this run's card and hold the dot.
+  // After E15, its own reminder is the one this run reads.
+  const keep = afterE15 ? await reminderFromE15(token, angle) : undefined
   for (const item of await pending(token))
-    if (item.type === 'recordingUpload') {
+    if (item.type === 'recordingUpload' && item.requestId !== keep?.requestId) {
       say(`$ curl -X PUT …/me/notifications/${item.requestId}/dismissed`)
       const settled = await request(
         'PUT',
@@ -369,7 +410,7 @@ async function main(): Promise<void> {
       )
       assert.equal(settled.status, 204, 'an earlier reminder was dismissed')
     }
-  const first = await remind(token, angle)
+  const first = keep ?? (await remind(token, angle))
   assert.equal(await hasPending(token), true, 'the summary says pending')
 
   const requireClient = createRequire(path.join(clientRoot, 'package.json'))
@@ -537,29 +578,67 @@ async function main(): Promise<void> {
     )
     pass('5 a reminder’s detail from History shows Upload and no Accept')
 
-    // 6. An upload naming the stream clears its reminder by itself.
-    const second = await remind(token, secondAngle)
-    await tap({ id: 'Notifications' })
-    await reloadPending()
-    say(`$ assertVisible "${TITLE}. ${describe(secondAngle)}"`)
-    assert(
-      (await find(card(secondAngle), 15000)) != null,
-      'the second reminder is listed'
-    )
-    assert(second.liveStreamId != null, 'the reminder names its stream')
-    await uploadRecording(token, second.liveStreamId)
-    assert.equal(
-      (await pending(token)).find(item => item.requestId === second.requestId),
-      undefined,
-      'the server cleared the second reminder'
-    )
-    await reloadPending()
-    say(`$ assertNotVisible "${TITLE}. ${describe(secondAngle)}"`)
-    assert(
-      await gone(card(secondAngle), 10000),
-      'the card went with nothing pressed'
-    )
-    pass('6 an upload naming the stream clears its reminder by itself')
+    // 6. After E16, the Pixel's reminder was settled by its upload, with
+    // nothing pressed.
+    if (afterE15) {
+      const settledByUpload = (await pending(token, true)).find(
+        item =>
+          item.type === 'recordingUpload' &&
+          item.description.startsWith(`${secondAngle} on `)
+      )
+      assert(
+        settledByUpload != null,
+        `${secondAngle}'s reminder from E15 is in History`
+      )
+      assert.equal(settledByUpload.status, 'accepted', 'settled')
+      assert.equal(
+        (await pending(token)).find(
+          item => item.requestId === settledByUpload.requestId
+        ),
+        undefined,
+        `${secondAngle}'s reminder is not pending`
+      )
+      await tap({ id: 'Notifications' })
+      await reloadPending()
+      say(`$ assertNotVisible "${TITLE}. ${secondAngle} on …"`)
+      assert(
+        await gone(
+          node =>
+            node.text?.startsWith(`${TITLE}. ${secondAngle} on `) === true,
+          5000
+        ),
+        `no ${secondAngle} card in Pending`
+      )
+      pass(
+        `6 ${secondAngle}'s reminder (“${settledByUpload.description}”) cleared by itself after E16's upload`
+      )
+    } else {
+      // 6. An upload naming the stream clears its reminder by itself.
+      const second = await remind(token, secondAngle)
+      await tap({ id: 'Notifications' })
+      await reloadPending()
+      say(`$ assertVisible "${TITLE}. ${describe(secondAngle)}"`)
+      assert(
+        (await find(card(secondAngle), 15000)) != null,
+        'the second reminder is listed'
+      )
+      assert(second.liveStreamId != null, 'the reminder names its stream')
+      await uploadRecording(token, second.liveStreamId)
+      assert.equal(
+        (await pending(token)).find(
+          item => item.requestId === second.requestId
+        ),
+        undefined,
+        'the server cleared the second reminder'
+      )
+      await reloadPending()
+      say(`$ assertNotVisible "${TITLE}. ${describe(secondAngle)}"`)
+      assert(
+        await gone(card(secondAngle), 10000),
+        'the card went with nothing pressed'
+      )
+      pass('6 an upload naming the stream clears its reminder by itself')
+    }
   } finally {
     await m.detach().catch(() => undefined)
   }
