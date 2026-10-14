@@ -3,15 +3,9 @@ import { Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { PublicGroup } from '../../common/publicGroups'
-import {
-  Badge,
-  Card,
-  DangerText,
-  Emblem,
-  initialsOf,
-  SectionHeader
-} from '../components'
+import { Card, SectionHeader } from '../components'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { GroupRelationshipRow } from './GroupRelationshipRow'
 import { useBreakParent } from './useBreakParent'
 
 export function ParentOrganizations({
@@ -43,25 +37,19 @@ export function ParentOrganizations({
       <SectionHeader title="Parent Organizations" />
       <Card style={styles.card}>
         {parents.map(parent => (
-          <View key={`${parent.kind}:${parent.id}`} style={styles.row}>
-            <Emblem uri={parent.imageUrl} fallback={initialsOf(parent.name)} />
-            <View style={styles.words}>
-              <Text style={styles.name}>{parent.name}</Text>
-              <Badge label={parent.kind === 'league' ? 'League' : 'Season'} />
-            </View>
-            <DangerText
-              label="Leave"
-              accessibilityLabel={`Leave ${parent.name}`}
-              disabled={breaker.busy}
-              onPress={() => {
-                setSelected(parent)
-                breaker.review(
-                  { kind: 'team', id: teamId },
-                  { kind: parent.kind, id: parent.id }
-                )
-              }}
-            />
-          </View>
+          <GroupRelationshipRow
+            key={`${parent.kind}:${parent.id}`}
+            group={parent}
+            label={`Leave ${parent.name}`}
+            disabled={breaker.busy}
+            onLeave={() => {
+              setSelected(parent)
+              breaker.review(
+                { kind: 'team', id: teamId },
+                { kind: parent.kind, id: parent.id }
+              )
+            }}
+          />
         ))}
       </Card>
       {breaker.error !== '' && (
@@ -76,16 +64,5 @@ export function ParentOrganizations({
 const getStyles = cacheStyles((theme: Theme) => ({
   section: { gap: theme.rem(0.75) },
   card: { gap: theme.rem(0.75) },
-  row: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: theme.rem(0.75)
-  },
-  words: { flex: 1, gap: theme.rem(0.25) },
-  name: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1.0625),
-    color: theme.primaryTextColor
-  },
   error: { color: theme.dangerColor }
 }))
