@@ -164,7 +164,111 @@ export async function observeMentionHeader(
   }
 }
 
-class Scenarios {
+/** Replace retained form values and submit the focused password input normally. */
+export async function submitPasswordSignIn(
+  ui: Chat2UI,
+  actor: Pick<Chat2Fixture['actors'][string], 'email' | 'password'>
+): Promise<Json> {
+  const observation: Json = {
+    name: 'Public password form submission',
+    outcome: 'failed',
+    providerKeysReset: false
+  }
+  ui.steps.push(observation)
+  const password = await ui.visible({ text: exactText('Password') }, 500)
+  const codeForm = await ui.visible(
+    { text: exactText('Use a password instead') },
+    500
+  )
+  if (!password && !codeForm) {
+    if (!(await ui.visible({ text: exactText('Sign in') }, 500))) {
+      observation.outcome = 'passed'
+      return { passwordFormSubmitted: false }
+    }
+    const buttons = (await ui.nodes()).filter(
+      node =>
+        node.text === 'Sign in' &&
+        /button$/i.test(node.type ?? '') &&
+        node.enabled !== false &&
+        node.bounds != null
+    )
+    observation.observedEntryButtons = buttons.length
+    assert(buttons.length === 1, 'Unique observed Sign in button required')
+    await ui.tapObserved(buttons[0])
+  }
+  if (!(await ui.visible({ text: exactText('Password') }, 500))) {
+    await ui.device.assertVisible({
+      text: exactText('Use a password instead'),
+      timeout: 15000
+    })
+    await ui.text('Use a password instead')
+  }
+  await ui.device.assertVisible({ text: exactText('Password'), timeout: 15000 })
+  for (const [label, value] of [
+    ['E-mail address', actor.email],
+    ['Password', actor.password]
+  ]) {
+    await ui.text(label)
+    if (await ui.visible({ text: exactText('Clear ' + label) }, 200))
+      await ui.text('Clear ' + label)
+    await ui.text(label)
+    await ui.append(value)
+  }
+  await ui.device.pressKey({ key: 'ENTER' })
+  observation.outcome = 'passed'
+  observation.fieldsReplaced = true
+  observation.submit = 'Focused password input Enter'
+  return { passwordFormSubmitted: true, retainedFieldsReplaced: true }
+}
+
+/** Capture readiness is separate from functional error and Retry scenarios. */
+export async function observeInfoCaptureReady(
+  ui: Chat2UI,
+  timeout = 15000
+): Promise<Json> {
+  const samples: Json[] = []
+  const observation: Json = {
+    name: 'Information capture readiness',
+    outcome: 'failed',
+    timeoutMs: timeout,
+    samples
+  }
+  ui.steps.push(observation)
+  try {
+    await ui.present('chat-info-hero')
+    await ui.present('chat-info-members')
+    const deadline = Date.now() + timeout
+    for (;;) {
+      const nodes = await ui.nodes()
+      const loading = nodes
+        .filter(node => /^Loading(?:…|\.{3})$/.test(node.text ?? ''))
+        .map(node => node.text)
+      const failed = nodes.some(
+        node =>
+          node.id === 'chat-load-error' ||
+          node.text === 'Chat could not be opened.'
+      )
+      const retry = nodes.some(node => node.text === 'Retry')
+      samples.push({ at: new Date().toISOString(), loading, failed, retry })
+      if (samples.length > 24) samples.splice(1, 1)
+      assert(!failed && !retry, 'Information capture has a load error or Retry')
+      if (loading.length === 0) {
+        observation.outcome = 'passed'
+        return { informationCaptureReady: true, observedLoadingAbsent: true }
+      }
+      assert(
+        Date.now() < deadline,
+        'Timed out waiting for information Loading to finish'
+      )
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+  } catch (error) {
+    observation.error = error instanceof Error ? error.message : String(error)
+    throw error
+  }
+}
+
+export class Scenarios {
   readonly group: string
   readonly viewerKey: string
   readonly viewerId: number
@@ -430,22 +534,7 @@ class Scenarios {
         await ui.open('/chat')
       }
     }
-    if (await ui.visible({ text: exactText('Use a password instead') })) {
-      await ui.text('Use a password instead')
-      await ui.text('E-mail address')
-      await ui.append(actor.email)
-      await ui.text('Password')
-      await ui.append(actor.password)
-      await ui.text('Sign in')
-    } else if (await ui.visible({ text: exactText('Sign in') })) {
-      await ui.text('Sign in')
-      await ui.text('Use a password instead')
-      await ui.text('E-mail address')
-      await ui.append(actor.email)
-      await ui.text('Password')
-      await ui.append(actor.password)
-      await ui.text('Sign in')
-    }
+    this.observations.push(await submitPasswordSignIn(ui, actor))
     if (await ui.visible({ text: exactText('Not Now') }, 500))
       await ui.text('Not Now')
     if (
@@ -2789,6 +2878,7 @@ class Scenarios {
           await this.dismiss()
           await this.openInfo()
           await ui.present('chat-info-hero')
+          this.observations.push(await observeInfoCaptureReady(ui))
           await ui.shot(
             variant + '-info',
             'Actual ' + variant + ' identity, mute control and member rows'
@@ -2883,6 +2973,7 @@ class Scenarios {
     if (ui.native) await ui.hideKeyboard()
     await this.cancelReply()
     await this.openInfo()
+    this.observations.push(await observeInfoCaptureReady(ui))
     await ui.shot('info', 'Actual information hero and mute control')
     await this.showInfoMember()
     await ui.shot(
