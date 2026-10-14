@@ -1,6 +1,10 @@
 package app.teamstation.streamcore.upload
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -140,6 +144,16 @@ class UploadClient(
             } catch (error: IOException) {
                 throw UploadClientError.Offline
             }
+            // Cancelling a coroutine cannot interrupt a socket blocked in a write or a read, which held
+            // a cancelled upload for as long as its part's five-minute timeout. Disconnecting can: the
+            // blocked call throws at once.
+            val disconnectOnCancel = launch(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    connection.disconnect()
+                }
+            }
             try {
                 connection.requestMethod = method
                 connection.connectTimeout = timeoutMillis
@@ -170,8 +184,11 @@ class UploadClient(
                 if (status == 204) return@withContext JSONObject()
                 runCatching { JSONObject(text) }.getOrElse { throw UploadClientError.Server("TeamStation sent something unreadable") }
             } catch (error: IOException) {
+                // A disconnect because the upload was cancelled is the cancellation, not the network.
+                coroutineContext.ensureActive()
                 throw UploadClientError.Offline
             } finally {
+                disconnectOnCancel.cancel()
                 connection.disconnect()
             }
         }
