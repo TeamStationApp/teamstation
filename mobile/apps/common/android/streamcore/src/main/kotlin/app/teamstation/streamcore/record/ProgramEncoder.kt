@@ -605,7 +605,8 @@ class ProgramEncoder(
         val deadline = System.nanoTime() + (seconds * 1e9).toLong()
         while (true) {
             drainAudio(limit = 512)
-            if (lock.withLock { pendingAudio.isEmpty() } || System.nanoTime() >= deadline) return
+            // A part whose file failed takes nothing more: there is nothing to wait for.
+            if (lock.withLock { pendingAudio.isEmpty() || writerFailed } || System.nanoTime() >= deadline) return
             Thread.sleep(20)
         }
     }
@@ -724,7 +725,7 @@ class ProgramEncoder(
      */
     private fun appendHoldSilence(end: Double) {
         // A part whose file never opened (no picture ever came) has no track to fill.
-        if (end <= 0 || lock.withLock { soundSinkOverride == null && writer == null }) return
+        if (end <= 0 || lock.withLock { writerFailed || (soundSinkOverride == null && writer == null) }) return
         val gap = HoldFill.silenceSeconds(end, lock.withLock { writtenAudioEnd })
         if (gap <= 0) return
         if (HoldFill.exceedsSilenceCap(gap)) {

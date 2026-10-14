@@ -116,6 +116,15 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     private var finishing: Job? = null
 
     /**
+     * A take whose part was cut short (its encoder failed) and that goes on as its next part once the
+     * cut part is finished. Stop closes it as it stands.
+     */
+    private var pausedTakeID: Long? = null
+
+    /** Parts opened again after their encoder failed, this recording; past [MAX_ENCODER_RECOVERIES] the part stops instead. */
+    private var encoderRecoveries = 0
+
+    /**
      * Set as a session starts streaming, until TeamStation has been told when its first published
      * picture was captured; see [reportLiveStartIfReady].
      */
@@ -183,6 +192,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
             now = environment.uptime
         )
         stream.onInputSurface { surface -> attachEncoder(PhoneProgramme.STREAM_KEY, surface) }
+        encoder.onWriterFailure = { message -> scope.launch { recordingWriterFailed(message) } }
     }
 
     private suspend fun <T> onEngine(work: suspend () -> T): T = withContext(environment.dispatcher) { work() }
@@ -319,6 +329,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         catalog.setLive(PhoneCatalog.LiveContext(liveStreamId, gameId, angleName))
         take = StreamTake(liveStreamId, gameId, angleName, request, recordingID, firstURL = rtmpUrl, cachedURL = rtmpUrl)
         recordingTakeID = recordingID
+        encoderRecoveries = 0
         liveStartWanted = true
         beginLiveSession(recordingID)
         streamController.start(StreamSessionController.DialReason.START)
@@ -347,12 +358,18 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         storageJob = null
         catalog.clearLive()
         if (recordingTakeID != null) finishPart(endedAt, closingTake = true) else awaitFinishing()
+        // A take whose part was cut short and not yet going again ends here.
+        pausedTakeID?.let {
+            pausedTakeID = null
+            runCatching { recordingSession.close(endedAt) }
+        }
         recordingSession.endLiveSession(stillLive = false)
         environment.foreground.recordingStopped()
         publishStatus()
     }
 
-    val isRecording: Boolean get() = recordingTakeID != null
+    /** Recording: a part is being written, or one was cut short and the take goes on as its next. */
+    val isRecording: Boolean get() = recordingTakeID != null || pausedTakeID != null
     val isStreaming: Boolean get() = take != null
 
     private fun beginLiveSession(recording: Long?) {
@@ -364,7 +381,11 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         if (surface == null) device.detachEncoder(key) else device.attachEncoder(key, surface)
     }
 
-    /** The part's own MediaCodec session, drawn by the programme tick, its pictures into [encoder]. */
+    /**
+     * The part's own MediaCodec session, drawn by the programme tick, its pictures into [encoder]. A
+     * session that fails ends its part, and the take goes on as its next part with a new session, as
+     * TS Director's writer recovery does.
+     */
     private fun openRecordingVideo() {
         val video = environment.makeRecordingVideoEncoder()
         val surface = video.open(
@@ -374,11 +395,87 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                 override fun onError(code: Int, message: String) {
                     telemetry.recordEncodeFailure(code)
                     telemetry.recordRecordingError(message)
+                    scope.launch { recordingEncoderFailed(video, message) }
                 }
             }
         )
         recordingVideo = video
         attachEncoder(PhoneProgramme.RECORDING_KEY, surface)
+    }
+
+    // MARK: - A part that fails
+
+    /**
+     * The part's encoder failed: no more pictures will come out of it. The part is finished with what
+     * it wrote, and the take goes on as its next part with a fresh session. One that keeps failing
+     * stops the part as [recordingWriterFailed] does.
+     */
+    private suspend fun recordingEncoderFailed(video: StreamVideoEncoding, message: String) {
+        if (video !== recordingVideo) return
+        val id = recordingTakeID ?: return
+        if (encoderRecoveries >= MAX_ENCODER_RECOVERIES) {
+            stopPartOnFailure(message)
+            return
+        }
+        encoderRecoveries += 1
+        telemetry.recordError("recording encoder failed, going on in a new part: $message")
+        pausedTakeID = id
+        finishPart(environment.clock.now(), closingTake = false)
+        resumePausedPart()
+    }
+
+    /**
+     * The part's file stopped taking writes (storage full, an I/O error). The part is finished with
+     * what it holds and the take closed, so a later Record on the stream continues it; the stream goes
+     * on, and the screen is told the recording failed.
+     */
+    private suspend fun recordingWriterFailed(message: String) {
+        if (recordingTakeID == null) return
+        stopPartOnFailure(message)
+    }
+
+    private suspend fun stopPartOnFailure(message: String) {
+        if (recordingTakeID == null) return
+        telemetry.recordRecordingError(message)
+        lastError = PhoneStreamError.RECORDING_FAILED
+        recordingSession.endLiveSession(recording = true, stillLive = true)
+        finishPart(environment.clock.now(), closingTake = true)
+        publishStatus()
+    }
+
+    /** Opens the next part of a take whose part was cut short, once that part is finished. */
+    private suspend fun resumePausedPart() {
+        awaitFinishing()
+        val id = pausedTakeID ?: return
+        // Stopped meanwhile: Stop closes the take.
+        if (take == null) return
+        pausedTakeID = null
+        if (!continuePart(id)) {
+            runCatching { recordingSession.close(environment.clock.now()) }
+            recordingSession.endLiveSession(recording = true, stillLive = true)
+            lastError = PhoneStreamError.RECORDING_FAILED
+        }
+        publishStatus()
+    }
+
+    /** Opens the take's next part, timed from its first picture. False when it would not open. */
+    private fun continuePart(id: Long): Boolean {
+        val summary = index.recording(id) ?: return false
+        val now = environment.clock.now()
+        return try {
+            recordingSession.resume(
+                LiveSessionResume.Take(id, summary.startedAt, null, index.nextProgramPart(id)),
+                now,
+                PhoneStreamProfile.recordingSettings
+            )
+            openRecordingVideo()
+            recordingTakeID = id
+            true
+        } catch (error: Exception) {
+            telemetry.recordRecordingError(error.message ?: error.javaClass.simpleName)
+            if (encoder.running) runCatching { recordingSession.finishProgramme(now) }
+            false
+        }
     }
 
     /**
@@ -489,6 +586,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         }
         angleName = live.angleName
         lastError = null
+        encoderRecoveries = 0
         val resumed = outcome.recording
         take = StreamTake(
             live.liveStreamId,
@@ -576,7 +674,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
             val congestion = streamController.refreshCongestion()
             val battery = environment.deviceStatus.battery()
             val started = recordingSession.startedAt
-            val recordingSeconds = if (recordingTakeID != null && started != null) maxOf(0.0, environment.clock.now() - started) else 0.0
+            val recordingSeconds = if (isRecording && started != null) maxOf(0.0, environment.clock.now() - started) else 0.0
             return PhoneStreamStatus(
                 phase = streamController.phase.rawValue,
                 retryInSeconds = streamController.retryInSeconds,
@@ -587,7 +685,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                 charging = battery?.isCharging ?: false,
                 thermal = environment.deviceStatus.thermal().rawValue,
                 recordingSeconds = recordingSeconds,
-                isRecording = recordingTakeID != null,
+                isRecording = isRecording,
                 error = lastError
             )
         }
@@ -918,6 +1016,9 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     companion object {
         /** How long a part's encoder has to hand over its last pictures at a stop. */
         const val finishInputMillis = 1_000L
+
+        /** How many times one recording's part is opened again after its encoder failed, before it stops instead. */
+        const val MAX_ENCODER_RECOVERIES = 3
 
         /**
          * How many times the live start is offered to TeamStation, [LIVE_START_RETRY_MILLIS] apart,

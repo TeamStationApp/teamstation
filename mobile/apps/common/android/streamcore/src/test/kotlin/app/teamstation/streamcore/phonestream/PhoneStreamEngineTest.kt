@@ -996,6 +996,73 @@ class PhoneStreamEngineTest {
     }
 
     @Test
+    fun aFailedRecordingEncoderGoesOnInANewPartAndOneThatKeepsFailingStops() {
+        val engine = opened()
+        start(engine)
+        capture(3.0)
+        // The part's codec dies: the part is finished and the take goes on in a new part, new codec.
+        videos.single().output!!.onError(-38, "codec died")
+        waitFor { videos.size == 2 && engine.isRecording && device.attached.containsKey(PhoneProgramme.RECORDING_KEY) }
+        assertTrue(videos.first().closed)
+        capture(3.0)
+        assertTrue(engine.isRecording)
+        assertNull(on { engine.status }.error)
+        // A late report from the dead codec changes nothing.
+        videos.first().output!!.onError(-38, "codec died")
+        on { }
+        assertEquals(2, videos.size)
+        // It keeps failing: after three new parts the part stops, the stream goes on, and the screen
+        // is told the recording failed.
+        repeat(PhoneStreamEngine.MAX_ENCODER_RECOVERIES - 1) {
+            val count = videos.size
+            videos.last().output!!.onError(-38, "codec died")
+            waitFor { videos.size == count + 1 && engine.isRecording }
+            capture(0.5)
+        }
+        videos.last().output!!.onError(-38, "codec died")
+        // Told once the part is finished.
+        waitFor { statuses().last().error == PhoneStreamError.RECORDING_FAILED }
+        assertFalse(engine.isRecording)
+        assertTrue(engine.isStreaming)
+        val take = runBlocking { engine.recordings() }.single()
+        assertEquals(1 + PhoneStreamEngine.MAX_ENCODER_RECOVERIES, take.parts)
+        assertNotNull(take.endedAt)
+        assertTrue(videos.all { it.closed })
+        runBlocking { engine.stopRecording() }
+        // The take exports across its parts.
+        runBlocking { engine.uploadRecording("s1", server.url("/").toString(), "token-0000", "Home Plate") }
+        assertTrue(runBlocking { engine.recordings() }.single().isUploaded)
+    }
+
+    @Test
+    fun aPartWhoseFileStopsTakingWritesStopsAndTheTakeGoesOnAtTheNextRecord() {
+        val engine = opened()
+        start(engine)
+        capture(3.0)
+        // The phone's storage refuses the next write.
+        engine.encoder.soundSinkOverride = object : app.teamstation.streamcore.record.SoundSink {
+            override val isReadyForMoreSound = true
+            override fun appendSound(samples: ShortArray): Boolean = throw java.io.IOException("No space left on device")
+            override fun finishSound() = Unit
+        }
+        capture(1.0)
+        waitFor { statuses().last().error == PhoneStreamError.RECORDING_FAILED }
+        engine.encoder.soundSinkOverride = null
+        assertFalse(engine.isRecording)
+        assertTrue(engine.isStreaming)
+        assertTrue(videos.single().closed)
+        val stopped = runBlocking { engine.recordings() }.single()
+        assertNotNull(stopped.endedAt)
+        assertTrue(engine.telemetry.lastRecordingError!!.contains("No space left on device"))
+        runBlocking { engine.stopRecording() }
+        // Record on the same stream continues the take as its next part.
+        start(engine)
+        capture(1.0)
+        runBlocking { engine.stopRecording() }
+        assertEquals(2, runBlocking { engine.recordings() }.single().parts)
+    }
+
+    @Test
     fun aKilledTakeOnAStreamNoLongerWantedIsClosedWhereItGotTo() {
         val first = opened()
         start(first)
