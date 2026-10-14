@@ -40,8 +40,24 @@ export interface PhoneStreamStatus {
   thermal: ThermalLevel
   recordingSeconds: number
   isRecording: boolean
-  /** The engine's error code, such as `streamEnded` or `recordingStoppedLowStorage`. */
+  /**
+   * The engine's error code, such as `streamEnded`,
+   * `recordingStoppedLowStorage`, or `cameraUnavailable` while the camera is
+   * lost (`CAMERA_UNAVAILABLE`).
+   */
   error: string | null
+}
+
+/**
+ * The error code the engine reports, and refuses Record with, for as long as
+ * the camera is lost. Android sends it; iOS may not, and then nothing is
+ * shown.
+ */
+export const CAMERA_UNAVAILABLE = 'cameraUnavailable'
+
+/** Whether the engine says the camera is lost just now. */
+export function cameraUnavailable(status: PhoneStreamStatus | null): boolean {
+  return status?.error === CAMERA_UNAVAILABLE
 }
 
 export interface PhoneZoomScale {
@@ -133,8 +149,8 @@ export interface InterruptedSession {
 /**
  * A call the engine refused, by the engine's code: `notReady`,
  * `uploadInProgress`, `insufficientStorage`, `recordingFailed`,
- * `noRecording`, `stillRecording`, `permission`, or `unsupported` in a build
- * without the module.
+ * `noRecording`, `stillRecording`, `permission`, `cameraUnavailable`, or
+ * `unsupported` in a build without the module.
  */
 export class PhoneStreamError extends Error {
   readonly code: string
