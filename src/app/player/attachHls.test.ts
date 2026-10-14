@@ -5,6 +5,7 @@ import { afterEach, describe, it } from 'mocha'
 import {
   aheadControl,
   APPLE_VENDOR,
+  atLiveEdge,
   attachHls,
   attachNativeHls,
   HLS_MIME_TYPE,
@@ -628,6 +629,45 @@ describe('a live game whose playlist was closed under the player', function () {
     emit(hls, Hls.Events.FRAG_BUFFERED)
     expect(video.plays).equals(plays)
     detach()
+  })
+
+  it('stays on the earlier inning a viewer scrubbed back to while it followed', async function () {
+    stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')
+    const video = new FakeVideo()
+    const { detach, hls } = attach(video, () => true)
+    video.emit('play')
+    emit(hls, Hls.Events.LEVEL_LOADED, { details: { live: true } })
+    // Back to the second inning, ten minutes behind the end.
+    video.currentTime = 42
+    emit(hls, Hls.Events.LEVEL_LOADED, {
+      details: { live: false, edge: 642, targetduration: 4 }
+    })
+    await settle()
+    expect(loads).has.length(2)
+    expect(hls.config.startPosition).equals(42)
+    detach()
+  })
+
+  it('rejoins the live edge from a playhead waiting at the end, not ended', async function () {
+    stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')
+    const video = new FakeVideo()
+    const { detach, hls } = attach(video, () => true)
+    video.emit('play')
+    emit(hls, Hls.Events.LEVEL_LOADED, { details: { live: true } })
+    // Where hls.js holds a live player: three segments behind the end.
+    video.currentTime = 630
+    emit(hls, Hls.Events.LEVEL_LOADED, {
+      details: { live: false, edge: 642, targetduration: 4 }
+    })
+    await settle()
+    expect(loads).has.length(2)
+    expect(hls.config.startPosition).equals(-1)
+    detach()
+  })
+
+  it('counts a playhead as following within the live distance and a segment', function () {
+    expect(atLiveEdge(626, 642, 4, 3)).equals(true)
+    expect(atLiveEdge(625.9, 642, 4, 3)).equals(false)
   })
 
   it('lets a finished video end, as it always has', async function () {
