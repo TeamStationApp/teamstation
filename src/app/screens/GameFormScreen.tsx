@@ -5,6 +5,7 @@ import type { TeamStationClient } from '../../common/api'
 import type { EventType } from '../../common/eventInfo'
 import type { PublicGroup } from '../../common/publicGroups'
 import { Button, Card, Screen, TextField } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { EventArrivalField } from '../components/EventArrivalField'
 import { EventScheduleFields } from '../components/EventScheduleFields'
 import { EventTypeRow } from '../components/EventTypeRow'
@@ -362,12 +363,7 @@ export function GameFormScreen({
                   setRetry(value => value + 1)
                 }}
               />
-              <Button
-                label="Cancel"
-                kind="text"
-                textColor={theme.dangerColor}
-                onPress={onCancel}
-              />
+              <CancelAction label="Cancel" onPress={onCancel} />
             </>
           )}
         </View>
@@ -634,13 +630,7 @@ export function GameFormScreen({
                 submitGame().catch(() => undefined)
               }}
             />
-            <Button
-              label="Cancel"
-              kind="text"
-              textColor={theme.dangerColor}
-              disabled={busy}
-              onPress={onCancel}
-            />
+            <CancelAction label="Cancel" disabled={busy} onPress={onCancel} />
             {loaded?.canPropose === true &&
               loaded.withdrawTeamIds.map(id => (
                 <Button

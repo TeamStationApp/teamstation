@@ -4,6 +4,7 @@ import { Modal, Pressable, Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import type { PublicGroup } from '../../common/publicGroups'
 import { Button, Card, SectionHeader } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { GroupRelationshipRow } from './GroupRelationshipRow'
@@ -111,11 +112,9 @@ export function SeasonParticipations({
                   leave().catch(() => undefined)
                 }}
               />
-              <Button
+              <CancelAction
+                destructivePrimary
                 label="Cancel"
-                kind="text"
-                textColor={theme.linkTextColor}
-                style={styles.cancel}
                 disabled={busy}
                 onPress={close}
               />
@@ -140,7 +139,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor
   },
   error: { color: theme.dangerColor },
-  cancel: { alignSelf: 'center' as const },
   scrim: { flex: 1, justifyContent: 'flex-end' as const },
   behind: {
     position: 'absolute' as const,

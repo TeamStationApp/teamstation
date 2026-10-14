@@ -10,6 +10,7 @@ import {
   initialsOf,
   SectionHeader
 } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export function ManagePlayers({
@@ -131,7 +132,8 @@ export function ManagePlayers({
                   remove().catch(() => undefined)
                 }}
               />
-              <DangerText
+              <CancelAction
+                destructivePrimary
                 label="Cancel"
                 disabled={busy}
                 onPress={() => {

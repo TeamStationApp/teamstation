@@ -2,7 +2,7 @@ import React from 'react'
 import { Modal, Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { Button } from './Button'
+import { CancelAction } from './CancelAction'
 
 export interface ChoiceSheetProps {
   title: string
@@ -58,10 +58,11 @@ export function ChoiceSheet(props: ChoiceSheetProps): React.ReactElement {
               )}
             </Pressable>
           ))}
-          <Button
+          <CancelAction
+            destructivePrimary={
+              choices.length === 1 && choices[0].destructive === true
+            }
             label="Cancel"
-            kind="text"
-            textColor={theme.dangerColor}
             onPress={onClose}
           />
         </View>

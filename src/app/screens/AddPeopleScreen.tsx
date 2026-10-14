@@ -5,7 +5,8 @@ import type { TeamStationClient } from '../../common/api'
 import { parseEmailList } from '../../common/emailList'
 import type { GroupRef } from '../../common/groupCreation'
 import type { RoleFlag } from '../../common/roles'
-import { Button, Card, DangerText, Screen, TextField } from '../components'
+import { Button, Card, Screen, TextField } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { adminLabel, flagLabel } from '../components/roleLabels'
 import { RoleSwitches } from '../components/RoleSwitches'
 import { useLatestRequest } from '../hooks/useLatestRequest'
@@ -149,7 +150,7 @@ export function AddPeopleScreen({
             send().catch(() => undefined)
           }}
         />
-        <DangerText label="Cancel" disabled={busy} onPress={onCancel} />
+        <CancelAction label="Cancel" disabled={busy} onPress={onCancel} />
       </View>
     </Screen>
   )

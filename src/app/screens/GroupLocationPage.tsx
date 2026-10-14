@@ -3,7 +3,8 @@ import { Text } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { GroupDetail } from '../../common/publicGroups'
-import { Button, DangerText, Screen } from '../components'
+import { Button, Screen } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { LocationScreen } from './LocationScreen'
 
@@ -52,14 +53,14 @@ export function GroupLocationPage({
             }}
           />
         )}
-        <DangerText label="Cancel" onPress={onDone} />
+        <CancelAction label="Cancel" onPress={onDone} />
       </Screen>
     )
   if (!detail.canManage)
     return (
       <Screen>
         <Text>Only a current administrator can change these settings.</Text>
-        <DangerText label="Cancel" onPress={onDone} />
+        <CancelAction label="Cancel" onPress={onDone} />
       </Screen>
     )
   return (

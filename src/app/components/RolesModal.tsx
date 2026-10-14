@@ -5,6 +5,7 @@ import { type Role, ROLE_FLAGS, type RoleFlag } from '../../common/roles'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { CancelAction } from './CancelAction'
 import { RoleSwitches } from './RoleSwitches'
 
 export interface RolesModalProps {
@@ -101,7 +102,7 @@ export function RolesModal(props: RolesModalProps): React.ReactElement {
               onSave({ admin, flags })
             }}
           />
-          <Button label={lstrings.role_cancel} kind="text" onPress={onClose} />
+          <CancelAction label={lstrings.role_cancel} onPress={onClose} />
         </View>
       </View>
     </Modal>
