@@ -1,6 +1,7 @@
 package app.teamstation.app
 
 import android.content.Intent
+import app.teamstation.app.orientation.Hold
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -11,6 +12,16 @@ class MainActivity : ReactActivity() {
   override fun onNewIntent(intent: Intent) {
     setIntent(intent)
     super.onNewIntent(intent)
+  }
+
+  override fun onResume() {
+    super.onResume()
+    Hold.apply(this)
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    Hold.apply(this)
   }
 
   /**

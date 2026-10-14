@@ -94,6 +94,11 @@ class CameraSession(private val context: Context) {
      */
     private var pendingDisplayRotation = 0
     /**
+     * The capture angle last chosen while the display was landscape. A portrait
+     * display leaves it, so opening settings does not turn the encoded picture.
+     */
+    private var lastLandscapeCaptureAngle = 0
+    /**
      * A measurement override, set from the control channel. The rule below is derived from what
      * this handset actually does; this is how that was found out, and it stays so the next handset
      * that disagrees can be measured rather than argued about.
@@ -339,10 +344,18 @@ class CameraSession(private val context: Context) {
             ?: return
         val sensor = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
         val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
-        val proposed = rotationOverride ?: captureRotation(
+        val computed = captureRotation(
             sensorOrientation = sensor,
             displayRotation = pendingDisplayRotation,
             isFront = facing == CameraMetadata.LENS_FACING_FRONT
+        )
+        if (rotationOverride == null && displayIsLandscape(pendingDisplayRotation)) {
+            lastLandscapeCaptureAngle = computed
+        }
+        val proposed = rotationOverride ?: appliedCaptureAngle(
+            computed = computed,
+            displayRotation = pendingDisplayRotation,
+            lastLandscape = lastLandscapeCaptureAngle
         )
 
         val isFront = facing == CameraMetadata.LENS_FACING_FRONT
@@ -784,9 +797,10 @@ class CameraSession(private val context: Context) {
          * Derived, not copied. The textbook formula for a *preview* is
          * `(sensor - displayRotation)` for a back camera, but that answers a different question:
          * it corrects an image for a view whose coordinate system the window manager has already
-         * rotated. The encoder's surface is a plain landscape buffer in no one's coordinate system,
-         * and this app's window is pinned to landscape, so `displayRotation` is 90 or 270 whatever
-         * the phone is doing and the textbook answer comes out 90 degrees short.
+         * rotated. The encoder's surface is a plain landscape buffer in no one's coordinate system.
+         * The camera view is held landscape, so the rotations that change the picture are 90 and
+         * 270, and a portrait reading is not applied. The textbook answer comes out 90 degrees
+         * short of what those landscape holds need.
          *
          * Measured on a Pixel 10 (sensor 90, window ROTATION_90, phone held landscape) on
          * 2026-09-05: the encoded frame needed a further quarter turn, and 0 left the stopwatch on
@@ -806,6 +820,20 @@ class CameraSession(private val context: Context) {
             // The quarter turn between a window-relative correction and a buffer-relative one.
             return (base + 90) % 360
         }
+
+        /** 90° and 270° are the two landscape holds. 0° and 180° are portrait. */
+        fun displayIsLandscape(displayRotation: Int): Boolean {
+            val normalized = ((displayRotation % 360) + 360) % 360
+            return normalized == 90 || normalized == 270
+        }
+
+        /**
+         * The angle the buffers keep. A landscape display takes the angle just
+         * computed for it. A portrait display leaves the last landscape angle,
+         * so the 1920×1080 picture does not turn while settings is up.
+         */
+        fun appliedCaptureAngle(computed: Int, displayRotation: Int, lastLandscape: Int): Int =
+            if (displayIsLandscape(displayRotation)) computed else lastLandscape
 
         /** Named for the state dump rather than for Camera2, so a soak log stays readable. */
         fun deviceTypeName(characteristics: CameraCharacteristics, id: String): String {

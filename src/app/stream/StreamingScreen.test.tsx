@@ -59,6 +59,7 @@ interface Harness {
   native: FakePhoneStreamModule
   patches: Array<{ streamId: string; change: unknown }>
   rotations: string[]
+  ios: string[]
   closes: number
   failPatch: boolean
 }
@@ -76,6 +77,7 @@ async function mount(
     native,
     patches: [],
     rotations: [],
+    ios: [],
     closes: 0,
     failPatch: false
   }
@@ -108,6 +110,11 @@ async function mount(
             allow: () => harness.rotations.push('any'),
             lockLandscape: () => harness.rotations.push('landscape'),
             restore: () => harness.rotations.push('portrait')
+          }}
+          cameraOrientation={{
+            landscape: () => harness.ios.push('landscape'),
+            any: () => harness.ios.push('any'),
+            portrait: () => harness.ios.push('portrait')
           }}
           onClose={() => {
             harness.closes += 1
@@ -176,6 +183,7 @@ describe('the streaming screen', function () {
   it('opens the engine sideways under the Cameraman overlay, and closes it after', async function () {
     const h = await mount()
     expect(h.rotations).deep.equals(['landscape'])
+    expect(h.ios).deep.equals(['landscape'])
     expect(calls(h.native, 'open')).deep.equals([['Home Plate', true, []]])
     await emit(h.native, {})
     expect(byTestId('camera-name')?.textContent).equals('Home Plate')
@@ -200,8 +208,8 @@ describe('the streaming screen', function () {
     expect(calls(h.native, 'setZoom')).deep.equals([[3]])
     await emit(h.native, { displayedZoom: 2.4 })
     expect(byTestId('zoom-label')?.textContent).equals('2x')
-    // The gear opens the settings sheet, which lets Android turn while it is
-    // up and holds it sideways again after Done.
+    // The gear opens settings, which may stand upright. Done gives the
+    // camera its landscape hold back.
     await press('settings-button')
     expect(byTestId('settings-done')).not.equals(null)
     expect(h.rotations).deep.equals(['landscape', 'any'])
@@ -222,6 +230,22 @@ describe('the streaming screen', function () {
       'landscape',
       'portrait'
     ])
+    expect(h.ios).deep.equals(['landscape', 'any', 'landscape', 'portrait'])
+  })
+
+  it('returns to portrait when the screen goes while settings is still open', async function () {
+    const h = await mount()
+    await press('settings-button')
+    expect(h.ios).deep.equals(['landscape', 'any'])
+    await act(async () => {
+      root?.unmount()
+      await delay(10)
+    })
+    root = undefined
+    // The screen's hold is gone before the sheet's cleanup runs, so the
+    // sheet does not turn the phone sideways again on its way out.
+    expect(h.ios).deep.equals(['landscape', 'any', 'portrait'])
+    expect(h.rotations).deep.equals(['landscape', 'any', 'portrait'])
   })
 
   it('records on the stream URL with the redial’s request, holds Close, and stops with a slide', async function () {
