@@ -1461,6 +1461,34 @@ class PhoneStreamEngineTest {
         assertTrue(live.makeSource().device is CameraSessionDevice)
     }
 
+    @Test
+    fun leavingAndRecordingAgainContinuesTheSameTakeOnTheSameStream() {
+        val first = opened()
+        start(first)
+        capture(0.5)
+        val id = runBlocking { first.recordings() }.single().recordingID
+        runBlocking {
+            first.stopRecording()
+            first.close()
+        }
+        val second = opened()
+        assertTrue(streamOutput.starts.isEmpty())
+        runBlocking {
+            second.startRecording("rtmp://ingest.example.test/live/key-0002", "s1", "g1", "Home Plate", request)
+        }
+        capture(0.3)
+        on { streamOutput.drop!!("peer went away") }
+        on { scheduler.pending!!() }
+        waitFor { streamOutput.starts.size == 2 }
+        val body = JSONObject(requests.first { it.path!!.contains("/live-streams") }.body.readUtf8())
+        assertEquals("s1", body.getString("heldStreamId"))
+        runBlocking { second.stopRecording() }
+        val takes = runBlocking { second.recordings() }
+        assertEquals(1, takes.size)
+        assertEquals(id, takes.single().recordingID)
+        assertEquals(2, takes.single().parts)
+    }
+
     private fun waitFor(condition: () -> Boolean) {
         val deadline = System.nanoTime() + 10_000_000_000L
         while (!condition()) {
