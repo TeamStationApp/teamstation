@@ -79,7 +79,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     private data class StreamTake(
         val liveStreamId: String,
         val gameId: String,
-        val angleName: String,
+        /** The stream's label, which a rename changes while it is on the air; every redial sends it. */
+        var angleName: String,
         val request: PhoneStreamRequest,
         val recordingID: Long?,
         /** The URL the first [StreamSessionController.DialReason.START] dial uses as given. */
@@ -239,7 +240,22 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         source?.device?.attachPreview(surface, width, height)
     }
 
-    suspend fun setAngleName(name: String) = onEngine { angleName = name }
+    /**
+     * Renames the angle. On the air, the stream keeps its id: its redials and a resume after a kill
+     * send the new label with the stream held, and its take and the live row carry it.
+     */
+    suspend fun setAngleName(name: String) = onEngine {
+        angleName = name
+        val held = take ?: return@onEngine
+        if (held.angleName == name) return@onEngine
+        held.angleName = name
+        try {
+            catalog.setLive(PhoneCatalog.LiveContext(held.liveStreamId, held.gameId, name))
+            held.recordingID?.let { catalog.rename(it, held.gameId, name) }
+        } catch (error: Exception) {
+            telemetry.recordError("could not rename the take: ${error.message ?: error.javaClass.simpleName}")
+        }
+    }
 
     // MARK: - Recording and streaming
 

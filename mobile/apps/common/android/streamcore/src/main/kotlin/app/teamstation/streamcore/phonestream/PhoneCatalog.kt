@@ -124,6 +124,12 @@ class PhoneCatalog(val index: RecordingCatalog) {
         )
     }
 
+    /** The angle of a take was renamed while it recorded: both rows carry the new name. */
+    fun rename(recordingID: Long, gameId: String, angleName: String) {
+        index.setGame(recordingID, gameId, angleName)
+        database.execSQL("UPDATE phone_recordings SET angle_name = ? WHERE recording_id = ?;", arrayOf<Any>(angleName, recordingID))
+    }
+
     /** Every take filed under a live stream, newest first. */
     fun recordings(): List<PhoneRecording> {
         val summaries = index.recordings().associateBy { it.id }
