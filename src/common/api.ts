@@ -218,7 +218,8 @@ export type ChatKindName = ReturnType<typeof asChatKind>
 export const asChatDmPerson = asObject({
   userId: asUserId,
   shortName: asString,
-  left: asBoolean
+  left: asBoolean,
+  avatarUrl: asOptional(asNullable(asString), null)
 })
 export type ChatDmPerson = ReturnType<typeof asChatDmPerson>
 
@@ -249,6 +250,9 @@ export const asChatConversation = asObject({
    * a league); null for a DM. The list groups chats by it.
    */
   scopeName: asNullable(asString),
+  /** The scope's own identity; absent on older servers and for DMs. */
+  avatarName: asOptional(asNullable(asString), null),
+  avatarUrl: asOptional(asNullable(asString), null),
   lastSeq: asNumber,
   /** When the newest message was posted, ISO; null before the first. */
   lastMessageAt: asNullable(asString),

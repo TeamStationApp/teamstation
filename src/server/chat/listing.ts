@@ -15,6 +15,7 @@ import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { survivors } from '../teams/teamStaff'
 import { isEligible, seasonStaffIds, teamGuardianRows } from './audiences'
+import { scopeAvatars } from './avatars'
 import { DmFacts } from './dms'
 import { defaultPreferences, preferencesFor } from './preferences'
 import { scopeNames, titlesOf } from './titles'
@@ -108,6 +109,7 @@ async function leaguesOfSeasons(
 /** Every conversation `userId` is in now, as the list shows it. */
 export async function conversationsFor(
   db: Kysely<Database>,
+  media: MediaContext,
   userId: number,
   isAdmin: boolean,
   now: Date = new Date()
@@ -134,12 +136,13 @@ export async function conversationsFor(
     .orderBy('chat_conversations.id')
     .execute()
   if (rows.length === 0) return []
-  return await describe(db, rows, userId, isAdmin)
+  return await describe(db, media, rows, userId, isAdmin)
 }
 
 /** One conversation as the list shows it to `userId`. */
 export async function conversationFor(
   db: Kysely<Database>,
+  media: MediaContext,
   conversationId: string,
   userId: number,
   isAdmin: boolean
@@ -149,12 +152,13 @@ export async function conversationFor(
     .select(['id', 'kind', 'scope_type', 'scope_id', 'closed_at', 'last_seq'])
     .where('id', '=', conversationId)
     .executeTakeFirstOrThrow()
-  const [described] = await describe(db, [row], userId, isAdmin)
+  const [described] = await describe(db, media, [row], userId, isAdmin)
   return described
 }
 
 async function describe(
   db: Kysely<Database>,
+  media: MediaContext,
   rows: ConversationRow[],
   userId: number,
   isAdmin: boolean
@@ -210,11 +214,21 @@ async function describe(
   const keys = await keyState(db, ids, userId)
   const people = await dmPeople(
     db,
+    media.space,
     rows.filter(row => row.kind === 'dm').map(row => row.id),
     userId
   )
   const names = await scopeNames(
     db,
+    rows.flatMap(row =>
+      row.scope_type == null || row.scope_id == null
+        ? []
+        : [{ type: row.scope_type, id: row.scope_id }]
+    )
+  )
+  const avatars = await scopeAvatars(
+    db,
+    media.space,
     rows.flatMap(row =>
       row.scope_type == null || row.scope_id == null
         ? []
@@ -286,6 +300,8 @@ async function describe(
         row.scope_type == null
           ? null
           : (names.get(`${row.scope_type}:${scopeId}`) ?? null),
+      avatarName: avatars.get(`${row.scope_type}:${scopeId}`)?.name ?? null,
+      avatarUrl: avatars.get(`${row.scope_type}:${scopeId}`)?.url ?? null,
       lastSeq: Number(row.last_seq),
       lastMessageAt: lastAt.get(row.id) ?? null,
       lastPostAt:
@@ -317,6 +333,7 @@ async function describe(
  */
 async function dmPeople(
   db: Kysely<Database>,
+  space: MediaContext['space'],
   conversationIds: string[],
   userId: number
 ): Promise<Map<string, ChatDmPerson[]>> {
@@ -344,7 +361,8 @@ async function dmPeople(
       'id',
       'display_name as displayName',
       'first_name as firstName',
-      'last_name as lastName'
+      'last_name as lastName',
+      'avatar_path as avatarPath'
     ])
     .where('id', 'in', [userId, ...rows.map(row => Number(row.userId))])
     .execute()
@@ -373,7 +391,10 @@ async function dmPeople(
             userId: id,
             shortName:
               names.get(id) ?? userOf.get(id)?.displayName ?? String(id),
-            left: row.left
+            left: row.left,
+            avatarUrl: row.left
+              ? null
+              : imageUrl(space, userOf.get(id)?.avatarPath ?? null)
           }
         })
         .sort((a, b) => a.shortName.localeCompare(b.shortName))

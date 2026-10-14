@@ -1242,7 +1242,7 @@ describe('chat devices in the app', function () {
     await render(<App />)
     await until('the members', () => text().includes('Leave this conversation'))
     await press('Leave this conversation')
-    await until('the list', () => text().includes('Follow a team'))
+    await until('the list', () => currentRoute().name === 'chat')
     expect(asked).includes('DELETE /chat/dms/cnv_dm/members/me')
     expect(currentRoute()).deep.equals({ name: 'chat' })
   })

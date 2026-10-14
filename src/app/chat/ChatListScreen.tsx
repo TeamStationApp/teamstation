@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   FlatList,
-  Image,
   type LayoutChangeEvent,
   Platform,
   Pressable,
@@ -10,11 +9,16 @@ import {
   View
 } from 'react-native'
 
-import { Badge, Button, Icon, Screen } from '../components'
+import { Badge, Button, Screen } from '../components'
+import { useBreakpoint } from '../components/useBreakpoint'
+import { edgeMarginRem } from '../layout/margins'
 import { lstrings, sprintf } from '../locales/strings'
+import { useInsets } from '../platform/safeArea'
 import { lightHaptic } from '../scoring/lightHaptic'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { ChatArrivalHost } from './ChatArrivalHost'
+import { ChatAvatar } from './ChatAvatar'
+import { conversationIdentity } from './chatIdentityModel'
 import { pressPoint, pressStamp } from './chatInteractionModel'
 import {
   canStartDm,
@@ -43,7 +47,6 @@ export interface ChatListScreenProps {
     Pick<Partial<ChatScreenEngine>, 'loadPreview' | 'setPreferences'>
   onOpen: (chat: ConversationListItem) => void
   onNewMessage: () => void
-  onFollowTeam: () => void
   now?: () => Date
   embedded?: boolean
   narrow?: boolean
@@ -66,6 +69,13 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const shared = getChatStyles(theme)
+  const insets = useInsets()
+  const breakpoint = useBreakpoint()
+  const margin = theme.rem(edgeMarginRem(theme, breakpoint))
+  const gutter = {
+    left: Math.max(margin, insets.left),
+    right: Math.max(margin, insets.right)
+  }
   const windowWidth = useWindowDimensions().width
   const narrow = props.narrow ?? windowWidth < CHAT_WIDE_WIDTH
   const [chats, setChats] = useState<ConversationListItem[]>()
@@ -993,7 +1003,12 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         }}
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
-          <View style={styles.actions}>
+          <View
+            style={[
+              styles.actions,
+              { paddingLeft: gutter.left, paddingRight: gutter.right }
+            ]}
+          >
             {chats != null && canStartDm(chats) && (
               <Button
                 label={lstrings.chat_new_message}
@@ -1003,16 +1018,15 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
                 onPress={props.onNewMessage}
               />
             )}
-            <Button
-              label={lstrings.chat_follow_team}
-              kind="text"
-              compact
-              onPress={props.onFollowTeam}
-            />
           </View>
         }
         ListEmptyComponent={
-          <View style={styles.empty}>
+          <View
+            style={[
+              styles.empty,
+              { paddingLeft: gutter.left, paddingRight: gutter.right }
+            ]}
+          >
             {chats != null && !failed && (
               <Text style={shared.heading}>{lstrings.chat_empty}</Text>
             )}
@@ -1025,14 +1039,21 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
             </Text>
           </View>
         }
-        renderItem={({ item }) =>
+        renderItem={({ item, index }) =>
           item.type === 'heading' ? (
-            <View style={styles.heading}>
+            <View
+              style={[
+                styles.heading,
+                { paddingLeft: gutter.left, paddingRight: gutter.right }
+              ]}
+            >
               <Text style={shared.heading}>{item.title}</Text>
             </View>
           ) : (
             <ConversationRow
               chat={item.chat}
+              gutter={gutter}
+              separator={rows[index + 1]?.type === 'chat'}
               onRef={node => {
                 if (node == null) rowRefs.current.delete(item.chat.id)
                 else rowRefs.current.set(item.chat.id, node)
@@ -1082,7 +1103,11 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   return props.embedded === true ? (
     content
   ) : (
-    <Screen scroll={false} contentStyle={styles.fill}>
+    <Screen
+      wide
+      scroll={false}
+      contentStyle={[styles.fill, { paddingHorizontal: 0, paddingVertical: 0 }]}
+    >
       {content}
     </Screen>
   )
@@ -1090,6 +1115,8 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
 
 function ConversationRow(props: {
   chat: ConversationListItem
+  gutter: { left: number; right: number }
+  separator: boolean
   now: Date
   selected: boolean
   narrow: boolean
@@ -1137,7 +1164,14 @@ function ConversationRow(props: {
       }}
       collapsable={false}
       onLayout={props.onLayout}
-      style={[styles.row, props.selected && styles.selected]}
+      style={[
+        styles.row,
+        {
+          paddingLeft: props.gutter.left,
+          paddingRight: props.gutter.right
+        },
+        props.selected && styles.selected
+      ]}
     >
       <Pressable
         testID={'chat-conversation-' + chat.id}
@@ -1208,25 +1242,7 @@ function ConversationRow(props: {
             props.onOpen()
         }}
       >
-        <View style={styles.avatar}>
-          {chat.avatarUrl != null ? (
-            <Image
-              source={{ uri: chat.avatarUrl }}
-              style={styles.avatarImage}
-            />
-          ) : chat.kind === 'dm' ? (
-            <Text style={styles.initials}>
-              {title
-                .split(/[ ,]+/)
-                .filter(Boolean)
-                .slice(0, 2)
-                .map(word => word[0])
-                .join('')}
-            </Text>
-          ) : (
-            <Icon name="group" size={1.5} color={theme.activeColor} />
-          )}
-        </View>
+        <ChatAvatar identity={conversationIdentity(chat)} />
         <View style={styles.text}>
           <View style={[styles.line, styles.titleLine]}>
             <Text
@@ -1248,8 +1264,8 @@ function ConversationRow(props: {
                 : chat.previewFailed === true
                   ? lstrings.chat_latest_failed
                   : (chat.preview ??
-                    (chat.lastSeq === 0
-                      ? lstrings.chat_no_messages
+                    (chat.lastSeq === 0 || chat.lastPostSeq === 0
+                      ? ''
                       : lstrings.chat_latest_loading))}
             </Text>
             <View style={styles.trailing}>
@@ -1321,17 +1337,31 @@ function ConversationRow(props: {
             </Text>
           </Pressable>
         )}
-      {props.narrow && (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            lstrings.chat_conversation_actions + ': ' + chat.title
-          }
-          onPress={props.onMenu}
-          style={styles.more}
-        >
-          <Text style={styles.moreText}>•••</Text>
-        </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={
+          lstrings.chat_conversation_actions + ': ' + chat.title
+        }
+        onPress={props.onMenu}
+        style={styles.more}
+      >
+        <View accessible={false} style={styles.ellipsis}>
+          {[0, 1, 2].map(dot => (
+            <View key={dot} style={styles.ellipsisDot} />
+          ))}
+        </View>
+      </Pressable>
+      {props.separator && (
+        <View
+          testID="chat-row-separator"
+          style={[
+            styles.separator,
+            {
+              left: props.gutter.left + theme.rem(3.125),
+              right: props.gutter.right
+            }
+          ]}
+        />
       )}
     </View>
   )
@@ -1354,8 +1384,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: theme.rem(0.75),
-    marginHorizontal: theme.rem(0.25)
+    minHeight: theme.rem(4.5)
   },
   selected: { backgroundColor: theme.containerBackgroundColor },
   openRow: {
@@ -1363,23 +1392,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.rem(0.625),
-    paddingHorizontal: theme.rem(0.75),
     paddingVertical: theme.rem(0.75)
-  },
-  avatar: {
-    width: theme.rem(2.5),
-    height: theme.rem(2.5),
-    borderRadius: theme.rem(1.25),
-    backgroundColor: theme.pillBackground,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden'
-  },
-  avatarImage: { width: '100%', height: '100%' },
-  initials: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1),
-    color: theme.activeColor
   },
   text: { flex: 1, minWidth: 0, gap: theme.rem(0.25) },
   line: { flexDirection: 'row', alignItems: 'center', gap: theme.rem(0.375) },
@@ -1427,11 +1440,24 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.boldTextFont,
     fontSize: theme.rem(0.75)
   },
-  more: { paddingVertical: theme.rem(1), paddingRight: theme.rem(0.5) },
-  moreText: {
-    color: theme.secondaryTextColor,
-    fontSize: theme.rem(0.75),
-    letterSpacing: 1
+  more: {
+    minWidth: theme.rem(2.75),
+    minHeight: theme.rem(2.75),
+    alignItems: 'flex-end',
+    justifyContent: 'center'
+  },
+  ellipsis: { gap: theme.rem(0.1875), alignItems: 'center' },
+  ellipsisDot: {
+    width: theme.rem(0.1875),
+    height: theme.rem(0.1875),
+    borderRadius: theme.rem(0.09375),
+    backgroundColor: theme.secondaryTextColor
+  },
+  separator: {
+    position: 'absolute',
+    bottom: 0,
+    height: 1,
+    backgroundColor: theme.defaultBorderColor
   },
   announcement: {
     position: 'absolute',
