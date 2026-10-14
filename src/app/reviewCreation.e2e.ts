@@ -716,7 +716,7 @@ async function main(): Promise<void> {
     )
     await press(imported, 'Team', 'tab')
     await press(imported, 'Ichiro')
-    await press(imported, 'Settings', 'tab')
+    await press(imported, 'Player settings', 'button')
     await fill(imported, 'Jersey number', '17')
     await press(imported, 'Save')
     await text(imported, 'Saved.')

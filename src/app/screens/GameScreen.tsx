@@ -33,6 +33,7 @@ import {
   LivePill,
   PillTabs,
   Screen,
+  SettingsGear,
   StreamPanel,
   type TeamStatLine,
   useHandoff,
@@ -1036,9 +1037,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const scoreboard =
     game.eventKind === 'event' ? (
       <Card testID="event-hero" style={styles.eventHero}>
-        <Text accessibilityRole="header" style={styles.eventTitle}>
-          {eventName(game)}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+          <Text
+            accessibilityRole="header"
+            style={[styles.eventTitle, { flex: 1 }]}
+          >
+            {eventName(game)}
+          </Text>
+          {canManageSchedule && props.onSettings != null && (
+            <SettingsGear label="Event settings" onPress={props.onSettings} />
+          )}
+        </View>
         <Text style={styles.eventHeaderTitle}>{game.homeTeamName}</Text>
         {game.startAt != null &&
           eventHeroLines(
@@ -1062,6 +1071,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     ) : (
       <GameHeroCard
         testID="event-hero"
+        onSettings={canManageSchedule ? props.onSettings : undefined}
         awayName={game.awayTeamName}
         homeName={game.homeTeamName}
         awayScore={game.awayScore}
@@ -1109,16 +1119,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         now: clockNow,
         music: props.music,
         onDjGame: props.onDjGame,
-        onCoachGame: props.onCoachGame == null ? undefined : openCoach,
-        canManage: canManageSchedule,
-        onSettings: props.onSettings
+        onCoachGame: props.onCoachGame == null ? undefined : openCoach
       })}
       selected={tab}
       onSelect={next => {
-        if (next === 'settings') {
-          props.onSettings?.()
-          return
-        }
         if (next === 'dj') {
           props.onDjGame?.()
           return

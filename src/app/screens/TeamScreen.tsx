@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Pressable, Text, useWindowDimensions, View } from 'react-native'
+import { Text, useWindowDimensions, View } from 'react-native'
 
 import type {
   BattingRow,
@@ -20,7 +20,6 @@ import {
   Emblem,
   GameRow,
   HandoffView,
-  Icon,
   initialsOf,
   ManageGear,
   PillBand,
@@ -31,6 +30,7 @@ import {
   ScheduleRow,
   Screen,
   SectionHeader,
+  SettingsGear,
   type Stat,
   StatGrid,
   useBreakpoint,
@@ -179,6 +179,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const { width, fontScale } = useWindowDimensions()
+  const [identityWidth, setIdentityWidth] = useState<number>()
 
   // The team's name slides up into the header as its card goes under, and
   // comes back down when it returns. The header carries no title for this
@@ -309,6 +311,23 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   }, [client, team.id, publicDetail, nonMemberView, refreshRevision])
 
   const follows = onManage == null && (publicDetail != null || nonMemberView)
+  // A name needs room of its own when both corner controls are present.
+  // Measure the card, since its reading-width cap can differ from the window.
+  const nameBelowControls =
+    place != null &&
+    onManage != null &&
+    (identityWidth ?? width) < theme.rem(24) * fontScale
+  const identityWords = (
+    <View style={styles.identityText} testID="team-hero-words">
+      <Text style={styles.teamName}>{team.name}</Text>
+      {standing != null && (
+        <Text style={styles.teamMeta}>
+          {standing.w}–{standing.l}
+          {standing.t > 0 ? `–${standing.t}` : ''} · {standing.played} played
+        </Text>
+      )}
+    </View>
+  )
   const withVideo = games.filter(game => game.videoCount > 0)
   // The same rule as the schedule and the season page, not a fourth copy of
   // it. Counting the unscored ones made a February fixture nobody ever scored
@@ -333,32 +352,28 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     <Screen {...pinned.screen}>
       <CardBand part={pinned.cardBand}>
         <Card style={styles.identity}>
-          <View style={styles.identityTop}>
+          <View
+            style={[
+              styles.identityTop,
+              nameBelowControls && styles.identityTopCompact
+            ]}
+            onLayout={event => {
+              setIdentityWidth(event.nativeEvent.layout.width)
+            }}
+          >
             <Emblem
               uri={team.logoUrl}
               fallback={initialsOf(team.name)}
               size={3.5}
             />
-            <View style={styles.identityText}>
-              <Text style={styles.teamName}>{team.name}</Text>
-              {standing != null && (
-                <Text style={styles.teamMeta}>
-                  {standing.w}–{standing.l}
-                  {standing.t > 0 ? `–${standing.t}` : ''} · {standing.played}{' '}
-                  played
-                </Text>
-              )}
-            </View>
-            {/*
-              The right-hand column: the place at the top, and at the bottom
-              the gear for an administrator or, for somebody who neither runs
-              this team nor belongs to it (the public page, or a non-member's),
-              Follow. Laid out rather than floated, so the gear can never be
-              drawn over the place, at any width or text size; and in the row
-              rather than under it, so a long name wraps beside the column
-              instead of running underneath. Follow alone sits level with the
-              name, as it always has.
-            */}
+            {nameBelowControls ? (
+              <View style={styles.identitySpace} />
+            ) : (
+              identityWords
+            )}
+            {place != null && onManage != null && (
+              <Badge label={placeLabel(place)} tone="honour" />
+            )}
             {(place != null || follows || onManage != null) && (
               <View
                 testID="team-card-end"
@@ -367,9 +382,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                   place == null && onManage == null && styles.identityEndLevel
                 ]}
               >
-                {place != null && (
-                  <Badge label={placeLabel(place)} tone="honour" />
-                )}
+                {place != null && onManage == null && <Badge label={placeLabel(place)} tone="honour" />}
                 {follows && (
                   <FollowButton
                     client={client}
@@ -387,24 +400,14 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                         onPress={onManage}
                       />
                     ) : (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Team settings"
-                        onPress={onManage}
-                        style={styles.publicGear}
-                      >
-                        <Icon
-                          name="settings"
-                          size={1.25}
-                          color={theme.secondaryTextColor}
-                        />
-                      </Pressable>
+                      <SettingsGear label="Team settings" onPress={onManage} />
                     )}
                   </View>
                 )}
               </View>
             )}
           </View>
+          {nameBelowControls && identityWords}
         </Card>
       </CardBand>
 
@@ -902,9 +905,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   identityTop: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: theme.rem(theme.spaceMdRem)
   },
+  identityTopCompact: { gap: theme.rem(theme.spaceSmRem) },
+  identitySpace: { flex: 1 },
   crest: {
     width: theme.rem(3.25),
     height: theme.rem(3.25),
@@ -940,7 +945,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   // The bottom corner, with or without a place above it.
   gear: {
-    marginTop: 'auto'
+    alignSelf: 'flex-start'
   },
   identityText: {
     flex: 1,

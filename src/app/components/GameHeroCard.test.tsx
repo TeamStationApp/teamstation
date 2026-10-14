@@ -113,7 +113,7 @@ describe('GameHeroCard', function () {
     expect(leaf(container, 'LIVE')).equals(undefined)
     const date = leaf(container, 'SUN, OCT 4')
     if (date == null) throw new Error('no date')
-    const row = pill.parentElement
+    const row = pill.parentElement?.parentElement
     expect(row?.contains(date)).equals(true)
   })
 

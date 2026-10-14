@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Pressable, Text, useWindowDimensions, View } from 'react-native'
+import { Text, useWindowDimensions, View } from 'react-native'
 
 import type {
   BattingRow,
@@ -20,12 +20,12 @@ import {
   Emblem,
   GameRow,
   HandoffView,
-  Icon,
   initialsOf,
   ManageGear,
   PillTabs,
   ScheduleRow,
   SectionHeader,
+  SettingsGear,
   StatGrid,
   useHandoff,
   useHeaderHandoff,
@@ -463,18 +463,10 @@ export function SeasonPresentation(
                 accessibilityLabel="Season settings"
               />
             ) : props.onSettings != null ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Season settings"
+              <SettingsGear
+                label="Season settings"
                 onPress={props.onSettings}
-                style={styles.gear}
-              >
-                <Icon
-                  name="settings"
-                  size={1.25}
-                  color={theme.secondaryTextColor}
-                />
-              </Pressable>
+              />
             ) : (
               // A visitor who neither runs this season nor belongs to it can
               // follow it where an administrator has the gear.
@@ -973,7 +965,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   identity: { gap: theme.rem(theme.spaceMdRem) },
   identityTop: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: theme.rem(theme.spaceSmRem)
   },
   seasonName: {

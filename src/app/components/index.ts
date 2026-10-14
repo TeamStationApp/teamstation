@@ -41,6 +41,7 @@ export { Icon, type IconName } from './Icon'
 export { initialsOf } from './initials'
 export { ListRow } from './ListRow'
 export { ManageGear, type ManageGearProps } from './ManageGear'
+export { SettingsGear } from './SettingsGear'
 export { LivePill, type LivePillProps } from './LivePill'
 export {
   adminLabel,
