@@ -377,10 +377,40 @@ extension PhoneStreamTests {
       #expect(ThermalBadgeLevel.allCases.contains(status.thermal()))
       #expect(environment.makeRadarFleet().limit == .max)
       if case .synthetic = environment.makeSource().input {} else { Issue.record("expected the synthetic source") }
-      let work = PhoneBackgroundWork.system.begin("A test")
+      let work = PhoneBackgroundWork.system.begin("A test") {}
       PhoneBackgroundWork.system.end(work)
-      PhoneBackgroundWork.none.end(PhoneBackgroundWork.none.begin("Nothing"))
+      PhoneBackgroundWork.none.end(PhoneBackgroundWork.none.begin("Nothing") {})
       #expect(!PhoneStreamEngine.shared.isOpen)
+    }
+
+    @Test("A background task that runs out of time winds its work down and is ended exactly once")
+    func backgroundTasksExpire() {
+      let next = Counter()
+      let calls = Calls()
+      let work = PhoneBackgroundWork.tasks(
+        begin: { name, handler in
+          calls.begun.append(name)
+          let id = next.take()
+          calls.handlers[id] = handler
+          return id
+        },
+        end: { calls.ended.append($0) }
+      )
+      let expired = Heard()
+      let first = work.begin("Upload Home Plate") { expired.add() }
+      #expect(calls.begun == [ "Upload Home Plate" ])
+      // Its time runs out: the work's own handler runs, then the task ends; the owner's end later
+      // finds it ended.
+      calls.handlers[first]?()
+      #expect(expired.count == 1)
+      #expect(calls.ended == [ first ])
+      work.end(first)
+      #expect(calls.ended == [ first ])
+      // Ended by its owner in time: ended once, and a second end does nothing.
+      let second = work.begin("Finish part") { expired.add() }
+      work.end(second)
+      work.end(second)
+      #expect(calls.ended == [ first, second ])
     }
 
     @Test("The engine follows the app into the background and back")
@@ -434,4 +464,36 @@ extension PhoneStreamTests {
       #expect(snapshot.lastRecordingError == "writer")
     }
   }
+}
+
+/// Counts, from any thread.
+final class Heard: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value = 0
+  func add() {
+    lock.lock()
+    value += 1
+    lock.unlock()
+  }
+  var count: Int {
+    lock.lock()
+    defer { lock.unlock() }
+    return value
+  }
+}
+
+/// Hands out ids 1, 2, 3, ….
+final class Counter: @unchecked Sendable {
+  private var value = 0
+  func take() -> Int {
+    value += 1
+    return value
+  }
+}
+
+/// What a fake system's background-task calls were asked.
+final class Calls: @unchecked Sendable {
+  var begun: [String] = []
+  var ended: [Int] = []
+  var handlers: [Int: @Sendable () -> Void] = [:]
 }

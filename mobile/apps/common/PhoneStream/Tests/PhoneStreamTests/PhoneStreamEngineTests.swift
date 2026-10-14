@@ -648,15 +648,27 @@ extension PhoneStreamTests {
       try sink.start()
       StubServer.with { $0.streamURL = sink.url }
       let rig = EngineRig(root: try scratchDirectory())
-      let (engine, _) = try await recording(rig, sink: sink)
+      let work = WorkLog()
+      let engine = try rig.engine(backgroundWork: work.work)
+      try engine.open(angleName: Self.angle)
+      try engine.startRecording(rtmpUrl: sink.url, liveStreamId: Self.stream, gameId: Self.game,
+                                angleName: Self.angle, request: rig.request)
+      #expect(await waitUntil { engine.status.phase == "live" })
       try await Task.sleep(for: .seconds(3))
-      await engine.enterBackground()
+      // Back in the foreground while the background is still finishing the part: the foreground
+      // waits for the finish and continues the take, whichever of the two the finish wakes first.
+      let background = Task { @MainActor in await engine.enterBackground() }
+      #expect(await waitUntil { engine.isFinishingPart })
       #expect(!engine.isRecording)
       #expect(engine.status.phase == "idle")
       await engine.enterBackground()
-      try await Task.sleep(for: .seconds(1))
       await engine.enterForeground()
+      await background.value
       #expect(engine.isRecording)
+      #expect(engine.status.error == nil)
+      // The background's finish ran under a background task, ended once it was done.
+      let finishTask = try #require(work.id(of: "Finish part"))
+      #expect(work.ended == [ finishTask ])
       #expect(await waitUntil { engine.status.phase == "live" })
       try await Task.sleep(for: .seconds(3))
       await engine.stopRecording()
@@ -688,11 +700,38 @@ extension PhoneStreamTests {
         await waitUntil(Self.exportWait) { (try? engine.recordings().first?.uploadId) != nil },
         "upload: \(log.uploads.map { "\($0.state.rawValue) \($0.message ?? "")" })"
       )
-      await engine.cancelUpload(liveStreamId: Self.stream)
+      // The background time runs out: the upload stops where it is, keeps its id to resume, and
+      // its task is ended once.
+      let uploadTask = try #require(work.id(of: "Upload Home Plate"))
+      work.expire("Upload Home Plate")
       _ = await upload.result
+      #expect(engine.runningUploads.isEmpty)
+      #expect(try engine.recordings().first?.uploadId == "upl_0001")
+      #expect(work.ended.filter { $0 == uploadTask }.count == 1)
+      await engine.cancelUpload(liveStreamId: Self.stream)
       #expect(try engine.recordings().first?.uploadId == nil)
       #expect(engine.runningUploads.isEmpty)
       await engine.cancelUpload(liveStreamId: "lst_0009")
+      await engine.close()
+      sink.drop()
+    }
+
+    @Test("A foreground resume that cannot run says so in the status instead of going quiet")
+    func foregroundResumeThatFails() async throws {
+      StubServer.reset()
+      let sink = TestRTMPSink()
+      try sink.start()
+      let rig = EngineRig(root: try scratchDirectory())
+      let (engine, _) = try await recording(rig, sink: sink)
+      try await Task.sleep(for: .seconds(2))
+      await engine.enterBackground()
+      // The stream kept for the resume cannot be read back.
+      let store = try SQLiteStore(url: PhoneStorage(root: rig.root).index)
+      try store.execute("DROP TABLE phone_live;")
+      await engine.enterForeground()
+      #expect(!engine.isStreaming)
+      #expect(!engine.isRecording)
+      #expect(engine.status.error == .recordingFailed)
       await engine.close()
       sink.drop()
     }

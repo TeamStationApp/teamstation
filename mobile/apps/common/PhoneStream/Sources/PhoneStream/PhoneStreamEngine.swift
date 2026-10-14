@@ -109,8 +109,11 @@ public final class PhoneStreamEngine {
   /// A part finished by the background, waiting for the foreground to continue it.
   private var suspendedInBackground = false
   private var lastError: PhoneStreamError?
-  /// A part being finished: its hold fill and its writer's close take a second or more.
+  /// A part being finished: its hold fill and its writer's close take a second or more. Cleared by
+  /// the finish itself as its last step, so whoever awaits it finds it gone when they resume.
   private var finishing: Task<Void, Never>?
+  /// Counts finishes, so a finish clears `finishing` only while it is still its own.
+  private var finishGeneration = 0
   /// Set as a session starts streaming, until TeamStation has been told when its first published
   /// picture was captured; see `reportLiveStartIfReady`.
   private var liveStartWanted = false
@@ -401,6 +404,8 @@ public final class PhoneStreamEngine {
   private func finishPart(endedAt: WallClock, closingTake: Bool) async {
     recordingTakeID = nil
     recordingSession.detachAnchors()
+    finishGeneration += 1
+    let generation = finishGeneration
     let task = Task { @MainActor [self] in
       let tail = environment.stopTailSeconds
       let waited = environment.clock.now - endedAt
@@ -412,15 +417,20 @@ public final class PhoneStreamEngine {
       programme.recordingMix.flush(through: environment.clock.now)
       _ = await recordingSession.finishProgramme(until: endedAt + tail)
       if closingTake { recordingSession.close(endedAt: endedAt) }
+      // Inside the finish, not after its awaiters: each of them resumes to find it gone, whichever
+      // resumes first. Cleared after the await instead, a foreground that resumed ahead of the
+      // finish's own caller found the part still finishing, and its resume was refused.
+      if finishGeneration == generation { finishing = nil }
     }
     finishing = task
     await task.value
-    if finishing == task { finishing = nil }
   }
 
-  /// Waits for a part that is being finished, if one is.
+  /// Waits until no part is being finished.
   private func partFinished() async {
-    await finishing?.value
+    while let task = finishing {
+      await task.value
+    }
   }
 
   /// The address for a dial. The first `.start` dial is the URL JS was given; every other asks the
@@ -542,6 +552,8 @@ public final class PhoneStreamEngine {
 
   /// The app went to the background: capture ends, so the part is finished, the heartbeat stops and
   /// the stream drops. The take stays open for the foreground to continue.
+  /// The part is finished under a background task: its tail and its writer's close take a second or
+  /// more, and the system suspends an app in the background long before that without one.
   public func enterBackground() async {
     guard stream != nil else { return }
     suspendedInBackground = true
@@ -550,18 +562,28 @@ public final class PhoneStreamEngine {
     storageLoop = nil
     recordingSession.stopHeartbeat()
     if recordingTakeID != nil {
+      // Nothing to cut short when the time runs out: the take stays open either way, and a part
+      // its writer did not close is closed by the resume as a kill's would be.
+      let work = environment.backgroundWork.begin("Finish part") {}
       await finishPart(endedAt: environment.clock.now, closingTake: false)
+      environment.backgroundWork.end(work)
     }
     publishStatus()
   }
 
-  /// Back in the foreground with the engine still open: the take continues as its next part.
+  /// Back in the foreground with the engine still open: the take continues as its next part. A
+  /// resume that cannot run is reported in the status rather than lost.
   public func enterForeground() async {
     await partFinished()
     guard suspendedInBackground, isOpen, let take = stream else { return }
     stream = nil
     suspendedInBackground = false
-    _ = try? resumeInterrupted(request: take.request)
+    do {
+      try resumeInterrupted(request: take.request)
+    } catch {
+      telemetry.recordRecordingError("foreground resume: \(error)")
+      fail(error as? PhoneStreamError ?? .recordingFailed)
+    }
   }
 
   private func observeApplication() {
@@ -857,7 +879,11 @@ public final class PhoneStreamEngine {
         uploads[id] = nil
         uploadProgress[id] = nil
       }
-      let work = environment.backgroundWork.begin("Upload \(recording.angleName)")
+      // Out of background time, the upload stops where it is and keeps its id, as a killed one
+      // would, and resumes when the app is next active.
+      let work = environment.backgroundWork.begin("Upload \(recording.angleName)") { [weak self] in
+        self?.uploads[id]?.cancel()
+      }
       defer { environment.backgroundWork.end(work) }
       do {
         let videoId = try await upload(recording, server: server, token: token, title: title)
