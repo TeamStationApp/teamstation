@@ -607,9 +607,9 @@ export const ENDED_CAMERA =
  * 1. **Reuse** the caller's active stream on the game with this device and
  *    name, in any case.
  * 2. **Adopt** the caller's active stream with no device, the same name, that
- *    the legacy Director claim route returned: a device updating mid-game
- *    keeps that stream's key and live video. A stream made on the website for
- *    streaming software is never adopted.
+ *    the legacy Director claim route returned and that nothing is publishing
+ *    on: a device updating mid-game keeps that stream's key and live video. A
+ *    stream made on the website for streaming software is never adopted.
  * 3. **Create** one in the lowest free slot, after revoking any ended stream
  *    of this device and name, which frees its slot and leaves its video.
  *
@@ -671,6 +671,11 @@ export async function requestDeviceStream(
             .where(nameIs(label))
             .where('device_id', 'is', null)
             .where('director_claimed', '=', true)
+            // Only once the old build has stopped publishing on it. While it
+            // still is, the asker is some other device of this account that
+            // happens to share the name, and taking the stream would put two
+            // encoders on one key.
+            .where('state', '<>', 'publishing')
             .orderBy('slot', 'asc')
             .executeTakeFirst()
     if (adopted != null) {

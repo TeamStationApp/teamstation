@@ -414,6 +414,29 @@ describe('phones and Directors asking for their streams by device', function () 
       expect(after.recordsLocally).equals(false)
     })
 
+    it('leaves a claimed stream that is still publishing to the build that claimed it', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const claimed = await claim(gameId, 'Home Plate')
+      expect(claimed.status).equals(200)
+      const claimedId = await claimedStream(gameId)
+      // An old Director build is on the air with it.
+      await db
+        .updateTable('live_streams')
+        .set({ state: 'publishing' })
+        .where('id', '=', claimedId)
+        .execute()
+
+      // A phone of the same account, under the same name, gets its own.
+      const phoneStream = await ask(gameId, phone('Home Plate'))
+      expect(phoneStream.status).equals(201)
+      expect(phoneStream.body.id).not.equals(claimedId)
+      expect(phoneStream.body.url).not.equals(claimed.body.url)
+      const kept = await stream(claimedId)
+      expect(kept.deviceId).equals(null)
+      expect(kept.state).equals('publishing')
+    })
+
     it('never adopts a stream made on the website for streaming software', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()
