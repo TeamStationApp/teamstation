@@ -38,10 +38,13 @@
 //      sampled under the cap.
 //   5. Slide to Stop: the blue pill returns and the server hears that this
 //      phone holds the recording. Close.
-//   6. Back on the Videos tab, the game's video plays: the player's elapsed
-//      time moves. With TS_STREAM_WEBCAM_URL, the camera's frame is kept and
-//      its sound must be louder while the video plays than once it is paused,
-//      so the game should have a video with sound in its player.
+//   6. Back on the Videos tab, a finished video of the game plays: the
+//      player's elapsed time moves. It is opened by its id, from its start:
+//      the tab opens on the stream just stopped, which stays live for the
+//      server's 60 s reconnect grace, so its player holds the last picture at
+//      the live edge. The game needs a finished video with sound; with
+//      TS_STREAM_WEBCAM_URL, the camera's frame is kept and its sound must be
+//      louder while the video plays than once it is paused.
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
@@ -50,6 +53,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
+import { type AngleCandidate, angleLabels } from '../player/multiCam/takes'
 import { screenOf } from './screenOf'
 
 const run = promisify(execFile)
@@ -784,7 +788,32 @@ async function main(): Promise<void> {
       `5 closed; the live HLS playlist last written ${recordingStat.mtime.toISOString()}`
     )
 
-    // 6. The game's video plays, with sound, now the camera has let go.
+    // 6. A finished video of the game plays, with sound, now the camera has
+    // let go. Not the stream just stopped: until its publisher has been away
+    // for the reconnect grace it is still live, and a live player sits at the
+    // live edge. The page opens again on the finished video, from its start;
+    // going home first, because the game's page keeps the video it has.
+    const listed = await request('GET', `/games/${game}`, undefined, token)
+    assert.equal(listed.status, 200, 'the game was read')
+    const { videos } = (await listed.json()) as { videos: AngleCandidate[] }
+    const finished = videos.find(
+      video => video.status === 'ready' && video.id !== row.videoId
+    )
+    assert(
+      finished != null,
+      `step 6 plays a finished video of the game with sound, and ${game} has none besides the stream just stopped`
+    )
+    const finishedName =
+      angleLabels(videos).find(label => label.id === finished.id)?.name ??
+      finished.title
+    say('$ openLink teamstation://home')
+    await m.openLink({ link: 'teamstation://home' })
+    await sleep(2000)
+    say(`$ openLink teamstation://games/${game}?video=${finished.id}`)
+    await m.openLink({
+      link: `teamstation://games/${game}?video=${finished.id}`
+    })
+    await sleep(3000)
     // Android's player is ExoPlayer's view, whose controls have its own ids.
     const androidIds: Record<string, string> = {
       Video: 'exo_content_frame',
@@ -842,7 +871,7 @@ async function main(): Promise<void> {
       ?.text
     if (webcam == null) {
       results.push(
-        `6 the game's video plays: elapsed “${startedAt}” → “${laterAt}”, volume button “${volume ?? '?'}”`
+        `6 the game's finished video “${finishedName}” (${finished.id}) plays: elapsed “${startedAt}” → “${laterAt}”, volume button “${volume ?? '?'}”`
       )
     } else {
       await press('Pause')
@@ -874,7 +903,7 @@ async function main(): Promise<void> {
         `the room hears the video: ${loud} dB playing, ${still} dB paused`
       )
       results.push(
-        `6 the game's video plays with sound: elapsed “${startedAt}” → “${laterAt}”, volume button “${volume ?? '?'}”; webcam sound ${loud} dB playing, ${still} dB paused; frame ${path.basename(frame)}`
+        `6 the game's finished video “${finishedName}” (${finished.id}) plays with sound: elapsed “${startedAt}” → “${laterAt}”, volume button “${volume ?? '?'}”; webcam sound ${loud} dB playing, ${still} dB paused; frame ${path.basename(frame)}`
       )
     }
   } finally {
