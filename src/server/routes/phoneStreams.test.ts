@@ -1663,6 +1663,69 @@ describe('phones and Directors asking for their streams by device', function () 
       ).equals(204)
     })
 
+    it('pages on among the reminders after the one a page ended on is dismissed', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const recordedStream = async (
+        label: string,
+        device: string
+      ): Promise<string> => {
+        const made = await ask(gameId, phone(label, device), OTHER)
+        const marked = await call(
+          'PATCH',
+          `/games/${gameId}/live-streams/${made.body.id}`,
+          OTHER,
+          { localRecording: 'recorded' }
+        )
+        expect(marked.status).equals(200)
+        return made.body.id
+      }
+      const first = await recordedStream('Home Plate', IPHONE)
+      const second = await recordedStream('First Base', PIXEL)
+
+      const page = await call('GET', '/me/notifications?limit=1', OTHER)
+      const [shown] = page.body.items as Body[]
+      expect(shown.liveStreamId).equals(first)
+      // Dismissed from the Pending list before the next page is asked for.
+      expect(
+        (
+          await call(
+            'PUT',
+            `/me/notifications/${shown.id}/dismissed`,
+            OTHER,
+            {}
+          )
+        ).status
+      ).equals(204)
+      const rest = await call(
+        'GET',
+        `/me/notifications?cursor=${encodeURIComponent(String(page.body.nextCursor))}`,
+        OTHER
+      )
+      const items = rest.body.items as Body[]
+      expect(items[0]?.liveStreamId).equals(second)
+
+      // A cursor from before reminders led, or one that is not a cursor.
+      const old = await call(
+        'GET',
+        `/me/notifications?cursor=${encodeURIComponent(`${new Date(0).toISOString()}|x`)}`,
+        OTHER
+      )
+      expect(old.status).equals(200)
+      for (const bad of [
+        '2|2026-05-02T18:00:00.000Z|x',
+        '0|soon|x',
+        '0|a|b|c'
+      ]) {
+        const refused = await call(
+          'GET',
+          `/me/notifications?cursor=${encodeURIComponent(bad)}`,
+          OTHER
+        )
+        expect(refused.status).equals(403)
+      }
+    })
+
     it('says the angle alone when the device gave no model', function () {
       expect(reminderDescription('Home Plate', null)).equals(
         'Home Plate — provide a higher-quality copy for future viewing.'
