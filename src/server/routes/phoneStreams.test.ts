@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 import express from 'express'
-import type { Kysely } from 'kysely'
+import type { Kysely, Transaction } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
@@ -1279,6 +1279,53 @@ describe('phones and Directors asking for their streams by device', function () 
       expect((await video(upload)).title).equals('What the app called it')
       expect(await receipt(home.body.id)).equals(undefined)
       expect((await stream(home.body.id)).localRecording).equals('recorded')
+    })
+
+    it('replaces nothing when the phone dials the stream again just before the change', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const home = await ask(gameId, phone('Home Plate'))
+      const liveVideo = await aired(home.body.id, 0, 600)
+      await recorded(gameId, home.body.id)
+      const upload = await uploadVideo(gameId, 0, 600)
+      // Idle when the upload's finish reads it, publishing by the time the
+      // change is made.
+      const real = db
+      const redialled = new Proxy(real, {
+        get(target, property) {
+          if (property === 'transaction') {
+            return () => ({
+              execute: async <T>(
+                run: (trx: Transaction<Database>) => Promise<T>
+              ): Promise<T> => {
+                await target
+                  .updateTable('live_streams')
+                  .set({ state: 'publishing' })
+                  .where('id', '=', home.body.id)
+                  .execute()
+                return await target.transaction().execute(run)
+              }
+            })
+          }
+          const value = Reflect.get(target, property) as unknown
+          return typeof value === 'function'
+            ? (value as (...args: unknown[]) => unknown).bind(target)
+            : value
+        }
+      })
+      expect(
+        await replaceLiveRecording(redialled, gameId, upload, {
+          liveStreamId: home.body.id,
+          wholeStream: true
+        })
+      ).deep.equals([])
+      const after = await stream(home.body.id)
+      expect(after.state).equals('publishing')
+      expect(after.localRecording).equals('recorded')
+      expect((await video(liveVideo)).hidden).equals(false)
+      expect((await video(liveVideo)).replacedBy).equals(null)
+      expect((await video(upload)).title).equals('What the app called it')
+      expect(await receipt(home.body.id)).equals(undefined)
     })
 
     it('hides exactly the whole stream’s video, whatever the coverage test says', async function () {

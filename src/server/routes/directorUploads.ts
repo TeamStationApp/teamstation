@@ -643,7 +643,20 @@ async function replaceNamedStream(
   }
 
   const now = new Date()
-  await db.transaction().execute(async trx => {
+  const replaced = await db.transaction().execute(async trx => {
+    // Revoked, so the next take on this angle asks for a fresh stream and
+    // video rather than this one, whose copy is now the upload. First, and
+    // only while it is still neither publishing nor replaced: the phone may
+    // have dialled it again since it was read above, and a stream that is on
+    // the air keeps its key and its video.
+    const claimed = await trx
+      .updateTable('live_streams')
+      .set({ local_recording: 'uploaded', state: 'revoked', updated_at: now })
+      .where('id', '=', stream.id)
+      .where('state', '<>', 'publishing')
+      .where('local_recording', '<>', 'uploaded')
+      .executeTakeFirst()
+    if (Number(claimed.numUpdatedRows) === 0) return false
     await trx
       .updateTable('videos')
       .set({
@@ -661,14 +674,8 @@ async function replaceNamedStream(
       .set({ title: live.title, updated_at: now })
       .where('id', '=', uploadedId)
       .execute()
-    // Revoked, so the next take on this angle asks for a fresh stream and
-    // video rather than this one, whose copy is now the upload.
-    await trx
-      .updateTable('live_streams')
-      .set({ local_recording: 'uploaded', state: 'revoked', updated_at: now })
-      .where('id', '=', stream.id)
-      .execute()
     await settleRecordingReminder(trx, stream.id, now)
+    return true
   })
-  return [live.id]
+  return replaced ? [live.id] : []
 }
