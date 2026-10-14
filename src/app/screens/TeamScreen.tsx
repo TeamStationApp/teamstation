@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Pressable, Text, useWindowDimensions, View } from 'react-native'
+import { Text, useWindowDimensions, View } from 'react-native'
 
 import type {
   BattingRow,
@@ -20,7 +20,6 @@ import {
   Emblem,
   GameRow,
   HandoffView,
-  Icon,
   initialsOf,
   ManageGear,
   PillBand,
@@ -31,6 +30,7 @@ import {
   ScheduleRow,
   Screen,
   SectionHeader,
+  SettingsGear,
   type Stat,
   StatGrid,
   useBreakpoint,
@@ -349,16 +349,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                 </Text>
               )}
             </View>
-            {/*
-              The right-hand column: the place at the top, and at the bottom
-              the gear for an administrator or, for somebody who neither runs
-              this team nor belongs to it (the public page, or a non-member's),
-              Follow. Laid out rather than floated, so the gear can never be
-              drawn over the place, at any width or text size; and in the row
-              rather than under it, so a long name wraps beside the column
-              instead of running underneath. Follow alone sits level with the
-              name, as it always has.
-            */}
+            {place != null && <Badge label={placeLabel(place)} tone="honour" />}
             {(place != null || follows || onManage != null) && (
               <View
                 testID="team-card-end"
@@ -367,9 +358,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                   place == null && onManage == null && styles.identityEndLevel
                 ]}
               >
-                {place != null && (
-                  <Badge label={placeLabel(place)} tone="honour" />
-                )}
+                {place != null && onManage == null && <Badge label={placeLabel(place)} tone="honour" />}
                 {follows && (
                   <FollowButton
                     client={client}
@@ -387,18 +376,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                         onPress={onManage}
                       />
                     ) : (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Team settings"
-                        onPress={onManage}
-                        style={styles.publicGear}
-                      >
-                        <Icon
-                          name="settings"
-                          size={1.25}
-                          color={theme.secondaryTextColor}
-                        />
-                      </Pressable>
+                      <SettingsGear label="Team settings" onPress={onManage} />
                     )}
                   </View>
                 )}
@@ -902,7 +880,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   identityTop: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: theme.rem(theme.spaceMdRem)
   },
   crest: {
@@ -940,7 +918,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   // The bottom corner, with or without a place above it.
   gear: {
-    marginTop: 'auto'
+    alignSelf: 'flex-start'
   },
   identityText: {
     flex: 1,
