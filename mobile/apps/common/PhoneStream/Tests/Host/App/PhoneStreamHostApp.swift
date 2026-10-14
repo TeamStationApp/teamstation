@@ -101,7 +101,13 @@ final class HostDriver {
       let gameId = settings["PHONESTREAM_GAME_ID"]
     else { return }
     let angle = settings["PHONESTREAM_ANGLE"] ?? "Home Plate"
-    let engine = PhoneStreamEngine.shared
+    let engine: PhoneStreamEngine
+    do {
+      engine = try PhoneStreamEngine.sharedResult.get()
+    } catch {
+      log("launch: no engine \(error.reason)")
+      return
+    }
     observation = engine.observe { [weak self] event in self?.report(event) }
     do {
       try engine.open(angleName: angle)
@@ -127,7 +133,7 @@ final class HostDriver {
   }
 
   func handle(_ command: String) async {
-    let engine = PhoneStreamEngine.shared
+    guard let engine = PhoneStreamEngine.shared else { return }
     switch command.split(separator: ".").last {
     case "stop":
       await engine.stopRecording()

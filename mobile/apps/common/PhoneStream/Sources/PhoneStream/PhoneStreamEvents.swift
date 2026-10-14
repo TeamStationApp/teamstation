@@ -72,6 +72,16 @@ public enum PhoneStreamError: String, Error, Sendable, Equatable {
   case stillRecording
 }
 
+/// The engine could not be made, so phone streaming is unavailable in this process: its host
+/// answers unsupported and refuses every call with `reason`, and the app carries on.
+public struct PhoneStreamUnavailable: Error, Sendable, Equatable {
+  public var reason: String
+
+  public init(reason: String) {
+    self.reason = reason
+  }
+}
+
 /// How one upload is going.
 public struct PhoneUploadProgress: Sendable, Equatable {
   public enum State: String, Sendable {

@@ -381,7 +381,8 @@ extension PhoneStreamTests {
       let work = PhoneBackgroundWork.system.begin("A test") {}
       PhoneBackgroundWork.system.end(work)
       PhoneBackgroundWork.none.end(PhoneBackgroundWork.none.begin("Nothing") {})
-      #expect(!PhoneStreamEngine.shared.isOpen)
+      let shared = try #require(PhoneStreamEngine.shared)
+      #expect(!shared.isOpen)
     }
 
     @Test("A background task that runs out of time winds its work down and is ended exactly once")
@@ -412,6 +413,25 @@ extension PhoneStreamTests {
       work.end(second)
       work.end(second)
       #expect(calls.ended == [ first, second ])
+    }
+
+    @Test("An engine that cannot open its catalog is reported, not a crash")
+    func engineThatCannotOpen() throws {
+      struct Corrupt: Error {}
+      let failed = PhoneStreamEngine.start { throw Corrupt() }
+      guard case let .failure(unavailable) = failed else {
+        Issue.record("expected a failure")
+        return
+      }
+      #expect(unavailable.reason.hasPrefix("PhoneStream could not open its catalog: "))
+      // A storage root that is a file: preparing it fails, and so does the engine, quietly.
+      let file = try scratchDirectory().appendingPathComponent("not-a-directory")
+      try Data([ 1 ]).write(to: file)
+      let rig = EngineRig(root: file)
+      let refused = PhoneStreamEngine.start { try rig.engine() }
+      #expect(throws: PhoneStreamUnavailable.self) { try refused.get() }
+      let opened = PhoneStreamEngine.start { try EngineRig(root: try scratchDirectory()).engine() }
+      #expect((try? opened.get()) != nil)
     }
 
     @Test("A stopped camera keeps its callbacks, which the capture queue reads, and delivers nothing more")
