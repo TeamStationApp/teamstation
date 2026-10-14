@@ -1,0 +1,1435 @@
+/** Public-UI actions, private evidence and one explicitly owned Maestro lease. */
+import assert from 'node:assert/strict'
+import { execFileSync, spawnSync } from 'node:child_process'
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
+import { createRequire } from 'node:module'
+import { basename, dirname, join, resolve } from 'node:path'
+
+import { JSDOM } from 'jsdom'
+import puppeteer, { type Browser, type CDPSession } from 'puppeteer'
+
+import {
+  Chat2Blocked,
+  type Chat2Fixture,
+  type Chat2Surface,
+  digest,
+  fixtureControl,
+  need,
+  outsideCheckout,
+  privateJson,
+  redact,
+  sourceBinding
+} from './chat2Fixture.e2e'
+
+type Args = Record<string, unknown>
+export interface Chat2Device {
+  pasteText: () => Promise<unknown>
+  setClipboard: (args: Args) => Promise<unknown>
+  setDarkMode: (args: Args) => Promise<unknown>
+  stopApp: (args: Args) => Promise<unknown>
+  launchApp: (args: Args) => Promise<unknown>
+  openLink: (args: Args) => Promise<unknown>
+  tapOn: (args: Args) => Promise<unknown>
+  tapOnPoint: (args: Args) => Promise<unknown>
+  longPressOn: (args: Args) => Promise<unknown>
+  swipe: (args: Args) => Promise<unknown>
+  dragAndDrop: (args: Args) => Promise<unknown>
+  inputText: (args: Args) => Promise<unknown>
+  copyTextFrom: (
+    args: Args
+  ) => Promise<{ data?: unknown; element?: { bounds?: Bounds } }>
+  eraseText: (args?: Args) => Promise<unknown>
+  pressKey: (args: Args) => Promise<unknown>
+  hideKeyboard: () => Promise<unknown>
+  back: () => Promise<unknown>
+  assertVisible: (args: Args) => Promise<unknown>
+  assertNotVisible: (args: Args) => Promise<unknown>
+  scrollUntilVisible: (args: Args) => Promise<unknown>
+  uploadFile: (args: Args) => Promise<unknown>
+  addMedia: (args: Args) => Promise<unknown>
+  startRecording: (args: Args) => Promise<unknown>
+  stopRecording: () => Promise<unknown>
+  mockNetwork: (args: Args) => Promise<unknown>
+  clearNetworkMocks: () => Promise<unknown>
+  setNetworkConditions: (args: Args) => Promise<unknown>
+  screenshot: () => Promise<Uint8Array>
+  hierarchy: () => Promise<unknown>
+  platformInfo: () => Promise<Args>
+  evalBrowserScript: (args: Args) => Promise<{ data?: unknown }>
+}
+interface Daemon {
+  started: boolean
+  info?: { pid: number; reportsDir?: string }
+  attach: (args: Args) => Promise<Chat2Device>
+  startDevice: (args: Args) => Promise<{ id: string }>
+  stopDevice: (id: string, args?: Args) => Promise<unknown>
+  detach: (id: string) => Promise<unknown>
+  shutdown: (args?: Args) => Promise<unknown>
+  status: () => Promise<Args>
+  close: () => void
+}
+interface Bounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+export interface PublicNode {
+  id?: string
+  type?: string
+  text?: string
+  bounds?: Bounds
+  focused?: boolean
+  enabled?: boolean
+}
+
+function object(value: unknown): Args {
+  return value != null && typeof value === 'object' ? (value as Args) : {}
+}
+function bounds(raw: unknown): Bounds | undefined {
+  if (typeof raw === 'string') {
+    const numbers = raw.match(/-?\d+(?:\.\d+)?/g)?.map(Number)
+    if (numbers?.length === 4)
+      return {
+        x: numbers[0],
+        y: numbers[1],
+        width: numbers[2] - numbers[0],
+        height: numbers[3] - numbers[1]
+      }
+  }
+  const b = object(raw)
+  if (['x', 'y', 'width', 'height'].every(k => typeof b[k] === 'number'))
+    return b as unknown as Bounds
+}
+
+/** Supports documented normalized nodes and the supported native backends. */
+export function flattenPublicHierarchy(raw: unknown): PublicNode[] {
+  if (Array.isArray(raw)) return raw.flatMap(flattenPublicHierarchy)
+  if (typeof raw === 'string') {
+    if (raw.trim().startsWith('<')) {
+      const dom = new JSDOM(raw, { contentType: 'text/xml' })
+      try {
+        return Array.from(dom.window.document.querySelectorAll('*')).map(n => ({
+          id:
+            n.getAttribute('resource-id') ??
+            n.getAttribute('identifier') ??
+            undefined,
+          type: n.getAttribute('class') ?? n.getAttribute('type') ?? undefined,
+          text:
+            n.getAttribute('text') ??
+            n.getAttribute('content-desc') ??
+            n.getAttribute('label') ??
+            undefined,
+          bounds: bounds(n.getAttribute('bounds'))
+        }))
+      } finally {
+        dom.window.close()
+      }
+    }
+    try {
+      return flattenPublicHierarchy(JSON.parse(raw))
+    } catch {
+      return []
+    }
+  }
+  const n = object(raw)
+  if (Array.isArray(n.nodes)) return n.nodes.flatMap(flattenPublicHierarchy)
+  if (Object.keys(n).length === 0) return []
+  const text = n.text ?? n.label ?? n.value ?? n.name
+  return [
+    {
+      id:
+        typeof (n.id ?? n.identifier) === 'string'
+          ? String(n.id ?? n.identifier)
+          : undefined,
+      type:
+        typeof (n.type ?? n.className) === 'string'
+          ? String(n.type ?? n.className)
+          : undefined,
+      text: typeof text === 'string' ? text : undefined,
+      bounds: bounds(n.bounds ?? n.rect),
+      focused: n.focused === true,
+      enabled: n.enabled !== false
+    },
+    ...(Array.isArray(n.children)
+      ? n.children.flatMap(flattenPublicHierarchy)
+      : [])
+  ]
+}
+
+export function exactText(text: string): string {
+  return '^' + text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'
+}
+export async function until<T>(
+  read: () => Promise<T | undefined>,
+  label: string,
+  timeout = 15000
+): Promise<T> {
+  const deadline = Date.now() + timeout
+  for (;;) {
+    const value = await read()
+    if (value != null) return value
+    if (Date.now() >= deadline)
+      throw new Error('Timed out waiting for ' + label)
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+}
+
+function code(error: unknown): string | undefined {
+  const value = object(error).code
+  return typeof value === 'string' ? value : undefined
+}
+function lockTree(path: string): void {
+  if (!existsSync(path)) return
+  if (statSync(path).isDirectory()) {
+    chmodSync(path, 0o700)
+    for (const name of readdirSync(path)) lockTree(join(path, name))
+  } else chmodSync(path, 0o600)
+}
+
+const PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+/** The Android RPC backend can return JPEG even when its API promises PNG. */
+export function saveCapture(bytes: Uint8Array, destination: string): Args {
+  const raw = Buffer.from(bytes)
+  const rawPath =
+    destination + (raw.subarray(0, 8).equals(PNG) ? '.raw.png' : '.raw.jpg')
+  writeFileSync(rawPath, raw, { mode: 0o600, flag: 'wx' })
+  let conversion: Args | undefined
+  if (raw.subarray(0, 8).equals(PNG)) {
+    writeFileSync(destination, raw, { mode: 0o600, flag: 'wx' })
+  } else {
+    assert(
+      raw[0] === 255 && raw[1] === 216 && raw[2] === 255,
+      'Unknown screenshot codec; do not mislabel it PNG'
+    )
+    const python = process.env.CHAT2_PYTHON ?? 'python3'
+    const script = [
+      'import sys,json,hashlib',
+      'from PIL import Image',
+      'im=Image.open(sys.argv[1]); im.load(); before=im.tobytes(); mode=im.mode; size=im.size',
+      'im.save(sys.argv[2],format="PNG")',
+      'out=Image.open(sys.argv[2]); out.load()',
+      'assert out.mode==mode and out.size==size and out.tobytes()==before',
+      'print(json.dumps({"decodedPixelsEqual":True,"decodedPixelSha256":hashlib.sha256(before).hexdigest()}))'
+    ].join('\n')
+    const result = spawnSync(python, ['-c', script, rawPath, destination], {
+      encoding: 'utf8',
+      timeout: 10000
+    })
+    if (result.status !== 0)
+      throw new Chat2Blocked(
+        'JPEG driver capture requires CHAT2_PYTHON with Pillow; raw bytes retained'
+      )
+    chmodSync(destination, 0o600)
+    conversion = JSON.parse(result.stdout) as Args
+  }
+  const png = readFileSync(destination)
+  assert(
+    png.subarray(0, 8).equals(PNG) && png.toString('ascii', 12, 16) === 'IHDR',
+    'Final screenshot must be actual PNG'
+  )
+  return {
+    rawPath,
+    rawSha256: digest(rawPath),
+    sha256: digest(destination),
+    format: 'PNG',
+    width: png.readUInt32BE(16),
+    height: png.readUInt32BE(20),
+    conversion
+  }
+}
+
+export class Chat2UI {
+  readonly native: boolean
+  readonly steps: Args[] = []
+  readonly captures: Args[] = []
+  readonly runDir: string
+  readonly binding: ReturnType<typeof sourceBinding>
+  readonly deadline = AbortSignal.timeout(900000)
+  device!: Chat2Device
+  daemon?: Daemon
+  browser?: Browser
+  cdp?: CDPSession
+  environment?: Args
+  deviceId = ''
+  cleanup: Args = {}
+  private readonly root: string
+  private readonly artifactRoot: string
+  private readonly daemonName: string
+  private reportsDir?: string
+  private connectCleanup?: () => Promise<Daemon>
+
+  constructor(
+    readonly fixture: Chat2Fixture,
+    readonly surface: Chat2Surface,
+    readonly scenario: string
+  ) {
+    this.root = process.cwd()
+    this.native = surface === 'ios' || surface === 'android'
+    this.artifactRoot = resolve(
+      need(process.env.CHAT2_ARTIFACTS, 'CHAT2_ARTIFACTS required')
+    )
+    outsideCheckout(this.root, this.artifactRoot)
+    this.binding = sourceBinding(this.root, fixture, surface)
+    this.daemonName = need(
+      process.env.MAESTRO_D,
+      'Each run requires its own explicit MAESTRO_D name'
+    )
+    assert(
+      this.daemonName.startsWith(fixture.ownershipId + '-') &&
+        /^[\w-]+$/.test(this.daemonName),
+      'Daemon name must bind this disposable ownership ID'
+    )
+    this.runDir = join(
+      this.artifactRoot,
+      'runs',
+      this.binding.source.slice(0, 12) +
+        '-' +
+        surface +
+        '-' +
+        scenario +
+        '-' +
+        Date.now()
+    )
+    mkdirSync(this.runDir, { recursive: true, mode: 0o700 })
+  }
+
+  async start(): Promise<void> {
+    const bin = process.env.MAESTRO_D_BIN ?? 'maestro-d'
+    const inventory = execFileSync(bin, ['ps'], {
+      encoding: 'utf8',
+      timeout: 8000
+    })
+    writeFileSync(join(this.runDir, 'daemon-inventory.txt'), inventory, {
+      mode: 0o600
+    })
+    const clientRoot = need(
+      process.env.MAESTRO_D_CLIENT_ROOT,
+      'MAESTRO_D_CLIENT_ROOT must identify the installed/built client'
+    )
+    const { MaestroD } = createRequire(
+      join(resolve(clientRoot), 'package.json')
+    )('maestro-d') as { MaestroD: { connect: (args: Args) => Promise<Daemon> } }
+    this.connectCleanup = async () =>
+      await MaestroD.connect({ name: this.daemonName, bin, spawn: false })
+    this.daemon = await MaestroD.connect({
+      name: this.daemonName,
+      bin,
+      idleTimeout: 0,
+      signal: this.deadline
+    })
+    if (!this.daemon.started) {
+      this.daemon.close()
+      this.daemon = undefined
+      throw new Error(
+        'Daemon name already exists; do not reuse another run lease'
+      )
+    }
+    this.reportsDir = this.daemon.info?.reportsDir
+    if (this.native) await this.startNative()
+    else await this.startWeb()
+    this.environment = this.native
+      ? await this.device.platformInfo()
+      : await this.dom(
+          'return {width:innerWidth,height:innerHeight,coarse:matchMedia("(pointer:coarse)").matches,fine:matchMedia("(pointer:fine)").matches,dpr:devicePixelRatio,userAgent:navigator.userAgent}'
+        )
+  }
+
+  private async startNative(): Promise<void> {
+    const platform = this.surface === 'ios' ? 'ios' : 'android'
+    const configured = this.fixture.devices[platform]
+    const requestedDevice = need(
+      process.env[
+        platform === 'ios' ? 'CHAT_IOS_DEVICE' : 'CHAT_ANDROID_DEVICE'
+      ],
+      'Explicit task-owned native ID required'
+    )
+    assert(
+      requestedDevice === configured.id && configured.owned,
+      'Device does not match the owned descriptor'
+    )
+    this.deviceId = requestedDevice
+    if (platform === 'android') {
+      const sims = JSON.parse(
+        execFileSync('xcrun', ['simctl', 'list', 'devices', '--json'], {
+          encoding: 'utf8'
+        })
+      ) as { devices: Record<string, Array<{ udid: string; state: string }>> }
+      assert(
+        !Object.values(sims.devices)
+          .flat()
+          .some(
+            d => d.udid === this.fixture.devices.ios.id && d.state === 'Booted'
+          ),
+        'Own iOS target must stop before Android starts'
+      )
+    } else {
+      const adb = spawnSync(process.env.CHAT2_ADB ?? 'adb', ['devices'], {
+        encoding: 'utf8',
+        timeout: 5000
+      })
+      assert(
+        adb.status === 0 &&
+          !adb.stdout
+            .split('\n')
+            .some(line =>
+              line.startsWith(this.fixture.devices.android.id + '\t')
+            ),
+        'Own Android target must stop before iOS starts'
+      )
+    }
+    if (process.env.CHAT2_NATIVE_PREBOOTED !== '1') {
+      const started = await need(this.daemon, 'Daemon required').startDevice({
+        platform,
+        name: configured.name,
+        bootTimeout: 180
+      })
+      assert(started.id === this.deviceId, 'Boot returned a different device')
+    } else if (platform === 'android') {
+      const name = execFileSync(
+        process.env.CHAT2_ADB ?? 'adb',
+        ['-s', this.deviceId, 'emu', 'avd', 'name'],
+        { encoding: 'utf8', timeout: 5000 }
+      )
+        .split('\n')[0]
+        .trim()
+      assert(
+        name === configured.name,
+        'Prebooted serial belongs to another AVD'
+      )
+    } else {
+      const sims = JSON.parse(
+        execFileSync('xcrun', ['simctl', 'list', 'devices', '--json'], {
+          encoding: 'utf8'
+        })
+      ) as {
+        devices: Record<
+          string,
+          Array<{ udid: string; name: string; state: string }>
+        >
+      }
+      assert(
+        Object.values(sims.devices)
+          .flat()
+          .some(
+            d =>
+              d.udid === this.deviceId &&
+              d.name === configured.name &&
+              d.state === 'Booted'
+          ),
+        'Exact owned prebooted simulator required'
+      )
+    }
+    this.device = await need(this.daemon, 'Daemon required').attach({
+      device: this.deviceId,
+      platform,
+      driver: configured.driver,
+      appId: this.fixture.appId,
+      ...(process.env.CHAT2_UPDATE_OWN_APP === '1'
+        ? {
+            appFile:
+              platform === 'ios'
+                ? dirname(this.binding.binding.artifact)
+                : this.binding.binding.artifact
+          }
+        : { noAppInstall: true }),
+      artifacts: 'none',
+      driverStartTimeout: 180,
+      commandTimeout: 30000
+    })
+    await this.device.launchApp({ appId: this.fixture.appId })
+    if (platform === 'ios') {
+      const installed = execFileSync(
+        'xcrun',
+        [
+          'simctl',
+          'get_app_container',
+          this.deviceId,
+          this.fixture.appId,
+          'app'
+        ],
+        { encoding: 'utf8' }
+      ).trim()
+      assert(
+        digest(join(installed, basename(this.binding.binding.artifact))) ===
+          this.binding.binding.sha256,
+        'Installed iOS executable differs from final bound build'
+      )
+      if (this.binding.binding.bundle != null)
+        assert(
+          digest(
+            join(installed, basename(this.binding.binding.bundle.path))
+          ) === this.binding.binding.bundle.sha256,
+          'Installed iOS JS differs from final source'
+        )
+      this.steps.push({
+        name: 'Installed iOS build/source binding',
+        outcome: 'passed',
+        installedArtifactSha256: this.binding.binding.sha256
+      })
+    } else {
+      const apkPath = execFileSync(
+        process.env.CHAT2_ADB ?? 'adb',
+        ['-s', this.deviceId, 'shell', 'pm', 'path', this.fixture.appId],
+        { encoding: 'utf8', timeout: 5000 }
+      )
+        .trim()
+        .split('\n')[0]
+        .replace(/^package:/, '')
+      assert(
+        /^\/data\/app\/[A-Za-z0-9_./+~=-]+\.apk$/.test(apkPath),
+        'Expected explicit installed application APK path'
+      )
+      const pulled = join(this.runDir, 'installed.apk')
+      execFileSync(
+        process.env.CHAT2_ADB ?? 'adb',
+        ['-s', this.deviceId, 'pull', apkPath, pulled],
+        { stdio: 'pipe', timeout: 20000 }
+      )
+      assert(
+        digest(pulled) === this.binding.binding.sha256,
+        'Installed Android APK differs from final source build'
+      )
+      this.steps.push({
+        name: 'Installed Android build/source binding',
+        outcome: 'passed',
+        installedArtifactSha256: digest(pulled)
+      })
+    }
+  }
+
+  private async startWeb(): Promise<void> {
+    const requestedDevice = need(
+      process.env.CHAT_WEB_DEVICE,
+      'Explicit task-owned CHAT_WEB_DEVICE required'
+    )
+    assert(
+      requestedDevice.startsWith(this.fixture.ownershipId + '-'),
+      'Browser ID must bind this fixture ownership'
+    )
+    this.deviceId = requestedDevice
+    const browser = need(
+      this.fixture.browser,
+      'Owned browser/profile descriptor required'
+    )
+    outsideCheckout(this.root, browser.profileRoot)
+    const served = await fetch(
+      this.fixture.webUrl.replace(/\/$/, '') +
+        '/' +
+        basename(this.binding.binding.artifact)
+    )
+    assert(served.ok, 'Actual served web bundle unavailable')
+    const bytes = Buffer.from(await served.arrayBuffer())
+    const expected = readFileSync(this.binding.binding.artifact)
+    assert(
+      bytes.equals(expected),
+      'Actual served web JS differs from final bound build'
+    )
+    this.steps.push({
+      name: 'Served final-source JS bytes',
+      outcome: 'passed',
+      sha256: this.binding.binding.sha256
+    })
+    const metrics = this.metrics()
+    const profile = join(browser.profileRoot, this.surface)
+    this.device = await need(this.daemon, 'Daemon required').attach({
+      device: this.deviceId,
+      platform: 'web',
+      driver: 'cdp',
+      appId: this.fixture.webUrl,
+      url: this.fixture.webUrl,
+      artifacts: 'none',
+      extra: {
+        browser: browser.executable,
+        userDataDir: profile,
+        windowSize: metrics.width + 'x' + metrics.height
+      }
+    })
+    const port = readFileSync(
+      join(profile, 'DevToolsActivePort'),
+      'utf8'
+    ).split('\n')[0]
+    this.browser = await puppeteer.connect({
+      browserURL: 'http://127.0.0.1:' + port,
+      defaultViewport: null
+    })
+    const pages = await this.browser.pages()
+    const page = need(
+      pages.find(p => p.url().startsWith(this.fixture.webUrl)),
+      'Owned app tab required'
+    )
+    this.cdp = await page.createCDPSession()
+    await this.cdp.send('Network.setCacheDisabled', { cacheDisabled: true })
+    await this.device.openLink({ link: this.fixture.webUrl })
+    await this.cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: metrics.width,
+      height: metrics.height,
+      deviceScaleFactor: 1,
+      mobile: metrics.coarse
+    })
+    await this.cdp.send('Emulation.setTouchEmulationEnabled', {
+      enabled: metrics.coarse,
+      maxTouchPoints: 1
+    })
+    const actual = await this.dom(
+      'return {width:innerWidth,height:innerHeight,coarse:matchMedia("(pointer:coarse)").matches}'
+    )
+    const matches =
+      actual.width === metrics.width &&
+      actual.height === metrics.height &&
+      actual.coarse === metrics.coarse
+    this.steps.push({
+      name: 'Viewport and pointer measurements',
+      outcome: matches ? 'passed' : 'failed',
+      expected: metrics,
+      actual: {
+        width: actual.width,
+        height: actual.height,
+        coarse: actual.coarse
+      }
+    })
+    assert(matches, 'Actual viewport/pointer differs from requested surface')
+  }
+
+  metrics(): { width: number; height: number; coarse: boolean } {
+    return {
+      width:
+        this.surface === 'web-wide'
+          ? 1440
+          : this.surface === 'web-320'
+            ? 320
+            : 390,
+      height:
+        this.surface === 'web-wide'
+          ? 1000
+          : this.surface === 'web-320'
+            ? 700
+            : 844,
+      coarse: this.surface === 'web-touch' || this.surface === 'web-320'
+    }
+  }
+
+  /** Starts a real new app workspace, preserving ordinary device keys and login. */
+  async coldOpen(path: string, beforeLaunch?: () => void): Promise<void> {
+    const at = new Date().toISOString()
+    if (this.native) {
+      await this.device.stopApp({ appId: this.fixture.appId })
+      beforeLaunch?.()
+      await this.device.launchApp({ appId: this.fixture.appId })
+      await this.open(path)
+    } else {
+      // Full navigation through Maestro destroys the previous JS workspace.
+      await this.device.openLink({ link: 'about:blank' })
+      beforeLaunch?.()
+      await this.device.openLink({
+        link: this.fixture.webUrl.replace(/\/$/, '') + path
+      })
+    }
+    this.steps.push({
+      name: 'Real cold workspace lifecycle',
+      at,
+      platform: this.surface,
+      path,
+      keysReset: false
+    })
+  }
+
+  /** Disable only the browser capability before app scripts, never app state. */
+  async withoutWasm(check: () => Promise<void>): Promise<void> {
+    assert(
+      !this.native && this.cdp != null,
+      'No-WASM is a browser capability case'
+    )
+    const script = await this.cdp.send(
+      'Page.addScriptToEvaluateOnNewDocument',
+      { source: 'delete globalThis.WebAssembly;' }
+    )
+    try {
+      await this.coldOpen('/chat')
+      await check()
+    } finally {
+      await this.cdp.send('Page.removeScriptToEvaluateOnNewDocument', {
+        identifier: script.identifier
+      })
+      await this.coldOpen('/chat')
+    }
+  }
+
+  async renderedEffects(): Promise<Args> {
+    if (this.native)
+      return {
+        method:
+          'Native actual composition is captured; OS Settings and source-bound visual review required',
+        publicNodes: (await this.nodes()).filter(n =>
+          [
+            'chat-message-spotlight',
+            'chat-message-spotlight-controls',
+            'chat-pinned-band',
+            'chat-composer-band'
+          ].includes(n.id ?? '')
+        )
+      }
+    return await this.dom(
+      'const ids=["chat-message-spotlight","chat-message-spotlight-controls","chat-pinned-band","chat-composer-band"];return {styles:ids.flatMap(id=>{const n=document.querySelector("[data-testid="+JSON.stringify(id)+"]");return n?[n,...n.querySelectorAll("*")].slice(0,60).map(el=>{const s=getComputedStyle(el);return {id:el.getAttribute("data-testid"),background:s.backgroundColor,backdrop:s.backdropFilter,filter:s.filter,transition:s.transitionDuration,animation:s.animationDuration,opacity:s.opacity}}):[]})}'
+    )
+  }
+
+  async photoMarker(conversationId: string): Promise<Args> {
+    return await this.renderedPhoto({
+      id: 'chat-avatar',
+      childOf: { id: 'chat-conversation-' + conversationId }
+    })
+  }
+
+  async renderedPhoto(selected: Args): Promise<Args> {
+    const box = need(
+      (await this.device.copyTextFrom(selected)).element?.bounds,
+      'Measured public photo avatar bounds required'
+    )
+    const path = join(this.runDir, 'photo-avatar-' + Date.now() + '.png')
+    const capture = saveCapture(await this.device.screenshot(), path)
+    const screen: Args = this.native
+      ? await this.device.platformInfo()
+      : this.metrics()
+    const width = Number(screen.screenWidth ?? screen.width)
+    const height = Number(screen.screenHeight ?? screen.height)
+    assert(
+      width > 0 && height > 0,
+      'Actual screenshot coordinate space required'
+    )
+    const result = spawnSync(
+      process.env.CHAT2_PYTHON ?? 'python3',
+      [
+        '-c',
+        [
+          'import sys,json',
+          'from PIL import Image',
+          'im=Image.open(sys.argv[1]).convert("RGB"); b=json.loads(sys.argv[2]); sw=float(sys.argv[3]); sh=float(sys.argv[4])',
+          'x=round(b["x"]*im.width/sw); y=round(b["y"]*im.height/sh); w=round(b["width"]*im.width/sw); h=round(b["height"]*im.height/sh)',
+          'pixels=list(im.crop((x,y,x+w,y+h)).getdata()); assert len(pixels)>20',
+          'magenta=sum(r>170 and g<110 and blue>140 for r,g,blue in pixels)/len(pixels)',
+          'green=sum(g>170 and r<110 and blue<130 for r,g,blue in pixels)/len(pixels)',
+          'print(json.dumps({"magentaFraction":magenta,"greenFraction":green,"actualRenderedSyntheticMarker":magenta>0.08 and green>0.08}))'
+        ].join('\n'),
+        path,
+        JSON.stringify(box),
+        String(width),
+        String(height)
+      ],
+      { encoding: 'utf8', timeout: 10000 }
+    )
+    assert.equal(
+      result.status,
+      0,
+      'Synthetic rendered photo pixel observation failed'
+    )
+    const proof = JSON.parse(result.stdout) as Args
+    assert(
+      proof.actualRenderedSyntheticMarker === true,
+      'Actual avatar must show both synthetic photo marker colors'
+    )
+    return { box, capture, path, ...proof }
+  }
+
+  async publicBounds(id: string): Promise<Bounds> {
+    const found = (await this.nodes()).find(
+      n => n.id === id && n.bounds != null
+    )?.bounds
+    return (
+      found ??
+      need(
+        (await this.device.copyTextFrom({ id })).element?.bounds,
+        'Measured public element bounds required: ' + id
+      )
+    )
+  }
+
+  async publicText(id: string): Promise<string> {
+    if (!this.native) {
+      const result = await this.dom(
+        'const n=document.querySelector(' +
+          JSON.stringify('[data-testid="' + id + '"]') +
+          ');return {text:n?.textContent ?? n?.getAttribute("aria-label")}'
+      )
+      assert(typeof result.text === 'string', 'Public text required: ' + id)
+      return result.text
+    }
+    const result = await this.device.copyTextFrom({ id })
+    assert(
+      typeof result.data === 'string',
+      'Native public text required: ' + id
+    )
+    return result.data
+  }
+
+  async resize(width: number, height: number): Promise<void> {
+    assert(
+      !this.native && this.cdp != null,
+      'Only owned browser environment may resize'
+    )
+    await this.cdp.send('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: this.metrics().coarse
+    })
+    const actual = await this.dom(
+      'return {width:innerWidth,height:innerHeight}'
+    )
+    assert(
+      actual.width === width && actual.height === height,
+      'Actual resized viewport differs'
+    )
+  }
+
+  /** OS Settings UI is an explicit observed private recipe, driven only by Maestro. */
+  private async settingsActions(
+    actions: NonNullable<Chat2Fixture['variants']>[string]['set']
+  ): Promise<void> {
+    for (const action of actions) {
+      assert(
+        [
+          'launchApp',
+          'tapOn',
+          'scrollUntilVisible',
+          'back',
+          'pressKey',
+          'setDarkMode'
+        ].includes(action.command),
+        'Unsupported Settings recipe command'
+      )
+      if (action.command === 'launchApp')
+        assert(
+          [
+            this.fixture.appId,
+            'com.apple.Preferences',
+            'com.android.settings'
+          ].includes(String(action.args.appId)),
+          'Settings recipe may launch only own app or OS Settings'
+        )
+      const command = this.device[action.command as keyof Chat2Device]
+      await command.call(this.device, action.args)
+    }
+  }
+
+  async variant(name: string, sweep: () => Promise<void>): Promise<void> {
+    assert(
+      [
+        'light',
+        'dark',
+        'large-text',
+        'reduced-motion',
+        'reduced-transparency'
+      ].includes(name),
+      'Unknown accessibility variant'
+    )
+    const row: Args = {
+      name,
+      startedAt: new Date().toISOString(),
+      platform: this.surface
+    }
+    const recipe = this.fixture.variants?.[this.surface + ':' + name]
+    let browserZoomAttempted = false
+    const nativeTextBefore = this.native
+      ? await this.publicBounds('chat-composer')
+      : undefined
+    const before = this.native
+      ? undefined
+      : await this.dom(
+          'const n=document.querySelector(\'[data-testid="chat-composer"]\');return {font:n?parseFloat(getComputedStyle(n).fontSize):0,height:n?.getBoundingClientRect().height,scale:visualViewport?.scale??1,dpr:devicePixelRatio,viewportWidth:visualViewport?.width??innerWidth}'
+        )
+    try {
+      if (this.native) {
+        if (this.surface === 'android' && name === 'reduced-transparency') {
+          assert(
+            recipe?.applicability === 'not-applicable' &&
+              (recipe.reason?.length ?? 0) > 20,
+            'Explicit Android platform-applicability rationale required'
+          )
+          row.applicability = 'not-applicable'
+          row.reason = recipe.reason
+          row.environment =
+            'No Android OS reduced-transparency preference; inspect actual native fallback composition'
+        } else if (name === 'light' || name === 'dark') {
+          assert(
+            recipe?.applicability === 'applicable' &&
+              recipe.restore.length > 0 &&
+              recipe.verify.length > 0 &&
+              recipe.restoreVerify.length > 0,
+            'Native appearance requires observed restoration recipe'
+          )
+          await this.device.setDarkMode({ enabled: name === 'dark' })
+          await this.settingsActions(recipe.set)
+          for (const selector of recipe.verify)
+            await this.device.assertVisible({ ...selector, timeout: 5000 })
+          await this.device.launchApp({ appId: this.fixture.appId })
+          row.environment = {
+            method: 'Maestro setDarkMode',
+            requested: name,
+            observed: await this.device.platformInfo()
+          }
+        } else {
+          const actual = need(
+            recipe,
+            'Observed native OS Settings recipe required for ' + name
+          )
+          assert(
+            actual.applicability === 'applicable' &&
+              actual.verify.length > 0 &&
+              actual.restoreVerify.length > 0,
+            'Native variant requires applied and restored setting observations'
+          )
+          await this.settingsActions(actual.set)
+          for (const selector of actual.verify)
+            await this.device.assertVisible({ ...selector, timeout: 5000 })
+          row.environment = {
+            method: 'Observed OS Settings via Maestro',
+            selectors: actual.verify
+          }
+          await this.device.launchApp({ appId: this.fixture.appId })
+        }
+      } else {
+        const features = [
+          {
+            name: 'prefers-color-scheme',
+            value: name === 'dark' ? 'dark' : 'light'
+          },
+          {
+            name: 'prefers-reduced-motion',
+            value: name === 'reduced-motion' ? 'reduce' : 'no-preference'
+          },
+          {
+            name: 'prefers-reduced-transparency',
+            value: name === 'reduced-transparency' ? 'reduce' : 'no-preference'
+          }
+        ]
+        await need(this.cdp, 'Owned CDP environment required').send(
+          'Emulation.setEmulatedMedia',
+          { features }
+        )
+        await need(this.cdp, 'Owned CDP environment required').send(
+          'Emulation.setEmulatedOSTextScale',
+          { scale: name === 'large-text' ? 1.5 : 1 }
+        )
+        const observe = async (): Promise<Args> =>
+          await this.dom(
+            'const n=document.querySelector(\'[data-testid="chat-composer"]\');return {dark:matchMedia("(prefers-color-scheme:dark)").matches,motion:matchMedia("(prefers-reduced-motion:reduce)").matches,transparency:matchMedia("(prefers-reduced-transparency:reduce)").matches,font:n?parseFloat(getComputedStyle(n).fontSize):0,height:n?.getBoundingClientRect().height,scale:visualViewport?.scale??1,dpr:devicePixelRatio,viewportWidth:visualViewport?.width??innerWidth}'
+          )
+        let actual = await observe()
+        assert(
+          actual.dark === (name === 'dark') &&
+            actual.motion === (name === 'reduced-motion') &&
+            actual.transparency === (name === 'reduced-transparency'),
+          'Actual browser media preferences differ'
+        )
+        if (name === 'large-text') {
+          if (!(
+            Number(actual.font) > Number(before?.font) ||
+            Number(actual.height) > Number(before?.height)
+          )) {
+            browserZoomAttempted = true
+            await this.device.pressKey({ key: 'Cmd+=' })
+            await this.device.pressKey({ key: 'Cmd+=' })
+            actual = await observe()
+            const pixelFont = (value: Args | undefined): number =>
+              Number(value?.font) * Number(value?.scale) * Number(value?.dpr)
+            if (pixelFont(actual) <= pixelFont(before)) {
+              await this.cdp?.send('Emulation.setPageScaleFactor', {
+                pageScaleFactor: 1.5
+              })
+              actual = await observe()
+              row.textScaleMethod =
+                'Actual browser viewport zoom; OS text scale alone had no app effect'
+            } else
+              row.textScaleMethod =
+                'Observed ordinary browser zoom through Maestro keyboard'
+          } else
+            row.textScaleMethod =
+              'Observed OS text-scale glyph or line-box growth'
+          assert(
+            Number(actual.font) > Number(before?.font) ||
+              Number(actual.height) > Number(before?.height) ||
+              Number(actual.font) * Number(actual.scale) * Number(actual.dpr) >
+                Number(before?.font) *
+                  Number(before?.scale) *
+                  Number(before?.dpr),
+            'Browser accessibility setting must enlarge actual glyph/line-box or observed viewport pixel scale'
+          )
+          row.textGrowth = { before, after: actual }
+        }
+        row.environment = actual
+      }
+      if (this.native && name === 'large-text') {
+        const after = await this.publicBounds('chat-composer')
+        assert(
+          after.height > Number(nativeTextBefore?.height),
+          'Native OS large text must enlarge actual composer line-box'
+        )
+        row.textGrowth = { before: nativeTextBefore, after }
+      }
+      if (name === 'dark') {
+        row.applicability = 'not-applicable'
+        row.reason =
+          'App has no public dark-theme selector; default ThemeProvider uses tsBallpark. OS-dark is applied and its actual light fallback is reviewed. Mounted tsDark component coverage is separate.'
+        row.osPreferenceApplied = true
+      }
+      await sweep()
+      row.outcome = 'passed'
+    } finally {
+      if (this.native) {
+        if (recipe?.applicability === 'applicable') {
+          await this.settingsActions(recipe.restore)
+          for (const selector of recipe.restoreVerify)
+            await this.device.assertVisible({ ...selector, timeout: 5000 })
+          await this.device.launchApp({ appId: this.fixture.appId })
+        }
+      } else {
+        if (browserZoomAttempted) await this.device.pressKey({ key: 'Cmd+0' })
+        await this.cdp?.send('Emulation.setPageScaleFactor', {
+          pageScaleFactor: 1
+        })
+        await this.cdp?.send('Emulation.setEmulatedMedia', { features: [] })
+        await this.cdp?.send('Emulation.setEmulatedOSTextScale', { scale: 1 })
+      }
+      row.restoredAt = new Date().toISOString()
+      this.steps.push({ ...row, variant: name, name: 'Accessibility variant' })
+    }
+  }
+
+  async step(name: string, run: () => Promise<void>): Promise<void> {
+    const row: Args = { name, startedAt: new Date().toISOString() }
+    this.steps.push(row)
+    try {
+      await run()
+      row.outcome = 'passed'
+    } catch (error) {
+      row.outcome = error instanceof Chat2Blocked ? 'blocked' : 'failed'
+      row.error = redact(this.fixture, String(error))
+      throw error
+    } finally {
+      row.finishedAt = new Date().toISOString()
+    }
+  }
+
+  async nodes(): Promise<PublicNode[]> {
+    return flattenPublicHierarchy(await this.device.hierarchy())
+  }
+
+  async dom(script: string): Promise<Args> {
+    assert(
+      !this.native,
+      'Browser DOM inspection cannot inspect native/private app state'
+    )
+    const result = await this.device.evalBrowserScript({
+      script: 'return JSON.stringify((()=>{' + script + '})())'
+    })
+    return typeof result.data === 'string'
+      ? object(JSON.parse(result.data))
+      : object(result.data)
+  }
+
+  async visible(selector: Args, timeout = 1000): Promise<boolean> {
+    try {
+      await this.device.assertVisible({ ...selector, timeout })
+      return true
+    } catch (error) {
+      if (code(error) !== 'COMMAND_FAILED') throw error
+      return false
+    }
+  }
+
+  async text(text: string): Promise<void> {
+    await this.device.tapOn({ text: exactText(text) })
+  }
+
+  async id(id: string): Promise<void> {
+    await this.device.tapOn({ id })
+  }
+
+  async present(id: string): Promise<void> {
+    await this.device.assertVisible({ id, timeout: 15000 })
+  }
+
+  async absent(id: string): Promise<void> {
+    await this.device.assertNotVisible({ id, timeout: 3000 })
+  }
+
+  async open(path: string): Promise<void> {
+    assert(path.startsWith('/chat'), 'Only fixture chat routes may be opened')
+    if (!this.native) {
+      await this.dom(
+        'history.pushState(null,"",' +
+          JSON.stringify(path) +
+          ');dispatchEvent(new PopStateEvent("popstate"));return {publicHistoryNavigation:true,path:location.pathname}'
+      )
+      return
+    }
+    await this.device.openLink({
+      link: this.native
+        ? this.fixture.scheme + ':/' + path
+        : this.fixture.webUrl.replace(/\/$/, '') + path
+    })
+    if (this.surface === 'ios') {
+      for (let i = 0; i < 10; i++) {
+        const nodes = await this.nodes()
+        if (nodes.some(n => /Open in .TeamStation/.test(n.text ?? ''))) {
+          await this.tapObserved(
+            need(
+              nodes.find(n => n.text === 'Open' && n.bounds != null),
+              'Observed native Open alert button required'
+            )
+          )
+          break
+        }
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+    }
+  }
+
+  async tapObserved(node: PublicNode): Promise<void> {
+    const b = need(node.bounds, 'Observed public element bounds required')
+    await this.device.tapOnPoint({
+      point: `${Math.round(b.x + b.width / 2)},${Math.round(b.y + b.height / 2)}`
+    })
+  }
+
+  async hideKeyboard(): Promise<void> {
+    if (this.surface !== 'ios') {
+      await this.device.hideKeyboard()
+      return
+    }
+    const pane = (await this.nodes()).find(
+      n =>
+        n.type?.includes('ScrollView') === true &&
+        n.bounds != null &&
+        n.bounds.width > 200 &&
+        n.bounds.y > 100 &&
+        n.bounds.y < 500
+    )
+    const b = need(
+      pane?.bounds,
+      'Observed history gutter needed to dismiss iOS keyboard'
+    )
+    await this.device.tapOnPoint({
+      point: `${Math.round(b.x + b.width - 5)},${Math.round(b.y + Math.min(50, b.height / 2))}`
+    })
+  }
+
+  async back(): Promise<void> {
+    if (this.surface !== 'ios') {
+      await this.device.back()
+      return
+    }
+    const back = (await this.nodes()).find(
+      n =>
+        n.type?.includes('Button') === true &&
+        n.text === 'Back' &&
+        n.bounds != null
+    )
+    await this.tapObserved(need(back, 'Observed public Back control required'))
+  }
+
+  async replaceDraft(text: string): Promise<void> {
+    await this.id('chat-composer')
+    await this.device.eraseText()
+    if (text !== '') await this.append(text)
+  }
+
+  async append(text: string): Promise<void> {
+    await this.device.inputText({
+      text,
+      ...(this.surface === 'android' ? { keyPress: true } : {})
+    })
+  }
+
+  async draft(): Promise<string> {
+    if (!this.native) {
+      const value = (
+        await this.dom(
+          'return {value:document.querySelector(\'[data-testid="chat-composer"]\')?.value}'
+        )
+      ).value
+      assert(typeof value === 'string', 'Public composer value required')
+      return value
+    }
+    const value = await this.device.copyTextFrom({ id: 'chat-composer' })
+    if (typeof value.data === 'string') return value.data
+    throw new Chat2Blocked('Native public composer text could not be read')
+  }
+
+  async assertKeyboard(): Promise<void> {
+    await this.device.assertVisible({
+      id: 'chat-composer',
+      focused: true,
+      timeout: 2000
+    })
+    if (!this.native) {
+      const focus = await this.dom(
+        'return {focused:document.activeElement?.getAttribute("data-testid")==="chat-composer"}'
+      )
+      assert(focus.focused === true, 'Explicit Reply must focus the composer')
+      return
+    }
+    await this.keyboardVisible()
+  }
+
+  async keyboardVisible(): Promise<void> {
+    assert(this.native, 'Software keyboard proof is native only')
+    const nodes = await this.nodes()
+    if (!nodes.some(n => /keyboard/i.test(n.type ?? ''))) {
+      // Direct public key queries avoid the native snapshot's node cap.
+      for (const key of ['q', 'w', 'e'])
+        await this.device.assertVisible({
+          text: '^[' + key + key.toUpperCase() + ']$',
+          timeout: 2000
+        })
+    }
+  }
+
+  async shot(kind: string, note: string): Promise<void> {
+    assert(/^[a-z][a-z-]+$/.test(kind), 'Safe proof name required')
+    const file = `${this.surface}-${kind}-after.png`
+    const path = join(
+      this.runDir,
+      String(this.captures.length + 1).padStart(3, '0') + '-' + file
+    )
+    const image = saveCapture(await this.device.screenshot(), path)
+    this.captures.push({
+      file,
+      path,
+      at: new Date().toISOString(),
+      note,
+      ...image
+    })
+  }
+
+  async finish(
+    outcome: 'passed' | 'failed' | 'blocked',
+    error?: unknown
+  ): Promise<string> {
+    try {
+      if (outcome !== 'passed' && this.device != null) {
+        try {
+          saveCapture(
+            await this.device.screenshot(),
+            join(this.runDir, 'failure.png')
+          )
+        } catch {}
+        try {
+          privateJson(
+            join(this.runDir, 'failure-public-hierarchy.json'),
+            await this.device.hierarchy()
+          )
+        } catch {}
+      }
+    } finally {
+      if (this.cdp != null) await this.cdp.detach().catch(() => {})
+      if (this.browser != null) await this.browser.disconnect()
+      // Cleanup cannot inherit the UI lease's expired AbortSignal.
+      const daemon =
+        this.daemon == null
+          ? undefined
+          : await this.connectCleanup?.().catch(() => this.daemon)
+      if (daemon != null) {
+        try {
+          await daemon.detach(this.deviceId)
+        } catch (failure) {
+          this.cleanup.detachError = redact(this.fixture, String(failure))
+        }
+        if (this.native && this.deviceId !== '') {
+          try {
+            await daemon.stopDevice(this.deviceId, { force: true })
+            this.cleanup.deviceStopRequested = true
+          } catch (failure) {
+            this.cleanup.deviceStopError = redact(this.fixture, String(failure))
+          }
+        }
+        try {
+          await daemon.shutdown({ wait: 20000 })
+          this.cleanup.daemonStopped = true
+        } catch (failure) {
+          this.cleanup.daemonError = redact(this.fixture, String(failure))
+          daemon.close()
+        }
+        this.cleanup.daemonPid = daemon.info?.pid
+      }
+      try {
+        if (this.native && this.deviceId !== '') {
+          const platform = this.surface
+          if (platform === 'ios') {
+            const result = spawnSync(
+              'xcrun',
+              ['simctl', 'shutdown', this.deviceId],
+              { encoding: 'utf8', timeout: 10000 }
+            )
+            const inventory = spawnSync(
+              'xcrun',
+              ['simctl', 'list', 'devices', '--json'],
+              { encoding: 'utf8', timeout: 8000 }
+            )
+            let state: string | undefined
+            if (inventory.status === 0) {
+              const data = JSON.parse(inventory.stdout) as {
+                devices: Record<string, Array<{ udid: string; state: string }>>
+              }
+              state = Object.values(data.devices)
+                .flat()
+                .find(d => d.udid === this.deviceId)?.state
+            }
+            this.cleanup.nativeAbsence = {
+              id: this.deviceId,
+              state,
+              shutdownExit: result.status,
+              absent: state === 'Shutdown'
+            }
+          } else {
+            const adb = process.env.CHAT2_ADB ?? 'adb'
+            const name = spawnSync(
+              adb,
+              ['-s', this.deviceId, 'emu', 'avd', 'name'],
+              { encoding: 'utf8', timeout: 3000 }
+            )
+            if (name.status === 0) {
+              assert(
+                name.stdout.split('\n')[0].trim() ===
+                  this.fixture.devices.android.name,
+                'Refuse shutting down another AVD'
+              )
+              spawnSync(adb, ['-s', this.deviceId, 'emu', 'kill'], {
+                encoding: 'utf8',
+                timeout: 5000
+              })
+            }
+            let inventory = spawnSync(adb, ['devices', '-l'], {
+              encoding: 'utf8',
+              timeout: 5000
+            })
+            for (
+              let i = 0;
+              i < 30 &&
+              inventory.status === 0 &&
+              inventory.stdout
+                .split('\n')
+                .some(l => l.startsWith(this.deviceId + '\t'));
+              i++
+            ) {
+              await new Promise(resolve => setTimeout(resolve, 200))
+              inventory = spawnSync(adb, ['devices', '-l'], {
+                encoding: 'utf8',
+                timeout: 5000
+              })
+            }
+            this.cleanup.nativeAbsence = {
+              id: this.deviceId,
+              absent:
+                inventory.status === 0 &&
+                !inventory.stdout
+                  .split('\n')
+                  .some(l => l.startsWith(this.deviceId + '\t')),
+              inventory: inventory.stdout
+            }
+          }
+        }
+      } catch (failure) {
+        this.cleanup.deviceVerificationError = redact(
+          this.fixture,
+          String(failure)
+        )
+      }
+      const daemonStatus = spawnSync(
+        process.env.MAESTRO_D_BIN ?? 'maestro-d',
+        ['status', '--daemon', this.daemonName, '--json'],
+        { encoding: 'utf8', timeout: 5000 }
+      )
+      this.cleanup.daemonAbsence = {
+        name: this.daemonName,
+        exit: daemonStatus.status,
+        absent: daemonStatus.status === 3
+      }
+      this.cleanup.daemonStopped = daemonStatus.status === 3
+      if (this.fixture.cleanupServices) {
+        try {
+          this.cleanup.services = fixtureControl(this.fixture, 'cleanup')
+        } catch (failure) {
+          this.cleanup.servicesError = redact(this.fixture, String(failure))
+        }
+      }
+      if (this.reportsDir != null) lockTree(this.reportsDir)
+    }
+    const receipt = join(this.runDir, 'result.json')
+    const cleanupFailed =
+      this.cleanup.daemonError != null ||
+      this.cleanup.deviceStopError != null ||
+      this.cleanup.servicesError != null ||
+      this.cleanup.deviceVerificationError != null ||
+      this.cleanup.daemonStopped !== true ||
+      (this.native && object(this.cleanup.nativeAbsence).absent !== true)
+    const result = {
+      scenario: this.scenario,
+      surface: this.surface,
+      variant: process.env.CHAT2_VARIANT ?? 'default',
+      outcome: cleanupFailed ? 'failed' : outcome,
+      source: this.binding.source,
+      binding: this.binding,
+      fixtureOwnership: this.fixture.ownershipId,
+      device: this.deviceId,
+      daemon: this.daemonName,
+      environment: this.environment,
+      steps: this.steps,
+      captures: this.captures,
+      cleanup: this.cleanup,
+      error:
+        error == null
+          ? undefined
+          : redact(
+              this.fixture,
+              error instanceof Error ? error.message : 'Unknown harness failure'
+            ),
+      completedAt: new Date().toISOString(),
+      method:
+        'All UI actions through maestro-d TypeScript; CDP only for browser environment; captures prove composition, no smoothness/physical-haptic claim'
+    }
+    privateJson(receipt, result)
+    if (result.outcome === 'passed' && this.scenario === 'capture') {
+      const indexPath = join(this.artifactRoot, 'proof-index.json')
+      const index = existsSync(indexPath)
+        ? (JSON.parse(readFileSync(indexPath, 'utf8')) as { entries: Args[] })
+        : { entries: [] as Args[] }
+      for (const image of this.captures) {
+        const file = String(image.file)
+        const destination = join(this.artifactRoot, file)
+        if (existsSync(destination))
+          copyFileSync(destination, join(this.runDir, 'replaced-' + file))
+        copyFileSync(String(image.path), destination)
+        chmodSync(destination, 0o600)
+        index.entries = index.entries.filter(row => row.file !== file)
+        index.entries.push({
+          ...image,
+          source: this.binding.source,
+          surface: this.surface,
+          device: this.deviceId,
+          receipt,
+          imageFormat: 'PNG',
+          evidenceStatus: 'captured',
+          scenario: this.scenario,
+          driver: 'maestro-d TypeScript'
+        })
+      }
+      privateJson(indexPath, index)
+    }
+    if (cleanupFailed)
+      throw new Error(
+        'Owned resource shutdown failed; see private result receipt'
+      )
+    return receipt
+  }
+}
