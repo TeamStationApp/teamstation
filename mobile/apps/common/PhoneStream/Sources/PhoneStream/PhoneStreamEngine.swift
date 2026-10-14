@@ -90,6 +90,8 @@ public final class PhoneStreamEngine {
     var firstURL: String?
     /// The last URL the server gave, for a redial the server cannot answer.
     var cachedURL: String?
+    /// The take is already marked as published outside its parts.
+    var markedOutsideParts = false
   }
 
   public private(set) var isOpen = false
@@ -629,7 +631,7 @@ public final class PhoneStreamEngine {
       environment.storageRules.mustStop(freeBytes: environment.freeDiskBytes())
     else { return }
     try? catalog.markStoppedForLowStorage(id)
-    try? catalog.markPublishedOutsideParts(id)
+    markPublishedOutsideParts(id)
     lastError = .recordingStoppedLowStorage
     recordingSession.endLiveSession(recording: true, stillLive: true)
     await finishPart(endedAt: environment.clock.now, closingTake: true)
@@ -673,12 +675,23 @@ public final class PhoneStreamEngine {
   }
 
   func publishStatus() {
-    // The stream on the air while no part is recording: the take no longer covers it all.
-    if streamController.phase == .live, recordingTakeID == nil, let id = stream?.recordingID {
-      try? catalog.markPublishedOutsideParts(id)
+    // The stream on the air while no part is recording: the take no longer covers it all. Written
+    // once, not at every status.
+    if streamController.phase == .live, recordingTakeID == nil, let take = stream,
+      let id = take.recordingID, !take.markedOutsideParts {
+      markPublishedOutsideParts(id)
     }
     reportLiveStartIfReady()
     emit(.status(status))
+  }
+
+  /// How many times the take on the air was marked as published outside its parts.
+  private(set) var outsidePartsWrites = 0
+
+  private func markPublishedOutsideParts(_ id: Int64) {
+    if stream?.recordingID == id { stream?.markedOutsideParts = true }
+    outsidePartsWrites += 1
+    try? catalog.markPublishedOutsideParts(id)
   }
 
   /// How many times the live start is offered to TeamStation, two seconds apart, before it is left to
