@@ -109,6 +109,13 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     private var recordingTakeID: Long? = null
 
     /**
+     * The part being finished, while it is: its encoder's last pictures, the mix's tail and the hold
+     * fill run off the engine's thread, and every call that starts, stops or closes waits for it
+     * ([awaitFinishing]), so none lands half-way through a stop.
+     */
+    private var finishing: Job? = null
+
+    /**
      * Set as a session starts streaming, until TeamStation has been told when its first published
      * picture was captured; see [reportLiveStartIfReady].
      */
@@ -222,10 +229,12 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         runCatching { environment.retention.sweep(catalog, environment.storage, now, protecting = uploads.keys.toSet()) }
     }
 
-    /** Ends the capture and the programme, stopping a recording first. */
+    /** Ends the capture and the programme, stopping a recording first; a part being finished is finished first. */
     suspend fun close() = onEngine {
+        awaitFinishing()
         if (!isOpen) return@onEngine
         if (take != null) stopRecordingNow()
+        awaitFinishing()
         statusJob?.cancel()
         statusJob = null
         source?.stop()
@@ -267,6 +276,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         angleName: String,
         request: PhoneStreamRequest
     ) = onEngine {
+        awaitFinishing()
         if (!isOpen || take != null) throw PhoneStreamException(PhoneStreamError.NOT_READY)
         val existing = catalog.current(liveStreamId)
         if (existing != null && (existing.hasPendingUpload || uploads.containsKey(existing.recordingID))) {
@@ -317,8 +327,14 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         publishStatus()
     }
 
-    /** Stops the stream and the recording, the recording with its hold fill and sound check. */
-    suspend fun stopRecording() = onEngine { stopRecordingNow() }
+    /**
+     * Stops the stream and the recording, the recording with its hold fill and sound check. Returns
+     * once the part is finished, a part already finishing (a low-storage stop) included.
+     */
+    suspend fun stopRecording() = onEngine {
+        stopRecordingNow()
+        awaitFinishing()
+    }
 
     private suspend fun stopRecordingNow() {
         if (take == null) return
@@ -326,10 +342,11 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         take = null
         liveStartWanted = false
         streamController.stop()
+        // A low-storage stop the loop is in the middle of carries on: its finish is its own job.
         storageJob?.cancel()
         storageJob = null
         catalog.clearLive()
-        if (recordingTakeID != null) finishPart(endedAt, closingTake = true)
+        if (recordingTakeID != null) finishPart(endedAt, closingTake = true) else awaitFinishing()
         recordingSession.endLiveSession(stillLive = false)
         environment.foreground.recordingStopped()
         publishStatus()
@@ -371,21 +388,41 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
      * stop that resumes later leaves nothing open either.
      */
     private suspend fun finishPart(endedAt: Double, closingTake: Boolean) {
+        awaitFinishing()
         recordingTakeID = null
         source?.device?.detachEncoder(PhoneProgramme.RECORDING_KEY)
         val video = recordingVideo
         recordingVideo = null
         val tail = environment.stopTailSeconds
-        withContext(environment.ioDispatcher) {
-            val waited = environment.clock.now() - endedAt
-            if (tail > waited) delay(((tail - waited) * 1000).toLong())
-            video?.finishInput(finishInputMillis)
-            video?.close()
-            recordingSession.detachAnchors()
-            mix.flush(recordingMix, endedAt)
-            recordingSession.finishProgramme(until = endedAt)
+        // Its own job, not the caller's: a caller cancelled half-way (the storage loop, stopped by
+        // Stop) leaves the part to finish and the take to close rather than open and its codec running.
+        val job = scope.launch {
+            try {
+                withContext(environment.ioDispatcher) {
+                    val waited = environment.clock.now() - endedAt
+                    if (tail > waited) delay(((tail - waited) * 1000).toLong())
+                    runCatching { video?.finishInput(finishInputMillis) }
+                    runCatching { video?.close() }
+                    recordingSession.detachAnchors()
+                    mix.flush(recordingMix, endedAt)
+                    try {
+                        recordingSession.finishProgramme(until = endedAt)
+                    } catch (error: Exception) {
+                        telemetry.recordRecordingError(error.message ?: error.javaClass.simpleName)
+                    }
+                }
+                if (closingTake) recordingSession.close(endedAt)
+            } finally {
+                if (finishing === coroutineContext[Job]) finishing = null
+            }
         }
-        if (closingTake) recordingSession.close(endedAt)
+        finishing = job
+        job.join()
+    }
+
+    /** Returns once no part is being finished. */
+    private suspend fun awaitFinishing() {
+        while (true) (finishing ?: return).join()
     }
 
     /**
@@ -441,6 +478,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
      * the hour is closed where it got to.
      */
     suspend fun resumeInterrupted(request: PhoneStreamRequest): Boolean = onEngine {
+        awaitFinishing()
         if (!isOpen || take != null) throw PhoneStreamException(PhoneStreamError.NOT_READY)
         val live = catalog.live() ?: return@onEngine false
         val plan = LiveSessionResume.plan(index, environment.clock.now(), PhoneStreamProfile.resumeDowntimeLimitSeconds)
@@ -676,6 +714,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
      */
     suspend fun uploadRecording(liveStreamId: String, apiBase: String, token: String, title: String): String {
         val running = onEngine {
+            // A part still being finished is not exported half-written.
+            awaitFinishing()
             val recording = catalog.recordings().firstOrNull { it.liveStreamId == liveStreamId }
                 ?: throw PhoneStreamException(PhoneStreamError.NO_RECORDING)
             val videoId = recording.videoId
@@ -720,6 +760,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
 
     /** Deletes the take of [liveStreamId], its files and its rows. Not while it records or uploads. */
     suspend fun deleteRecording(liveStreamId: String) = onEngine {
+        awaitFinishing()
         val recording = catalog.recordings().firstOrNull { it.liveStreamId == liveStreamId } ?: return@onEngine
         if (take?.liveStreamId == liveStreamId) throw PhoneStreamException(PhoneStreamError.STILL_RECORDING)
         if (uploads.containsKey(recording.recordingID)) throw PhoneStreamException(PhoneStreamError.UPLOAD_IN_PROGRESS)
