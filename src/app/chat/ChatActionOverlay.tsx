@@ -1,13 +1,20 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import {
+  Animated,
   BackHandler,
   Pressable,
   ScrollView,
   StyleSheet,
+  useWindowDimensions,
   View
 } from 'react-native'
 
+import { AppHeader } from '../components/AppHeader'
+import { Button } from '../components/Button'
 import { GlassView } from '../components/GlassView'
+import { useBreakpoint } from '../components/useBreakpoint'
+import { useMotionPreference } from '../components/useMotionPreference'
+import { edgeMarginRem } from '../layout/margins'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
@@ -19,6 +26,10 @@ export interface ChatActionOverlayProps {
   selected?: React.ReactNode
   onClose: () => void
   label: string
+  initialField?: boolean
+  keyboardRows?: string
+  /** A chooser owns a full same-window scene with the shared header. */
+  scene?: boolean
 }
 
 /** The selected content and controls stay above the blurred backdrop. */
@@ -33,9 +44,27 @@ export function ChatActionOverlay(
 }
 
 function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
-  const { onClose } = props
+  const { onClose, initialField, keyboardRows } = props
   const theme = useTheme()
   const insets = useInsets()
+  const breakpoint = useBreakpoint()
+  const window = useWindowDimensions()
+  const margin = theme.rem(edgeMarginRem(theme, breakpoint))
+  const [headerHeight, setHeaderHeight] = useState(insets.top + theme.rem(3))
+  const reduced = useMotionPreference()
+  const entrance = useRef(new Animated.Value(0)).current
+  useEffect(() => {
+    if (props.scene !== true) return
+    const animation = Animated.timing(entrance, {
+      toValue: 1,
+      duration: reduced ? 80 : 200,
+      useNativeDriver: true
+    })
+    animation.start()
+    return () => {
+      animation.stop()
+    }
+  }, [props.scene, reduced, entrance])
   const panel = useRef<React.ComponentRef<typeof View>>(null)
   const close = useRef(onClose)
   close.current = onClose
@@ -47,14 +76,93 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
         return true
       }
     )
-    const stop = bindPopupKeys(panel.current, () => {
-      close.current()
-    })
+    const stop = bindPopupKeys(
+      panel.current,
+      () => {
+        close.current()
+      },
+      true,
+      initialField === true,
+      keyboardRows
+    )
     return () => {
       subscription.remove()
       stop()
     }
-  }, [])
+  }, [initialField, keyboardRows])
+  if (props.scene === true)
+    return (
+      <View
+        ref={panel}
+        testID="chat-picker-scene"
+        accessibilityLabel={props.label}
+        accessibilityViewIsModal
+        onAccessibilityEscape={() => {
+          close.current()
+        }}
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            zIndex: 100,
+            elevation: 30,
+            backgroundColor: theme.cardBackgroundColor
+          }
+        ]}
+      >
+        {/* The same-window scene preserves the composer's trusted focus handoff. */}
+        <Animated.View
+          testID="chat-picker-transition"
+          style={{
+            flex: 1,
+            opacity: entrance,
+            transform: reduced
+              ? undefined
+              : [
+                  {
+                    translateY: entrance.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [window.height, 0]
+                    })
+                  }
+                ]
+          }}
+        >
+          <ScrollView
+            testID="chat-picker-content"
+            keyboardShouldPersistTaps="handled"
+            automaticallyAdjustKeyboardInsets
+            style={{ flex: 1 }}
+            contentContainerStyle={{
+              paddingTop: headerHeight + theme.rem(1),
+              paddingBottom: insets.bottom + theme.rem(1),
+              paddingLeft: Math.max(margin, insets.left),
+              paddingRight: Math.max(margin, insets.right),
+              gap: theme.rem(0.75)
+            }}
+          >
+            {props.children}
+          </ScrollView>
+          <AppHeader
+            title={props.label}
+            contentHeight={Math.max(
+              theme.rem(3),
+              theme.rem(2.25) * window.fontScale
+            )}
+            onHeight={setHeaderHeight}
+            nav={
+              <Button
+                label={lstrings.chat_cancel}
+                kind="text"
+                textColor={theme.dangerColor}
+                onPress={() => {
+                  close.current()
+                }}
+              />
+            }
+          />
+        </Animated.View>
+      </View>
+    )
   return (
     <>
       <View

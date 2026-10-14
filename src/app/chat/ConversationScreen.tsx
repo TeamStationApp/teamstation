@@ -26,6 +26,16 @@ import { ChatDropTarget } from './ChatDropTarget'
 import * as platformFiles from './chatFiles'
 import type { PickedFile, PickSource } from './chatFileTypes'
 import { anchorAfterChromeChange } from './chatLayoutModel'
+import {
+  type ComposerChange,
+  type ComposerSelection,
+  insertMention,
+  mentionIds,
+  type MentionRequest,
+  mentionRequest,
+  type MentionToken,
+  reconcileMentions
+} from './chatMentionsModel'
 import { endsIncomingRun } from './chatMessageRuns'
 import type { MessageSource } from './chatMessageSource'
 import {
@@ -55,6 +65,7 @@ import { EmojiPicker } from './EmojiPicker'
 import type { MessageView } from './engine/apply'
 import type { ConversationView, GrantApproval } from './engine/engine'
 import { findOriginal, replyExcerpt } from './engine/reply'
+import { MentionPicker } from './MentionPicker'
 import { MessageBubble } from './MessageBubble'
 import { MessageMenu } from './MessageMenu'
 import { PinnedMessages } from './PinnedMessages'
@@ -131,9 +142,11 @@ export function ConversationScreen(
   })
   const readableTop = useRef(viewport.readableTop)
   readableTop.current = viewport.readableTop
-  const focusComposer = useRef<() => void>(() => {})
+  const focusComposer = useRef<(selection?: ComposerSelection) => void>(
+    () => {}
+  )
   const registerComposerFocus = useCallback(
-    (focus: () => void): (() => void) => {
+    (focus: (selection?: ComposerSelection) => void): (() => void) => {
       focusComposer.current = focus
       return () => {
         if (focusComposer.current === focus) focusComposer.current = () => {}
@@ -144,7 +157,6 @@ export function ConversationScreen(
   const identityPress = useRef(onMembers)
   identityPress.current = onMembers
 
-  const { onDraftChange } = props
   const [localDraftOwner] = useState(() => {
     const state = newChatWorkspaceState()
     state.drafts.set(conversationId, props.draft ?? emptyChatDraft())
@@ -165,6 +177,28 @@ export function ConversationScreen(
   const [text, setText] = useState(props.draft?.text ?? '')
   const textNow = useRef(text)
   textNow.current = text
+  const [mentionTokens, setMentionTokens] = useState<
+    MentionToken[] | undefined
+  >(props.draft?.mentionTokens)
+  const mentionTokensNow = useRef(mentionTokens)
+  mentionTokensNow.current = mentionTokens
+  const [mentionChoosing, setMentionChoosing] = useState<MentionRequest>()
+  const [mentionError, setMentionError] = useState<string>()
+  const reportDraft = props.onDraftChange
+  const onDraftChange = useCallback(
+    (next: ChatDraft): void => {
+      const tokens = mentionTokensNow.current
+      reportDraft?.({
+        ...next,
+        ...(tokens == null ? {} : { mentionTokens: tokens })
+      })
+    },
+    [reportDraft]
+  )
+  useEffect(() => {
+    if (props.active === false || view?.composer !== 'enabled')
+      setMentionChoosing(undefined)
+  }, [conversationId, props.active, view?.composer])
   const [replyTo, setReplyTo] = useState<MessageView | undefined>(
     props.draft?.replyTo
   )
@@ -279,6 +313,9 @@ export function ConversationScreen(
         conversationId,
         () => ({
           text: textNow.current,
+          ...(mentionTokensNow.current == null
+            ? {}
+            : { mentionTokens: mentionTokensNow.current }),
           replyTo: replyNow.current,
           editing: editingNow.current,
           picked: pickedNow.current,
@@ -291,6 +328,9 @@ export function ConversationScreen(
           if (!mounted.current) return
           const next = draftOwner.draft(conversationId)
           textNow.current = next.text
+          mentionTokensNow.current = next.mentionTokens
+          setMentionTokens(next.mentionTokens)
+          setMentionChoosing(undefined)
           replyNow.current = next.replyTo
           editingNow.current = next.editing
           pickedNow.current = next.picked
@@ -430,6 +470,7 @@ export function ConversationScreen(
       props.active === false ||
       !readDocumentActive() ||
       menu != null ||
+      mentionChoosing != null ||
       reacting != null ||
       pinsOpen ||
       isRestoringPopupFocus()
@@ -438,7 +479,15 @@ export function ConversationScreen(
     readRevision.current =
       current.conversation.preferences?.manualUnreadRevision ?? 0
     engine.markRead(conversationId, readRevision.current).catch(() => undefined)
-  }, [engine, conversationId, props.active, menu, reacting, pinsOpen])
+  }, [
+    engine,
+    conversationId,
+    props.active,
+    menu,
+    reacting,
+    pinsOpen,
+    mentionChoosing
+  ])
   const hasView = view != null
   const userScrolled = useCallback(() => {
     if (!mounted.current || !paneActive.current) return
@@ -943,6 +992,7 @@ export function ConversationScreen(
   useEffect(() => {
     const next = {
       text,
+      ...(mentionTokens == null ? {} : { mentionTokens }),
       replyTo,
       editing,
       picked,
@@ -955,6 +1005,7 @@ export function ConversationScreen(
     onDraftChange?.(next)
   }, [
     text,
+    mentionTokens,
     replyTo,
     editing,
     picked,
@@ -1174,6 +1225,7 @@ export function ConversationScreen(
       props.active === false ||
       !documentActive ||
       menu != null ||
+      mentionChoosing != null ||
       pinsOpen ||
       reacting != null
     )
@@ -1189,6 +1241,7 @@ export function ConversationScreen(
     props.active,
     documentActive,
     menu,
+    mentionChoosing,
     pinsOpen,
     reacting
   ])
@@ -1229,6 +1282,8 @@ export function ConversationScreen(
   }
 
   const send = (): void => {
+    const current = engine.view(conversationId)
+    if (current?.composer !== 'enabled') return
     if (
       !sendAllowed({
         enabled: view.composer === 'enabled' && props.active !== false,
@@ -1243,13 +1298,28 @@ export function ConversationScreen(
     if (submission == null) return
     const submitted = submission.draft
     const body = submitted.text.trim()
+    const mentions = mentionIds(
+      submitted.text,
+      submitted.mentionTokens,
+      current.members,
+      submitted.editing
+    )
     const work = async (): Promise<unknown> => {
       if (submitted.editing != null) {
-        await engine.edit(conversationId, submitted.editing.id, body)
+        if (mentions.length > 0)
+          await engine.edit(
+            conversationId,
+            submitted.editing.id,
+            body,
+            mentions
+          )
+        else await engine.edit(conversationId, submitted.editing.id, body)
         return
       }
-      const quote =
-        submitted.replyTo == null ? {} : { quoteId: submitted.replyTo.id }
+      const quote = {
+        ...(submitted.replyTo == null ? {} : { quoteId: submitted.replyTo.id }),
+        ...(mentions.length === 0 ? {} : { mentions })
+      }
       if (submitted.picked.length > 0) {
         return await engine.attach(
           conversationId,
@@ -1276,11 +1346,33 @@ export function ConversationScreen(
     )
   }
 
-  const onText = (next: string): void => {
+  const onText = (next: string, change?: ComposerChange): void => {
+    const before = textNow.current
+    const reconciled = reconcileMentions(
+      before,
+      next,
+      mentionTokensNow.current,
+      change
+    )
+    const tokens =
+      mentionTokensNow.current == null && reconciled.length === 0
+        ? undefined
+        : reconciled
+    mentionTokensNow.current = tokens
+    setMentionTokens(tokens)
+    const choosing =
+      view.composer === 'enabled' &&
+      props.active !== false &&
+      engine.view(conversationId)?.composer === 'enabled'
+        ? mentionRequest(before, next, change)
+        : undefined
+    setMentionChoosing(choosing)
+    setMentionError(undefined)
     textNow.current = next
     draftOwner.write(conversationId, {
       ...draftOwner.draft(conversationId),
-      text: next
+      text: next,
+      ...(tokens == null ? {} : { mentionTokens: tokens })
     })
     setText(next)
     readRevision.current =
@@ -1292,6 +1384,42 @@ export function ConversationScreen(
     if (next !== '' && view.composer === 'enabled') {
       engine.typing(conversationId)
     }
+  }
+
+  const chooseMention = (userId: number): void => {
+    const current = engine.view(conversationId)
+    const member = current?.members.find(member => member.userId === userId)
+    if (
+      props.active === false ||
+      current?.composer !== 'enabled' ||
+      member == null ||
+      mentionChoosing == null
+    ) {
+      setMentionChoosing(undefined)
+      return
+    }
+    const next = insertMention(
+      mentionChoosing,
+      textNow.current,
+      mentionTokensNow.current,
+      member
+    )
+    if (next == null) {
+      setMentionError(lstrings.chat_mention_too_long)
+      return
+    }
+    textNow.current = next.text
+    mentionTokensNow.current = next.tokens
+    setText(next.text)
+    setMentionTokens(next.tokens)
+    draftOwner.write(conversationId, {
+      ...draftOwner.draft(conversationId),
+      text: next.text,
+      mentionTokens: next.tokens
+    })
+    setMentionChoosing(undefined)
+    setMentionError(undefined)
+    focusComposer.current(next.selection)
   }
 
   const reply = (pressed: MessageView): void => {
@@ -1435,7 +1563,7 @@ export function ConversationScreen(
       scrolled.current.offset + scrolled.current.height >=
       scrolled.current.content - 48
     scrolled.current.anchor = readingAnchor(messagePositions.current)
-    props.onDraftChange?.({
+    onDraftChange?.({
       text: textNow.current,
       replyTo: replyNow.current,
       editing: editingNow.current,
@@ -1904,7 +2032,12 @@ export function ConversationScreen(
                     : undefined
               }
               onCancelContext={() => {
-                if (editing != null) setText('')
+                if (editing != null) {
+                  textNow.current = ''
+                  setText('')
+                  mentionTokensNow.current = undefined
+                  setMentionTokens(undefined)
+                }
                 setEditing(undefined)
                 replyNow.current = undefined
                 setReplyTo(undefined)
@@ -1927,6 +2060,20 @@ export function ConversationScreen(
           )}
         </View>
       </ChatViewport>
+      {mentionChoosing?.text === text &&
+        view.composer === 'enabled' &&
+        props.active !== false && (
+          <MentionPicker
+            members={view.members}
+            error={mentionError}
+            onSelect={chooseMention}
+            onClose={() => {
+              setMentionChoosing(undefined)
+              setMentionError(undefined)
+              focusComposer.current()
+            }}
+          />
+        )}
       {currentMenu != null && (
         <MessageMenu
           message={currentMenu}
