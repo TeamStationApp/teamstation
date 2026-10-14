@@ -854,8 +854,10 @@ public final class PhoneStreamEngine {
     try? catalog.setUpload(id: nil, title: nil, for: id)
   }
 
-  /// Deletes the take of `liveStreamId`, its files and its rows. Not while it records or uploads.
-  public func deleteRecording(liveStreamId: String) throws {
+  /// Deletes the take of `liveStreamId`, its files and its rows. Not while it records or uploads,
+  /// and not before a part still being finished has closed its file.
+  public func deleteRecording(liveStreamId: String) async throws {
+    await partFinished()
     guard let recording = try catalog.recordings().first(where: { $0.liveStreamId == liveStreamId }) else { return }
     if stream?.liveStreamId == liveStreamId { throw PhoneStreamError.stillRecording }
     if uploads[recording.recordingID] != nil { throw PhoneStreamError.uploadInProgress }
