@@ -32,7 +32,11 @@ import {
   reminderDescription
 } from '../notifications/recordingReminders'
 import { directorRoutes } from './director'
-import { directorUploadRoutes, replaceLiveRecording } from './directorUploads'
+import {
+  ANOTHER_ACCOUNTS_RECORDING,
+  directorUploadRoutes,
+  replaceLiveRecording
+} from './directorUploads'
 import { healthRoutes } from './health'
 import { liveRoutes } from './live'
 import { notificationRoutes } from './notifications'
@@ -1270,11 +1274,37 @@ describe('phones and Directors asking for their streams by device', function () 
       expect((await video(firstVideo)).hidden).equals(false)
     })
 
+    it('refuses a recording of somebody else’s stream, rather than opening it unnamed', async function () {
+      if (db == null) this.skip()
+      // One person's take, resumed on a shared phone after another signed in.
+      // Opened unnamed, it went down the coverage rule as the second person's
+      // upload and could hide their own live copies.
+      const gameId = await newGame()
+      const theirs = await ask(gameId, phone('Home Plate'), OTHER)
+      const before = await db
+        .selectFrom('director_uploads')
+        .select(eb => eb.fn.countAll<string>().as('count'))
+        .executeTakeFirstOrThrow()
+      const opened = await open(gameId, {
+        liveStreamId: theirs.body.id,
+        wholeStream: true
+      })
+      expect(opened.status).equals(403)
+      expect(opened.body.message).equals(ANOTHER_ACCOUNTS_RECORDING)
+      const after = await db
+        .selectFrom('director_uploads')
+        .select(eb => eb.fn.countAll<string>().as('count'))
+        .executeTakeFirstOrThrow()
+      expect(after.count).equals(before.count)
+      // Its own account opens it as before.
+      const own = await open(gameId, { liveStreamId: theirs.body.id }, OTHER)
+      expect(own.status).equals(201)
+    })
+
     it('ignores a liveStreamId it may not use, and the upload still opens', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()
       const elsewhere = await newGame()
-      const theirs = await ask(gameId, phone('Home Plate'), OTHER)
       const otherGame = await ask(elsewhere, phone('Home Plate'))
       const uploaded = await ask(gameId, phone('Dugout'))
       await db
@@ -1288,7 +1318,6 @@ describe('phones and Directors asking for their streams by device', function () 
         deviceModel: 'iPad Pro'
       })
       for (const named of [
-        theirs.body.id,
         otherGame.body.id,
         uploaded.body.id,
         director.body.id,
