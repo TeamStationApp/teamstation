@@ -380,6 +380,33 @@ struct ChooseTests {
     #expect(abs(sent.timeIntervalSinceNow - 2) < 0.1, "reported \(sent.timeIntervalSinceNow) s from now")
   }
 
+  @Test func saysWhyFromTheRowsStateAndWindowBeforeTheIngestsWord() {
+    let now = Date(timeIntervalSince1970: 1_790_000_000)
+    func row(
+      state: String? = "idle",
+      opensAt: Date? = nil,
+      closesAt: Date? = nil,
+      lastError: String? = nil
+    ) -> TeamStationDeviceStream {
+      TeamStationDeviceStream(
+        id: "lst_9", gameId: "g1", state: state, lastError: lastError,
+        deviceId: installId, opensAt: opensAt, closesAt: closesAt
+      )
+    }
+    let ended = TeamStationError.streamEnded.localizedDescription
+    #expect(TeamStationAccount.refusal(of: row(state: "ended", lastError: "x"), now: now) == ended)
+    #expect(TeamStationAccount.refusal(of: row(state: "revoked"), now: now) == ended)
+    let early = TeamStationAccount.refusal(of: row(opensAt: now.addingTimeInterval(600), lastError: "x"), now: now)
+    #expect(early?.hasPrefix("This camera can go live from ") == true)
+    let late = TeamStationAccount.refusal(of: row(opensAt: now.addingTimeInterval(-600), closesAt: now, lastError: "x"), now: now)
+    #expect(late?.hasPrefix("This camera's streaming window closed at ") == true)
+    // Inside its window, the ingest's own sentence; nothing to say, nil.
+    let open = row(opensAt: now.addingTimeInterval(-600), closesAt: now.addingTimeInterval(600), lastError: "Disk full")
+    #expect(TeamStationAccount.refusal(of: open, now: now) == "Disk full")
+    #expect(TeamStationAccount.refusal(of: row(lastError: ""), now: now) == nil)
+    #expect(TeamStationAccount.refusal(of: row(), now: now) == nil)
+  }
+
   @Test func picksTheShortestRoundTripForTheServersClock() {
     #expect(ServerClock.offset(from: []) == nil)
     // A clock that went backwards mid-request says nothing.
