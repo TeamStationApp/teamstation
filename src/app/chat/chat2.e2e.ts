@@ -41,6 +41,60 @@ import type { MessageView } from './engine/apply'
 type Peer = Awaited<ReturnType<typeof fixturePeer>>
 type Json = Record<string, unknown>
 
+/** Compare one public selector coordinate space without assuming native raster scale. */
+export async function observeMentionHeader(ui: Chat2UI): Promise<Json> {
+  await ui.present('chat-picker-scene')
+  await ui.present('chat-picker-header')
+  const header = await ui.observedBounds({
+    id: 'chat-picker-header',
+    childOf: { id: 'chat-picker-scene' }
+  })
+  const title = await ui.observedBounds({
+    text: exactText('Mention a member'),
+    childOf: { id: 'chat-picker-header' }
+  })
+  const cancel = await ui.observedBounds({
+    text: exactText('Cancel'),
+    childOf: { id: 'chat-picker-header' }
+  })
+  const search = await ui.observedBounds({
+    text: exactText('Search members'),
+    childOf: { id: 'chat-picker-content' }
+  })
+  for (const box of [header, title, cancel, search])
+    assert(
+      [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+        box.width > 0 &&
+        box.height > 0,
+      'Actual measured chooser header and Search bounds required'
+    )
+  for (const box of [title, cancel])
+    assert(
+      box.y >= header.y &&
+        box.y + box.height <= header.y + header.height &&
+        box.x >= header.x &&
+        box.x + box.width <= header.x + header.width,
+      'Chooser title and Cancel must be contained in the measured header'
+    )
+  assert(
+    header.y + header.height <= search.y,
+    'Chooser title and Cancel header must be above Search, never a footer'
+  )
+  return {
+    mentionHeaderGeometry: {
+      header,
+      title,
+      cancel,
+      search,
+      coordinateSpace: ui.native
+        ? 'Native public scoped element bounds; no raster conversion assumed'
+        : 'Public DOM CSS pixels',
+      titleScope: 'chat-picker-header',
+      searchScope: 'chat-picker-content'
+    }
+  }
+}
+
 class Scenarios {
   readonly group: string
   readonly viewerKey: string
@@ -1638,6 +1692,7 @@ class Scenarios {
         await this.reply()
         await ui.append('@')
         await ui.device.assertVisible({ text: exactText('Mention a member') })
+        this.observations.push(await observeMentionHeader(ui))
         const members = this.f.members.filter(m => m.userId !== this.viewerId)
         const first = need(members[0], 'Mention member fixtures required')
         assert(
@@ -2679,6 +2734,7 @@ class Scenarios {
           await ui.back()
           await ui.replaceDraft('@')
           await ui.device.assertVisible({ text: exactText('Mention a member') })
+          this.observations.push(await observeMentionHeader(ui))
           const member = need(
             this.f.members.find(m => m.userId !== this.viewerId),
             'Current mention member required'
@@ -2767,6 +2823,7 @@ class Scenarios {
     await ui.back()
     await ui.replaceDraft('@')
     await ui.device.assertVisible({ text: exactText('Mention a member') })
+    this.observations.push(await observeMentionHeader(ui))
     await ui.shot('mentions', 'Actual mention chooser before selection')
     const member = need(
       this.f.members.find(m => m.userId !== this.viewerId),
