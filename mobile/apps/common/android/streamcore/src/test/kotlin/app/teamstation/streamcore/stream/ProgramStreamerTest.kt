@@ -5,6 +5,7 @@ import app.teamstation.streamcore.bitrate.AdaptiveBitrateController
 import app.teamstation.streamcore.core.EncodedVideoFrame
 import app.teamstation.streamcore.core.StreamCodec
 import app.teamstation.streamcore.rtmp.AMF0
+import app.teamstation.streamcore.rtmp.ChannelRTMPTransport
 import app.teamstation.streamcore.rtmp.FLVTag
 import app.teamstation.streamcore.rtmp.FakeRtmpServer
 import app.teamstation.streamcore.rtmp.RTMPClient
@@ -21,7 +22,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.StandardSocketOptions
+import java.nio.channels.ServerSocketChannel
+import java.nio.channels.SocketChannel
 import java.util.Collections
 
 /** [ProgramStreamer] with fake encoders, publishing to an in-process ingest. */
@@ -264,6 +270,43 @@ class ProgramStreamerTest {
         // Not live on the wire, so nothing is sent and nothing is counted.
         streamer.append(AudioFrame(ShortArray(4096), wallClock = wall))
         videos.single().output!!.onFrame(frame(false))
+    }
+
+    @Test
+    fun aPictureDroppedForAKeyframeAsksTheEncoderForOne() {
+        // A peer that reads nothing, so what the streamer sends waits and then outlives the buffer.
+        val listener = ServerSocketChannel.open().apply {
+            setOption(StandardSocketOptions.SO_RCVBUF, 8 * 1024)
+            bind(InetSocketAddress(InetAddress.getLoopbackAddress(), 0))
+        }
+        val sender = SocketChannel.open().apply {
+            setOption(StandardSocketOptions.SO_SNDBUF, 8 * 1024)
+            connect(listener.localAddress)
+        }
+        val receiver = listener.accept()
+        closers += AutoCloseable { receiver.close(); sender.close(); listener.close() }
+        val client = RTMPClient().also { closers += AutoCloseable { it.stop() } }
+        client.attachForTesting(
+            ChannelRTMPTransport.wrap(sender, sendTimeoutSeconds = 0.05),
+            budgetBytes = 64 * 1024 * 1024,
+            bufferSeconds = 0.2,
+            stallDeadlineSeconds = 10.0
+        )
+        val streamer = streamer()
+        streamer.goLiveForTesting(client, StreamSettings(codec = StreamCodec.HEVC), startWall = wall)
+        val video = videos.single()
+        fun big(keyframe: Boolean) = EncodedVideoFrame(
+            nalUnits = listOf((if (keyframe) idr else trail) + ByteArray(20_000)),
+            parameterSets = if (keyframe) listOf(vps, sps, pps) else emptyList(),
+            isKeyframe = keyframe,
+            presentationTime = wall
+        )
+        video.output!!.onFrame(big(true))
+        repeat(60) { video.output!!.onFrame(big(false)) }
+        assertEquals(0, video.syncRequests)
+        Thread.sleep(400)
+        video.output!!.onFrame(big(false))
+        assertEquals(1, video.syncRequests)
     }
 
     @Test
