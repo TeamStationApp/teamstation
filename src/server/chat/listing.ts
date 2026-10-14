@@ -17,7 +17,7 @@ import { survivors } from '../teams/teamStaff'
 import { isEligible, seasonStaffIds, teamGuardianRows } from './audiences'
 import { DmFacts } from './dms'
 import { defaultPreferences, preferencesFor } from './preferences'
-import { scopeNames, titlesOf } from './titles'
+import { scopeIdentities, scopeKey, scopesOf, titlesOf } from './titles'
 
 /**
  * What the chat routes read back: a person's conversations, a
@@ -91,23 +91,10 @@ export function nameMatches(names: string[], query: string): boolean {
   return names.some(name => name.toLowerCase().includes(wanted))
 }
 
-/** The season each season id belongs to the league of, for season chats. */
-async function leaguesOfSeasons(
-  db: Kysely<Database>,
-  seasonIds: string[]
-): Promise<Map<string, string | null>> {
-  if (seasonIds.length === 0) return new Map()
-  const rows = await db
-    .selectFrom('seasons')
-    .select(['id', 'league_id'])
-    .where('id', 'in', seasonIds)
-    .execute()
-  return new Map(rows.map(row => [row.id, row.league_id]))
-}
-
 /** Every conversation `userId` is in now, as the list shows it. */
 export async function conversationsFor(
   db: Kysely<Database>,
+  media: MediaContext,
   userId: number,
   isAdmin: boolean,
   now: Date = new Date()
@@ -134,12 +121,13 @@ export async function conversationsFor(
     .orderBy('chat_conversations.id')
     .execute()
   if (rows.length === 0) return []
-  return await describe(db, rows, userId, isAdmin)
+  return await describe(db, media, rows, userId, isAdmin)
 }
 
 /** One conversation as the list shows it to `userId`. */
 export async function conversationFor(
   db: Kysely<Database>,
+  media: MediaContext,
   conversationId: string,
   userId: number,
   isAdmin: boolean
@@ -149,12 +137,13 @@ export async function conversationFor(
     .select(['id', 'kind', 'scope_type', 'scope_id', 'closed_at', 'last_seq'])
     .where('id', '=', conversationId)
     .executeTakeFirstOrThrow()
-  const [described] = await describe(db, [row], userId, isAdmin)
+  const [described] = await describe(db, media, [row], userId, isAdmin)
   return described
 }
 
 async function describe(
   db: Kysely<Database>,
+  media: MediaContext,
   rows: ConversationRow[],
   userId: number,
   isAdmin: boolean
@@ -171,14 +160,22 @@ async function describe(
     .orderBy('seq', 'desc')
     .execute()
   const lastPost = new Map(posts.map(post => [post.conversation_id, post]))
-  const titles = await titlesOf(
-    db,
-    rows.map(row => ({
-      id: row.id,
-      kind: row.kind,
-      scopeType: row.scope_type,
-      scopeId: row.scope_id
-    }))
+  // Each scope's row, read once: the title, the scope name, the picture
+  // and a season's league all come from it.
+  const titled = rows.map(row => ({
+    id: row.id,
+    kind: row.kind,
+    scopeType: row.scope_type,
+    scopeId: row.scope_id
+  }))
+  const identities = await scopeIdentities(db, scopesOf(titled))
+  const titles = titlesOf(titled, identities)
+  // Signed once per scope, so every chat of a scope shows the same picture.
+  const pictures = new Map(
+    [...identities].map(([key, identity]) => [
+      key,
+      imageUrl(media.space, identity.logoPath)
+    ])
   )
   const counts = new Map(
     (
@@ -210,16 +207,9 @@ async function describe(
   const keys = await keyState(db, ids, userId)
   const people = await dmPeople(
     db,
+    media.space,
     rows.filter(row => row.kind === 'dm').map(row => row.id),
     userId
-  )
-  const names = await scopeNames(
-    db,
-    rows.flatMap(row =>
-      row.scope_type == null || row.scope_id == null
-        ? []
-        : [{ type: row.scope_type, id: row.scope_id }]
-    )
   )
   // When each chat last had a message, for the list. The newest envelope
   // of any kind: a reaction or an edit is news in a chat too.
@@ -239,10 +229,6 @@ async function describe(
 
   // Moderation and posting, from the caller's roles.
   const scopes = await roleScopes(db, userId, isAdmin)
-  const seasonIds = rows.flatMap(row =>
-    row.scope_type === 'season' && row.scope_id != null ? [row.scope_id] : []
-  )
-  const seasonLeague = await leaguesOfSeasons(db, seasonIds)
   const direct = await db
     .selectFrom('scope_roles')
     .select(['scope_type', 'scope_id', 'role'])
@@ -252,7 +238,8 @@ async function describe(
     id != null &&
     direct.some(role => role.scope_type === type && role.scope_id === id)
   const seasonStaff = (seasonId: string): boolean =>
-    holdsOn('season', seasonId) || holdsOn('league', seasonLeague.get(seasonId))
+    holdsOn('season', seasonId) ||
+    holdsOn('league', identities.get(scopeKey('season', seasonId))?.leagueId)
 
   return rows.map(row => {
     const scopeId = row.scope_id ?? ''
@@ -274,6 +261,9 @@ async function describe(
     const canPost =
       !closed && (row.kind !== 'seasonAnnouncements' || seasonStaff(scopeId))
     const key = keys.get(row.id)
+    const scope =
+      row.scope_type == null ? undefined : scopeKey(row.scope_type, scopeId)
+    const identity = scope == null ? undefined : identities.get(scope)
     return {
       id: row.id,
       kind: row.kind,
@@ -282,10 +272,9 @@ async function describe(
         row.scope_type == null || row.scope_id == null
           ? null
           : { type: row.scope_type, id: row.scope_id },
-      scopeName:
-        row.scope_type == null
-          ? null
-          : (names.get(`${row.scope_type}:${scopeId}`) ?? null),
+      scopeName: identity?.scopeName ?? null,
+      avatarName: identity?.name ?? null,
+      avatarUrl: (scope == null ? undefined : pictures.get(scope)) ?? null,
       lastSeq: Number(row.last_seq),
       lastMessageAt: lastAt.get(row.id) ?? null,
       lastPostAt:
@@ -317,6 +306,7 @@ async function describe(
  */
 async function dmPeople(
   db: Kysely<Database>,
+  space: MediaContext['space'],
   conversationIds: string[],
   userId: number
 ): Promise<Map<string, ChatDmPerson[]>> {
@@ -344,7 +334,8 @@ async function dmPeople(
       'id',
       'display_name as displayName',
       'first_name as firstName',
-      'last_name as lastName'
+      'last_name as lastName',
+      'avatar_path as avatarPath'
     ])
     .where('id', 'in', [userId, ...rows.map(row => Number(row.userId))])
     .execute()
@@ -373,7 +364,10 @@ async function dmPeople(
             userId: id,
             shortName:
               names.get(id) ?? userOf.get(id)?.displayName ?? String(id),
-            left: row.left
+            left: row.left,
+            avatarUrl: row.left
+              ? null
+              : imageUrl(space, userOf.get(id)?.avatarPath ?? null)
           }
         })
         .sort((a, b) => a.shortName.localeCompare(b.shortName))

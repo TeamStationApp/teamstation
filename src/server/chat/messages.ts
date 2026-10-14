@@ -16,7 +16,7 @@ import { chatPeople, moderatorsOf } from './listing'
 import { notifyChat, notifyChatUser } from './membershipLog'
 import { clearManualUnread } from './preferences'
 import { memberNow } from './reconciler'
-import { titlesOf } from './titles'
+import { scopeIdentities, scopesOf, titlesOf } from './titles'
 import { b64 } from './wire'
 
 /**
@@ -733,15 +733,13 @@ export async function reportsFor(
     .limit(MAX_PAGE)
     .execute()
   const envelopes = rows.map(row => row.envelope as ReportEnvelope)
-  const titles = await titlesOf(
-    db,
-    rows.map(row => ({
-      id: row.conversation_id,
-      kind: row.kind,
-      scopeType: row.scope_type,
-      scopeId: row.scope_id
-    }))
-  )
+  const titled = rows.map(row => ({
+    id: row.conversation_id,
+    kind: row.kind,
+    scopeType: row.scope_type,
+    scopeId: row.scope_id
+  }))
+  const titles = titlesOf(titled, await scopeIdentities(db, scopesOf(titled)))
   const people = await chatPeople(db, space, [
     ...rows.map(row => Number(row.reporter_user_id)),
     ...envelopes.map(envelope => envelope.senderUserId)

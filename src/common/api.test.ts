@@ -1043,6 +1043,8 @@ describe('api client', function () {
     expect(await list.client.chatConversations()).deep.equals([
       {
         ...chat,
+        avatarName: null,
+        avatarUrl: null,
         people: [],
         lastPostAt: null,
         lastPostId: null,
@@ -1056,6 +1058,9 @@ describe('api client', function () {
       },
       {
         ...dm,
+        avatarName: null,
+        avatarUrl: null,
+        people: dm.people.map(person => ({ ...person, avatarUrl: null })),
         lastPostAt: null,
         lastPostId: null,
         lastPostSeq: 0,
