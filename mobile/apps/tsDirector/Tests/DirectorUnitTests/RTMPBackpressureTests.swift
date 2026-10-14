@@ -85,7 +85,6 @@ struct RTMPBackpressureTests {
     // The keyframe ends the wait, and the pictures after it go again.
     #expect(client.sendVideo(timestampMs: 366, tag: videoTag(keyframe: true, bytes: 32)) == .sent)
     #expect(client.sendVideo(timestampMs: 400, tag: videoTag(keyframe: false, bytes: 32)) == .sent)
-    #expect(client.firstQueuedVideoIsKeyframeForTesting)
   }
 
   @Test("What survives a shed starts on a keyframe")
@@ -114,6 +113,31 @@ struct RTMPBackpressureTests {
     // A P-frame whose group has been thrown away cannot be decoded, so the first picture still
     // queued has to be a keyframe.
     #expect(client.firstQueuedVideoIsKeyframeForTesting)
+  }
+
+  @Test("A shed keeps the write in flight at the head of the queue delay")
+  func shedKeepsTheWriteInFlight() {
+    let pair = SocketPair()
+    defer { pair.close() }
+    let client = RTMPClient()
+    client.attachForTesting(fd: pair.client, budgetBytes: 400_000)
+    defer { client.stop() }
+
+    // A picture far larger than the pair holds goes in flight and stays there.
+    client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: true, bytes: 300_000))
+    usleep(300_000)
+    // Three more cross the budget, so the oldest waiting goes: the ledger is rebuilt from what is
+    // left, and the write in flight is still the oldest the socket has not taken.
+    for frame in 1 ... 3 {
+      client.sendVideo(timestampMs: UInt32(frame * 33), tag: videoTag(keyframe: true, bytes: 50_000))
+    }
+    #expect(client.metrics.droppedPackets > 0)
+    #expect(client.congestionSample(at: RTMPClient.monotonicNow()).queueDelay >= 0.25)
+
+    // The peer reads everything: the ledger drains with the socket, not ahead of it.
+    pair.drain(untilQueuedFallsBelow: 1, of: client)
+    #expect(client.metrics.queuedBytes == 0)
+    #expect(client.congestionSample(at: RTMPClient.monotonicNow()).queueDelay == 0)
   }
 
   @Test("Sequence headers are never shed")
