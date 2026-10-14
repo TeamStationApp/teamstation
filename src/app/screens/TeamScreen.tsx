@@ -178,6 +178,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const { width, fontScale } = useWindowDimensions()
+  const [identityWidth, setIdentityWidth] = useState<number>()
 
   // The team's name slides up into the header as its card goes under, and
   // comes back down when it returns. The header carries no title for this
@@ -304,6 +306,23 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   }, [client, team.id, publicDetail, nonMemberView, refreshRevision])
 
   const follows = onManage == null && (publicDetail != null || nonMemberView)
+  // A name needs room of its own when both corner controls are present.
+  // Measure the card, since its reading-width cap can differ from the window.
+  const nameBelowControls =
+    place != null &&
+    onManage != null &&
+    (identityWidth ?? width) < theme.rem(24) * fontScale
+  const identityWords = (
+    <View style={styles.identityText} testID="team-hero-words">
+      <Text style={styles.teamName}>{team.name}</Text>
+      {standing != null && (
+        <Text style={styles.teamMeta}>
+          {standing.w}–{standing.l}
+          {standing.t > 0 ? `–${standing.t}` : ''} · {standing.played} played
+        </Text>
+      )}
+    </View>
+  )
   const withVideo = games.filter(game => game.videoCount > 0)
   // The same rule as the schedule and the season page, not a fourth copy of
   // it. Counting the unscored ones made a February fixture nobody ever scored
@@ -328,18 +347,21 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     <Screen {...pinned.screen}>
       <CardBand part={pinned.cardBand}>
         <Card style={styles.identity}>
-          <View style={styles.identityTop}>
+          <View
+            style={[
+              styles.identityTop,
+              nameBelowControls && styles.identityTopCompact
+            ]}
+            onLayout={event => {
+              setIdentityWidth(event.nativeEvent.layout.width)
+            }}
+          >
             <TeamEmblem uri={team.logoUrl} name={team.name} size={3.5} />
-            <View style={styles.identityText}>
-              <Text style={styles.teamName}>{team.name}</Text>
-              {standing != null && (
-                <Text style={styles.teamMeta}>
-                  {standing.w}–{standing.l}
-                  {standing.t > 0 ? `–${standing.t}` : ''} · {standing.played}{' '}
-                  played
-                </Text>
-              )}
-            </View>
+            {nameBelowControls ? (
+              <View style={styles.identitySpace} />
+            ) : (
+              identityWords
+            )}
             {place != null && onManage != null && (
               <Badge label={placeLabel(place)} tone="honour" />
             )}
@@ -378,6 +400,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
               </View>
             )}
           </View>
+          {nameBelowControls && identityWords}
         </Card>
       </CardBand>
 
@@ -878,6 +901,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'flex-start',
     gap: theme.rem(theme.spaceMdRem)
   },
+  identityTopCompact: { gap: theme.rem(theme.spaceSmRem) },
+  identitySpace: { flex: 1 },
   crest: {
     width: theme.rem(3.25),
     height: theme.rem(3.25),
