@@ -42,6 +42,7 @@ import path from 'node:path'
 
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { lstrings } from '../locales/strings'
 import {
   api,
   apiToken,
@@ -187,6 +188,24 @@ async function webMultiCam(token: string, angles: string[]): Promise<string> {
     assert(
       moving.length >= angles.length,
       `every picture plays: ${first.map(time => time.toFixed(1)).join(', ')} → ${later.map(time => time.toFixed(1)).join(', ')}`
+    )
+    // A tile with no address reads "not available": its angle is not
+    // playing, whatever the other pictures do (the single player behind the
+    // view is a <video> too, and counted with them).
+    const unavailable = await page.$$eval(
+      '*',
+      (elements, text) =>
+        elements.filter(
+          element =>
+            element.children.length === 0 &&
+            String(element.textContent).includes(text)
+        ).length,
+      lstrings.game_video_unavailable
+    )
+    assert.equal(
+      unavailable,
+      0,
+      'no tile reads that its video is not available'
     )
     const dir = optional('TS_STREAM_ARTIFACT_DIR')
     if (dir != null) {
