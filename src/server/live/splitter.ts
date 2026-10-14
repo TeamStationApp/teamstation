@@ -532,8 +532,8 @@ export function clearLive(key: string, reason: string): void {
  * playlist after this — the end of a game — must not run until it has: the
  * writer's last word would land on top of the close.
  *
- * The wait is bounded by the SIGKILL that follows a writer ignoring the
- * SIGTERM.
+ * It waits on the children's own `exit` events, bounded by the SIGKILL that
+ * follows a writer ignoring the SIGTERM.
  */
 export async function clearLiveSettled(
   key: string,
@@ -545,10 +545,22 @@ export async function clearLiveSettled(
   clearLive(key, reason)
   const running = (child: ChildProcess): boolean =>
     child.exitCode == null && child.signalCode == null && isPidAlive(child.pid)
-  const deadline = Date.now() + SIGKILL_GRACE_MS + 1000
-  while (children.some(running) && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 25))
-  }
+  const exited = children.filter(running).map(async child => {
+    await new Promise<void>(resolve => {
+      child.once('exit', () => {
+        resolve()
+      })
+    })
+  })
+  if (exited.length === 0) return
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    Promise.all(exited),
+    new Promise<void>(resolve => {
+      timer = setTimeout(resolve, SIGKILL_GRACE_MS + 1000)
+    })
+  ])
+  clearTimeout(timer)
 }
 
 export function statusFor(key: string): LiveStatus | undefined {
