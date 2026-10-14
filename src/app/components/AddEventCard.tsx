@@ -1,6 +1,7 @@
 import React from 'react'
 import { Pressable, Text } from 'react-native'
 
+import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export function AddEventCard({
@@ -27,20 +28,23 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
     paddingVertical: theme.rem(0.875),
-    borderWidth: 1.5,
-    borderStyle: 'dashed' as const,
-    borderColor: theme.secondaryTextColor,
+    backgroundColor: theme.addEventCardColor,
+    shadowColor: theme.shadowColor,
+    shadowOpacity: 1,
+    shadowRadius: theme.rem(0.375),
+    shadowOffset: { width: 0, height: theme.rem(0.125) },
+    elevation: elevationFor(theme.rem(0.375)),
     borderRadius: theme.rem(theme.radiusRem)
   },
   pressed: {
-    borderColor: theme.activeColor,
-    backgroundColor: theme.containerBackgroundColor
+    opacity: 0.75
   },
   title: {
     fontSize: theme.rem(1.5),
     lineHeight: theme.rem(1.5),
-    fontFamily: theme.semiBoldTextFont,
-    color: theme.activeColor,
+    fontFamily: theme.boldTextFont,
+    fontWeight: '700' as const,
+    color: theme.addEventCardTextColor,
     textAlign: 'center' as const
   }
 }))
