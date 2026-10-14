@@ -315,7 +315,10 @@ export function toRecording(recording: NativePhoneRecording): PhoneRecording {
     videoId: orNull(recording.videoId),
     stoppedForLowStorage: recording.stoppedForLowStorage,
     publishedOutsideParts: recording.publishedOutsideParts,
-    hasPendingUpload: uploadId != null && uploadedAt == null,
+    // Wanted and not landed: the engines mark an upload wanted by its title before the export, so
+    // one cut off while exporting resumes with the next launch, and an opened one carries its id.
+    hasPendingUpload:
+      (uploadId != null || recording.uploadTitle != null) && uploadedAt == null,
     uploadRunning: recording.uploadRunning,
     uploadProgress:
       recording.uploadRunning && recording.uploadProgress != null

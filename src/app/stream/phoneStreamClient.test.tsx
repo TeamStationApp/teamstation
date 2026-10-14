@@ -19,6 +19,7 @@ import {
   type PhoneStream,
   PhoneStreamError,
   type Recordings,
+  toRecording,
   toStatus,
   toUploadProgress,
   usePhoneStreamStatusOf,
@@ -492,6 +493,40 @@ describe('the phone stream bridge', function () {
     stop()
     stream.onRadar(() => {})()
     stream.onUpload(() => {})()
+  })
+})
+
+describe('a recording from the engine', function () {
+  const base = {
+    liveStreamId: 'lst_00000000000000000004',
+    gameId: 'gam_00000000000000000001',
+    angleName: 'Home Plate',
+    startedAt: 1_790_000_000_000,
+    endedAt: 1_790_000_060_000,
+    parts: 1,
+    stoppedForLowStorage: false,
+    publishedOutsideParts: false,
+    uploadRunning: false
+  }
+
+  it('is still to upload once an upload is wanted, before the server has opened it', function () {
+    expect(toRecording(base).hasPendingUpload).equals(false)
+    // An export the background cut off: the title says it was wanted, there is no id yet.
+    expect(
+      toRecording({ ...base, uploadTitle: 'Home Plate' }).hasPendingUpload
+    ).equals(true)
+    expect(
+      toRecording({ ...base, uploadTitle: 'Home Plate', uploadId: 'dup_1' })
+        .hasPendingUpload
+    ).equals(true)
+    expect(
+      toRecording({
+        ...base,
+        uploadTitle: 'Home Plate',
+        uploadId: 'dup_1',
+        uploadedAt: 1_790_000_900_000
+      }).hasPendingUpload
+    ).equals(false)
   })
 })
 
