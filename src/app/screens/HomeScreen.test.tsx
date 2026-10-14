@@ -962,6 +962,12 @@ describe('a player opened from Home, through the app', function () {
 })
 
 describe('followed team identity on Home', () => {
+  afterEach(async () => {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
   it('opens followed teams with name-hashed initials while preserving league defaults', async () => {
     const group = asPublicGroup({
       kind: 'team',
