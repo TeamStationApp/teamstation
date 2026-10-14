@@ -123,7 +123,8 @@ export function cancelUserScroll(view: unknown): void {
 export function bindUserScroll(
   view: unknown,
   read: () => void,
-  position?: (offset: number) => void
+  position?: (offset: number) => void,
+  motion?: () => void
 ): () => void {
   const element = scrollElement(view)
   const win = element?.ownerDocument.defaultView
@@ -133,6 +134,7 @@ export function bindUserScroll(
   let scrollbarHeld = false
   let touchHeld = false
   let touchY: number | undefined
+  let physical = { x: element.scrollLeft, y: element.scrollTop }
   let pending:
     | {
         last: number
@@ -252,6 +254,17 @@ export function bindUserScroll(
   }
   const scroll = (event: Event): void => {
     if (!live || event.target !== element) return
+    const next = { x: element.scrollLeft, y: element.scrollTop }
+    // Observe physical motion before RNW throttles its notification. A delayed
+    // packet for movement before a press must not cancel that stationary hold.
+    if (
+      !Number.isFinite(next.x) ||
+      !Number.isFinite(next.y) ||
+      next.x !== physical.x ||
+      next.y !== physical.y
+    )
+      motion?.()
+    physical = next
     if (pending == null) {
       if (scrollbarHeld) arm(event, 0)
       return

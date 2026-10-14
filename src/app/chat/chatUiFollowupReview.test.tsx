@@ -6300,13 +6300,25 @@ async function stationaryHoldPane(): Promise<{
     engine,
     pulses,
     scroll: (x, y, height = 2200) => {
-      callbacks.onScroll!({
-        nativeEvent: {
-          contentOffset: { x, y },
-          contentSize: { width: 640, height },
-          layoutMeasurement: { width: 640, height: 400 }
-        }
-      })
+      const descriptor = Object.getOwnPropertyDescriptor(
+        ReactNative.Platform,
+        'OS'
+      )!
+      try {
+        Object.defineProperty(ReactNative.Platform, 'OS', {
+          ...descriptor,
+          value: 'ios'
+        })
+        callbacks.onScroll!({
+          nativeEvent: {
+            contentOffset: { x, y },
+            contentSize: { width: 640, height },
+            layoutMeasurement: { width: 640, height: 400 }
+          }
+        })
+      } finally {
+        Object.defineProperty(ReactNative.Platform, 'OS', descriptor)
+      }
     },
     drag: () => {
       callbacks.onScrollBeginDrag()
@@ -6330,6 +6342,53 @@ const holdMouse = (
 }
 
 describe('stationary message hold after scrolling', function () {
+  it('keeps a stationary hold when a throttled pre-hold offset is delivered later', async function () {
+    const { reading, pulses } = await stationaryHoldPane()
+    const text = document.querySelector<HTMLElement>(
+      '[data-testid="chat-message-body-msg_original"]'
+    )!.firstElementChild as HTMLElement
+    expect(text.textContent).equals('Practice notes')
+    await act(async () => {
+      reading.node.scrollTop = 700
+      reading.node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      const firstAt = Date.now()
+      await wait(20)
+      reading.node.scrollTop = 701
+      reading.node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(
+        Date.now() - firstAt,
+        'Both physical offsets are within the real 100ms throttle window'
+      ).lessThan(100)
+      await wait(20)
+      holdMouse(text, 'mousedown')
+      await wait(600)
+      holdMouse(text, 'mouseup')
+      text.dispatchEvent(
+        new window.MouseEvent('click', {
+          bubbles: true,
+          button: 0,
+          clientX: 100,
+          clientY: 180
+        })
+      )
+      await wait()
+    })
+    expect(
+      reading.node.scrollTop,
+      'Physical 701 stays stationary during the hold'
+    ).equals(701)
+    expect(
+      pulses,
+      'One recognition after the final pre-hold movement'
+    ).deep.equals([8])
+    expect(
+      document.querySelector('[data-testid="chat-message-spotlight"]'),
+      'Spotlight remains after 600ms hold, release and click'
+    ).not.equals(null)
+    await settleChatMessageActions('open')
+    expect(button('Reply')).not.equals(undefined)
+  })
+
   it('recognizes one hold when the RNW scroll-end callback repeats an unchanged offset', async function () {
     const { reading, target, pulses } = await stationaryHoldPane()
     await act(async () => {
@@ -6356,6 +6415,52 @@ describe('stationary message hold after scrolling', function () {
     }
   })
 
+  for (const axis of ['x', 'y'] as const)
+    for (const phase of ['armed', 'measuring'] as const)
+      it(`cancels a ${phase} web hold on raw physical ${axis} movement`, async function () {
+        const { reading, target, pulses } = await stationaryHoldPane()
+        await act(async () => {
+          reading.node.scrollTop = 700
+          reading.node.dispatchEvent(
+            new window.Event('scroll', { bubbles: true })
+          )
+          await wait(150)
+        })
+        let accept:
+          | ((x: number, y: number, width: number, height: number) => void)
+          | undefined
+        Object.defineProperty(target, 'measureInWindow', {
+          configurable: true,
+          value: (callback: typeof accept) => {
+            accept = callback
+          }
+        })
+        const callbacks = renderedPressCallbacks(target)
+        await nativePress(callbacks, 'onPressIn', contact(1000))
+        if (phase === 'measuring') {
+          await nativePress(callbacks, 'onLongPress', contact(1500))
+          expect(accept).not.equals(undefined)
+        }
+        await act(async () => {
+          if (axis === 'x') reading.node.scrollLeft = 1
+          else reading.node.scrollTop = 701
+          reading.node.dispatchEvent(
+            new window.Event('scroll', { bubbles: true })
+          )
+        })
+        if (phase === 'armed')
+          await nativePress(callbacks, 'onLongPress', contact(1500))
+        else
+          await act(async () => {
+            accept!(48, 160, 260, 100)
+          })
+        await nativePress(callbacks, 'onPress', contact(1600))
+        expect(pulses).deep.equals(phase === 'armed' ? [] : [8])
+        expect(
+          document.querySelector('[data-testid="chat-message-spotlight"]')
+        ).equals(null)
+      })
+
   for (const [name, x, y] of [
     ['horizontal movement', 1, 700],
     ['vertical movement', 0, 701],
@@ -6363,7 +6468,7 @@ describe('stationary message hold after scrolling', function () {
     ['invalid horizontal coordinate', Number.NaN, 700],
     ['invalid vertical coordinate', 0, Number.NaN]
   ] as const)
-    it(`cancels an armed hold on ${name}`, async function () {
+    it(`cancels an armed hold on a native packet with ${name}`, async function () {
       const { target, scroll, pulses } = await stationaryHoldPane()
       const callbacks = renderedPressCallbacks(target)
       await nativePress(callbacks, 'onPressIn', contact(1000))

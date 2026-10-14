@@ -637,10 +637,19 @@ export function ConversationScreen(
   }, [onDraftChange, explicitRead, readingAnchor])
   useEffect(
     () =>
-      bindUserScroll(scroller.current, userScrolled, offset => {
-        scrolled.current.offset = offset
-        userScrolled()
-      }),
+      bindUserScroll(
+        scroller.current,
+        userScrolled,
+        offset => {
+          scrolled.current.offset = offset
+          userScrolled()
+        },
+        Platform.OS === 'web'
+          ? () => {
+              gestureGeneration.current += 1
+            }
+          : undefined
+      ),
     [userScrolled, hasView]
   )
   useEffect(
@@ -2130,13 +2139,14 @@ export function ConversationScreen(
           onScroll={event => {
             const { x = 0, y } = event.nativeEvent.contentOffset
             const previous = gestureOffset.current
-            // RNW repeats the settled offset at scroll end. Only actual motion
-            // or an uncertain coordinate cancels a stationary message hold.
+            // Web motion is observed before RNW throttles notifications. Native
+            // packets still cancel on actual motion or uncertain coordinates.
             if (
-              !Number.isFinite(x) ||
-              !Number.isFinite(y) ||
-              x !== previous.x ||
-              y !== previous.y
+              Platform.OS !== 'web' &&
+              (!Number.isFinite(x) ||
+                !Number.isFinite(y) ||
+                x !== previous.x ||
+                y !== previous.y)
             )
               gestureGeneration.current += 1
             gestureOffset.current = { x, y }

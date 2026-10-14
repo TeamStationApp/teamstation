@@ -37,7 +37,8 @@ export function bindComposerKeys(
 export function bindUserScroll(
   _view: unknown,
   _read: () => void,
-  _position?: (offset: number) => void
+  _position?: (offset: number) => void,
+  _motion?: () => void
 ): () => void {
   return () => {}
 }
