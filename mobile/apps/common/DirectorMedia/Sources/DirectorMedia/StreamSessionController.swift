@@ -404,7 +404,13 @@ public final class StreamSessionController {
         self.handleDrop(message, attempt: mine)
         return
       }
-      guard mine == self.attempt else { return }
+      guard mine == self.attempt else {
+        // Stopped while this publish was opening: the stop found nothing running yet, so the
+        // session that has just come up is taken down here, or the phone goes on publishing after
+        // Stop or the background.
+        if !self.wanted { self.publisher.stop() }
+        return
+      }
       self.phase = .live
       self.liveSince = self.now()
       self.lastError = nil
