@@ -121,13 +121,14 @@ async function main(): Promise<void> {
     await node.bringToFront()
     await node.goto(f.h.origin + '/node', { waitUntil: 'networkidle0' })
     await fill(node, 'Find an account', 'Tim Raines')
-    await press(node, 'Suspend Tim Raines')
-    await press(node, 'Confirm account change')
-    await text(node, 'Add another active direct administrator')
-    await node.screenshot({
-      path: join(artifacts!, 'last-admin-protected.png')
-    })
-    // The node administrator adds a second direct administrator, at once.
+    // Suspension remains an API action; this screen manages node access.
+    const protectedAccount = await f.h.request(
+      'PATCH',
+      '/users/106/administration',
+      { suspended: true },
+      105
+    )
+    expect(protectedAccount.status).equals(409)
     const second = await f.h.request(
       'POST',
       `/manage/team/${f.teamA}/people`,
@@ -140,21 +141,36 @@ async function main(): Promise<void> {
     )
     expect(second.status).equals(201)
     expect(await second.json()).deep.include({ added: true })
-    await node.bringToFront()
-    await press(node, 'Confirm account change')
-    await text(node, 'Suspended')
+    expect(
+      (
+        await f.h.request(
+          'PATCH',
+          '/users/106/administration',
+          { suspended: true },
+          105
+        )
+      ).status
+    ).equals(200)
     expect(
       (await f.h.request('GET', '/me/groups', undefined, 106)).status
     ).equals(401)
-    await press(node, 'Reactivate Tim Raines')
-    await press(node, 'Confirm account change')
-    await text(node, 'Account · Active')
+    expect(
+      (
+        await f.h.request(
+          'PATCH',
+          '/users/106/administration',
+          { suspended: false },
+          105
+        )
+      ).status
+    ).equals(200)
     expect(
       (await f.h.request('GET', '/me/groups', undefined, 106)).status
     ).equals(401)
-    await press(node, 'Grant node role to Tim Raines')
-    await press(node, 'Confirm account change')
-    await text(node, 'Node administrator · Active')
+    await node.reload({ waitUntil: 'networkidle0' })
+    await fill(node, 'Find an account', 'Tim Raines')
+    await press(node, 'Add Tim Raines')
+    await node.waitForSelector('[aria-label="Revoke Tim Raines"]')
     await node.screenshot({
       path: join(artifacts!, 'node-administration-after.png')
     })
@@ -162,7 +178,7 @@ async function main(): Promise<void> {
     await login(recipient, f, 106)
     await recipient.goto(f.h.origin + '/account', { waitUntil: 'networkidle0' })
     await press(recipient, 'Node administration')
-    await text(recipient, 'Find an account')
+    await recipient.waitForSelector('[aria-label="Find an account"]')
     await team.bringToFront()
     await team.goto(f.h.origin + '/node', { waitUntil: 'networkidle0' })
     await text(team, 'Only a node administrator')

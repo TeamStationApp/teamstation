@@ -1511,10 +1511,10 @@ export const asDjGame = asObject({
 export type DjGame = ReturnType<typeof asDjGame>
 
 export class TeamStationClient {
-  async nodeAccounts(query = ''): Promise<NodeAccount[]> {
+  async nodeAccounts(query = '', nodeAdmin = false): Promise<NodeAccount[]> {
     return await this.request(
       'GET',
-      `/users?view=administration&query=${encodeURIComponent(query)}`,
+      `/users?view=administration&query=${encodeURIComponent(query)}${nodeAdmin ? '&nodeAdmin=true' : ''}`,
       asNodeAccounts
     )
   }

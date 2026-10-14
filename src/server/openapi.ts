@@ -4761,6 +4761,13 @@ export function openApiDocument(version: string): OpenApiDocument {
               description: 'Optional account filter for administration view.'
             },
             {
+              name: 'nodeAdmin',
+              in: 'query',
+              schema: { type: 'boolean', default: false },
+              description:
+                'Administration view only: true lists only accounts with node access. Omitted or false includes all matching accounts. All matching accounts are returned.'
+            },
+            {
               name: 'externalId',
               in: 'query',
               required: false,
