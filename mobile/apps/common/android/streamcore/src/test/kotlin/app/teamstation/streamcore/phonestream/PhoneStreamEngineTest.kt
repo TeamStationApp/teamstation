@@ -203,6 +203,12 @@ class PhoneStreamEngineTest {
             closed += 1
         }
 
+        @Volatile
+        var reopens = 0
+        override fun reopen() {
+            reopens += 1
+        }
+
         override fun flip() {
             flips += 1
         }
@@ -387,6 +393,7 @@ class PhoneStreamEngineTest {
     private lateinit var engineDispatcher: CoroutineDispatcher
 
     private var storageCheckSeconds = 3_600.0
+    private var cameraReopenSeconds = 3_600.0
 
     private fun engine(): PhoneStreamEngine {
         device = FakeDevice()
@@ -416,6 +423,7 @@ class PhoneStreamEngineTest {
             heartbeatSeconds = 3_600.0,
             statusIntervalSeconds = 3_600.0,
             storageCheckSeconds = storageCheckSeconds,
+            cameraReopenSeconds = cameraReopenSeconds,
             stopTailSeconds = 0.0,
             deviceStatus = FakeStatus(),
             makeRadar = {
@@ -1060,6 +1068,88 @@ class PhoneStreamEngineTest {
         capture(1.0)
         runBlocking { engine.stopRecording() }
         assertEquals(2, runBlocking { engine.recordings() }.single().parts)
+    }
+
+    @Test
+    fun aLostCameraIsOpenedAgainAndTheRecordingPausesUntilItIsBack() {
+        cameraReopenSeconds = 0.02
+        val engine = opened()
+        start(engine)
+        capture(2.0)
+        val lost = CameraSession.State(isRunning = false, isInterrupted = true, interruptionReason = "videoInUse")
+        // Another app takes the camera: the status says so, and the part is finished rather than fill
+        // with the last picture held; the take goes on.
+        device.onStateChange!!(lost)
+        waitFor { statuses().lastOrNull()?.error == PhoneStreamError.CAMERA_UNAVAILABLE }
+        waitFor { videos.single().closed }
+        assertFalse(device.attached.containsKey(PhoneProgramme.RECORDING_KEY))
+        assertTrue(engine.isRecording)
+        assertTrue(engine.isStreaming)
+        assertNull(runBlocking { engine.recordings() }.single().endedAt)
+        // It is asked to open again, and again, each wait longer than the last.
+        waitFor { device.reopens >= 3 }
+        assertEquals(device.reopens, engine.cameraReopens)
+        // The camera is back: the take goes on as its next part.
+        device.onStateChange!!(CameraSession.State(isRunning = true))
+        waitFor { videos.size == 2 && device.attached.containsKey(PhoneProgramme.RECORDING_KEY) }
+        assertNull(on { engine.status }.error)
+        val reopened = device.reopens
+        capture(2.0)
+        assertEquals(reopened, device.reopens)
+        runBlocking { engine.stopRecording() }
+        val take = runBlocking { engine.recordings() }.single()
+        assertEquals(2, take.parts)
+        assertNotNull(take.endedAt)
+        // The stream published while no part recorded: the take does not cover it all.
+        assertFalse(take.coversWholeStream)
+
+        // Lost again: Record is refused, and coming back to the screen tries the camera at once.
+        device.onStateChange!!(CameraSession.State(failure = "cameraError deviceFatal"))
+        waitFor { on { engine.status }.error == PhoneStreamError.CAMERA_UNAVAILABLE }
+        expect(PhoneStreamError.CAMERA_UNAVAILABLE) {
+            engine.startRecording("rtmp://ingest.example.test/live/key-0001", "s2", "g1", "Home Plate", request)
+        }
+        val before = engine.cameraReopens
+        runBlocking { engine.open("Home Plate") }
+        assertEquals(before + 1, engine.cameraReopens)
+        // Lost while the take is stopped meanwhile: Stop closes it as it stands.
+        device.onStateChange!!(CameraSession.State(isRunning = true))
+        waitFor { on { engine.status }.error == null }
+        start(engine, stream = "s3")
+        capture(1.0)
+        device.onStateChange!!(lost)
+        waitFor { videos.last().closed }
+        runBlocking { engine.stopRecording() }
+        assertFalse(engine.isRecording)
+        assertNotNull(runBlocking { engine.recordings() }.first { it.liveStreamId == "s3" }.endedAt)
+        runBlocking { engine.close() }
+        assertNull(on { engine.status }.error)
+        val closedAt = engine.cameraReopens
+        Thread.sleep(100)
+        assertEquals(closedAt, engine.cameraReopens)
+    }
+
+    @Test
+    fun aTakeResumedWhileTheCameraIsLostGoesOnOnceItIsBack() {
+        val first = opened()
+        start(first)
+        capture(3.0)
+        runBlocking { first.abandonForTesting() }
+        val second = opened()
+        device.onStateChange!!(CameraSession.State(isRunning = false, isInterrupted = true))
+        waitFor { on { second.status }.error == PhoneStreamError.CAMERA_UNAVAILABLE }
+        assertTrue(runBlocking { second.resumeInterrupted(request) })
+        // Nothing to record from yet: no part opens until the camera is back.
+        assertTrue(second.isRecording)
+        assertTrue(videos.size == 1)
+        device.onStateChange!!(CameraSession.State(isRunning = true))
+        waitFor { videos.size == 2 && device.attached.containsKey(PhoneProgramme.RECORDING_KEY) }
+        capture(1.0)
+        runBlocking { second.stopRecording() }
+        assertEquals(2, runBlocking { second.recordings() }.single().parts)
+        assertTrue(PhoneStreamEngine.cameraIsLost(CameraSession.State(failure = "x")))
+        assertFalse(PhoneStreamEngine.cameraIsLost(CameraSession.State(isRunning = true, failure = "x")))
+        assertFalse(PhoneStreamEngine.cameraIsLost(CameraSession.State()))
     }
 
     @Test

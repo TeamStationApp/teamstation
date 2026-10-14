@@ -98,6 +98,23 @@ class CameraSession(private val context: Context) {
     private var rotationOverride: Int? = null
     private var lensCatalog: List<CameraLens> = emptyList()
     private var lensSelection = LensSelection()
+
+    /** Configured and not closed: a camera lost meanwhile is opened again when it is free. */
+    private var keepOpen = false
+    private var watchingAvailability = false
+
+    /**
+     * Another app releasing the camera, or the camera service coming back, is when a lost camera can
+     * be opened again. Registered with the first configure; called on the capture thread.
+     */
+    private val availability = object : CameraManager.AvailabilityCallback() {
+        override fun onCameraAvailable(id: String) {
+            if (id == cameraId) reopenIfLost(fromAvailability = true)
+        }
+    }
+
+    /** When the camera was last asked to open again, on the boot clock in milliseconds. */
+    private var lastReopenAt = Long.MIN_VALUE / 2
     /**
      * The hardware's own zoom range, before any lens selection narrowed it.
      *
@@ -185,6 +202,11 @@ class CameraSession(private val context: Context) {
 
     fun configure(position: CameraPosition, settings: StreamSettings) {
         handler.post {
+            keepOpen = true
+            if (!watchingAvailability) {
+                watchingAvailability = true
+                runCatching { manager.registerAvailabilityCallback(availability, handler) }
+            }
             this.settings = settings
             lensSelection = LensSelection(settings.disabledLensIDs)
             applyDevice(position)
@@ -215,8 +237,30 @@ class CameraSession(private val context: Context) {
         }
     }
 
+    /**
+     * Opens the camera again if it was lost (disconnected, or failed) while it is meant to be open. A camera that is
+     * running, or was closed, is left as it is.
+     */
+    fun reopen() {
+        handler.post { reopenIfLost(fromAvailability = false) }
+    }
+
+    /**
+     * Opens a lost camera again. One the system says is free is opened at most every
+     * [reopenSpacingMillis], so a camera that fails as it opens, and is then free again, is not
+     * opened in a tight loop; the owner's own tries ([reopen]) are spaced by the owner.
+     */
+    private fun reopenIfLost(fromAvailability: Boolean) {
+        if (!keepOpen || state.isRunning || !(state.isInterrupted || state.failure != null)) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (fromAvailability && now - lastReopenAt < reopenSpacingMillis) return
+        lastReopenAt = now
+        applyDevice(state.position)
+    }
+
     fun close() {
         handler.post {
+            keepOpen = false
             runCatching { session?.close() }
             session = null
             runCatching { device?.close() }
@@ -533,6 +577,9 @@ class CameraSession(private val context: Context) {
     }
 
     companion object {
+        /** The least time between two reopens the camera's availability starts. */
+        const val reopenSpacingMillis = 2_000L
+
         /**
          * Every format the device offers, reduced to what the picker and the catalogue need.
          *
