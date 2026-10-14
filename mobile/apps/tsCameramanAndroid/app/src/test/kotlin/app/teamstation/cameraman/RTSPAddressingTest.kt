@@ -56,9 +56,9 @@ class PreferredAddressTest {
     @Test
     fun `Wi-Fi wins`() {
         assertEquals(
-            "192.168.7.157",
+            "192.168.1.10",
             RTSPServer.preferredLANIPv4(
-                listOf("rndis0" to "192.168.42.129", "wlan0" to "192.168.7.157")
+                listOf("rndis0" to "192.168.42.129", "wlan0" to "192.168.1.10")
             )
         )
     }
@@ -75,9 +75,9 @@ class PreferredAddressTest {
     @Test
     fun `a hotspot ranks below the real network`() {
         assertEquals(
-            "192.168.7.157",
+            "192.168.1.10",
             RTSPServer.preferredLANIPv4(
-                listOf("ap0" to "192.168.43.1", "wlan0" to "192.168.7.157")
+                listOf("ap0" to "192.168.43.1", "wlan0" to "192.168.1.10")
             )
         )
     }
