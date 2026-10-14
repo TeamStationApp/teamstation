@@ -197,10 +197,12 @@ class RTMPClient(
     /** Connects, handshakes, and publishes [url]; returns once the publish is live. */
     suspend fun publish(url: RTMPURL, timeoutSeconds: Double = 20.0) {
         suspendCancellableCoroutine { continuation ->
-            post {
+            val queued = post {
                 begin(url, continuation)
                 schedule(timeoutSeconds) { publishTimedOut() }
             }
+            // A client stopped before its publish began has no queue left to answer it.
+            if (!queued) continuation.resumeWithException(RTMPClientError.Cancelled)
         }
     }
 
@@ -261,6 +263,11 @@ class RTMPClient(
     }
 
     private fun begin(url: RTMPURL, continuation: CancellableContinuation<Unit>) {
+        if (lock.withLock { phase == Phase.FAILED && isStopping }) {
+            // Stopped while the publish waited to begin.
+            continuation.resumeWithException(RTMPClientError.Cancelled)
+            return
+        }
         val started = lock.withLock {
             if (phase != Phase.IDLE) return@withLock false
             connectWait = continuation
@@ -747,13 +754,14 @@ class RTMPClient(
         if (wasLive && reported != RTMPClientError.Cancelled) handler?.invoke(reported)
     }
 
-    private fun post(work: () -> Unit) {
+    private fun post(work: () -> Unit): Boolean =
         try {
             queue.execute(work)
+            true
         } catch (_: RejectedExecutionException) {
             // Stopped: the work is for a client that is gone.
+            false
         }
-    }
 
     private fun schedule(seconds: Double, work: () -> Unit) {
         try {

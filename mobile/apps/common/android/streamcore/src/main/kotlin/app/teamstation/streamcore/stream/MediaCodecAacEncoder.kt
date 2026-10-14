@@ -31,6 +31,9 @@ class MediaCodecAacEncoder(
     /** Asks the codec for a free input buffer. Replaced in tests, to make a codec that is busy. */
     internal var dequeueInput: (MediaCodec, Long) -> Int = { running, timeout -> running.dequeueInputBuffer(timeout) }
 
+    /** The buffer behind a dequeued index. Replaced in tests, to make a codec that hands out none. */
+    internal var inputBuffer: (MediaCodec, Int) -> ByteBuffer? = { running, index -> running.getInputBuffer(index) }
+
     override var audioSpecificConfig: ByteArray = defaultAudioSpecificConfig
         private set
 
@@ -80,14 +83,20 @@ class MediaCodecAacEncoder(
                 if (System.nanoTime() >= deadline) return
                 continue
             }
-            val input = running.getInputBuffer(index) ?: continue
+            val time = queuedFrames * 1_000_000 / StreamAudioStamps.sampleRate
+            val input = inputBuffer(running, index)
+            if (input == null) {
+                // The index is the codec's until it is queued back: empty, so it is not lost.
+                running.queueInputBuffer(index, 0, 0, time, 0)
+                if (System.nanoTime() >= deadline) return
+                continue
+            }
             val frame = leftover.copyOfRange(0, frameSamples)
             leftover = leftover.copyOfRange(frameSamples, leftover.size)
             input.clear()
             val bytes = ByteBuffer.allocate(frame.size * 2).order(ByteOrder.LITTLE_ENDIAN)
             bytes.asShortBuffer().put(frame)
             input.put(bytes)
-            val time = queuedFrames * 1_000_000 / StreamAudioStamps.sampleRate
             running.queueInputBuffer(index, 0, frame.size * 2, time, 0)
             queuedFrames += StreamAudioStamps.samplesPerPacket
             drain(running, packets)
