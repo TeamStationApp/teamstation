@@ -33,6 +33,8 @@ export interface AppHeaderProps {
   contentHeight?: number
   /** The three destinations, on a wide window. */
   nav?: React.ReactNode
+  /** An opt-in minimum for a scene's trailing controls, including scaled labels. */
+  navMinWidth?: number
   /** The signed-in person, drawn at the right and opening their account. */
   account?: {
     name: string
@@ -162,7 +164,15 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           )}
         </View>
 
-        <View style={[styles.side, styles.sideEnd]}>
+        <View
+          style={[
+            styles.side,
+            styles.sideEnd,
+            props.navMinWidth != null && {
+              minWidth: Math.max(theme.rem(3), props.navMinWidth)
+            }
+          ]}
+        >
           {nav}
           {props.tess != null && (
             <Pressable
