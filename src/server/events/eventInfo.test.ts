@@ -430,6 +430,78 @@ describe('real event info and guardian attendance', function () {
       )
     ).equals(true)
   })
+  it('defaults to the team a viewer has most to do with: a point each for guardian, staff and member', async () => {
+    await seedEventInfo2People(f, gameId)
+    const member = async (
+      userId: number,
+      teamId: string,
+      isPlayer = false
+    ): Promise<void> => {
+      await f.h.db
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: userId,
+          team_id: teamId,
+          is_player: isPlayer
+        })
+        .execute()
+    }
+    const guardian = async (child: number): Promise<void> => {
+      await f.h.db
+        .insertInto('user_links')
+        .values({
+          id: makeId('userLink'),
+          user_id: 107,
+          related_user_id: child,
+          kind: 'guardian',
+          can_manage: false
+        })
+        .execute()
+    }
+    // A member of the home team; then of the away team too, a tie that keeps
+    // the game's own order.
+    expect((await info(gameId, 107)).teamId).equals(f.teamA)
+    await member(107, f.teamB)
+    expect((await info(gameId, 107)).teamId).equals(f.teamA)
+    // Coaching away as well: two points to one.
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: makeId('scopeRole'),
+        user_id: 107,
+        scope_type: 'team',
+        scope_id: f.teamB,
+        role: 'coach'
+      })
+      .execute()
+    expect((await info(gameId, 107)).teamId).equals(f.teamB)
+    // Guardian of a home player: two each, and home again.
+    await guardian(108)
+    expect((await info(gameId, 107)).teamId).equals(f.teamA)
+    // That child playing away too gives away all three points.
+    await member(108, f.teamB, true)
+    const read = await info(gameId, 107)
+    expect(read.teamId).equals(f.teamB)
+    expect(
+      (read.attendanceTeams ?? [])
+        .filter(team => team.isParticipant === true)
+        .map(team => team.id)
+    ).members([f.teamA, f.teamB])
+    // Asking for a team still answers that team.
+    expect(
+      asEventInfo(
+        await (
+          await f.h.request(
+            'GET',
+            `/events/${gameId}/info?teamId=${f.teamA}`,
+            undefined,
+            107
+          )
+        ).json()
+      ).teamId
+    ).equals(f.teamA)
+  })
   it('drops removed team people and disabled players’ guardians without widening from old replies', async () => {
     await seedEventInfo2People(f, gameId)
     await f.h.db.deleteFrom('scope_roles').where('user_id', '=', 106).execute()

@@ -47,7 +47,7 @@ export function eventInfoPaths(
             required: false,
             schema: { type: 'string' },
             description:
-              'One visible participating team, including merged aliases. Defaults to the viewer’s directly affiliated participating team, home first; otherwise visible home or the first visible participant. With none visible, only private family controls are returned. Attendance excludes inherited people and the opponent.'
+              'One visible participating team, including merged aliases. Defaults to the viewer’s directly affiliated participating team with the most points: one each for guarding a player there, being on its staff and being a member, a tie going home first; otherwise visible home or the first visible participant. With none visible, only private family controls are returned. Attendance excludes inherited people and the opponent.'
           }
         ],
         responses
