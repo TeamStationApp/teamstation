@@ -3,14 +3,8 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { Invite, TeamStationClient } from '../../common/api'
 import type { GroupRef } from '../../common/groupCreation'
-import {
-  Button,
-  Card,
-  DangerText,
-  Icon,
-  Screen,
-  TextField
-} from '../components'
+import { Button, Card, Icon, Screen, TextField } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { lstrings, sprintf } from '../locales/strings'
 import { copyToClipboard } from '../platform/clipboard'
@@ -177,7 +171,7 @@ export function InviteSpectatorsScreen({
                       disabled={busy}
                     />
                     <Button label="Create" block busy={busy} onPress={create} />
-                    <DangerText
+                    <CancelAction
                       label="Cancel"
                       disabled={busy}
                       onPress={() => {

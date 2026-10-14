@@ -20,7 +20,8 @@ A row in a picker has:
 - the name, on one line;
 - a quieter detail line when there is something worth knowing: a season's
   dates and league, a team's seasons, a time zone's offset and time now;
-- a mark on the chosen row (`RadioMark`), never a filled background;
+- a mark on the chosen row (`RadioMark`), never a filled background; immediate
+  navigation choices such as Choose Team use a right chevron instead;
 - at least 48 points of height, and a hairline divider between rows.
 
 A grid of plain cells is a row picker too: the calendar's days and the
@@ -56,9 +57,10 @@ touch target stay large enough. Dense tab strips reduce gaps and scroll.
 
 - **One filled button per form.** The primary action (Save, Create) is the
   only filled button.
-- **Cancel is red text.** Cancelling a form or dismissing a picker is a text
-  button in the danger colour (`Button kind="text"` with
-  `textColor={theme.dangerColor}`). It is never a filled or pale button.
+- **Cancel is centered beneath a primary action.** Use `CancelAction`: blue text
+  beneath a red destructive primary, red text otherwise. Header and toolbar Cancels
+  retain their header alignment; the team picker places its visible text on the
+  right content margin. Cancel is never a filled or pale button.
 - **A long label gets smaller type, not a smaller target.** Use
   `Button small`, which keeps the 48-point height.
 
