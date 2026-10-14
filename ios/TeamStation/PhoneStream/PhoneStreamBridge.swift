@@ -28,21 +28,27 @@ final class TSPhoneStreamBridge: NSObject {
   @objc var onRadar: (([String: Any]) -> Void)?
   @objc var onUpload: (([String: Any]) -> Void)?
 
-  private var observation: PhoneStreamObservation?
+  /// The module starts observing on its own thread and stops on another; the relay registers on
+  /// the main actor and drops an observer that a stop overtook.
+  private let relay: PhoneStreamEventRelay
+
+  override init() {
+    final class Owner: @unchecked Sendable { weak var bridge: TSPhoneStreamBridge? }
+    let owner = Owner()
+    relay = PhoneStreamEventRelay(
+      engine: { PhoneStreamEngine.shared },
+      deliver: { event in owner.bridge?.deliver(event) }
+    )
+    super.init()
+    owner.bridge = self
+  }
 
   @objc func startObserving() {
-    Task { @MainActor in
-      guard self.observation == nil else { return }
-      self.observation = PhoneStreamEngine.shared.observe { [weak self] event in
-        self?.deliver(event)
-      }
-    }
+    relay.start()
   }
 
   @objc func stopObserving() {
-    let observation = self.observation
-    self.observation = nil
-    observation?.cancel()
+    relay.stop()
   }
 
   private func deliver(_ event: PhoneStreamEvent) {
@@ -55,13 +61,18 @@ final class TSPhoneStreamBridge: NSObject {
 
   /// The capture session the preview layer draws, nil before `open` and on a simulator.
   @MainActor @objc static func previewSession() -> AVCaptureSession? {
-    PhoneStreamEngine.shared.previewSession
+    PhoneStreamEngine.shared?.previewSession
   }
 
   // MARK: - Calls
 
+  /// Unsupported when the engine could not open, so the app offers no streaming rather than
+  /// failing at Record.
   @objc func capabilities(_ reply: @escaping PhoneStreamReply) {
-    reply(["supported": PhoneStreamCapabilities.isSupported, "deviceModel": PhoneStreamCapabilities.deviceModel], nil, nil)
+    Task { @MainActor in
+      let supported = PhoneStreamCapabilities.isSupported && PhoneStreamEngine.shared != nil
+      reply(["supported": supported, "deviceModel": PhoneStreamCapabilities.deviceModel], nil, nil)
+    }
   }
 
   @objc func open(_ angleName: String, audioEnabled: Bool, disabledLenses: [String], reply: @escaping PhoneStreamReply) {
@@ -160,11 +171,11 @@ final class TSPhoneStreamBridge: NSObject {
   }
 
   @objc func setZoom(_ displayed: Double) {
-    Task { @MainActor in PhoneStreamEngine.shared.setZoom(displayed: displayed) }
+    Task { @MainActor in PhoneStreamEngine.shared?.setZoom(displayed: displayed) }
   }
 
   @objc func pinch(_ scale: Double, ended: Bool) {
-    Task { @MainActor in PhoneStreamEngine.shared.pinch(scale: scale, ended: ended) }
+    Task { @MainActor in PhoneStreamEngine.shared?.pinch(scale: scale, ended: ended) }
   }
 
   @objc func zoomScale(_ reply: @escaping PhoneStreamReply) {
@@ -303,8 +314,8 @@ final class TSPhoneStreamBridge: NSObject {
   }
 
   @objc func deleteRecording(_ liveStreamId: String, reply: @escaping PhoneStreamReply) {
-    Self.run(reply) { engine in
-      try engine.deleteRecording(liveStreamId: liveStreamId)
+    Self.runAsync(reply) { engine in
+      try await engine.deleteRecording(liveStreamId: liveStreamId)
       return nil
     }
   }
@@ -314,7 +325,7 @@ final class TSPhoneStreamBridge: NSObject {
   private static func run(_ reply: @escaping PhoneStreamReply, _ work: @escaping @MainActor (PhoneStreamEngine) throws -> Any?) {
     Task { @MainActor in
       do {
-        reply(try work(PhoneStreamEngine.shared), nil, nil)
+        reply(try work(PhoneStreamEngine.sharedResult.get()), nil, nil)
       } catch {
         reject(reply, error)
       }
@@ -324,15 +335,19 @@ final class TSPhoneStreamBridge: NSObject {
   private static func runAsync(_ reply: @escaping PhoneStreamReply, _ work: @escaping @MainActor (PhoneStreamEngine) async throws -> Any?) {
     Task { @MainActor in
       do {
-        reply(try await work(PhoneStreamEngine.shared), nil, nil)
+        reply(try await work(PhoneStreamEngine.sharedResult.get()), nil, nil)
       } catch {
         reject(reply, error)
       }
     }
   }
 
+  /// An engine that could not open refuses as `unsupported`, the code JavaScript already has for a
+  /// build without streaming, with why in the message.
   private static func reject(_ reply: PhoneStreamReply, _ error: Error) {
-    if let refusal = error as? PhoneStreamError {
+    if let unavailable = error as? PhoneStreamUnavailable {
+      reply(nil, "unsupported", unavailable.reason)
+    } else if let refusal = error as? PhoneStreamError {
       reply(nil, refusal.rawValue, refusal.rawValue)
     } else {
       reply(nil, "failed", "\(error)")
