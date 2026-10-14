@@ -23,12 +23,16 @@ export interface AppStateLike {
  * server already has; an upload already running in this process is left to
  * run. Nothing happens on a phone that cannot record, nor in a browser.
  *
- * Only the signed-in account's own takes. A take is filmed into a stream, and
- * the stream is its account's: the game's camera list says which are this
+ * Only the signed-in account's own takes. A take the server already opened
+ * an upload for carries its id, and that upload is its opener's: the server
+ * answers it only to that account, so it resumes as it is, even once the
+ * server has finished it and revoked the take's stream (it then reads as
+ * done). A take cut off before the server opened it is filmed into a stream,
+ * and the stream is its account's: the game's camera list says which are this
  * account's (`mine`). A take on a stream that is not among them was made by
  * somebody else who used this phone, or cannot be told apart from one, and is
- * left waiting for them. Resumed under the wrong account it would land as
- * that account's upload, and its maker's reminder would never settle.
+ * left waiting for them. Opened under the wrong account it would land as that
+ * account's upload, and its maker's reminder would never settle.
  */
 export function useResumePendingUploads(
   client: TeamStationClient,
@@ -58,13 +62,16 @@ export function useResumePendingUploads(
         ])
       }
       for (const [gameId, takes] of games) {
-        // Unreadable, or not this account's game to film: whose the takes
+        // Only takes the server has not opened yet need the camera list.
+        // Unreadable, or not this account's game to film: whose those takes
         // are is unknown, so they wait.
-        const streams = await client.liveStreams(gameId).catch(() => undefined)
-        if (!alive || streams == null) continue
-        const mine = new Set(streams.mine.map(stream => stream.id))
+        const streams = takes.every(take => take.uploadId != null)
+          ? undefined
+          : await client.liveStreams(gameId).catch(() => undefined)
+        if (!alive) return
+        const mine = new Set(streams?.mine.map(stream => stream.id) ?? [])
         for (const take of takes) {
-          if (!mine.has(take.liveStreamId)) continue
+          if (take.uploadId == null && !mine.has(take.liveStreamId)) continue
           phone
             .resumeUpload({
               liveStreamId: take.liveStreamId,
