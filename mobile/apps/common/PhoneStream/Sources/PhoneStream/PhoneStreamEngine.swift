@@ -56,14 +56,24 @@ public struct PhoneLens: Sendable, Equatable {
  */
 @MainActor
 public final class PhoneStreamEngine {
-  /// The process's engine, with the app's own storage, camera and network.
-  public static let shared: PhoneStreamEngine = {
+  /// The process's engine, with the app's own storage, camera and network, or why it could not
+  /// open. A catalog that cannot be opened (a corrupt index, a schema step that fails) leaves the
+  /// app running: phone streaming is unavailable, and says so, while everything else works.
+  public static let sharedResult: Result<PhoneStreamEngine, PhoneStreamUnavailable> = start {
+    try PhoneStreamEngine(environment: .live())
+  }
+
+  /// The process's engine, nil when it could not open (`sharedResult` says why).
+  public static var shared: PhoneStreamEngine? { try? sharedResult.get() }
+
+  /// An engine from `make`, or why it could not be made, rather than a crash.
+  static func start(_ make: () throws -> PhoneStreamEngine) -> Result<PhoneStreamEngine, PhoneStreamUnavailable> {
     do {
-      return try PhoneStreamEngine(environment: .live())
+      return .success(try make())
     } catch {
-      fatalError("PhoneStream could not open its catalog: \(error)")
+      return .failure(PhoneStreamUnavailable(reason: "PhoneStream could not open its catalog: \(error)"))
     }
-  }()
+  }
 
   public let environment: PhoneStreamEnvironment
   public let index: ArchiveIndex
