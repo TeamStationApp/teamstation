@@ -12,6 +12,8 @@ import {
 import {
   androidPermissionHost,
   androidPermissionsFor,
+  CAMERA_UNAVAILABLE,
+  cameraUnavailable,
   makePhoneStream,
   type PermissionHost,
   type PhoneStream,
@@ -530,6 +532,14 @@ describe('the phone stream hooks', function () {
       batteryPercent: null,
       error: 'streamEnded'
     })
+    expect(cameraUnavailable(status.current())).equals(false)
+    // Android says so while the camera is lost.
+    act(() => {
+      native.emitStatus({ ...STATUS_EVENT, error: 'cameraUnavailable' })
+    })
+    expect(status.current()?.error).equals(CAMERA_UNAVAILABLE)
+    expect(cameraUnavailable(status.current())).equals(true)
+    expect(cameraUnavailable(null)).equals(false)
     expect(native.listenerCount()).equals(1)
     act(() => {
       root?.unmount()

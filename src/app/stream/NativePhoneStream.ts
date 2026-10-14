@@ -10,8 +10,9 @@ import { TurboModuleRegistry } from 'react-native'
 //
 // A call the engine refuses rejects with the engine's error as its code:
 // `notReady`, `uploadInProgress`, `insufficientStorage`, `recordingFailed`,
-// `noRecording`, `stillRecording`, or `permission` when the camera or the
-// microphone was not allowed.
+// `noRecording`, `stillRecording`, `permission` when the camera or the
+// microphone was not allowed, or `cameraUnavailable` while the camera is
+// lost (Android says so; iOS may not).
 
 export interface NativePhoneStreamCapabilities {
   supported: boolean
@@ -40,6 +41,11 @@ export interface NativePhoneStreamStatus {
   thermal: string
   recordingSeconds: CodegenTypes.Double
   isRecording: boolean
+  /**
+   * The engine's error code: `streamEnded`, `recordingStoppedLowStorage`,
+   * `recordingFailed`, or `cameraUnavailable` for as long as the camera is
+   * lost (Android sends it; iOS may not).
+   */
   error?: string
 }
 
