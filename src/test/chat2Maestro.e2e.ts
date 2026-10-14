@@ -1,6 +1,7 @@
 /** Public-UI actions, private evidence and one explicitly owned Maestro lease. */
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   chmodSync,
   copyFileSync,
@@ -669,14 +670,9 @@ export class Chat2UI {
       browserURL: 'http://127.0.0.1:' + port,
       defaultViewport: null
     })
-    const pages = await this.browser.pages()
-    const page = need(
-      pages.find(p => p.url().startsWith(this.fixture.webUrl)),
-      'Owned app tab required'
-    )
-    this.cdp = await page.createCDPSession()
-    await this.cdp.send('Network.setCacheDisabled', { cacheDisabled: true })
     await this.device.openLink({ link: this.fixture.webUrl })
+    this.cdp = await this.currentWebTarget()
+    await this.cdp.send('Network.setCacheDisabled', { cacheDisabled: true })
     await this.cdp.send('Emulation.setDeviceMetricsOverride', {
       width: metrics.width,
       height: metrics.height,
@@ -711,6 +707,112 @@ export class Chat2UI {
       'Actual viewport/pointer/pixel scale differs from requested surface'
     )
     this.webFrame = { ...metrics }
+  }
+
+  /** Bind the observer to Maestro's current public document, including restored tabs. */
+  private async currentWebTarget(): Promise<CDPSession> {
+    const browser = need(this.browser, 'Passive browser observer required')
+    const origin = new URL(this.fixture.webUrl).origin
+    const attribute = 'data-observer-' + randomUUID().replace(/-/g, '')
+    const marker = randomUUID()
+    const name = JSON.stringify(attribute)
+    const value = JSON.stringify(marker)
+    const sessions: CDPSession[] = []
+    let retained: CDPSession | undefined
+    let marked = false
+    let ownedPageCount = 0
+    let targetId: string | undefined
+    try {
+      let selected: CDPSession | undefined
+      try {
+        const result = await this.dom(
+          'const node=document.documentElement; const name=' +
+            name +
+            '; if(node.hasAttribute(name)) throw Error("Observer marker collision");' +
+            ' node.setAttribute(name,' +
+            value +
+            '); return {marked:node.getAttribute(name)===' +
+            value +
+            ',origin:location.origin}'
+        )
+        marked = result.marked === true
+        assert(
+          marked && result.origin === origin,
+          'Owned Maestro page marker required'
+        )
+        const matches: CDPSession[] = []
+        for (const page of await browser.pages()) {
+          let pageOrigin: string
+          try {
+            pageOrigin = new URL(page.url()).origin
+          } catch {
+            continue
+          }
+          if (pageOrigin !== origin) continue
+          ownedPageCount++
+          try {
+            const session = await page.createCDPSession()
+            sessions.push(session)
+            const probe = await session.send('Runtime.evaluate', {
+              expression:
+                '({marker:document.documentElement.getAttribute(' +
+                name +
+                ')===' +
+                value +
+                ',origin:location.origin})',
+              returnByValue: true
+            })
+            assert(probe.exceptionDetails == null, 'Public DOM probe failed')
+            const observed = object(probe.result.value)
+            if (observed.marker === true && observed.origin === origin)
+              matches.push(session)
+          } catch {
+            throw new Error('Owned browser target read probe failed')
+          }
+        }
+        assert(
+          matches.length === 1,
+          'Exactly one Maestro-marked owned browser target required'
+        )
+        selected = matches[0]
+        const info = await selected.send('Target.getTargetInfo')
+        assert(
+          info.targetInfo.type === 'page' &&
+            new URL(info.targetInfo.url).origin === origin &&
+            info.targetInfo.targetId !== '',
+          'Marked browser page target identity required'
+        )
+        targetId = info.targetInfo.targetId
+      } finally {
+        const cleanup = await this.dom(
+          'const node=document.documentElement; const name=' +
+            name +
+            '; const matched=node.getAttribute(name)===' +
+            value +
+            '; if(matched) node.removeAttribute(name);' +
+            ' return {matched,absent:!node.hasAttribute(name)}'
+        )
+        assert(
+          cleanup.absent === true && (!marked || cleanup.matched === true),
+          'Owned Maestro page marker cleanup required'
+        )
+      }
+      retained = need(selected, 'Unique marked browser observer required')
+      this.steps.push({
+        name: 'Exact Maestro browser target identity',
+        outcome: 'passed',
+        ownedOrigin: origin,
+        ownedPageCount,
+        matchCount: 1,
+        targetId,
+        markerSha256: createHash('sha256').update(marker).digest('hex'),
+        markerRemoved: true
+      })
+      return retained
+    } finally {
+      for (const session of sessions)
+        if (session !== retained) await session.detach()
+    }
   }
 
   metrics(): { width: number; height: number; coarse: boolean; dpr: number } {
