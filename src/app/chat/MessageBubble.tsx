@@ -65,6 +65,8 @@ export interface MessageBubbleProps {
   gestureGeneration?: React.RefObject<number>
   selected?: boolean
   showSenderAvatar?: boolean
+  bodyRef?: (node: React.ComponentRef<typeof View> | null) => void
+  onBodyLayout?: () => void
   pictures?: ReadonlyMap<string, LoadedChatPicture>
 }
 
@@ -383,66 +385,78 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                 messageGesture={messageGesture}
               />
             )}
-            {said != null ? (
-              <Text style={styles.status}>{said}</Text>
-            ) : (
-              message.body !== '' && (
-                <Text
-                  style={styles.body}
-                  selectable={desktop && props.selected !== true}
-                >
-                  {message.body}
-                </Text>
-              )
-            )}
-            {message.attachments.map(attachment => {
-              if (props.selected === true) {
-                const picture = props.pictures?.get(attachment.id)
-                if (picture?.attachment === attachment && picture.valid()) {
-                  const size = placeholderSize(
-                    picture.width,
-                    picture.height,
-                    attachmentWidth,
-                    theme.rem(20)
-                  )
+            <View
+              ref={props.bodyRef}
+              collapsable={false}
+              onLayout={props.onBodyLayout}
+              testID={
+                props.selected === true
+                  ? undefined
+                  : `chat-message-body-${message.id}`
+              }
+            >
+              {said != null ? (
+                <Text style={styles.status}>{said}</Text>
+              ) : (
+                message.body !== '' && (
+                  <Text
+                    style={styles.body}
+                    selectable={desktop && props.selected !== true}
+                  >
+                    {message.body}
+                  </Text>
+                )
+              )}
+              {message.attachments.map(attachment => {
+                if (props.selected === true) {
+                  const picture = props.pictures?.get(attachment.id)
+                  if (picture?.attachment === attachment && picture.valid()) {
+                    const size = placeholderSize(
+                      picture.width,
+                      picture.height,
+                      attachmentWidth,
+                      theme.rem(20)
+                    )
+                    return (
+                      <Image
+                        key={attachment.id}
+                        accessibilityLabel={attachment.fileName}
+                        source={{ uri: picture.uri }}
+                        style={[
+                          size,
+                          { borderRadius: theme.rem(theme.radiusRem) }
+                        ]}
+                        resizeMode="cover"
+                      />
+                    )
+                  }
                   return (
-                    <Image
-                      key={attachment.id}
-                      accessibilityLabel={attachment.fileName}
-                      source={{ uri: picture.uri }}
-                      style={[
-                        size,
-                        { borderRadius: theme.rem(theme.radiusRem) }
-                      ]}
-                      resizeMode="cover"
-                    />
+                    <Text key={attachment.id} style={styles.body}>
+                      {messagePreview({
+                        ...message,
+                        body: '',
+                        attachments: [attachment]
+                      })}
+                    </Text>
                   )
                 }
                 return (
-                  <Text key={attachment.id} style={styles.body}>
-                    {messagePreview({
-                      ...message,
-                      body: '',
-                      attachments: [attachment]
-                    })}
-                  </Text>
+                  <AttachmentView
+                    key={attachment.id}
+                    attachment={attachment}
+                    engine={props.engine}
+                    files={props.files}
+                    maxWidth={attachmentWidth}
+                    messageGesture={messageGesture}
+                    onPicture={picture => {
+                      if (picture == null)
+                        pictures.current.delete(attachment.id)
+                      else pictures.current.set(attachment.id, picture)
+                    }}
+                  />
                 )
-              }
-              return (
-                <AttachmentView
-                  key={attachment.id}
-                  attachment={attachment}
-                  engine={props.engine}
-                  files={props.files}
-                  maxWidth={attachmentWidth}
-                  messageGesture={messageGesture}
-                  onPicture={picture => {
-                    if (picture == null) pictures.current.delete(attachment.id)
-                    else pictures.current.set(attachment.id, picture)
-                  }}
-                />
-              )
-            })}
+              })}
+            </View>
             <View style={styles.footer}>
               {props.pinned === true && (
                 <Text
