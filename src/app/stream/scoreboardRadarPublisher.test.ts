@@ -258,6 +258,29 @@ describe('the scoreboard radar publisher', function () {
     publisher.stop()
   })
 
+  it('drops a pending clear when the radar goes, so a later pairing starts clean', function () {
+    const h = harness()
+    const publisher = makeScoreboardRadarPublisher({
+      apiBase: 'https://teamstation.example.test/api/v1',
+      gameId: 'gam_1',
+      token: 'token-0000',
+      open: h.open,
+      timers: h.timers,
+      now: h.clock
+    })
+    publisher.update(radar(device({ pitchMph: 72, readingAt: START + 1000 })))
+    h.sockets[0].accept()
+    expect(h.sockets[0].sent).deep.equals(['{"pitchSpeed":72}'])
+    // Unpaired inside the hold: the clear does not wait for the next radar.
+    publisher.update(radar())
+    h.advance(10000)
+    publisher.update(radar(device({ readingAt: START + 1000, pitchMph: 72 })))
+    expect(h.sockets).has.length(2)
+    h.sockets[1].accept()
+    expect(h.sockets[1].sent).deep.equals([])
+    publisher.stop()
+  })
+
   it('closes when no radar is paired, opens again when one is, and backs off after a drop', function () {
     const h = harness()
     const publisher = makeScoreboardRadarPublisher({
