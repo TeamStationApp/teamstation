@@ -762,12 +762,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   // The app never builds a media URL: the server knows where the video is and
   // checks membership while it looks, so asking is the only way to find out.
+  /** How many times a live video without files has been asked for again. */
+  const [playbackAsks, setPlaybackAsks] = useState(0)
   useEffect(() => {
     if (video == null || nonMemberView) return
     const forVideoId = video.id
     let live = true
     setPlayback(undefined)
     setPlaybackFor(undefined)
+    // Each video's asks back off from the first wait, not from where the
+    // last video's had got to.
+    setPlaybackAsks(0)
     client
       .playback(forVideoId)
       .then(found => {
@@ -783,8 +788,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [client, video, nonMemberView])
 
-  /** How many times a live video without files has been asked for again. */
-  const [playbackAsks, setPlaybackAsks] = useState(0)
   // A live video is listed the moment its stream starts publishing, a few
   // seconds before its first segment is written, and until then the server
   // says its files are not there. The page that picked it up then — the
