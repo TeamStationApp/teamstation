@@ -6025,14 +6025,17 @@ export function openApiDocument(version: string): OpenApiDocument {
             'unread, canPost, canModerate, locked, noHolder, closed, ' +
             'memberCount, people}`. `title` and `scopeName` are null for a ' +
             'DM; `people` lists, for a DM, everybody else who was in it ' +
-            'with the caller as `{userId, shortName, left}` (current ' +
+            'with the caller as `{userId, shortName, left, avatarUrl}` (current ' +
             'members, and those who left after the caller joined), and is ' +
             'empty for a scope chat. `lastMessageAt` is null before the ' +
             'first message. Somebody who is not an account, or is under ' +
             '13 by birth month, is in none. Additive `preferences` describes ' +
             'only the caller: `{pinned, muted, manualUnread, manualUnreadRevision}`. ' +
             '`lastPostId`, `lastPostSeq`, `lastPostAt` describe the latest post, ' +
-            'including a deleted post; edits, reactions and preferences do not change post recency.',
+            'including a deleted post; edits, reactions and preferences do not change post recency. ' +
+            'Additive `avatarName` and `avatarUrl` describe the scope’s own identity ' +
+            'and signed image URL, or null for a DM. DM people have an optional ' +
+            '`avatarUrl`, null for former members. Older responses may omit these fields.',
           security: [{ bearer: [] }],
           responses: {
             200: { description: 'The chats' },

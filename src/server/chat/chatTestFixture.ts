@@ -260,7 +260,7 @@ export async function openChatFixture(
   app.use(withAudit(db))
   app.use(
     '/api/v1',
-    chatRoutes(db, TEST_MEDIA, () => fixture.now)
+    chatRoutes(db, { ...TEST_MEDIA, space }, () => fixture.now)
   )
   app.use(
     '/api/v1',

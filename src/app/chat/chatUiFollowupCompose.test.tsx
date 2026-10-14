@@ -610,7 +610,6 @@ async function showWorkspace(
       onOpen={() => {}}
       onMembers={() => {}}
       onNewMessage={() => {}}
-      onFollowTeam={() => {}}
       onTitle={() => {}}
     />
   )
@@ -1006,7 +1005,6 @@ describe('chat repeated offscreen announcements', function () {
         onOpen={() => {}}
         onMembers={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
         onTitle={() => {}}
       />
     )
@@ -1086,7 +1084,6 @@ describe('chat repeated offscreen announcements', function () {
         narrow
         onOpen={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
       />
     )
     const region = document.querySelector<HTMLElement>('[aria-live="polite"]')!

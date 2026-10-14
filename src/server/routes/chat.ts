@@ -72,7 +72,9 @@ export function chatRoutes(
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
-      res.json(await conversationsFor(db, actor.userId, actor.isAdmin, clock()))
+      res.json(
+        await conversationsFor(db, media, actor.userId, actor.isAdmin, clock())
+      )
     })
   )
 
@@ -259,6 +261,7 @@ export function chatRoutes(
         .json(
           await conversationFor(
             db,
+            media,
             made.conversationId,
             actor.userId,
             actor.isAdmin

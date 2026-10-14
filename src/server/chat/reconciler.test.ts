@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
 
@@ -738,16 +738,32 @@ describe('the chat reconciler over data from before 051 (U5)', function () {
   it('creates the scope chats on its first run', async function () {
     await adminPool?.query(`create database ${name}`)
     const at = migrations.findIndex(migration => migration.name === '052chat')
-    const pool = new Pool({ connectionString: url })
-    await migrateUp(pool, migrations.slice(0, at))
-    const early = makeDatabase(url)
-    const seed = await chatSeed(early, {
-      password: 'pw',
-      now: new Date('2027-04-10T12:00:00Z')
-    })
-    await early.destroy()
-    await migrateUp(pool, migrations)
-    await pool.end()
+    const seed = await (async () => {
+      const pool = new Pool({ connectionString: url })
+      try {
+        await migrateUp(pool, migrations.slice(0, at))
+        const early = makeDatabase(url)
+        let seeded
+        try {
+          seeded = await chatSeed(early, {
+            password: 'pw',
+            now: new Date('2027-04-10T12:00:00Z'),
+            writeFollow: async (db, userId, ref) => {
+              await sql`insert into team_follows (user_id, team_id)
+                values (${userId}, ${ref.id}) on conflict do nothing`.execute(
+                db
+              )
+            }
+          })
+        } finally {
+          await early.destroy()
+        }
+        await migrateUp(pool, migrations)
+        return seeded
+      } finally {
+        await pool.end()
+      }
+    })()
     const db = makeDatabase(url)
     try {
       expect(
