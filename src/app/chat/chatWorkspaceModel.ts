@@ -1,6 +1,11 @@
+import {
+  type ChatAttentionSession,
+  newAttentionSession
+} from './chatAttentionModel'
 import type { PickedFile } from './chatFileTypes'
 import { type MentionToken, sameMentionTokens } from './chatMentionsModel'
 import type { MessageView } from './engine/apply'
+import type { ConversationView } from './engine/engine'
 
 export const CHAT_WIDE_WIDTH = 960
 export interface ChatDraft {
@@ -15,7 +20,7 @@ export interface ChatDraft {
   /** Preserve automatic following only when the saved view was at its end. */
   followNewest?: boolean
   /** Opaque row and its viewport position survive content re-folding on reopen. */
-  scrollAnchor?: { id: string; relativeY: number }
+  scrollAnchor?: { id: string; relativeY: number; bodyInset?: number }
 }
 export interface ChatWorkspaceState {
   drafts: Map<string, ChatDraft>
@@ -47,6 +52,28 @@ export interface ChatSubmission {
 export class ChatDraftOwner {
   readonly key = nextDraftOwner++
   private live = true
+  private readonly attentionSessions = new Map<string, ChatAttentionSession>()
+
+  attention(id: string): ChatAttentionSession | undefined {
+    return this.attentionSessions.get(id)
+  }
+
+  beginAttention(
+    id: string,
+    opened: ConversationView
+  ): ChatAttentionSession | undefined {
+    if (!this.live) return undefined
+    const existing = this.attention(id)
+    if (existing != null) return existing
+    const session = newAttentionSession(opened)
+    if (session != null) this.attentionSessions.set(id, session)
+    return session
+  }
+
+  forgetAttention(id: string): void {
+    this.attentionSessions.delete(id)
+  }
+
   private readonly revisions = new Map<string, Record<DraftField, number>>()
   private readonly pending = new Map<string, ChatSubmission>()
   private readonly failures = new Set<string>()
@@ -169,6 +196,7 @@ export class ChatDraftOwner {
 
   invalidate(): void {
     this.live = false
+    this.attentionSessions.clear()
     this.pending.clear()
     this.readers.clear()
     this.listeners.clear()
