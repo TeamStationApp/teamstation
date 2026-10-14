@@ -492,14 +492,18 @@ export function watchMessageAnchor(
 export function bindPopupKeys(
   view: unknown,
   close: () => void,
-  trap = true
+  trap = true,
+  initialField = false,
+  rowSelector?: string
 ): () => void {
   if (!(view instanceof HTMLElement)) return () => {}
   const previous = document.activeElement
   const buttons = (): HTMLElement[] =>
     Array.from(
       view.querySelectorAll<HTMLElement>(
-        '[role="button"],button,[tabindex="0"]'
+        initialField
+          ? '[role="button"],button,[tabindex="0"],input,textarea'
+          : '[role="button"],button,[tabindex="0"]'
       )
     )
   const key = (event: KeyboardEvent): void => {
@@ -509,13 +513,30 @@ export function bindPopupKeys(
       return
     }
     if (!trap) return
-    const nodes = buttons()
+    const fieldActive =
+      document.activeElement?.tagName === 'INPUT' ||
+      document.activeElement?.tagName === 'TEXTAREA'
+    if (
+      initialField &&
+      fieldActive &&
+      (event.key === 'Home' || event.key === 'End')
+    )
+      return
+    const nodes =
+      rowSelector != null &&
+      (event.key === 'ArrowDown' ||
+        event.key === 'ArrowUp' ||
+        event.key === 'Home' ||
+        event.key === 'End')
+        ? Array.from(view.querySelectorAll<HTMLElement>(rowSelector))
+        : buttons()
     const index = nodes.indexOf(document.activeElement as HTMLElement)
     let next: number | undefined
     if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey))
       next = (index + 1) % nodes.length
     if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey))
-      next = (index - 1 + nodes.length) % nodes.length
+      next =
+        index < 0 ? nodes.length - 1 : (index - 1 + nodes.length) % nodes.length
     if (event.key === 'Home') next = 0
     if (event.key === 'End') next = nodes.length - 1
     if (next != null && nodes.length > 0) {
@@ -524,7 +545,13 @@ export function bindPopupKeys(
     }
   }
   document.addEventListener('keydown', key, true)
-  if (trap) buttons()[0]?.focus()
+  if (trap) {
+    const field = initialField
+      ? view.querySelector<HTMLElement>('input,textarea')
+      : null
+    if (field != null) field.focus()
+    else buttons()[0]?.focus()
+  }
   return () => {
     document.removeEventListener('keydown', key, true)
     if (
@@ -578,4 +605,19 @@ export function watchVisualViewport(
     viewport.removeEventListener('resize', changed)
     viewport.removeEventListener('scroll', changed)
   }
+}
+
+/** Apply a caret after the controlled text commit, keeping focus synchronous. */
+export function setComposerSelection(
+  view: unknown,
+  selection: { start: number; end: number }
+): void {
+  if (
+    view instanceof HTMLElement &&
+    (view.tagName === 'INPUT' || view.tagName === 'TEXTAREA')
+  )
+    (view as HTMLInputElement | HTMLTextAreaElement).setSelectionRange(
+      selection.start,
+      selection.end
+    )
 }

@@ -1,9 +1,11 @@
 import type { PickedFile } from './chatFileTypes'
+import { type MentionToken, sameMentionTokens } from './chatMentionsModel'
 import type { MessageView } from './engine/apply'
 
 export const CHAT_WIDE_WIDTH = 960
 export interface ChatDraft {
   text: string
+  mentionTokens?: MentionToken[]
   picked: PickedFile[]
   replyTo?: MessageView
   editing?: MessageView
@@ -28,7 +30,7 @@ export function emptyChatDraft(): ChatDraft {
   return { text: '', picked: [], scrollOffset: 0 }
 }
 
-type DraftField = 'text' | 'replyTo' | 'editing' | 'picked'
+type DraftField = 'text' | 'replyTo' | 'editing' | 'picked' | 'mentionTokens'
 const samePickedFiles = (
   before: readonly PickedFile[],
   after: readonly PickedFile[]
@@ -62,11 +64,14 @@ export class ChatDraftOwner {
     const before = this.draft(id)
     const revisions = this.revisions.get(id) ?? {
       text: 0,
+      mentionTokens: 0,
       replyTo: 0,
       editing: 0,
       picked: 0
     }
     if (before.text !== next.text) revisions.text += 1
+    if (!sameMentionTokens(before.mentionTokens, next.mentionTokens))
+      revisions.mentionTokens += 1
     if (before.replyTo?.id !== next.replyTo?.id) revisions.replyTo += 1
     if (before.editing?.id !== next.editing?.id) revisions.editing += 1
     if (!samePickedFiles(before.picked, next.picked)) revisions.picked += 1
@@ -98,10 +103,21 @@ export class ChatDraftOwner {
     if (!this.live || this.pending.has(id)) return undefined
     this.pull(id)
     const token: ChatSubmission = {
-      draft: { ...this.draft(id), picked: [...this.draft(id).picked] },
+      draft: {
+        ...this.draft(id),
+        picked: [...this.draft(id).picked],
+        ...(this.draft(id).mentionTokens == null
+          ? {}
+          : {
+              mentionTokens: this.draft(id).mentionTokens!.map(token => ({
+                ...token
+              }))
+            })
+      },
       revisions: {
         ...(this.revisions.get(id) ?? {
           text: 0,
+          mentionTokens: 0,
           replyTo: 0,
           editing: 0,
           picked: 0
@@ -126,10 +142,12 @@ export class ChatDraftOwner {
     if (success) {
       const unchanged =
         revisions.text === token.revisions.text &&
+        revisions.mentionTokens === token.revisions.mentionTokens &&
         revisions.replyTo === token.revisions.replyTo &&
         revisions.editing === token.revisions.editing &&
         revisions.picked === token.revisions.picked &&
         current.text === token.draft.text &&
+        sameMentionTokens(current.mentionTokens, token.draft.mentionTokens) &&
         current.replyTo?.id === token.draft.replyTo?.id &&
         current.editing?.id === token.draft.editing?.id &&
         samePickedFiles(current.picked, token.draft.picked)
@@ -138,6 +156,7 @@ export class ChatDraftOwner {
         this.write(id, {
           ...current,
           text: '',
+          ...(current.mentionTokens == null ? {} : { mentionTokens: [] }),
           replyTo: undefined,
           editing: undefined,
           picked: []
