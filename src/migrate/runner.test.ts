@@ -60,7 +60,7 @@ describe('migrations', function () {
 
   it('applies every migration, then reports them as already applied', async function () {
     const first = await migrateUp(pool, migrations)
-    expect(first.applied).deep.equals(migrations.map(item => item.name))
+    expect(first.applied).deep.equals(migrations.map(item => item.name).sort())
     expect(first.alreadyApplied).deep.equals([])
 
     const second = await migrateUp(pool, migrations)
@@ -121,7 +121,7 @@ describe('migrations', function () {
 
   it('applies cleanly a second time after a rollback', async function () {
     const again = await migrateUp(pool, migrations)
-    expect(again.applied).deep.equals(migrations.map(item => item.name))
+    expect(again.applied).deep.equals(migrations.map(item => item.name).sort())
   })
 
   it('migrates up again after rolling back below the baseline', async function () {
@@ -195,9 +195,9 @@ describe('the baseline', function () {
   })
 })
 
-// Both histories exist before the branches meet: OAuth on main, and chat
-// on a development database. Applied names must remain stable on upgrade.
-for (const history of ['oauth', 'chat'] as const) {
+// The original fork histories and the already-deployed combined chat history
+// must all upgrade without renaming an applied migration.
+for (const history of ['oauth', 'chat', 'deployed'] as const) {
   describe(`upgrade from the ${history} migration history`, function () {
     this.timeout(60000)
     const name = `teamstation_upgrade_${history}_${Date.now()}_${process.pid}`
@@ -221,25 +221,37 @@ for (const history of ['oauth', 'chat'] as const) {
     })
 
     it('applies only the missing migrations and preserves existing users', async function () {
-      const prior = migrations.filter(migration =>
-        history === 'chat'
-          ? migration.name !== '050oauth'
-          : migration.name <= '050oauth'
-      )
+      const prior = migrations.filter(migration => {
+        if (history === 'deployed')
+          return migration.name <= '057chatMasterCompatibility'
+        if (history === 'oauth') return migration.name <= '050oauth'
+        return (
+          migration.name < '050' ||
+          ['050teamFollows', '051guardiansAndAccounts', '052chat'].includes(
+            migration.name
+          )
+        )
+      })
       await migrateUp(pool, prior)
       await pool.query(
         'insert into users (id, "legacyId", display_name) values (1001, $1, $2)',
         ['upgrade-fixture', 'Upgrade fixture']
       )
       const result = await migrateUp(pool, migrations)
+      const priorNames = prior.map(migration => migration.name).sort()
       expect(result.applied).deep.equals(
-        history === 'chat'
-          ? ['050oauth']
-          : ['050teamFollows', '051guardiansAndAccounts', '052chat']
+        migrations
+          .map(migration => migration.name)
+          .filter(name => !priorNames.includes(name))
+          .sort()
       )
-      expect(result.alreadyApplied).deep.equals(
-        prior.map(migration => migration.name)
-      )
+      if (history === 'deployed')
+        expect(result.applied).deep.equals([
+          '057eventInfo',
+          '058eventDetails',
+          '059accountMail'
+        ])
+      expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(
         'select display_name from users where id = 1001'
       )

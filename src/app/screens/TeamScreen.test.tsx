@@ -120,7 +120,10 @@ const roster = [
     positions: [],
     isPlayer: false,
     role: 'owner',
-    group: 'coach'
+    group: 'coach',
+    section: 'admin',
+    staffRoles: [],
+    inheritedFrom: null
   }),
   asRosterEntry({
     userId: 21,
@@ -129,7 +132,10 @@ const roster = [
     positions: ['SS'],
     isPlayer: true,
     role: 'member',
-    group: 'player'
+    group: 'player',
+    section: 'player',
+    staffRoles: [],
+    inheritedFrom: null
   })
 ]
 
