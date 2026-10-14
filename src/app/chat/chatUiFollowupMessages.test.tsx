@@ -70,6 +70,19 @@ async function resetTimeouts(): Promise<void> {
 let root: Root | undefined
 let restoreViewport: (() => void) | undefined
 const stops: Array<() => void> = []
+function retainMeasurement(node: object, method: string): void {
+  const saved = Object.getOwnPropertyDescriptor(node, method)
+  const measure = Reflect.get(node, method)
+  Object.defineProperty(node, method, {
+    configurable: true,
+    get: () => measure,
+    set: () => {}
+  })
+  stops.push(() => {
+    if (saved == null) Reflect.deleteProperty(node, method)
+    else Object.defineProperty(node, method, saved)
+  })
+}
 const originals = new Map<string, PropertyDescriptor | undefined>(
   ['matchMedia', 'vibrate', 'clipboard'].map(key => [
     key,
@@ -2270,6 +2283,7 @@ describe('chat follow-up conversation message integration', function () {
       if (measuredCalls === 1) success(0, 0, 0, 0)
       else complete = success
     }
+    retainMeasurement(node, 'measureLayout')
     const scroller = [...document.querySelectorAll<HTMLElement>('div')].find(
       element => getComputedStyle(element).overflowY === 'auto'
     )!
@@ -2324,6 +2338,7 @@ describe('chat follow-up conversation message integration', function () {
     node.measureLayout = (_relative, success) => {
       complete = success
     }
+    retainMeasurement(node, 'measureLayout')
     const scroller = [...document.querySelectorAll<HTMLElement>('div')].find(
       element => getComputedStyle(element).overflowY === 'auto'
     )!
@@ -2379,6 +2394,8 @@ describe('chat follow-up conversation message integration', function () {
     await screen(engine)
     await measured(positionWrapper(first.id), 640, 100, 100)
     await measured(positionWrapper(second.id), 640, 100, 500)
+    retainMeasurement(positionWrapper(first.id), 'measureLayout')
+    retainMeasurement(positionWrapper(second.id), 'measureLayout')
     const scroller = [...document.querySelectorAll<HTMLElement>('div')].find(
       node => getComputedStyle(node).overflowY === 'auto'
     )!
@@ -2392,13 +2409,33 @@ describe('chat follow-up conversation message integration', function () {
       await wait(80)
     })
     expect(moves).deep.equals([444])
+    let pendingMeasurement:
+      | ((x: number, y: number, width: number, height: number) => void)
+      | undefined
+    Object.defineProperty(positionWrapper(first.id), 'measureLayout', {
+      configurable: true,
+      get:
+        () =>
+        (
+          _relative: unknown,
+          success: NonNullable<typeof pendingMeasurement>
+        ) => {
+          pendingMeasurement = success
+        },
+      set: () => {}
+    })
     await act(async () => {
       button('Jump to message from Shohei Ohtani: First original').click()
-      await Promise.resolve()
+      await wait(20)
     })
+    expect(
+      pendingMeasurement,
+      'The original measurement is genuinely pending at teardown'
+    ).not.equals(undefined)
     await act(async () => {
       root!.unmount()
       root = undefined
+      pendingMeasurement!(0, 100, 640, 100)
       await wait(80)
     })
     expect(moves).deep.equals([444])
@@ -2613,6 +2650,8 @@ describe('chat follow-up conversation message integration', function () {
         windowPane.measureInWindow = done => {
           done(0, 40, 640, 400)
         }
+        retainMeasurement(windowRow, 'measureInWindow')
+        retainMeasurement(windowPane, 'measureInWindow')
       }
       const measurements: Array<() => void> = []
       if (cancelAt === 'manual-overlap') {
@@ -3174,9 +3213,30 @@ describe('chat follow-up conversation message integration', function () {
     await press('Pin')
     expect(engine.calls).deep.equals([['pin', 'cnv_fixture', 'msg_1', true]])
     expect(labelled('Pinned message')).not.equals(undefined)
-    await press('Pinned messages: 1')
+    await act(async () => {
+      engine.current = {
+        ...engine.current,
+        pins: [
+          ...(engine.current.pins ?? []),
+          { messageId: 'msg_other', pinnedAt: '2027-03-01T17:00:00Z' }
+        ]
+      }
+      for (const listener of engine.listeners)
+        listener({ type: 'conversation', conversationId: 'cnv_fixture' })
+      await wait()
+    })
+    await press('Pinned messages: 2')
     expect(labelled('Pinned messages').textContent).contains('Game day')
     await press('Cancel')
+    await act(async () => {
+      engine.current = {
+        ...engine.current,
+        pins: engine.current.pins?.filter(pin => pin.messageId !== 'msg_other')
+      }
+      for (const listener of engine.listeners)
+        listener({ type: 'conversation', conversationId: 'cnv_fixture' })
+      await wait()
+    })
     await press('More message actions')
     await press('Unpin')
     expect(engine.calls.at(-1)).deep.equals([
