@@ -382,9 +382,16 @@ export function liveRoutes(
         await setCameraName(db, row.id, named)
       }
       if (body.localRecording != null) {
+        // A device that holds a recording keeps its own, whatever the
+        // request that made its stream said: the upload that settles the
+        // reminder looks for streams that do.
         const marked = await db
           .updateTable('live_streams')
-          .set({ local_recording: 'recorded', updated_at: new Date() })
+          .set({
+            local_recording: 'recorded',
+            records_locally: true,
+            updated_at: new Date()
+          })
           .where('id', '=', row.id)
           .where('local_recording', '=', 'none')
           .executeTakeFirst()

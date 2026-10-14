@@ -772,6 +772,49 @@ describe('phones and Directors asking for their streams by device', function () 
       expect(await recordRecordingReminder(db, made.body.id)).equals(false)
     })
 
+    it('marks a stream made without recordsLocally as keeping its recording', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      // Made by a build that did not send recordsLocally.
+      const made = await ask(gameId, {
+        label: 'Home Plate',
+        deviceId: IPHONE,
+        deviceModel: 'iPhone 13 Pro'
+      })
+      expect(made.status).equals(201)
+      expect((await stream(made.body.id)).recordsLocally).equals(false)
+      // The phone redials saying it does; the stream learns it.
+      const redial = await ask(
+        gameId,
+        phone('Home Plate', IPHONE, { heldStreamId: made.body.id })
+      )
+      expect(redial.body.id).equals(made.body.id)
+      expect((await stream(made.body.id)).recordsLocally).equals(true)
+      // And a redial that does not say so leaves it.
+      await ask(gameId, {
+        label: 'Home Plate',
+        deviceId: IPHONE,
+        heldStreamId: made.body.id
+      })
+      expect((await stream(made.body.id)).recordsLocally).equals(true)
+
+      // Saying it holds a recording marks it too, whatever made it.
+      const other = await ask(gameId, {
+        label: 'First Base',
+        deviceId: PIXEL,
+        deviceModel: 'Pixel 10'
+      })
+      expect((await stream(other.body.id)).recordsLocally).equals(false)
+      const marked = await call(
+        'PATCH',
+        `/games/${gameId}/live-streams/${other.body.id}`,
+        OWNER,
+        { localRecording: 'recorded' }
+      )
+      expect(marked.status).equals(200)
+      expect((await stream(other.body.id)).recordsLocally).equals(true)
+    })
+
     it('will not touch somebody else’s stream', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()
