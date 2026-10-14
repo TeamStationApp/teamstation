@@ -1118,8 +1118,8 @@ class PhoneStreamEngineTest {
         val take = runBlocking { engine.recordings() }.single()
         assertEquals(2, take.parts)
         assertNotNull(take.endedAt)
-        // The stream published while no part recorded: the take does not cover it all.
-        assertFalse(take.coversWholeStream)
+        // The stream published only a held picture while the camera was away: the take still covers it.
+        assertTrue(take.coversWholeStream)
 
         // Lost again: Record is refused, and coming back to the screen tries the camera at once.
         device.onStateChange!!(CameraSession.State(failure = "cameraError deviceFatal"))
@@ -1145,6 +1145,58 @@ class PhoneStreamEngineTest {
         val closedAt = engine.cameraReopens
         Thread.sleep(100)
         assertEquals(closedAt, engine.cameraReopens)
+    }
+
+    @Test
+    fun aTakeThatLostItsCameraAndGotItBackUploadsAsTheWholeStream() {
+        cameraReopenSeconds = 0.02
+        val engine = opened()
+        start(engine)
+        capture(2.0)
+        device.onStateChange!!(CameraSession.State(isRunning = false, isInterrupted = true, interruptionReason = "videoInUse"))
+        waitFor { videos.single().closed }
+        // The stream stays on the air through the loss, and the status loop runs meanwhile.
+        assertTrue(engine.isStreaming)
+        repeat(3) { on { engine.publishStatus() } }
+        assertFalse(runBlocking { engine.recordings() }.single().publishedOutsideParts)
+        device.onStateChange!!(CameraSession.State(isRunning = true))
+        waitFor { videos.size == 2 && device.attached.containsKey(PhoneProgramme.RECORDING_KEY) }
+        capture(2.0)
+        runBlocking { engine.stopRecording() }
+        val take = runBlocking { engine.recordings() }.single()
+        assertEquals(2, take.parts)
+        assertFalse(take.publishedOutsideParts)
+        // The upload replaces the live copy rather than sit beside it.
+        runBlocking { engine.uploadRecording("s1", server.url("/").toString(), "token-0000", "Home Plate") }
+        val body = JSONObject(requests.first { it.method == "POST" && it.path!!.endsWith("/director/uploads") }.body.readUtf8())
+        assertTrue(body.getBoolean("wholeStream"))
+    }
+
+    @Test
+    fun aTakeThatLostItsCameraAndThenStoppedForLowStorageIsNotTheWholeStream() {
+        cameraReopenSeconds = 0.02
+        val engine = opened()
+        start(engine)
+        capture(2.0)
+        device.onStateChange!!(CameraSession.State(isRunning = false, isInterrupted = true, interruptionReason = "videoInUse"))
+        waitFor { videos.single().closed }
+        device.onStateChange!!(CameraSession.State(isRunning = true))
+        waitFor { videos.size == 2 && device.attached.containsKey(PhoneProgramme.RECORDING_KEY) }
+        capture(2.0)
+        // Storage runs low: the part stops while the stream goes on, so the take no longer covers it.
+        free = 400_000_000
+        runBlocking { withContext(engineDispatcher) { engine.checkStorage() } }
+        assertFalse(engine.isRecording)
+        assertTrue(engine.isStreaming)
+        on { engine.publishStatus() }
+        runBlocking { engine.stopRecording() }
+        val take = runBlocking { engine.recordings() }.single()
+        assertTrue(take.stoppedForLowStorage)
+        assertTrue(take.publishedOutsideParts)
+        free = 10_000_000_000
+        runBlocking { engine.uploadRecording("s1", server.url("/").toString(), "token-0000", "Home Plate") }
+        val body = JSONObject(requests.first { it.method == "POST" && it.path!!.endsWith("/director/uploads") }.body.readUtf8())
+        assertFalse(body.has("wholeStream"))
     }
 
     @Test

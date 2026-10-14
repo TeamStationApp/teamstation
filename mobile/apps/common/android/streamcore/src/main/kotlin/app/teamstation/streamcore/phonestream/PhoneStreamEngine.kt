@@ -801,10 +801,15 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
 
     internal fun publishStatus() {
         // The stream on the air while no part is recording: the take no longer covers it all. Written
-        // once per take, not on every status.
+        // once per take, not on every status. A take paused until its camera is back (or its next part
+        // opens after an encoder failure) still covers it: the live copy carries only a frozen or held
+        // picture meanwhile, and the export holds the last picture across the hole, so its upload is
+        // the better copy and replaces the live one. A low-storage stop or a failed part has no pause
+        // and still counts.
         val held = take
         val outside = held?.recordingID
-        if (streamController.phase == StreamSessionController.Phase.LIVE && recordingTakeID == null && outside != null && outside != outsidePartsMarked) {
+        val paused = pausedTakeID != null
+        if (streamController.phase == StreamSessionController.Phase.LIVE && recordingTakeID == null && !paused && outside != null && outside != outsidePartsMarked) {
             try {
                 catalog.markPublishedOutsideParts(outside)
                 outsidePartsMarked = outside
