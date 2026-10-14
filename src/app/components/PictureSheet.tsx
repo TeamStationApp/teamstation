@@ -13,6 +13,7 @@ export function PictureSheet({
   client,
   name,
   team = false,
+  fitInitials = false,
   allowCatalog = false,
   pickPhoto,
   onSave,
@@ -21,6 +22,7 @@ export function PictureSheet({
   client: TeamStationClient
   name: string
   team?: boolean
+  fitInitials?: boolean
   allowCatalog?: boolean
   pickPhoto?: typeof pickAccountPhoto
   onSave: (choice: GroupPicture) => Promise<void>
@@ -72,6 +74,7 @@ export function PictureSheet({
               client={client}
               name={name}
               team={team}
+              fitInitials={fitInitials}
               allowCatalog={allowCatalog}
               pickPhoto={pickPhoto}
               value={choice}

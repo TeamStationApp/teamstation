@@ -9,7 +9,7 @@ export function TeamEmblem({
   ...props
 }: { name: string } & Pick<
   EmblemProps,
-  'uri' | 'size'
+  'uri' | 'size' | 'fitInitials'
 >): React.ReactElement {
   const normalized = name.trim()
   const initials = teamInitialsOf(normalized)

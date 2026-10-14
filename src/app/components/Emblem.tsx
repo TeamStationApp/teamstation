@@ -2,9 +2,12 @@ import React, { useState } from 'react'
 import { Image, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { FittedInitials } from './FittedInitials'
 import { Icon, type IconName } from './Icon'
 
 export interface EmblemProps {
+  /** Opt-in large group preview; ordinary identity tiles keep their sizing. */
+  fitInitials?: boolean
   /** Signed, short-lived, and often absent. */
   uri?: string | null
   /** Drawn when there is no picture, or when the picture will not load. */
@@ -61,6 +64,12 @@ export function Emblem(props: EmblemProps): React.ReactElement {
       >
         {icon != null ? (
           <Icon name={icon} size={size / 2} color={theme.activeColor} />
+        ) : props.fitInitials === true ? (
+          <FittedInitials
+            letters={fallback}
+            size={size}
+            color={tint != null ? '#FFFFFF' : theme.activeColor}
+          />
         ) : (
           <Text
             style={[
