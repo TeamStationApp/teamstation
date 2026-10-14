@@ -45,6 +45,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { lstrings } from '../locales/strings'
+import { screenOf } from './screenOf'
 
 interface Bounds {
   x: number
@@ -320,7 +321,24 @@ async function main(): Promise<void> {
     }
   }
   const tap = async (label: string, settle = 1500): Promise<void> => {
-    const node = await find(label)
+    let node = await find(label)
+    assert(node?.bounds != null, `Nothing labelled ${label}`)
+    // A tab past the right edge of the game's tab row (master's Info tab
+    // pushed DJ Game there on a phone) is swiped into view along its row.
+    for (let i = 0; i < 4 && node?.bounds != null; i++) {
+      const screen = screenOf(await m.hierarchy())
+      const right = node.bounds.x + node.bounds.width
+      if (right <= screen.x + screen.width && node.bounds.x >= screen.x) break
+      // maestro-d takes a swipe's start and end as percentages of the screen.
+      const y = Math.round(
+        ((node.bounds.y + node.bounds.height / 2 - screen.y) / screen.height) *
+          100
+      )
+      say(`$ swipe 85%,${y}% → 15%,${y}% to bring ${label} into view`)
+      await m.swipe({ start: `85%, ${y}%`, end: `15%, ${y}%`, duration: 500 })
+      await sleep(800)
+      node = await find(label)
+    }
     assert(node?.bounds != null, `Nothing labelled ${label}`)
     say(`$ tapOn ${label}`)
     await m.tapOn({ point: centre(node.bounds) })
