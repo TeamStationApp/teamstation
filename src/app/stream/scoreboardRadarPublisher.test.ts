@@ -133,8 +133,8 @@ describe('the scoreboard radar publisher', function () {
       scoreboardPublishUrl('https://teamstation.example.test/api/v1/', 'gam_1')
     ).equals('wss://teamstation.example.test/api/v1/scoreboard/gam_1/publish')
     expect(
-      scoreboardPublishUrl('http://192.168.1.20:9100/api/v1', 'gam 2')
-    ).equals('ws://192.168.1.20:9100/api/v1/scoreboard/gam%202/publish')
+      scoreboardPublishUrl('http://bench.example.test:9100/api/v1', 'gam 2')
+    ).equals('ws://bench.example.test:9100/api/v1/scoreboard/gam%202/publish')
     expect(scoreboardPublishUrl('/api/v1', 'gam_1')).equals(null)
   })
 
