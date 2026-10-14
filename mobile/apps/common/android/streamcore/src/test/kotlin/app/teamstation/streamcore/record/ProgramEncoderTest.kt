@@ -532,4 +532,44 @@ class ProgramEncoderTest {
         assertEquals(3.0, reader.video!!.endSeconds!!, 1e-6)
         assertTrue(telemetry.errors.any { it.startsWith("program writer failed") })
     }
+
+    @Test
+    fun aSoundCodecThatThrowsEndsThePartAndItsFinishStillCloses() {
+        val encoder = encoder()
+        val failures = mutableListOf<String>()
+        encoder.onWriterFailure = { failures += it }
+        encoder.start(wall)
+        record(encoder, 4.0)
+        // The AAC codec dies as the part finishes: its encode throws a runtime error, not an I/O one.
+        encoder.soundSinkOverride = object : SoundSink {
+            override val isReadyForMoreSound = true
+            override fun appendSound(samples: ShortArray): Boolean = throw IllegalStateException("codec released")
+            override fun finishSound() = Unit
+        }
+        encoder.append(AudioFrame(ShortArray(960 * 2), wallClock = wall - 0.05))
+        val file = encoder.finish(until = wall + 1.0)!!
+        assertFalse(encoder.running)
+        assertEquals(listOf("program writer failed: codec released"), failures)
+        assertTrue(FragmentedMp4Reader.read(file)!!.video!!.samples.isNotEmpty())
+        // The next part opens: nothing was left running.
+        encoder.soundSinkOverride = null
+        encoder.start(wall)
+        assertTrue(encoder.running)
+        encoder.finish()
+    }
+
+    @Test
+    fun aStartWhileAPartIsRunningIsRefused() {
+        val encoder = encoder()
+        encoder.start(wall)
+        val first = encoder.outputFile
+        try {
+            encoder.start(wall + 60)
+            org.junit.Assert.fail("a second start was taken")
+        } catch (error: IllegalStateException) {
+            assertEquals("program writer is already running", error.message)
+        }
+        assertEquals(first, encoder.outputFile)
+        encoder.finish()
+    }
 }

@@ -173,9 +173,13 @@ class ProgramEncoder(
         lock.withLock { anchorRecordingID = recordingID }
     }
 
+    /**
+     * Opens part 1 of a take. Refused while a part is running: a part left running by a stop that
+     * failed would otherwise take the next take's pictures and sound into its own file.
+     */
     fun start(wall: Double) {
         lock.withLock {
-            if (isRunning) return
+            if (isRunning) throw IllegalStateException("program writer is already running")
             resumedAwaitingPicture = false
             part = 1
             partRecordingID = null
@@ -336,7 +340,8 @@ class ProgramEncoder(
                 if (writer?.writeVideo(ProgramStreamer.lengthPrefixed(frame.nalUnits), frame.presentationTime, frame.isKeyframe) == true) {
                     writtenFrames += 1
                 }
-            } catch (error: IOException) {
+            } catch (error: Exception) {
+                // Storage refusing, or the sound track's codec failing as the file opens.
                 failWriterLocked(error)
             }
         }
@@ -543,7 +548,9 @@ class ProgramEncoder(
                     }
                     val accepted = try {
                         sink.appendSound(samples)
-                    } catch (error: IOException) {
+                    } catch (error: Exception) {
+                        // Storage refusing, or the AAC codec failing (`IllegalStateException`,
+                        // `CodecException`): either way the part takes no more sound.
                         failWriterLocked(error)
                         return
                     }
@@ -618,28 +625,12 @@ class ProgramEncoder(
      */
     fun finish(until: Double? = null): File? {
         val (finishedRecordingID, finishedPart) = lock.withLock { partRecordingID to part }
-        drainAudioUntilEmpty(2.0)
-        val started = lock.withLock { startedAt }
-        var heldPicture: Double? = null
-        if (until != null && started != null) {
-            // Out to the take's end on the wall clock, from where the part's timeline really starts:
-            // a phone's first picture was captured a picture delay before Record, so a fill counted
-            // from the take's start ended that much short of the take, and every ordinary take was
-            // rebuilt instead of copied for ending early.
-            val byTake = until - started - lock.withLock { previousPartsDuration }
-            val byAnchors = lock.withLock { RecordingCatalog.partStart(partAnchorStarts.toList())?.first }?.let { until - it }
-            val target = maxOf(0.0, byTake, byAnchors ?: 0.0)
-            val (pictureAt, soundAt) = lock.withLock { (if (lastTime.isNumeric) lastTime.seconds else -1.0) to writtenAudioEnd }
-            heldPicture = fillHold(target)
-            drainAudioUntilEmpty(10.0)
-            lastProgramFinishDetail = lock.withLock {
-                "target %.3f picture %.3f sound %.3f->%.3f queued %d refused %d dropped %d accepted %d behind %d silence %d offered %d unseeded %d beforePart %d origin %.3f first %.3f".format(
-                    Locale.US, target, pictureAt, soundAt, writtenAudioEnd, pendingAudio.size, audioAppendFailures,
-                    audioQueueDrops, acceptedAudioCount, audioBehindTrack, silenceQueued, audioOffered, audioUnseeded,
-                    audioBeforePart, soundOrigin.partStartWall ?: -1.0, audioFirstTarget
-                )
-            }
-            telemetry.recordProgramFinish(lastProgramFinishDetail)
+        val heldPicture = try {
+            finishSoundAndHold(until)
+        } catch (error: RuntimeException) {
+            // The part is closed below whatever went wrong here, so a failed stop leaves nothing running.
+            telemetry.recordError("program finish failed: ${error.message ?: error.javaClass.simpleName}")
+            null
         }
         val stranded = lock.withLock { pendingAudio.size }
         if (stranded > 0) telemetry.recordError("program finish left $stranded audio buffers unwritten")
@@ -689,6 +680,35 @@ class ProgramEncoder(
         if (check.isShort) telemetry.recordError("program master sound %.3f s short of its picture".format(Locale.US, check.shortfall))
         telemetry.recordEncodeSessionChange(-1)
         return finished
+    }
+
+    /**
+     * The sound queued, then the hold out to [until] and the sound after it. Answers how long the last
+     * picture lasts, or null with no hold to write.
+     */
+    private fun finishSoundAndHold(until: Double?): Double? {
+        drainAudioUntilEmpty(2.0)
+        val started = lock.withLock { startedAt }
+        if (until == null || started == null) return null
+        // Out to the take's end on the wall clock, from where the part's timeline really starts:
+        // a phone's first picture was captured a picture delay before Record, so a fill counted
+        // from the take's start ended that much short of the take, and every ordinary take was
+        // rebuilt instead of copied for ending early.
+        val byTake = until - started - lock.withLock { previousPartsDuration }
+        val byAnchors = lock.withLock { RecordingCatalog.partStart(partAnchorStarts.toList())?.first }?.let { until - it }
+        val target = maxOf(0.0, byTake, byAnchors ?: 0.0)
+        val (pictureAt, soundAt) = lock.withLock { (if (lastTime.isNumeric) lastTime.seconds else -1.0) to writtenAudioEnd }
+        val held = fillHold(target)
+        drainAudioUntilEmpty(10.0)
+        lastProgramFinishDetail = lock.withLock {
+            "target %.3f picture %.3f sound %.3f->%.3f queued %d refused %d dropped %d accepted %d behind %d silence %d offered %d unseeded %d beforePart %d origin %.3f first %.3f".format(
+                Locale.US, target, pictureAt, soundAt, writtenAudioEnd, pendingAudio.size, audioAppendFailures,
+                audioQueueDrops, acceptedAudioCount, audioBehindTrack, silenceQueued, audioOffered, audioUnseeded,
+                audioBeforePart, soundOrigin.partStartWall ?: -1.0, audioFirstTarget
+            )
+        }
+        telemetry.recordProgramFinish(lastProgramFinishDetail)
+        return held
     }
 
     /**

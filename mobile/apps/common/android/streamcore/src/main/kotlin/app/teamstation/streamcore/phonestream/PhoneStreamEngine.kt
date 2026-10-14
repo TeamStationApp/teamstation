@@ -593,12 +593,10 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                     runCatching { video?.finishInput(finishInputMillis) }
                     runCatching { video?.close() }
                     recordingSession.detachAnchors()
-                    mix.flush(recordingMix, endedAt)
-                    try {
-                        recordingSession.finishProgramme(until = endedAt)
-                    } catch (error: Exception) {
-                        telemetry.recordRecordingError(error.message ?: error.javaClass.simpleName)
-                    }
+                    // Each step on its own: a sound codec that throws in the tail still leaves the part
+                    // finished, and the take closed below.
+                    attempt { mix.flush(recordingMix, endedAt) }
+                    attempt { recordingSession.finishProgramme(until = endedAt) }
                 }
                 if (closingTake) recordingSession.close(endedAt)
             } finally {
@@ -607,6 +605,15 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         }
         finishing = job
         job.join()
+    }
+
+    /** Runs [work], keeping what it throws as the recording's error. */
+    private inline fun attempt(work: () -> Unit) {
+        try {
+            work()
+        } catch (error: Exception) {
+            telemetry.recordRecordingError(error.message ?: error.javaClass.simpleName)
+        }
     }
 
     /** Returns once no part is being finished. */

@@ -1278,6 +1278,29 @@ class PhoneStreamEngineTest {
     }
 
     @Test
+    fun aStopWhoseSoundCodecThrowsStillClosesTheTake() {
+        val engine = opened()
+        start(engine)
+        capture(3.0)
+        // The AAC codec dies as the part finishes: the mix's tail and the hold fill reach it.
+        engine.encoder.soundSinkOverride = object : app.teamstation.streamcore.record.SoundSink {
+            override val isReadyForMoreSound = true
+            override fun appendSound(samples: ShortArray): Boolean = throw IllegalStateException("codec released")
+            override fun finishSound() = Unit
+        }
+        runBlocking { engine.stopRecording() }
+        engine.encoder.soundSinkOverride = null
+        assertFalse(engine.encoder.running)
+        assertFalse(engine.recordingSession.isRecording)
+        assertNotNull(runBlocking { engine.recordings() }.single().endedAt)
+        // Record on another stream writes a take of its own.
+        start(engine, stream = "s2")
+        capture(1.0)
+        runBlocking { engine.stopRecording() }
+        assertEquals(2, runBlocking { engine.recordings() }.size)
+    }
+
+    @Test
     fun aKilledTakeOnAStreamNoLongerWantedIsClosedWhereItGotTo() {
         val first = opened()
         start(first)
