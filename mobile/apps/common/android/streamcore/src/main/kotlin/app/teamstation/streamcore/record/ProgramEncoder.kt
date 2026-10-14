@@ -12,6 +12,7 @@ import app.teamstation.streamcore.stream.ProgramStreamer
 import app.teamstation.streamcore.stream.StreamAudioEncoding
 import app.teamstation.streamcore.stream.roundedHalfAwayFromZero
 import java.io.File
+import java.io.FileDescriptor
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -144,6 +145,9 @@ class ProgramEncoder(
      */
     @Volatile
     var onWriterFailure: ((String) -> Unit)? = null
+
+    /** How each part's file is forced to storage; a test makes it refuse. */
+    internal var forceToStorage: (FileDescriptor) -> Unit = FileDescriptor::sync
 
     /** Overridden by tests; otherwise the part's own sound track. */
     internal var soundSinkOverride: SoundSink? = null
@@ -352,10 +356,14 @@ class ProgramEncoder(
 
     /**
      * Forces what the part's writer has written to storage, outside [lock]: a slow fsync under it held
-     * up the render tick and the sound with it.
+     * up the render tick and the sound with it. A force storage refuses fails the part, as a refused
+     * write does: its fragments are not reaching storage.
      */
     private fun syncWriter() {
-        lock.withLock { writer }?.syncPending()
+        val target = lock.withLock { writer } ?: return
+        if (target.syncPending()) return
+        lock.withLock { if (writer === target) failWriterLocked(IOException("the part could not be forced to storage")) }
+        deliverWriterFailure()
     }
 
     /** The part's file stopped taking writes: it is closed where it got to. Called with [lock] held. */
@@ -412,7 +420,8 @@ class ProgramEncoder(
             file,
             FragmentedMp4Writer.VideoTrack(settings.codec, settings.width, settings.height, record),
             FragmentedMp4Writer.AudioTrack(config, primingSamples = priming),
-            syncEachFragment = false
+            syncEachFragment = false,
+            forceToStorage = forceToStorage
         )
     }
 

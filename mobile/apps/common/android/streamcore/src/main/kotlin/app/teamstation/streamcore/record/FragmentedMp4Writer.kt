@@ -4,6 +4,7 @@ import app.teamstation.streamcore.core.StreamCodec
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileDescriptor
 import java.io.FileOutputStream
 import java.io.IOException
 import kotlin.math.roundToLong
@@ -32,7 +33,9 @@ class FragmentedMp4Writer(
      * owner, through [syncPending], so it can do it outside whatever lock it writes under: one slow
      * fsync held under the recorder's lock froze the preview, the stream's pictures and the live sound.
      */
-    private val syncEachFragment: Boolean = true
+    private val syncEachFragment: Boolean = true,
+    /** How the file is forced to storage: `FileDescriptor.sync`, or a refusal in a test. */
+    private val forceToStorage: (FileDescriptor) -> Unit = FileDescriptor::sync
 ) {
     /** A picture track: the codec, its size, and its decoder configuration record (`hvcC` or `avcC`). */
     class VideoTrack(
@@ -69,13 +72,20 @@ class FragmentedMp4Writer(
     private val audioQueue = mutableListOf<Sample>()
     private var heldPicture: Sample? = null
     private var fragmentStart: Double? = null
-    private var closed = false
 
     @Volatile
-    private var syncWanted = false
+    private var closed = false
 
-    /** Fragments written since the last [syncPending] that have not been forced to storage. */
-    internal val hasPendingSync: Boolean get() = syncWanted
+    /** Fragments handed to the file. */
+    @Volatile
+    private var flushedFragments = 0
+
+    /** Fragments forced to storage: a fragment counts only once a force after it succeeded. */
+    @Volatile
+    private var syncedFragments = 0
+
+    /** Fragments handed to the file that have not been forced to storage. */
+    internal val hasPendingSync: Boolean get() = !closed && flushedFragments > syncedFragments
 
     /** Pictures and packets written to the file, held-back picture included once it is. */
     var videoSamples = 0
@@ -157,9 +167,8 @@ class FragmentedMp4Writer(
         try {
             flush(next = null)
             out.flush()
-            fileOut.fd.sync()
+            forceToStorage(fileOut.fd)
         } finally {
-            syncWanted = false
             runCatching { fileOut.close() }
         }
     }
@@ -168,23 +177,24 @@ class FragmentedMp4Writer(
     fun abandon() {
         if (closed) return
         closed = true
-        syncWanted = false
         runCatching { fileOut.close() }
     }
 
     /**
      * Forces the fragments written since the last call to storage, when the writer was made without
-     * [syncEachFragment]. Safe from any thread, alongside the writes; false when the force failed
-     * (the file closed meanwhile, or storage refused).
+     * [syncEachFragment]. Safe from any thread, alongside the writes. False when storage refused, and
+     * the fragments stay unforced; a file closed meanwhile has nothing left to force, because [finish]
+     * forced it and [abandon] let it go.
      */
     fun syncPending(): Boolean {
-        if (!syncWanted) return true
-        syncWanted = false
+        val through = flushedFragments
+        if (through <= syncedFragments) return true
         return try {
-            fileOut.fd.sync()
+            forceToStorage(fileOut.fd)
+            syncedFragments = through
             true
         } catch (error: IOException) {
-            false
+            closed
         }
     }
 
@@ -197,7 +207,8 @@ class FragmentedMp4Writer(
         sequence += 1
         writeFragment(sequence)
         out.flush()
-        if (syncEachFragment) fileOut.fd.sync() else syncWanted = true
+        if (syncEachFragment) forceToStorage(fileOut.fd)
+        flushedFragments = sequence
         videoSamples += videoQueue.size
         audioSamples += audioQueue.size
         audioTicks += audioQueueTicks

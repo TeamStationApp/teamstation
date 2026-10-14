@@ -572,4 +572,22 @@ class ProgramEncoderTest {
         assertEquals(first, encoder.outputFile)
         encoder.finish()
     }
+
+    @Test
+    fun aPartWhoseFragmentsCannotBeForcedToStorageStops() {
+        val encoder = encoder()
+        val failures = mutableListOf<String>()
+        encoder.onWriterFailure = { failures += it }
+        encoder.forceToStorage = { throw java.io.SyncFailedException("sync failed") }
+        encoder.start(wall)
+        record(encoder, 4.0)
+        assertTrue(failures.single(), failures.single().startsWith("program writer failed"))
+        val written = encoder.frameCount
+        record(encoder, 1.0)
+        // Nothing more goes into a part whose fragments are not reaching storage.
+        assertEquals(written, encoder.frameCount)
+        encoder.finish(until = wall)
+        assertFalse(encoder.running)
+        assertEquals(1, failures.size)
+    }
 }
