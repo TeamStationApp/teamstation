@@ -28,6 +28,9 @@ public struct ExportService: Sendable {
   private let assembler: SegmentAssembler
   private let programDirectory: URL
   private let fallbackEncoding: @Sendable () -> TakeEncoding
+  /// A phone's programme shows the absence between parts as a hole on the wall clock, black every
+  /// frame (`ArchiveRemux.stitch`'s `blankGaps`).
+  private let blankProgrammeHoles: Bool
 
   /// `fallbackEncoding` is asked, at the time of each export, for the encoding of a take that has
   /// none of its own: TS Director answers with its settings as they are then, TS Distributor with the
@@ -36,12 +39,14 @@ public struct ExportService: Sendable {
     index: ArchiveIndex,
     archives: URL = DirectorPaths.archives,
     programDirectory: URL = DirectorPaths.program,
-    fallbackEncoding: @escaping @Sendable () -> TakeEncoding = { AppConfig().takeEncoding }
+    fallbackEncoding: @escaping @Sendable () -> TakeEncoding = { AppConfig().takeEncoding },
+    blankProgrammeHoles: Bool = false
   ) {
     self.index = index
     self.assembler = SegmentAssembler(index: index, archives: archives)
     self.programDirectory = programDirectory
     self.fallbackEncoding = fallbackEncoding
+    self.blankProgrammeHoles = blankProgrammeHoles
   }
 
   /// The encoding `recording`'s exports are made with.
@@ -273,6 +278,7 @@ public struct ExportService: Sendable {
         length: windowEnd.map { max(0, $0 - windowStart) },
         settings: settings,
         destination: destination,
+        blankGaps: blankProgrammeHoles,
         progress: progress
       )
     }

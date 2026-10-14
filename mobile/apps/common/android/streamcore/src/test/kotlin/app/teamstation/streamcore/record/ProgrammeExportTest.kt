@@ -8,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import app.teamstation.streamcore.core.StreamCodec
 import java.io.File
 import java.io.RandomAccessFile
 
@@ -61,7 +62,9 @@ class ProgrammeExportTest {
         seconds: Int,
         priming: Int = 0,
         keyframeEvery: Int = 60,
-        video: FragmentedMp4Writer.VideoTrack = FragmentedMp4WriterTest.videoTrack
+        video: FragmentedMp4Writer.VideoTrack = FragmentedMp4WriterTest.videoTrack,
+        dropped: Set<Int> = emptySet(),
+        keyframe: ((Int) -> ByteArray)? = null
     ): File {
         val file = folder.newFile(name)
         val audio = FragmentedMp4Writer.AudioTrack(byteArrayOf(0x11, 0x90.toByte()), primingSamples = priming)
@@ -69,6 +72,9 @@ class ProgrammeExportTest {
         repeat(priming / 1024) { writer.writeAudio(primingPacket) }
         var packets = 0
         for (frame in 0 until seconds * 30) {
+            if (frame in dropped) continue
+            // A keyframe of the units given, or the same unit as every other picture.
+            if (keyframe != null && frame % keyframeEvery == 0) writer.writeVideo(keyframe(frame), frame / 30.0, true) else
             writer.writeVideo(byteArrayOf(0, 0, 0, 3, 0x26, 1, frame.toByte()), frame / 30.0, frame % keyframeEvery == 0)
             while (packets * 1024.0 / 48_000 < (frame + 1) / 30.0) {
                 writer.writeAudio(byteArrayOf(0x21, 0x55))
@@ -251,5 +257,166 @@ class ProgrammeExportTest {
         val soundAtOneMinute = audio.samples.first { it.ticks >= 60 * 48_000 }
         val pictureAtTwoMinutes = video.samples.first { it.ticks >= 120 * 90_000 }
         assertTrue(soundAtOneMinute.offset < pictureAtTwoMinutes.offset)
+    }
+
+    /** An HEVC keyframe as the phone codes it: its wall-clock SEI, then the IDR picture. */
+    private fun stampedKeyframe(frame: Int) =
+        FragmentedMp4WriterTest.bytes(0, 0, 0, 4, 0x4E, 1, 0x05, frame, 0, 0, 0, 3, 0x26, 1, frame)
+
+    @Test
+    fun aPhoneHoleIsWallClockAndFilledWithTheOutgoingKeyframeOnceASecond() {
+        val first = part("program-20261012-100000.mp4", 2, keyframeEvery = 30, keyframe = ::stampedKeyframe)
+        val second = part("program-20261012-100000-2.mp4", 2, keyframe = ::stampedKeyframe)
+        val anchors = anchors(count = 2) + anchors(part = 2, start = 1_032.0, count = 2)
+        val output = File(folder.root, "hole.mp4")
+        ProgrammeExport.export(listOf(first, second), anchors, 1, 1_000.0, 1_034.0, 30, silent, output, blankHoles = true)
+        val reader = FragmentedMp4Reader.read(output)!!
+        val video = reader.video!!
+        val frame = 1.0 / 30
+        val seconds = { ticks: Long -> ticks.toDouble() / video.timescale }
+        assertEquals(60 + 30 + 60, video.samples.size)
+        // Part 1's pictures each keep their frame, the outgoing one too.
+        video.samples.take(60).forEachIndexed { index, sample ->
+            assertEquals("picture $index", frame, seconds(sample.duration), 1e-4)
+        }
+        // Then the hole, from that picture's end to part 2's first: part 1's last keyframe (frame 30)
+        // once a second, each lasting until the next, without its wall-clock SEI.
+        val hole = video.samples.subList(60, 90)
+        assertEquals((2 until 32).map { it.toDouble() }, hole.map { Math.round(seconds(it.ticks) * 1e4) / 1e4 })
+        assertTrue(hole.all { it.sync && Math.abs(seconds(it.duration) - 1.0) < 1e-4 })
+        assertTrue(hole.all { reader.read(it).contentEquals(byteArrayOf(0, 0, 0, 3, 0x26, 1, 30)) })
+        // Part 2 opens on its own keyframe, its SEI and all, at its wall time.
+        val opening = video.samples[90]
+        assertTrue(opening.sync)
+        assertEquals(32.0, seconds(opening.ticks), 1e-4)
+        assertArrayEquals(stampedKeyframe(0), reader.read(opening))
+        video.samples.zipWithNext().forEach { (a, b) -> assertEquals(a.ticks + a.duration, b.ticks) }
+        // The pictures go out in 3 s fragments, the hole's too, and the hole's sound, written ahead of
+        // its pictures, in fragments cut by its own length. A fragment per picture would be over a
+        // hundred.
+        assertTrue("${reader.fragments} fragments", reader.fragments <= 34 / 3 + 30 / 6 + 2)
+    }
+
+    @Test
+    fun aHoleAfterAKeyframeThatIsNoRefreshIsLeftAJumpInTime() {
+        // A part whose keyframes are HEVC CRA pictures: repeated, one would come back with a picture
+        // order before the pictures already shown, so the hole is left as a jump in time, the
+        // outgoing picture holding one frame.
+        val cra = { frame: Int -> FragmentedMp4WriterTest.bytes(0, 0, 0, 3, 0x2A, 1, frame) }
+        val first = part("program-20261012-100000.mp4", 2, keyframe = cra)
+        val second = part("program-20261012-100000-2.mp4", 2, keyframe = cra)
+        val anchors = anchors(count = 2) + anchors(part = 2, start = 1_012.0, count = 2)
+        val output = File(folder.root, "cra.mp4")
+        ProgrammeExport.export(listOf(first, second), anchors, 1, 1_000.0, 1_014.0, 30, silent, output, blankHoles = true)
+        val video = FragmentedMp4Reader.read(output)!!.video!!
+        assertEquals(120, video.samples.size)
+        assertEquals(3_000L, video.samples[59].duration)
+        assertEquals(12.0, video.samples[60].ticks / 90_000.0, 1e-6)
+        // A sample that is not length-prefixed units is no refresh and gives no fill.
+        val fill = ProgrammeExport.HoleFill.of("avc1", FragmentedMp4WriterTest.bytes(1, 0x64, 0, 0x1F, 0xFF))
+        assertFalse(fill.isInstantRefresh(byteArrayOf(0, 0, 0, 9, 0x65)))
+        assertFalse(fill.isInstantRefresh(byteArrayOf(0, 0, 0)))
+        assertNull(fill.filler(byteArrayOf(0, 0, 0, 0)))
+        assertArrayEquals(byteArrayOf(0, 0, 0, 1, 0x65), fill.filler(byteArrayOf(0, 0, 0, 2, 0x06, 0, 0, 0, 0, 1, 0x65)))
+        assertTrue(ProgrammeExport.HoleFill.of("avc1", byteArrayOf()).isInstantRefresh(byteArrayOf(0, 0, 0, 1, 0x65)))
+    }
+
+    @Test
+    fun aDroppedFrameInsideAPartIsNotAHole() {
+        // A loaded phone dropping every other frame for a second: each picture before a drop lasts
+        // across it, and the fragments keep their 3 s cadence.
+        val dropped = (31 until 61 step 2).toSet()
+        val first = part("program-20261012-100000.mp4", 4, dropped = dropped)
+        val second = part("program-20261012-100000-2.mp4", 2)
+        val anchors = anchors(count = 2) + anchors(part = 2, start = 1_010.0, count = 2)
+        val output = File(folder.root, "dropped.mp4")
+        ProgrammeExport.export(listOf(first, second), anchors, 1, 1_000.0, 1_012.0, 30, silent, output, blankHoles = true)
+        val reader = FragmentedMp4Reader.read(output)!!
+        val video = reader.video!!
+        val frame = 1.0 / 30
+        assertEquals(120 - dropped.size + 6 + 60, video.samples.size)
+        val beforeDrop = video.samples.first { it.ticks == 30L * 3_000 }
+        assertEquals(2 * frame, beforeDrop.duration.toDouble() / video.timescale, 1e-4)
+        // The part change is still a hole: part 1's last picture keeps one frame, and its last
+        // keyframe fills the hole once a second.
+        val last = video.samples.last { it.ticks < 4L * 90_000 }
+        assertEquals(frame, last.duration.toDouble() / video.timescale, 1e-4)
+        val hole = video.samples.filter { it.ticks in 4L * 90_000 until 10L * 90_000 }
+        assertEquals((4L until 10L).map { it * 90_000 }, hole.map { it.ticks })
+        assertEquals(10.0, video.samples.first { it.ticks >= 10L * 90_000 }.ticks / 90_000.0, 1e-6)
+        assertTrue("${reader.fragments} fragments", reader.fragments <= 8)
+    }
+
+    private val blackSound = byteArrayOf(0x01, 0x18, 0x20, 0x07)
+
+    /**
+     * Fifteen 64×64 black H.264 pictures at 30 fps, a keyframe first, as an encoder coded them, with
+     * mono sound: a part as the recording writes it.
+     */
+    private fun blackPart(name: String): File {
+        val clip = FragmentedMp4Reader.read(File("src/test/resources/record/black-64x64-h264.mp4"))!!
+        val video = clip.video!!
+        val file = folder.newFile(name)
+        val writer = FragmentedMp4Writer(
+            file,
+            FragmentedMp4Writer.VideoTrack(StreamCodec.H264, 64, 64, video.configuration!!),
+            FragmentedMp4Writer.AudioTrack(FragmentedMp4WriterTest.bytes(0x11, 0x88), channels = 1, bitrate = 24_000)
+        )
+        var packets = 0
+        clip.samples().use { source ->
+            video.samples.forEachIndexed { index, sample ->
+                writer.writeVideo(source.read(sample), sample.ticks.toDouble() / video.timescale, sample.sync)
+                while (packets * 1024.0 / 48_000 < (index + 1) / 30.0) {
+                    writer.writeAudio(blackSound)
+                    packets += 1
+                }
+            }
+        }
+        writer.finish()
+        return file
+    }
+
+    /**
+     * A part, a ten-second absence and a part, as a phone exports them. FFmpeg's HLS copy (TeamStation's
+     * upload) closes a jump in decode time, so the hole is filled: the outgoing picture keeps one
+     * frame, the part's last keyframe follows once a second, each lasting until the next, and the next
+     * part opens on its keyframe at its own time. No sample lasts over a second and the track is one
+     * run of samples. The file is TeamStation's fixture for the same check through FFmpeg
+     * (`src/server/media/androidHole.test.ts`), and must stay what this export writes.
+     */
+    @Test
+    fun aHoleIsFilledOnceASecondSoFFmpegsCopyKeepsIt() {
+        val first = blackPart("program-20261012-100000.mp4")
+        val second = blackPart("program-20261012-100000-2.mp4")
+        val anchors = anchors(count = 1) + anchors(part = 2, start = 1_010.5, count = 1)
+        val output = File(folder.root, "androidHole.mp4")
+        ProgrammeExport.export(listOf(first, second), anchors, 1, 1_000.0, 1_011.0, 30, blackSound, output, blankHoles = true)
+        val reader = FragmentedMp4Reader.read(output)!!
+        val video = reader.video!!
+        val frame = 1.0 / 30
+        val seconds = { ticks: Long -> ticks.toDouble() / video.timescale }
+        val before = video.samples.filter { seconds(it.ticks) < 0.49 }
+        val hole = video.samples.filter { seconds(it.ticks) in 0.49..10.49 }
+        val after = video.samples.filter { seconds(it.ticks) > 10.49 }
+        assertEquals(15, before.size)
+        assertEquals(frame, seconds(before.last().duration), 1e-4)
+        assertEquals((0 until 10).map { 0.5 + it }, hole.map { Math.round(seconds(it.ticks) * 1e4) / 1e4 })
+        assertTrue(hole.all { it.sync && Math.abs(seconds(it.duration) - 1.0) < 1e-4 })
+        // Each is the outgoing part's last keyframe, coded once and stored again.
+        val keyframe = reader.read(before.first())
+        assertTrue(hole.all { reader.read(it).contentEquals(keyframe) })
+        assertTrue(after.first().sync)
+        assertEquals(10.5, seconds(after.first().ticks), 1e-6)
+        assertEquals(15, after.size)
+        assertEquals(11.0, video.endSeconds!!, 1e-4)
+        assertTrue(video.samples.all { seconds(it.duration) < 1.0 + 1e-4 })
+        video.samples.zipWithNext().forEach { (a, b) -> assertEquals(a.ticks + a.duration, b.ticks) }
+        val fixture = File("../../../../../src/server/media/fixtures/androidHole.mp4")
+        if (!fixture.exists()) {
+            fixture.parentFile?.mkdirs()
+            output.copyTo(fixture)
+            error("wrote ${fixture.path}; review and commit it")
+        }
+        assertArrayEquals("the server's fixture is no longer what this export writes", fixture.readBytes(), output.readBytes())
     }
 }

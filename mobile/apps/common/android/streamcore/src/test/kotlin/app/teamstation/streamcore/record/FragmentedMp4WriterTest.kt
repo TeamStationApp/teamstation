@@ -254,4 +254,22 @@ class FragmentedMp4WriterTest {
         refuse = true
         assertTrue(writer.syncPending())
     }
+
+    @Test
+    fun aFrameOfJitterIsHeldOutAndAHoleKeepsOneFrame() {
+        val file = folder.newFile("jitter.mp4")
+        val writer = FragmentedMp4Writer(file, videoTrack, null)
+        val frame = 1.0 / 30
+        writer.writeVideo(bytes(0, 0, 0, 1, 0x26), 0.0, true, frame)
+        writer.writeVideo(bytes(0, 0, 0, 1, 0x02), frame + 0.001, false, frame)
+        writer.writeVideo(bytes(0, 0, 0, 1, 0x02), frame + 0.001 + 30.0, false, frame)
+        writer.finish()
+        val video = FragmentedMp4Reader.read(file)!!.video!!
+        val first = video.samples[0]
+        assertEquals(frame + 0.001, first.duration.toDouble() / video.timescale, 1e-4)
+        val across = video.samples[1]
+        assertEquals(frame, across.duration.toDouble() / video.timescale, 1e-4)
+        // The jitter stayed in the first fragment. A flush per picture would be three.
+        assertEquals(2, FragmentedMp4Reader.read(file)!!.fragments)
+    }
 }

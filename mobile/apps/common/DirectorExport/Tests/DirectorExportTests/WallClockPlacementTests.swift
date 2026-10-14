@@ -97,13 +97,15 @@ struct WallClockPlacementTests {
   ///
   /// `audioLead` starts the sound that long after the first picture and `audioOverrun` runs it that
   /// long past the last, which is the shape a camera segment really has: its sound begins and ends a
-  /// few tens of milliseconds after its picture does.
+  /// few tens of milliseconds after its picture does. `skipping` leaves those frames out, as a
+  /// camera that drops one does.
   func markedMovieWithAudio(
     at url: URL,
     firstValue: Int,
     frames: Int,
     audioLead: Double = 0,
-    audioOverrun: Double = 0
+    audioOverrun: Double = 0,
+    skipping: Set<Int> = []
   ) async throws {
     try? FileManager.default.removeItem(at: url)
     let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -214,6 +216,7 @@ struct WallClockPlacementTests {
         // last second of picture never goes in.
         if nextChunk == chunks { audio.markAsFinished() }
       }
+      if skipping.contains(index) { continue }
       try await ready(video)
       guard let buffer = Self.paint(value: firstValue + index) else { continue }
       adaptor.append(buffer, withPresentationTime: CMTime(seconds: time, preferredTimescale: 600))

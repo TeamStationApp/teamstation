@@ -94,6 +94,11 @@ export interface RemuxOptions {
    * declare, in samples, or 0. See `AAC_PRIMING_SAMPLES`.
    */
   soundPrimingSamples?: number
+  /**
+   * `input` is an ffconcat list. The demuxer is told so, and each entry may
+   * be a `concat:` of the init segment and one media segment.
+   */
+  concatList?: boolean
 }
 
 /**
@@ -160,12 +165,23 @@ export function remuxToHlsArgs(options: RemuxOptions): string[] {
     outDir,
     segmentSeconds = 6,
     videoTag = 'hvc1',
-    soundPrimingSamples = 0
+    soundPrimingSamples = 0,
+    concatList = false
   } = options
   return [
     '-hide_banner',
     '-loglevel',
     'error',
+    ...(concatList
+      ? [
+          '-f',
+          'concat',
+          '-safe',
+          '0',
+          '-protocol_whitelist',
+          'file,crypto,data,concat'
+        ]
+      : []),
     '-i',
     input,
     '-c',

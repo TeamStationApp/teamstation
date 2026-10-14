@@ -1039,7 +1039,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                     windowEnd = summary.endedAt,
                     frameRate = PhoneStreamProfile.frameRate,
                     silentPacket = silence,
-                    output = output
+                    output = output,
+                    blankHoles = true
                 )
             }
         }

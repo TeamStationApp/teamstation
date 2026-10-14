@@ -1015,7 +1015,8 @@ public final class PhoneStreamEngine {
       index: index,
       archives: storage.fileRoots.archives,
       programDirectory: storage.program,
-      fallbackEncoding: { PhoneStreamProfile.takeEncoding }
+      fallbackEncoding: { PhoneStreamProfile.takeEncoding },
+      blankProgrammeHoles: true
     )
     // The export is cut to the take's window, so its first frame is the take's start: copied from
     // the picture at or before it, with the edit list hiding the head, or re-encoded from it.

@@ -11,8 +11,11 @@ import java.util.Locale
  * it is. Anything that makes its timeline doubtful (a second part, a resume, anchors that disagree, a
  * part that does not reach one end of the window or does not read to its end) has it rebuilt. TS
  * Director rebuilds by re-encoding; here every part's coded samples are placed by its own wall start
- * in a new [FragmentedMp4Writer] file, nothing re-encoded: across a hole the last picture is held as
- * one sample lasting the gap, and the sound is filled with coded silence ([SilentAac]).
+ * in a new [FragmentedMp4Writer] file, nothing re-encoded. Across a hole the last picture is held
+ * for the whole gap, except when the export leaves the hole blank: then that picture is held for
+ * one frame at the take's frame rate, the outgoing part's last keyframe fills the hole once a
+ * second, and the next part keeps its wall-clock time. The sound is filled with coded silence
+ * ([SilentAac]).
  */
 object ProgrammeExport {
     /** Why a master has to be rebuilt. */
@@ -149,7 +152,8 @@ object ProgrammeExport {
         windowEnd: Double?,
         frameRate: Int,
         silentPacket: ByteArray,
-        output: File
+        output: File,
+        blankHoles: Boolean = false
     ): Result {
         val existing = parts.filter { it.isFile && it.length() > 0 }
         val plan = plan(
@@ -172,7 +176,7 @@ object ProgrammeExport {
             val start = starts[part] ?: return@mapIndexedNotNull null
             start to file
         }.sortedBy { it.first }
-        val peak = place(placed, windowStart, windowEnd, silentPacket, output)
+        val peak = place(placed, windowStart, windowEnd, silentPacket, output, frameRate, blankHoles)
         return Result(plan, output, peak)
     }
 
@@ -191,8 +195,12 @@ object ProgrammeExport {
      * server's remux) found the two starting apart. From the earlier head both tracks start together,
      * as a copied part's do. A picture lasts until the next one, so across a hole the last picture
      * before it is held as one sample; the sound is contiguous, with [silentPacket]s across every hole
-     * and out to the end. The last picture and the sound both run to [windowEnd], or to where the last
-     * part ends.
+     * and out to the end. [blankHoles] leaves that picture at one frame of [frameRate] instead, the
+     * hole is filled with the outgoing part's last keyframe once a second ([HoleFill]), each lasting
+     * until the next, and the next part opens on its keyframe at its own wall time. Only a change of
+     * part can be a hole: a gap inside a part is dropped frames, and the picture before it lasts
+     * across them. The last picture and the sound both run to [windowEnd], or to where the last part
+     * ends.
      *
      * Each part's pictures and sound are written interleaved by time, so the writer holds about one
      * fragment's samples at a time however long the part is. Where parts overlap, a picture at or
@@ -200,7 +208,15 @@ object ProgrammeExport {
      * keyframe: the ones between depend on what was left out. Every part must share the first part's
      * picture configuration ([MismatchedParts]). Answers the most samples held for one fragment.
      */
-    fun place(parts: List<Pair<Double, File>>, windowStart: Double, windowEnd: Double?, silentPacket: ByteArray, output: File): Int {
+    fun place(
+        parts: List<Pair<Double, File>>,
+        windowStart: Double,
+        windowEnd: Double?,
+        silentPacket: ByteArray,
+        output: File,
+        frameRate: Int,
+        blankHoles: Boolean = false
+    ): Int {
         val readings = parts.map { (start, file) -> Triple(start, file, FragmentedMp4Reader.read(file)) }
         val readers = readings.mapNotNull { (start, file, reader) -> reader?.let { Triple(start, file, it) } }
         require(readers.isNotEmpty()) {
@@ -239,6 +255,10 @@ object ProgrammeExport {
             syncEachFragment = false
         )
         val packet = FragmentedMp4Writer.StreamPacketSamples.toDouble() / (sourceAudio?.timescale ?: 48_000)
+        val frame = 1.0 / maxOf(1, frameRate)
+        val fill = sourceVideo?.let { HoleFill.of(it.sampleEntry, it.configuration!!) }
+        // The newest keyframe written that a hole can repeat, from the part being written.
+        var lastKeyframe: ByteArray? = null
         val head = minOf(windowStart, readers.minOf { it.first })
         var lastPicture = Double.NEGATIVE_INFINITY
         // Where the sound written so far ends, on the output's timeline, priming included.
@@ -248,6 +268,9 @@ object ProgrammeExport {
         try {
             for ((start, _, reader) in readers) {
                 val offset = start - head
+                // A hole is filled from the part before it, and only from that part.
+                val outgoingKeyframe = lastKeyframe
+                lastKeyframe = null
                 val video = reader.video
                 val pictures = video?.samples.orEmpty()
                 val audio = reader.audio
@@ -260,6 +283,9 @@ object ProgrammeExport {
                 var leadIn = audio != null
                 // Nothing of the part is written before a keyframe: its pictures depend on one.
                 var awaitingKeyframe = true
+                // A hole is only ever between parts: within one, the recording ran unbroken, and a
+                // gap is a dropped frame that the picture before it lasts across.
+                var opensPart = true
                 // One sample in memory at a time, read from the part as it is written out.
                 reader.samples().use { source ->
                     while (true) {
@@ -275,7 +301,29 @@ object ProgrammeExport {
                             }
                             if (awaitingKeyframe && !sample.sync) continue
                             awaitingKeyframe = false
-                            if (writer.writeVideo(source.read(sample), pictureAt, sample.sync)) lastPicture = pictureAt
+                            val data = source.read(sample)
+                            // A hole is only ever at a part's first picture, and only past one and a
+                            // half frames: parts that meet are not a hole. The outgoing picture keeps
+                            // one frame, and its part's last keyframe follows it once a second up to
+                            // this picture, so no sample lasts across the hole and the track stays
+                            // one run of samples that FFmpeg's HLS copy cannot close up.
+                            val hole = blankHoles && opensPart && lastPicture.isFinite() && pictureAt - lastPicture > frame * 1.5
+                            val filler = if (hole) outgoingKeyframe?.let { fill?.filler(it) } else null
+                            if (filler != null) {
+                                var at = lastPicture + frame
+                                while (at < pictureAt - frame / 2) {
+                                    writer.writeVideo(filler, at, true)
+                                    at += HoleFill.SECONDS
+                                }
+                            }
+                            // Without a keyframe to fill with, the outgoing picture is held one frame
+                            // and the writer leaves the hole as a jump in time.
+                            val held = if (hole && filler == null) frame else Double.POSITIVE_INFINITY
+                            if (writer.writeVideo(data, pictureAt, sample.sync, held)) {
+                                lastPicture = pictureAt
+                                opensPart = false
+                                if (sample.sync && fill?.isInstantRefresh(data) == true) lastKeyframe = data
+                            }
                             pictureEnd = maxOf(pictureEnd, pictureAt + sample.duration.toDouble() / video!!.timescale)
                         } else if (leadIn) {
                             if (soundEnd + packet / 2 < soundAt) {
@@ -312,5 +360,73 @@ object ProgrammeExport {
             throw error
         }
         return writer.peakQueuedSamples
+    }
+
+    /**
+     * What fills a hole in a phone's export: the outgoing part's last keyframe, stored again once a
+     * second. The export copies coded samples and encodes none, so it has no black picture of the
+     * take's configuration to show; a keyframe decodes on its own wherever it is placed. Only an
+     * instantaneous decoder refresh (H.264 IDR, HEVC IDR) is repeated, as it resets the picture order
+     * and nothing after it refers back past it. Its SEI is left out, so the wall-clock points the
+     * pictures carry stay where they were captured and in order.
+     */
+    class HoleFill private constructor(private val hevc: Boolean, private val lengthSize: Int) {
+        /** Whether [sample] holds an IDR picture. */
+        fun isInstantRefresh(sample: ByteArray): Boolean =
+            units(sample)?.any { type(sample, it.first) in (if (hevc) HEVC_IDR else H264_IDR) } == true
+
+        /** [keyframe] without its SEI units, or null when it is not length-prefixed NAL units. */
+        fun filler(keyframe: ByteArray): ByteArray? {
+            val kept = (units(keyframe) ?: return null).filter { type(keyframe, it.first) !in (if (hevc) HEVC_SEI else H264_SEI) }
+            val filler = ByteArray(kept.sumOf { it.second - it.first + lengthSize })
+            var at = 0
+            for ((start, end) in kept) {
+                keyframe.copyInto(filler, at, start - lengthSize, end)
+                at += end - start + lengthSize
+            }
+            return filler
+        }
+
+        private fun type(sample: ByteArray, at: Int): Int {
+            val header = sample[at].toInt() and 0xFF
+            return if (hevc) (header ushr 1) and 0x3F else header and 0x1F
+        }
+
+        /** Each unit's payload as [start, end), or null when the lengths do not add up. */
+        private fun units(sample: ByteArray): List<Pair<Int, Int>>? {
+            val units = mutableListOf<Pair<Int, Int>>()
+            var at = 0
+            while (at < sample.size) {
+                if (at + lengthSize > sample.size) return null
+                var length = 0L
+                repeat(lengthSize) { length = (length shl 8) or (sample[at + it].toLong() and 0xFF) }
+                val start = at + lengthSize
+                if (length <= 0 || start + length > sample.size) return null
+                units += start to (start + length).toInt()
+                at = (start + length).toInt()
+            }
+            return units
+        }
+
+        companion object {
+            /** How far apart the fill's pictures are: no sample in a hole lasts longer. */
+            const val SECONDS = 1.0
+
+            private val H264_IDR = setOf(5)
+            private val H264_SEI = setOf(6)
+            private val HEVC_IDR = setOf(19, 20)
+            private val HEVC_SEI = setOf(39, 40)
+
+            /**
+             * The fill for a track of [sampleEntry] with decoder configuration [configuration] (`avcC`
+             * or `hvcC`), whose NAL unit length size it reads.
+             */
+            fun of(sampleEntry: String, configuration: ByteArray): HoleFill {
+                val hevc = sampleEntry == "hvc1" || sampleEntry == "hev1"
+                val at = if (hevc) 21 else 4
+                val lengthSize = if (configuration.size > at) (configuration[at].toInt() and 3) + 1 else 4
+                return HoleFill(hevc, lengthSize)
+            }
+        }
     }
 }

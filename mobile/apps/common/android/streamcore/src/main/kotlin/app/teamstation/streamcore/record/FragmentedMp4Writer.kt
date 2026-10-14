@@ -20,8 +20,13 @@ import kotlin.math.roundToLong
  *
  * Times are seconds on the part's own timeline. A picture's duration is not known until the next one
  * arrives, so the newest picture is held back to the next fragment; [finish] gives the last one its
- * duration, which is how the hold at Stop is written as one picture lasting out the take. Sound is
- * contiguous: every AAC packet lasts 1024 samples from where the last one ended.
+ * duration, which is how the hold at Stop is written as one picture lasting out the take. A gap of
+ * about one frame is the next picture, jitter included, and that picture is held out to it. A
+ * picture written with a hold cap may open a hole: a gap past one and a half of the cap is the
+ * absence, the outgoing picture keeps the cap and the next picture opens the following fragment at
+ * its own time. The owner offers the cap only where a hole can be, at a change of part, so dropped
+ * frames inside a part never cut a picture short or end a fragment early. Sound is contiguous: every AAC packet lasts
+ * 1024 samples from where the last one ended.
  */
 class FragmentedMp4Writer(
     val file: File,
@@ -120,15 +125,35 @@ class FragmentedMp4Writer(
      * One coded picture, length-prefixed NAL units, presented at [seconds]. A picture at or before
      * the one before it is refused: the track's times only move forward.
      */
-    fun writeVideo(sample: ByteArray, seconds: Double, keyframe: Boolean): Boolean {
+    fun writeVideo(
+        sample: ByteArray,
+        seconds: Double,
+        keyframe: Boolean,
+        maxHoldSeconds: Double = Double.POSITIVE_INFINITY
+    ): Boolean {
         val track = video ?: return false
         check(!closed) { "writer is finished" }
         val ticks = (seconds * track.timescale).roundToLong()
         val held = heldPicture
         if (held != null) {
             if (ticks <= held.ticks) return false
-            held.duration = ticks - held.ticks
+            val gap = ticks - held.ticks
+            val hole = maxHoldSeconds.isFinite()
+            val cap = if (hole) {
+                maxOf(1L, (maxHoldSeconds * track.timescale).roundToLong())
+            } else {
+                Long.MAX_VALUE
+            }
+            // One and a half frames. A few ticks of timestamp jitter is still
+            // the next picture; a wider gap is the absence.
+            val clearlyAHole = hole && gap > cap + cap / 2
+            held.duration = if (clearlyAHole) minOf(gap, cap) else gap
             videoQueue += held
+            // A capped picture cannot carry the next timestamp: the fragment's
+            // later samples are placed by summing durations from its first one.
+            // End it here so the picture after the absence opens the next
+            // fragment at its own time.
+            if (clearlyAHole) flush(next = seconds)
         }
         heldPicture = Sample(sample, ticks, 0, keyframe)
         if (fragmentStart == null) fragmentStart = seconds
