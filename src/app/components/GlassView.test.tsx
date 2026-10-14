@@ -50,4 +50,31 @@ describe('GlassView', function () {
     )
     expect(dark.style.backgroundColor).not.equals(light.style.backgroundColor)
   })
+
+  it('keeps the iOS backdrop option off the DOM and preserves the web material and opaque fallback', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <GlassView testID="plain" />
+          <GlassView testID="backdrop" backdropBlur />
+          <GlassView testID="opaque" backdropBlur opaque />
+        </ThemeProvider>
+      )
+    })
+    const plain = host.querySelector<HTMLElement>('[data-testid="plain"]')!
+    const backdrop = host.querySelector<HTMLElement>(
+      '[data-testid="backdrop"]'
+    )!
+    const opaque = host.querySelector<HTMLElement>('[data-testid="opaque"]')!
+    expect(backdrop.hasAttribute('backdropBlur')).equals(false)
+    expect(backdrop.hasAttribute('glassBackdropBlur')).equals(false)
+    expect(backdrop.className).equals(plain.className)
+    expect(backdrop.style.cssText).equals(plain.style.cssText)
+    expect(opaque.style.backgroundColor).equals(
+      painted(glassStyle(tsBallpark, true).backgroundColor)
+    )
+  })
 })
