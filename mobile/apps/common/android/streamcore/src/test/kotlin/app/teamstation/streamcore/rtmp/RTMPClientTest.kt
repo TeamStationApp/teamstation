@@ -1,5 +1,6 @@
 package app.teamstation.streamcore.rtmp
 
+import app.teamstation.streamcore.bitrate.AdaptiveBitrateController
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -17,6 +18,7 @@ import java.net.UnknownHostException
 import java.nio.ByteBuffer
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
+import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -445,6 +447,39 @@ class RTMPClientTest {
         peer.drain()
         waitFor { client.metrics.queuedBytes == 0 }
         assertEquals(0.0, client.congestionSample().queueDelay, 0.0)
+    }
+
+    @Test
+    fun withoutTheKernelsBacklogTheRateIsCutOnTheQueueDelayAlone() {
+        val notes = Collections.synchronizedList(mutableListOf<String>())
+        val log = TransportBacklog.log
+        TransportBacklog.log = { notes += it }
+        TransportBacklog.resetForTesting()
+        closers += AutoCloseable { TransportBacklog.log = log }
+        val peer = StalledPeer().also { closers += it }
+        // A JVM reaches neither the descriptor nor ioctl: the transport cannot say, and says so once.
+        val transport = ChannelRTMPTransport.wrap(peer.sender, sendTimeoutSeconds = 0.05)
+        assertNull(transport.unsentBytes())
+        assertNull(transport.unsentBytes())
+        assertNull(TransportBacklog.unsentBytes(java.io.FileDescriptor()))
+        assertEquals(notes.toString(), 1, notes.size)
+        assertTrue(notes.single(), notes.single().contains("send queue alone"))
+
+        val client = RTMPClient()
+        closers += AutoCloseable { client.stop() }
+        client.attachForTesting(transport, budgetBytes = 64 * 1024 * 1024, bufferSeconds = 60.0, stallDeadlineSeconds = 10.0)
+        val controller = AdaptiveBitrateController(4_000_000)
+        controller.update(client.congestionSample(), RTMPClient.monotonicNow())
+        groups(client, count = 6, frameBytes = 4_000)
+        Thread.sleep(400)
+        // Nothing was shed and the kernel says nothing; what is waiting in the queue is enough.
+        val sample = client.congestionSample()
+        assertNull(sample.transportBacklogBytes)
+        assertEquals(0, sample.droppedFrames)
+        assertTrue(sample.queueDelay > 0.3)
+        val cut = controller.update(sample, RTMPClient.monotonicNow())
+        assertNotNull(cut)
+        assertTrue("cut to $cut", cut!! < 4_000_000)
     }
 
     @Test

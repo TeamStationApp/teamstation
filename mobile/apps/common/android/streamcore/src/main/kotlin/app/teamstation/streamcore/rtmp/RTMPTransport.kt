@@ -119,7 +119,7 @@ class ChannelRTMPTransport private constructor(
         runCatching { writeSelector.close() }
     }
 
-    override fun unsentBytes(): Int? = descriptor?.let { TransportBacklog.unsentBytes(it) }
+    override fun unsentBytes(): Int? = TransportBacklog.unsentBytes(descriptor)
 
     companion object {
         /**
@@ -148,13 +148,22 @@ class ChannelRTMPTransport private constructor(
 
 /**
  * The kernel's unsent bytes on a socket, `SIOCOUTQ`: TS Director reads `SO_NWRITE` for the same
- * number. Android exposes neither the socket's descriptor nor `ioctl` publicly, so both are reached
- * by reflection, and anywhere they cannot be (a JVM, or a release that refuses the call) the answer
- * is null, which the bitrate controller reads as "the transport cannot say".
+ * number. Android's public API has no `ioctl` and no integer `getsockopt` (`android.system.Os` offers
+ * neither, through API 37), and a `SocketChannel` does not hand out its descriptor, so both are reached
+ * by reflection. Anywhere they cannot be (a JVM, or a release that refuses the hidden call) the answer
+ * is null, which the bitrate controller reads as "the transport cannot say": it then judges the link
+ * by the send queue's own delay, its deliveries and its drops, which is how it runs in the unit
+ * tests. That is said once in the log, so a phone running without it can be told from one with it.
  */
 internal object TransportBacklog {
     /** `SIOCOUTQ`, the same request number as `TIOCOUTQ` on Linux. */
     private const val SIOCOUTQ = 0x5411
+
+    private val reported = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Where the one note that the backlog cannot be read goes. Replaced in tests. */
+    @Volatile
+    internal var log: (String) -> Unit = { android.util.Log.w("RTMPTransport", it) }
 
     fun descriptor(channel: SocketChannel): FileDescriptor? = runCatching {
         val method = channel.javaClass.getMethod("getFD")
@@ -162,9 +171,22 @@ internal object TransportBacklog {
         method.invoke(channel) as? FileDescriptor
     }.getOrNull()
 
-    fun unsentBytes(descriptor: FileDescriptor): Int? = runCatching {
-        val os = Class.forName("android.system.Os")
-        val ioctl = os.getMethod("ioctlInt", FileDescriptor::class.java, Int::class.javaPrimitiveType)
-        maxOf(0, ioctl.invoke(null, descriptor, SIOCOUTQ) as Int)
-    }.getOrNull()
+    /** The unsent bytes on [descriptor]; null, said once per process, when they cannot be read. */
+    fun unsentBytes(descriptor: FileDescriptor?): Int? {
+        if (descriptor == null) return unavailable("the socket's descriptor is not reachable")
+        return runCatching {
+            val os = Class.forName("android.system.Os")
+            val ioctl = os.getMethod("ioctlInt", FileDescriptor::class.java, Int::class.javaPrimitiveType)
+            maxOf(0, ioctl.invoke(null, descriptor, SIOCOUTQ) as Int)
+        }.getOrElse { unavailable("ioctl(SIOCOUTQ) is refused: ${it.javaClass.simpleName}") }
+    }
+
+    private fun unavailable(reason: String): Int? {
+        if (reported.compareAndSet(false, true)) {
+            log("The kernel's unsent bytes cannot be read ($reason); adaptive bitrate judges the link by the send queue alone")
+        }
+        return null
+    }
+
+    internal fun resetForTesting() = reported.set(false)
 }
