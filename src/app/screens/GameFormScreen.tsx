@@ -4,7 +4,7 @@ import { Pressable, Switch, Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import type { EventType } from '../../common/eventInfo'
 import type { PublicGroup } from '../../common/publicGroups'
-import { Button, Card, initialsOf, Screen, TextField } from '../components'
+import { Button, Card, Screen, TextField } from '../components'
 import { EventArrivalField } from '../components/EventArrivalField'
 import { EventScheduleFields } from '../components/EventScheduleFields'
 import { EventTypeRow } from '../components/EventTypeRow'
@@ -419,7 +419,7 @@ export function GameFormScreen({
       <ListRow
         title={choice.group.name}
         subtitle={`${label}${choice.group.external ? ' · Placeholder' : ''}`}
-        emblem={initialsOf(choice.group.name)}
+        teamName={choice.group.name}
         emblemUri={choice.group.imageUrl}
         onPress={open}
       />

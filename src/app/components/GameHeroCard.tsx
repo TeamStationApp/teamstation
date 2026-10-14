@@ -3,10 +3,9 @@ import { Pressable, Text, View } from 'react-native'
 
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { Emblem } from './Emblem'
 import { LivePill } from './LivePill'
 import { SettingsGear } from './SettingsGear'
-import { teamInitialsOf, teamTint } from './teamTile'
+import { TeamEmblem } from './TeamEmblem'
 import { useBreakpoint } from './useBreakpoint'
 import { VideoPoster } from './VideoPoster'
 
@@ -74,12 +73,6 @@ export interface GameHeroCardProps {
   awayLogoUrl?: string | null
   homeLogoUrl?: string | null
   /**
-   * Each side's team, which picks the colour of its tile where it has no
-   * logo. The name picks it where there is no id.
-   */
-  awayTeamId?: string
-  homeTeamId?: string
-  /**
    * Opens a side's team, from its name and its mark.
    *
    * Nothing is drawn to say so — no colour, no chevron, no underline. Paul
@@ -138,8 +131,6 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     homeRecord,
     awayLogoUrl,
     homeLogoUrl,
-    awayTeamId,
-    homeTeamId,
     onOpenAwayTeam,
     onOpenHomeTeam
   } = props
@@ -229,7 +220,6 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             score={awayScore}
             record={awayRecord}
             logoUrl={awayLogoUrl}
-            teamId={awayTeamId}
             note="Away"
             won={winner === 'away'}
             stacked={narrow}
@@ -241,7 +231,6 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             score={homeScore}
             record={homeRecord}
             logoUrl={homeLogoUrl}
-            teamId={homeTeamId}
             note="Home"
             won={winner === 'home'}
             alignEnd={!narrow}
@@ -327,8 +316,6 @@ function ScoreLine(props: {
   score: number | null
   record?: string | null
   logoUrl?: string | null
-  /** Picks the tile's colour where there is no logo. */
-  teamId?: string
   note: string
   won: boolean
   alignEnd?: boolean
@@ -342,7 +329,6 @@ function ScoreLine(props: {
     score,
     record,
     logoUrl,
-    teamId,
     note,
     won,
     alignEnd = false,
@@ -360,14 +346,7 @@ function ScoreLine(props: {
   // around the row would take in the record on one of them and not the other.
   // The mark and the name are the two things Paul named, and they are the two
   // things wrapped, in both.
-  const emblem = (
-    <Emblem
-      uri={logoUrl}
-      fallback={teamInitialsOf(name)}
-      tint={teamTint(teamId ?? name)}
-      size={2}
-    />
-  )
+  const emblem = <TeamEmblem uri={logoUrl} name={name} size={2} />
   const mark =
     onPress == null ? (
       emblem

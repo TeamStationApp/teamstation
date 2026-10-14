@@ -381,6 +381,7 @@ export function SeasonPresentation(
       return (
         <ChildCard
           key={team.id}
+          kind="team"
           title={team.name}
           imageUrl={team.logoUrl}
           subtitle={

@@ -6,12 +6,14 @@ import { Card } from './Card'
 import { Emblem } from './Emblem'
 import { Icon } from './Icon'
 import { initialsOf } from './initials'
+import { TeamEmblem } from './TeamEmblem'
 
 export function HeroCard({
   name,
   secondary,
   uri,
   person = false,
+  team = false,
   onEdit,
   disabled = false
 }: {
@@ -19,11 +21,14 @@ export function HeroCard({
   secondary?: string | null
   uri?: string | null
   person?: boolean
+  team?: boolean
   onEdit?: () => void
   disabled?: boolean
 }): React.ReactElement {
   const styles = getStyles(useTheme())
-  const emblem = (
+  const emblem = team ? (
+    <TeamEmblem name={name} uri={uri} size={3.5} />
+  ) : (
     <Emblem
       key={uri}
       uri={uri}

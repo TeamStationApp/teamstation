@@ -218,6 +218,7 @@ function league(id: string, name: string): PublicGroup {
 }
 
 interface Setup {
+  follows?: () => Promise<PublicGroup[]>
   /** The players this person guards; given, Home can open a player. */
   players?: () => Promise<UserMatch[]>
   /** Their own leagues, seasons and teams; given, Home can open a group. */
@@ -256,7 +257,7 @@ async function mount(setup: Setup = {}): Promise<Calls> {
       return await (setup.players ?? (async () => []))()
     },
     ownGroups: setup.groups ?? (async () => []),
-    follows: async () => [],
+    follows: setup.follows ?? (async () => []),
     teams: setup.teams ?? (async () => []),
     seasons: setup.seasons ?? (async () => []),
     recentGame: setup.recent ?? (async () => null),
@@ -957,5 +958,25 @@ describe('a player opened from Home, through the app', function () {
       await delay(50)
     })
     expect(routePath(currentRoute())).equals('/players/7')
+  })
+})
+
+describe('followed team identity on Home', () => {
+  it('opens followed teams with name-hashed initials while preserving league defaults', async () => {
+    const group = asPublicGroup({
+      kind: 'team',
+      id: 'tem_followed',
+      name: 'Winter Wolves',
+      imageUrl: null,
+      locality: null
+    })
+    await mount({
+      groups: async () => [],
+      follows: async () => [group, league('lea_followed', 'Willow Woods')]
+    })
+    expect(text()).includes('Winter Wolves').and.includes('Willow Woods')
+    const row = labelled('Winter Wolves')
+    expect(row.textContent).includes('WW')
+    expect(row.querySelector('[role="img"]')).equals(null)
   })
 })

@@ -38,6 +38,18 @@ if (!reportOnly) rmSync(temp, { recursive: true, force: true })
 mkdirSync(temp, { recursive: true })
 mkdirSync('lib', { recursive: true })
 const uiPatterns = [
+  'src/app/components/ManageGear.test.tsx',
+  'src/app/screens/TeamPage.test.tsx',
+  'src/app/App.teamRoutes.test.tsx',
+  'src/app/screens/SeasonStandings.test.tsx',
+  'src/app/components/Card.test.tsx',
+  'src/app/screens/teamSchedule.test.tsx',
+  'src/app/screens/TeamSelectorScene.test.tsx',
+  'src/app/screens/GameFormScreen*.test.tsx',
+  'src/app/screens/HomeScreen.test.tsx',
+  'src/app/components/Emblem.test.tsx',
+  'src/app/components/ChildCard.test.tsx',
+
   'src/app/components/GameHeroCard.test.tsx',
   'src/app/screens/TeamScreen.pending.test.tsx',
   'src/app/screens/SeasonParticipations.test.tsx',
@@ -130,7 +142,10 @@ if (!reportOnly) {
       'src/server/email/accountMail.test.ts',
       'src/server/openapi.test.ts',
       'src/common/api.test.ts',
-      'src/app/components/pinnedHead.test.ts'
+      'src/app/components/pinnedHead.test.ts',
+      'src/app/components/teamTile.test.ts',
+      'src/app/components/teamEmblemUsage.test.ts',
+      'src/app/screens/gameTabs.test.ts'
     ],
     { NODE_V8_COVERAGE: temp }
   )
@@ -199,6 +214,23 @@ const paths = [
     /\.(test|e2e|smoke)\./.test(path) ||
     /\.d\.ts$/.test(path) ||
     ['src/app/locales/en_US.ts', 'src/server/openapi.ts'].includes(path)
+  )
+    return false
+  // Re-export barrels have no source runtime lines in a bundled app.
+  const syntax = ts.createSourceFile(
+    path,
+    readFileSync(path, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true
+  )
+  if (
+    syntax.statements.every(
+      statement =>
+        ts.isExportDeclaration(statement) ||
+        ts.isImportDeclaration(statement) ||
+        ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement)
+    )
   )
     return false
   // Interfaces and type aliases have no emitted runtime to measure.
