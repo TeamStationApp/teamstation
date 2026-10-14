@@ -19,6 +19,7 @@ import app.teamstation.streamcore.stream.StreamSessionController
 import app.teamstation.streamcore.stream.StreamVideoEncoding
 import app.teamstation.streamcore.upload.UploadService
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
@@ -62,7 +63,18 @@ import java.util.concurrent.CopyOnWriteArrayList
  *   captured ([LiveStreamClient.reportLiveStart]), which is where it places the stream's live video.
  */
 class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
-    private val scope = CoroutineScope(SupervisorJob() + environment.dispatcher)
+    /**
+     * Everything the engine runs. A failure that escapes one of its jobs is logged rather than left
+     * to the thread, where it would end the process mid-recording.
+     */
+    private val scope = CoroutineScope(
+        SupervisorJob() + environment.dispatcher + CoroutineExceptionHandler { _, error ->
+            telemetry.recordError("phone engine: ${error.message ?: error.javaClass.simpleName}")
+        }
+    )
+
+    /** The engine's scope, for a test of what happens to a failure inside it. */
+    internal val scopeForTesting: CoroutineScope get() = scope
     val index: RecordingCatalog
     val catalog: PhoneCatalog
     val telemetry = BasicMediaTelemetry()
@@ -120,6 +132,9 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
      * its next part once the cut part is finished and the camera is back. Stop closes it as it stands.
      */
     private var pausedTakeID: Long? = null
+
+    /** The take already marked as published outside its parts, so the status loop writes it once. */
+    private var outsidePartsMarked: Long? = null
 
     /** Parts opened again after their encoder failed, this recording; past [MAX_ENCODER_RECOVERIES] the part stops instead. */
     private var encoderRecoveries = 0
@@ -249,7 +264,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         source = opened
         opened.start(programme, mix)
         isOpen = true
-        radar.start(scope) { emit(PhoneStreamEvent.Radar(it)) }
+        onRadarThread { radar.start(scope) { emit(PhoneStreamEvent.Radar(it)) } }
         startStatusLoop()
         runCatching { environment.retention.sweep(catalog, environment.storage, now, protecting = uploads.keys.toSet()) }
     }
@@ -767,10 +782,17 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         }
 
     internal fun publishStatus() {
-        // The stream on the air while no part is recording: the take no longer covers it all.
+        // The stream on the air while no part is recording: the take no longer covers it all. Written
+        // once per take, not on every status.
         val held = take
-        if (streamController.phase == StreamSessionController.Phase.LIVE && recordingTakeID == null && held?.recordingID != null) {
-            catalog.markPublishedOutsideParts(held.recordingID)
+        val outside = held?.recordingID
+        if (streamController.phase == StreamSessionController.Phase.LIVE && recordingTakeID == null && outside != null && outside != outsidePartsMarked) {
+            try {
+                catalog.markPublishedOutsideParts(outside)
+                outsidePartsMarked = outside
+            } catch (error: Exception) {
+                telemetry.recordError("could not mark the take: ${error.message ?: error.javaClass.simpleName}")
+            }
         }
         reportLiveStartIfReady()
         emit(PhoneStreamEvent.Status(status))
@@ -870,12 +892,15 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
 
     // MARK: - Radar
 
-    suspend fun radarSetEnabled(enabled: Boolean) = onEngine { radar.setEnabled(enabled) }
-    suspend fun radarScan() = onEngine { radar.scan() }
-    suspend fun radarStopScan() = onEngine { radar.stopScan() }
-    suspend fun radarPair(serial: String): Boolean = onEngine { radar.pair(serial) }
-    suspend fun radarUnpair(serial: String) = onEngine { radar.unpair(serial) }
-    suspend fun radarState(): PhoneRadarState = onEngine { radar.state }
+    // The radar fleet and its links are the main thread's: their timers and radio callbacks post there.
+    suspend fun radarSetEnabled(enabled: Boolean) = onRadarThread { radar.setEnabled(enabled) }
+    suspend fun radarScan() = onRadarThread { radar.scan() }
+    suspend fun radarStopScan() = onRadarThread { radar.stopScan() }
+    suspend fun radarPair(serial: String): Boolean = onRadarThread { radar.pair(serial) }
+    suspend fun radarUnpair(serial: String) = onRadarThread { radar.unpair(serial) }
+    suspend fun radarState(): PhoneRadarState = onRadarThread { radar.state }
+
+    private suspend fun <T> onRadarThread(work: () -> T): T = withContext(environment.radarDispatcher) { work() }
 
     // MARK: - Recordings and uploads
 
@@ -1085,7 +1110,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         take = null
         recordingTakeID = null
         isOpen = false
-        radar.stop()
+        onRadarThread { radar.stop() }
         index.close()
     }
 

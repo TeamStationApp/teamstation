@@ -93,7 +93,9 @@ class PhoneStreamEnvironment(
     val dispatcher: CoroutineDispatcher = Executors.newSingleThreadExecutor { Thread(it, "phone-stream").apply { isDaemon = true } }
         .asCoroutineDispatcher(),
     /** Where blocking work goes: a part's finish, an export. */
-    val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
+    val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** Where the radar fleet is driven: the main thread, which its links and timers belong to. */
+    val radarDispatcher: CoroutineDispatcher = Dispatchers.Main
 ) {
     companion object {
         /** The app's own storage, camera, microphone, network and radios. */
