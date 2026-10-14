@@ -91,6 +91,21 @@ describe('protected node account administration', function () {
         )
       ).status
     ).equals(200)
+    for (const value of ['true', 'false', 'yes']) {
+      const missingView = await f.h.request(
+        'GET',
+        `/users?guardedBy=me&nodeAdmin=${value}`,
+        undefined,
+        105
+      )
+      expect(missingView.status).equals(400)
+      expect(await missingView.text()).includes(
+        'nodeAdmin requires view=administration'
+      )
+    }
+    expect(
+      (await f.h.request('GET', '/users?guardedBy=me', undefined, 105)).status
+    ).equals(200)
   })
   it('requires a signed-in node administrator for account lookup and every global role or suspension change', async () => {
     for (const user of [101, 106, null])

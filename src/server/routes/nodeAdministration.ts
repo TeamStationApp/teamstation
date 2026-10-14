@@ -27,6 +27,8 @@ export function nodeAdministrationRoutes(
     '/users',
     withAsync(async (req, res, next) => {
       if (req.query.view !== 'administration') {
+        if (req.query.nodeAdmin != null)
+          throw badRequest('nodeAdmin requires view=administration')
         next()
         return
       }
