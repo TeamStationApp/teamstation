@@ -286,13 +286,15 @@ public struct TeamStationClient: Sendable {
   /// caller's lowest free slot. `heldStreamId` names the stream the device holds, which a redial
   /// sends: if that stream has been ended the server answers 410, thrown as
   /// `TeamStationError.streamEnded`, and makes nothing — only a request without it can start a
-  /// fresh stream.
+  /// fresh stream. `recordsLocally` says the device keeps its own recording of the stream to upload
+  /// later, as a phone does; left out, the server takes it that the device does not.
   public func requestLiveStream(
     gameId: String,
     label: String,
     deviceId: String,
     deviceModel: String,
-    heldStreamId: String? = nil
+    heldStreamId: String? = nil,
+    recordsLocally: Bool? = nil
   ) async throws -> TeamStationDeviceStream {
     var body: [String: any Sendable] = [
       "label": label,
@@ -300,6 +302,7 @@ public struct TeamStationClient: Sendable {
       "deviceModel": deviceModel
     ]
     if let heldStreamId { body["heldStreamId"] = heldStreamId }
+    if let recordsLocally { body["recordsLocally"] = recordsLocally }
     return try await send(
       "games/\(escape(gameId))/live-streams",
       method: "POST",

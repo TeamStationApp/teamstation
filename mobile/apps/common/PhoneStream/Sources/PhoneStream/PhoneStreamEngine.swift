@@ -298,8 +298,19 @@ public final class PhoneStreamEngine {
     }
   }
 
+  /// Renames the angle. On the air, the stream, its take and the stream kept for a relaunch take the
+  /// new name too, so every redial and resume after the rename asks for the held stream by the name
+  /// TeamStation now has for it.
   public func setAngleName(_ name: String) {
     angleName = name
+    guard let take = stream, take.angleName != name else { return }
+    stream?.angleName = name
+    if let live = try? catalog.live(), live.liveStreamId == take.liveStreamId {
+      try? catalog.setLive(.init(liveStreamId: live.liveStreamId, gameId: live.gameId, angleName: name))
+    }
+    if let recordingID = take.recordingID {
+      try? catalog.rename(recordingID, angleName: name)
+    }
   }
 
   // MARK: - Recording and streaming
@@ -459,7 +470,8 @@ public final class PhoneStreamEngine {
         label: take.angleName,
         deviceId: take.request.deviceId,
         deviceModel: take.request.deviceModel,
-        heldStreamId: take.liveStreamId
+        heldStreamId: take.liveStreamId,
+        recordsLocally: true
       )
       guard let url = held.url else { throw TeamStationError.server("no stream address") }
       stream?.cachedURL = url
