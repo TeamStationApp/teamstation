@@ -1,5 +1,7 @@
-import React, { createContext, useContext, useEffect, useState } from 'react'
+import React, { createContext, useContext, useState } from 'react'
 import { Platform, View } from 'react-native'
+
+import { useChatOverlayCommit } from './chatWebInteractions'
 
 interface OverlayEntry {
   node: React.ReactNode
@@ -51,7 +53,8 @@ export function ChatOverlayPortal({
   modal?: boolean
 }): React.ReactElement | null {
   const host = useContext(OverlayContext)
-  useEffect(() => {
+  // The web twin publishes controls before React restores their DOM values.
+  useChatOverlayCommit(() => {
     if (host == null) return
     host({ node: children, modal })
     return () => {

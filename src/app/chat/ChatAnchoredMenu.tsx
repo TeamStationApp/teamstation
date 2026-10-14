@@ -54,10 +54,17 @@ function AnchoredFrame(props: {
   )
   useEffect(
     () =>
-      bindPopupKeys(panel.current, () => {
-        close.current()
-      }),
-    []
+      bindPopupKeys(
+        panel.current,
+        () => {
+          close.current()
+        },
+        true,
+        false,
+        undefined,
+        props.anchor
+      ),
+    [props.anchor]
   )
   const position = menuPosition(bounds, size, viewport)
   return (

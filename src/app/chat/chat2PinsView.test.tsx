@@ -278,6 +278,89 @@ describe('floating personal pin summary', function () {
     expect(preferenceWrites).equals(0)
   })
 
+  it('carries an unacknowledged cold web follow to the end when the band is measured after the first scroll-to-end', async function () {
+    const state = fixture(
+      view({
+        conversation: { ...view().conversation, lastSeq: 300 },
+        ownReadSeq: 200,
+        historyBefore: 280,
+        hasEarlier: true,
+        messages: [message({ id: 'msg_tail', seq: 300 })],
+        pins: [pin('msg_older')]
+      })
+    )
+    let complete: ((next: ConversationView) => void) | undefined
+    state.setLoad(
+      async () =>
+        await new Promise<ConversationView>(resolve => {
+          complete = resolve
+        })
+    )
+    const node = await render(
+      <HeaderSlotProvider
+        headerHeight={48}
+        navigationHeight={72}
+        onHandoff={() => {}}
+      >
+        <ConversationScreen
+          engine={state.engine}
+          conversationId="cnv_1"
+          userId={userIdOfGumbo(1)}
+          onMembers={() => {}}
+          files={{ ...files, PICK_SOURCES: [] }}
+        />
+      </HeaderSlotProvider>
+    )
+    const history = node.querySelector<HTMLElement>(
+      '[data-testid="chat-message-history"]'
+    )!
+    const content = history.firstElementChild as HTMLElement
+    const band = node.querySelector<HTMLElement>(
+      '[data-testid="chat-pinned-band"]'
+    )!
+    // The browser's scroll extent includes the content's current top padding.
+    const extent = (): number =>
+      2936 + Number.parseFloat(content.style.paddingTop)
+    Object.defineProperties(history, {
+      clientWidth: { configurable: true, value: 360 },
+      clientHeight: { configurable: true, value: 844 },
+      scrollHeight: { configurable: true, get: extent }
+    })
+    const moves: number[] = []
+    history.scroll = options => {
+      history.scrollTop = Math.min(
+        (options as ScrollToOptions).top ?? 0,
+        extent() - 844
+      )
+      moves.push(history.scrollTop)
+    }
+    await layout(history, 844)
+    // First content layout precedes the band's measurement: follow the old end.
+    await layout(content, extent())
+    expect(content.style.paddingTop).equals('64px')
+    expect(history.scrollTop).equals(2156)
+    // The band's padding is a padding-only change: no onContentSizeChange follows.
+    await layout(band, 58)
+    expect(content.style.paddingTop).equals('122px')
+    expect(
+      history.scrollTop,
+      'An unacknowledged initial follow reaches the end that includes the band'
+    ).equals(extent() - 844)
+    const settled = history.scrollTop
+    await act(async () => {
+      const next = { ...state.shown, historyBefore: 190, hasEarlier: false }
+      state.update(next)
+      complete?.(next)
+      await wait()
+    })
+    await layout(content, extent())
+    expect(
+      history.scrollTop,
+      'Background discovery must not move the settled reader'
+    ).equals(settled)
+    expect(moves.filter(y => y !== 2156 && y !== settled)).deep.equals([])
+  })
+
   it('keeps the reader in place on a failed resolution and ignores a pending target after Cancel', async function () {
     const state = fixture(
       view({

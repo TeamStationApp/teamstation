@@ -1116,6 +1116,7 @@ describe('the chat engine (U12)', function () {
       readonly queries: Array<{ id: string; page: MessagePage }> = []
       readonly marked: Array<Parameters<TeamStationClient['markChatRead']>> = []
       readRequests = 0
+      afterReads?: (conversationId: string) => Promise<void>
       beforeMessages?: (id: string, page: MessagePage) => Promise<void>
       afterMessages?: (
         id: string,
@@ -1177,7 +1178,9 @@ describe('the chat engine (U12)', function () {
         ...args: Parameters<TeamStationClient['chatReads']>
       ): ReturnType<TeamStationClient['chatReads']> {
         this.readRequests += 1
-        return await super.chatReads(...args)
+        const reads = await super.chatReads(...args)
+        await this.afterReads?.(args[0])
+        return reads
       }
 
       /** Test observation bypasses the app-request counter, never authorization. */
@@ -1219,6 +1222,69 @@ describe('the chat engine (U12)', function () {
       viewer.engine.subscribe(event => events.push(event))
       return { viewer, client, events }
     }
+
+    it('captures a fresh synchronized attention boundary before a queued read acknowledgement and keeps manual-unread revisions independent', async function () {
+      const room = await freshRoom()
+      const sender = await device('A')
+      await sender.engine.open(room)
+      const first = (await sender.engine.sendText(
+        room,
+        'First attention original'
+      ))!
+      const { viewer, client } = await observer()
+      try {
+        expect(viewer.engine.view(room)!.readsReady).equals(false)
+        expect(viewer.engine.view(room)!.ownReadSeq).equals(undefined)
+        const delayed = gate()
+        client.afterReads = async conversationId => {
+          if (conversationId !== room) return
+          delayed.entered()
+          await delayed.wait
+        }
+        const opening = viewer.engine.open(room)
+        await reached(delayed.began)
+        expect(viewer.engine.view(room)!.readsReady).equals(false)
+        expect(client.marked).length(0)
+        const queued = viewer.engine.markRead(room)
+        delayed.release()
+        const snapshot = await opening
+        await queued
+        expect(snapshot.readsReady).equals(true)
+        expect(
+          snapshot.ownReadSeq,
+          'A synchronized absent own read is a valid zero'
+        ).equals(0)
+        expect(viewer.engine.view(room)!.ownReadSeq).equals(first.seq)
+        client.afterReads = undefined
+        const second = (await sender.engine.sendText(
+          room,
+          'Later incoming text'
+        ))!
+        // A cursor moved by another device before a new visit must be fresh.
+        await client.markChatRead(room, second.seq)
+        expect(
+          viewer.engine.view(room)!.ownReadSeq,
+          'The cached cursor is still older'
+        ).equals(first.seq)
+        const fresh = await viewer.engine.open(room)
+        expect(fresh.ownReadSeq).equals(second.seq)
+        await viewer.engine.setPreferences(room, { manualUnread: true })
+        const revision =
+          viewer.engine.view(room)!.conversation.preferences!
+            .manualUnreadRevision
+        await viewer.engine.markRead(room, revision - 1)
+        expect(
+          viewer.engine.view(room)!.conversation.preferences!.manualUnread
+        ).equals(true)
+        await viewer.engine.markRead(room, revision)
+        expect(
+          viewer.engine.view(room)!.conversation.preferences!.manualUnread
+        ).equals(false)
+        expect(snapshot.ownReadSeq, 'The old snapshot is immutable').equals(0)
+      } finally {
+        viewer.engine.stop()
+      }
+    })
 
     const messageHint = (
       conversationId: string,
