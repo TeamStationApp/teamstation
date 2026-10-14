@@ -246,15 +246,20 @@ export function CameraAnglesPanel(
    * This phone's stream for an angle: the one it holds under that name, or a
    * new one. Asking without a held stream is what an explicit start is, so a
    * camera somebody ended gets a fresh stream here.
+   *
+   * `held` is the stream a row stands for. It is asked for by its id, because
+   * the name a row shows is not always one the server finds it by: a camera
+   * with no stored name is listed by its slot's ("Camera 2").
    */
-  const request = async (name: string): Promise<OpenCamera> => {
+  const request = async (name: string, held?: string): Promise<OpenCamera> => {
     if (uploadingNamed(name))
       throw new Error(sprintf(lstrings.stream_error_uploading, name))
     const id = myId ?? (await deviceId())
     const stream = await client.addLiveStream(gameId, name, {
       deviceId: id,
       deviceModel,
-      recordsLocally: true
+      recordsLocally: true,
+      ...(held == null ? {} : { heldStreamId: held })
     })
     const url =
       stream.url ?? (await client.revealLiveStream(gameId, stream.id)).url
@@ -278,7 +283,13 @@ export function CameraAnglesPanel(
 
   const reopen = (stream: LiveStream): void => {
     setMessage(undefined)
-    request(stream.label).then(setOpen, (error: unknown) => {
+    // An ended or closing camera is held no longer; tapping it starts afresh
+    // under its name, as Record video would.
+    const held =
+      stream.state !== 'ended' && stream.closesAt == null
+        ? stream.id
+        : undefined
+    request(stream.label, held).then(setOpen, (error: unknown) => {
       setMessage(error instanceof Error ? error.message : lstrings.common_retry)
     })
   }

@@ -527,7 +527,8 @@ describe('the cameras on a game, on a phone', function () {
         device: {
           deviceId: DEVICE_ID,
           deviceModel: 'iPhone 13 Pro',
-          recordsLocally: true
+          recordsLocally: true,
+          heldStreamId: 'liv_1'
         }
       }
     ])
@@ -543,6 +544,30 @@ describe('the cameras on a game, on a phone', function () {
     }
     await press(byTestId('angle-row-liv_1')!)
     expect(text()).contains('This camera was ended')
+  })
+
+  it('opens the row tapped by its stream, whatever name the list shows', async function () {
+    // A camera whose stored name was cleared is listed by its slot's name,
+    // which the server does not find it by: asked by that name alone, it made
+    // a second stream, video and slot, and the phone filmed a different angle
+    // from the row tapped.
+    const fake = fakeClient()
+    fake.mine = [
+      stream({ id: 'liv_2', slot: 2, label: 'Camera 2' }),
+      stream({ id: 'liv_3', label: 'Bullpen', state: 'ended' })
+    ]
+    fake.next = async () => stream({ id: 'liv_2', slot: 2, label: 'Camera 2' })
+    await mount(fake)
+    await press(byTestId('angle-row-liv_2')!)
+    expect(fake.added.at(-1)?.device?.heldStreamId).equals('liv_2')
+    expect(opened.at(-1)?.session.streamId).equals('liv_2')
+    await press(byTestId('fake-screen')!)
+
+    // An ended camera is not held any more: tapping it starts it afresh.
+    fake.next = async () => stream({ id: 'liv_5', label: 'Bullpen' })
+    await press(byTestId('angle-row-liv_3')!)
+    expect(fake.added.at(-1)?.label).equals('Bullpen')
+    expect(fake.added.at(-1)?.device?.heldStreamId).equals(undefined)
   })
 
   it('offers on each camera exactly what the web panel offers', async function () {
