@@ -89,6 +89,7 @@ function WorkspaceContent(
       : (props.state.drafts.get(selected) ?? emptyChatDraft())
   return (
     <Screen
+      overlayContent
       wide
       scroll={false}
       contentStyle={{
@@ -203,6 +204,7 @@ function WorkspaceContent(
               conversationId={selected}
               userId={props.userId}
               embedded
+              paneHeader={wide}
               active={messagesVisible}
               readingSession={readingSession}
               draft={draft}

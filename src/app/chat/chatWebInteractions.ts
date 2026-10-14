@@ -522,7 +522,12 @@ export function bindPopupKeys(view: unknown, close: () => void): () => void {
   buttons()[0]?.focus()
   return () => {
     document.removeEventListener('keydown', key, true)
-    if (previous instanceof HTMLElement && previous.isConnected) {
+    if (
+      previous instanceof HTMLElement &&
+      previous.isConnected &&
+      (document.activeElement === document.body ||
+        view.contains(document.activeElement))
+    ) {
       restoringFocus = true
       try {
         previous.focus()
@@ -539,4 +544,32 @@ export function focusPopupControl(view: unknown): void {
     view
       .querySelector<HTMLElement>('[role="button"],button,[tabindex="0"]')
       ?.focus()
+}
+
+/** The browser's visible bottom includes its actual software keyboard. */
+export function watchVisualViewport(
+  update: (value: { bottom: number; keyboardOpen: boolean }) => void
+): () => void {
+  const viewport = window.visualViewport
+  if (viewport == null) return () => {}
+  let width = window.innerWidth
+  let closedHeight = Math.max(
+    window.innerHeight,
+    viewport.offsetTop + viewport.height
+  )
+  const changed = (): void => {
+    const bottom = viewport.offsetTop + viewport.height
+    if (window.innerWidth !== width) {
+      width = window.innerWidth
+      closedHeight = window.innerHeight
+    } else closedHeight = Math.max(closedHeight, window.innerHeight, bottom)
+    update({ bottom, keyboardOpen: bottom < closedHeight - 80 })
+  }
+  viewport.addEventListener('resize', changed)
+  viewport.addEventListener('scroll', changed)
+  changed()
+  return () => {
+    viewport.removeEventListener('resize', changed)
+    viewport.removeEventListener('scroll', changed)
+  }
 }

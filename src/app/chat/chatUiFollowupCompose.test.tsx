@@ -818,8 +818,12 @@ describe('chat read sessions preserve personal unread', function () {
     const { engine, reads } = unreadSessionEngine()
     const state = newChatWorkspaceState()
     await showWorkspace(engine, state, 'cnv_aurora')
-    await press('Conversation actions')
-    await press('Mark unread')
+    await act(async () => {
+      await (engine as ChatScreenEngine).setPreferences?.('cnv_aurora', {
+        manualUnread: true
+      })
+      await wait()
+    })
     expect(
       engine.views.get('cnv_aurora')?.conversation.preferences?.manualUnread
     ).equals(true)

@@ -60,3 +60,9 @@ export function watchMessageAnchor(
 }
 
 export function focusPopupControl(_view: unknown): void {}
+
+export function watchVisualViewport(
+  _update: (value: { bottom: number; keyboardOpen: boolean }) => void
+): () => void {
+  return () => {}
+}
