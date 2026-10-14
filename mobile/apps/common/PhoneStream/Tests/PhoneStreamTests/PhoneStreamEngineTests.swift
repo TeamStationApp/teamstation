@@ -513,7 +513,7 @@ extension PhoneStreamTests {
         try engine.startRecording(rtmpUrl: sink.url, liveStreamId: Self.stream, gameId: Self.game,
                                   angleName: Self.angle, request: rig.request)
       }
-      #expect(throws: PhoneStreamError.uploadInProgress) { try engine.deleteRecording(liveStreamId: Self.stream) }
+      await #expect(throws: PhoneStreamError.uploadInProgress) { try await engine.deleteRecording(liveStreamId: Self.stream) }
       await engine.interruptUploads()
       _ = await upload.result
       #expect(log.uploads.contains { $0.state == .exporting })
@@ -587,9 +587,9 @@ extension PhoneStreamTests {
       #expect(try await again.uploadRecording(liveStreamId: Self.stream, apiBase: rig.request.apiBase,
                                               token: rig.request.token, title: Self.angle) == "vid_0001")
       // Uploaded, the take is kept for a week, then swept; and it can be deleted by hand.
-      try again.deleteRecording(liveStreamId: Self.stream)
+      try await again.deleteRecording(liveStreamId: Self.stream)
       #expect(try again.recordings().isEmpty)
-      try again.deleteRecording(liveStreamId: Self.stream)
+      try await again.deleteRecording(liveStreamId: Self.stream)
       await again.close()
       sink.drop()
     }
@@ -610,7 +610,7 @@ extension PhoneStreamTests {
       #expect(await waitUntil { !engine.isRecording })
       #expect(engine.status.phase == "live")
       #expect(engine.isStreaming)
-      #expect(throws: PhoneStreamError.stillRecording) { try engine.deleteRecording(liveStreamId: Self.stream) }
+      await #expect(throws: PhoneStreamError.stillRecording) { try await engine.deleteRecording(liveStreamId: Self.stream) }
       await #expect(throws: PhoneStreamError.stillRecording) {
         try await engine.uploadRecording(liveStreamId: Self.stream, apiBase: rig.request.apiBase,
                                          token: rig.request.token, title: Self.angle)
@@ -634,6 +634,20 @@ extension PhoneStreamTests {
         try await engine.uploadRecording(liveStreamId: "lst_0009", apiBase: rig.request.apiBase,
                                          token: rig.request.token, title: Self.angle)
       }
+
+      // Deleted straight after Stop, a take waits for its part's file to be closed first.
+      rig.free.bytes = 50_000_000_000
+      try engine.startRecording(rtmpUrl: sink.url, liveStreamId: "lst_0002", gameId: Self.game,
+                                angleName: "First Base", request: rig.request)
+      try await Task.sleep(for: .seconds(2))
+      let second = try #require(try engine.recordings().first { $0.liveStreamId == "lst_0002" })
+      let stopping = Task { @MainActor in await engine.stopRecording() }
+      #expect(await waitUntil { engine.isFinishingPart })
+      try await engine.deleteRecording(liveStreamId: "lst_0002")
+      #expect(!engine.isFinishingPart)
+      #expect(try engine.recordings().allSatisfy { $0.liveStreamId != "lst_0002" })
+      #expect(try engine.index.recordings().allSatisfy { $0.id != second.recordingID })
+      await stopping.value
       await engine.close()
       sink.drop()
     }
