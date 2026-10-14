@@ -3,33 +3,41 @@ import Foundation
 
 /// How the programme master is encoded: the values `ProgramEncoder` opens a part with.
 public struct ProgrammeSettings: Hashable, Sendable {
+  /// TS Director's recording sound: AAC at 192 kbps.
+  public static let defaultAudioBitrate = 192_000
+
   public var codec: ProgramCodec
   public var resolution: ProgramResolution
   public var frameRate: Int
   public var bitrate: Int
   public var gopSeconds: Double
+  /// The AAC rate of the master's sound, in bits per second.
+  public var audioBitrate: Int
 
   public init(
     codec: ProgramCodec,
     resolution: ProgramResolution,
     frameRate: Int,
     bitrate: Int,
-    gopSeconds: Double
+    gopSeconds: Double,
+    audioBitrate: Int = ProgrammeSettings.defaultAudioBitrate
   ) {
     self.codec = codec
     self.resolution = resolution
     self.frameRate = frameRate
     self.bitrate = bitrate
     self.gopSeconds = gopSeconds
+    self.audioBitrate = audioBitrate
   }
 
-  public init(_ encoding: EncodeSettings) {
+  public init(_ encoding: EncodeSettings, audioBitrate: Int = ProgrammeSettings.defaultAudioBitrate) {
     self.init(
       codec: encoding.codec,
       resolution: encoding.resolution,
       frameRate: encoding.frameRate,
       bitrate: encoding.bitrate,
-      gopSeconds: encoding.keyframeSeconds
+      gopSeconds: encoding.keyframeSeconds,
+      audioBitrate: audioBitrate
     )
   }
 
@@ -49,6 +57,9 @@ public struct ProgrammeSettings: Hashable, Sendable {
 /// bitrate starts at `bitrateStart` (`bitrateHigh` when that is nil) and moves between the low and
 /// the high with the uplink.
 public struct StreamSettings: Hashable, Sendable {
+  /// TS Director's stream sound: AAC at 128 kbps.
+  public static let defaultAudioBitrate = 128_000
+
   public var codec: ProgramCodec
   public var resolution: ProgramResolution
   public var frameRate: Int
@@ -59,6 +70,8 @@ public struct StreamSettings: Hashable, Sendable {
   /// half its high rather than at the top of a link it has never measured. Nil opens at the high,
   /// as TS Director's stream always has.
   public var bitrateStart: Int?
+  /// The AAC rate of the stream's sound, in bits per second.
+  public var audioBitrate: Int
 
   public init(
     codec: ProgramCodec,
@@ -67,7 +80,8 @@ public struct StreamSettings: Hashable, Sendable {
     bitrateLow: Int,
     bitrateHigh: Int,
     gopSeconds: Double,
-    bitrateStart: Int? = nil
+    bitrateStart: Int? = nil,
+    audioBitrate: Int = StreamSettings.defaultAudioBitrate
   ) {
     self.codec = codec
     self.resolution = resolution
@@ -76,6 +90,7 @@ public struct StreamSettings: Hashable, Sendable {
     self.bitrateHigh = bitrateHigh
     self.gopSeconds = gopSeconds
     self.bitrateStart = bitrateStart
+    self.audioBitrate = audioBitrate
   }
 
   /// The rate a session opens at: `bitrateStart` held between the low and the high, or the high.
