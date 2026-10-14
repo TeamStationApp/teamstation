@@ -25,6 +25,7 @@ import { GroupGameSchedule } from './GroupGameSchedule'
 import { InvitationsWaiting } from './InvitationsWaiting'
 import { ManagementCard, type ManagementCardProps } from './ManagementCard'
 import { ParentOrganizations } from './ParentOrganizations'
+import { SeasonParticipations } from './SeasonParticipations'
 
 export function GroupSettingsScreen({
   client,
@@ -305,27 +306,18 @@ export function GroupSettingsScreen({
                 disabled={busy}
               />
             )}
-            {detail.participatingSeasons.length > 0 && (
-              <View style={styles.section}>
-                <SectionHeader title="Season participation" />
-                {detail.participatingSeasons.map(season => (
-                  <Card key={season.id} style={styles.card}>
-                    <Text style={styles.name}>{season.name}</Text>
-                    <Text style={styles.hint}>
-                      Ending participation leaves all scheduled games and
-                      management parents unchanged.
-                    </Text>
-                    <Button
-                      label={`End participation in ${season.name}`}
-                      kind="secondary"
-                      disabled={busy}
-                      onPress={() => {
-                        leave(detail.group.id, season.id).catch(() => undefined)
-                      }}
-                    />
-                  </Card>
-                ))}
-              </View>
+            {detail.group.kind === 'team' && (
+              <SeasonParticipations
+                key={detail.group.id}
+                client={client}
+                teamId={detail.group.id}
+                seasons={detail.participatingSeasons}
+                disabled={busy}
+                onLeft={() => {
+                  setRevision(value => value + 1)
+                  onChanged?.()
+                }}
+              />
             )}
             {detail.competingTeams.length > 0 && (
               <View style={styles.section}>
