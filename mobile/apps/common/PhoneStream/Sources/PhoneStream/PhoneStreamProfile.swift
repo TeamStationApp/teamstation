@@ -56,7 +56,7 @@ public enum PhoneStreamProfile {
   }
 
   public static var programmeSettings: ProgrammeSettings {
-    ProgrammeSettings(recordingEncoding)
+    ProgrammeSettings(recordingEncoding, audioBitrate: recordingAudioBitrate)
   }
 
   public static var recordingSettings: RecordingSettings {
@@ -75,7 +75,8 @@ public enum PhoneStreamProfile {
       bitrateLow: streamBitrateLow,
       bitrateHigh: streamBitrateHigh,
       gopSeconds: gopSeconds,
-      bitrateStart: streamBitrateStart
+      bitrateStart: streamBitrateStart,
+      audioBitrate: streamAudioBitrate
     )
   }
 }

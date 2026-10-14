@@ -4,7 +4,7 @@ import CameramanCore
 import CoreMedia
 import DirectorCore
 import DirectorExport
-import DirectorMedia
+@testable import DirectorMedia
 import DirectorSources
 import Foundation
 import TeamStationKit
@@ -36,6 +36,20 @@ extension PhoneStreamTests {
       #expect(PhoneStreamProfile.programmeSettings.gopSeconds == 2)
       #expect(PhoneStreamProfile.streamAudioBitrate == 128_000)
       #expect(PhoneStreamProfile.recordingAudioBitrate == 192_000)
+      // The sound rates reach the encoders from the profile, not from figures inside them.
+      #expect(stream.audioBitrate == PhoneStreamProfile.streamAudioBitrate)
+      #expect(PhoneStreamProfile.programmeSettings.audioBitrate == PhoneStreamProfile.recordingAudioBitrate)
+      let streamer = ProgramStreamer(telemetry: PhoneMediaTelemetry(), converter: PixelConverter())
+      var quieter = stream
+      quieter.audioBitrate = 96_000
+      #expect(streamer.configurationForTesting(stream).audioBitrate == 128_000)
+      #expect(streamer.configurationForTesting(quieter).audioBitrate == 96_000)
+      let encoder = ProgramEncoder(
+        telemetry: PhoneMediaTelemetry(),
+        converter: PixelConverter(),
+        settings: ProgrammeSettings(PhoneStreamProfile.recordingEncoding, audioBitrate: 160_000)
+      )
+      #expect(encoder.audioBitrate == 160_000)
       #expect(PhoneStreamProfile.audioSampleRate == 48_000)
       #expect(PhoneStreamProfile.pictureDelaySeconds == 1)
       #expect(PhoneStreamProfile.recordingMixDelaySeconds == 1)
