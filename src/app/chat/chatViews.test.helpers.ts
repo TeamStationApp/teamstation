@@ -148,6 +148,8 @@ export function view(over: Partial<ConversationView> = {}): ConversationView {
     unverified: false,
     composer: 'enabled',
     hasEarlier: false,
+    readsReady: true,
+    ownReadSeq: over.conversation?.lastSeq ?? chat().lastSeq,
     safetyChanges: [],
     ...over
   }
