@@ -71,8 +71,29 @@ export function anchored(
   pinAt: number
 ): HeadState {
   'worklet'
-  const y = rowOffset + Math.min(state.collapse, pinAt)
+  const y = Math.max(0, rowOffset + Math.min(state.collapse, pinAt))
   return { y, collapse: Math.min(state.collapse, y) }
+}
+
+/**
+ * The head after a tab is anchored on a row: as `anchored`, but never
+ * scrolled past the page's natural end. The schedule opens at its next
+ * event, and no further than its last event resting the page's own bottom
+ * margin above the nav bar; empty room under it would make it look like the
+ * only event, with nothing to scroll back to. `contentBottom` counts that
+ * margin, measured from the top of the page.
+ */
+export function rowAnchored(
+  state: HeadState,
+  rowOffset: number,
+  pinAt: number,
+  contentBottom: number,
+  viewportHeight: number
+): HeadState {
+  'worklet'
+  const target = anchored(state, rowOffset, pinAt)
+  const y = Math.max(0, Math.min(target.y, contentBottom - viewportHeight))
+  return { y, collapse: Math.min(target.collapse, y) }
 }
 
 /**

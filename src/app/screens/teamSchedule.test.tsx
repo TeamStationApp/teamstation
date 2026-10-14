@@ -337,6 +337,7 @@ describe('a team’s tabs, each started under the pills', function () {
   /** The page's scroll offset, as the stubbed scroller keeps it. */
   let scrollTop = 0
   const ROW = 100
+  const VIEWPORT = 400
   const original = {
     // eslint-disable-next-line @typescript-eslint/unbound-method -- restored onto the prototype it came from
     rect: HTMLElement.prototype.getBoundingClientRect,
@@ -352,12 +353,18 @@ describe('a team’s tabs, each started under the pills', function () {
   beforeEach(function () {
     scrollTop = 0
     // jsdom lays nothing out: each schedule row stands ROW below the last,
-    // and everything else sits at the top.
+    // what holds them ends with the last, and everything else sits at the top.
     HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
       const games = [
         ...document.querySelectorAll('[data-testid="scheduleGame"]')
       ]
       const at = games.indexOf(this)
+      if (at < 0 && games.length > 0 && this.contains(games[0]))
+        return {
+          top: 0,
+          bottom: games.length * ROW,
+          height: games.length * ROW
+        } as unknown as DOMRect
       if (at < 0) return original.rect.call(this)
       return {
         top: at * ROW,
@@ -377,7 +384,7 @@ describe('a team’s tabs, each started under the pills', function () {
     Object.defineProperty(Element.prototype, 'clientHeight', {
       configurable: true,
       get(this: Element) {
-        return scrolls(this) ? 800 : 0
+        return scrolls(this) ? VIEWPORT : 0
       }
     })
   })
@@ -458,9 +465,23 @@ describe('a team’s tabs, each started under the pills', function () {
     expect(scrollTop).equals(8 * ROW)
   })
 
-  it('opens a finished season at its last game', async function () {
+  it('opens a finished season toward its last game, with no room under it', async function () {
     await mount('over', 'schedule')
-    expect(scrollTop).equals(13 * ROW)
+    // The last game is the anchor, but the page stops where that game rests
+    // just above the nav bar: no further, so the games before it still show.
+    expect(scrollTop)
+      .greaterThan(9 * ROW)
+      .and.lessThan(13 * ROW)
+  })
+
+  it('scrolls a schedule that fits on the screen not at all', async function () {
+    await mount(
+      'normal',
+      'schedule',
+      fixtureClient('normal', games => games.slice(7, 9))
+    )
+    expect(rows()).length(2)
+    expect(scrollTop).equals(0)
   })
 
   it('opens an empty schedule at its top', async function () {

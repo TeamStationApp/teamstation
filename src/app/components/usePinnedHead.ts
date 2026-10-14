@@ -14,6 +14,7 @@ import {
   inStep,
   type PinnedHead,
   type PinnedHeadOptions,
+  rowAnchored,
   scrolled,
   spacerFor
 } from './pinnedHead'
@@ -62,6 +63,13 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
 
   /** The anchor's reach into the tab: what the room after it is sized for. */
   const lastOffset = useRef<number | undefined>(undefined)
+  /**
+   * A row anchor, held until somebody moves the page: the head it was
+   * anchored from, and where it left the page. Rows above it that settle
+   * their height after it lands would otherwise carry it away, and the room
+   * kept for the page would leave empty space under the last row.
+   */
+  const rowHold = useRef<{ from: HeadState; at: number } | undefined>(undefined)
   const page = useRef<Node>(null)
 
   /**
@@ -137,14 +145,16 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     if (from == null || page == null) return
     const { pinAt: pin, rowOffset, contentBottom, viewport } = measure()
     pinAt.current = pin
-    const offset = latest.current.anchorOnRow ? rowOffset : 0
-    lastOffset.current = offset
-    const target = anchored(from, offset, pin)
-    const space = spacerFor(
-      offset + pin,
-      contentBottom + latest.current.tail,
-      viewport
-    )
+    const bottom = contentBottom + latest.current.tail
+    const onRow = latest.current.anchorOnRow
+    const target = onRow
+      ? rowAnchored(from, rowOffset, pin, bottom, viewport)
+      : anchored(from, 0, pin)
+    // A tab at its top keeps room to drag up until the pills pin; a row
+    // anchor keeps none past where it lands.
+    const reach = onRow ? target.y : pin
+    lastOffset.current = reach - pin
+    const space = spacerFor(reach, bottom, viewport)
     // Room for the jump first, then the jump, then only the room the tab
     // needs: shrinking before the jump could clamp the page and move the head.
     if (spacer.current != null) {
@@ -154,11 +164,15 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     page.scrollTop = target.y
     if (spacer.current != null) spacer.current.style.height = `${space}px`
     const y = page.scrollTop
+    rowHold.current = latest.current.anchorOnRow ? { from, at: y } : undefined
     state.current = { y, collapse: Math.min(target.collapse, y) }
     pending.current = undefined
     paint()
     latest.current.onScroll()
   }, [measure, paint, scroller])
+
+  const anchorRef = useRef(anchor)
+  anchorRef.current = anchor
 
   // After every commit: a tab selected (or the first load) is anchored as soon
   // as its content is on the page, before the browser paints it.
@@ -182,6 +196,15 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   // before the scroll its pull would send, which then finds nothing moved.
   const remeasure = useCallback((): void => {
     if (pending.current != null || lastOffset.current == null) return
+    // Still held on its row (nobody has scrolled since it landed; a page the
+    // browser pulled back is not somebody scrolling): anchor on it again.
+    const hold = rowHold.current
+    const page = scroller()
+    if (hold != null && page != null) {
+      pending.current = hold.from
+      anchorRef.current()
+      return
+    }
     const { pinAt: pin, contentBottom, viewport } = measure()
     pinAt.current = pin
     const at = state.current.y
@@ -192,7 +215,6 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
         spacerFor(at, bottom, viewport)
       )}px`
     }
-    const page = scroller()
     if (page != null && page.scrollTop < at - 1) page.scrollTop = at
     paint()
   }, [measure, paint, scroller])
@@ -253,6 +275,15 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       y < at - 1 &&
       y >= end - 1
     ) {
+      // Held on its row: anchor on the row again rather than keep the page
+      // where it was with room under the last row.
+      const hold = rowHold.current
+      if (hold != null) {
+        pending.current = hold.from
+        anchorRef.current()
+        pageEnd.current = page.scrollHeight - page.clientHeight
+        return
+      }
       if (spacer.current != null) {
         const now = spacer.current.getBoundingClientRect().height
         spacer.current.style.height = `${now + (at - y)}px`
@@ -261,6 +292,13 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       pageEnd.current = page.scrollHeight - page.clientHeight
       return
     }
+    // Moved from where a row anchor left it: the page is somebody's now.
+    if (
+      rowHold.current != null &&
+      pending.current == null &&
+      Math.abs(y - rowHold.current.at) > 1
+    )
+      rowHold.current = undefined
     // While a tab is being anchored the head holds still: the page can move
     // under it as the new content lands, and must not take the head along.
     state.current =
@@ -274,6 +312,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   const select = useCallback(
     (_tab: string): void => {
       pending.current = { ...state.current }
+      rowHold.current = undefined
       // Room for wherever the page is now, whatever the new tab's height, so
       // the browser cannot clamp the page while the new content lands.
       const page = scroller()

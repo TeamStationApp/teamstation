@@ -7,6 +7,7 @@ import {
   cardOffset,
   inStep,
   pillsOffset,
+  rowAnchored,
   scrolled,
   spacerFor
 } from './pinnedHead'
@@ -121,6 +122,26 @@ describe('the pinned head', function () {
         expect(head.collapse).to.be.at.least(PIN_AT)
         expect(pillsOffset(head, PIN_AT)).equals(head.y - PIN_AT)
       }
+    })
+
+    it('anchors a row no further than the page goes without room after it', function () {
+      // 3000 of content and its margin in an 800 viewport: the page ends at
+      // 2200, so a row at 640 anchors as usual and one at 2500 stops there.
+      expect(rowAnchored(AT_REST, 640, PIN_AT, 3000, 800)).deep.equals(
+        anchored(AT_REST, 640, PIN_AT)
+      )
+      expect(rowAnchored(AT_REST, 2500, PIN_AT, 3000, 800)).deep.equals({
+        y: 2200,
+        collapse: 0
+      })
+      // Pinned pills stay pinned on the way, and a page shorter than its
+      // viewport does not move at all.
+      const pinned = { y: PIN_AT, collapse: PIN_AT }
+      expect(rowAnchored(pinned, 2500, PIN_AT, 3000, 800)).deep.equals({
+        y: 2200,
+        collapse: PIN_AT
+      })
+      expect(rowAnchored(AT_REST, 300, PIN_AT, 600, 800)).deep.equals(AT_REST)
     })
 
     it('lets the page be dragged up from the anchor until the pills pin', function () {
