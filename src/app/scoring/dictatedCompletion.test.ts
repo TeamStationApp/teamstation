@@ -724,9 +724,10 @@ describe('a dictated sentence finishes the play', function () {
     })
     const both = game({ first: 5, second: 6 })
     // Sent for the runner on first, into an occupied second: the runner on
-    // second's, at third, without the fielders guessed for second.
+    // second's, at third. The fielders guessed for second are dropped, and
+    // the catcher's throw to the third baseman is credited.
     expect(stealsByBase(both.session, [caught(5, '2B', [11, 14])])).deep.equals(
-      [caught(6, '3B')]
+      [caught(6, '3B', [11, 15])]
     )
     // Only he could have tried: nothing to ask.
     expect(
@@ -862,7 +863,13 @@ describe('a dictated sentence finishes the play', function () {
         'Picked off at second.'
       )
     ).deep.equals([
-      { type: 'baseRunning', kind: 'pickoff', runner: 6, to: '2B' }
+      {
+        type: 'baseRunning',
+        kind: 'pickoff',
+        runner: 6,
+        to: '2B',
+        fielders: [10, 14]
+      }
     ])
   })
 
@@ -1581,6 +1588,294 @@ describe('a dictated sentence finishes the play', function () {
     expect(answerOf({ transcript: 't', question: 'q' }, { picks: [] })).equals(
       undefined
     )
+  })
+})
+
+describe('a dictated throw credits the fielder who covered the base', function () {
+  const PITCHER = 10
+  const CATCHER = 11
+  const CF = 17
+  const RF = 18
+  const RUNNER = 5
+  function credits(state: ScoringState): string[] {
+    const { allPlays, currentPlay } = state.session.liveData.plays
+    const play =
+      (currentPlay?.runners.length ?? 0) > 0 ? currentPlay : allPlays.at(-1)
+    return (play?.runners ?? [])
+      .flatMap(runner =>
+        (runner.credits ?? []).map(c => `${c.credit} ${c.player.id}`)
+      )
+      .sort()
+  }
+  const outAt = (
+    runner: number,
+    to: '1B' | '2B' | '3B' | 'home',
+    fielders?: number[]
+  ): ScoringAction => ({
+    type: 'runnerMovement',
+    runner,
+    to,
+    out: true,
+    ...(fielders == null ? {} : { fielders })
+  })
+
+  it('credits the second baseman when the third baseman fields, and the shortstop when the first baseman does', function () {
+    const fromThird = settle(
+      sayAs(
+        'Ground ball to third. The runner is out at second, safe at first.',
+        game({ first: RUNNER }),
+        { ...grounder, fielder: THIRD_BASEMAN },
+        choice,
+        outAt(RUNNER, '2B')
+      )
+    )
+    expect(credits(fromThird)).deep.equals(
+      [
+        `f_assist ${THIRD_BASEMAN}`,
+        `f_putout ${SECOND_BASEMAN}`,
+        `f_fielded_ball ${THIRD_BASEMAN}`
+      ].sort()
+    )
+    const fromFirst = settle(
+      sayAs(
+        'Ground ball to first. The runner is out at second, safe at first.',
+        game({ first: RUNNER }),
+        { ...grounder, fielder: FIRST_BASEMAN },
+        choice,
+        outAt(RUNNER, '2B')
+      )
+    )
+    expect(credits(fromFirst)).deep.equals(
+      [
+        `f_assist ${FIRST_BASEMAN}`,
+        `f_putout ${SS}`,
+        `f_fielded_ball ${FIRST_BASEMAN}`
+      ].sort()
+    )
+    // A chain the model sent is kept, including one the cover rule would not choose.
+    const sent = playDefaults(
+      game({ first: RUNNER }).session,
+      [
+        { ...grounder, fielder: THIRD_BASEMAN },
+        choice,
+        outAt(RUNNER, '2B', [THIRD_BASEMAN, SS])
+      ],
+      'Ground ball to third, out at second to the shortstop.'
+    )
+    expect(sent.find(action => action.type === 'runnerMovement')).deep.include({
+      fielders: [THIRD_BASEMAN, SS]
+    })
+  })
+
+  it('credits a player the scorer named at second ahead of the cover', function () {
+    const named = game({ first: RUNNER })
+    named.session.gameData.players[SECOND_BASEMAN].fullName = 'Fari Cole'
+    const toFari = settle(
+      sayAs(
+        'Ground ball to first, throw to second to Fari, safe at first.',
+        named,
+        { ...grounder, fielder: FIRST_BASEMAN },
+        choice,
+        outAt(RUNNER, '2B')
+      )
+    )
+    expect(credits(toFari)).to.include(`f_putout ${SECOND_BASEMAN}`)
+    expect(credits(toFari)).to.not.include(`f_putout ${SS}`)
+    const john = game({ first: RUNNER })
+    john.session.gameData.players[SS].fullName = 'John Hale'
+    const threwOn = settle(
+      sayAs(
+        "Ground ball to third, out at second, but John's throw to first is late.",
+        john,
+        { ...grounder, fielder: THIRD_BASEMAN },
+        choice,
+        outAt(RUNNER, '2B')
+      )
+    )
+    expect(credits(threwOn)).to.include(`f_putout ${SS}`)
+    expect(credits(threwOn)).to.not.include(`f_putout ${SECOND_BASEMAN}`)
+  })
+
+  it('credits the infielder a ground ball was hit to when the play left him off', function () {
+    const third = settle(
+      sayAs(
+        'Grounder to third, thrown out at first.',
+        game(),
+        { type: 'ballInPlay', contact: 'swing', trajectory: 'ground_ball' },
+        { type: 'result', eventType: 'field_out', outBy: 'throw' }
+      )
+    )
+    expect(credits(third)).deep.equals(
+      [`f_assist ${THIRD_BASEMAN}`, `f_putout ${FIRST_BASEMAN}`].sort()
+    )
+    const short = settle(
+      sayAs(
+        'Sacrifice bunt to the shortstop, thrown out at first.',
+        game(),
+        { type: 'ballInPlay', contact: 'bunt', trajectory: 'ground_ball' },
+        { type: 'result', eventType: 'field_out', outBy: 'throw' }
+      )
+    )
+    expect(credits(short)).deep.equals(
+      [`f_assist ${SS}`, `f_putout ${FIRST_BASEMAN}`].sort()
+    )
+  })
+
+  it('credits the center fielder for a gap unless the scorer named someone', function () {
+    const caught: ScoringAction = {
+      type: 'result',
+      eventType: 'field_out',
+      outBy: 'catch'
+    }
+    const gap = (fielder: number): ScoringAction => ({
+      type: 'ballInPlay',
+      contact: 'swing',
+      trajectory: 'popup',
+      direction: 'right_center',
+      fielder
+    })
+    expect(
+      playDefaults(
+        game().session,
+        [gap(RF), caught],
+        'Pop fly to right center, caught.'
+      )[0]
+    ).deep.include({ fielder: CF })
+    const william = game()
+    william.session.gameData.players[RF].fullName = 'William Park'
+    expect(
+      playDefaults(
+        william.session,
+        [gap(RF), caught],
+        'Pop fly to right center, William catches it.'
+      )[0]
+    ).deep.include({ fielder: RF })
+  })
+
+  it('credits the fielder who caught the fly and the one who took the throw, second included', function () {
+    const fly = (fielder: number): ScoringAction => ({
+      type: 'ballInPlay',
+      contact: 'swing',
+      trajectory: 'popup',
+      fielder
+    })
+    const caught: ScoringAction = {
+      type: 'result',
+      eventType: 'field_out',
+      outBy: 'catch'
+    }
+    const fromLeft = settle(
+      sayAs(
+        'Pop fly to left, the runner tags and is thrown out at second.',
+        game({ first: RUNNER }),
+        fly(LF),
+        caught,
+        outAt(RUNNER, '2B')
+      )
+    )
+    expect(credits(fromLeft)).deep.equals(
+      [`f_putout ${LF}`, `f_assist ${LF}`, `f_putout ${SS}`].sort()
+    )
+    const fromThird = settle(
+      sayAs(
+        'Pop up to third, the runner tags and is thrown out at second.',
+        game({ first: RUNNER }),
+        fly(THIRD_BASEMAN),
+        caught,
+        outAt(RUNNER, '2B')
+      )
+    )
+    expect(credits(fromThird)).deep.equals(
+      [
+        `f_putout ${THIRD_BASEMAN}`,
+        `f_assist ${THIRD_BASEMAN}`,
+        `f_putout ${SECOND_BASEMAN}`
+      ].sort()
+    )
+  })
+
+  it('credits the outfielder for the direction on a hit, and the infielder at the base', function () {
+    const state = settle(
+      sayAs(
+        'Single to right center, the runner is thrown out at second.',
+        game({ first: RUNNER }),
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          direction: 'right_center',
+          fielder: RF
+        },
+        { type: 'result', eventType: 'single' },
+        outAt(RUNNER, '2B')
+      )
+    )
+    expect(credits(state)).to.include(`f_assist ${CF}`)
+    expect(credits(state)).to.include(`f_putout ${SS}`)
+    expect(credits(state)).to.not.include(`f_putout ${CF}`)
+    expect(credits(state)).to.not.include(`f_assist ${RF}`)
+  })
+
+  it('credits a caught stealing to the catcher and the fielder at the base', function () {
+    const third = settle(
+      sayAs('He is thrown out at third.', game({ second: 6 }), {
+        type: 'baseRunning',
+        kind: 'caught_stealing',
+        runner: 6,
+        to: '3B'
+      })
+    )
+    expect(credits(third)).deep.equals(
+      [`f_assist ${CATCHER}`, `f_putout ${THIRD_BASEMAN}`].sort()
+    )
+    const second = settle(
+      sayAs('Caught stealing at second.', game({ first: RUNNER }), {
+        type: 'baseRunning',
+        kind: 'caught_stealing',
+        runner: RUNNER,
+        to: '2B'
+      })
+    )
+    expect(credits(second)).deep.equals(
+      [`f_assist ${CATCHER}`, `f_putout ${SS}`].sort()
+    )
+  })
+
+  it('credits a pickoff that gets the runner to the pitcher, and a safe one to nobody', function () {
+    const out = settle(
+      sayAs('Picked him off at first.', game({ first: RUNNER }), {
+        type: 'baseRunning',
+        kind: 'pickoff',
+        runner: RUNNER,
+        to: '1B'
+      })
+    )
+    expect(credits(out)).deep.equals(
+      [`f_assist ${PITCHER}`, `f_putout ${FIRST_BASEMAN}`].sort()
+    )
+    const snap = settle(
+      sayAs('The catcher picks him off at first.', game({ first: RUNNER }), {
+        type: 'baseRunning',
+        kind: 'pickoff',
+        runner: RUNNER,
+        to: '1B'
+      })
+    )
+    expect(credits(snap)).deep.equals(
+      [`f_assist ${CATCHER}`, `f_putout ${FIRST_BASEMAN}`].sort()
+    )
+    const safe = settle(
+      sayAs('Pickoff attempt at first, safe.', game({ first: RUNNER }), {
+        type: 'baseRunning',
+        kind: 'pickoff_safe',
+        runner: RUNNER,
+        to: '1B'
+      })
+    )
+    expect(
+      credits(safe).filter(
+        line => line.startsWith('f_assist') || line.startsWith('f_putout')
+      )
+    ).deep.equals([])
   })
 })
 
@@ -2473,7 +2768,7 @@ describe('a dictated double play', function () {
     expect(credits(state)).not.to.include(`f_assist ${SS}`)
   })
 
-  it('throws the batter out from the fielder who made the runner’s out, or credits nobody', function () {
+  it('throws the batter out from the fielder who made the runner’s out, assuming the cover when nobody was named', function () {
     const pivot = turned('said', { first: RUNNER }, to(SS), thrown, {
       type: 'runnerMovement',
       runner: RUNNER,
@@ -2482,6 +2777,8 @@ describe('a dictated double play', function () {
       fielders: [SS, SECOND_BASEMAN]
     })
     expect(credits(pivot)).deep.equals(dp(SS, SECOND_BASEMAN))
+    // The shortstop fielded it and the out was at second, so the second
+    // baseman took the throw and threw on to first.
     const unsaid = turned('said', { first: RUNNER }, to(SS), thrown, {
       type: 'runnerMovement',
       runner: RUNNER,
@@ -2489,7 +2786,7 @@ describe('a dictated double play', function () {
       out: true
     })
     expect(unsaid.session.liveData.linescore.outs).equals(2)
-    expect(credits(unsaid)).deep.equals([])
+    expect(credits(unsaid)).deep.equals(dp(SS, SECOND_BASEMAN))
   })
 })
 
