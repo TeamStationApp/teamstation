@@ -85,13 +85,14 @@ const SILENCE_LIMIT_MS = 100 * 365 * 24 * 60 * 60 * 1000
  * So while the publisher may yet come back the playlist stays open, and the
  * players wait at the end of it.
  *
- * Past this, the playlist is closed so the people watching are not left
- * waiting on a stream that has stopped. It is not the end of the stream: the
- * key still works, a publisher coming back reopens the playlist and carries on
- * in it, and the web player, which knows the video is still live, picks it up
- * again. The stream itself finishes as it always has, when somebody ends it.
+ * Past this — eight minutes — the playlist is closed so the people watching
+ * are not left waiting on a stream that has stopped. It is not the end of the
+ * stream: the key still works, a publisher coming back reopens the playlist
+ * and carries on in it, and the web player, which knows the video is still
+ * live, picks it up again. The stream itself finishes as it always has, when
+ * somebody ends it.
  */
-export const RECONNECT_GRACE_MS = 60_000
+export const RECONNECT_GRACE_MS = 8 * 60 * 1000
 /**
  * How long a video's files stay on this machine after the Space has them.
  *

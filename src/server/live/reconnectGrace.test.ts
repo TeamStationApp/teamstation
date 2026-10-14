@@ -34,7 +34,7 @@ import {
  *
  * Every player reads `EXT-X-ENDLIST` as the end of the broadcast and stops
  * for good, so it must not reach a live playlist while the publisher may yet
- * come back: a minute's grace from the moment it went, and never while the
+ * come back: eight minutes' grace from the moment it went, and never while the
  * ingest says it is publishing again. Past the grace it is written, once for
  * each time the publisher goes.
  */
@@ -197,6 +197,10 @@ describe('the reconnect grace', function () {
       .where('id', '=', 'liv_grace')
       .execute()
   }
+
+  it('is eight minutes', function () {
+    expect(RECONNECT_GRACE_MS).equals(8 * 60 * 1000)
+  })
 
   it('keeps the playlist open while the publisher may come back', async function () {
     if (options == null) this.skip()

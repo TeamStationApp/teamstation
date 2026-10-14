@@ -44,7 +44,7 @@ export interface PlayIntent {
    * playlist turns out to have been closed.
    *
    * Supplied for a video that was live when it was opened. The server closes
-   * a live playlist when its publisher has been away for a minute, and a
+   * a live playlist when its publisher has been away for eight minutes, and a
    * player that reads the close stops for good; while the game still lists
    * the video as live, the web player waits for the playlist to open again
    * and rejoins it (`liveRejoin.ts`). Left out, an ended playlist ends the
