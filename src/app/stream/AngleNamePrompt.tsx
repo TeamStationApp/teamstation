@@ -23,6 +23,16 @@ export function angleNameProblem(raw: string): string | null {
   return null
 }
 
+/** One-word angles the prompt offers, in the order they are shown. */
+export function angleSuggestions(): string[] {
+  return [
+    lstrings.stream_prompt_suggestion_home,
+    lstrings.stream_prompt_suggestion_first,
+    lstrings.stream_prompt_suggestion_third,
+    lstrings.stream_prompt_suggestion_dugout
+  ]
+}
+
 /** The name to send, or undefined while there is none that may be sent. */
 export function angleNameToSend(raw: string): string | undefined {
   const trimmed = raw.trim()
@@ -102,11 +112,29 @@ export function AngleNamePrompt(
             }}
             placeholder={lstrings.stream_prompt_placeholder}
             autoFocus
+            autoCapitalize="words"
             // A phone may be held sideways already, ready to film.
             disableFullscreenUI
             error={problem ?? refused}
             onSubmitEditing={start}
           />
+          <View style={styles.suggestions}>
+            {angleSuggestions().map(label => (
+              <Pressable
+                key={label}
+                accessibilityRole="button"
+                accessibilityLabel={label}
+                testID={`angle-suggestion-${label}`}
+                style={styles.suggestion}
+                onPress={() => {
+                  setName(label)
+                  setRefused(undefined)
+                }}
+              >
+                <Text style={styles.suggestionText}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
           <View style={styles.buttons}>
             <Button
               label={lstrings.stream_prompt_cancel}
@@ -153,6 +181,23 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor,
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(1.125),
+    fontWeight: '600'
+  },
+  suggestions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: theme.rem(theme.spaceSmRem)
+  },
+  suggestion: {
+    paddingHorizontal: theme.rem(0.75),
+    paddingVertical: theme.rem(0.375),
+    borderRadius: theme.rem(1),
+    backgroundColor: theme.inactiveBackgroundColor
+  },
+  suggestionText: {
+    color: theme.primaryTextColor,
+    fontFamily: theme.semiBoldTextFont,
+    fontSize: theme.rem(0.875),
     fontWeight: '600'
   },
   buttons: {

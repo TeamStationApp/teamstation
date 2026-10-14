@@ -10,8 +10,13 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { TextField } from '../components/TextField'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { angleNameProblem, angleNameToSend } from './AngleNamePrompt'
+import {
+  angleNameProblem,
+  angleNameToSend,
+  angleSuggestions
+} from './AngleNamePrompt'
 import { CameraAnglesPanel } from './CameraAnglesPanel.native'
 import {
   type FakePhoneStreamModule,
@@ -247,6 +252,40 @@ describe('Record video on a phone', function () {
     expect(angleNameProblem('Home — Plate')).equals(
       'A camera name cannot contain " — ".'
     )
+    expect(angleNameToSend('dugout')).equals('dugout')
+  })
+
+  it('fills the angle from a one-word suggestion and leaves other fields uncapitalized', async function () {
+    const fake = fakeClient()
+    await mount(fake)
+    await press(button('Record video'))
+    await press(button('Home'))
+    expect(
+      document.querySelector<HTMLInputElement>(
+        'input[aria-label="Camera angle"]'
+      )?.value
+    ).equals('Home')
+    await press(button('Start'))
+    expect(fake.added[0]?.label).equals('Home')
+
+    await act(async () => {
+      root?.unmount()
+    })
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <TextField label="Email" value="" onChangeText={() => undefined} />
+        </ThemeProvider>
+      )
+      await delay(20)
+    })
+    expect(
+      fieldProps(document.querySelector('input[aria-label="Email"]'))
+        .autoCapitalize
+    ).equals('none')
   })
 
   it('is hidden on a phone that cannot record, and from anybody who may not film', async function () {
@@ -271,7 +310,16 @@ describe('Record video on a phone', function () {
       document
         .querySelector('input[aria-label="Camera angle"]')
         ?.getAttribute('placeholder')
-    ).equals('Home Plate')
+    ).equals('Home')
+    expect(angleSuggestions()).deep.equals(['Home', '1st', '3rd', 'Dugout'])
+    for (const label of angleSuggestions()) {
+      expect(label.includes(' '), label).equals(false)
+      expect(text()).contains(label)
+    }
+    expect(
+      fieldProps(document.querySelector('input[aria-label="Camera angle"]'))
+        .autoCapitalize
+    ).equals('words')
     // Held sideways, an Android phone edits the name in place.
     expect(
       fieldProps(document.querySelector('input[aria-label="Camera angle"]'))
