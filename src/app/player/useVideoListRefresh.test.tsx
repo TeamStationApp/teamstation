@@ -148,14 +148,39 @@ describe('the video a game page opens on', function () {
 
 describe('two lists of videos', function () {
   it('are the same when they hold the same videos in the same states', function () {
+    // A frame's address is signed afresh on every read, so it is not a change.
     expect(
-      sameVideos([video('a', 'live')], [{ ...video('a', 'live'), title: 'x' }])
+      sameVideos(
+        [{ ...video('a', 'live'), posterUrl: 'https://media.example.test/1' }],
+        [{ ...video('a', 'live'), posterUrl: 'https://media.example.test/2' }]
+      )
     ).equals(true)
     expect(sameVideos([video('a', 'live')], [video('a', 'ready')])).equals(
       false
     )
     expect(sameVideos([video('a', 'live')], [video('b', 'live')])).equals(false)
     expect(sameVideos([], [video('a', 'live')])).equals(false)
+  })
+
+  it('differ when a video was placed again or renamed', function () {
+    // The phone says when its first picture was taken a moment after the
+    // server placed the stream by when it heard it. A refresh that brings the
+    // phone's start is the one the multi-camera view lines up by.
+    expect(
+      sameVideos(
+        [video('a', 'live')],
+        [{ ...video('a', 'live'), startAt: '2026-09-27T22:29:59.200Z' }]
+      )
+    ).equals(false)
+    expect(
+      sameVideos([video('a', 'live')], [{ ...video('a', 'live'), title: 'x' }])
+    ).equals(false)
+    expect(
+      sameVideos(
+        [video('a', 'ready')],
+        [{ ...video('a', 'ready'), syncOffsetSec: 0.4 }]
+      )
+    ).equals(false)
   })
 })
 
