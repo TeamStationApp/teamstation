@@ -43,6 +43,13 @@ class PhoneSoundMix(
     }
 
     private val lock = ReentrantLock()
+
+    /**
+     * Held while runs are taken and handed to the outputs, by [pump] on the sound thread and [flush]
+     * at a part's end: taken under [lock] and handed over after it, a flush's later runs could reach
+     * the recording ahead of runs a pump had already taken.
+     */
+    private val delivery = ReentrantLock()
     private val capacity = (capacitySeconds * sampleRate).toInt()
     private val ring = ShortArray(capacity)
     private val runFrames = (runSeconds * sampleRate).roundToLong()
@@ -154,20 +161,24 @@ class PhoneSoundMix(
 
     /** Sends every output the runs its delay has let through by [wall]. */
     fun pump(wall: Double) {
-        val due = lock.withLock {
-            if (!started) return
-            outputs.flatMap { output -> runsFor(output, index(wall - output.delaySeconds)).map { output to it } }
+        delivery.withLock {
+            val due = lock.withLock {
+                if (!started) return
+                outputs.flatMap { output -> runsFor(output, index(wall - output.delaySeconds)).map { output to it } }
+            }
+            for ((output, frame) in due) output.sink(frame)
         }
-        for ((output, frame) in due) output.sink(frame)
     }
 
     /** Sends [output] every run up to [wall], whatever its delay: the end of a recording's part. */
     fun flush(output: Output, wall: Double) {
-        val due = lock.withLock {
-            if (!started) return
-            runsFor(output, index(wall) + runFrames - 1)
+        delivery.withLock {
+            val due = lock.withLock {
+                if (!started) return
+                runsFor(output, index(wall) + runFrames - 1)
+            }
+            for (frame in due) output.sink(frame)
         }
-        for (frame in due) output.sink(frame)
     }
 
     private fun runsFor(output: Output, through: Long): List<AudioFrame> {
