@@ -29,6 +29,21 @@ type Step =
   | { stateUnchanged: string; fields?: string[] }
   | { stateEquals: { path: Array<string | number>; value: unknown } }
   | {
+      stateRow: {
+        table: string
+        match: Record<string, unknown>
+        values: Record<string, unknown>
+      }
+    }
+  | { signIn: string }
+  | { fontScale: 'large' | 'default' }
+  | { clock: { save: string } | { after: string; min: number; max: number } }
+  | {
+      position:
+        | { save: string; target: Selector }
+        | { matches: string; target: Selector; tolerance?: number }
+    }
+  | {
       geometry: {
         target: Selector
         relation: 'centered' | 'right' | 'visible'
@@ -180,6 +195,24 @@ async function main(): Promise<void> {
   let recording = false
   let passed = false
   const snapshots = new Map<string, Record<string, unknown>>()
+  const clocks = new Map<string, number>()
+  const positions = new Map<string, NonNullable<NativeNode['bounds']>>()
+  let originalFont: string | undefined
+  const font = (value: string): void => {
+    if (platform === 'ios')
+      execFileSync('xcrun', ['simctl', 'ui', device, 'content_size', value])
+    else
+      execFileSync('adb', [
+        '-s',
+        device,
+        'shell',
+        'settings',
+        'put',
+        'system',
+        'font_scale',
+        value
+      ])
+  }
   const state = async (): Promise<Record<string, unknown>> => {
     const response = await fetch(manifest.controlOrigin + '/state')
     assert.equal(response.status, 200)
@@ -196,9 +229,10 @@ async function main(): Promise<void> {
       extra: platform === 'android' ? { androidTcpForward: true } : {}
     })
     await m.launchApp({ appId: 'app.teamstation.app', clearState: false })
-    if (process.env.TS_SETTINGS3_SIGN_IN === '1') {
+    const signIn = async (email: string): Promise<void> => {
+      assert(m != null, 'Attached native application required')
       await m.tapOn({ text: 'E-mail address', timeout: 15000 })
-      await m.inputText({ text: manifest.email })
+      await m.inputText({ text: email })
       await m.hideKeyboard()
       await m.tapOn({ text: 'Send me a sign-in code', timeout: 15000 })
       let code: unknown
@@ -208,9 +242,7 @@ async function main(): Promise<void> {
         attempt++
       ) {
         const response = await fetch(
-          manifest.controlOrigin +
-            '/code?email=' +
-            encodeURIComponent(manifest.email)
+          manifest.controlOrigin + '/code?email=' + encodeURIComponent(email)
         )
         assert.equal(response.status, 200)
         code = (await response.json()).code
@@ -228,6 +260,8 @@ async function main(): Promise<void> {
       await m.tapOn({ text: 'Sign in', timeout: 15000 })
       await m.assertVisible({ text: 'Search', timeout: 15000 })
     }
+    if (process.env.TS_SETTINGS3_SIGN_IN === '1') await signIn(manifest.email)
+    await m.openLink({ link: 'teamstation://' })
     await m.tapOn({ text: 'About TeamStation', timeout: 15000 })
     await m.assertVisible({ text: manifest.commit, timeout: 15000 })
     await m.assertVisible({ text: manifest.branch, timeout: 15000 })
@@ -314,6 +348,101 @@ async function main(): Promise<void> {
           for (const key of step.stateEquals.path) value = value[key]
           assert.deepEqual(value, step.stateEquals.value)
           assertions++
+        } else if ('stateRow' in step) {
+          const { table, match, values } = step.stateRow
+          const rows = (await state())[table]
+          assert(Array.isArray(rows), 'Fixture table required')
+          const selected = rows.filter(row =>
+            Object.entries(match).every(([key, value]) => row[key] === value)
+          )
+          assert.equal(selected.length, 1, 'Unique fixture row required')
+          for (const [key, value] of Object.entries(values))
+            assert.deepEqual(selected[0][key], value)
+          assertions++
+        } else if ('signIn' in step) {
+          await m.openLink({ link: 'teamstation://account' })
+          await m.scrollUntilVisible({
+            element: { text: 'Sign out' },
+            timeout: 15000
+          })
+          await m.tapOn({ text: 'Sign out', timeout: 15000 })
+          await signIn(step.signIn)
+          assertions++
+        } else if ('fontScale' in step) {
+          originalFont ??=
+            platform === 'ios'
+              ? execFileSync(
+                  'xcrun',
+                  ['simctl', 'ui', device, 'content_size'],
+                  { encoding: 'utf8' }
+                ).trim()
+              : execFileSync(
+                  'adb',
+                  [
+                    '-s',
+                    device,
+                    'shell',
+                    'settings',
+                    'get',
+                    'system',
+                    'font_scale'
+                  ],
+                  { encoding: 'utf8' }
+                ).trim()
+          font(
+            step.fontScale === 'default'
+              ? originalFont
+              : platform === 'ios'
+                ? 'extra-extra-extra-large'
+                : '1.3'
+          )
+        } else if ('clock' in step) {
+          const nodes = flatten((await m.hierarchy()) as NativeNode)
+          const track = selectNode(nodes, {
+            text: 'Position in the game'
+          }).bounds!
+          const times = nodes
+            .filter(
+              node =>
+                node.bounds != null &&
+                /^\d+:\d{2}$/.test(node.text ?? '') &&
+                Math.abs(node.bounds.y - track.y) < 80
+            )
+            .sort((a, b) => a.bounds!.x - b.bounds!.x)
+          assert.equal(
+            times.length,
+            2,
+            'Visible current and duration clocks required'
+          )
+          const [minutes, seconds] = times[0].text!.split(':').map(Number)
+          const value = minutes * 60 + seconds
+          if ('save' in step.clock) clocks.set(step.clock.save, value)
+          else {
+            const before = clocks.get(step.clock.after)
+            assert(before != null, 'Prior visible playback clock required')
+            assert(
+              value - before >= step.clock.min &&
+                value - before <= step.clock.max,
+              `Playback clock advanced from ${before} to ${value}`
+            )
+          }
+          await note(`${test.id} visible playback clock ${value}s`)
+          assertions++
+        } else if ('position' in step) {
+          const bounds = selectNode(
+            flatten((await m.hierarchy()) as NativeNode),
+            step.position.target
+          ).bounds!
+          if ('save' in step.position) positions.set(step.position.save, bounds)
+          else {
+            const before = positions.get(step.position.matches)
+            assert(before != null, 'Prior native position required')
+            assert(
+              Math.abs(bounds.y - before.y) <= (step.position.tolerance ?? 3),
+              'Pinned vertical position unchanged'
+            )
+          }
+          assertions++
         } else if ('geometry' in step) {
           const nodes = flatten((await m.hierarchy()) as NativeNode)
           const target = selectNode(nodes, step.geometry.target).bounds!
@@ -375,24 +504,28 @@ async function main(): Promise<void> {
     )
     throw error
   } finally {
-    if (recording) await m?.command('stopRecording').catch(() => undefined)
     try {
-      await m?.detach()
+      if (originalFont != null) font(originalFont)
     } finally {
+      if (recording) await m?.command('stopRecording').catch(() => undefined)
       try {
-        await daemon.shutdown()
+        await m?.detach()
       } finally {
-        // A caller may keep its one device between N1/N2/N3, but a failed
-        // scenario always releases it. The final scenario uses the default.
-        if (!passed || process.env.TS_SETTINGS3_KEEP_DEVICE !== '1') {
-          if (platform === 'ios')
-            execFileSync('xcrun', ['simctl', 'shutdown', device], {
-              stdio: 'ignore'
-            })
-          else
-            execFileSync('adb', ['-s', device, 'emu', 'kill'], {
-              stdio: 'ignore'
-            })
+        try {
+          await daemon.shutdown()
+        } finally {
+          // A caller may keep its one device between N1/N2/N3, but a failed
+          // scenario always releases it. The final scenario uses the default.
+          if (!passed || process.env.TS_SETTINGS3_KEEP_DEVICE !== '1') {
+            if (platform === 'ios')
+              execFileSync('xcrun', ['simctl', 'shutdown', device], {
+                stdio: 'ignore'
+              })
+            else
+              execFileSync('adb', ['-s', device, 'emu', 'kill'], {
+                stdio: 'ignore'
+              })
+          }
         }
       }
     }

@@ -1,13 +1,16 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import type { Server } from 'node:http'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import express from 'express'
 
 import { googlePlaces } from '../server/location/googlePlaces'
+import { devMediaRoutes } from '../server/routes/devMedia'
 import { healthRoutes } from '../server/routes/health'
+import { mediaRoutes } from '../server/routes/media'
 import { googlePlacesStub } from './googlePlacesStub'
 import { groupFixture } from './groupFixtures'
 import { seedSettingsCleanup3 } from './settingsCleanup3Fixture'
@@ -17,6 +20,8 @@ async function main(): Promise<void> {
   const artifacts = process.env.TS_CREATION_ARTIFACTS
   const bind = process.env.TS_CREATION_NATIVE_HOST
   const host = process.env.TS_SETTINGS3_API_HOST
+  const mediaSource = process.env.TS_SETTINGS3_NATIVE_MEDIA_ROOT
+  let mediaRoot: string | undefined
   if (artifacts == null || bind == null || host == null)
     throw new Error('Supply artifacts, native bind host and simulator API host')
   const branch = execFileSync('git', ['branch', '--show-current'], {
@@ -51,18 +56,76 @@ async function main(): Promise<void> {
       } catch (error) {
         errors.push(error)
       }
+    if (mediaRoot != null)
+      try {
+        await rm(mediaRoot, { recursive: true, force: true })
+      } catch (error) {
+        errors.push(error)
+      }
     if (errors.length !== 0)
       throw new AggregateError(errors, 'Native fixture cleanup failed')
   }
   try {
+    if (mediaSource != null) {
+      // Express deliberately refuses dotfiles; private artifact directories
+      // may have a hidden ancestor. Serve an owned disposable media copy.
+      mediaRoot = await mkdtemp(join(tmpdir(), 'settings-native-media-'))
+      await cp(mediaSource, mediaRoot, { recursive: true })
+    }
+    let mountMedia: ((publicUrl: string) => void) | undefined
     const f = await groupFixture(
       undefined,
       bind,
-      undefined,
+      (app, { db, media }) => {
+        let router: express.Router | undefined
+        app.use((req, res, next) => {
+          if (router == null) next()
+          else router(req, res, next)
+        })
+        mountMedia = publicUrl => {
+          if (mediaRoot == null) return
+          router = express.Router()
+          router.use(
+            '/api/v1',
+            mediaRoutes(db, { ...media, mediaRoot, publicUrl })
+          )
+          router.use(devMediaRoutes(mediaRoot, media.mediaSecret))
+        }
+      },
       googlePlaces({ apiKey: 'placeholder-key', baseUrl: stub.baseUrl })
     )
     fixture = f
     await seedSettingsCleanup3(f)
+    if (mediaRoot != null) {
+      const media = JSON.parse(
+        await readFile(join(mediaRoot, 'media-manifest.json'), 'utf8')
+      ) as {
+        videoId: string
+        durationSec: number
+        width: number
+        height: number
+      }
+      if (media.videoId !== 'vid_settings3_native' || media.durationSec !== 90)
+        throw new Error('Supply the prepared synthetic native HLS asset')
+      await f.h.db
+        .insertInto('videos')
+        .values({
+          id: media.videoId,
+          game_id: 'gam_settings3_final',
+          kind: 'program',
+          title: 'Native fixture video',
+          storage: 'local',
+          status: 'ready',
+          start_at: new Date('2027-04-10T19:00:00Z'),
+          start_at_source: 'manual',
+          duration_sec: media.durationSec,
+          num_cameras: 1,
+          width: media.width,
+          height: media.height,
+          codecs: 'h264'
+        })
+        .execute()
+    }
     const app = express()
     app.use('/api/v1', healthRoutes(f.h.db, commit))
     // Keep returned synthetic object/API URLs reachable from this simulator.
@@ -100,10 +163,23 @@ async function main(): Promise<void> {
         fetch(f.h.origin + req.originalUrl, {
           method: req.method,
           headers,
+          redirect: 'manual',
           ...(chunks.length === 0 ? {} : { body: Buffer.concat(chunks) })
         })
           .then(async response => {
             res.status(response.status)
+            for (const name of [
+              'content-range',
+              'accept-ranges',
+              'cache-control',
+              'etag'
+            ]) {
+              const value = response.headers.get(name)
+              if (value != null) res.setHeader(name, value)
+            }
+            const location = response.headers.get('location')
+            if (location != null)
+              res.setHeader('location', String(reachable(location)))
             const type = response.headers.get('content-type') ?? ''
             if (type.includes('application/json'))
               res.json(reachable(await response.json()))
@@ -120,6 +196,7 @@ async function main(): Promise<void> {
     const address = api.address()
     if (address == null || typeof address === 'string')
       throw new Error('Missing native API port')
+    mountMedia?.(`http://${host}:${address.port}`)
     const controlApp = express()
     controlApp.use(express.json())
     controlApp.get('/code', (req, res) => {
@@ -153,13 +230,28 @@ async function main(): Promise<void> {
           .execute(),
         f.h.db
           .selectFrom('teams')
-          .select(['id', 'name', 'kind'])
+          .select(['id', 'name', 'kind', 'locality'])
           .orderBy('id')
+          .execute(),
+        f.h.db
+          .selectFrom('system_settings')
+          .selectAll()
+          .orderBy('key')
           .execute()
       ])
-        .then(([seasons, parents, games, memberships, users, teams]) => {
-          res.json({ seasons, parents, games, memberships, users, teams })
-        })
+        .then(
+          ([seasons, parents, games, memberships, users, teams, settings]) => {
+            res.json({
+              seasons,
+              parents,
+              games,
+              memberships,
+              users,
+              teams,
+              settings
+            })
+          }
+        )
         .catch(next)
     })
     controlApp.post('/reset-season', (_req, res, next) => {
@@ -210,7 +302,8 @@ async function main(): Promise<void> {
           adminCandidate: 106,
           game: 'gam_settings3_scheduled',
           live: 'gam_settings3_live',
-          final: 'gam_settings3_final'
+          final: 'gam_settings3_final',
+          video: mediaRoot == null ? null : 'vid_settings3_native'
         },
         null,
         2
