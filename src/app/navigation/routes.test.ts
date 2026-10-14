@@ -291,7 +291,17 @@ describe('addresses', function () {
       name: 'chatMembers',
       conversationId: 'cnv_abc'
     })
+    expect(parseRoute('/chat/cnv_abc/info')).deep.equals({
+      name: 'chatInfo',
+      conversationId: 'cnv_abc'
+    })
+    expect(routePath({ name: 'chatInfo', conversationId: 'cnv space' })).equals(
+      '/chat/cnv%20space/info'
+    )
+    expect(parseRoute('/chat/new/info')).deep.equals({ name: 'home' })
+    expect(parseRoute('/chat/cnv_abc/info/x')).deep.equals({ name: 'home' })
     for (const route of [
+      { name: 'chatInfo' as const, conversationId: 'cnv_abc' },
       { name: 'chat' as const },
       { name: 'chatNew' as const },
       { name: 'conversation' as const, conversationId: 'cnv_abc' },

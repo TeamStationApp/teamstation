@@ -1191,11 +1191,12 @@ describe('chat devices in the app', function () {
       conversationId: 'cnv_hawks'
     })
     await press('Hawks, Team Members')
-    await until('the members', () =>
-      text().includes('Members of Hawks Members')
+    await until(
+      'the members',
+      () => document.querySelector('[data-testid="chat-info-members"]') != null
     )
     expect(currentRoute()).deep.equals({
-      name: 'chatMembers',
+      name: 'chatInfo',
       conversationId: 'cnv_hawks'
     })
   })
