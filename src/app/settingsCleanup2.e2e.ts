@@ -402,6 +402,10 @@ async function main(): Promise<void> {
         )
         throw error
       })
+    // Start at the largest viewport so the recording preserves readable
+    // landscape frames instead of shrinking them to a portrait-width strip.
+    if (!before)
+      await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 })
     const recording = before
       ? undefined
       : await page.record({
@@ -411,6 +415,20 @@ async function main(): Promise<void> {
           frameRate: 15
         })
     stopRecording = recording?.stop.bind(recording)
+    const hold = async (): Promise<void> => {
+      if (!before) await new Promise(resolve => setTimeout(resolve, 2500))
+    }
+    if (!before) {
+      await hold()
+      await page.setViewport({
+        width: 402,
+        height: 874,
+        deviceScaleFactor: 1,
+        hasTouch: true,
+        isMobile: true
+      })
+      await hold()
+    }
     const center = await page.$eval('video', node => {
       const r = node.getBoundingClientRect()
       return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
@@ -460,17 +478,36 @@ async function main(): Promise<void> {
         const v = document.querySelector('video')
         return v != null && !v.paused && v.currentTime > 1
       })
+      await hold()
       await tap(m, 'Right field', 'tab')
       await page.waitForFunction(() => {
         const v = document.querySelector('video')
         return v != null && v.readyState >= 2
       })
+      await hold()
       await tap(m, 'Box score', 'tab')
+      await hold()
       await tap(m, 'Videos', 'tab')
       await page.waitForFunction(() => {
         const v = document.querySelector('video')
         return v != null && v.readyState >= 2
       })
+      if (await page.$eval('video', node => node.paused)) {
+        const point = await page.$eval('video', node => {
+          const r = node.getBoundingClientRect()
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+        })
+        await m.command('tapOnPoint', point)
+      }
+      const returnedAt = await page.$eval('video', node => node.currentTime)
+      await page.waitForFunction(
+        at => {
+          const v = document.querySelector('video')
+          return v != null && !v.paused && v.currentTime >= at + 3
+        },
+        {},
+        returnedAt
+      )
       await page.setViewport({
         width: 402,
         height: 874,
@@ -478,6 +515,7 @@ async function main(): Promise<void> {
         isMobile: true,
         hasTouch: true
       })
+      await hold()
       await recording!.stop()
       stopRecording = undefined
     }
