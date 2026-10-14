@@ -312,7 +312,11 @@ public final class PhoneStreamEngine {
   ) throws {
     guard isOpen, stream == nil, finishing == nil else { throw PhoneStreamError.notReady }
     let existing = try catalog.current(forLiveStream: liveStreamId)
-    if existing?.hasPendingUpload == true { throw PhoneStreamError.uploadInProgress }
+    // An upload running here is one too while it is still exporting, before the server has given
+    // it an id: a part added now would be missing from the file it sends.
+    if let existing, existing.hasPendingUpload || uploads[existing.recordingID] != nil {
+      throw PhoneStreamError.uploadInProgress
+    }
     guard environment.storageRules.canStart(freeBytes: environment.freeDiskBytes()) else {
       fail(.insufficientStorage)
       throw PhoneStreamError.insufficientStorage

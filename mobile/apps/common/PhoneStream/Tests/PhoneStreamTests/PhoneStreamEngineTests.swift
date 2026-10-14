@@ -695,6 +695,15 @@ extension PhoneStreamTests {
         try await engine.uploadRecording(liveStreamId: Self.stream, apiBase: rig.request.apiBase,
                                          token: rig.request.token, title: Self.angle)
       }
+      // While the three-part rebuild is still being made, before the server has an upload for it,
+      // Record on its stream is refused all the same: a part added now would not be in the file.
+      #expect(await waitUntil { engine.runningUploads == [ take.recordingID ] })
+      #expect(try engine.recordings().first?.uploadId == nil)
+      #expect(throws: PhoneStreamError.uploadInProgress) {
+        try engine.startRecording(rtmpUrl: sink.url, liveStreamId: Self.stream, gameId: Self.game,
+                                  angleName: Self.angle, request: rig.request)
+      }
+      #expect(!engine.isRecording)
       // Opened after the three-part rebuild, as above.
       #expect(
         await waitUntil(Self.exportWait) { (try? engine.recordings().first?.uploadId) != nil },
