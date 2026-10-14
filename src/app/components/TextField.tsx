@@ -29,6 +29,11 @@ export interface TextFieldProps {
    * editor, which a phone held sideways opens over the whole screen.
    */
   disableFullscreenUI?: boolean
+  /**
+   * How the keyboard capitalizes. Sign-in fields leave this off. A name
+   * field passes `words` so each word starts with a capital.
+   */
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters'
 }
 
 /**
@@ -56,7 +61,8 @@ export function TextField(props: TextFieldProps): React.ReactElement {
     action,
     error,
     onSubmitEditing,
-    disableFullscreenUI
+    disableFullscreenUI,
+    autoCapitalize = 'none'
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -95,7 +101,7 @@ export function TextField(props: TextFieldProps): React.ReactElement {
           placeholderTextColor={theme.placeholderTextColor}
           secureTextEntry={secure}
           autoFocus={autoFocus}
-          autoCapitalize="none"
+          autoCapitalize={autoCapitalize}
           autoCorrect={false}
           keyboardType={keyboardType}
           // `one-time-code` is iOS's name for it and Android's is `sms-otp`;
