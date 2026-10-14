@@ -104,6 +104,21 @@ describe('local scoring sessions', function () {
       local: true
     })
   })
+  it('puts a full surname on the scoreboard as a last initial', function () {
+    const session = initial().session
+    const batter = session.liveData.linescore.offense.batter
+    if (batter == null) throw new Error('Missing batter')
+    batter.fullName = 'Alex Rivera'
+    expect(scoreboardFor(session).batter).deep.equals({
+      firstName: 'Alex',
+      lastName: 'R'
+    })
+    batter.fullName = 'Jordan K.'
+    expect(scoreboardFor(session).batter).deep.equals({
+      firstName: 'Jordan',
+      lastName: 'K'
+    })
+  })
   it('allocates local identities without parsing or conflating persisted ids', function () {
     const map = createIdentityMap()
     const ids = ['123', 123, 'usr_one', null, null].map(id =>

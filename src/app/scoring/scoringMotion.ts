@@ -5,6 +5,7 @@ import {
   type FieldPlayer,
   type GroundPoint
 } from '../field/fieldModel'
+import { shortPlayerNames } from './currentSetup'
 import { fieldPlayersFor } from './fieldAdapter'
 import { copyState } from './scoringMachine'
 import { battingSide } from './scoringSelectors'
@@ -186,6 +187,7 @@ export function scoringFieldPlayers(
     'chooseDefender'
   ].includes(state.phase)
   const players = fieldPlayersFor(session)
+  const labels = shortPlayerNames(Object.values(session.gameData.players))
   const pending = state.pendingPlay
   const movements = session.pending?.movements ?? []
   const homeQueue = session.homeQueue
@@ -208,8 +210,8 @@ export function scoringFieldPlayers(
       id: `offense-${id}`,
       playerId: id,
       label: 'Runner',
-      name: person.fullName,
-      displayName: person.fullName,
+      name: labels.get(id) ?? '',
+      displayName: labels.get(id) ?? '',
       jersey: person.jersey,
       uniformSide:
         person.teamId === session.gameData.teams.home.id ? 'home' : 'away',

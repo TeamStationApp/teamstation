@@ -1,5 +1,5 @@
 import type { RosterEntry } from '../../common/api'
-import { shortName } from '../../common/names'
+import { shortName, shortNames } from '../../common/names'
 import { awaitingResult, battingLineupKey } from '../../common/scoring/rules'
 import { copyState } from '../../common/scoring/state'
 import { createPlayers, type FieldPlayer } from '../field/fieldModel'
@@ -56,6 +56,38 @@ export function defensiveRosterName(player: ScoringPlayer): string {
     ? shortName({ id: player.id, displayName: player.fullName })
     : player.fullName.trim()
   return name === '' ? '?' : name
+}
+
+/**
+ * First name and last initial for everyone drawn from a game. A stored label
+ * may already be that short name, or the whole name; two players who would
+ * read the same take another letter, the same way a roster does.
+ */
+export function shortPlayerNames(
+  players: Iterable<
+    Pick<ScoringPlayer, 'id' | 'fullName' | 'firstName' | 'lastName'>
+  >
+): Map<number, string> {
+  const list = [...players]
+  const names = shortNames(
+    list.map(player => ({
+      id: player.id,
+      firstName: player.firstName,
+      lastName: player.lastName,
+      displayName: player.fullName
+    }))
+  )
+  const out = new Map<number, string>()
+  for (const player of list) {
+    const stored = player.fullName.trim()
+    const shown = names.get(player.id) ?? stored
+    // A label that is already an initial keeps its period: `Jordan K.`.
+    out.set(
+      player.id,
+      stored === shown || stored === `${shown}.` ? stored : shown
+    )
+  }
+  return out
 }
 export function defensiveRosterLabel(player: ScoringPlayer): string {
   const name = defensiveRosterName(player)

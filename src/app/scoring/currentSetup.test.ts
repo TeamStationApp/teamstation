@@ -20,6 +20,7 @@ import {
   lineupCountMessage,
   missingDefense,
   setupEditable,
+  shortPlayerNames,
   withRosterDetails
 } from './currentSetup'
 import { createDevelopmentSession } from './developmentSession'
@@ -27,7 +28,11 @@ import { gameFixture } from './isUnscoredGame.test'
 import { addPlaceholderPlayers } from './placeholderPlayers'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { memoryStore } from './scoringSource'
-import { POSITIONS, type ScoringSessionState } from './scoringTypes'
+import {
+  POSITIONS,
+  type ScoringPlayer,
+  type ScoringSessionState
+} from './scoringTypes'
 
 const applyAction = (
   state: ScoringSessionState,
@@ -502,5 +507,49 @@ describe('current scoring setup', function () {
         setup: setupOf(unsafe)
       }).problems
     ).has.length(1)
+  })
+})
+
+describe('names drawn on the field', function () {
+  const player = (
+    id: number,
+    fullName: string,
+    parts?: { firstName: string; lastName: string }
+  ): ScoringPlayer => ({
+    id,
+    userId: null,
+    teamId: 'home',
+    fullName,
+    firstName: parts?.firstName,
+    lastName: parts?.lastName,
+    jersey: '',
+    bats: 'right',
+    throws: 'right',
+    positions: [],
+    local: parts != null
+  })
+
+  it('draws a whole surname as a first name and last initial', function () {
+    const names = shortPlayerNames([
+      player(1, 'Alex Rivera', { firstName: 'Alex', lastName: 'Rivera' }),
+      player(2, 'Daniel M')
+    ])
+    expect(names.get(1)).equals('Alex R')
+    expect(names.get(2)).equals('Daniel M')
+  })
+
+  it('keeps an initial that already has its period', function () {
+    expect(shortPlayerNames([player(1, 'Jordan K.')]).get(1)).equals(
+      'Jordan K.'
+    )
+  })
+
+  it('takes another letter when two players would read the same', function () {
+    const names = shortPlayerNames([
+      player(1, 'Luis Garcia', { firstName: 'Luis', lastName: 'Garcia' }),
+      player(2, 'Luis Gibson', { firstName: 'Luis', lastName: 'Gibson' })
+    ])
+    expect(names.get(1)).equals('Luis Ga')
+    expect(names.get(2)).equals('Luis Gi')
   })
 })

@@ -66,6 +66,7 @@ import {
   lineupCountMessage,
   missingDefense,
   setupEditable,
+  shortPlayerNames,
   withRosterDetails
 } from './currentSetup'
 import { DefensiveRosterSheet } from './DefensiveRosterSheet'
@@ -1176,6 +1177,9 @@ function ScoringPanel(props: {
     }
   })
   const line = session.liveData.linescore
+  const shownNames = shortPlayerNames(
+    Object.values(displaySession.gameData.players)
+  )
   const scoredHere = useRef(state.past.length)
   scoredHere.current = state.past.length
   // The walk-up song stops the moment the scorer leaves, not once the save
@@ -1398,16 +1402,19 @@ function ScoringPanel(props: {
       },
       previousPlayers.current
     )
+    const labels = shortPlayerNames(
+      Object.values(displaySession.gameData.players)
+    )
     const named = next.map(player => {
       const person = displaySession.gameData.players[player.playerId ?? 0]
-      return person == null
-        ? player
-        : {
-            ...player,
-            name: person.fullName,
-            displayName: person.fullName,
-            jersey: person.jersey
-          }
+      if (person == null) return player
+      const label = labels.get(person.id) ?? ''
+      return {
+        ...player,
+        name: label,
+        displayName: label,
+        jersey: person.jersey
+      }
     })
     const complete = [...named, ...emptyDefensePlayers(session)]
     previousPlayers.current = complete
@@ -2095,7 +2102,7 @@ function ScoringPanel(props: {
       summary={summary}
       dictationControl={tiebreaker.active ? undefined : dictation.control}
       dictationLog={dictation.log}
-      accessibilitySummary={`${state.celebration == null ? '' : state.celebration.kind === 'in-park' ? 'IN THE PARK HOME RUN · ' : 'HOME RUN · '}${summary} · Batter ${line.offense.batter?.fullName ?? 'waiting'} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P?.fullName ?? 'unassigned'}`}
+      accessibilitySummary={`${state.celebration == null ? '' : state.celebration.kind === 'in-park' ? 'IN THE PARK HOME RUN · ' : 'HOME RUN · '}${summary} · Batter ${line.offense.batter == null ? 'waiting' : (shownNames.get(line.offense.batter.id) ?? 'waiting')} ${session.liveData.plays.currentPlay?.matchup.batSide.code === 'L' ? 'left handed' : 'right handed'} · Pitcher ${line.defense.P == null ? 'unassigned' : (shownNames.get(line.defense.P.id) ?? 'unassigned')}`}
     >
       {tiebreaker.mode === 'settings' && (
         <TiebreakerSetupSheet
