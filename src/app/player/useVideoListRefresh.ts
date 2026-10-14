@@ -69,19 +69,30 @@ export function openingVideo(videos: VideoSummary[]): VideoSummary | undefined {
 }
 
 /**
- * Whether two lists hold the same videos in the same states, so a refresh
- * that changed nothing leaves the page's own copy, and everything drawn from
- * it, alone.
+ * Whether two lists hold the same videos, unchanged, so a refresh that changed
+ * nothing leaves the page's own copy, and everything drawn from it, alone.
+ *
+ * Every field counts but the frame's address, which is signed afresh on each
+ * read. A live video's start in particular moves after the page first sees
+ * it: the server places it by when it heard the stream, and the phone then
+ * says when its first picture was taken. A refresh that brings that is the
+ * one the multi-camera view lines its angles up by, and a rename is a rename.
  */
 export function sameVideos(
   before: VideoSummary[],
   after: VideoSummary[]
 ): boolean {
   if (before.length !== after.length) return false
-  return before.every(
-    (video, index) =>
-      video.id === after[index]?.id && video.status === after[index]?.status
-  )
+  return before.every((video, index) => {
+    const other = after[index]
+    if (other == null) return false
+    const keys = new Set([...Object.keys(video), ...Object.keys(other)])
+    keys.delete('posterUrl')
+    return [...keys].every(
+      key =>
+        video[key as keyof VideoSummary] === other[key as keyof VideoSummary]
+    )
+  })
 }
 
 /**
