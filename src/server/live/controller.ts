@@ -679,20 +679,28 @@ export async function sync(
         )
 
   const wanted = new Set<string>()
+  // Streams being finished, side by side rather than one after another: each
+  // waits for its own writer to exit, and angles ended together should not
+  // hold up every other stream's tick for the sum of those waits.
+  const finishing: Array<Promise<void>> = []
   for (const row of rows) {
     if (row.state === 'revoked') {
-      await finishStream(
-        current,
-        row.id,
-        row.localRecording === 'uploaded'
-          ? REPLACED_BY_UPLOAD
-          : (row.lastError ?? 'streaming permission was removed')
+      finishing.push(
+        finishStream(
+          current,
+          row.id,
+          row.localRecording === 'uploaded'
+            ? REPLACED_BY_UPLOAD
+            : (row.lastError ?? 'streaming permission was removed')
+        )
       )
       continue
     }
     if (!(await mayPublish(db, row))) {
       await revokePublishing(db, row.id, now)
-      await finishStream(current, row.id, 'streaming permission was removed')
+      finishing.push(
+        finishStream(current, row.id, 'streaming permission was removed')
+      )
       continue
     }
     // `closes_at` is now the moment somebody ended it rather than a window
@@ -700,7 +708,7 @@ export async function sync(
     // removal all come through.
     const closesAt = row.closesAt == null ? null : new Date(row.closesAt)
     if (closesAt != null && now >= closesAt) {
-      await finishStream(current, row.id, 'the stream was ended')
+      finishing.push(finishStream(current, row.id, 'the stream was ended'))
       continue
     }
     // Nothing has arrived for a long time, and something did once. The game is
@@ -708,7 +716,9 @@ export async function sync(
     if (row.state === 'idle' && row.lastPublishedAt != null) {
       const silentFor = now.getTime() - new Date(row.lastPublishedAt).getTime()
       if (silentFor > SILENCE_LIMIT_MS) {
-        await finishStream(current, row.id, 'the stream stopped arriving')
+        finishing.push(
+          finishStream(current, row.id, 'the stream stopped arriving')
+        )
         continue
       }
     }
@@ -763,6 +773,13 @@ export async function sync(
     clearLive(entry.key, 'no longer open')
     tracked.delete(liveStreamId)
   }
+
+  // Every finish runs to its end before the tick does, and the first failure
+  // is the tick's, as it was when they ran in turn.
+  const failed = (await Promise.allSettled(finishing)).find(
+    (one): one is PromiseRejectedResult => one.status === 'rejected'
+  )
+  if (failed != null) throw failed.reason
 }
 
 /**
