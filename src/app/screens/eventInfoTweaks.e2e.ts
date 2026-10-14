@@ -164,6 +164,19 @@ async function main(): Promise<void> {
       return Math.abs(row.getBoundingClientRect().height-needed)<2;
     })()`)
     )
+    // A card's badge (LIVE, Canceled, a result) and its RSVP count bubbles
+    // end at the same right edge, as the camera does.
+    const edges = await evaluate<Array<{ badge: number; counts: number }>>(
+      `Array.from(document.querySelectorAll('[data-testid="schedule-row"]')).flatMap(row=>{
+        const counts=row.querySelector('[data-testid="player-rsvp-counts"]'), label=Array.from(row.querySelectorAll('div')).find(node=>node.childElementCount===0&&/^(LIVE|Canceled|Pending approval|[WLT] \\d)/.test(node.textContent));
+        return counts&&label&&counts.childElementCount>0?[{badge:label.parentElement.getBoundingClientRect().right,counts:counts.getBoundingClientRect().right}]:[];
+      })`
+    )
+    assert(edges.length > 0, 'A card has both a badge and RSVP counts')
+    assert(
+      edges.every(edge => Math.abs(edge.badge - edge.counts) < 1.5),
+      `Badges end where the RSVP counts do: ${JSON.stringify(edges)}`
+    )
     console.log(
       'All calendar columns show weekday above separator; RSVP button aligns with event details'
     )

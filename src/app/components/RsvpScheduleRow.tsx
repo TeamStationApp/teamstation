@@ -130,6 +130,9 @@ export function RsvpScheduleRow(
       </Text>
     </View>
   )
+  // The camera sits at the bottom right: only the lines that could run into
+  // it make room for it, so the first line's badge still ends at the edge.
+  const besideCamera = videoCount > 0 && styles.withCamera
   const details = (
     <View style={styles.details} testID="schedule-details">
       <View style={styles.first}>
@@ -144,19 +147,23 @@ export function RsvpScheduleRow(
         </Text>
       )}
       {dated.when !== '' && (
-        <Text style={styles.time} numberOfLines={1} testID="schedule-time">
+        <Text
+          style={[styles.time, besideCamera]}
+          numberOfLines={1}
+          testID="schedule-time"
+        >
           {compact && dated.weekday !== ''
             ? `${dated.weekday} ${dated.time}`
             : dated.time}
         </Text>
       )}
       {venue != null && venue !== '' && (
-        <Text style={styles.venue} numberOfLines={1}>
+        <Text style={[styles.venue, besideCamera]} numberOfLines={1}>
           {venue}
         </Text>
       )}
       {status === 'cancelled' && cancellationReason === 'withdrawal' && (
-        <Text style={styles.detail}>
+        <Text style={[styles.detail, besideCamera]}>
           Withdrawal — {withdrawnByTeamName ?? 'A team'} withdrew
         </Text>
       )}
@@ -182,7 +189,6 @@ export function RsvpScheduleRow(
             onPress={onPress}
             style={({ pressed }) => [
               styles.eventTarget,
-              videoCount > 0 && styles.withCamera,
               pressed && styles.pressed
             ]}
           >

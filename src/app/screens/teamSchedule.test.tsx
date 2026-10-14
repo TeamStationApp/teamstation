@@ -235,6 +235,47 @@ describe('a team’s schedule', function () {
     }
   })
 
+  it('keeps a recorded game’s result at the card’s right edge, the camera clear of its time and address', async function () {
+    await mount(
+      'normal',
+      'schedule',
+      fixtureClient('normal', games =>
+        games.map(game => ({
+          ...game,
+          playerRsvps: { yes: 1, unknown: 1, no: 0 }
+        }))
+      )
+    )
+    const recorded = rows().find(
+      row =>
+        row.querySelector('[aria-label="Video"]') != null &&
+        row.querySelector('[data-testid^="schedule-rsvps-"]') != null
+    )!
+    expect(recorded).not.equals(undefined)
+    const badge = [...recorded.querySelectorAll<HTMLElement>('div')].find(
+      node =>
+        /^[WL] \d/.test(node.textContent ?? '') && node.childElementCount === 0
+    )!
+    // Nothing between the badge's line and the card's body holds it off the
+    // edge (the badge's own padding is inside it).
+    const body = recorded.querySelector('[data-testid="schedule-body"]')!
+    let line: HTMLElement | null = badge
+    while (line != null && !/^(vs|@) /.test(line.textContent ?? ''))
+      line = line.parentElement
+    for (
+      let node: HTMLElement | null = line;
+      node != null && node !== body;
+      node = node.parentElement
+    )
+      expect(getComputedStyle(node).paddingRight, node.textContent!).oneOf([
+        '',
+        '0px'
+      ])
+    // The lines beside the camera make room for it.
+    const time = recorded.querySelector('[data-testid="schedule-time"]')!
+    expect(getComputedStyle(time).paddingRight).equals('24px')
+  })
+
   it('names events the same way on a visitor’s schedule', async function () {
     const opened = await mount(
       'normal',
