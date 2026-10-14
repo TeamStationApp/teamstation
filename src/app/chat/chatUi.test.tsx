@@ -22,7 +22,7 @@ import {
 import { ChatGate } from './ChatGate'
 import { ChatLinks } from './ChatLinks'
 import { ChatListScreen } from './ChatListScreen'
-import { ChatMembersScreen } from './ChatMembersScreen'
+import { ChatInfoScreen } from './ChatInfoScreen'
 import { chat, member, message, view } from './chatViews.test.helpers'
 import { Composer } from './Composer'
 import {
@@ -1470,7 +1470,8 @@ describe('members, approvals and safety numbers', function () {
       }
     ]
     await render(
-      <ChatMembersScreen
+      <ChatInfoScreen
+        showMembers
         engine={engine}
         client={{ leaveDm: async () => ({ closed: false }) }}
         conversationId="cnv_1"
@@ -1478,8 +1479,9 @@ describe('members, approvals and safety numbers', function () {
         onLeft={() => {}}
       />
     )
-    await until('the members', () =>
-      text().includes('Members of Hawks Members')
+    await until(
+      'the members',
+      () => document.querySelector('[data-testid="chat-info-members"]') != null
     )
     await until('the approval', () => text().includes('reset their chat keys'))
     const words = text()
@@ -1542,7 +1544,8 @@ describe('members, approvals and safety numbers', function () {
     let left = 0
     const asked: string[] = []
     await render(
-      <ChatMembersScreen
+      <ChatInfoScreen
+        showMembers
         engine={engine}
         client={{
           leaveDm: async id => {
@@ -1569,7 +1572,8 @@ describe('members, approvals and safety numbers', function () {
   it('says when the members cannot be read', async function () {
     const engine = new FakeEngine()
     await render(
-      <ChatMembersScreen
+      <ChatInfoScreen
+        showMembers
         engine={engine}
         client={{ leaveDm: async () => ({ closed: false }) }}
         conversationId="cnv_missing"
