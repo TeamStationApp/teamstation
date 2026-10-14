@@ -6071,11 +6071,13 @@ export function openApiDocument(version: string): OpenApiDocument {
             '120-second coverage rule, among streams that do not keep their ' +
             'own recording. `liveStreamId` counts only for a stream of mine ' +
             'on this game that keeps its own recording and has not been ' +
-            'replaced, ended or revoked streams included; otherwise it is ' +
-            'ignored. That stream\u2019s live copy alone is replaced when the ' +
-            'upload lands: always with `wholeStream`, else only if the upload ' +
-            'covers it, and never while it is publishing. 409 when it is ' +
-            'publishing as the upload opens.',
+            'replaced, ended or revoked streams included. That stream\u2019s ' +
+            'live copy alone is replaced when the upload lands: always with ' +
+            '`wholeStream`, else only if the upload covers it, and never ' +
+            'while it is publishing; a stream with no live copy is settled ' +
+            'by the upload all the same. Any other stream of mine makes the ' +
+            'upload replace nothing. 409 when it is publishing as the upload ' +
+            'opens.',
           security: [{ bearer: [] }],
           requestBody: {
             required: true,

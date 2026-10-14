@@ -35,6 +35,7 @@ import { directorRoutes } from './director'
 import {
   ANOTHER_ACCOUNTS_RECORDING,
   directorUploadRoutes,
+  namedBy,
   replaceLiveRecording
 } from './directorUploads'
 import { healthRoutes } from './health'
@@ -1328,11 +1329,57 @@ describe('phones and Directors asking for their streams by device', function () 
           wholeStream: true
         })
         expect(opened.status, named).equals(201)
+        // This account's own stream stays on the upload, so that the upload
+        // replaces nothing rather than going by the coverage rule.
         expect(await uploadRow(opened.body.uploadId), named).deep.equals({
-          liveStreamId: null,
+          liveStreamId: named === 'liv_nothingAtAll' ? null : named,
           wholeStream: false
         })
       }
+    })
+
+    it('replaces nothing for a recording of its own stream that it may not replace', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      // A coach's streaming software, and another account's Director.
+      const web = await ask(gameId, { label: 'Backstop' })
+      await claim(gameId, 'Center Field', OTHER)
+      const director = (
+        await db
+          .selectFrom('live_streams')
+          .select('id')
+          .where('game_id', '=', gameId)
+          .where('user_id', '=', other.userId)
+          .executeTakeFirstOrThrow()
+      ).id
+      const webVideo = await aired(web.body.id, 0, 2 * HOUR)
+      const directorVideo = await aired(director, 0, 2 * HOUR)
+      // This phone's take, uploaded once already and now sent again.
+      const home = await ask(gameId, phone('Home Plate'))
+      await aired(home.body.id, 0, 2 * HOUR)
+      await db
+        .updateTable('live_streams')
+        .set({ local_recording: 'uploaded' })
+        .where('id', '=', home.body.id)
+        .execute()
+
+      const opened = await open(gameId, {
+        liveStreamId: home.body.id,
+        wholeStream: true
+      })
+      expect(opened.status).equals(201)
+      const row = await db
+        .selectFrom('director_uploads')
+        .select(['live_stream_id', 'whole_stream'])
+        .where('id', '=', opened.body.uploadId)
+        .executeTakeFirstOrThrow()
+      const upload = await uploadVideo(gameId, -60, 2 * HOUR + 60)
+      // What the finish does with the row.
+      expect(
+        await replaceLiveRecording(db, gameId, upload, namedBy(row))
+      ).deep.equals([])
+      expect((await video(webVideo)).hidden).equals(false)
+      expect((await video(directorVideo)).hidden).equals(false)
     })
 
     it('keeps a named stream, and refuses one that is still publishing', async function () {

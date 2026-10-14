@@ -245,17 +245,26 @@ export function directorUploadRoutes(
       // Somebody else's stream is refused, not ignored. Opened unnamed, the
       // take would go down the coverage rule as this account's upload — it
       // can hide this account's own live copies — and its maker's reminder
-      // would never settle. Any other stream it may not use is ignored, as
-      // before: those are all this account's own, or none at all.
+      // would never settle.
+      //
+      // This account's own stream that it may not replace — another game's,
+      // one already replaced, one that keeps no recording — is still kept on
+      // the upload, so the upload replaces nothing: opened unnamed, a phone's
+      // take would go down the coverage rule meant for Director and the
+      // Distributor, and could hide a coach's streaming-software copy or
+      // another account's Director angle. The finish re-checks the stream and
+      // finds nothing to replace.
+      let ownStream: string | undefined
       if (named == null && body.liveStreamId != null) {
         const owner = await db
           .selectFrom('live_streams')
-          .select('user_id as userId')
+          .select(['id', 'user_id as userId'])
           .where('id', '=', body.liveStreamId)
           .executeTakeFirst()
         if (owner != null && owner.userId !== actor.userId) {
           throw forbidden(ANOTHER_ACCOUNTS_RECORDING)
         }
+        ownStream = owner?.id
       }
 
       const uploadId = makeId('directorUpload')
@@ -272,7 +281,7 @@ export function directorUploadRoutes(
           size_bytes: String(Math.round(body.sizeBytes)),
           part_size: PART_SIZE,
           started_at: recordingStart(body.startAt),
-          live_stream_id: named?.id ?? null,
+          live_stream_id: named?.id ?? ownStream ?? null,
           whole_stream: named != null && body.wholeStream === true
         })
         .execute()
@@ -487,14 +496,7 @@ export function directorUploadRoutes(
         }
       })
 
-      await replaceLiveRecording(
-        db,
-        game.id,
-        ingested.videoId,
-        row.live_stream_id == null
-          ? undefined
-          : { liveStreamId: row.live_stream_id, wholeStream: row.whole_stream }
-      )
+      await replaceLiveRecording(db, game.id, ingested.videoId, namedBy(row))
 
       await db
         .updateTable('director_uploads')
@@ -552,6 +554,19 @@ export function directorUploadRoutes(
   )
 
   return router
+}
+
+/**
+ * The stream an upload names, for `replaceLiveRecording`: none for an upload
+ * from TS Director or the Distributor, which go by the coverage rule.
+ */
+export function namedBy(row: {
+  live_stream_id: string | null
+  whole_stream: boolean
+}): { liveStreamId: string; wholeStream: boolean } | undefined {
+  return row.live_stream_id == null
+    ? undefined
+    : { liveStreamId: row.live_stream_id, wholeStream: row.whole_stream }
 }
 
 /**
