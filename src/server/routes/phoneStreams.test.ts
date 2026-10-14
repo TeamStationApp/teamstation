@@ -1540,6 +1540,66 @@ describe('phones and Directors asking for their streams by device', function () 
       ).deep.equals([homeVideo])
     })
 
+    it('settles a stream that never reached the server when its recording lands', async function () {
+      if (db == null) this.skip()
+      for (const wholeStream of [true, false]) {
+        const gameId = await newGame()
+        // Its phone recorded, but its stream never connected: the ended
+        // stream's placeholder video went, and the stream names none.
+        const home = await ask(gameId, phone('Home Plate'))
+        await recorded(gameId, home.body.id)
+        await end(gameId, home.body.id)
+        await db
+          .updateTable('live_streams')
+          .set({ video_id: null })
+          .where('id', '=', home.body.id)
+          .execute()
+        const upload = await uploadVideo(gameId, 0, 600)
+        expect(
+          await replaceLiveRecording(db, gameId, upload, {
+            liveStreamId: home.body.id,
+            wholeStream
+          })
+        ).deep.equals([])
+        const after = await stream(home.body.id)
+        expect(after.localRecording, String(wholeStream)).equals('uploaded')
+        expect(after.state).equals('revoked')
+        expect((await receipt(home.body.id))?.dismissedAt).not.equals(null)
+        expect((await video(upload)).hidden).equals(false)
+      }
+    })
+
+    it('settles nothing for a stream with no video that keeps no recording, or is on the air', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const director = await ask(gameId, {
+        label: 'Center Field',
+        deviceId: IPAD,
+        deviceModel: 'iPad Pro'
+      })
+      const home = await ask(gameId, phone('Home Plate'))
+      await db
+        .updateTable('live_streams')
+        .set({ video_id: null })
+        .where('id', 'in', [director.body.id, home.body.id])
+        .execute()
+      await db
+        .updateTable('live_streams')
+        .set({ state: 'publishing' })
+        .where('id', '=', home.body.id)
+        .execute()
+      const upload = await uploadVideo(gameId, 0, 600)
+      for (const id of [director.body.id, home.body.id]) {
+        expect(
+          await replaceLiveRecording(db, gameId, upload, {
+            liveStreamId: id,
+            wholeStream: true
+          })
+        ).deep.equals([])
+        expect((await stream(id)).localRecording).equals('none')
+      }
+    })
+
     it('replaces nothing for a named stream with no video or an unknown upload', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()

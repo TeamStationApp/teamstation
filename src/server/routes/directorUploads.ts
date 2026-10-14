@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { asBoolean, asNumber, asObject, asOptional, asString } from 'cleaners'
 import express, { Router } from 'express'
-import type { Kysely, Selectable } from 'kysely'
+import type { Kysely, Selectable, Transaction } from 'kysely'
 
 import {
   badRequest,
@@ -572,7 +572,12 @@ export function directorUploadRoutes(
  * whatever the coverage test says; without, only if the test passes. When it
  * is hidden, the upload takes its title, the stream is revoked and marked
  * `uploaded`, and its reminder is settled. When it is not, the upload stands
- * as a video of its own and the reminder stays.
+ * as a video of its own and the reminder stays. A stream with no live copy at
+ * all — its phone never reached the server, so the placeholder went when it
+ * ended — has nothing to hide: the upload is the angle's only copy, and the
+ * stream is revoked, marked `uploaded` and its reminder settled all the same.
+ * A named stream that is another game's, keeps no recording, or was replaced
+ * already replaces nothing.
  */
 export async function replaceLiveRecording(
   db: Kysely<Database>,
@@ -637,14 +642,26 @@ async function replaceNamedStream(
     .select(['id', 'state', 'video_id as videoId', 'local_recording'])
     .where('id', '=', named.liveStreamId)
     .where('game_id', '=', gameId)
+    .where('records_locally', '=', true)
     .executeTakeFirst()
   // Publishing again since the upload began, or replaced by another upload
   // already: nothing is replaced, and the upload is a video of its own.
   if (
-    stream?.videoId == null ||
+    stream == null ||
     stream.state === 'publishing' ||
     stream.local_recording === 'uploaded'
   ) {
+    return []
+  }
+  if (stream.videoId == null) {
+    // Never on the air, so nothing to hide: the upload is all there is of
+    // this angle, and it settles the angle as a replacement would.
+    const now = new Date()
+    await db.transaction().execute(async trx => {
+      if (await claimAsUploaded(trx, stream.id, now)) {
+        await settleRecordingReminder(trx, stream.id, now)
+      }
+    })
     return []
   }
   const videos = await db
@@ -672,14 +689,7 @@ async function replaceNamedStream(
     // only while it is still neither publishing nor replaced: the phone may
     // have dialled it again since it was read above, and a stream that is on
     // the air keeps its key and its video.
-    const claimed = await trx
-      .updateTable('live_streams')
-      .set({ local_recording: 'uploaded', state: 'revoked', updated_at: now })
-      .where('id', '=', stream.id)
-      .where('state', '<>', 'publishing')
-      .where('local_recording', '<>', 'uploaded')
-      .executeTakeFirst()
-    if (Number(claimed.numUpdatedRows) === 0) return false
+    if (!(await claimAsUploaded(trx, stream.id, now))) return false
     await trx
       .updateTable('videos')
       .set({
@@ -701,4 +711,25 @@ async function replaceNamedStream(
     return true
   })
   return replaced ? [live.id] : []
+}
+
+/**
+ * Marks a stream `uploaded` and revokes it, so the next take on its angle asks
+ * for a fresh stream and video, and says whether it did: only while it is
+ * neither publishing nor replaced already, since the phone may have dialled it
+ * again since it was read.
+ */
+async function claimAsUploaded(
+  trx: Transaction<Database>,
+  streamId: string,
+  now: Date
+): Promise<boolean> {
+  const claimed = await trx
+    .updateTable('live_streams')
+    .set({ local_recording: 'uploaded', state: 'revoked', updated_at: now })
+    .where('id', '=', streamId)
+    .where('state', '<>', 'publishing')
+    .where('local_recording', '<>', 'uploaded')
+    .executeTakeFirst()
+  return Number(claimed.numUpdatedRows) > 0
 }
