@@ -51,7 +51,8 @@ export function EventRsvpPill({
   widthRem = 14.25,
   disabledChoices = [],
   labelSizeRem,
-  oneLineLabels = false
+  oneLineLabels = false,
+  boldLabels = false
 }: {
   value: RsvpChoice
   onChange: (response: Rsvp) => void
@@ -71,6 +72,8 @@ export function EventRsvpPill({
    * Its padding stays the fill's radius, so no glyph reaches the rounded ends.
    */
   oneLineLabels?: boolean
+  /** Labels in the bold face, for a capsule that must read at a glance. */
+  boldLabels?: boolean
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -282,6 +285,7 @@ export function EventRsvpPill({
             {...oneLineLabelProps(oneLineLabels)}
             style={[
               styles.label,
+              boldLabels && styles.boldLabel,
               labelSizeRem == null
                 ? undefined
                 : { fontSize: theme.rem(labelSizeRem) },
@@ -341,6 +345,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor,
     textAlign: 'center'
   },
+  boldLabel: { fontFamily: theme.boldTextFont, fontWeight: '700' },
   selected: { color: '#ffffff' },
   disabled: { opacity: 0.65 }
 }))

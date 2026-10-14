@@ -226,6 +226,7 @@ export function EventRsvpModal({
                           value={row.response}
                           widthRem={16.5}
                           oneLineLabels
+                          boldLabels
                           disabled={busy[row.userId]}
                           onChange={response => {
                             change(row.userId, response).catch(() => undefined)
@@ -268,15 +269,18 @@ const getStyles = cacheStyles((theme: Theme) => ({
     padding: theme.rem(1),
     gap: theme.rem(0.75)
   },
+  // Every line here is bold, so the sheet reads at a glance.
   title: {
     color: theme.primaryTextColor,
-    fontFamily: theme.semiBoldTextFont,
+    fontFamily: theme.boldTextFont,
+    fontWeight: '700',
     fontSize: theme.rem(1.25),
     marginBottom: theme.rem(0.5)
   },
   detail: {
     color: theme.secondaryTextColor,
-    fontFamily: theme.regularTextFont,
+    fontFamily: theme.boldTextFont,
+    fontWeight: '700',
     fontSize: theme.rem(0.875),
     marginBottom: theme.rem(0.5)
   },
@@ -293,13 +297,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flex: 1,
     minWidth: theme.rem(3),
     color: theme.primaryTextColor,
-    fontFamily: theme.regularTextFont,
+    fontFamily: theme.boldTextFont,
+    fontWeight: '700',
     fontSize: theme.rem(1)
   },
   control: { marginLeft: 'auto', maxWidth: '100%' as const },
   error: {
     color: theme.dangerColor,
-    fontFamily: theme.regularTextFont,
+    fontFamily: theme.boldTextFont,
+    fontWeight: '700',
     fontSize: theme.rem(0.875)
   }
 }))
