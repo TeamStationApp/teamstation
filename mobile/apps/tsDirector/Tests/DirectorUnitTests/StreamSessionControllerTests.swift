@@ -14,6 +14,32 @@ final class FakePublisher: StreamPublishing, @unchecked Sendable {
   private(set) var stops = 0
   /// The next `start` throws this, once.
   var refuseNext: Error?
+  /// The next `start` waits, before its session comes up, until `releaseStart`: a publish that is
+  /// still opening.
+  var holdNextStart = false
+  private var heldStart: CheckedContinuation<Void, Never>?
+
+  /// Whether a `start` is waiting for `releaseStart`.
+  var isHoldingStart: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return heldStart != nil
+  }
+
+  /// Lets the held `start` come up.
+  func releaseStart() {
+    lock.lock()
+    let held = heldStart
+    heldStart = nil
+    lock.unlock()
+    held?.resume()
+  }
+
+  private func hold(_ continuation: CheckedContinuation<Void, Never>) {
+    lock.lock()
+    heldStart = continuation
+    lock.unlock()
+  }
   /// What the socket has taken, and what waits for it.
   var bytesSent: UInt64 = 0
   var queuedBytes = 1_000
@@ -34,6 +60,10 @@ final class FakePublisher: StreamPublishing, @unchecked Sendable {
   }
 
   func start(urlString: String, settings: StreamSettings, onFailure: ProgramStreamer.FailureHandler?) async throws {
+    if holdNextStart {
+      holdNextStart = false
+      await withCheckedContinuation { hold($0) }
+    }
     if let refused = open(urlString, onFailure) { throw refused }
   }
 
@@ -331,6 +361,26 @@ struct StreamSessionControllerTests {
     await rig.settle()
     #expect(rig.reasons == [ .start ])
     #expect(rig.controller.congestion == ProgramStreamer.Metrics())
+  }
+
+  @Test("A stop while the publish is still opening takes the session down once it comes up")
+  func stopWhileOpening() async {
+    let rig = StreamRig()
+    rig.publisher.holdNextStart = true
+    rig.controller.start()
+    await rig.settle()
+    #expect(rig.publisher.isHoldingStart)
+    // Stop or the background lands before the session is up: there is nothing running to stop.
+    rig.controller.stop()
+    #expect(rig.controller.phase == .idle)
+    let stops = rig.publisher.stops
+    rig.publisher.releaseStart()
+    await rig.settle()
+    // The session that came up after the stop is taken down, and nothing redials.
+    #expect(!rig.publisher.running)
+    #expect(rig.publisher.stops == stops + 1)
+    #expect(rig.controller.phase == .idle)
+    #expect(rig.scheduler.waiting.isEmpty)
   }
 
   @Test("Without a stall setting nothing watches the session, as Director has it")
