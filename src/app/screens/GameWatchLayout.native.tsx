@@ -1,7 +1,6 @@
 import React, { useState } from 'react'
 import { type LayoutChangeEvent, View } from 'react-native'
 import Animated, {
-  runOnJS,
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useComposedEventHandler,
@@ -34,7 +33,6 @@ export function GameWatchLayout(
     headerHeight,
     tabsHeight,
     height,
-    onScroll,
     style,
     contentStyle,
     headStyle
@@ -51,8 +49,6 @@ export function GameWatchLayout(
   const [columnWidth, setColumnWidth] = useState<number | undefined>(undefined)
   const handleScroll = useAnimatedScrollHandler(event => {
     scrollY.value = event.contentOffset.y
-    // eslint-disable-next-line @typescript-eslint/no-deprecated -- same bridge as the shared pinned head
-    runOnJS(onScroll)()
   })
   // The native pinned-head implementation always supplies a Reanimated handler.
   const onPageScroll = useComposedEventHandler([

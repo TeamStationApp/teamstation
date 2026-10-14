@@ -77,6 +77,7 @@ import { defaultEventTab, eventEndTime } from './eventTabPolicy'
 import { gameStatusLine, winnerOf } from './format'
 import { gameTabs } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
+import { watchHandoff } from './gameWatchLayoutProps'
 import { openableTeams as teamsWithAPage } from './openableTeams'
 import {
   STAT_COLUMN_GAP_REM,
@@ -533,13 +534,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // words it copies had gone under it.
   const handoff = useHandoff(headerHeight, 0.5)
   /**
-   * How far the section pills push the highlights down.
-   *
-   * Beside the video the list should be clipped by the bottom of the card, not
-   * by the top of the picture: rows that vanish at the picture's top edge look
-   * cut off, because there is nothing there to be cut off *by*. The pills sit
-   * between the two and are only as wide as the left column, so the list is
-   * pulled up past them into the empty space beside them.
+   * The full-width section band's height: the picture pegs below it and the
+   * highlight column leaves the same room in portrait and landscape.
    */
   const [tabsHeight, setTabsHeight] = useState(0)
   /**
@@ -559,14 +555,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const shortWindow = useRef(false)
   const progress = handoff.progress
-  const handleWatchScroll = useCallback(() => {
-    // Short, the card is never drawn, so there is nothing to hand over and
-    // nothing to measure: the header simply holds the score.
-    if (shortWindow.current) progress.value = 1
-    else handoff.handleScroll()
-  }, [handoff, progress])
+  const pinnedHandoff = watchHandoff(handoff, shortWindow)
   const { pinned, selectTab } = usePinnedTabs({
-    head: { headerHeight, handoff },
+    head: { headerHeight, handoff: pinnedHandoff },
     ready: game != null,
     tab,
     anchorOnRow: false
@@ -1349,9 +1340,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     </View>
   )
 
-  // Stacked, the pills sit in the head's padding and run back out through
-  // it to the screen's edges. In the short layout they share a column with
-  // the picture beside them, so they stay inside it.
+  // The full-width section band keeps the same horizontal inset in every
+  // layout, above both the picture and the highlight column.
   const headInset = theme.rem(theme.spaceMdRem)
   const sections = (
     <View
@@ -1502,7 +1492,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               headerHeight={headerHeight}
               tabsHeight={tabsHeight}
               height={height}
-              onScroll={handleWatchScroll}
               style={styles.tabPane}
               contentStyle={[
                 styles.watchContent,

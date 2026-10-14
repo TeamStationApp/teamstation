@@ -27,7 +27,6 @@ export function GameWatchLayout(
     headerHeight,
     tabsHeight,
     height,
-    onScroll,
     style,
     contentStyle,
     headStyle
@@ -49,7 +48,6 @@ export function GameWatchLayout(
       onScroll={event => {
         if (typeof pinned.screen.onScroll === 'function')
           pinned.screen.onScroll(event)
-        onScroll()
         fitList()
       }}
       scrollEventThrottle={16}
