@@ -3,7 +3,11 @@ import { describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import { asSessionUser, TeamStationClient } from '../common/api'
+import {
+  asGameLiveStreams,
+  asSessionUser,
+  TeamStationClient
+} from '../common/api'
 import { App } from './App'
 import { phoneStream } from './stream/phoneStream'
 
@@ -18,18 +22,63 @@ describe('the app at launch', () => {
     const originals = Object.getOwnPropertyDescriptors(proto)
     const engine = {
       capabilities: phoneStream.capabilities,
-      resumePendingUploads: phoneStream.resumePendingUploads
+      recordings: phoneStream.recordings,
+      resumeUpload: phoneStream.resumeUpload
     }
-    const resumed: Array<[string, string]> = []
-    // A phone that can record, in place of the browser's engine.
+    const resumed: Array<[string, string, string]> = []
+    // A phone that can record, with a take whose upload a kill cut off, in
+    // place of the browser's engine.
     phoneStream.capabilities = async () => ({
       supported: true,
       deviceModel: 'iPhone 13 Pro'
     })
-    phoneStream.resumePendingUploads = async (apiBase, token) => {
-      resumed.push([apiBase, token])
-      return 0
+    phoneStream.recordings = async () => [
+      {
+        liveStreamId: 'liv_00000000000000000001',
+        gameId: 'gam_00000000000000000001',
+        angleName: 'Home Plate',
+        startedAt: 1_790_000_000_000,
+        endedAt: 1_790_000_600_000,
+        parts: 1,
+        uploadId: 'dup_00000000000000000001',
+        uploadTitle: 'Home Plate',
+        uploadedAt: null,
+        videoId: null,
+        stoppedForLowStorage: false,
+        publishedOutsideParts: false,
+        hasPendingUpload: true,
+        uploadRunning: false,
+        uploadProgress: null
+      }
+    ]
+    phoneStream.resumeUpload = async ({ liveStreamId, apiBase, token }) => {
+      resumed.push([liveStreamId, apiBase, token])
+      return 'vid_00000000000000000001'
     }
+    proto.liveStreams = async gameId =>
+      asGameLiveStreams({
+        gameId,
+        mine: [
+          {
+            id: 'liv_00000000000000000001',
+            gameId,
+            userId: 1,
+            ownerName: 'Demo Fan',
+            slot: 1,
+            label: 'Home Plate',
+            keyPrefix: 'ts_0000',
+            state: 'ended',
+            opensAt: '2026-05-20T16:00:00.000Z',
+            closesAt: null,
+            videoId: null,
+            lastError: null,
+            status: null
+          }
+        ],
+        others: [],
+        canAdd: 3,
+        maxCameras: 4
+      })
     proto.whoAmI = async () =>
       asSessionUser({ id: 1, displayName: 'Demo Fan', isAdmin: false })
     proto.myRoles = async () => {
@@ -53,7 +102,9 @@ describe('the app at launch', () => {
       await act(async () => {
         await new Promise(resolve => setTimeout(resolve, 100))
       })
-      expect(resumed).deep.equals([['/api/v1', 'token-0000']])
+      expect(resumed).deep.equals([
+        ['liv_00000000000000000001', '/api/v1', 'token-0000']
+      ])
     } finally {
       await act(async () => {
         root.unmount()
