@@ -16,14 +16,20 @@ export interface ManageGearProps {
 /** Settings access is decided by the server's scope invitation permission. */
 export function ManageGear(props: ManageGearProps): React.ReactElement {
   const { client, scopeType, scopeId, onPress } = props
-  const [may, setMay] = useState(false)
+  const [permission, setPermission] = useState<{
+    client: TeamStationClient
+    scopeType: ManageGearProps['scopeType']
+    scopeId: string
+    may: boolean
+  }>()
 
   useEffect(() => {
     let live = true
     client
       .invites(scopeType, scopeId)
       .then(answer => {
-        if (live) setMay(answer.canInvite)
+        if (live)
+          setPermission({ client, scopeType, scopeId, may: answer.canInvite })
       })
       .catch(() => undefined)
     return () => {
@@ -31,7 +37,13 @@ export function ManageGear(props: ManageGearProps): React.ReactElement {
     }
   }, [client, scopeId, scopeType])
 
-  if (!may) return <View />
+  if (
+    permission?.client !== client ||
+    permission.scopeId !== scopeId ||
+    permission.scopeType !== scopeType ||
+    !permission.may
+  )
+    return <View />
 
   return (
     <SettingsGear
