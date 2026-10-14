@@ -675,6 +675,43 @@ class PhoneStreamEngineTest {
     }
 
     @Test
+    fun aRenameOnTheAirKeepsTheStreamAndEveryRedialAndResumeSendsTheNewLabel() {
+        val first = opened()
+        start(first)
+        capture(1.0)
+        runBlocking { first.setAngleName("First Base") }
+        assertEquals("First Base", first.angleName)
+        // The take and the live row carry the new name.
+        assertEquals("First Base", runBlocking { first.recordings() }.single().angleName)
+        assertEquals("First Base", on { first.catalog.live() }!!.angleName)
+        // The stream drops: the redial asks for the same stream under the new label.
+        on { streamOutput.drop!!("peer went away") }
+        on { scheduler.pending!!() }
+        waitFor { streamOutput.starts.size == 2 }
+        val redial = JSONObject(requests.first { it.path!!.contains("/live-streams") }.body.readUtf8())
+        assertEquals("s1", redial.getString("heldStreamId"))
+        assertEquals("First Base", redial.getString("label"))
+        // A rename to the same name changes nothing; one off the air renames only the screen's angle.
+        runBlocking { first.setAngleName("First Base") }
+        capture(1.0)
+        runBlocking { first.abandonForTesting() }
+
+        // Killed and resumed: the resume sends the new label with the stream held.
+        requests.clear()
+        val second = opened()
+        assertEquals("First Base", runBlocking { second.interruptedSession() }!!.angleName)
+        assertTrue(runBlocking { second.resumeInterrupted(request) })
+        waitFor { streamOutput.starts.size == 1 }
+        val resumed = JSONObject(requests.first { it.method == "POST" && it.path!!.contains("/live-streams") }.body.readUtf8())
+        assertEquals("s1", resumed.getString("heldStreamId"))
+        assertEquals("First Base", resumed.getString("label"))
+        runBlocking { second.stopRecording() }
+        runBlocking { second.setAngleName("Third Base") }
+        assertEquals("Third Base", second.angleName)
+        assertEquals("First Base", runBlocking { second.recordings() }.single().angleName)
+    }
+
+    @Test
     fun anOrdinaryTakeIsCopiedNotRebuilt() {
         // One part, never resumed, its first picture captured a picture delay before Record: the hold
         // at Stop reaches the take's end on the wall clock, so the export copies the part as it is.
