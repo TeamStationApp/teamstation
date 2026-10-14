@@ -102,11 +102,20 @@ async function clickRole(
   role: string,
   text: string
 ): Promise<void> {
+  // Functions run in the page are sent as source text: sucrase turns `?.`
+  // and `??` into helpers the page does not have, so they use plain JS.
   const handle = await page.waitForFunction(
-    (wantRole: string, wantText: string) =>
-      [...document.querySelectorAll(`[role="${wantRole}"], button`)].find(
-        element => element.textContent?.trim() === wantText
-      ) ?? false,
+    (wantRole: string, wantText: string) => {
+      const found = [
+        ...document.querySelectorAll(`[role="${wantRole}"], button`)
+      ].find(
+        element =>
+          (element.textContent == null ? '' : element.textContent.trim()) ===
+          wantText
+      )
+      if (found === undefined) return false
+      return found
+    },
     { timeout: 20000 },
     role,
     text
@@ -142,7 +151,7 @@ async function webMultiCam(token: string, angles: string[]): Promise<string> {
     })
     const pills = async (): Promise<string[]> =>
       await page.$$eval('[role="tab"]', tabs =>
-        tabs.map(tab => tab.textContent?.trim() ?? '')
+        tabs.map(tab => (tab.textContent == null ? '' : tab.textContent.trim()))
       )
     let shown: string[] = []
     for (const until = Date.now() + 30000; Date.now() < until;) {
