@@ -318,6 +318,14 @@ struct UploadServiceTests {
     }
   }
 
+  /// Set once, from another task.
+  private final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isSet = false
+    var value: Bool { lock.withLock { isSet } }
+    func set() { lock.withLock { isSet = true } }
+  }
+
   /// A clock the test moves, and what the upload reported, both told from other threads.
   private final class Recorder: @unchecked Sendable {
     private let lock = NSLock()
@@ -430,6 +438,49 @@ struct UploadServiceTests {
     let result = await upload.result
     #expect(throws: CancellationError.self) { try result.get() }
     #expect(recorder.progress.count == 1)
+  }
+
+  @Test func aCancelledUploadStopsWatchingTheServerAtOnce() async throws {
+    // Cancelled while the server works the parts into a video: the watch swallowed the cancellation,
+    // so its sleeps and asks returned at once and it spun for a quarter hour, holding its caller.
+    FlakyServer.failuresLeft = [:]
+    FlakyServer.seen = []
+    FlakyServer.finishReply =
+      #"{"videoId":null,"state":"assembling","step":"assembling"}"#
+    FlakyServer.stateReply =
+      #"{"uploadId":"dup_1","state":"processing","partSize":8,"parts":2,"received":[0,1],"missing":[],"receivedBytes":12,"step":"remuxing","videoId":null}"#
+    defer {
+      FlakyServer.stateReply =
+        #"{"uploadId":"dup_1","state":"ready","partSize":8,"parts":2,"received":[0,1],"missing":[],"receivedBytes":12,"videoId":"vid_1"}"#
+    }
+    let file = try aFile()
+    defer { try? FileManager.default.removeItem(at: file) }
+    let service = service()
+    let upload = Task {
+      try await service.send(file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began)
+    }
+    let finished = Date().addingTimeInterval(10)
+    while !FlakyServer.seen.contains("finish"), Date() < finished {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(FlakyServer.seen.contains("finish"))
+    upload.cancel()
+    // The answer within a second, standing in for the quarter hour it took.
+    let ended = Flag()
+    Task {
+      _ = await upload.result
+      ended.set()
+    }
+    let deadline = Date().addingTimeInterval(1)
+    while !ended.value, Date() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(ended.value)
+    if ended.value {
+      let result = await upload.result
+      #expect(throws: CancellationError.self) { try result.get() }
+    }
+    #expect(!FlakyServer.seen.contains("state"))
   }
 
   @Test func aPartsTaskDelegateHandsOnTheBytesSent() {
