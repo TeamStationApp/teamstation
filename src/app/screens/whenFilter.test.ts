@@ -125,8 +125,47 @@ describe('the game a team schedule opens on', function () {
   })
 
   it('takes the later of two games still marked live', function () {
-    const abandoned = at('2026-08-20T16:00:00Z', null, 'inProgress')
-    expect(nextGameIndex([abandoned, played, today, soon], NOW)).equals(2)
+    const earlier = at('2026-09-17T06:00:00Z', null, 'inProgress')
+    expect(nextGameIndex([earlier, played, today, soon], NOW)).equals(2)
+  })
+
+  it('stays on something that has started and not yet ended, a practice as much as a game', function () {
+    // Began half an hour ago; with no end time it runs the usual three hours.
+    const practice = at('2026-09-17T11:30:00Z', null)
+    expect(nextGameIndex([played, practice, soon], NOW)).equals(1)
+    // One that ended an hour ago is behind.
+    const over = {
+      ...at('2026-09-17T08:00:00Z', null),
+      endAt: '2026-09-17T11:00:00Z'
+    }
+    expect(nextGameIndex([played, over, soon], NOW)).equals(2)
+  })
+
+  it('keeps a game marked live first until two hours past its end', function () {
+    // Ended two hours ago and still marked live: still the one shown first.
+    const running = {
+      ...at('2026-09-17T07:00:00Z', null, 'inProgress'),
+      endAt: '2026-09-17T10:00:00Z'
+    }
+    expect(nextGameIndex([played, running, soon], NOW)).equals(1)
+    // Three hours past its end, it is scrolled past like anything over.
+    const stale = {
+      ...at('2026-09-17T06:00:00Z', null, 'inProgress'),
+      endAt: '2026-09-17T09:00:00Z'
+    }
+    expect(nextGameIndex([played, stale, soon], NOW)).equals(2)
+  })
+
+  it('never lets a game marked live take the schedule past something still to come', function () {
+    // Scored five days early, and a session two days old nobody finished:
+    // neither is being played, so the next thing to come is where it opens.
+    const early = at('2026-09-22T19:30:00Z', null, 'inProgress')
+    const abandoned = at('2026-09-15T22:30:00Z', null, 'inProgress')
+    expect(nextGameIndex([abandoned, soon, early, later], NOW)).equals(1)
+    // A practice still on comes before a later game being played.
+    const practice = at('2026-09-17T10:30:00Z', null)
+    const running = at('2026-09-17T11:00:00Z', null, 'inProgress')
+    expect(nextGameIndex([played, practice, running, soon], NOW)).equals(1)
   })
 
   it('is -1 for no games', function () {

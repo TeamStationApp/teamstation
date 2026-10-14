@@ -412,6 +412,47 @@ describe('a team’s tabs, each started under the pills', function () {
     expect(scrollTop).equals(0)
   })
 
+  it('opens the schedule at a practice or other event when it is the next thing on it', async function () {
+    for (const [eventType, title] of [
+      ['practice', 'Morning drills'],
+      ['other', 'Team dinner']
+    ] as const) {
+      await mount(
+        'normal',
+        'schedule',
+        fixtureClient('normal', games => [
+          ...games,
+          {
+            ...games[0],
+            id: `tev_next_${eventType}`,
+            eventKind: 'event',
+            eventType,
+            title,
+            awayTeamId: '',
+            awayTeamName: '',
+            status: 'scheduled',
+            homeScore: null,
+            awayScore: null,
+            videoCount: 0,
+            // Two days out: before vs Falcons, a week out.
+            startAt: new Date(NOW + 2 * 86_400_000).toISOString()
+          }
+        ])
+      )
+      expect(linesOf(rows()[8]).join(' ')).includes(
+        eventType === 'practice' ? 'Practice' : title
+      )
+      expect(scrollTop, eventType).equals(8 * ROW)
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+      host?.remove()
+      host = undefined
+      scrollTop = 0
+    }
+  })
+
   it('opens at the next game on first load when the address says schedule', async function () {
     await mount('normal', 'schedule')
     expect(scrollTop).equals(8 * ROW)
