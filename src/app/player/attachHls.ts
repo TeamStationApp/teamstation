@@ -329,9 +329,23 @@ function attachHlsJs(
    * playing when it ran out, which is a pause of its own, not the viewer's.
    */
   let playAfterRejoin = !handle.paused
+  /**
+   * What the caller wanted the moment it ran out, read once the end's own
+   * pause has been heard by everybody. A caller whose intent follows the
+   * element's pauses — the single player's does — reads the end as a pause,
+   * and that is not the viewer stopping it. One whose intent goes from
+   * wanting to not wanting after the end — a grid the viewer paused, which
+   * leaves an already paused tile without a pause event — has been stopped,
+   * and the rejoin leaves it stopped.
+   */
+  let wantedAtEnd: boolean | undefined
   const onPlay = (): void => {
     ownWantsToPlay = true
     playAfterRejoin = true
+    wantedAtEnd = undefined
+  }
+  const onEnded = (): void => {
+    wantedAtEnd = wantsToPlay()
   }
   const onPause = (): void => {
     if (recovering) return
@@ -340,6 +354,8 @@ function attachHlsJs(
   }
   handle.addEventListener('play', onPlay)
   handle.addEventListener('pause', onPause)
+  // The web element's own event: no native player is handed this path.
+  video.addEventListener('ended', onEnded)
 
   /** Puts it back to playing, if that is what it was doing. */
   const resume = (): void => {
@@ -445,7 +461,8 @@ function attachHlsJs(
     if (!rejoining) return
     rejoining = false
     recovering = false
-    if (playAfterRejoin) handle.play().catch(() => undefined)
+    const stillWanted = wantsToPlay() || wantedAtEnd === false
+    if (playAfterRejoin && stillWanted) handle.play().catch(() => undefined)
   })
 
   hls.loadSource(url)
@@ -455,6 +472,7 @@ function attachHlsJs(
     rejoiner?.stop()
     handle.removeEventListener('play', onPlay)
     handle.removeEventListener('pause', onPause)
+    video.removeEventListener('ended', onEnded)
     limit?.onControl?.(null)
     hls.destroy()
   }

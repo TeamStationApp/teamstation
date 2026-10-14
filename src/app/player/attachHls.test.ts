@@ -572,12 +572,13 @@ describe('a live game whose playlist was closed under the player', function () {
 
   function attach(
     video: FakeVideo,
-    isLive?: () => boolean
+    isLive?: () => boolean,
+    wantsToPlay: () => boolean = () => true
   ): { detach: () => void; hls: Running } {
     let detach: () => void = () => undefined
     asBrowser('Google Inc.', () => {
       detach = attachHls(video as unknown as VideoHandle, url, undefined, {
-        wantsToPlay: () => true,
+        wantsToPlay,
         isLive
       })
     })
@@ -608,6 +609,62 @@ describe('a live game whose playlist was closed under the player', function () {
     emit(hls, Hls.Events.FRAG_BUFFERED)
     expect(video.plays).equals(plays + 1)
     // Only the rejoin's first pictures play it; later ones are left alone.
+    emit(hls, Hls.Events.FRAG_BUFFERED)
+    expect(video.plays).equals(plays + 1)
+    detach()
+  })
+
+  it('stays paused when the viewer paused the grid while the playlist was closed', async function () {
+    stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')
+    const video = new FakeVideo()
+    // The grid's intent for this tile: the viewer's play and pause buttons.
+    let gridPlays = true
+    const { detach, hls } = attach(
+      video,
+      () => true,
+      () => gridPlays
+    )
+    video.emit('play')
+    emit(hls, Hls.Events.LEVEL_LOADED, { details: { live: true } })
+    emit(hls, Hls.Events.LEVEL_LOADED, { details: { live: false } })
+    // Played to the closed edge: the end's pause, then `ended`.
+    video.ended = true
+    video.paused = true
+    video.emit('pause')
+    video.emit('ended')
+    // The viewer pauses the grid. The tile is paused already, so it hears no
+    // pause of its own.
+    gridPlays = false
+    await settle()
+    expect(loads).has.length(2)
+    const plays = video.plays
+    emit(hls, Hls.Events.FRAG_BUFFERED)
+    expect(video.plays).equals(plays)
+    detach()
+  })
+
+  it('plays again after a rejoin when the end’s pause is all that stopped the intent', async function () {
+    stubbed('#EXTM3U\n#EXTINF:4.000000,\nseg000000.m4s\n')
+    const video = new FakeVideo()
+    // The single player's intent: false on any pause it did not cause.
+    let viewerWants = true
+    video.addEventListener('pause', () => {
+      viewerWants = false
+    })
+    const { detach, hls } = attach(
+      video,
+      () => true,
+      () => viewerWants
+    )
+    video.emit('play')
+    emit(hls, Hls.Events.LEVEL_LOADED, { details: { live: true } })
+    emit(hls, Hls.Events.LEVEL_LOADED, { details: { live: false } })
+    video.ended = true
+    video.paused = true
+    video.emit('pause')
+    video.emit('ended')
+    await settle()
+    const plays = video.plays
     emit(hls, Hls.Events.FRAG_BUFFERED)
     expect(video.plays).equals(plays + 1)
     detach()
