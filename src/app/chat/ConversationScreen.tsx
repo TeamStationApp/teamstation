@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Keyboard,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
@@ -12,32 +11,30 @@ import {
 } from 'react-native'
 
 import { MAX_ATTACHMENTS } from '../../common/chatContent'
-import {
-  Button,
-  FLOATING_BOTTOM_REM,
-  Icon,
-  NAV_CLEARANCE_REM,
-  Screen
-} from '../components'
-import { navClearanceAboveInset } from '../components/navClearance'
-import { lstrings, plural, sprintf } from '../locales/strings'
+import { Button, Icon, Screen } from '../components'
+import { GlassView } from '../components/GlassView'
+import { useHeaderHandoff } from '../components/headerSlot'
+import { useBreakpoint } from '../components/useBreakpoint'
+import { edgeMarginRem } from '../layout/margins'
+import { lstrings, sprintf } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { ChatFileOps } from './AttachmentView'
 import { copyChatText } from './chatClipboard'
 import { attachmentProblem, sendAllowed } from './chatComposeModel'
+import { ChatConversationIdentity } from './ChatConversationIdentity'
 import { ChatDropTarget } from './ChatDropTarget'
 import * as platformFiles from './chatFiles'
 import type { PickedFile, PickSource } from './chatFileTypes'
+import { anchorAfterChromeChange } from './chatLayoutModel'
 import {
   actionsFor,
   approvalsIn,
-  conversationPill,
-  conversationTitle,
   type MessageAction,
   typingNames
 } from './chatModel'
 import { getChatStyles } from './chatStyles'
+import { ChatViewport, useChatViewport } from './ChatViewport'
 import {
   bindUserScroll,
   isFinePointer,
@@ -53,7 +50,6 @@ import {
   newChatWorkspaceState
 } from './chatWorkspaceModel'
 import { Composer } from './Composer'
-import { ConversationMenu } from './ConversationMenu'
 import { EmojiPicker } from './EmojiPicker'
 import type { MessageView } from './engine/apply'
 import type { ConversationView, GrantApproval } from './engine/engine'
@@ -74,7 +70,7 @@ export interface ConversationScreenProps {
   conversationId: string
   /** The signed-in person, who is never asked to approve their own reset. */
   userId: number
-  /** The members and safety numbers, from the header's Members button. */
+  /** Conversation information and member security, from the identity. */
   onMembers: () => void
   /** The chat's title once it is known, for the header. */
   onTitle?: (title: string) => void
@@ -83,38 +79,13 @@ export interface ConversationScreenProps {
   /** Swipe a message right to reply; on phones by default. */
   swipe?: boolean
   embedded?: boolean
+  /** Wide workspaces keep their identity inside the conversation pane. */
+  paneHeader?: boolean
   active?: boolean
   readingSession?: number
   draft?: ChatDraft
   draftOwner?: ChatDraftOwner
   onDraftChange?: (draft: ChatDraft) => void
-}
-
-/**
- * How tall the phone's keyboard stands, 0 when it is down (and always in a
- * browser, which has none of its own).
- */
-export function useKeyboardHeight(): number {
-  const [height, setHeight] = useState(0)
-  useEffect(() => {
-    const shown = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      event => {
-        setHeight(event.endCoordinates.height)
-      }
-    )
-    const hidden = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => {
-        setHeight(0)
-      }
-    )
-    return () => {
-      shown.remove()
-      hidden.remove()
-    }
-  }, [])
-  return height
 }
 
 /** How often a chat not open yet is tried again, and how many times. */
@@ -146,16 +117,28 @@ export function ConversationScreen(
   const window = useWindowDimensions()
   const bubbleWidth = Math.min(window.width * 0.7, theme.rem(22))
   const insets = useInsets()
-  const keyboard = useKeyboardHeight()
-  // The keyboard rises over the capsule's clearance under the column; the
-  // composer is lifted by what is left of it, so it stays above the keys.
-  const clearance =
-    navClearanceAboveInset(
-      Platform.OS,
-      theme.rem(NAV_CLEARANCE_REM),
-      theme.rem(FLOATING_BOTTOM_REM)
-    ) + insets.bottom
-  const lift = Math.max(0, keyboard - clearance)
+  const breakpoint = useBreakpoint()
+  const margin = theme.rem(edgeMarginRem(theme, breakpoint))
+  const [paneHeaderHeight, setPaneHeaderHeight] = useState(theme.rem(3.5))
+  const [composerHeight, setComposerHeight] = useState(theme.rem(3.25))
+  const viewport = useChatViewport({
+    paneHeader: props.paneHeader === true ? paneHeaderHeight : 0,
+    composer: composerHeight
+  })
+  const readableTop = useRef(viewport.readableTop)
+  readableTop.current = viewport.readableTop
+  const focusComposer = useRef<() => void>(() => {})
+  const registerComposerFocus = useCallback(
+    (focus: () => void): (() => void) => {
+      focusComposer.current = focus
+      return () => {
+        if (focusComposer.current === focus) focusComposer.current = () => {}
+      }
+    },
+    []
+  )
+  const identityPress = useRef(onMembers)
+  identityPress.current = onMembers
 
   const { onDraftChange } = props
   const [localDraftOwner] = useState(() => {
@@ -239,7 +222,6 @@ export function ConversationScreen(
     | undefined
   >(undefined)
   const [reacting, setReacting] = useState<MessageView | undefined>(undefined)
-  const [conversationMenu, setConversationMenu] = useState(false)
   const readRevision = useRef<number | undefined>(undefined)
   const paneActive = useRef(props.active !== false)
   paneActive.current = props.active !== false
@@ -416,7 +398,6 @@ export function ConversationScreen(
       props.active === false ||
       !readDocumentActive() ||
       menu != null ||
-      conversationMenu ||
       reacting != null ||
       pinsOpen ||
       isRestoringPopupFocus()
@@ -425,15 +406,7 @@ export function ConversationScreen(
     readRevision.current =
       current.conversation.preferences?.manualUnreadRevision ?? 0
     engine.markRead(conversationId, readRevision.current).catch(() => undefined)
-  }, [
-    engine,
-    conversationId,
-    props.active,
-    menu,
-    conversationMenu,
-    reacting,
-    pinsOpen
-  ])
+  }, [engine, conversationId, props.active, menu, reacting, pinsOpen])
   const hasView = view != null
   const userScrolled = useCallback(() => {
     if (!mounted.current || !paneActive.current) return
@@ -527,8 +500,12 @@ export function ConversationScreen(
     [conversationId, props.active]
   )
 
-  const loadOlder = async (): Promise<ConversationView> => {
+  const loadOlder = async (
+    cancelled: () => boolean = () => false
+  ): Promise<ConversationView> => {
     const before = engine.view(conversationId)
+    if (before == null) throw new Error('Conversation unavailable')
+    if (cancelled()) return before
     const pending = {
       offset: scrolled.current.offset,
       content: scrolled.current.content,
@@ -564,7 +541,13 @@ export function ConversationScreen(
             !mounted.current ||
             !paneActive.current
         )
+      if (cancelled()) {
+        if (prepend.current === pending) prepend.current = undefined
+        return before
+      }
       const next = await engine.loadEarlier(conversationId)
+      // A cancelled jump must still preserve the reader when this response
+      // removes the paging header or changes existing row geometry.
       const firstSeq = next.messages[0]?.seq
       if (
         firstSeq == null ||
@@ -578,7 +561,7 @@ export function ConversationScreen(
             if (present.has(id) && !messagePositions.current.has(id))
               messagePositions.current.set(id, y)
           if (
-            before?.hasEarlier === true &&
+            before.hasEarlier &&
             !next.hasEarlier &&
             mounted.current &&
             paneActive.current &&
@@ -839,7 +822,16 @@ export function ConversationScreen(
     setError(undefined)
     atBottom.current = false
     findOriginal(
-      { view: engine.view.bind(engine), loadEarlier: loadOlder },
+      {
+        view: engine.view.bind(engine),
+        loadEarlier: async () =>
+          await loadOlder(
+            () =>
+              generation !== jumpGeneration.current ||
+              !mounted.current ||
+              !paneActive.current
+          )
+      },
       conversationId,
       id,
       () => generation !== jumpGeneration.current || props.active === false
@@ -871,10 +863,13 @@ export function ConversationScreen(
           setError(lstrings.chat_message_unavailable)
           return
         }
-        const target = rememberPosition(Math.max(0, y - theme.rem(0.5)), {
-          id,
-          relativeY: theme.rem(0.5)
-        })
+        const target = rememberPosition(
+          Math.max(0, y - readableTop.current - theme.rem(0.5)),
+          {
+            id,
+            relativeY: readableTop.current + theme.rem(0.5)
+          }
+        )
         scroller.current?.scrollTo({
           y: target,
           animated: true
@@ -916,6 +911,48 @@ export function ConversationScreen(
     draftOwner,
     conversationId
   ])
+
+  const restoreForGeometry = useRef(restoreReadingAnchor)
+  restoreForGeometry.current = restoreReadingAnchor
+  const previousClearances = useRef({
+    top: viewport.readableTop,
+    bottom: viewport.contentBottom
+  })
+  useEffect(() => {
+    const previous = previousClearances.current
+    previousClearances.current = {
+      top: viewport.readableTop,
+      bottom: viewport.contentBottom
+    }
+    if (
+      previous.top === viewport.readableTop &&
+      previous.bottom === viewport.contentBottom
+    )
+      return
+    if (
+      !mounted.current ||
+      !paneActive.current ||
+      !scrolled.current.hasPosition
+    )
+      return
+    if (scrolled.current.followNewest || atBottom.current) {
+      scroller.current?.scrollToEnd({ animated: false })
+      return
+    }
+    const anchor = scrolled.current.anchor
+    if (anchor != null) {
+      restoreAnchor.current = {
+        ...anchor,
+        relativeY: anchorAfterChromeChange(
+          anchor.relativeY,
+          previous.top,
+          viewport.readableTop,
+          theme.rem(0.5)
+        )
+      }
+      restoreForGeometry.current()
+    }
+  }, [viewport.readableTop, viewport.contentBottom, theme])
 
   // Open the chat, and keep its view current from the engine's events. A
   // chat the list does not hold yet (a newcomer, a moment before the server
@@ -994,7 +1031,6 @@ export function ConversationScreen(
           setView(undefined)
           setFailed(true)
           setMenu(undefined)
-          setConversationMenu(false)
         }
       }
     })
@@ -1012,6 +1048,26 @@ export function ConversationScreen(
   useEffect(() => {
     if (title != null && title !== '') onTitle?.(title)
   }, [onTitle, title])
+  const headerConversation = view?.conversation
+  useHeaderHandoff(
+    useMemo(
+      () =>
+        headerConversation != null &&
+        props.active !== false &&
+        props.paneHeader !== true ? (
+          <ChatConversationIdentity
+            conversation={headerConversation}
+            onPress={() => {
+              identityPress.current()
+            }}
+          />
+        ) : null,
+      [headerConversation, props.active, props.paneHeader]
+    ),
+    props.active !== false && props.paneHeader !== true
+      ? Math.max(theme.rem(3), theme.rem(2.25) * window.fontScale)
+      : 0
+  )
 
   // What is on the screen has been read.
   const newest = view?.messages.at(-1)?.seq ?? 0
@@ -1022,7 +1078,6 @@ export function ConversationScreen(
       props.active === false ||
       !documentActive ||
       menu != null ||
-      conversationMenu ||
       pinsOpen ||
       reacting != null
     )
@@ -1038,7 +1093,6 @@ export function ConversationScreen(
     props.active,
     documentActive,
     menu,
-    conversationMenu,
     pinsOpen,
     reacting
   ])
@@ -1142,6 +1196,26 @@ export function ConversationScreen(
     if (next !== '' && view.composer === 'enabled') {
       engine.typing(conversationId)
     }
+  }
+
+  const reply = (pressed: MessageView): void => {
+    const current = engine.view(conversationId)
+    const original = current?.messages.find(
+      message => message.id === pressed.id
+    )
+    if (
+      props.active === false ||
+      current?.conversation.id !== conversationId ||
+      original == null ||
+      !actionsFor(original, current).includes('reply')
+    )
+      return
+    editingNow.current = undefined
+    setEditing(undefined)
+    replyNow.current = original
+    setReplyTo(original)
+    // Keep trusted mobile-web activation and repeated Reply actions synchronous.
+    focusComposer.current()
   }
 
   const react = (message: MessageView, emoji: string, remove = false): void => {
@@ -1296,98 +1370,47 @@ export function ConversationScreen(
 
   const content = (
     <>
-      <View style={[styles.fill, { paddingBottom: lift }]}>
-        <View style={styles.top}>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={shared.heading} numberOfLines={1}>
-              {conversationTitle(view.conversation)}
-            </Text>
-            {conversationPill(view.conversation) != null && (
-              <Text style={shared.small}>
-                {conversationPill(view.conversation)}
-              </Text>
-            )}
-            <Text style={styles.count}>
-              {plural(
-                view.conversation.memberCount,
-                lstrings.chat_members_count_one,
-                lstrings.chat_members_count_many
-              )}
-            </Text>
-          </View>
-          <Button
-            label={lstrings.chat_members}
-            kind="text"
-            compact
-            icon="group"
-            onPress={onMembers}
-          />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={lstrings.chat_conversation_actions}
-            onPress={() => {
-              setConversationMenu(true)
+      <ChatViewport viewport={viewport}>
+        {props.paneHeader === true && (
+          <GlassView
+            onLayout={event => {
+              setPaneHeaderHeight(event.nativeEvent.layout.height)
             }}
-            style={{ padding: theme.rem(0.75) }}
-          >
-            <Text
-              style={{
-                color: theme.primaryTextColor,
-                fontSize: theme.rem(1.125),
-                letterSpacing: 2
-              }}
-            >
-              •••
-            </Text>
-          </Pressable>
-        </View>
-        {(view.pins?.length ?? 0) > 0 && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`${lstrings.chat_pinned_messages}: ${view.pins!.length}`}
-            onPress={() => {
-              setPinsOpen(true)
+            style={{
+              position: 'absolute',
+              top: viewport.header,
+              left: 0,
+              right: 0,
+              zIndex: 3,
+              minHeight: Math.max(
+                theme.rem(3.5),
+                theme.rem(2.25) * window.fontScale + theme.rem(0.5)
+              ),
+              paddingHorizontal: margin,
+              paddingVertical: theme.rem(0.25),
+              borderBottomWidth: 1,
+              borderBottomColor: theme.glassBorderColor
             }}
-            style={{ paddingVertical: theme.rem(0.25) }}
           >
-            <Text style={shared.small}>
-              ⌖ {lstrings.chat_pinned_messages} ({view.pins!.length})
-            </Text>
-          </Pressable>
-        )}
-        {view.historyLocked && (
-          <View style={[shared.banner, shared.bannerWarning]}>
-            <Icon name="lock" color={theme.warningColor} />
-            <Text style={shared.bannerText}>
-              {lstrings.chat_history_locked}
-            </Text>
-          </View>
-        )}
-        {approvals.map(approval => (
-          <View key={approval.requestId} style={shared.banner}>
-            <Text style={shared.bannerText}>
-              {sprintf(
-                lstrings.chat_approval_request,
-                approval.name ?? lstrings.chat_former_member
-              )}
-            </Text>
-            <Button
-              label={lstrings.chat_review}
-              kind="secondary"
-              compact
+            <ChatConversationIdentity
+              conversation={view.conversation}
               onPress={onMembers}
             />
-          </View>
-        ))}
-        {view.unverified && (
-          <View style={[shared.banner, shared.bannerWarning]}>
-            <Text style={shared.bannerText}>{lstrings.chat_unverified}</Text>
-          </View>
+          </GlassView>
         )}
         <ScrollView
+          testID="chat-message-history"
           ref={scroller}
           style={styles.fill}
-          contentContainerStyle={styles.messages}
+          contentContainerStyle={[
+            styles.messages,
+            {
+              paddingTop: viewport.contentTop,
+              paddingBottom: viewport.contentBottom,
+              paddingLeft: Math.max(margin, insets.left),
+              paddingRight: Math.max(margin, insets.right)
+            }
+          ]}
           keyboardShouldPersistTaps="handled"
           onScroll={event => {
             gestureGeneration.current += 1
@@ -1508,6 +1531,49 @@ export function ConversationScreen(
             else recaptureLiveAnchor()
           }}
         >
+          {(view.pins?.length ?? 0) > 0 && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${lstrings.chat_pinned_messages}: ${view.pins!.length}`}
+              onPress={() => {
+                setPinsOpen(true)
+              }}
+              style={{ paddingVertical: theme.rem(0.25) }}
+            >
+              <Text style={shared.small}>
+                ⌖ {lstrings.chat_pinned_messages} ({view.pins!.length})
+              </Text>
+            </Pressable>
+          )}
+          {view.historyLocked && (
+            <View style={[shared.banner, shared.bannerWarning]}>
+              <Icon name="lock" color={theme.warningColor} />
+              <Text style={shared.bannerText}>
+                {lstrings.chat_history_locked}
+              </Text>
+            </View>
+          )}
+          {approvals.map(approval => (
+            <View key={approval.requestId} style={shared.banner}>
+              <Text style={shared.bannerText}>
+                {sprintf(
+                  lstrings.chat_approval_request,
+                  approval.name ?? lstrings.chat_former_member
+                )}
+              </Text>
+              <Button
+                label={lstrings.chat_review}
+                kind="secondary"
+                compact
+                onPress={onMembers}
+              />
+            </View>
+          ))}
+          {view.unverified && (
+            <View style={[shared.banner, shared.bannerWarning]}>
+              <Text style={shared.bannerText}>{lstrings.chat_unverified}</Text>
+            </View>
+          )}
           {view.hasEarlier && (
             <Button
               label={lstrings.chat_load_earlier}
@@ -1573,21 +1639,7 @@ export function ConversationScreen(
                 onReact={pressed => {
                   setReacting(pressed)
                 }}
-                onReply={pressed => {
-                  const current = engine.view(conversationId)
-                  const original = current?.messages.find(
-                    message => message.id === pressed.id
-                  )
-                  if (
-                    current == null ||
-                    original == null ||
-                    !actionsFor(original, current).includes('reply')
-                  )
-                    return
-                  setEditing(undefined)
-                  replyNow.current = original
-                  setReplyTo(original)
-                }}
+                onReply={reply}
                 onToggleReaction={(pressed, emoji, mine) => {
                   react(pressed, emoji, mine)
                 }}
@@ -1596,96 +1648,107 @@ export function ConversationScreen(
           ))}
           {notices.get(view.messages.length)?.map(renderNotice)}
         </ScrollView>
-        {typing.length > 0 && (
-          <Text style={shared.small} accessibilityLiveRegion="polite">
-            {typing.length === 1
-              ? sprintf(lstrings.chat_typing_one, typing[0])
-              : sprintf(lstrings.chat_typing_many, typing.join(', '))}
-          </Text>
-        )}
-        {error != null && <Text style={shared.error}>{error}</Text>}
-        {reported && (
-          <Text style={shared.muted} accessibilityLiveRegion="polite">
-            {lstrings.chat_reported}
-          </Text>
-        )}
-        {view.composer === 'closed' ? (
-          <View style={shared.banner}>
-            <Text style={shared.bannerText}>{lstrings.chat_closed_notice}</Text>
-          </View>
-        ) : view.composer === 'readOnly' ? (
-          <View style={shared.banner}>
-            <Text style={shared.bannerText}>{lstrings.chat_read_only}</Text>
-          </View>
-        ) : (
-          <Composer
-            onRead={() => {
-              if (
-                props.active === false ||
-                !readDocumentActive() ||
-                isRestoringPopupFocus()
-              )
-                return
-              readRevision.current =
-                view.conversation.preferences?.manualUnreadRevision ?? 0
-              engine
-                .markRead(conversationId, readRevision.current)
-                .catch(() => undefined)
-            }}
-            text={text}
-            onText={onText}
-            enabled={view.composer === 'enabled'}
-            sending={sending}
-            preparing={preparing > 0}
-            context={
-              editing != null
-                ? { kind: 'edit' }
-                : replyTo != null
-                  ? {
-                      kind: 'reply',
-                      name: nameOf(
-                        view.messages.find(
-                          message => message.id === replyTo.id
-                        ) ?? { ...replyTo, senderName: undefined }
-                      ),
-                      snippet: replyExcerpt(
-                        view.messages.find(message => message.id === replyTo.id)
-                      )
-                    }
-                  : undefined
-            }
-            onCancelContext={() => {
-              if (editing != null) setText('')
-              setEditing(undefined)
-              replyNow.current = undefined
-              setReplyTo(undefined)
-            }}
-            attachments={picked}
-            onRemoveAttachment={index => {
-              const next = pickedNow.current.filter((_, at) => at !== index)
-              pickedNow.current = next
-              setPicked(next)
-            }}
-            sources={editing == null ? files.PICK_SOURCES : []}
-            onAttach={source => {
-              prepareFiles(
-                async remaining => await files.pickFiles(source, remaining),
-                'picker'
-              )
-            }}
-            onSend={send}
-          />
-        )}
-      </View>
-      {conversationMenu && (
-        <ConversationMenu
-          conversation={view.conversation}
-          engine={engine}
-          onClose={() => {
-            setConversationMenu(false)
+        <View
+          testID="chat-composer-band"
+          pointerEvents="box-none"
+          onLayout={event => {
+            setComposerHeight(event.nativeEvent.layout.height)
           }}
-        />
-      )}
+          style={{
+            position: 'absolute',
+            left: Math.max(margin, insets.left),
+            right: Math.max(margin, insets.right),
+            bottom: viewport.composerBottom,
+            zIndex: 4
+          }}
+        >
+          {typing.length > 0 && (
+            <Text style={shared.small} accessibilityLiveRegion="polite">
+              {typing.length === 1
+                ? sprintf(lstrings.chat_typing_one, typing[0])
+                : sprintf(lstrings.chat_typing_many, typing.join(', '))}
+            </Text>
+          )}
+          {error != null && <Text style={shared.error}>{error}</Text>}
+          {reported && (
+            <Text style={shared.muted} accessibilityLiveRegion="polite">
+              {lstrings.chat_reported}
+            </Text>
+          )}
+          {view.composer === 'closed' ? (
+            <View style={shared.banner}>
+              <Text style={shared.bannerText}>
+                {lstrings.chat_closed_notice}
+              </Text>
+            </View>
+          ) : view.composer === 'readOnly' ? (
+            <View style={shared.banner}>
+              <Text style={shared.bannerText}>{lstrings.chat_read_only}</Text>
+            </View>
+          ) : (
+            <Composer
+              registerFocus={registerComposerFocus}
+              onRead={() => {
+                if (
+                  props.active === false ||
+                  !readDocumentActive() ||
+                  isRestoringPopupFocus()
+                )
+                  return
+                readRevision.current =
+                  view.conversation.preferences?.manualUnreadRevision ?? 0
+                engine
+                  .markRead(conversationId, readRevision.current)
+                  .catch(() => undefined)
+              }}
+              text={text}
+              onText={onText}
+              enabled={view.composer === 'enabled' && props.active !== false}
+              sending={sending}
+              preparing={preparing > 0}
+              context={
+                editing != null
+                  ? { kind: 'edit' }
+                  : replyTo != null
+                    ? {
+                        kind: 'reply',
+                        name: nameOf(
+                          view.messages.find(
+                            message => message.id === replyTo.id
+                          ) ?? { ...replyTo, senderName: undefined }
+                        ),
+                        snippet: replyExcerpt(
+                          view.messages.find(
+                            message => message.id === replyTo.id
+                          )
+                        )
+                      }
+                    : undefined
+              }
+              onCancelContext={() => {
+                if (editing != null) setText('')
+                setEditing(undefined)
+                replyNow.current = undefined
+                setReplyTo(undefined)
+              }}
+              attachments={picked}
+              onRemoveAttachment={index => {
+                const next = pickedNow.current.filter((_, at) => at !== index)
+                pickedNow.current = next
+                setPicked(next)
+              }}
+              sources={editing == null ? files.PICK_SOURCES : []}
+              onAttach={source => {
+                prepareFiles(
+                  async remaining => await files.pickFiles(source, remaining),
+                  'picker'
+                )
+              }}
+              onSend={send}
+            />
+          )}
+        </View>
+      </ChatViewport>
       {currentMenu != null && (
         <MessageMenu
           message={currentMenu}
@@ -1716,9 +1779,7 @@ export function ConversationScreen(
           onReply={() => {
             const selected = selectedFor('reply')
             if (selected == null) return
-            setEditing(undefined)
-            replyNow.current = selected
-            setReplyTo(selected)
+            reply(selected)
             setMenu(undefined)
           }}
           onReact={emoji => {
@@ -1797,11 +1858,9 @@ export function ConversationScreen(
   )
   const pane =
     props.embedded === true ? (
-      <View style={[styles.column, { padding: theme.rem(1), flex: 1 }]}>
-        {content}
-      </View>
+      <View style={[styles.column, { flex: 1 }]}>{content}</View>
     ) : (
-      <Screen scroll={false} contentStyle={styles.column}>
+      <Screen overlayContent wide scroll={false} contentStyle={styles.column}>
         {content}
       </Screen>
     )
@@ -1821,27 +1880,16 @@ export function ConversationScreen(
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
-  // The screen's own column, grown to the window; its bottom padding is
-  // what keeps the composer clear of the floating capsule on a phone.
+  // The full pane owns its measured content clearances.
   column: {
     flex: 1,
     // Centred in a wide window, as every other chat screen is.
     alignSelf: 'stretch',
-    gap: theme.rem(theme.spaceSmRem)
+    minHeight: 0
   },
   fill: {
     flex: 1,
     gap: theme.rem(theme.spaceSmRem)
-  },
-  top: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between'
-  },
-  count: {
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(0.8125),
-    color: theme.secondaryTextColor
   },
   messages: {
     gap: theme.rem(theme.spaceSmRem),

@@ -6,6 +6,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import * as ReactNative from 'react-native'
 
+import { HeaderSlotProvider } from '../components/headerSlot'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { PickedFile } from './chatFileTypes'
 import { ChatListScreen } from './ChatListScreen'
@@ -765,7 +766,7 @@ describe('chat review list return restoration', function () {
       'Fetched data alone must not reuse the empty layout'
     ).deep.equals([])
     expect(pending.offsets).deep.equals([])
-    setListRowMeasurement('cnv_return_1', 420, 80)
+    setListRowMeasurement('cnv_return_1', 420, listTailHeight(80))
     const lastRow = document.querySelector<HTMLElement>(
       '[data-testid="chat-conversation-cnv_return_1"]'
     )!.parentElement!
@@ -775,7 +776,7 @@ describe('chat review list return restoration', function () {
       typeof (lastRow as HTMLElement & { __reactLayoutHandler?: unknown })
         .__reactLayoutHandler === 'function'
     )
-      await layout(lastRow, 320, 80)
+      await layout(lastRow, 320, listTailHeight(80))
     expect(
       pending.moves,
       'Measured rows must not reuse empty content geometry'
@@ -846,7 +847,8 @@ describe('chat review list return restoration', function () {
 async function returningList(
   measureViewport = true,
   initialOffset = 240,
-  initialAnchor?: { id: string; relativeY: number }
+  initialAnchor?: { id: string; relativeY: number },
+  navigationHeight = 0
 ): Promise<{
   node: HTMLElement
   moves: number[]
@@ -877,18 +879,31 @@ async function returningList(
       if (capture === read) capture = undefined
     }
   }
+  // This fixture measures a list pane without the shell's floating tab bar.
+  // The phone tab-bar clearance is exercised by the measured-chrome suite.
+  const scene = (child: React.ReactNode): React.ReactElement => (
+    <HeaderSlotProvider
+      headerHeight={48}
+      navigationHeight={navigationHeight}
+      onHandoff={() => {}}
+    >
+      {child}
+    </HeaderSlotProvider>
+  )
   await render(
-    <ChatListScreen
-      engine={engine}
-      embedded
-      registerPositionCapture={registerCapture}
-      initialOffset={initialOffset}
-      initialAnchor={initialAnchor}
-      onOffset={offset => offsets.push(offset)}
-      onAnchor={anchor => anchors.push(anchor)}
-      onOpen={() => {}}
-      onNewMessage={() => {}}
-    />
+    scene(
+      <ChatListScreen
+        engine={engine}
+        embedded
+        registerPositionCapture={registerCapture}
+        initialOffset={initialOffset}
+        initialAnchor={initialAnchor}
+        onOffset={offset => offsets.push(offset)}
+        onAnchor={anchor => anchors.push(anchor)}
+        onOpen={() => {}}
+        onNewMessage={() => {}}
+      />
+    )
   )
   const node = [...document.querySelectorAll<HTMLElement>('div')].find(
     element => getComputedStyle(element).overflowY === 'auto'
@@ -968,36 +983,40 @@ async function returningList(
     },
     hide: async () => {
       await render(
-        <ChatListScreen
-          engine={engine}
-          embedded
-          narrow
-          selectedVisible
-          registerPositionCapture={registerCapture}
-          initialOffset={initialOffset}
-          initialAnchor={initialAnchor}
-          onOffset={offset => offsets.push(offset)}
-          onAnchor={anchor => anchors.push(anchor)}
-          onOpen={() => {}}
-          onNewMessage={() => {}}
-        />
+        scene(
+          <ChatListScreen
+            engine={engine}
+            embedded
+            narrow
+            selectedVisible
+            registerPositionCapture={registerCapture}
+            initialOffset={initialOffset}
+            initialAnchor={initialAnchor}
+            onOffset={offset => offsets.push(offset)}
+            onAnchor={anchor => anchors.push(anchor)}
+            onOpen={() => {}}
+            onNewMessage={() => {}}
+          />
+        )
       )
     },
     show: async () => {
       await render(
-        <ChatListScreen
-          engine={engine}
-          embedded
-          narrow
-          selectedVisible={false}
-          registerPositionCapture={registerCapture}
-          initialOffset={initialOffset}
-          initialAnchor={initialAnchor}
-          onOffset={offset => offsets.push(offset)}
-          onAnchor={anchor => anchors.push(anchor)}
-          onOpen={() => {}}
-          onNewMessage={() => {}}
-        />
+        scene(
+          <ChatListScreen
+            engine={engine}
+            embedded
+            narrow
+            selectedVisible={false}
+            registerPositionCapture={registerCapture}
+            initialOffset={initialOffset}
+            initialAnchor={initialAnchor}
+            onOffset={offset => offsets.push(offset)}
+            onAnchor={anchor => anchors.push(anchor)}
+            onOpen={() => {}}
+            onNewMessage={() => {}}
+          />
+        )
       )
     },
     replace: async count => {
@@ -1133,6 +1152,52 @@ function terminalDraft(): ChatDraft {
     followNewest: false
   }
 }
+
+describe('chat measured chrome reader anchors', function () {
+  it('keeps the same partially visible tall row when only the measured composer grows', async function () {
+    const engine = new ReviewEngine()
+    engine.update('cnv_aurora', { messages: [original()] })
+    const state = newChatWorkspaceState()
+    state.drafts.set('cnv_aurora', {
+      ...terminalDraft(),
+      scrollOffset: 700,
+      scrollAnchor: { id: 'msg_original', relativeY: -700 }
+    })
+    await workspace(engine, state)
+    await layout(
+      document.querySelector('[data-testid="chat-workspace"]')!,
+      390,
+      844
+    )
+    const reading = terminalReadingPane()
+    await reading.measure()
+    expect(reading.node.scrollTop).equals(700)
+    const row = document.querySelector<HTMLElement>(
+      '[data-testid="chat-message-msg_original"]'
+    )!.parentElement!
+    const relative = (): number =>
+      row.getBoundingClientRect().top - reading.node.getBoundingClientRect().top
+    expect(relative()).equals(-700)
+    reading.moves.length = 0
+    await layout(
+      document.querySelector('[data-testid="chat-composer-band"]')!,
+      640,
+      96
+    )
+    await act(async () => {
+      await wait(80)
+    })
+    expect(reading.node.scrollTop).equals(700)
+    expect(
+      relative(),
+      'Composer growth preserves the actual reading row'
+    ).equals(-700)
+    expect(state.drafts.get('cnv_aurora')!.scrollAnchor).deep.equals({
+      id: 'msg_original',
+      relativeY: -700
+    })
+  })
+})
 
 describe('chat review final native scroll positions', function () {
   it('saves the final drag and momentum zero offsets instead of the last throttled position and reopens at the first row', async function () {
@@ -2250,9 +2315,9 @@ describe('review4 incremental restoration lifecycle', function () {
       else
         await act(async () => {
           // A fresh visible tail now permits a legitimate short-list clamp.
-          setListRowMeasurement('cnv_return_1', 420, 80)
+          setListRowMeasurement('cnv_return_1', 420, listTailHeight(80))
           renderedRowLayout('cnv_return_1')({
-            nativeEvent: { layout: { height: 80 } }
+            nativeEvent: { layout: { height: listTailHeight(80) } }
           })
           await wait()
         })
@@ -2308,6 +2373,18 @@ function renderedRowLayout(id: string): ListLayoutCallbacks['onLayout'] {
 }
 
 const listMeasurementMethods = new WeakMap<object, unknown>()
+
+/** Total mocked content includes the scene's actual trailing chrome inset. */
+function listTailHeight(remaining: number): number {
+  const content = document.querySelector<HTMLElement>(
+    '[data-testid="chat-conversation-list"]'
+  )!.firstElementChild!
+  const parsed = Number.parseFloat(getComputedStyle(content).paddingBottom)
+  const inset = Number.isFinite(parsed) ? parsed : 0
+  expect(inset, 'Rendered trailing content inset').greaterThan(0)
+  expect(remaining, 'Mocked last row remains visible').greaterThan(inset)
+  return remaining - inset
+}
 
 function setListRowMeasurement(id: string, y: number, height = 67): void {
   const node = document.querySelector<HTMLElement>(
@@ -2409,7 +2486,7 @@ describe('deep list opaque reading anchors', function () {
   it('measures complete tail coordinates rather than consuming a pending target from tail layout before content size', async function () {
     const pending = await returningList(true, 240)
     await pending.populate(8)
-    setListRowMeasurement('cnv_return_7', 1720, 80)
+    setListRowMeasurement('cnv_return_7', 1720, listTailHeight(80))
     await pending.content(500)
     await act(async () => {
       renderedRowLayout('cnv_return_7')({
@@ -2524,7 +2601,7 @@ describe('deep list measurement lifetime', function () {
       relativeY: 20
     })
     await pending.populate(2)
-    setListRowMeasurement('cnv_return_1', 420, 80)
+    setListRowMeasurement('cnv_return_1', 420, listTailHeight(80))
     await pending.content(500)
     await act(async () => {
       await wait(30)
@@ -2718,7 +2795,7 @@ describe('deep list coherent tail revisions', function () {
   it('rejects a preceding short-tail geometry and its old clamped acknowledgement after same-order row layout, then restores from fresh content', async function () {
     const pending = await returningList(true, 6000)
     await pending.populate(8)
-    setListRowMeasurement('cnv_return_7', 420, 80)
+    setListRowMeasurement('cnv_return_7', 420, listTailHeight(80))
     await pending.content(500)
     await act(async () => {
       await wait(30)
@@ -2754,11 +2831,12 @@ describe('deep list coherent tail revisions', function () {
       'Current row layout remeasures the tail even without another content callback'
     ).greaterThan(0)
     await act(async () => {
-      for (const complete of completions) complete(0, 1720, 320, 80)
+      for (const complete of completions)
+        complete(0, 1720, 320, listTailHeight(80))
       await wait(30)
     })
     expect(pending.offsets).deep.equals([])
-    setListRowMeasurement('cnv_return_7', 1720, 80)
+    setListRowMeasurement('cnv_return_7', 1720, listTailHeight(80))
     await pending.content(1800)
     await act(async () => {
       await wait(30)
@@ -2785,7 +2863,7 @@ describe('b66 offscreen layout current-anchor schedule', function () {
     holdListRowMeasurement(row, (_relative, success) => {
       success(0, rowY, 320, 67)
     })
-    setListRowMeasurement('cnv_return_7', 1720, 80)
+    setListRowMeasurement('cnv_return_7', 1720, listTailHeight(80))
     await pending.content(1800)
     await pending.scroll(0)
     const callbacks = renderedListCallbacks(
@@ -2815,7 +2893,7 @@ describe('b66 offscreen layout current-anchor schedule', function () {
       relativeY: 30
     })
     rowY = 334
-    setListRowMeasurement('cnv_return_7', 1784, 80)
+    setListRowMeasurement('cnv_return_7', 1784, listTailHeight(80))
     await act(async () => {
       renderedRowLayout('cnv_return_0')({
         nativeEvent: { layout: { height: 131 } }
@@ -3172,9 +3250,10 @@ describe('post-deep review2 current geometry persistence', function () {
         completions.length,
         'A real mounted tail measurement is pending'
       ).greaterThan(0)
-      for (const complete of completions.splice(0)) complete(0, 420, 320, 80)
+      for (const complete of completions.splice(0))
+        complete(0, 420, 320, listTailHeight(80))
       holdListRowMeasurement(row, (_relative, success) => {
-        success(0, 420, 320, 80)
+        success(0, 420, 320, listTailHeight(80))
       })
       await wait(80)
     })
@@ -3502,7 +3581,7 @@ describe('review4 no-event clamps and reachable jumps', function () {
       relativeY: 30
     })
     await pending.populate(2)
-    setListRowMeasurement('cnv_return_1', 120, 80)
+    setListRowMeasurement('cnv_return_1', 120, listTailHeight(80))
     await pending.content(200)
     await act(async () => {
       await wait(30)
@@ -3707,17 +3786,67 @@ describe('review4 quiet preview recovery', function () {
 })
 
 describe('qa4 accepted list boundaries', function () {
+  it('accepts a phone clamp only after its tail plus measured navigation inset completes and preserves the same reader after growth', async function () {
+    const pending = await returningList(
+      true,
+      780,
+      { id: 'cnv_return_1', relativeY: 20 },
+      76
+    )
+    await pending.populate(2)
+    const incompleteHeight = listTailHeight(194)
+    const completeHeight = listTailHeight(200)
+    expect(completeHeight).equals(76)
+    setListRowMeasurement('cnv_return_1', 800, incompleteHeight)
+    await pending.content(1000)
+    await act(async () => {
+      await wait(40)
+    })
+    expect(pending.moves).deep.equals([600])
+    await pending.scroll(600)
+    expect(
+      pending.offsets,
+      'An incomplete tail cannot acknowledge the clamp'
+    ).deep.equals([])
+    setListRowMeasurement('cnv_return_1', 800, completeHeight)
+    await act(async () => {
+      renderedRowLayout('cnv_return_1')({
+        nativeEvent: { layout: { height: completeHeight } }
+      })
+      await wait(40)
+    })
+    expect(
+      pending.moves,
+      'Completion does not issue another scroll'
+    ).deep.equals([600])
+    expect(pending.offsets.at(-1)).equals(600)
+    expect(pending.anchors.at(-1)).deep.equals({
+      id: 'cnv_return_1',
+      relativeY: 200
+    })
+    setListRowMeasurement('cnv_return_1', 800, listTailHeight(500))
+    await pending.content(1300)
+    await act(async () => {
+      await wait(40)
+    })
+    expect(pending.moves).deep.equals([600])
+    expect(pending.anchors.at(-1)).deep.equals({
+      id: 'cnv_return_1',
+      relativeY: 200
+    })
+  })
+
   it('finishes a complete surviving-anchor clamp at the acknowledged relative position without restoring the obsolete target after growth', async function () {
     const pending = await returningList(true, 610, {
       id: 'cnv_return_1',
       relativeY: 20
     })
     await pending.populate(2)
-    setListRowMeasurement('cnv_return_1', 630, 90)
+    setListRowMeasurement('cnv_return_1', 630, listTailHeight(90))
     await pending.content(720)
     await act(async () => {
       renderedRowLayout('cnv_return_1')({
-        nativeEvent: { layout: { height: 90 } }
+        nativeEvent: { layout: { height: listTailHeight(90) } }
       })
       await wait(40)
     })
@@ -3729,7 +3858,7 @@ describe('qa4 accepted list boundaries', function () {
       id: 'cnv_return_1',
       relativeY: 310
     })
-    setListRowMeasurement('cnv_return_1', 630, 490)
+    setListRowMeasurement('cnv_return_1', 630, listTailHeight(490))
     await pending.content(1120)
     await act(async () => {
       await wait(40)
@@ -3737,7 +3866,7 @@ describe('qa4 accepted list boundaries', function () {
     expect(pending.moves).not.contains(610)
     expect(pending.moves.at(-1)).equals(320)
     // A genuine later prefix change still preserves this accepted reader.
-    setListRowMeasurement('cnv_return_1', 670, 490)
+    setListRowMeasurement('cnv_return_1', 670, listTailHeight(490))
     await pending.content(1160)
     await act(async () => {
       await wait(40)
@@ -3751,17 +3880,17 @@ describe('qa4 accepted list boundaries', function () {
       relativeY: 20
     })
     await pending.populate(2)
-    setListRowMeasurement('cnv_return_1', 630, 80)
+    setListRowMeasurement('cnv_return_1', 630, listTailHeight(80))
     await pending.content(720)
     await act(async () => {
       await wait(40)
     })
     await pending.scroll(320)
     expect(pending.offsets).deep.equals([])
-    setListRowMeasurement('cnv_return_1', 630, 90)
+    setListRowMeasurement('cnv_return_1', 630, listTailHeight(90))
     await act(async () => {
       renderedRowLayout('cnv_return_1')({
-        nativeEvent: { layout: { height: 90 } }
+        nativeEvent: { layout: { height: listTailHeight(90) } }
       })
       await wait(40)
     })

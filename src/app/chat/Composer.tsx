@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Pressable, Text, TextInput, View } from 'react-native'
 
 import { Icon } from '../components'
+import { GlassView } from '../components/GlassView'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { sendAllowed } from './chatComposeModel'
@@ -29,6 +30,8 @@ export interface ComposerProps {
   onAttach: (source: PickSource) => void
   onSend: () => void
   onRead?: () => void
+  /** Register a synchronous user-action focus handoff, scoped to this mount. */
+  registerFocus?: (focus: () => void) => () => void
 }
 
 /**
@@ -38,7 +41,15 @@ export interface ComposerProps {
  * edited.
  */
 export function Composer(props: ComposerProps): React.ReactElement {
-  const { text, onText, enabled, sending, context, attachments } = props
+  const {
+    text,
+    onText,
+    enabled,
+    sending,
+    context,
+    attachments,
+    registerFocus
+  } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const [emoji, setEmoji] = useState(false)
@@ -54,6 +65,13 @@ export function Composer(props: ComposerProps): React.ReactElement {
     attachments
   })
   const canAttach = enabled && !sending && props.preparing !== true
+  useEffect(
+    () =>
+      registerFocus?.(() => {
+        if (latest.current.enabled) input.current?.focus()
+      }),
+    [registerFocus]
+  )
   useEffect(
     () =>
       bindComposerKeys(input.current, () => {
@@ -81,7 +99,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
   }
 
   return (
-    <View style={styles.composer}>
+    <GlassView radius={theme.rem(1.5)} style={styles.composer}>
       {context != null && (
         <View style={styles.chip}>
           <View style={styles.chipText}>
@@ -266,14 +284,17 @@ export function Composer(props: ComposerProps): React.ReactElement {
           }}
         />
       )}
-    </View>
+    </GlassView>
   )
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
   composer: {
     gap: theme.rem(theme.spaceXsRem),
-    paddingTop: theme.rem(theme.spaceXsRem)
+    paddingVertical: theme.rem(theme.spaceXsRem),
+    borderWidth: 1,
+    borderColor: theme.glassBorderColor,
+    borderRadius: theme.rem(1.5)
   },
   row: {
     flexDirection: 'row',
@@ -281,8 +302,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     gap: theme.rem(0.25)
   },
   icon: {
-    width: theme.rem(2.5),
-    height: theme.rem(2.5),
+    width: theme.rem(2.75),
+    height: theme.rem(2.75),
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: theme.rem(1.25)
@@ -292,12 +313,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   input: {
     flex: 1,
-    minHeight: theme.rem(2.5),
+    minWidth: 0,
+    minHeight: theme.rem(2.75),
     maxHeight: theme.rem(8),
     borderWidth: 1,
     borderColor: theme.inputBorderColor,
     borderRadius: theme.rem(1.25),
-    backgroundColor: theme.inputBackgroundColor,
+    backgroundColor: 'transparent',
     color: theme.inputTextColor,
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(1),
@@ -309,8 +331,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     backgroundColor: theme.inactiveBackgroundColor
   },
   send: {
-    width: theme.rem(2.5),
-    height: theme.rem(2.5),
+    width: theme.rem(2.75),
+    height: theme.rem(2.75),
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: theme.rem(1.25),

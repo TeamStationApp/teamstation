@@ -2174,7 +2174,7 @@ describe('chat follow-up conversation message integration', function () {
       complete!(0, 300, 640, 100)
       await wait(30)
     })
-    expect(moves).deep.equals([292])
+    expect(moves).deep.equals([244])
   })
 
   it('discards a delayed measurement after genuine user scrolling cancels the jump', async function () {
@@ -2277,7 +2277,7 @@ describe('chat follow-up conversation message integration', function () {
       button('Jump to message from Shohei Ohtani: Second original').click()
       await wait(80)
     })
-    expect(moves).deep.equals([492])
+    expect(moves).deep.equals([444])
     await act(async () => {
       button('Jump to message from Shohei Ohtani: First original').click()
       await Promise.resolve()
@@ -2287,7 +2287,7 @@ describe('chat follow-up conversation message integration', function () {
       root = undefined
       await wait(80)
     })
-    expect(moves).deep.equals([492])
+    expect(moves).deep.equals([444])
   })
 
   it('preserves prepend position, jumps to a verified older original and highlights it for 1.5 seconds', async function () {
@@ -2360,7 +2360,7 @@ describe('chat follow-up conversation message integration', function () {
       finish?.(engine.current)
       await wait(80)
     })
-    expect(moves.at(-1)).deep.equals([292, 'smooth'])
+    expect(moves.at(-1)).deep.equals([244, 'smooth'])
     expect(getComputedStyle(row).backgroundColor).not.equals(before)
     expect((labelled('Message') as HTMLTextAreaElement).value).equals(
       'Draft body'
