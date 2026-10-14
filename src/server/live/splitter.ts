@@ -1380,6 +1380,14 @@ function hasGoneQuiet(ingress: IngressRuntime): boolean {
  * are stopped rather than released, exactly as for a stale publisher, so the
  * newcomer's accept brings the same HLS writer back and the video goes on in
  * the same playlist.
+ *
+ * The release has to happen before the newcomer's key is resolved, since
+ * resolving reads the database and node-media-server's check does not wait.
+ * So a newcomer that is then refused — a key revoked in the last second, a
+ * disk under the floor — has still evicted the quiet publisher, and two
+ * stalled encoders on one key can take it from each other. What bounds it:
+ * the entry exists only for a key the last sync found open and authorized,
+ * and the publisher evicted had sent nothing for two ticks.
  */
 function replaceQuietPublisher(entry: LiveEntry, session: NmsSession): void {
   const ingress = entry.ingress
