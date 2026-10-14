@@ -12,6 +12,7 @@ import {
 } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { canFilm, canSeeGame, roleScopes, visibleScopes } from '../access'
+import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import {
   cameraLabelOf,
@@ -227,17 +228,18 @@ export function liveRoutes(
         })
         return
       }
-      const mine = await myLiveStreams(db, game.id, actor.userId)
-      const slot = freeSlot(mine)
-      if (slot == null) {
-        throw badRequest(
-          `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
-        )
-      }
-
-      let created
-      try {
-        created = await createLiveStream(db, {
+      // Under the game's lock, as a device's request and a Director's claim
+      // are, so streaming software and a phone asking at once get a slot
+      // each, and neither is handed the other's key.
+      const created = await db.transaction().execute(async trx => {
+        await lockKeys(trx, [`liveStreams:${game.id}`])
+        const slot = freeSlot(await myLiveStreams(trx, game.id, actor.userId))
+        if (slot == null) {
+          throw badRequest(
+            `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`
+          )
+        }
+        return await createLiveStream(trx, {
           gameId: game.id,
           teamId,
           startAt: game.startAt,
@@ -248,21 +250,7 @@ export function liveRoutes(
           sessionSecret,
           videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`
         })
-      } catch (error) {
-        // Two presses of the button at once: one of them wins the slot and the
-        // other lands here. Hand back what it was asking for rather than a
-        // five-hundred.
-        const raced = (await myLiveStreams(db, game.id, actor.userId)).find(
-          row => row.slot === slot
-        )
-        if (raced == null) throw error
-        setAudit(res.locals, { entityType: 'liveStream', entityId: raced.id })
-        res.json({
-          ...(await summaryOf(db, raced, actor.userId)),
-          url: streamUrlFor(live, host, revealKey(sessionSecret, raced))
-        })
-        return
-      }
+      })
 
       setAudit(res.locals, { entityType: 'liveStream', entityId: created.id })
       res.status(201).json({

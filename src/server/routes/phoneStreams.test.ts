@@ -1545,5 +1545,23 @@ describe('phones and Directors asking for their streams by device', function () 
       expect(a.key).equals(b.key)
       expect([a.created, b.created].filter(Boolean)).deep.equals([true])
     })
+
+    it('never hands streaming software a phone’s stream when both ask at once', async function () {
+      if (db == null) this.skip()
+      for (let round = 0; round < 8; round += 1) {
+        const gameId = await newGame()
+        const [device, browser] = await Promise.all([
+          ask(gameId, phone('Home Plate')),
+          ask(gameId, { label: 'Encoder' })
+        ])
+        expect(device.status).equals(201)
+        expect(browser.status).equals(201)
+        expect(browser.body.id).not.equals(device.body.id)
+        expect(browser.body.url).not.equals(device.body.url)
+        expect(
+          [device.body.slot, browser.body.slot].sort((a, b) => a - b)
+        ).deep.equals([1, 2])
+      }
+    })
   })
 })
