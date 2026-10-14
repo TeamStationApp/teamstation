@@ -53,6 +53,11 @@ public final class ProgramStreamer: @unchecked Sendable {
   private var session: VTCompressionSession?
   private var aac = AACPacketizer()
   private var isRunning = false
+  /// Which start the streamer is on: a start takes the next, and a stop moves past it. Work that
+  /// finishes after a stop or a newer start (an encoder opened, a publish that fails, a client that
+  /// drops) checks its own against this, so it cannot install anything on, or stop, a session that
+  /// is not its own.
+  private var generation = 0
   private var sentVideoConfig = false
   private var sentAudioConfig = false
   private var sentMetadata = false
@@ -166,9 +171,17 @@ public final class ProgramStreamer: @unchecked Sendable {
     case let .failure(error): throw error
     }
 
-    guard beginStart(settings: settings, onFailure: onFailure) else { return }
+    guard let session = beginStart(settings: settings, onFailure: onFailure) else { return }
+    if let opening = willOpenEncoderForTesting { await opening() }
 
-    try openEncoder()
+    // A stop, or a newer start, while this one opens its encoder or dials cancels it, as a stop
+    // cancels the client's own publish.
+    do {
+      guard try openEncoder(generation: session) else { throw RTMPClientError.cancelled }
+    } catch {
+      stop(generation: session)
+      throw error
+    }
     let client = RTMPClient()
     // How far behind the socket may fall before the client sheds media: `sendBufferSeconds` of the
     // top of the stream's range, which is the most this session ever produces.
@@ -177,24 +190,39 @@ public final class ProgramStreamer: @unchecked Sendable {
       videoCodec: Self.rtmpCodec(settings.codec)
     )
     client.onFailure { [weak self] error in
-      self?.handleFailure(error.description)
+      self?.handleFailure(error.description, generation: session)
     }
-    markStarted(client)
+    guard markStarted(client, generation: session) else {
+      client.stop()
+      throw RTMPClientError.cancelled
+    }
     startRateLoop(client: client)
     telemetry.recordEncodeSessionChange(delta: 1)
     do {
       try await client.publish(to: url)
     } catch {
-      stop()
+      // Only this start's session: a stop and a newer start may have come while it dialled.
+      stop(generation: session)
       throw error
     }
   }
 
-  /// NSLock cannot be taken inside an async function; these two helpers keep `start` legal.
-  private func beginStart(settings: StreamSettings, onFailure: FailureHandler?) -> Bool {
+  /// Runs as a start is about to open its encoder: for the tests of a stop that lands there.
+  var willOpenEncoderForTesting: (@Sendable () async -> Void)? {
+    get { lock.withLock { openingHook } }
+    set { lock.withLock { openingHook = newValue } }
+  }
+
+  private var openingHook: (@Sendable () async -> Void)?
+
+  /// NSLock cannot be taken inside an async function; these helpers keep `start` legal.
+  ///
+  /// Resets the session state for a start, answering its generation, or nil while one runs.
+  private func beginStart(settings: StreamSettings, onFailure: FailureHandler?) -> Int? {
     lock.lock()
     defer { lock.unlock() }
-    if isRunning { return false }
+    if isRunning { return nil }
+    generation += 1
     applyStreamSettings(settings)
     self.onFailure = onFailure
     sentVideoConfig = false
@@ -215,7 +243,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     lastOutputWall = 0
     pendingEncodes = 0
     timelineStart = StreamTimelineStart()
-    return true
+    return generation
   }
 
   /// The stream group of Settings, and the keyframe interval every encoder shares.
@@ -286,16 +314,34 @@ public final class ProgramStreamer: @unchecked Sendable {
     if let session { Self.setRate(rate, on: session) }
   }
 
-  private func markStarted(_ client: RTMPClient) {
+  /// Puts `client` on the session, unless a stop or a newer start has come since `generation` began.
+  private func markStarted(_ client: RTMPClient, generation: Int) -> Bool {
     lock.lock()
+    guard self.generation == generation else {
+      lock.unlock()
+      return false
+    }
     self.client = client
     isRunning = true
     lock.unlock()
     startGOPWatchdog()
+    return true
   }
 
   public func stop() {
+    stop(generation: nil)
+  }
+
+  /// Stops the streamer; given a `generation`, only while that start is still the current one.
+  /// Answers whether it stopped.
+  @discardableResult
+  private func stop(generation: Int?) -> Bool {
     lock.lock()
+    if let generation, generation != self.generation {
+      lock.unlock()
+      return false
+    }
+    self.generation += 1
     let running = isRunning
     isRunning = false
     let timer = gopTimer
@@ -318,6 +364,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     }
     client?.stop()
     if running { telemetry.recordEncodeSessionChange(delta: -1) }
+    return true
   }
 
   /// A programme picture. `captureWall` is when it was captured, on `clock`, for a picture new to
@@ -575,14 +622,15 @@ public final class ProgramStreamer: @unchecked Sendable {
     lastResetWall = absoluteNow()
     telemetry.recordStreamPendingEncodes(0)
     telemetry.recordStreamEncoderReset()
+    let current = generation
     lock.unlock()
     if let old {
       VTCompressionSessionInvalidate(old)
     }
     do {
-      try openEncoder()
+      try openEncoder(generation: current)
     } catch {
-      handleFailure(String(describing: error))
+      handleFailure(String(describing: error), generation: current)
     }
   }
 
@@ -708,7 +756,10 @@ public final class ProgramStreamer: @unchecked Sendable {
     }
   }
 
-  private func openEncoder() throws {
+  /// Opens an encoder session for start `generation` and installs it, answering whether it did: one
+  /// that opens after a stop or a newer start is invalidated again rather than left on the streamer.
+  @discardableResult
+  private func openEncoder(generation: Int) throws -> Bool {
     var session: VTCompressionSession?
     let refcon = Unmanaged.passUnretained(self).toOpaque()
     lock.lock()
@@ -773,8 +824,17 @@ public final class ProgramStreamer: @unchecked Sendable {
     )
     VTCompressionSessionPrepareToEncodeFrames(session)
     lock.lock()
+    guard self.generation == generation else {
+      lock.unlock()
+      VTCompressionSessionInvalidate(session)
+      return false
+    }
+    // A start cancelled after its encoder opened leaves that encoder for the next start to replace.
+    let replaced = self.session
     self.session = session
     lock.unlock()
+    if let replaced { VTCompressionSessionInvalidate(replaced) }
+    return true
   }
 
   /// How far above the average the encoder may go over any one second.
@@ -901,9 +961,14 @@ public final class ProgramStreamer: @unchecked Sendable {
     }
   }
 
-  private func handleFailure(_ message: String) {
-    stop()
-    onFailure?(message)
+  /// A failure of start `generation`'s session: one reported after a stop or a newer start is not
+  /// this session's to act on.
+  private func handleFailure(_ message: String, generation: Int) {
+    lock.lock()
+    let handler = onFailure
+    lock.unlock()
+    guard stop(generation: generation) else { return }
+    handler?(message)
   }
 
   private func milliseconds(_ time: CMTime) -> UInt32 {
