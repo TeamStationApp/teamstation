@@ -662,20 +662,27 @@ export async function requestDeviceStream(
             .orderBy('slot', 'asc')
             .executeTakeFirst()
     if (reused != null) {
+      const deviceModel = request.deviceModel ?? reused.deviceModel
+      // A stream made by a build that did not say it keeps its own recording
+      // learns so from the first request that does. Never the other way: the
+      // recording a phone said it holds is still there.
+      const recordsLocally =
+        reused.recordsLocally || request.recordsLocally === true
       if (
-        request.deviceModel != null &&
-        request.deviceModel !== reused.deviceModel
+        deviceModel !== reused.deviceModel ||
+        recordsLocally !== reused.recordsLocally
       ) {
         await trx
           .updateTable('live_streams')
-          .set({ device_model: request.deviceModel, updated_at: new Date() })
+          .set({
+            device_model: deviceModel,
+            records_locally: recordsLocally,
+            updated_at: new Date()
+          })
           .where('id', '=', reused.id)
           .execute()
       }
-      const row = {
-        ...asRow(reused),
-        deviceModel: request.deviceModel ?? reused.deviceModel
-      }
+      const row = { ...asRow(reused), deviceModel, recordsLocally }
       return { row, key: revealKey(request.sessionSecret, row), created: false }
     }
 
