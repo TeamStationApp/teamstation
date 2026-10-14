@@ -139,6 +139,7 @@ describe('the live sweep', function () {
       verifiedAt?: Date | null
       deleteAfter?: Date | null
       updatedAt?: Date
+      replacedBy?: string
     },
     shape: 'packed' | 'segments'
   ): Promise<void> {
@@ -163,6 +164,8 @@ describe('the live sweep', function () {
         status: 'ready',
         spaces_verified_at: row.verifiedAt ?? null,
         local_delete_after: row.deleteAfter ?? null,
+        replaced_by: row.replacedBy ?? null,
+        hidden: row.replacedBy != null,
         created_at: row.updatedAt ?? LONG_AGO,
         updated_at: row.updatedAt ?? LONG_AGO
       })
@@ -248,5 +251,38 @@ describe('the live sweep', function () {
       [...held.keys()].some(key => key.includes('vid_packed/video.mp4')),
       'the Space was actually written to'
     ).equals(true)
+  })
+
+  it('copies a phone upload replaced do not keep a failed recording from the Space', async function () {
+    if (options == null) this.skip()
+    held = new Map()
+    // What Stop and then Upload Recording leaves behind: the live copy is
+    // finished while it is already replaced, so it stays `local`, `ready` and
+    // in its segments, with an `updated_at` that never moves again. Five of
+    // them older than anything else filled the whole window the retry reads.
+    await makeVideo('vid_upload', { storage: 'spaces' }, 'packed')
+    for (let i = 0; i < 5; i++) {
+      await makeVideo(
+        `vid_replaced${i}`,
+        {
+          storage: 'local',
+          replacedBy: 'vid_upload',
+          updatedAt: new Date(Date.now() - 86_400_000 + i)
+        },
+        'segments'
+      )
+    }
+    await makeVideo('vid_failed', { storage: 'local' }, 'packed')
+
+    await sweepLocalCopies(options)
+
+    expect(
+      await storageOf('vid_failed'),
+      'the recording the Space never took is tried again'
+    ).equals('spaces')
+    expect(
+      await storageOf('vid_replaced0'),
+      'a replaced copy is left for the purge'
+    ).equals('local')
   })
 })

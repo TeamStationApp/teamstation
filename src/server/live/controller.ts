@@ -291,12 +291,18 @@ async function retryTheSpace(current: LiveControllerOptions): Promise<void> {
   // `updated_at` that never moves, so it sits at the head of this order for
   // good — and asking only for the head would mean one broken game stopping
   // every later one from ever reaching the Space.
+  //
+  // A live copy an upload replaced is not waiting for the Space at all: it
+  // was finished already replaced, so it stays here in its segments for the
+  // month the replacement may be undone, with an `updated_at` that never
+  // moves. Left in, five of them would fill this window for that month.
   const rows = await db
     .selectFrom('videos')
     .select(['id'])
     .where('kind', '=', 'live')
     .where('status', '=', 'ready')
     .where('storage', '=', 'local')
+    .where('replaced_by', 'is', null)
     .where('updated_at', '<', stale)
     .orderBy('updated_at', 'asc')
     .limit(5)
