@@ -1248,6 +1248,36 @@ class PhoneStreamEngineTest {
     }
 
     @Test
+    fun aResumeWhosePartCannotOpenClosesTheTakeAndTheNextRecordWritesItsOwn() {
+        val first = opened()
+        start(first)
+        capture(3.0)
+        runBlocking { first.abandonForTesting() }
+        val second = opened()
+        // The resumed part opens, then its encoder will not: the part is finished and the take closed.
+        failVideo = true
+        assertTrue(runBlocking { second.resumeInterrupted(request) })
+        assertFalse(second.encoder.running)
+        assertFalse(second.recordingSession.isRecording)
+        assertFalse(second.isRecording)
+        assertTrue(second.isStreaming)
+        assertEquals(PhoneStreamError.RECORDING_FAILED, on { second.status }.error)
+        val resumed = runBlocking { second.recordings() }.single()
+        assertNotNull(resumed.endedAt)
+        runBlocking { second.stopRecording() }
+        // Record on another stream writes a take of its own, into files of its own.
+        failVideo = false
+        start(second, stream = "s2")
+        capture(1.0)
+        runBlocking { second.stopRecording() }
+        val takes = runBlocking { second.recordings() }
+        val own = second.index.recording(takes.first { it.liveStreamId == "s2" }.recordingID)!!.programFilenames
+        val old = second.index.recording(resumed.recordingID)!!.programFilenames
+        assertEquals(1, own.size)
+        assertTrue(own.none { it in old })
+    }
+
+    @Test
     fun aKilledTakeOnAStreamNoLongerWantedIsClosedWhereItGotTo() {
         val first = opened()
         start(first)
