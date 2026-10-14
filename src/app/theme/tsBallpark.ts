@@ -137,6 +137,8 @@ export const tsBallpark: Theme = {
   successColor: palette.winInk,
   warningColor: palette.gold,
   dangerColor: palette.crimson,
+  addEventCardColor: palette.blue,
+  addEventCardTextColor: '#FFFFFF',
   linkTextColor: palette.blue,
   liveColor: palette.liveRed,
   scheduledColor: palette.ash,

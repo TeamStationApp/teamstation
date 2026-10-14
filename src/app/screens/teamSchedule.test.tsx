@@ -109,7 +109,7 @@ afterEach(async function () {
 
 describe('schedule event creation entry', () => {
   for (const season of ['normal', 'empty'] as const)
-    it(`ends a ${season} schedule with a centered dashed Add Event card`, async () => {
+    it(`ends a ${season} schedule with a centered blue Add Event card`, async () => {
       let creates = 0
       await mount(season, 'schedule', fixtureClient(season), () => {
         creates++
@@ -119,7 +119,8 @@ describe('schedule event creation entry', () => {
       )!
       expect(card).not.equals(null)
       expect(card.parentElement!.lastElementChild).equals(card)
-      expect(getComputedStyle(card).borderTopStyle).equals('dashed')
+      expect(getComputedStyle(card).backgroundColor).equals('rgb(21, 101, 192)')
+      expect(getComputedStyle(card).borderTopStyle).not.equals('dashed')
       expect(getComputedStyle(card).alignItems).equals('center')
       expect(getComputedStyle(card).justifyContent).equals('center')
       await act(async () => {
