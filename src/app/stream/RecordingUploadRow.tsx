@@ -27,6 +27,9 @@ export type UploadRowState =
  *   `failed` event).
  * - A progress event wins over the catalog's row, which is only read again
  *   when an upload lands or fails, or the list is polled.
+ * - Until one is heard, a running upload shows where the engine said it stood
+ *   when the list was read: one resumed at launch reported before anything
+ *   listened, and its row starts from there, not from nothing.
  * - An upload the catalog has open but that is not running in this process
  *   was cut off: it says so, and Retry carries on from the server's parts.
  */
@@ -37,6 +40,7 @@ export function uploadRowState(
 ): UploadRowState {
   if (recording.uploadedAt != null) return { kind: 'done' }
   if (cancelled) return { kind: 'ready' }
+  progress ??= recording.uploadProgress ?? undefined
   if (progress != null) {
     if (progress.state === 'uploaded') return { kind: 'done' }
     if (progress.state === 'failed')

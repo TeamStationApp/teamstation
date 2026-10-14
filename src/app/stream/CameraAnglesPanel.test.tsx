@@ -790,6 +790,44 @@ describe('the cameras on a game, on a phone', function () {
     expect(fake.added).deep.equals([])
   })
 
+  it('starts a running upload’s row where the engine says it stands, then follows its reports', async function () {
+    // Resumed at launch, the upload reported before this panel listened: its
+    // row read 0% until the next report, which came only as a part landed.
+    const native = fakePhoneStreamModule({
+      capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },
+      recordings: [
+        take({
+          uploadId: 'upl_1',
+          uploadRunning: true,
+          uploadProgress: {
+            liveStreamId: 'liv_1',
+            state: 'uploading',
+            fraction: 0.52,
+            bytesSent: 52,
+            bytesTotal: 100
+          }
+        })
+      ]
+    })
+    await mount(fakeClient(), undefined, native)
+    expect(byTestId('upload-progress-liv_1')?.textContent).equals(
+      'Uploading 52%'
+    )
+    await act(async () => {
+      native.emitUpload({
+        liveStreamId: 'liv_1',
+        state: 'uploading',
+        fraction: 0.61,
+        bytesSent: 61,
+        bytesTotal: 100
+      })
+      await delay(20)
+    })
+    expect(byTestId('upload-progress-liv_1')?.textContent).equals(
+      'Uploading 61%'
+    )
+  })
+
   it('says an upload cut off in another run was interrupted, and Retry carries it on', async function () {
     const native = fakePhoneStreamModule({
       capabilities: { supported: true, deviceModel: 'iPhone 13 Pro' },

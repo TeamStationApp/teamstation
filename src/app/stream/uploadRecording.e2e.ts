@@ -6,7 +6,9 @@
 //   TS_STREAM_ANDROID_SERIAL=<the Pixel 10>, or TS_STREAM_IOS_UDID=<an iPhone
 //     or its simulator> when there is no Pixel
 //   [TS_STREAM_ANGLE=<the angle that phone recorded, First Base>]
-//   [TS_STREAM_KILL_AT=<the upload's percentage at which the app is stopped, 30>]
+//   [TS_STREAM_KILL_AT=<the upload's percentage at which the app is stopped, 30;
+//     past the first 32 MB part's share, so the server holds a part to resume
+//     from>]
 //   [TS_STREAM_OTHER_IOS_UDID=<the other phone, which must stop showing
 //     "not uploaded">]
 //   [DIRECTOR_DEVICE_UDID=<the iPad Pro M4 running Director>]
@@ -15,8 +17,9 @@
 //   1. Slide to Stop, then Close.
 //   2. Upload Recording and its caption show; tap it.
 //   3. At TS_STREAM_KILL_AT %, stopApp; launchApp and open the game: the
-//      progress shows again (upload-recording-progress.png), carrying on,
-//      until the row goes.
+//      progress shows again (upload-recording-progress.png) at the share the
+//      server already holds, above 0%, and rises at least twice, never going
+//      back, until the row goes.
 //   4. "…" on Center Field, then End. With Director on the iPad, after 60 s
 //      no new Center Field stream exists, and Director stays off the air until
 //      it is uploaded from Director's Upload menu and started again by hand,
@@ -152,9 +155,16 @@ async function main(): Promise<void> {
     const resumed = await progressOf(phone, stream.id)
     say(`$ assertVisible upload-progress-${stream.id}: ${resumed ?? 'none'}%`)
     assert(resumed != null, 'the progress shows again after the relaunch')
+    // Resumed at launch, the upload has already said where it stands; the row
+    // reads that, not 0% until the next part lands.
+    assert(
+      resumed > 0,
+      `the relaunched row starts where the upload stands, not at 0% (stopped at ${seen}%; stop past the first part)`
+    )
     await phone.scrollTo({ id: `upload-progress-${stream.id}` })
     await phone.shot('upload-recording-progress.png')
     const marks: string[] = [`${resumed}%`]
+    const climb: number[] = [resumed]
     for (const until = Date.now() + 15 * 60000; ;) {
       const now = await progressOf(phone, stream.id)
       if (
@@ -165,11 +175,27 @@ async function main(): Promise<void> {
         )) == null
       )
         break
-      if (now != null && marks.at(-1) !== `${now}%`) marks.push(`${now}%`)
+      if (now != null && marks.at(-1) !== `${now}%`) {
+        marks.push(`${now}%`)
+        climb.push(now)
+      }
       assert(Date.now() < until, 'the upload landed')
       await sleep(1000)
     }
     say(`$ assertNotVisible ${rowId} (no progress, button or Retry)`)
+    // It moves within a part, so a part of a slow uplink shows the bar
+    // climbing rather than sitting still and then jumping.
+    const rises = climb.filter(
+      (value, index) => index > 0 && value > climb[index - 1]
+    ).length
+    assert(
+      climb.every((value, index) => index === 0 || value >= climb[index - 1]),
+      `the progress never goes back: ${marks.join(' → ')}`
+    )
+    assert(
+      rises >= 2 && climb.filter(value => value < 100).length >= 3,
+      `the progress rises at least twice before it completes: ${marks.join(' → ')}`
+    )
     results.push(
       `3 stopApp at ${seen}%; after launchApp the row read ${marks.join(' → ')}, then went`
     )
