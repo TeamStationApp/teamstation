@@ -127,6 +127,11 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     private val uploads = mutableMapOf<Long, Deferred<String>>()
     private val uploadServers = mutableMapOf<Long, Pair<String, String>>()
 
+    /** What the last export did: copied a take unbroken, or rebuilt it, and why. */
+    @Volatile
+    internal var lastExport: ProgrammeExport.Result? = null
+        private set
+
     /** Where each running upload stands, by take, for a host that starts listening part-way. Told from the network's thread too. */
     private val uploadProgress = mutableMapOf<Long, PhoneUploadProgress>()
 
@@ -747,7 +752,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                         aac.close()
                     }
                 } ?: throw PhoneStreamException(PhoneStreamError.RECORDING_FAILED, "no coded silence")
-                ProgrammeExport.export(
+                lastExport = ProgrammeExport.export(
                     parts = summary.programFilenames.map { File(environment.storage.program, it) },
                     anchors = index.programAnchors(id),
                     resumeCount = summary.resumeCount,
