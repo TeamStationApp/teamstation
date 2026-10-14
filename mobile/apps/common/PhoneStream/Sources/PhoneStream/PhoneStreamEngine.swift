@@ -858,13 +858,19 @@ public final class PhoneStreamEngine {
   /// Exports the take of `liveStreamId` and sends it as that stream's replacement. Answers the video
   /// it became. An upload of the same take already running in this process is the one returned.
   public func uploadRecording(liveStreamId: String, apiBase: URL, token: String, title: String) async throws -> String {
-    guard let recording = try catalog.recordings().first(where: { $0.liveStreamId == liveStreamId }) else {
+    guard let found = try catalog.recordings().first(where: { $0.liveStreamId == liveStreamId }) else {
       throw PhoneStreamError.noRecording
     }
-    if let videoId = recording.videoId, recording.isUploaded { return videoId }
-    if let running = uploads[recording.recordingID] { return try await running.value }
+    if let videoId = found.videoId, found.isUploaded { return videoId }
+    if let running = uploads[found.recordingID] { return try await running.value }
     await partFinished()
     if stream?.liveStreamId == liveStreamId { throw PhoneStreamError.stillRecording }
+    // Read again after the finish: it wrote the take's end, which the export is cut to, and may have
+    // marked it stopped for low storage. And a second Upload tap that waited for the same finish
+    // finds the first one's upload running, rather than starting another beside it.
+    guard let recording = try catalog.recording(found.recordingID) else { throw PhoneStreamError.noRecording }
+    if let videoId = recording.videoId, recording.isUploaded { return videoId }
+    if let running = uploads[recording.recordingID] { return try await running.value }
     let server = PhoneStreamRequest(apiBase: apiBase, token: token, deviceId: "").serverURL
     return try await startUpload(recording, server: server, token: token, title: title).value
   }
