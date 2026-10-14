@@ -663,6 +663,7 @@ export const enUs = {
     'There is not enough free space on this phone to record.',
   stream_error_uploading: '%s is still uploading',
   stream_error_failed: 'That did not work: %s',
+  stream_camera_unavailable: 'Camera unavailable',
   stream_angle_live: 'Live',
   stream_angle_idle: 'Idle',
   stream_angle_ended: 'Ended',

@@ -619,6 +619,36 @@ describe('the streaming screen', function () {
     )
   })
 
+  it('says the camera is unavailable while the engine reports it lost, and offers no Record', async function () {
+    const h = await mount()
+    await emit(h.native, {})
+    expect(byTestId('camera-unavailable')).equals(null)
+    await emit(h.native, { error: 'cameraUnavailable' })
+    expect(byTestId('camera-unavailable')?.textContent).equals(
+      'Camera unavailable'
+    )
+    expect(byTestId('broadcast-button')?.getAttribute('aria-disabled')).equals(
+      'true'
+    )
+    await press('broadcast-button')
+    expect(calls(h.native, 'startRecording')).has.length(0)
+    // Lost mid-take: the stop control still works.
+    await emit(h.native, {
+      phase: 'live',
+      isRecording: true,
+      error: 'cameraUnavailable'
+    })
+    expect(byTestId('camera-unavailable')).not.equals(null)
+    await press('broadcast-button')
+    expect(byTestId('slide-to-stop-track')).not.equals(null)
+    await press('slide-to-stop-dismiss')
+    // Back: the message goes and Record is offered again.
+    await emit(h.native, {})
+    expect(byTestId('camera-unavailable')).equals(null)
+    await press('broadcast-button')
+    expect(calls(h.native, 'startRecording')).has.length(1)
+  })
+
   it('words each refusal for the person holding the phone', function () {
     expect(describeRefusal(new PhoneStreamError('permission'), 'A')).contains(
       'camera and the microphone'
@@ -632,6 +662,9 @@ describe('the streaming screen', function () {
     expect(
       describeRefusal(new PhoneStreamError('notReady', 'not ready'), 'A')
     ).equals('That did not work: not ready')
+    expect(
+      describeRefusal(new PhoneStreamError('cameraUnavailable'), 'A')
+    ).equals('Camera unavailable')
     expect(describeRefusal('gone', 'A')).equals('That did not work: gone')
   })
 })
