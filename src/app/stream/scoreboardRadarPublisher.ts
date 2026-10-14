@@ -210,6 +210,9 @@ export function makeScoreboardRadarPublisher(
       const devices = state?.enabled === true ? state.devices : []
       active = devices.length > 0
       if (!active) {
+        // A clear left to fire now would wait in `pending` and be the first
+        // thing the next radar's socket sends.
+        clearHold()
         disconnect()
       } else {
         connect()
