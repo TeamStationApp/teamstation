@@ -768,8 +768,11 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                 {scopeOf(stats, filter, player?.teams)}
               </Text>
               <Button
-                label={lstrings.player_filter}
+                label={filterName(stats, filter, player?.teams)}
+                accessibilityLabel="Filter stats"
+                icon="filter_alt"
                 kind="secondary"
+                compact
                 onPress={() => {
                   setFiltering('stats')
                 }}
