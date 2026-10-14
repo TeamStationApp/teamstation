@@ -489,7 +489,11 @@ export function watchMessageAnchor(
     document.removeEventListener('scroll', measure, true)
   }
 }
-export function bindPopupKeys(view: unknown, close: () => void): () => void {
+export function bindPopupKeys(
+  view: unknown,
+  close: () => void,
+  trap = true
+): () => void {
   if (!(view instanceof HTMLElement)) return () => {}
   const previous = document.activeElement
   const buttons = (): HTMLElement[] =>
@@ -504,6 +508,7 @@ export function bindPopupKeys(view: unknown, close: () => void): () => void {
       close()
       return
     }
+    if (!trap) return
     const nodes = buttons()
     const index = nodes.indexOf(document.activeElement as HTMLElement)
     let next: number | undefined
@@ -519,10 +524,11 @@ export function bindPopupKeys(view: unknown, close: () => void): () => void {
     }
   }
   document.addEventListener('keydown', key, true)
-  buttons()[0]?.focus()
+  if (trap) buttons()[0]?.focus()
   return () => {
     document.removeEventListener('keydown', key, true)
     if (
+      trap &&
       previous instanceof HTMLElement &&
       previous.isConnected &&
       (document.activeElement === document.body ||

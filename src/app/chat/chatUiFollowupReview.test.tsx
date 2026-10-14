@@ -11,7 +11,14 @@ import { ThemeProvider } from '../theme/ThemeContext'
 import type { PickedFile } from './chatFileTypes'
 import { ChatListScreen } from './ChatListScreen'
 import { ChatOverlayHost } from './ChatOverlayHost'
-import { chat, member, message, view } from './chatViews.test.helpers'
+import {
+  chat,
+  measureChatTestViewport,
+  member,
+  message,
+  settleChatMessageActions,
+  view
+} from './chatViews.test.helpers'
 import * as WebScroll from './chatWebInteractions'
 import * as NativeScroll from './chatWebInteractions.native'
 import { ChatWorkspace } from './ChatWorkspace'
@@ -32,6 +39,7 @@ import { MessageMenu } from './MessageMenu'
 import type { ChatScreenEngine } from './screenEngine'
 
 let root: Root | undefined
+let restoreViewport: (() => void) | undefined
 const originalPointer = Object.getOwnPropertyDescriptor(
   globalThis,
   'matchMedia'
@@ -40,6 +48,8 @@ const originalVibration = Object.getOwnPropertyDescriptor(navigator, 'vibrate')
 
 afterEach(async function () {
   await unmount()
+  restoreViewport?.()
+  restoreViewport = undefined
   if (originalPointer != null)
     Object.defineProperty(globalThis, 'matchMedia', originalPointer)
   else Reflect.deleteProperty(globalThis, 'matchMedia')
@@ -53,6 +63,7 @@ const wait = async (ms = 20): Promise<void> => {
 }
 
 async function render(element: React.ReactElement, fine = true): Promise<void> {
+  restoreViewport ??= measureChatTestViewport()
   Object.defineProperty(globalThis, 'matchMedia', {
     configurable: true,
     value: () => ({ matches: fine })
@@ -66,6 +77,7 @@ async function render(element: React.ReactElement, fine = true): Promise<void> {
     root!.render(<ThemeProvider>{element}</ThemeProvider>)
     await wait()
   })
+  await settleChatMessageActions()
 }
 
 async function unmount(): Promise<void> {
@@ -92,6 +104,7 @@ async function press(
     button(label, within).click()
     await wait()
   })
+  await settleChatMessageActions()
 }
 
 function input(): HTMLTextAreaElement {
@@ -868,6 +881,8 @@ async function returningList(
 }> {
   const engine = new ReviewEngine()
   const refreshed = deferred<ConversationListItem[]>()
+  if (navigationHeight > 0)
+    restoreViewport ??= measureChatTestViewport({ width: 390, height: 844 })
   engine.refreshWork = refreshed.promise
   const offsets: number[] = []
   const anchors: Array<{ id: string; relativeY: number } | undefined> = []
@@ -1154,6 +1169,153 @@ function terminalDraft(): ChatDraft {
 }
 
 describe('chat measured chrome reader anchors', function () {
+  it('holds the actual reader through spotlight opening arrivals composer growth and closing, then leaves new posts below', async function () {
+    const engine = new ReviewEngine()
+    engine.update('cnv_aurora', { messages: [original()] })
+    const state = newChatWorkspaceState()
+    state.drafts.set('cnv_aurora', {
+      ...terminalDraft(),
+      scrollOffset: 1800,
+      followNewest: true
+    })
+    await render(
+      <ChatOverlayHost>
+        <ChatWorkspace
+          engine={engine}
+          userId={1}
+          state={state}
+          conversationId="cnv_aurora"
+          onOpen={() => {}}
+          onMembers={() => {}}
+          onNewMessage={() => {}}
+          onTitle={() => {}}
+        />
+      </ChatOverlayHost>,
+      false
+    )
+    await layout(
+      document.querySelector('[data-testid="chat-workspace"]')!,
+      390,
+      844
+    )
+    const reading = terminalReadingPane()
+    await reading.measure()
+    const row = document.querySelector<HTMLElement>(
+      '[data-testid="chat-message-msg_original"]'
+    )!.parentElement!
+    Object.defineProperty(row, 'offsetTop', { configurable: true, value: 1800 })
+    row.getBoundingClientRect = () =>
+      new window.DOMRect(0, 1800 - reading.node.scrollTop, 640, 180)
+    await layout(row, 640, 180, 1800)
+    await reading.deliver(
+      renderedReadingCallbacks(reading.node),
+      'onScroll',
+      1800
+    )
+    document.querySelector<HTMLElement>(
+      '[data-testid="chat-bubble-msg_original"]'
+    )!.getBoundingClientRect = () => new window.DOMRect(42, 100, 210, 180)
+    reading.node.scroll = options => {
+      const top = (options as ScrollToOptions).top ?? 0
+      reading.moves.push(top)
+      reading.node.scrollTop = Math.min(
+        top,
+        reading.node.scrollHeight - reading.node.clientHeight
+      )
+    }
+    const content = (): void => {
+      Object.defineProperty(reading.node, 'scrollHeight', {
+        configurable: true,
+        value: 3000
+      })
+      const callbacks = renderedReadingCallbacks(
+        reading.node
+      ) as ScrollCallbacks & {
+        onContentSizeChange: (width: number, height: number) => void
+      }
+      callbacks.onContentSizeChange(640, 3000)
+    }
+    reading.moves.length = 0
+    await act(async () => {
+      button('More message actions').click()
+      await wait(20)
+      engine.update('cnv_aurora', {
+        messages: [original(), { ...original('msg_arrival'), seq: 2 }]
+      })
+      content()
+      await wait(30)
+    })
+    await settleChatMessageActions('open')
+    expect(
+      reading.node.scrollTop,
+      'Opening arrival keeps the physical reader'
+    ).equals(1800)
+    await layout(
+      document.querySelector('[data-testid="chat-composer-band"]')!,
+      640,
+      120
+    )
+    await act(async () => {
+      content()
+      await wait(40)
+    })
+    expect(
+      reading.node.scrollTop,
+      'Composer clearance cannot follow the arriving post'
+    ).equals(1800)
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[data-testid="chat-message-spotlight"]')!
+        .dispatchEvent(
+          new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+        )
+      await wait(20)
+      content()
+      await wait(30)
+    })
+    await settleChatMessageActions('closed')
+    expect(
+      reading.node.scrollTop,
+      'Closing keeps the same row coordinate'
+    ).equals(1800)
+    expect(
+      reading.moves.every(move => move === 1800),
+      'No stage asks to follow the new end'
+    ).equals(true)
+    expect(state.drafts.get('cnv_aurora')!.text).equals('Current unsent body')
+    expect(state.drafts.get('cnv_aurora')!.followNewest).equals(false)
+    reading.moves.length = 0
+    await act(async () => {
+      content()
+      await wait(40)
+    })
+    expect(
+      reading.moves,
+      'Dismissal retains the reader with unseen posts below'
+    ).deep.equals([])
+    await reading.deliver(
+      renderedReadingCallbacks(reading.node),
+      'onScroll',
+      2600
+    )
+    await act(async () => {
+      Object.defineProperty(reading.node, 'scrollHeight', {
+        configurable: true,
+        value: 3400
+      })
+      ;(
+        renderedReadingCallbacks(reading.node) as ScrollCallbacks & {
+          onContentSizeChange: (width: number, height: number) => void
+        }
+      ).onContentSizeChange(640, 3400)
+      await wait(40)
+    })
+    expect(
+      reading.node.scrollTop,
+      'Returning to the end resumes ordinary following'
+    ).equals(3000)
+  })
+
   it('keeps the same partially visible tall row when only the measured composer grows', async function () {
     const engine = new ReviewEngine()
     engine.update('cnv_aurora', { messages: [original()] })
@@ -1466,6 +1628,14 @@ async function nativeGesture(kind: NativeTarget): Promise<{
   const body = document.querySelector<HTMLElement>(
     `[data-testid="chat-bubble-${value.id}"]`
   )!
+  Object.defineProperty(body, 'measureInWindow', {
+    configurable: true,
+    value: (
+      accept: (x: number, y: number, width: number, height: number) => void
+    ) => {
+      accept(24, 160, 260, 100)
+    }
+  })
   const target =
     kind === 'body'
       ? body
@@ -5920,3 +6090,236 @@ function holdViewportCaptureCallbacks(node: HTMLElement): {
     }
   }
 }
+
+async function stationaryHoldPane(): Promise<{
+  reading: ReturnType<typeof terminalReadingPane>
+  target: HTMLElement
+  pulses: number[]
+  engine: ReviewEngine
+  scroll: (x: number, y: number, height?: number) => void
+  drag: () => void
+}> {
+  const engine = new ReviewEngine()
+  engine.update('cnv_aurora', { messages: [original()] })
+  const state = newChatWorkspaceState()
+  state.drafts.set('cnv_aurora', { ...terminalDraft(), scrollOffset: 700 })
+  const pulses: number[] = []
+  Object.defineProperty(navigator, 'vibrate', {
+    configurable: true,
+    value: (value: number) => {
+      pulses.push(value)
+      return true
+    }
+  })
+  restoreViewport = measureChatTestViewport({ width: 390, height: 844 })
+  await render(
+    <HeaderSlotProvider headerHeight={48} onHandoff={() => {}}>
+      <ChatOverlayHost>
+        <ChatWorkspace
+          engine={engine}
+          userId={1}
+          state={state}
+          conversationId="cnv_aurora"
+          onOpen={() => {}}
+          onMembers={() => {}}
+          onNewMessage={() => {}}
+          onTitle={() => {}}
+        />
+      </ChatOverlayHost>
+    </HeaderSlotProvider>,
+    false
+  )
+  const reading = terminalReadingPane()
+  await reading.measure()
+  const target = document.querySelector<HTMLElement>(
+    '[data-testid="chat-bubble-msg_original"]'
+  )!
+  Object.defineProperty(target, 'measureInWindow', {
+    configurable: true,
+    value: (
+      accept: (x: number, y: number, width: number, height: number) => void
+    ) => {
+      accept(48, 160, 260, 100)
+    }
+  })
+  const callbacks = renderedReadingCallbacks(
+    reading.node
+  ) as ScrollCallbacks & {
+    onScrollBeginDrag: () => void
+  }
+  await act(async () => {
+    await wait(150)
+    callbacks.onScroll!({
+      nativeEvent: {
+        contentOffset: { x: 0, y: 700 },
+        contentSize: { width: 640, height: 2200 },
+        layoutMeasurement: { width: 640, height: 400 }
+      }
+    })
+  })
+  return {
+    reading,
+    target,
+    engine,
+    pulses,
+    scroll: (x, y, height = 2200) => {
+      callbacks.onScroll!({
+        nativeEvent: {
+          contentOffset: { x, y },
+          contentSize: { width: 640, height },
+          layoutMeasurement: { width: 640, height: 400 }
+        }
+      })
+    },
+    drag: () => {
+      callbacks.onScrollBeginDrag()
+    }
+  }
+}
+
+const holdMouse = (
+  target: HTMLElement,
+  type: 'mousedown' | 'mouseup'
+): void => {
+  target.dispatchEvent(
+    new window.MouseEvent(type, {
+      bubbles: true,
+      button: 0,
+      buttons: type === 'mousedown' ? 1 : 0,
+      clientX: 100,
+      clientY: 180
+    })
+  )
+}
+
+describe('stationary message hold after scrolling', function () {
+  it('recognizes one hold when the RNW scroll-end callback repeats an unchanged offset', async function () {
+    const { reading, target, pulses } = await stationaryHoldPane()
+    await act(async () => {
+      reading.node.scrollTop = 700
+      reading.node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      // Start after the real offset changed, before RNW's 100ms end callback.
+      await wait(40)
+      holdMouse(target, 'mousedown')
+      await wait(560)
+    })
+    try {
+      expect(reading.node.scrollTop, 'No movement during the hold').equals(700)
+      expect(pulses, 'One 500ms recognition').deep.equals([8])
+      expect(
+        document.querySelector('[data-testid="chat-message-spotlight"]'),
+        'Stationary hold survives a duplicate scroll-end notification'
+      ).not.equals(null)
+      await settleChatMessageActions('open')
+      expect(button('Reply')).not.equals(undefined)
+    } finally {
+      await act(async () => {
+        holdMouse(target, 'mouseup')
+      })
+    }
+  })
+
+  for (const [name, x, y] of [
+    ['horizontal movement', 1, 700],
+    ['vertical movement', 0, 701],
+    ['fractional movement', 0, 700.25],
+    ['invalid horizontal coordinate', Number.NaN, 700],
+    ['invalid vertical coordinate', 0, Number.NaN]
+  ] as const)
+    it(`cancels an armed hold on ${name}`, async function () {
+      const { target, scroll, pulses } = await stationaryHoldPane()
+      const callbacks = renderedPressCallbacks(target)
+      await nativePress(callbacks, 'onPressIn', contact(1000))
+      await act(async () => {
+        scroll(x, y)
+      })
+      await nativePress(callbacks, 'onLongPress', contact(1500))
+      expect(pulses).deep.equals([])
+      expect(
+        document.querySelector('[data-testid="chat-message-spotlight"]')
+      ).equals(null)
+    })
+
+  it('cancels an armed hold on explicit drag before the offset changes', async function () {
+    const { target, drag, pulses } = await stationaryHoldPane()
+    const callbacks = renderedPressCallbacks(target)
+    await nativePress(callbacks, 'onPressIn', contact(1000))
+    await act(async () => {
+      drag()
+    })
+    await nativePress(callbacks, 'onLongPress', contact(1500))
+    expect(pulses).deep.equals([])
+    expect(
+      document.querySelector('[data-testid="chat-message-spotlight"]')
+    ).equals(null)
+  })
+
+  it('keeps early release from becoming a hold after the repeated scroll-end packet', async function () {
+    const { reading, target, pulses } = await stationaryHoldPane()
+    await act(async () => {
+      reading.node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      await wait(40)
+      holdMouse(target, 'mousedown')
+      await wait(80)
+      holdMouse(target, 'mouseup')
+      await wait(520)
+    })
+    expect(pulses).deep.equals([])
+    expect(
+      document.querySelector('[data-testid="chat-message-spotlight"]')
+    ).equals(null)
+  })
+
+  for (const change of [
+    'duplicate',
+    'x',
+    'y',
+    'drag',
+    'invalid',
+    'permission',
+    'unmount'
+  ] as const)
+    it(`retains pending measurement ownership through ${change}`, async function () {
+      const { target, scroll, drag, pulses, engine } =
+        await stationaryHoldPane()
+      let accept:
+        | ((x: number, y: number, width: number, height: number) => void)
+        | undefined
+      Object.defineProperty(target, 'measureInWindow', {
+        configurable: true,
+        value: (callback: typeof accept) => {
+          accept = callback
+        }
+      })
+      const callbacks = renderedPressCallbacks(target)
+      await nativePress(callbacks, 'onPressIn', contact(1000))
+      await nativePress(callbacks, 'onLongPress', contact(1500))
+      expect(pulses).deep.equals([8])
+      expect(accept).not.equals(undefined)
+      expect(
+        document.querySelector('[data-testid="chat-message-spotlight"]')
+      ).equals(null)
+      await act(async () => {
+        if (change === 'duplicate') scroll(0, 700, 2300)
+        else if (change === 'x') scroll(1, 700)
+        else if (change === 'y') scroll(0, 701)
+        else if (change === 'drag') drag()
+        else if (change === 'invalid') scroll(0, Number.NaN)
+        else if (change === 'permission') {
+          engine.update('cnv_aurora', { composer: 'locked' })
+          await wait()
+        } else await unmount()
+      })
+      await act(async () => {
+        accept!(48, 160, 260, 100)
+      })
+      expect(
+        document.querySelector('[data-testid="chat-message-spotlight"]') != null
+      ).equals(change === 'duplicate')
+      expect(pulses, 'No duplicated recognition').deep.equals([8])
+      if (change === 'duplicate') {
+        await settleChatMessageActions('open')
+        expect(button('Reply')).not.equals(undefined)
+      }
+    })
+})
