@@ -19,7 +19,9 @@ export function isRestoringPopupFocus(): boolean {
 export function bindPopupKeys(
   _view: unknown,
   _close: () => void,
-  _trap = true
+  _trap = true,
+  _initialField = false,
+  _rowSelector?: string
 ): () => void {
   return () => {}
 }
@@ -70,4 +72,15 @@ export function watchVisualViewport(
   _update: (value: { bottom: number; keyboardOpen: boolean }) => void
 ): () => void {
   return () => {}
+}
+
+export function setComposerSelection(
+  view: unknown,
+  selection: { start: number; end: number }
+): void {
+  ;(
+    view as {
+      setNativeProps?: (props: { selection: typeof selection }) => void
+    } | null
+  )?.setNativeProps?.({ selection })
 }
