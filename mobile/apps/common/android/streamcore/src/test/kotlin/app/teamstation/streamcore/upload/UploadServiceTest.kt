@@ -1,5 +1,7 @@
 package app.teamstation.streamcore.upload
 
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -42,6 +44,20 @@ class UploadServiceTest {
     private fun take(): RecordedRequest = server.takeRequest(1, TimeUnit.SECONDS) ?: error("no request")
 
     private fun file(size: Int) = folder.newFile("program-20261012-100000.mp4").apply { writeBytes(ByteArray(size) { it.toByte() }) }
+
+    @Test
+    fun aCancelledPartStopsAtOnceThoughTheServerNeverAnswers() {
+        // The server takes the part and never answers: only the five-minute timeout would end the wait.
+        server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE))
+        runBlocking {
+            val sending = launch(kotlinx.coroutines.Dispatchers.IO) { client.sendPart("u1", 0, ByteArray(1_024)) }
+            take()
+            val started = System.nanoTime()
+            kotlinx.coroutines.withTimeout(5_000) { sending.cancelAndJoin() }
+            assertTrue(sending.isCancelled)
+            assertTrue((System.nanoTime() - started) / 1_000_000 < 2_000)
+        }
+    }
 
     @Test
     fun aRecordingGoesUpInPartsAndIsFollowedToItsVideo() {
