@@ -392,6 +392,16 @@ export interface PhoneStream {
     title: string
   }) => Promise<string>
   resumePendingUploads: (apiBase: string, token: string) => Promise<number>
+  /**
+   * Carries on one take's cut-off upload, as `uploadRecording` does but
+   * without asking for anything: nobody pressed a button for it.
+   */
+  resumeUpload: (options: {
+    liveStreamId: string
+    apiBase: string
+    token: string
+    title: string
+  }) => Promise<string>
   cancelUpload: (liveStreamId: string) => Promise<void>
   deleteRecording: (liveStreamId: string) => Promise<void>
   onStatus: (listener: Listener<PhoneStreamStatus>) => () => void
@@ -589,6 +599,11 @@ export function makePhoneStream(
       }),
     resumePendingUploads: async (apiBase, token) =>
       await call(async () => await need().resumePendingUploads(apiBase, token)),
+    resumeUpload: async ({ liveStreamId, apiBase, token, title }) =>
+      await call(
+        async () =>
+          await need().uploadRecording(liveStreamId, apiBase, token, title)
+      ),
     cancelUpload: async liveStreamId => {
       await call(async () => {
         await need().cancelUpload(liveStreamId)
