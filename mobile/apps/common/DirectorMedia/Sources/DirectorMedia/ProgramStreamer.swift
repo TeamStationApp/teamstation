@@ -228,6 +228,7 @@ public final class ProgramStreamer: @unchecked Sendable {
     bitrate = settings.openingBitrate
     frameRate = max(1, settings.frameRate)
     gopSeconds = settings.gopSeconds
+    aac.bitrate = settings.audioBitrate
   }
 
   static func rtmpCodec(_ codec: ProgramCodec) -> RTMPVideoCodec {
@@ -339,6 +340,8 @@ public final class ProgramStreamer: @unchecked Sendable {
     var bitrateLow: Int
     var bitrateHigh: Int
     var gopSeconds: Double
+    /// The rate the sound's encoder opens at.
+    var audioBitrate = StreamSettings.defaultAudioBitrate
   }
 
   func configurationForTesting(_ settings: StreamSettings) -> Configuration {
@@ -353,7 +356,8 @@ public final class ProgramStreamer: @unchecked Sendable {
       bitrate: bitrate,
       bitrateLow: bitrateLow,
       bitrateHigh: bitrateHigh,
-      gopSeconds: gopSeconds
+      gopSeconds: gopSeconds,
+      audioBitrate: aac.bitrate
     )
   }
 
@@ -1047,6 +1051,8 @@ final class AACPacketizer: @unchecked Sendable {
   /// The encoder's priming: packet N decodes to the input from this many samples before sample
   /// N x 1024. Read from the converter; 2,112 for Apple's AAC-LC.
   private(set) var primingSamples = 2_112
+  /// The AAC rate the next converter is made with, from the session's settings.
+  var bitrate = StreamSettings.defaultAudioBitrate
 
   func reset() {
     if let converter { AudioConverterDispose(converter) }
@@ -1103,8 +1109,8 @@ final class AACPacketizer: @unchecked Sendable {
     if AudioConverterGetProperty(converter, kAudioConverterPrimeInfo, &primeSize, &prime) == noErr {
       primingSamples = Int(prime.leadingFrames)
     }
-    var bitrate: UInt32 = 128_000
-    AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate, 4, &bitrate)
+    var rate = UInt32(bitrate)
+    AudioConverterSetProperty(converter, kAudioConverterEncodeBitRate, 4, &rate)
     // FLV AAC packet type 0 is AudioSpecificConfig (2 bytes), not Apple's MP4 magic cookie.
     audioSpecificConfig = Data([ 0x11, 0x90 ])
     self.converter = converter
