@@ -401,8 +401,21 @@ function attachHlsJs(
    * lists the video as live: wait for the playlist to open again, then load
    * it afresh. Where the player was following the game it rejoins the live
    * edge; where somebody was watching an earlier moment it stays there.
+   *
+   * Following is where the playhead is, not whether the playlist was live:
+   * at the end of the closed playlist, or within the distance hls.js itself
+   * keeps a live player behind that end, and a segment more.
    */
-  let following = false
+  let closedAt: { edgeSec: number; targetSec: number } | undefined
+  const following = (): boolean =>
+    video.ended ||
+    (closedAt != null &&
+      atLiveEdge(
+        video.currentTime,
+        closedAt.edgeSec,
+        closedAt.targetSec,
+        hls.config.liveSyncDurationCount
+      ))
   let rejoining = false
   const isLive = intent?.isLive
   const rejoiner =
@@ -415,16 +428,17 @@ function attachHlsJs(
           rejoin: () => {
             rejoining = true
             recovering = true
-            hls.config.startPosition =
-              following || video.ended ? -1 : video.currentTime
+            hls.config.startPosition = following() ? -1 : video.currentTime
             hls.loadSource(url)
           }
         })
   hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
-    if (data.details.live) {
-      following = true
-      return
-    }
+    const { details } = data
+    if (details.live) return
+    closedAt =
+      Number.isFinite(details.edge) && Number.isFinite(details.targetduration)
+        ? { edgeSec: details.edge, targetSec: details.targetduration }
+        : undefined
     rejoiner?.ended()
   })
   hls.on(Hls.Events.FRAG_BUFFERED, () => {
@@ -444,6 +458,20 @@ function attachHlsJs(
     limit?.onControl?.(null)
     hls.destroy()
   }
+}
+
+/**
+ * Whether a playhead is following a live playlist that ends at `edgeSec`:
+ * no further behind it than hls.js keeps a live player (`syncCount` target
+ * durations), and one segment more for the one it was waiting on.
+ */
+export function atLiveEdge(
+  currentSec: number,
+  edgeSec: number,
+  targetSec: number,
+  syncCount: number
+): boolean {
+  return edgeSec - currentSec <= (syncCount + 1) * targetSec
 }
 
 /**
