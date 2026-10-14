@@ -322,6 +322,7 @@ export function ConversationScreen(
     undefined
   )
   const gestureGeneration = useRef(0)
+  const gestureOffset = useRef({ x: 0, y: 0 })
   const nativeUserScroll = useRef<'drag' | 'momentum' | undefined>(undefined)
   const nativeMomentumFromDrag = useRef(false)
   const messagePositions = useRef(new Map<string, number>())
@@ -2127,7 +2128,18 @@ export function ConversationScreen(
           ]}
           keyboardShouldPersistTaps="handled"
           onScroll={event => {
-            gestureGeneration.current += 1
+            const { x = 0, y } = event.nativeEvent.contentOffset
+            const previous = gestureOffset.current
+            // RNW repeats the settled offset at scroll end. Only actual motion
+            // or an uncertain coordinate cancels a stationary message hold.
+            if (
+              !Number.isFinite(x) ||
+              !Number.isFinite(y) ||
+              x !== previous.x ||
+              y !== previous.y
+            )
+              gestureGeneration.current += 1
+            gestureOffset.current = { x, y }
             rememberNativeScroll(event)
           }}
           // A throttled Android stream need not send its last edge offset.
