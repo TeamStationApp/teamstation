@@ -238,7 +238,9 @@ public actor UploadService {
   ///
   /// Every five seconds, for a quarter of an hour: a large recording has been
   /// measured at four to seven minutes, and a lost answer is not a failure —
-  /// the work carries on either way, so the next ask picks it up.
+  /// the work carries on either way, so the next ask picks it up. A cancelled upload stops at once:
+  /// with the cancellation swallowed, its sleeps returned at once and its asks failed at once, and
+  /// it spun through the quarter hour without waiting.
   private func watch(
     uploadId: String,
     parts: Int,
@@ -248,8 +250,14 @@ public actor UploadService {
     let deadline = Date().addingTimeInterval(900)
     var last = "assembling"
     while Date() < deadline {
-      try? await Task.sleep(nanoseconds: 5 * 1_000_000_000)
-      guard let state = try? await client.uploadState(uploadId: uploadId) else { continue }
+      try await Task.sleep(nanoseconds: 5 * 1_000_000_000)
+      let state: TeamStationUploadState
+      do {
+        state = try await client.uploadState(uploadId: uploadId)
+      } catch {
+        try Task.checkCancellation()
+        continue
+      }
       switch state.state {
       case "ready":
         if let videoId = state.videoId { return videoId }
