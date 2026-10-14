@@ -14,6 +14,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.util.concurrent.Executor
 
 /** One AAC packet per 1024 samples of mix, holding its index; what is left over comes out at the end. */
 class CountingAac : StreamAudioEncoding {
@@ -70,8 +71,10 @@ class ProgramEncoderTest {
     private val anchors = mutableListOf<RecordingCatalog.ProgramAnchor>()
     private val checks = mutableListOf<ProgramSoundCheck>()
 
-    private fun encoder(settings: EncodeSettings = EncodeSettings()) =
-        ProgramEncoder(telemetry, settings, folder.root, clock = { wall }, uptime = { host }, audioEncoderFactory = { CountingAac() }).apply {
+    private fun encoder(settings: EncodeSettings = EncodeSettings(), syncExecutor: Executor = Executor(Runnable::run)) =
+        ProgramEncoder(
+            telemetry, settings, folder.root, clock = { wall }, uptime = { host }, audioEncoderFactory = { CountingAac() }, syncExecutor = syncExecutor
+        ).apply {
             setAnchorSink { recording, part, seconds, at -> anchors += RecordingCatalog.ProgramAnchor(part, seconds, at).also { assertEquals(7L, recording) } }
             setSoundCheckSink { _, check -> checks += check }
             setAnchorRecording(7)
@@ -589,5 +592,33 @@ class ProgramEncoderTest {
         encoder.finish(until = wall)
         assertFalse(encoder.running)
         assertEquals(1, failures.size)
+    }
+
+    @Test
+    fun fragmentsAreForcedToStorageOnTheirOwnThreadAndCountOnlyOnceForced() {
+        val queued = mutableListOf<Runnable>()
+        val forcedOn = mutableListOf<Thread>()
+        val encoder = encoder(syncExecutor = { queued += it })
+        encoder.forceToStorage = { forcedOn += Thread.currentThread() }
+        encoder.start(wall)
+        record(encoder, 7.0)
+        // Two fragments went to the file. Neither was forced on the thread that wrote it (the codec's
+        // output or the phone's sound), and neither counts as written until it is.
+        assertTrue(forcedOn.isEmpty())
+        assertTrue(encoder.writerHasPendingSyncForTesting)
+        // One force waits, however many fragments came meanwhile.
+        assertEquals(1, queued.size)
+        val worker = Thread { queued.removeAt(0).run() }
+        worker.start()
+        worker.join()
+        assertEquals(listOf(worker), forcedOn)
+        assertFalse(encoder.writerHasPendingSyncForTesting)
+        record(encoder, 3.5)
+        assertEquals(1, queued.size)
+        // The finish forces the file itself; a force still waiting for a finished part does nothing.
+        encoder.finish(until = wall)
+        assertEquals(2, forcedOn.size)
+        queued.removeAt(0).run()
+        assertEquals(2, forcedOn.size)
     }
 }

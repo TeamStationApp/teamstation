@@ -17,6 +17,9 @@ import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import kotlin.math.abs
@@ -68,7 +71,13 @@ class ProgramEncoder(
     /** Host uptime in seconds, which the grid is checked against. */
     private val uptime: () -> Double = SteadyWall::elapsedRealtime,
     /** The AAC encoder each part's sound track is coded with. */
-    private val audioEncoderFactory: () -> StreamAudioEncoding = { MediaCodecAacEncoder(bitrate = 192_000) }
+    private val audioEncoderFactory: () -> StreamAudioEncoding = { MediaCodecAacEncoder(bitrate = 192_000) },
+    /**
+     * Where each part's fragments are forced to storage: a thread of their own, so a slow fsync on a
+     * busy flash holds up neither the codec's output thread nor the phone's sound thread, which feeds
+     * the stream's sound too.
+     */
+    private val syncExecutor: Executor = sharedSyncExecutor
 ) {
     /** Called as the programme is written: which recording, which part, where, and when. */
     fun interface AnchorSink {
@@ -351,15 +360,24 @@ class ProgramEncoder(
         }
         deliverWriterFailure()
         drainAudio(limit = 2)
-        syncWriter()
+    }
+
+    /** A force is waiting on [syncExecutor]; fragments written meanwhile ride on it. */
+    private val syncQueued = AtomicBoolean(false)
+
+    /** A fragment reached the part's file: [syncWriter] forces it on [syncExecutor]. */
+    private fun requestSync() {
+        if (syncQueued.compareAndSet(false, true)) syncExecutor.execute(::syncWriter)
     }
 
     /**
-     * Forces what the part's writer has written to storage, outside [lock]: a slow fsync under it held
-     * up the render tick and the sound with it. A force storage refuses fails the part, as a refused
-     * write does: its fragments are not reaching storage.
+     * Forces what the part's writer has written to storage, on [syncExecutor] and outside [lock]: a
+     * slow fsync under the lock held up the render tick and the sound, and one on the writing thread
+     * held up the codec and the sound. A force storage refuses fails the part, as a refused write
+     * does: its fragments are not reaching storage.
      */
     private fun syncWriter() {
+        syncQueued.set(false)
         val target = lock.withLock { writer } ?: return
         if (target.syncPending()) return
         lock.withLock { if (writer === target) failWriterLocked(IOException("the part could not be forced to storage")) }
@@ -421,7 +439,8 @@ class ProgramEncoder(
             FragmentedMp4Writer.VideoTrack(settings.codec, settings.width, settings.height, record),
             FragmentedMp4Writer.AudioTrack(config, primingSamples = priming),
             syncEachFragment = false,
-            forceToStorage = forceToStorage
+            forceToStorage = forceToStorage,
+            onFragmentWritten = ::requestSync
         )
     }
 
@@ -471,7 +490,6 @@ class ProgramEncoder(
             queueSoundLocked(audio.samples, audio.wallClock, audio.durationSeconds)
         }
         drainAudio(limit = 8)
-        syncWriter()
     }
 
     /**
@@ -859,6 +877,11 @@ class ProgramEncoder(
 
         /** Longest the tail at Stop keeps trying. */
         const val holdSilenceDeadlineSeconds = 8.0
+
+        /** The process's one thread that forces parts to storage, made when the first part needs it. */
+        val sharedSyncExecutor: Executor by lazy {
+            Executors.newSingleThreadExecutor { Thread(it, "program-sync").apply { isDaemon = true } }
+        }
 
         /** How many AAC frames of silence the probe encodes before it reads the codec's configuration. */
         const val PROBE_FRAMES = 4
