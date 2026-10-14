@@ -29,6 +29,8 @@ export interface AppHeaderProps {
    * carried and never both at once.
    */
   handoff?: React.ReactNode
+  /** An opt-in two-line identity can grow with accessibility text size. */
+  contentHeight?: number
   /** The three destinations, on a wide window. */
   nav?: React.ReactNode
   /** The signed-in person, drawn at the right and opening their account. */
@@ -96,7 +98,8 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           styles.header,
           wide && styles.headerWide,
           {
-            height: theme.rem(3) + insets.top,
+            height:
+              Math.max(theme.rem(3), props.contentHeight ?? 0) + insets.top,
             paddingTop: insets.top,
             paddingLeft: Math.max(margin, insets.left),
             paddingRight: Math.max(margin, insets.right)

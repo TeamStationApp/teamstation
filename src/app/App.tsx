@@ -56,6 +56,7 @@ import {
   useHandoffSlot
 } from './components'
 import { ChoiceSheet } from './components/ChoiceSheet'
+import { FLOATING_HEIGHT_REM } from './components/AppNav'
 import { errorScreen } from './components/ErrorFallback'
 import { OfflineBanner } from './components/OfflineBanner'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
@@ -397,9 +398,13 @@ function Shell(props: AppProps): React.ReactElement {
   // player both have to clear the header, and a second copy of its height is a
   // second thing to forget.
   const [headerHeight, setHeaderHeight] = useState(48)
+  const [navigationHeight, setNavigationHeight] = useState(
+    theme.rem(FLOATING_HEIGHT_REM)
+  )
   // What the screen on top has handed up: a team's name, a row of filter
   // pills, a game's score. The header draws it and never anything else.
-  const { handoff, setHandoff } = useHandoffSlot()
+  const { handoff, setHandoff, handoffHeight, setHandoffHeight } =
+    useHandoffSlot()
   const [backOverride, setBackOverride] = useState<(() => void) | null>(null)
   const setBack = useCallback((handler: (() => void) | null) => {
     setBackOverride(() => handler)
@@ -3159,7 +3164,10 @@ function Shell(props: AppProps): React.ReactElement {
       apiBaseUrl={apiBaseUrl}
       isAdmin={isAdmin}
       buildsClient={session == null ? undefined : client}
-      title={titleFor(tab, top)}
+      title={
+        top?.name === 'conversation' ? lstrings.chat_chats : titleFor(tab, top)
+      }
+      contentHeight={handoffHeight}
       // The mark on every screen that is a destination in its own right —
       // home, and the two lists — and on none that was pushed on top of one,
       // where the chevron and what scrolled up into the header say where you
@@ -3277,7 +3285,11 @@ function Shell(props: AppProps): React.ReactElement {
                       ? 0
                       : headerHeight + (bannerShown ? bannerHeight : 0)
                   }
+                  navigationHeight={
+                    isWide || immersiveField ? 0 : navigationHeight
+                  }
                   onHandoff={setHandoff}
+                  onHandoffHeight={setHandoffHeight}
                   onBackOverride={setBack}
                 >
                   <View style={styles.body}>
@@ -3313,9 +3325,11 @@ function Shell(props: AppProps): React.ReactElement {
             {!isWide && !immersiveField && !tessLayer && (
               <AppNav
                 key="nav"
+                onHeight={setNavigationHeight}
                 mode="floating"
                 selected={tab}
                 onSelect={selectTab}
+                dots={{ chat: hasUnread(chatList) }}
               />
             )}
             <SuccessToast notice={successNotice} />
