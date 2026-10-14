@@ -26,6 +26,7 @@ import app.teamstation.streamcore.stream.StreamVideoEncoding
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import okhttp3.mockwebserver.Dispatcher
@@ -392,6 +393,13 @@ class PhoneStreamEngineTest {
 
     private lateinit var engineDispatcher: CoroutineDispatcher
 
+    /** The radar's own thread, standing in for the main thread the fleet belongs to. */
+    private val radarExecutor = Executors.newSingleThreadExecutor { Thread(it, "radar-test") }.also { dispatchers += it }
+    private val radarDispatcher = radarExecutor.asCoroutineDispatcher()
+
+    /** The threads the radar fleet was driven from. */
+    private val radarThreads = ConcurrentLinkedQueue<String>()
+
     private var storageCheckSeconds = 3_600.0
     private var cameraReopenSeconds = 3_600.0
 
@@ -432,7 +440,10 @@ class PhoneStreamEngineTest {
                     app.teamstation.streamcore.radar.RadarFleet(
                         store = PhoneRadar.store(context),
                         newRadio = { app.teamstation.streamcore.radar.systemRadarRadio(context) },
-                        bluetoothOn = { false },
+                        bluetoothOn = {
+                            radarThreads += Thread.currentThread().name.substringBefore(" @coroutine")
+                            false
+                        },
                         locationOn = { true },
                         permissionsGranted = { true },
                         log = {},
@@ -442,7 +453,8 @@ class PhoneStreamEngineTest {
             },
             foreground = foreground,
             dispatcher = engineDispatcher,
-            ioDispatcher = Dispatchers.IO
+            ioDispatcher = Dispatchers.IO,
+            radarDispatcher = radarDispatcher
         )
         return PhoneStreamEngine(environment).also { engine ->
             engine.observe { events += it }
@@ -1153,6 +1165,26 @@ class PhoneStreamEngineTest {
     }
 
     @Test
+    fun aFailureInsideTheEngineIsLoggedAndTheTakeIsMarkedOnce() {
+        val engine = opened()
+        // A job that throws is logged, not left to end the process.
+        runBlocking { engine.scopeForTesting.launch { error("something broke") }.join() }
+        assertTrue(engine.telemetry.lastError!!.contains("something broke"))
+        start(engine)
+        capture(2.0)
+        free = 400_000_000
+        runBlocking { withContext(engineDispatcher) { engine.checkStorage() } }
+        val id = runBlocking { engine.recordings() }.single().recordingID
+        on { engine.publishStatus() }
+        assertTrue(runBlocking { engine.recordings() }.single().publishedOutsideParts)
+        // Marked once: the status loop does not write it again four times a second.
+        engine.index.database.execSQL("UPDATE phone_recordings SET published_outside_parts = 0 WHERE recording_id = ?;", arrayOf<Any>(id))
+        repeat(4) { on { engine.publishStatus() } }
+        assertFalse(runBlocking { engine.recordings() }.single().publishedOutsideParts)
+        runBlocking { engine.stopRecording() }
+    }
+
+    @Test
     fun aKilledTakeOnAStreamNoLongerWantedIsClosedWhereItGotTo() {
         val first = opened()
         start(first)
@@ -1240,6 +1272,9 @@ class PhoneStreamEngineTest {
         runBlocking { engine.radarUnpair("ADFA0000001") }
         waitFor { events.any { it is PhoneStreamEvent.Radar } }
         runBlocking { engine.radarSetEnabled(false) }
+        // Every call reached the fleet on its thread, never the engine's.
+        assertTrue(radarThreads.isNotEmpty())
+        assertEquals(setOf("radar-test"), radarThreads.toSet())
     }
 
     @Test

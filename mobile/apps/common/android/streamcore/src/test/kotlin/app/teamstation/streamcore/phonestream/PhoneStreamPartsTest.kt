@@ -193,6 +193,33 @@ class PhoneStreamPartsTest {
         assertEquals(LiveStreamClient.Error.Offline, offline)
     }
 
+    @Test
+    fun anAnswerCutOffOnItsWayIsOfflineOrStillEnded() {
+        val cut = okhttp3.mockwebserver.SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY
+        val body = """{"message":"This camera was ended and the answer is long enough to be cut off half way"}"""
+        server.enqueue(MockResponse().setResponseCode(410).setBody(body).setSocketPolicy(cut))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"id":"s1","url":"rtmp://ingest.example.test/live/key-0001","label":"Home Plate"}""").setSocketPolicy(cut))
+        server.enqueue(MockResponse().setResponseCode(410).setBody(body).setSocketPolicy(cut))
+        val errors = (1..2).map {
+            try {
+                runBlocking { client().requestLiveStream("g1", "Home Plate", "d1", "Google Pixel 10", "s1") }
+                null
+            } catch (error: LiveStreamClient.Error) {
+                error
+            }
+        }
+        // A 410 is the stream ended whatever its body; a success that never arrived whole is offline.
+        assertEquals(LiveStreamClient.endedMessage, (errors[0] as LiveStreamClient.Error.StreamEnded).message)
+        assertEquals(LiveStreamClient.Error.Offline, errors[1])
+        val report = try {
+            runBlocking { client().reportLiveStart("g1", "s1", 1_760_000_000.0) }
+            null
+        } catch (error: LiveStreamClient.Error) {
+            error
+        }
+        assertEquals(LiveStreamClient.endedMessage, (report as LiveStreamClient.Error.StreamEnded).message)
+    }
+
     private fun catalog(): Pair<PhoneCatalog, PhoneStorage> {
         val storage = PhoneStorage(File(folder.root, "phoneStream")).apply { prepare() }
         return PhoneCatalog(RecordingCatalog(storage.index)) to storage

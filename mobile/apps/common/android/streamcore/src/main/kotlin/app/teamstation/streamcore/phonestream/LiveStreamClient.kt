@@ -67,12 +67,15 @@ class LiveStreamClient(
                 throw Error.Offline
             }
             response.use { answer ->
-                val text = answer.body?.string().orEmpty()
+                val read = text(answer)
+                val text = read.orEmpty()
                 val status = answer.code
                 when {
                     status == 410 -> throw Error.StreamEnded(reason(text) ?: endedMessage)
                     status == 401 || status == 403 -> throw Error.NotSignedIn
                     !answer.isSuccessful -> throw Error.Server(status, reason(text) ?: "TeamStation answered $status")
+                    // The answer was cut off on its way.
+                    read == null -> throw Error.Offline
                 }
                 val json = runCatching { JSONObject(text) }.getOrElse { throw Error.Server(status, "TeamStation sent something unreadable") }
                 LiveStream(
@@ -108,7 +111,7 @@ class LiveStreamClient(
             response.use { answer ->
                 val status = answer.code
                 when {
-                    status == 410 -> throw Error.StreamEnded(reason(answer.body?.string().orEmpty()) ?: endedMessage)
+                    status == 410 -> throw Error.StreamEnded(reason(text(answer).orEmpty()) ?: endedMessage)
                     !answer.isSuccessful -> throw Error.Server(status, "TeamStation answered $status")
                 }
             }
@@ -163,6 +166,13 @@ class LiveStreamClient(
         }
 
         private fun reason(text: String): String? = runCatching { JSONObject(text).getString("message") }.getOrNull()
+
+        /** The answer's body, or null when the connection dropped while it was read. */
+        private fun text(answer: okhttp3.Response): String? = try {
+            answer.body?.string().orEmpty()
+        } catch (error: IOException) {
+            null
+        }
 
         private fun escape(segment: String): String = URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
 
