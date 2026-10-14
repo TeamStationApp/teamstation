@@ -16,7 +16,9 @@
 //   [TS_STREAM_ARTIFACT_DIR=<dir>] [TS_STREAM_HOLD_SECONDS=20] \
 //   [TS_STREAM_OUTAGE_IP=<the phone's address on a shaped network> \
 //    TS_STREAM_CONDITIONER=https://<conditioner>/v1] \
-//   [TS_STREAM_WEBCAM_URL=<an RTSP(S) camera watching the phone, with sound>] \
+//   [TS_STREAM_RECORDING_DIR=<the take's parts, copied off the phone>] \
+//   [TS_STREAM_WEBCAM_URL=<an RTSP(S) camera watching the phone, with sound;
+//    required on a real iPhone, for the overlay's frame>] \
 //     node -r sucrase/register src/app/stream/streamingScreen.e2e.ts
 //
 // The local server runs without mail, so it logs each sign-in link; the app
@@ -30,14 +32,20 @@
 //   1. Record video → the angle's name → Start.
 //   2. The overlay: the name, "Press record to start stream", a thermal
 //      label, and on a phone the battery. Screenshot.
-//   3. Record → "Broadcasting"; ffprobe the live HLS (HEVC 1080p).
+//   3. Record → "Broadcasting"; ffprobe the live HLS (HEVC 1080p). With the
+//      webcam, its frame of the overlay over the live camera.
 //   4. Pinch, and read the zoom readout again.
 //   E12, with TS_STREAM_OUTAGE_IP: the phone's address loses every packet for
-//      20 s, then is capped at 1 Mbit/s for 60 s. The pill is read throughout,
-//      the HLS is watched for the stream coming back, and the ingest's rate is
-//      sampled under the cap.
+//      20 s, then is capped at 1 Mbit/s for 60 s. The pill must read
+//      "Connecting" during the cut and "Broadcasting" after it, the HLS must
+//      be back within 5 s of the restore, the ingest at or below the cap once
+//      it settles, and what arrives after the cap within the send budget.
+//      `reconnect-live.mp4` is the live HLS around the cut.
 //   5. Slide to Stop: the blue pill returns and the server hears that this
-//      phone holds the recording. Close.
+//      phone holds the recording. After E12, the phone's own recording is
+//      copied off it (TS_STREAM_RECORDING_DIR where it cannot be, as from a
+//      release Android build) and `ffprobe -show_frames` must find no gap of
+//      more than a frame across either event. Close.
 //   6. Back on the Videos tab, a finished video of the game plays: the
 //      player's elapsed time moves. It is opened by its id, from its start:
 //      the tab opens on the stream just stopped, which stays live for the
@@ -47,7 +55,7 @@
 //      louder while the video plays than once it is paused.
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -129,6 +137,14 @@ const outageIp = process.env.TS_STREAM_OUTAGE_IP
 const conditioner = process.env.TS_STREAM_CONDITIONER
 const webcam = process.env.TS_STREAM_WEBCAM_URL
 const APP = 'app.teamstation.app'
+// A simulator's UDID; a real iPhone's is not of this shape.
+const isSimulator = /^[0-9A-F]{8}-[0-9A-F]{4}-/.test(device)
+// E11 on the iPhone keeps a frame of the overlay over the live camera, which
+// only the bench camera can see.
+assert(
+  android || isSimulator || (webcam != null && webcam !== ''),
+  'TS_STREAM_WEBCAM_URL is required on a real iPhone: E11 keeps a webcam frame of the overlay over the live camera'
+)
 
 const sleep = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
@@ -212,7 +228,13 @@ interface StreamRow {
   videoId: string | null
   deviceModel?: string | null
   localRecording?: string
-  status: { ingress: { publishing: boolean; bytesPerSecond: number } } | null
+  status: {
+    ingress: {
+      publishing: boolean
+      bytesPerSecond: number
+      bytesReceived: number
+    }
+  } | null
 }
 
 async function myStream(token: string): Promise<StreamRow> {
@@ -313,6 +335,393 @@ async function meanVolume(file: string): Promise<number> {
   const match = /mean_volume: (-?[\d.]+|-inf) dB/.exec(stderr)
   assert(match != null, `volumedetect said nothing: ${stderr.slice(-400)}`)
   return match[1] === '-inf' ? -Infinity : Number(match[1])
+}
+
+/** One frame of the webcam watching the phone, into `file`. */
+async function webcamFrame(file: string): Promise<void> {
+  assert(webcam != null, 'TS_STREAM_WEBCAM_URL is required')
+  await run(
+    'ffmpeg',
+    [
+      '-nostdin',
+      '-loglevel',
+      'error',
+      '-rtsp_transport',
+      'tcp',
+      ...(webcam.startsWith('rtsps:') ? ['-tls_verify', '0'] : []),
+      '-timeout',
+      '15000000',
+      '-i',
+      webcam,
+      '-frames:v',
+      '1',
+      '-q:v',
+      '3',
+      '-y',
+      file
+    ],
+    { timeout: 45000 }
+  )
+  assert((await stat(file)).size > 0, `the webcam gave a frame in ${file}`)
+}
+
+/** When E12's two events happened, for the checks that follow them. */
+interface OutageTimes {
+  cutAt: number
+  restoredAt: number
+  throttleEndedAt: number
+}
+
+/** How long E12 cuts the phone off, and how long it caps it. */
+const CUT_SECONDS = 20
+const THROTTLE_SECONDS = 60
+/** The cap during the throttle, in Mbit/s. */
+const CAP_MBIT = 1
+/**
+ * The engines' send budget, `RTMPClient.sendBudget` at the phone's highest
+ * bitrate: 4 Mbit/s for 30 s of stream, half as much again. What waits to be
+ * sent never grows past it; older pictures are shed first.
+ */
+const SEND_BUDGET_BYTES = (4_000_000 / 8) * 30 * 1.5
+
+/**
+ * The live HLS of the outage, from 10 s before the cut to 30 s after the
+ * restore, copied into `file`: the segments the playlist lists with a
+ * written time in that window, each under the init segment it follows.
+ */
+async function clipAround(
+  playlistFile: string,
+  fromMs: number,
+  toMs: number,
+  file: string
+): Promise<number> {
+  const dir = path.dirname(playlistFile)
+  const absolute = (uri: string): string =>
+    path.isAbsolute(uri) ? uri : path.join(dir, uri)
+  const lines = (await readFile(playlistFile, 'utf8')).split('\n')
+  const kept = ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:10']
+  let map: string | undefined
+  let mapWritten: string | undefined
+  let writtenAt: number | undefined
+  let duration: string | undefined
+  let gap = false
+  let segments = 0
+  for (const line of lines) {
+    if (line.startsWith('#EXT-X-MAP:')) {
+      map = line.replace(/URI="([^"]+)"/, (_all, uri: string) => {
+        return `URI="${absolute(uri)}"`
+      })
+    } else if (line.startsWith('#EXT-X-PROGRAM-DATE-TIME:')) {
+      writtenAt = Date.parse(line.slice('#EXT-X-PROGRAM-DATE-TIME:'.length))
+    } else if (line.startsWith('#EXT-X-DISCONTINUITY')) {
+      gap = true
+    } else if (line.startsWith('#EXTINF:')) {
+      duration = line
+    } else if (line !== '' && !line.startsWith('#') && duration != null) {
+      if (writtenAt != null && writtenAt >= fromMs && writtenAt <= toMs) {
+        if (gap && segments > 0) kept.push('#EXT-X-DISCONTINUITY')
+        if (map != null && (map !== mapWritten || gap)) {
+          kept.push(map)
+          mapWritten = map
+        }
+        kept.push(duration, absolute(line))
+        segments += 1
+        gap = false
+      }
+      duration = undefined
+    }
+  }
+  kept.push('#EXT-X-ENDLIST', '')
+  const list = `${file}.m3u8`
+  await writeFile(list, kept.join('\n'))
+  await run('ffmpeg', [
+    '-nostdin',
+    '-loglevel',
+    'error',
+    '-protocol_whitelist',
+    'file',
+    '-allowed_extensions',
+    'ALL',
+    '-i',
+    list,
+    '-c',
+    'copy',
+    '-y',
+    file
+  ])
+  return segments
+}
+
+/**
+ * E12: the phone loses every packet for 20 s, then is capped at 1 Mbit/s for
+ * 60 s. Asserts the plan's expectations: "Connecting" during the cut and
+ * "Broadcasting" after it, the HLS back within 5 s of the restore, the ingest
+ * at or below the cap once it settles under it, and no more arriving after
+ * the cap than the send budget could have held. Keeps `reconnect-live.mp4`.
+ */
+async function rideOutage(options: {
+  token: string
+  videoId: string
+  pill: () => Promise<string>
+  results: string[]
+}): Promise<OutageTimes> {
+  const { token, videoId, pill, results } = options
+  assert(outageIp != null, 'TS_STREAM_OUTAGE_IP is required for E12')
+  // The writer for the new connection appends after a discontinuity; the
+  // segment the old writer flushes as its stream ends does not count.
+  const joins = async (): Promise<{ joins: number; after: number }> => {
+    const text = await readFile((await playlist(videoId)).file, 'utf8').catch(
+      () => ''
+    )
+    const parts = text.split('#EXT-X-DISCONTINUITY')
+    return {
+      joins: parts.length - 1,
+      after: (parts.at(-1) ?? '')
+        .split('\n')
+        .filter(line => line.startsWith('#EXTINF')).length
+    }
+  }
+
+  const cutAt = Date.now()
+  say(`cut: 100% loss on the phone for ${CUT_SECONDS} s`)
+  await shape([{ ip: outageIp, lossPct: 100 }])
+  const seen: string[] = []
+  for (const until = cutAt + CUT_SECONDS * 1000; Date.now() < until;) {
+    const now = await pill()
+    if (seen.at(-1) !== now) seen.push(now)
+    await sleep(1000)
+  }
+  const joinsAtRestore = (await joins()).joins
+  await shape([{ ip: outageIp }])
+  const restoredAt = Date.now()
+  say(`restored; the pill read ${seen.join(' → ')} during the cut`)
+  assert(
+    seen.includes('Connecting'),
+    `the pill reads Connecting during the cut (it read ${seen.join(' → ')})`
+  )
+  let resumed: number | undefined
+  let broadcasting: number | undefined
+  for (
+    const until = restoredAt + 60000;
+    Date.now() < until && (resumed == null || broadcasting == null);
+  ) {
+    if (broadcasting == null && (await pill()) === 'Broadcasting')
+      broadcasting = (Date.now() - restoredAt) / 1000
+    const now = await joins()
+    if (resumed == null && now.joins > joinsAtRestore && now.after > 0)
+      resumed = (Date.now() - restoredAt) / 1000
+    await sleep(500)
+  }
+  assert(
+    broadcasting != null,
+    'the pill reads Broadcasting again after the restore'
+  )
+  assert(
+    resumed != null && resumed <= 5,
+    `the HLS resumes within 5 s of the restore (${resumed?.toFixed(1) ?? 'never'} s)`
+  )
+  results.push(
+    `E12 cut ${new Date(cutAt).toISOString()}: pill ${seen.join(' → ')} during the cut; Broadcasting ${broadcasting.toFixed(1)} s and the new connection's first segment in the HLS ${resumed.toFixed(1)} s after the restore`
+  )
+
+  say(`throttle: ${CAP_MBIT} Mbit/s for ${THROTTLE_SECONDS} s`)
+  await shape([{ ip: outageIp, mbit: CAP_MBIT }])
+  const throttledAt = Date.now()
+  const rates: number[] = []
+  const pills = new Set<string>()
+  for (
+    const until = throttledAt + THROTTLE_SECONDS * 1000;
+    Date.now() < until;
+  ) {
+    await sleep(5000)
+    const sample = await myStream(token)
+    rates.push(((sample.status?.ingress.bytesPerSecond ?? 0) * 8) / 1e6)
+    pills.add(await pill())
+  }
+  const beforeLift = (await myStream(token)).status?.ingress.bytesReceived ?? 0
+  await shape([{ ip: outageIp }])
+  const throttleEndedAt = Date.now()
+  // The last 30 s under the cap: the controller has settled by then.
+  const settled = rates.slice(-6)
+  const mean =
+    settled.reduce((sum, value) => sum + value, 0) / Math.max(settled.length, 1)
+  say(
+    `ingest Mbit/s every 5 s under the cap: ${rates.map(rate => rate.toFixed(2)).join(' ')}`
+  )
+  assert(settled.length > 0, 'the ingest was sampled under the cap')
+  assert(
+    mean <= CAP_MBIT,
+    `the stream settles at or below ${CAP_MBIT} Mbit/s under the cap (last 30 s mean ${mean.toFixed(2)})`
+  )
+  // Whatever waited to be sent under the cap arrives once it lifts, on top
+  // of what the encoder makes meanwhile; it can be no more than the budget.
+  const DRAIN_SECONDS = 20
+  await sleep(DRAIN_SECONDS * 1000)
+  const afterLift = (await myStream(token)).status?.ingress.bytesReceived ?? 0
+  // A counter that went back is a new connection, which counts from nought.
+  const delivered = afterLift >= beforeLift ? afterLift - beforeLift : afterLift
+  const encoded = (CAP_MBIT * 1e6 * DRAIN_SECONDS) / 8
+  const backlog = Math.max(0, delivered - encoded)
+  assert(
+    backlog <= SEND_BUDGET_BYTES,
+    `the backlog drained after the cap (${(backlog / 1e6).toFixed(1)} MB) stays within the send budget (${(SEND_BUDGET_BYTES / 1e6).toFixed(1)} MB)`
+  )
+  results.push(
+    `E12 throttle ${CAP_MBIT} Mbit/s: ingest ${rates.map(rate => rate.toFixed(2)).join(' ')} Mbit/s, last 30 s mean ${mean.toFixed(2)}; pill ${[...pills].join(', ')}; ${(delivered / 1e6).toFixed(1)} MB in the ${DRAIN_SECONDS} s after, a backlog of at most ${(backlog / 1e6).toFixed(1)} MB against a ${(SEND_BUDGET_BYTES / 1e6).toFixed(1)} MB budget`
+  )
+
+  const clip = path.join(artifacts ?? tmpdir(), 'reconnect-live.mp4')
+  const segments = await clipAround(
+    (await playlist(videoId)).file,
+    cutAt - 10000,
+    restoredAt + 30000,
+    clip
+  )
+  assert(segments > 0, 'the live HLS has segments around the cut')
+  say(`$ ffmpeg ${path.basename(clip)}: ${segments} segments around the cut`)
+  results.push(`E12 ${clip}: ${segments} live segments around the cut`)
+  await writeFile(
+    path.join(artifacts ?? tmpdir(), 'e12-times.json'),
+    JSON.stringify({
+      cutAt: new Date(cutAt).toISOString(),
+      restoredAt: new Date(restoredAt).toISOString(),
+      throttleEndedAt: new Date(throttleEndedAt).toISOString(),
+      videoId
+    })
+  )
+  return { cutAt, restoredAt, throttleEndedAt }
+}
+
+/**
+ * The phone's own recording parts, copied off it into `dir`: from the app's
+ * data container on an iPhone or a simulator, and on Android with `run-as`,
+ * which needs a debuggable build, or from TS_STREAM_RECORDING_DIR where the
+ * parts were copied some other way.
+ */
+async function pullRecording(dir: string): Promise<string> {
+  const given = process.env.TS_STREAM_RECORDING_DIR
+  if (given != null && given !== '') return given
+  await mkdir(dir, { recursive: true })
+  const program = 'Library/Application Support/PhoneStream/Program'
+  if (android) {
+    try {
+      const { stdout } = await run(
+        'adb',
+        [
+          '-s',
+          device,
+          'exec-out',
+          'run-as',
+          APP,
+          'tar',
+          '-c',
+          '-C',
+          'files/phoneStream',
+          'Program'
+        ],
+        { encoding: 'buffer', maxBuffer: 1 << 30 }
+      )
+      const tarball = path.join(dir, 'program.tar')
+      await writeFile(tarball, stdout)
+      await run('tar', ['-x', '-f', tarball, '-C', dir])
+      return path.join(dir, 'Program')
+    } catch (error) {
+      throw new Error(
+        `The local recording cannot be read off ${device}: run-as needs a debuggable build. Copy the take's parts from files/phoneStream/Program and set TS_STREAM_RECORDING_DIR. (${String(error)})`
+      )
+    }
+  }
+  if (isSimulator) {
+    const { stdout } = await run('xcrun', [
+      'simctl',
+      'get_app_container',
+      device,
+      APP,
+      'data'
+    ])
+    return path.join(stdout.trim(), program)
+  }
+  await run('xcrun', [
+    'devicectl',
+    'device',
+    'copy',
+    'from',
+    '--device',
+    device,
+    '--domain-type',
+    'appDataContainer',
+    '--domain-identifier',
+    APP,
+    '--source',
+    program,
+    '--destination',
+    dir
+  ])
+  return dir
+}
+
+/**
+ * E12's last expectation: the phone's recording of the take shows no gap of
+ * more than a frame across either event. Read once the take has stopped, so
+ * its part is whole.
+ */
+async function checkLocalRecording(outage: OutageTimes): Promise<string> {
+  const dir = await pullRecording(
+    path.join(artifacts ?? tmpdir(), 'e12-recording')
+  )
+  const parts: string[] = []
+  for (const name of await readdir(dir)) {
+    if (!name.endsWith('.mp4')) continue
+    const file = path.join(dir, name)
+    // Written since the cut: the part the events happened in.
+    if ((await stat(file)).mtimeMs >= outage.cutAt) parts.push(file)
+  }
+  assert(parts.length > 0, `the take's part is among ${dir}`)
+  const span = (outage.throttleEndedAt - outage.cutAt) / 1000
+  const lines: string[] = []
+  for (const file of parts) {
+    const { stdout } = await run(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_frames',
+        '-show_entries',
+        'frame=best_effort_timestamp_time',
+        '-of',
+        'csv=p=0',
+        file
+      ],
+      { maxBuffer: 1 << 28 }
+    )
+    const times = stdout
+      .split('\n')
+      .map(line => Number(line.split(',')[0]))
+      .filter(time => Number.isFinite(time))
+      .sort((a, b) => a - b)
+    assert(times.length > 1, `${path.basename(file)} has frames`)
+    const steps = times.slice(1).map((time, index) => time - times[index])
+    const frame = [...steps].sort((a, b) => a - b)[Math.floor(steps.length / 2)]
+    const longest = Math.max(...steps)
+    const length = times[times.length - 1] - times[0]
+    lines.push(
+      `${path.basename(file)}: ${times.length} frames over ${length.toFixed(1)} s, frame ${(frame * 1000).toFixed(1)} ms, longest step ${(longest * 1000).toFixed(1)} ms`
+    )
+    if (length < span) continue
+    // One frame missing at most: never more than two frame times apart.
+    assert(
+      longest <= frame * 2 + 0.001,
+      `${path.basename(file)} has a gap of ${(longest * 1000).toFixed(1)} ms, more than a frame`
+    )
+  }
+  assert(
+    lines.some(line => Number(/over ([\d.]+) s/.exec(line)?.[1]) >= span),
+    `a part spans both events (${span.toFixed(0)} s): ${lines.join('; ')}`
+  )
+  say(`$ ffprobe -show_frames: ${lines.join('; ')}`)
+  return `E12 local recording, no gap over a frame across either event: ${lines.join('; ')}`
 }
 
 /** "0:19 elapsed" or "1:02:03 elapsed" in seconds. */
@@ -479,7 +888,6 @@ async function main(): Promise<void> {
     )
     assert(thermal != null, 'a thermal label shows')
     const battery = shown.find(text => /^\d{1,3}%$/.test(text))
-    const isSimulator = /^[0-9A-F]{8}-[0-9A-F]{4}-/.test(device)
     if (!isSimulator) assert(battery != null, 'the battery shows')
     const zoom = await textOf('zoom-label')
     results.push(
@@ -532,6 +940,17 @@ async function main(): Promise<void> {
       'Slide to Stop shows'
     )
     await shot('stream-overlay-live')
+    if (webcam != null) {
+      // The overlay on the phone itself, over its live camera, as the bench
+      // camera sees it.
+      const frame = path.join(
+        artifacts ?? tmpdir(),
+        'stream-overlay-webcam.jpg'
+      )
+      say('$ ffmpeg webcam frame (the overlay over the live camera)')
+      await webcamFrame(frame)
+      results.push(`3 webcam frame of the overlay: ${frame}`)
+    }
     say('$ tapOn slide-to-stop-dismiss')
     await m.tapOn({ id: 'slide-to-stop-dismiss' })
 
@@ -657,88 +1076,14 @@ async function main(): Promise<void> {
     results.push(`4 pinch: zoom readout ${before} → ${after ?? '?'}`)
 
     // E12: the outage.
+    let outage: OutageTimes | undefined
     if (outageIp != null) {
-      // The writer for the new connection appends after a discontinuity; the
-      // segment the old writer flushes as its stream ends does not count.
-      const joins = async (): Promise<{ joins: number; after: number }> => {
-        const text = await readFile(
-          (await playlist(row.videoId!)).file,
-          'utf8'
-        ).catch(() => '')
-        const parts = text.split('#EXT-X-DISCONTINUITY')
-        return {
-          joins: parts.length - 1,
-          after: (parts.at(-1) ?? '')
-            .split('\n')
-            .filter(line => line.startsWith('#EXTINF')).length
-        }
-      }
-      const cutAt = new Date()
-      say(`cut: 100% loss on the phone for 20 s`)
-      await shape([{ ip: outageIp, lossPct: 100 }])
-      const seen = new Set<string>()
-      for (const until = Date.now() + 20000; Date.now() < until;) {
-        seen.add(await pill())
-        await sleep(1000)
-      }
-      const joinsAtRestore = (await joins()).joins
-      await shape([{ ip: outageIp }])
-      const restoredAt = Date.now()
-      say(`restored; the pill read ${[...seen].join(', ')} during the cut`)
-      let resumed: number | undefined
-      let publishing: number | undefined
-      for (
-        const until = restoredAt + 60000;
-        Date.now() < until && (resumed == null || publishing == null);
-      ) {
-        if (
-          publishing == null &&
-          (await myStream(token)).status?.ingress.publishing === true
-        ) {
-          // The ingest's view lags a little; the pill says when the phone is through.
-          if ((await pill()) === 'Broadcasting')
-            publishing = (Date.now() - restoredAt) / 1000
-        }
-        const now = await joins()
-        if (resumed == null && now.joins > joinsAtRestore && now.after > 0)
-          resumed = (Date.now() - restoredAt) / 1000
-        await sleep(500)
-      }
-      const pillAfter = await pill()
-      results.push(
-        `E12 cut ${cutAt.toISOString()}: pill during the cut ${[...seen].join(' → ')}; after the restore ${pillAfter} at ${publishing?.toFixed(1) ?? 'never'} s; first segment of the new connection in the HLS ${resumed?.toFixed(1) ?? 'never'} s after the restore`
-      )
-      await writeFile(
-        path.join(artifacts ?? '.', 'e12-times.json'),
-        JSON.stringify({
-          cutAt: cutAt.toISOString(),
-          restoredAt: new Date(restoredAt).toISOString(),
-          videoId: row.videoId,
-          playlist: (await playlist(row.videoId)).file
-        })
-      )
-      say('throttle: 1 Mbit/s for 60 s')
-      await shape([{ ip: outageIp, mbit: 1 }])
-      const rates: number[] = []
-      const pills = new Set<string>()
-      for (const until = Date.now() + 60000; Date.now() < until;) {
-        await sleep(5000)
-        const sample = await myStream(token)
-        rates.push(((sample.status?.ingress.bytesPerSecond ?? 0) * 8) / 1e6)
-        pills.add(await pill())
-      }
-      await shape([{ ip: outageIp }])
-      const settled = rates.slice(-6)
-      const mean =
-        settled.reduce((sum, value) => sum + value, 0) /
-        Math.max(settled.length, 1)
-      say(
-        `ingest Mbit/s every 5 s under the cap: ${rates.map(rate => rate.toFixed(2)).join(' ')}`
-      )
-      results.push(
-        `E12 throttle 1 Mbit/s: ingest ${rates.map(rate => rate.toFixed(2)).join(' ')} Mbit/s; last 30 s mean ${mean.toFixed(2)}; pill ${[...pills].join(', ')}`
-      )
-      await sleep(10000)
+      outage = await rideOutage({
+        token,
+        videoId: row.videoId,
+        pill,
+        results
+      })
     } else if (holdSeconds > 0) {
       await sleep(holdSeconds * 1000)
     }
@@ -774,6 +1119,7 @@ async function main(): Promise<void> {
     results.push(
       `5 Slide to Stop: blue pill back after ${toIdle.toFixed(1)} s; localRecording ${recorded}`
     )
+    if (outage != null) results.push(await checkLocalRecording(outage))
     say('$ tapOn camera-close')
     await m.tapOn({ id: 'camera-close' })
     assert(
