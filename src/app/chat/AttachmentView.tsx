@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Image, Pressable, Text, View } from 'react-native'
 
 import type { AttachmentRef } from '../../common/chatContent'
@@ -32,6 +32,16 @@ export interface AttachmentViewProps {
   /** The widest the picture may draw, in pixels. */
   maxWidth: number
   messageGesture?: MessagePressGesture
+  /** A passive image snapshot; its original view alone owns the URI. */
+  onPicture?: (picture: LoadedChatPicture | undefined) => void
+}
+
+export interface LoadedChatPicture {
+  attachment: AttachmentRef
+  uri: string
+  width: number
+  height: number
+  valid: () => boolean
 }
 
 /** Opened bytes as a URL, released when the view goes. */
@@ -41,7 +51,12 @@ function useOpened(
   files: ChatFileOps,
   wanted: boolean
 ): { uri: string | undefined; failed: boolean } {
-  const [uri, setUri] = useState<string | undefined>(undefined)
+  const [opened, setOpened] = useState<{
+    attachment: AttachmentRef
+    engine: AttachmentViewProps['engine']
+    files: ChatFileOps
+    uri: string
+  }>()
   const [failed, setFailed] = useState(false)
   useEffect(() => {
     if (!wanted) return
@@ -60,7 +75,7 @@ function useOpened(
       )
       .then(next => {
         made = next
-        if (live) setUri(next)
+        if (live) setOpened({ attachment, engine, files, uri: next })
         else files.releaseUri(next).catch(() => undefined)
       })
       .catch(() => {
@@ -71,7 +86,15 @@ function useOpened(
       if (made != null) files.releaseUri(made).catch(() => undefined)
     }
   }, [attachment, engine, files, wanted])
-  return { uri, failed }
+  return {
+    uri:
+      opened?.attachment === attachment &&
+      opened.engine === engine &&
+      opened.files === files
+        ? opened.uri
+        : undefined,
+    failed
+  }
 }
 
 /**
@@ -87,7 +110,8 @@ export function AttachmentView(props: AttachmentViewProps): React.ReactElement {
     engine,
     files,
     maxWidth,
-    messageGesture: props.messageGesture
+    messageGesture: props.messageGesture,
+    onPicture: props.onPicture
   }
   if (attachment.contentType.startsWith('image/')) {
     return <PictureAttachment {...shown} />
@@ -118,6 +142,30 @@ function PictureAttachment(
     maxWidth,
     theme.rem(20)
   )
+  const onPicture = props.onPicture
+  const { width, height } = size
+  const displayed = useRef({ attachment, uri, loaded: false })
+  if (
+    displayed.current.attachment !== attachment ||
+    displayed.current.uri !== uri
+  )
+    displayed.current = { attachment, uri, loaded: false }
+  const image = displayed.current
+  useEffect(() => {
+    let live = true
+    if (uri != null)
+      onPicture?.({
+        attachment,
+        uri,
+        width,
+        height,
+        valid: () => live && image.loaded
+      })
+    return () => {
+      live = false
+      onPicture?.(undefined)
+    }
+  }, [attachment, uri, width, height, onPicture, image])
   return (
     <View
       style={[styles.picture, size]}
@@ -129,6 +177,12 @@ function PictureAttachment(
           source={{ uri }}
           style={size}
           resizeMode="cover"
+          onLoad={() => {
+            image.loaded = true
+          }}
+          onError={() => {
+            image.loaded = false
+          }}
         />
       ) : failed ? (
         <Text style={styles.failed}>{lstrings.chat_attachment_failed}</Text>

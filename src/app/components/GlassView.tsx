@@ -23,6 +23,7 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
     opaque = false,
     fallbackFill = true,
     dark = false,
+    backdropBlur: _backdropBlur,
     ...rest
   } = props
   const appTheme = useTheme()

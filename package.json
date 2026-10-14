@@ -44,6 +44,7 @@
     "coverage.uiTweaks": "node scripts/ui-tweaks-coverage.mjs",
     "coverage.sync": "node scripts/sync-changed-coverage.mjs",
     "coverage.lineupQr": "node scripts/lineup-qr-coverage.mjs",
+    "coverage.chat-ui": "c8 --temp-directory coverage/chatUi/tmp --reports-dir coverage/chatUi --reporter=text --reporter=json --reporter=json-summary --exclude '**/*.test.*' --exclude '**/*.e2e.*' --exclude 'src/test/**' --exclude-after-remap node scripts/chatUiCoverage.mjs && node scripts/changed-line-check.cjs --base \"$TS_COVERAGE_BASE\" --coverage coverage/chatUi/coverage-final.json --report coverage/chatUi/changed-lines.json --ext .ts --ext .tsx --ext .mjs --ext .cjs --exclude src/app/locales/en_US.ts --exclude src/app/chat/screenEngine.ts --exclude src/app/components/glassViewProps.ts src scripts/chatUiCoverage.mjs scripts/changed-line-check.cjs",
     "coverage.app": "node scripts/chatCryptoBuild.mjs node wasm && node scripts/build-scoring-tests.mjs && node scripts/scoring-coverage.mjs",
     "coverage.changed.app": "c8 --reporter=json --report-dir coverage/changedApp --include 'src/app/player/**/*.ts' --exclude '**/*.test.ts' --exclude '**/*.e2e.ts' --exclude '**/*.integration.ts' mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts --spec 'src/app/player/**/*.test.ts' && node scripts/changed-line-check.cjs --coverage coverage/changedApp/coverage-final.json --ext .ts --allow-empty src/app/player",
     "coverage.changed.server": "node scripts/chatCryptoBuild.mjs node wasm && node scripts/server-changed-coverage.mjs",
@@ -115,8 +116,7 @@
     "coverage.autoScheduler": "node scripts/auto-scheduler-coverage.mjs",
     "coverage.observability": "node scripts/observability-coverage.mjs",
     "chat-crypto": "node scripts/chatCryptoBuild.mjs node wasm",
-    "chat-seed": "node -r sucrase/register src/server/dev/chatSeed.ts",
-    "coverage.chat-ui": "c8 --temp-directory coverage/chatUi/tmp --reports-dir coverage/chatUi --reporter=text --reporter=json --reporter=json-summary --exclude '**/*.test.*' --exclude '**/*.e2e.*' --exclude 'src/test/**' --exclude-after-remap node scripts/chatUiCoverage.mjs && node scripts/changed-line-check.cjs --base \"$TS_COVERAGE_BASE\" --coverage coverage/chatUi/coverage-final.json --report coverage/chatUi/changed-lines.json --ext .ts --ext .tsx --ext .mjs --ext .cjs --exclude src/app/locales/en_US.ts --exclude src/app/chat/screenEngine.ts src scripts/chatUiCoverage.mjs scripts/changed-line-check.cjs"
+    "chat-seed": "node -r sucrase/register src/server/dev/chatSeed.ts"
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "^18.2.5",
