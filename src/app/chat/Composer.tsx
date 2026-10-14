@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Pressable, Text, TextInput, View } from 'react-native'
 
 import { Icon } from '../components'
@@ -7,12 +7,17 @@ import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { sendAllowed } from './chatComposeModel'
 import type { PickedFile, PickSource } from './chatFileTypes'
-import { bindComposerKeys } from './chatWebInteractions'
+import {
+  type ComposerChange,
+  type ComposerSelection,
+  textEdit
+} from './chatMentionsModel'
+import { bindComposerKeys, setComposerSelection } from './chatWebInteractions'
 import { EmojiPicker } from './EmojiPicker'
 
 export interface ComposerProps {
   text: string
-  onText: (text: string) => void
+  onText: (text: string, change?: ComposerChange) => void
   /** Off while history is locked: the composer shows, but takes nothing. */
   enabled: boolean
   sending: boolean
@@ -31,7 +36,7 @@ export interface ComposerProps {
   onSend: () => void
   onRead?: () => void
   /** Register a synchronous user-action focus handoff, scoped to this mount. */
-  registerFocus?: (focus: () => void) => () => void
+  registerFocus?: (focus: (selection?: ComposerSelection) => void) => () => void
 }
 
 /**
@@ -55,6 +60,13 @@ export function Composer(props: ComposerProps): React.ReactElement {
   const [emoji, setEmoji] = useState(false)
   const [choosing, setChoosing] = useState(false)
   const input = useRef<React.ComponentRef<typeof TextInput>>(null)
+  const selection = useRef<ComposerSelection>({
+    start: text.length,
+    end: text.length
+  })
+  const editKey = useRef<string | undefined>(undefined)
+  const pendingCaret = useRef<ComposerSelection | undefined>(undefined)
+  const [caretRevision, setCaretRevision] = useState(0)
   const latest = useRef(props)
   latest.current = { ...props, onAttach: props.onAttach }
   const canSend = sendAllowed({
@@ -67,11 +79,23 @@ export function Composer(props: ComposerProps): React.ReactElement {
   const canAttach = enabled && !sending && props.preparing !== true
   useEffect(
     () =>
-      registerFocus?.(() => {
-        if (latest.current.enabled) input.current?.focus()
+      registerFocus?.(caret => {
+        if (!latest.current.enabled) return
+        input.current?.focus()
+        if (caret != null) {
+          pendingCaret.current = caret
+          setCaretRevision(value => value + 1)
+        }
       }),
     [registerFocus]
   )
+  useLayoutEffect(() => {
+    const caret = pendingCaret.current
+    if (caret == null || !enabled) return
+    pendingCaret.current = undefined
+    selection.current = caret
+    setComposerSelection(input.current, caret)
+  }, [text, enabled, caretRevision])
   useEffect(
     () =>
       bindComposerKeys(input.current, () => {
@@ -247,7 +271,22 @@ export function Composer(props: ComposerProps): React.ReactElement {
           testID="chat-composer"
           accessibilityLabel={lstrings.chat_composer}
           value={text}
-          onChangeText={onText}
+          onSelectionChange={event => {
+            selection.current = event.nativeEvent.selection
+          }}
+          onKeyPress={event => {
+            editKey.current = event.nativeEvent.key
+          }}
+          onChangeText={next => {
+            const change = {
+              selection: selection.current,
+              key: editKey.current
+            }
+            editKey.current = undefined
+            const edit = textEdit(latest.current.text, next, change)
+            selection.current = { start: edit.afterEnd, end: edit.afterEnd }
+            onText(next, change)
+          }}
           editable={enabled}
           multiline
           placeholder={
@@ -277,7 +316,9 @@ export function Composer(props: ComposerProps): React.ReactElement {
       {emoji && (
         <EmojiPicker
           onPick={picked => {
-            onText(text + picked)
+            onText(text + picked, {
+              selection: { start: text.length, end: text.length }
+            })
           }}
           onClose={() => {
             setEmoji(false)
