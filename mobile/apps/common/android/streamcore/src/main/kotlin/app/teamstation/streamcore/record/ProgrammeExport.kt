@@ -122,8 +122,19 @@ object ProgrammeExport {
         return PartReading(first, end, end, reader.complete)
     }
 
-    /** What an export did. */
-    data class Result(val plan: Plan, val file: File)
+    /**
+     * What an export did. [peakQueuedSamples] is the most samples a rebuild held in memory for one
+     * fragment (0 for a copy), which a long part must not raise.
+     */
+    data class Result(val plan: Plan, val file: File, val peakQueuedSamples: Int = 0)
+
+    /**
+     * The parts were written with different picture decoder configurations (the encoder's settings
+     * changed between them), so no one sample entry can describe them all: the rebuild refuses
+     * rather than write a file whose later parts nothing can decode.
+     */
+    class MismatchedParts(val part: String) :
+        IllegalStateException("$part was recorded with other picture settings than the take's first part")
 
     /**
      * Writes the take's programme to [output]: [parts] are its files in part order, [anchors] its
@@ -161,8 +172,8 @@ object ProgrammeExport {
             val start = starts[part] ?: return@mapIndexedNotNull null
             start to file
         }.sortedBy { it.first }
-        place(placed, windowStart, windowEnd, silentPacket, output)
-        return Result(plan, output)
+        val peak = place(placed, windowStart, windowEnd, silentPacket, output)
+        return Result(plan, output, peak)
     }
 
     /** A part's number from its file name: `program-…-N.mp4` is part N, and no suffix is part 1. */
@@ -182,15 +193,28 @@ object ProgrammeExport {
      * before it is held as one sample; the sound is contiguous, with [silentPacket]s across every hole
      * and out to the end. The last picture and the sound both run to [windowEnd], or to where the last
      * part ends.
+     *
+     * Each part's pictures and sound are written interleaved by time, so the writer holds about one
+     * fragment's samples at a time however long the part is. Where parts overlap, a picture at or
+     * before the last one written is left out, and so is every picture after it up to the part's next
+     * keyframe: the ones between depend on what was left out. Every part must share the first part's
+     * picture configuration ([MismatchedParts]). Answers the most samples held for one fragment.
      */
-    fun place(parts: List<Pair<Double, File>>, windowStart: Double, windowEnd: Double?, silentPacket: ByteArray, output: File) {
+    fun place(parts: List<Pair<Double, File>>, windowStart: Double, windowEnd: Double?, silentPacket: ByteArray, output: File): Int {
         val readings = parts.map { (start, file) -> Triple(start, file, FragmentedMp4Reader.read(file)) }
-        val readers = readings.mapNotNull { (start, _, reader) -> reader?.let { start to it } }
+        val readers = readings.mapNotNull { (start, file, reader) -> reader?.let { Triple(start, file, it) } }
         require(readers.isNotEmpty()) {
             "no readable programme part: " + readings.joinToString { (_, file, _) -> "${file.name} is not an MP4 with tracks" }
         }
-        val sourceVideo = readers.firstNotNullOfOrNull { it.second.video?.takeIf { track -> track.configuration != null } }
-        val sourceAudio = readers.firstNotNullOfOrNull { it.second.audio?.takeIf { track -> track.configuration != null } }
+        val sourceVideo = readers.firstNotNullOfOrNull { it.third.video?.takeIf { track -> track.configuration != null } }
+        val sourceAudio = readers.firstNotNullOfOrNull { it.third.audio?.takeIf { track -> track.configuration != null } }
+        if (sourceVideo != null) {
+            readers.firstOrNull { (_, _, reader) ->
+                val video = reader.video
+                video?.configuration != null && video.samples.isNotEmpty() &&
+                    (video.sampleEntry != sourceVideo.sampleEntry || !video.configuration.contentEquals(sourceVideo.configuration))
+            }?.let { throw MismatchedParts(it.second.name) }
+        }
         // Priming is not sound: the first part's is skipped with the edit list, as in the part itself.
         val priming = sourceAudio?.mediaTime ?: 0L
         val writer = FragmentedMp4Writer(
@@ -210,7 +234,9 @@ object ProgrammeExport {
                     channels = maxOf(1, it.channels),
                     primingSamples = priming.toInt()
                 )
-            }
+            },
+            // The export is forced to storage once, as it finishes, not fragment by fragment.
+            syncEachFragment = false
         )
         val packet = FragmentedMp4Writer.StreamPacketSamples.toDouble() / (sourceAudio?.timescale ?: 48_000)
         val head = minOf(windowStart, readers.minOf { it.first })
@@ -219,44 +245,72 @@ object ProgrammeExport {
         var soundEnd = -(sourceAudio?.let { priming.toDouble() / it.timescale } ?: 0.0)
         var pictureEnd = 0.0
         var end = 0.0
-        for ((start, reader) in readers) {
-            val offset = start - head
-            // One sample in memory at a time, read from the part as it is written out.
-            reader.samples().use { source ->
-                reader.video?.let { track ->
-                    for (sample in track.samples) {
-                        val at = offset + sample.ticks.toDouble() / track.timescale
-                        if (at <= lastPicture) continue
-                        if (writer.writeVideo(source.read(sample), at, sample.sync)) lastPicture = at
-                        pictureEnd = maxOf(pictureEnd, at + sample.duration.toDouble() / track.timescale)
-                    }
-                }
-                reader.audio?.let { track ->
-                    var at = offset - track.mediaTime.toDouble() / track.timescale
-                    while (soundEnd + packet / 2 < at) {
-                        writer.writeAudio(silentPacket)
-                        soundEnd += packet
-                    }
-                    for (sample in track.samples) {
-                        // A packet the sound has already passed (parts that overlap) is left out.
-                        if (at >= soundEnd - packet / 2) {
-                            writer.writeAudio(source.read(sample))
-                            soundEnd += packet
+        try {
+            for ((start, _, reader) in readers) {
+                val offset = start - head
+                val video = reader.video
+                val pictures = video?.samples.orEmpty()
+                val audio = reader.audio
+                val sounds = audio?.samples.orEmpty()
+                var picture = 0
+                var sound = 0
+                // Where the part's next packet belongs on the output's timeline.
+                var soundAt = audio?.let { offset - it.mediaTime.toDouble() / it.timescale } ?: 0.0
+                // The silence from where the sound has got to up to the part's own sound comes first.
+                var leadIn = audio != null
+                // Nothing of the part is written before a keyframe: its pictures depend on one.
+                var awaitingKeyframe = true
+                // One sample in memory at a time, read from the part as it is written out.
+                reader.samples().use { source ->
+                    while (true) {
+                        val pictureAt = if (video != null && picture < pictures.size) offset + pictures[picture].ticks.toDouble() / video.timescale else Double.POSITIVE_INFINITY
+                        val soundDue = if (leadIn || sound < sounds.size) soundEnd else Double.POSITIVE_INFINITY
+                        if (pictureAt == Double.POSITIVE_INFINITY && soundDue == Double.POSITIVE_INFINITY) break
+                        if (pictureAt <= soundDue) {
+                            val sample = pictures[picture]
+                            picture += 1
+                            if (pictureAt <= lastPicture) {
+                                awaitingKeyframe = true
+                                continue
+                            }
+                            if (awaitingKeyframe && !sample.sync) continue
+                            awaitingKeyframe = false
+                            if (writer.writeVideo(source.read(sample), pictureAt, sample.sync)) lastPicture = pictureAt
+                            pictureEnd = maxOf(pictureEnd, pictureAt + sample.duration.toDouble() / video!!.timescale)
+                        } else if (leadIn) {
+                            if (soundEnd + packet / 2 < soundAt) {
+                                writer.writeAudio(silentPacket)
+                                soundEnd += packet
+                            } else {
+                                leadIn = false
+                            }
+                        } else {
+                            val sample = sounds[sound]
+                            sound += 1
+                            // A packet the sound has already passed (parts that overlap) is left out.
+                            if (soundAt >= soundEnd - packet / 2) {
+                                writer.writeAudio(source.read(sample))
+                                soundEnd += packet
+                            }
+                            soundAt += sample.duration.toDouble() / audio!!.timescale
                         }
-                        at += sample.duration.toDouble() / track.timescale
                     }
-                    end = maxOf(end, soundEnd)
+                }
+                if (audio != null) end = maxOf(end, soundEnd)
+            }
+            // The window's end when the take has one; otherwise wherever the last part's media ends.
+            val finalEnd = windowEnd?.let { it - head } ?: maxOf(pictureEnd, end)
+            if (sourceAudio != null) {
+                while (soundEnd + packet / 2 < finalEnd) {
+                    writer.writeAudio(silentPacket)
+                    soundEnd += packet
                 }
             }
+            writer.finish(if (lastPicture.isFinite()) maxOf(1e-3, maxOf(finalEnd, pictureEnd) - lastPicture) else null)
+        } catch (error: Throwable) {
+            writer.abandon()
+            throw error
         }
-        // The window's end when the take has one; otherwise wherever the last part's media ends.
-        val finalEnd = windowEnd?.let { it - head } ?: maxOf(pictureEnd, end)
-        if (sourceAudio != null) {
-            while (soundEnd + packet / 2 < finalEnd) {
-                writer.writeAudio(silentPacket)
-                soundEnd += packet
-            }
-        }
-        writer.finish(if (lastPicture.isFinite()) maxOf(1e-3, maxOf(finalEnd, pictureEnd) - lastPicture) else null)
+        return writer.peakQueuedSamples
     }
 }

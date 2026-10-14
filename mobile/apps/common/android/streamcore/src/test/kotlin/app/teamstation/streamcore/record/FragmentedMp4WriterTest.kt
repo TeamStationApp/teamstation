@@ -205,4 +205,30 @@ class FragmentedMp4WriterTest {
         assertNull(FragmentedMp4Reader.read(folder.newFile("empty.mp4")))
         assertNull(FragmentedMp4Reader.read(File(folder.root, "missing.mp4")))
     }
+
+    @Test
+    fun soundWithoutPicturesIsCutByItsOwnLengthAndTheForceCanWaitForTheOwner() {
+        // One picture, then twenty seconds of sound and no picture: the sound is not held whole for a
+        // fragment the pictures never cut, but cut every two fragments' length.
+        val file = folder.newFile("soundOnly.mp4")
+        val writer = FragmentedMp4Writer(file, videoTrack, audioTrack, syncEachFragment = false)
+        assertTrue(writer.syncPending())
+        assertTrue(writer.writeVideo(bytes(0, 0, 0, 1, 0x26), 0.0, true))
+        val packets = (20 * 48_000) / 1024
+        repeat(packets) { writer.writeAudio(bytes(0x21, it and 0xFF)) }
+        // The fragments went to the file, and the force waits for the owner to ask for it.
+        assertTrue(writer.audioSamples > packets - 282)
+        assertTrue(writer.peakQueuedSamples <= 282)
+        assertTrue(writer.hasPendingSync)
+        assertTrue(writer.syncPending())
+        assertFalse(writer.hasPendingSync)
+        writer.finish(20.0)
+        assertTrue(writer.syncPending())
+        val reader = FragmentedMp4Reader.read(file)!!
+        assertTrue(reader.complete)
+        assertEquals(packets, reader.audio!!.samples.size)
+        assertEquals(1, reader.video!!.samples.size)
+        assertEquals(20.0, reader.video!!.endSeconds!!, 1e-6)
+        assertTrue(reader.fragments >= 3)
+    }
 }

@@ -56,14 +56,20 @@ class ProgrammeExportTest {
      * encoder's priming packets come first and the edit list skips them, so the first real sample
      * plays with the first picture.
      */
-    private fun part(name: String, seconds: Int, priming: Int = 0): File {
+    private fun part(
+        name: String,
+        seconds: Int,
+        priming: Int = 0,
+        keyframeEvery: Int = 60,
+        video: FragmentedMp4Writer.VideoTrack = FragmentedMp4WriterTest.videoTrack
+    ): File {
         val file = folder.newFile(name)
         val audio = FragmentedMp4Writer.AudioTrack(byteArrayOf(0x11, 0x90.toByte()), primingSamples = priming)
-        val writer = FragmentedMp4Writer(file, FragmentedMp4WriterTest.videoTrack, if (priming == 0) FragmentedMp4WriterTest.audioTrack else audio)
+        val writer = FragmentedMp4Writer(file, video, if (priming == 0) FragmentedMp4WriterTest.audioTrack else audio)
         repeat(priming / 1024) { writer.writeAudio(primingPacket) }
         var packets = 0
         for (frame in 0 until seconds * 30) {
-            writer.writeVideo(byteArrayOf(0, 0, 0, 3, 0x26, 1, frame.toByte()), frame / 30.0, frame % 60 == 0)
+            writer.writeVideo(byteArrayOf(0, 0, 0, 3, 0x26, 1, frame.toByte()), frame / 30.0, frame % keyframeEvery == 0)
             while (packets * 1024.0 / 48_000 < (frame + 1) / 30.0) {
                 writer.writeAudio(byteArrayOf(0x21, 0x55))
                 packets += 1
@@ -177,15 +183,73 @@ class ProgrammeExportTest {
         assertTrue(runCatching {
             ProgrammeExport.export(listOf(first, part("program-20261012-100000-2.mp4", 2)), emptyList(), 0, 1_000.0, null, 30, silent, output)
         }.isFailure)
-        // Overlapping parts: the second's samples before the first's end are left out.
+        // Overlapping parts: the second's samples before the first's end are left out, and so is
+        // everything up to its next keyframe, which here it never has: its pictures after the overlap
+        // depend on the keyframe that was left out.
         val anchors = anchors(count = 1) + anchors(part = 2, start = 1_001.0, count = 1)
         val placed = File(folder.root, "overlap.mp4")
         ProgrammeExport.export(listOf(first, File(folder.root, "program-20261012-100000-2.mp4")), anchors, 0, 1_000.0, null, 30, silent, placed)
         val reader = FragmentedMp4Reader.read(placed)!!
-        assertEquals(60 + 30, reader.video!!.samples.size)
+        assertEquals(60, reader.video!!.samples.size)
         // With no end to the take, both run to where the last part's media ends: its sound, half a
         // packet past its picture.
         assertEquals(reader.audio!!.endSeconds!!, reader.video!!.endSeconds!!, 1e-4)
         assertEquals(3.0, reader.audio!!.endSeconds!!, 1024.0 / 48_000)
+    }
+
+    @Test
+    fun anOverlappingPartStartsAtItsFirstKeyframeAfterTheOverlap() {
+        // Part 2 opens half a second before part 1's last picture, with a keyframe every second: its
+        // opening keyframe is in the overlap, so it starts at its next one, never on a picture that
+        // depends on one left out.
+        val first = part("program-20261012-100000.mp4", 4, keyframeEvery = 30)
+        val second = part("program-20261012-100000-2.mp4", 4, keyframeEvery = 30)
+        val anchors = anchors(count = 1) + anchors(part = 2, start = 1_003.5, count = 1)
+        val output = File(folder.root, "keyframe.mp4")
+        ProgrammeExport.export(listOf(first, second), anchors, 1, 1_000.0, 1_007.5, 30, silent, output)
+        val video = FragmentedMp4Reader.read(output)!!.video!!
+        val partTwo = video.samples.drop(120)
+        assertTrue(partTwo.first().sync)
+        assertEquals(4.5, partTwo.first().ticks / 90_000.0, 1e-6)
+        assertEquals(120 + 90, video.samples.size)
+        // Part 1's last picture lasts until part 2's keyframe.
+        assertEquals(4.5, (video.samples[119].ticks + video.samples[119].duration) / 90_000.0, 1e-6)
+    }
+
+    @Test
+    fun partsWithDifferentPictureSettingsAreRefused() {
+        val config = FragmentedMp4WriterTest.videoTrack.decoderConfiguration.copyOf().also { it[it.size - 1] = (it.last() + 1).toByte() }
+        val first = part("program-20261012-100000.mp4", 2)
+        val second = part("program-20261012-100000-2.mp4", 2, video = FragmentedMp4Writer.VideoTrack(app.teamstation.streamcore.core.StreamCodec.HEVC, 1920, 1080, config))
+        val anchors = anchors(count = 1) + anchors(part = 2, start = 1_010.0, count = 1)
+        val output = File(folder.root, "mismatched.mp4")
+        val refused = runCatching { ProgrammeExport.export(listOf(first, second), anchors, 1, 1_000.0, 1_012.0, 30, silent, output) }
+        assertTrue(refused.exceptionOrNull() is ProgrammeExport.MismatchedParts)
+        assertTrue(refused.exceptionOrNull()!!.message!!.contains("program-20261012-100000-2.mp4"))
+        assertFalse(output.exists())
+    }
+
+    @Test
+    fun aLongPartIsRebuiltInterleavedAndHeldAFragmentAtATime() {
+        // Twenty minutes in one part, rebuilt because the take was resumed: its pictures and sound go
+        // out side by side, so the rebuild holds about one fragment of samples at a time. Written
+        // pictures first, the part's whole sound sat in memory until the end.
+        val minutes = 20
+        val file = part("program-20261012-100000.mp4", minutes * 60)
+        val output = File(folder.root, "long.mp4")
+        val result = ProgrammeExport.export(listOf(file), anchors(count = 4), 1, 1_000.0, 1_000.0 + minutes * 60, 30, silent, output)
+        assertEquals("reencode: resumed 1 time", result.plan.description)
+        // A fragment is 3 s: 90 pictures and about 141 packets.
+        assertTrue("held ${result.peakQueuedSamples} samples at once", result.peakQueuedSamples in 200..300)
+        val reader = FragmentedMp4Reader.read(output)!!
+        val video = reader.video!!
+        val audio = reader.audio!!
+        assertEquals(minutes * 60 * 30, video.samples.size)
+        assertEquals(minutes * 60.0, audio.endSeconds!!, 1024.0 / 48_000)
+        assertEquals(minutes * 60 / 3.0, reader.fragments.toDouble(), 2.0)
+        // Interleaved on disk: a minute in, the sound sits before the pictures of a minute later.
+        val soundAtOneMinute = audio.samples.first { it.ticks >= 60 * 48_000 }
+        val pictureAtTwoMinutes = video.samples.first { it.ticks >= 120 * 90_000 }
+        assertTrue(soundAtOneMinute.offset < pictureAtTwoMinutes.offset)
     }
 }

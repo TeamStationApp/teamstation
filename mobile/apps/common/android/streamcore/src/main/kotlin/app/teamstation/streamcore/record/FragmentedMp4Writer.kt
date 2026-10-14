@@ -1,9 +1,11 @@
 package app.teamstation.streamcore.record
 
 import app.teamstation.streamcore.core.StreamCodec
+import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import kotlin.math.roundToLong
 
 /**
@@ -24,7 +26,13 @@ class FragmentedMp4Writer(
     val file: File,
     private val video: VideoTrack?,
     private val audio: AudioTrack?,
-    private val fragmentSeconds: Double = 3.0
+    private val fragmentSeconds: Double = 3.0,
+    /**
+     * Whether each fragment is forced to storage as it is written. False leaves the force to the
+     * owner, through [syncPending], so it can do it outside whatever lock it writes under: one slow
+     * fsync held under the recorder's lock froze the preview, the stream's pictures and the live sound.
+     */
+    private val syncEachFragment: Boolean = true
 ) {
     /** A picture track: the codec, its size, and its decoder configuration record (`hvcC` or `avcC`). */
     class VideoTrack(
@@ -48,14 +56,26 @@ class FragmentedMp4Writer(
 
     private class Sample(val data: ByteArray, val ticks: Long, var duration: Long, val sync: Boolean)
 
-    private val out = FileOutputStream(file)
+    private val fileOut = FileOutputStream(file)
+
+    /** Every box and sample goes through this, and is flushed to [fileOut] at the end of each fragment. */
+    private val out = BufferedOutputStream(fileOut, 64 * 1024)
     private var sequence = 0
     private var audioTicks = 0L
+
+    /** The sound queued for the next fragment, in samples: kept as it changes, never summed. */
+    private var audioQueueTicks = 0L
     private val videoQueue = mutableListOf<Sample>()
     private val audioQueue = mutableListOf<Sample>()
     private var heldPicture: Sample? = null
     private var fragmentStart: Double? = null
     private var closed = false
+
+    @Volatile
+    private var syncWanted = false
+
+    /** Fragments written since the last [syncPending] that have not been forced to storage. */
+    internal val hasPendingSync: Boolean get() = syncWanted
 
     /** Pictures and packets written to the file, held-back picture included once it is. */
     var videoSamples = 0
@@ -63,16 +83,23 @@ class FragmentedMp4Writer(
     var audioSamples = 0
         private set
 
+    /** The most samples ever queued for one fragment, both tracks together: what the writer held in memory at once. */
+    var peakQueuedSamples = 0
+        private set
+
     /** Where the sound written so far ends, in seconds. */
-    val audioEndSeconds: Double get() = audio?.let { (audioTicks + audioQueueTicks()).toDouble() / it.sampleRate } ?: 0.0
+    val audioEndSeconds: Double get() = audio?.let { (audioTicks + audioQueueTicks).toDouble() / it.sampleRate } ?: 0.0
 
     init {
-        out.write(ftyp())
-        out.write(moov())
-        out.flush()
+        try {
+            out.write(ftyp())
+            out.write(moov())
+            out.flush()
+        } catch (error: IOException) {
+            runCatching { fileOut.close() }
+            throw error
+        }
     }
-
-    private fun audioQueueTicks(): Long = audioQueue.sumOf { it.duration }
 
     /**
      * One coded picture, length-prefixed NAL units, presented at [seconds]. A picture at or before
@@ -98,11 +125,17 @@ class FragmentedMp4Writer(
     fun writeAudio(packet: ByteArray) {
         val track = audio ?: return
         check(!closed) { "writer is finished" }
-        audioQueue += Sample(packet, audioTicks + audioQueueTicks(), StreamPacketSamples, true)
-        val seconds = (audioTicks + audioQueueTicks()).toDouble() / track.sampleRate
+        audioQueue += Sample(packet, audioTicks + audioQueueTicks, StreamPacketSamples, true)
+        audioQueueTicks += StreamPacketSamples
+        val seconds = (audioTicks + audioQueueTicks).toDouble() / track.sampleRate
         if (video == null) {
             if (fragmentStart == null) fragmentStart = 0.0
             if (seconds - (fragmentStart ?: 0.0) >= fragmentSeconds) flush(next = seconds)
+        } else if (audioQueueTicks.toDouble() / track.sampleRate >= fragmentSeconds * AUDIO_CUT_FRAGMENTS) {
+            // Pictures normally cut the fragments, and sound written beside them goes in with them.
+            // Sound that runs on without pictures (a part's sound written after its pictures, or a
+            // picture track that has stopped) is cut by its own length, so it is never held whole.
+            flush(next = null)
         }
     }
 
@@ -120,16 +153,39 @@ class FragmentedMp4Writer(
             videoQueue += held
             heldPicture = null
         }
-        flush(next = null)
         closed = true
-        out.close()
+        try {
+            flush(next = null)
+            out.flush()
+            fileOut.fd.sync()
+        } finally {
+            syncWanted = false
+            runCatching { fileOut.close() }
+        }
     }
 
     /** Closes the file without writing what is buffered, as a crash would leave it. */
     fun abandon() {
         if (closed) return
         closed = true
-        runCatching { out.close() }
+        syncWanted = false
+        runCatching { fileOut.close() }
+    }
+
+    /**
+     * Forces the fragments written since the last call to storage, when the writer was made without
+     * [syncEachFragment]. Safe from any thread, alongside the writes; false when the force failed
+     * (the file closed meanwhile, or storage refused).
+     */
+    fun syncPending(): Boolean {
+        if (!syncWanted) return true
+        syncWanted = false
+        return try {
+            fileOut.fd.sync()
+            true
+        } catch (error: IOException) {
+            false
+        }
     }
 
     private fun flush(next: Double?) {
@@ -137,14 +193,15 @@ class FragmentedMp4Writer(
             fragmentStart = next
             return
         }
+        peakQueuedSamples = maxOf(peakQueuedSamples, videoQueue.size + audioQueue.size)
         sequence += 1
-        val fragment = fragment(sequence)
-        out.write(fragment)
+        writeFragment(sequence)
         out.flush()
-        out.fd.sync()
+        if (syncEachFragment) fileOut.fd.sync() else syncWanted = true
         videoSamples += videoQueue.size
         audioSamples += audioQueue.size
-        audioTicks += audioQueueTicks()
+        audioTicks += audioQueueTicks
+        audioQueueTicks = 0
         videoQueue.clear()
         audioQueue.clear()
         fragmentStart = next
@@ -337,19 +394,23 @@ class FragmentedMp4Writer(
         write(body)
     }.toByteArray()
 
-    private fun fragment(sequence: Int): ByteArray {
+    /**
+     * One `moof` and its `mdat`, the samples streamed to the file one by one rather than copied into
+     * one payload first.
+     */
+    private fun writeFragment(sequence: Int) {
         // The moof's size decides the data offsets inside it, and the offsets do not change its size,
         // so it is built once to measure and once to keep.
         val draft = moof(sequence, 0)
         val moof = moof(sequence, draft.size + 8)
-        val payload = videoQueue.sumOf { it.data.size } + audioQueue.sumOf { it.data.size }
-        return ByteArrayOutputStream(moof.size + 8 + payload).apply {
-            write(moof)
-            writeU32(this, 8L + payload)
-            write("mdat".toByteArray(Charsets.US_ASCII))
-            videoQueue.forEach { write(it.data) }
-            audioQueue.forEach { write(it.data) }
-        }.toByteArray()
+        val payload = videoQueue.sumOf { it.data.size.toLong() } + audioQueue.sumOf { it.data.size.toLong() }
+        out.write(moof)
+        val header = ByteArrayOutputStream(8)
+        writeU32(header, 8L + payload)
+        header.write("mdat".toByteArray(Charsets.US_ASCII))
+        out.write(header.toByteArray())
+        videoQueue.forEach { out.write(it.data) }
+        audioQueue.forEach { out.write(it.data) }
     }
 
     private fun moof(sequence: Int, dataStart: Int): ByteArray = box("moof") {
@@ -419,6 +480,9 @@ class FragmentedMp4Writer(
     companion object {
         /** An AAC-LC packet's length in samples. */
         const val StreamPacketSamples = 1024L
+
+        /** With a picture track, sound queued for this many fragments' length is cut on its own. */
+        const val AUDIO_CUT_FRAGMENTS = 2.0
 
         private fun writeU32(out: ByteArrayOutputStream, value: Long) {
             out.write(((value ushr 24) and 0xFF).toInt())
