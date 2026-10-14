@@ -72,6 +72,38 @@ describe('this install’s device id', function () {
     expect(await id()).equals('00000000-0000-4000-8000-000000000002')
   })
 
+  it('keeps the stored id when a read fails once, and never writes over it', async function () {
+    const kept = '00000000-0000-4000-8000-000000000001'
+    const storage = memory({ [DEVICE_ID_KEY]: kept })
+    let reads = 0
+    const flaky: PreferenceStorage = {
+      getItem: async key => {
+        reads += 1
+        if (reads === 1) throw new Error('busy')
+        return await storage.getItem(key)
+      },
+      setItem: storage.setItem
+    }
+    expect(await deviceIdStore(flaky)()).equals(kept)
+    expect(storage.writes).equals(0)
+
+    // Unreadable every time: an id for this run, and the stored one left for
+    // the next launch to read.
+    const unreadable: PreferenceStorage = {
+      getItem: async () => {
+        throw new Error('locked')
+      },
+      setItem: storage.setItem
+    }
+    const id = deviceIdStore(
+      unreadable,
+      () => '00000000-0000-4000-8000-000000000003'
+    )
+    expect(await id()).equals('00000000-0000-4000-8000-000000000003')
+    expect(storage.writes).equals(0)
+    expect(storage.values[DEVICE_ID_KEY]).equals(kept)
+  })
+
   it('is a version 4 UUID from the runtime’s randomness, or Math.random without one', function () {
     expect(randomUuid(bytes => bytes.fill(0xff))).equals(
       'ffffffff-ffff-4fff-bfff-ffffffffffff'
