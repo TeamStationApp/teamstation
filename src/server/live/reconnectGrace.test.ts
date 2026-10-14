@@ -237,4 +237,55 @@ describe('the reconnect grace', function () {
     expect(await readFile(playlist, 'utf8')).equals(OPEN)
     forcePublishForTest(KEY, false)
   })
+
+  /** A sync that runs `duringRead` while the controller reads the playlist. */
+  async function syncReadingWith(
+    duringRead: () => Promise<void>
+  ): Promise<void> {
+    if (options == null) return
+    // The module itself, which the controller reads through, rather than
+    // the copy an `import *` makes of it.
+    const stubbed = require('node:fs/promises') as {
+      readFile: (...args: unknown[]) => Promise<unknown>
+    }
+    const realRead = stubbed.readFile
+    stubbed.readFile = async (...args: unknown[]) => {
+      const text = await realRead(...args)
+      if (String(args[0]) === playlist) await duringRead()
+      return text
+    }
+    try {
+      await sync(options)
+    } finally {
+      stubbed.readFile = realRead
+      forcePublishForTest(KEY, false)
+    }
+  }
+
+  it('leaves it open for a publisher that comes back while it is being read', async function () {
+    if (options == null) this.skip()
+    await publisherLeft(RECONNECT_GRACE_MS + 40_000)
+    // The publisher reconnects while the controller is reading the playlist:
+    // the ingest has it back, and its writer has reopened a playlist that had
+    // nothing to take off yet.
+    await syncReadingWith(async () => {
+      forcePublishForTest(KEY, true)
+    })
+    expect(await readFile(playlist, 'utf8')).equals(OPEN)
+  })
+
+  it('writes nothing over a playlist that went, or was closed, while it was read', async function () {
+    if (options == null) this.skip()
+    await publisherLeft(RECONNECT_GRACE_MS + 45_000)
+    await syncReadingWith(async () => {
+      await writeFile(playlist, `${OPEN}#EXT-X-ENDLIST\n`)
+    })
+    expect(await readFile(playlist, 'utf8')).equals(`${OPEN}#EXT-X-ENDLIST\n`)
+    await writeFile(playlist, OPEN)
+    await publisherLeft(RECONNECT_GRACE_MS + 50_000)
+    await syncReadingWith(async () => {
+      await rm(playlist)
+    })
+    expect(await readFile(playlist, 'utf8').catch(() => 'gone')).equals('gone')
+  })
 })
