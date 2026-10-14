@@ -16,7 +16,7 @@ describe('team identity composition boundaries', () => {
     ['screens/PlayerTeamsTab.tsx', 'teamName={team.teamName}'],
     ['screens/GroupSettingsScreen.tsx', "team={kind === 'team'}"],
     ['screens/CreateGroupScreen.tsx', "team={kind === 'team'}"],
-    ['screens/PlaceholderTeamForm.tsx', 'team={true}'],
+    ['screens/PlaceholderTeamForm.tsx', 'team\n'],
     ['screens/LeaguePage.tsx', 'kind="team"'],
     ['screens/SeasonPresentation.tsx', 'kind="team"']
   ])
