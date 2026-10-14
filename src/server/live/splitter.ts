@@ -1,9 +1,11 @@
 import type { ChildProcess } from 'child_process'
 import { spawn } from 'child_process'
-import { readdirSync, readFileSync, writeFileSync } from 'fs'
+import type { FSWatcher } from 'fs'
+import { readdirSync, readFileSync, watch, writeFileSync } from 'fs'
 
 import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
 import { segmentPictureSec } from '../media/trackStarts'
+import { recoverUnstampedSegments, stampNewSegments } from './segmentClock'
 
 /**
  * The RTMP ingest, and the split.
@@ -202,6 +204,20 @@ interface OutputRuntime {
   drainTimer?: NodeJS.Timeout
   /** The publisher came back while the last writer was still finishing. */
   pendingRespawn?: boolean
+  /** A start is reading the playlist before its ffmpeg exists. */
+  preparing?: boolean
+  /** Another start arrived while that read was in progress. */
+  spawnAgain?: boolean
+  /**
+   * How many times this output has been stopped. A start that is still
+   * reading the playlist samples it and does not spawn once it has moved:
+   * the stop ran while there was no process yet to kill.
+   */
+  stopGeneration: number
+  /** Moves segments this writer has closed onto the programme clock. */
+  stampSegments?: () => void
+  /** Stops watching for those segments, after moving the last one. */
+  stopStamp?: () => void
 }
 
 interface IngressRuntime {
@@ -354,7 +370,8 @@ function makeOutput(
     bytesAtLastTick: 0,
     restartCount: 0,
     spawned: new Set<ChildProcess>(),
-    released: false
+    released: false,
+    stopGeneration: 0
   }
 }
 
@@ -634,8 +651,8 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
   // segments a player already has, and an `EVENT` playlist may only grow at
   // the end.
   //
-  // Two numbers make the continuation seamless to a player that kept the
-  // playlist across the restart:
+  // Two numbers make the continuation a player that kept the playlist can
+  // follow:
   //
   // - `-start_number` is the playlist's own first sequence number, not the
   //   next free one. FFmpeg writes `EXT-X-MEDIA-SEQUENCE` from it and names
@@ -643,10 +660,16 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
   //   the next free number renumbered every segment already in the playlist,
   //   and a player that held it took them for new ones and played the start
   //   of the game again after the break.
-  // - `-output_ts_offset` is the playlist's length so far, so the new
-  //   segments' own timestamps carry on from where the last ones stopped
-  //   instead of starting again at nought. The recording made from these
-  //   segments then needs no guess about where each part goes.
+  // - The continuation offset is where the new segments sit on the wall clock,
+  //   measured from the playlist's first program date time. That is the
+  //   length of the media already listed, plus the time since the last
+  //   segment's program date time. The absence is a hole: no pictures, and
+  //   the last frame is not stretched across it. A return with no measurable
+  //   absence keeps the offset at the end of the media, so an immediate
+  //   restart does not invent a hole. A playlist with no program date time
+  //   keeps the sum of its durations. The offset is applied to each new
+  //   segment after ffmpeg closes it. Asking the muxer to apply it rewrites
+  //   the init segment and moves the parts already listed onto the new time.
   const flags = [
     'independent_segments',
     'temp_file',
@@ -655,7 +678,6 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
   ]
   const restart = output.hlsRestarted === true
   if (restart) flags.push('append_list')
-  const offsetSec = output.continuation?.offsetSec ?? 0
   const directory = output.target.slice(
     0,
     output.target.length - LIVE_PLAYLIST_NAME.length - 1
@@ -664,9 +686,6 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     ...base,
     '-c',
     'copy',
-    ...(restart && offsetSec > 0
-      ? ['-output_ts_offset', offsetSec.toFixed(6)]
-      : []),
     // Safari refuses HEVC tagged `hev1`, which is what a copy from RTMP is
     // tagged by default, so every HLS track here is tagged `hvc1`. It is also
     // why an H.264 publish is turned away rather than written: this tag and
@@ -721,24 +740,61 @@ function parseSize(token: string, unit: string): number {
 }
 
 function spawnOutput(entry: LiveEntry, output: OutputRuntime): void {
+  if (output.preparing === true) {
+    output.spawnAgain = true
+    return
+  }
+  output.preparing = true
+  spawnPrepared(entry, output)
+    .catch((error: unknown) => {
+      requireConfig().log(
+        `[live:${entry.liveStreamId}] ${output.label} failed to start: ${String(error)}`
+      )
+    })
+    .finally(() => {
+      output.preparing = false
+      if (
+        output.spawnAgain === true &&
+        !output.released &&
+        output.child == null &&
+        entry.ingress.publishing
+      ) {
+        output.spawnAgain = false
+        spawnOutput(entry, output)
+      } else {
+        output.spawnAgain = false
+      }
+    })
+}
+
+async function spawnPrepared(
+  entry: LiveEntry,
+  output: OutputRuntime
+): Promise<void> {
   const { ffmpegPath, log } = requireConfig()
+  const generation = output.stopGeneration
+  // The publisher can leave, or the game can be ended, while the playlist is
+  // being read. That stop finds no process, so it has to be visible here.
+  const stoppedDuringRead = (): boolean =>
+    output.released ||
+    !entry.ingress.publishing ||
+    output.stopGeneration !== generation
   if (output.restartTimer != null) {
     clearTimeout(output.restartTimer)
     output.restartTimer = undefined
   }
-  // A spawn after a stop means the stream is wanted again. Cancel the pending
-  // escalation, or it would SIGKILL the child about to be registered.
-  if (output.killEscalationTimer != null) {
-    clearTimeout(output.killEscalationTimer)
-    output.killEscalationTimer = undefined
-  }
-  if (output.released) return
-  // Two ffmpeg writing one playlist would corrupt it, so a respawn waits for
-  // the draining writer to finish. Its exit handler picks this up.
-  if (output.draining === true && output.child != null) {
+  if (output.released || !entry.ingress.publishing) return
+  // A writer that is still alive keeps the playlist. This start is recorded
+  // and runs when that process exits, including after a stop that it has not
+  // answered yet. The escalation that will kill it, and the stamper writing
+  // its segments, stay until this start actually goes ahead.
+  const deferIfWriterAlive = (): boolean => {
+    const child = output.child
+    if (child == null || !isPidAlive(child.pid)) return false
     output.pendingRespawn = true
-    return
+    return true
   }
+  if (deferIfWriterAlive()) return
 
   // A writer starting where one has already been must continue that playlist,
   // not start it again. Read from the directory rather than remembered,
@@ -747,17 +803,71 @@ function spawnOutput(entry: LiveEntry, output: OutputRuntime): void {
   // segments on disk are the one account of what happened that survives all
   // of them. Getting this wrong silently overwrites the first half of a game
   // with the second.
+  let installStamp: (() => void) | undefined
   if (output.kind === 'hls') {
     const next = nextSegmentNumber(entry.hlsDir)
     if (next > 0) {
       output.hlsRestarted = true
       reopenPlaylist(entry.hlsDir)
       settleLastSegment(entry.hlsDir)
-      output.continuation = playlistContinuation(
-        readPlaylist(entry.hlsDir),
-        next
-      )
+      const playlist = readPlaylist(entry.hlsDir)
+      output.continuation = playlistContinuation(playlist, next, new Date())
+      const offsetSec = output.continuation.offsetSec
+      if (offsetSec > 0) {
+        // A segment closed before the last stamp is still on the publisher's
+        // clock. Move it onto its programme date; every name already in the
+        // directory is then on that clock and stays there.
+        await recoverUnstampedSegments(entry.hlsDir, playlist, offsetSec)
+        if (stoppedDuringRead()) return
+        if (deferIfWriterAlive()) return
+        const skip = new Set(
+          readdirSync(entry.hlsDir).filter(name => /^seg\d+\.m4s$/.test(name))
+        )
+        installStamp = () => {
+          const stamp = (): void => {
+            for (const name of stampNewSegments(
+              entry.hlsDir,
+              offsetSec,
+              skip
+            )) {
+              skip.add(name)
+            }
+          }
+          let watcher: FSWatcher | undefined
+          try {
+            watcher = watch(entry.hlsDir, stamp)
+            watcher.on('error', () => {
+              // The progress lines stamp the same files.
+            })
+          } catch {
+            watcher = undefined
+          }
+          output.stopStamp = () => {
+            watcher?.close()
+            stamp()
+            output.stampSegments = undefined
+            output.stopStamp = undefined
+          }
+          output.stampSegments = stamp
+        }
+      }
     }
+  }
+
+  if (stoppedDuringRead()) return
+  if (deferIfWriterAlive()) return
+
+  // The previous writer is gone, or was never there. Its stamper flushes, and
+  // the escalation queued for it must not kill the process about to start.
+  output.stopStamp?.()
+  installStamp?.()
+  if (output.killEscalationTimer != null) {
+    clearTimeout(output.killEscalationTimer)
+    output.killEscalationTimer = undefined
+  }
+  if (output.child != null) {
+    output.spawned.delete(output.child)
+    output.child = undefined
   }
 
   const args = argsFor(entry, output)
@@ -801,6 +911,7 @@ function spawnOutput(entry: LiveEntry, output: OutputRuntime): void {
     if (written != null) {
       output.recordedSec = Number.parseInt(written[1], 10) / 1_000_000
     }
+    if (progress != null || written != null) output.stampSegments?.()
     if ((progress != null || written != null) && output.state !== 'connected') {
       output.state = 'connected'
       output.lastError = undefined
@@ -847,10 +958,12 @@ function spawnOutput(entry: LiveEntry, output: OutputRuntime): void {
       `[live:${entry.liveStreamId}] ffmpeg for ${output.label} exited code=${String(code)} signal=${String(signal)}`
     )
 
-    // Node says it died; the OS says otherwise. Kill it and keep tracking it,
-    // rather than forgetting an ffmpeg that is still pushing video somewhere.
+    // Node says it died; the OS says otherwise. Kill it, and hear the exit
+    // that follows. Dropping that exit left the writer on the books, and a
+    // publisher that came back had nothing to replace.
     if (isPidAlive(pid)) {
       log(`[live:${entry.liveStreamId}] phantom exit pid=${String(pid)}`)
+      exitHandled = false
       killByPid(pid, 'SIGKILL')
       report(entry)
       return
@@ -863,6 +976,7 @@ function spawnOutput(entry: LiveEntry, output: OutputRuntime): void {
       return
     }
     output.child = undefined
+    output.stopStamp?.()
 
     if (output.draining === true) {
       output.draining = false
@@ -870,14 +984,22 @@ function spawnOutput(entry: LiveEntry, output: OutputRuntime): void {
         clearTimeout(output.drainTimer)
         output.drainTimer = undefined
       }
-      // The publisher came back while this one was finishing. Now that the
-      // playlist has one writer again, the next part can be appended to it.
-      if (output.pendingRespawn === true && !output.released) {
-        output.pendingRespawn = false
-        spawnOutput(entry, output)
-        return
-      }
     }
+
+    // The publisher came back while this writer was still alive, including
+    // one a stop had already signalled. The state says stopped because that
+    // is what the stop recorded. The return is what says the next part is
+    // wanted, and it starts now that the playlist has one writer again.
+    if (
+      output.pendingRespawn === true &&
+      !output.released &&
+      entry.ingress.publishing
+    ) {
+      output.pendingRespawn = false
+      spawnOutput(entry, output)
+      return
+    }
+    output.pendingRespawn = false
 
     if (output.released || output.state === 'stopped') {
       report(entry)
@@ -931,7 +1053,11 @@ export function nextSegmentNumber(directory: string): number {
 export interface Continuation {
   /** What `-start_number` must be for the playlist's numbering to hold. */
   startNumber: number
-  /** The playlist's length so far, which the new timestamps start from. */
+  /**
+   * Where the new timestamps start, in seconds from the programme's first
+   * picture. The media already listed, plus the wall-clock absence since the
+   * last segment when that absence is measurable.
+   */
   offsetSec: number
 }
 
@@ -952,31 +1078,66 @@ export interface Continuation {
  */
 export function playlistContinuation(
   playlist: string | undefined,
-  nextOnDisk: number
+  nextOnDisk: number,
+  now: Date = new Date()
 ): Continuation {
   if (playlist == null) return { startNumber: nextOnDisk, offsetSec: 0 }
   let mediaSequence = 0
   let listed = 0
   let highest = -1
-  let offsetSec = 0
+  let mediaSec = 0
+  let firstPdtMs: number | undefined
+  let timelineEndMs: number | undefined
+  // The date applies to the segment that follows it. That segment's duration
+  // may be written before the date or after it.
+  let pendingSec: number | undefined
+  let pendingPdt: number | undefined
   for (const raw of playlist.split('\n')) {
     const line = raw.trim()
     const sequence = /^#EXT-X-MEDIA-SEQUENCE:(\d+)$/.exec(line)
     if (sequence != null) mediaSequence = Number.parseInt(sequence[1], 10)
+    const dated = /^#EXT-X-PROGRAM-DATE-TIME:(.+)$/.exec(line)
+    if (dated != null) {
+      const ms = Date.parse(dated[1])
+      if (Number.isFinite(ms)) {
+        firstPdtMs ??= ms
+        pendingPdt = ms
+      }
+    }
     const duration = /^#EXTINF:([\d.]+)/.exec(line)
-    if (duration != null) offsetSec += Number.parseFloat(duration[1])
+    if (duration != null) {
+      const seconds = Number.parseFloat(duration[1])
+      mediaSec += seconds
+      pendingSec = seconds
+    }
     const segment = /^seg(\d+)\.m4s$/.exec(line)
     if (segment != null) {
+      if (pendingSec != null) {
+        const start = pendingPdt ?? timelineEndMs
+        if (start != null) timelineEndMs = start + pendingSec * 1000
+      }
+      pendingSec = undefined
+      pendingPdt = undefined
       listed += 1
       highest = Math.max(highest, Number.parseInt(segment[1], 10))
     }
   }
   if (listed === 0) return { startNumber: nextOnDisk, offsetSec: 0 }
-  return {
-    startNumber: Math.max(mediaSequence, highest + 1 - listed),
-    // To the microsecond, as FFmpeg writes the durations.
-    offsetSec: Math.round(offsetSec * 1_000_000) / 1_000_000
+  const startNumber = Math.max(mediaSequence, highest + 1 - listed)
+  // To the microsecond, as FFmpeg writes the durations.
+  const round = (seconds: number): number =>
+    Math.round(seconds * 1_000_000) / 1_000_000
+  if (firstPdtMs == null || timelineEndMs == null) {
+    return { startNumber, offsetSec: round(mediaSec) }
   }
+  const wallEndMs = timelineEndMs
+  const absenceSec = (now.getTime() - wallEndMs) / 1000
+  // Under a millisecond is the clock landing on the segment's end.
+  const offsetSec =
+    absenceSec > 0.001
+      ? (now.getTime() - firstPdtMs) / 1000
+      : (wallEndMs - firstPdtMs) / 1000
+  return { startNumber, offsetSec: round(offsetSec) }
 }
 
 /**
@@ -989,7 +1150,7 @@ export function playlistContinuation(
  * that played up to the break puts it after the picture it already has, and
  * the two disagree by a frame for the rest of the game. Measured from the
  * segment itself, the length is the same for both, and the new part's
- * timestamps (`-output_ts_offset`) start exactly where it ends.
+ * timestamps start exactly where it ends.
  *
  * Only a small correction is made, to the last segment, and only once its
  * samples have been read; anything it cannot read is left as it is.
@@ -1100,6 +1261,7 @@ function drainOutput(output: OutputRuntime): void {
 }
 
 function stopOutput(output: OutputRuntime): void {
+  output.stopGeneration += 1
   if (output.restartTimer != null) {
     clearTimeout(output.restartTimer)
     output.restartTimer = undefined
@@ -1109,7 +1271,9 @@ function stopOutput(output: OutputRuntime): void {
     output.drainTimer = undefined
   }
   output.draining = false
-  output.pendingRespawn = false
+  // A return recorded while this writer was finishing has to survive the
+  // stop. Clearing it here dropped the next part on the floor: the process
+  // had not exited, and nothing else would start one.
   output.state = 'stopped'
   output.bytesPerSecond = 0
   // SIGTERM every tracked child, not only the current one: a phantom exit may

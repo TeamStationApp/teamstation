@@ -1,4 +1,11 @@
-import { mkdir, readdir, rename, rm } from 'node:fs/promises'
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { type Kysely, sql } from 'kysely'
@@ -15,6 +22,11 @@ import {
 } from '../media/ffmpeg'
 import { isStampedAt, readRecordingStamps } from '../media/wallClockScan'
 import { storeWallPoints } from '../media/wallTimeline'
+import {
+  FRAME_SLACK_SEC,
+  readLeadingBoxes,
+  timelineStartSec
+} from './segmentClock'
 import { LIVE_PLAYLIST_NAME } from './splitter'
 
 /**
@@ -64,10 +76,17 @@ export async function toRecording(
   await rm(staging, { recursive: true, force: true })
   await mkdir(staging, { recursive: true })
 
-  await remuxToHls(ffmpegPath, {
-    input: join(dir, LIVE_PLAYLIST_NAME),
-    outDir: staging
-  })
+  const playlistPath = join(dir, LIVE_PLAYLIST_NAME)
+  try {
+    const source = await fileForRemux(dir)
+    await remuxToHls(ffmpegPath, {
+      input: source,
+      outDir: staging,
+      concatList: source !== playlistPath
+    })
+  } finally {
+    await rm(join(dir, '.holes'), { recursive: true, force: true })
+  }
 
   const probe = await probeVideoStream(
     ffprobeFor(ffmpegPath),
@@ -103,6 +122,101 @@ export async function toRecording(
     codecTag: probe.codecTag,
     files: files.sort()
   }
+}
+
+/**
+ * Where a segment sits on the playlist's timeline, from its `sidx` and the
+ * init segment's timescale. Undefined when either box is missing.
+ */
+export function segmentTimelineStart(
+  init: Buffer,
+  segment: Buffer
+): number | undefined {
+  return timelineStartSec(init, segment)
+}
+
+/**
+ * Whether the listed segments leave a gap the public file has to keep.
+ *
+ * Continuous segments sit about a frame past the previous `#EXTINF`. A wider
+ * gap is the absence the live timestamps already record, down to about one
+ * frame, and the remux keeps it.
+ */
+export function timelineHole(
+  pieces: ReadonlyArray<{ start: number; duration: number }>
+): boolean {
+  return pieces.some((piece, index) => {
+    if (index === 0) return false
+    const previous = pieces[index - 1]
+    return piece.start - previous.start > previous.duration + FRAME_SLACK_SEC
+  })
+}
+
+function listedSegments(
+  playlist: string
+): Array<{ name: string; duration: number }> {
+  const out: Array<{ name: string; duration: number }> = []
+  let duration = 0
+  for (const raw of playlist.split('\n')) {
+    const line = raw.trim()
+    const inf = /^#EXTINF:([\d.]+)/.exec(line)
+    if (inf != null) {
+      duration = Number.parseFloat(inf[1])
+      continue
+    }
+    if (/^seg\d+\.m4s$/.test(line)) out.push({ name: line, duration })
+  }
+  return out
+}
+
+/**
+ * The file a live playlist should be remuxed from.
+ *
+ * A playlist whose segments sit apart on the wall clock is assembled first:
+ * each segment keeps the start written in its `sidx`, and the gap between
+ * those starts is the absence. The public file keeps that hole down to about
+ * one frame. The list points the concat demuxer at each init-and-segment
+ * pair in place, so the finish does not copy the stream beside itself.
+ * Continuous segments sit about a frame past the previous `#EXTINF` and are
+ * remuxed as they stand.
+ */
+export async function fileForRemux(dir: string): Promise<string> {
+  const playlistPath = join(dir, LIVE_PLAYLIST_NAME)
+  const playlist = await readFile(playlistPath, 'utf8').catch(() => '')
+  const listed = listedSegments(playlist)
+  if (listed.length < 2) return playlistPath
+  const init = await readFile(join(dir, 'init.mp4')).catch(() => undefined)
+  if (init == null) return playlistPath
+  const pieces: Array<{ name: string; duration: number; start: number }> = []
+  for (const item of listed) {
+    const bytes = await readLeadingBoxes(join(dir, item.name)).catch(
+      () => undefined
+    )
+    if (bytes == null) return playlistPath
+    const start = segmentTimelineStart(init, bytes)
+    if (start == null) return playlistPath
+    pieces.push({ name: item.name, duration: item.duration, start })
+  }
+  if (!timelineHole(pieces)) return playlistPath
+
+  const scratch = join(dir, '.holes')
+  await rm(scratch, { recursive: true, force: true })
+  await mkdir(scratch, { recursive: true })
+  const initPath = join(dir, 'init.mp4')
+  const lines = ['ffconcat version 1.0']
+  for (let index = 0; index < pieces.length; index++) {
+    const piece = pieces[index]
+    const pair = `concat:${initPath}|${join(dir, piece.name)}`
+    lines.push(`file '${pair.replaceAll("'", "'\\''")}'`)
+    if (index + 1 < pieces.length) {
+      lines.push(
+        `duration ${(pieces[index + 1].start - piece.start).toFixed(6)}`
+      )
+    }
+  }
+  const list = join(scratch, 'list.txt')
+  await writeFile(list, `${lines.join('\n')}\n`)
+  return list
 }
 
 /** Whether a directory has already been turned into a recording. */
