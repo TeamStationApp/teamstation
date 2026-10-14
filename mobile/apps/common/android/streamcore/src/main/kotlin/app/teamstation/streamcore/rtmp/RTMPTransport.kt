@@ -6,6 +6,7 @@ import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
+import java.nio.channels.ClosedChannelException
 import java.nio.channels.ClosedSelectorException
 import java.nio.channels.SelectionKey
 import java.nio.channels.Selector
@@ -85,7 +86,12 @@ class ChannelRTMPTransport private constructor(
     override fun receive(buffer: ByteArray): Int {
         val wrapped = ByteBuffer.wrap(buffer)
         while (true) {
-            val count = channel.read(wrapped)
+            val count = try {
+                channel.read(wrapped)
+            } catch (closed: ClosedChannelException) {
+                // [close] landed between the selector and the read: the end of the stream too.
+                return -1
+            }
             if (count != 0) return count
             try {
                 readSelector.select()
