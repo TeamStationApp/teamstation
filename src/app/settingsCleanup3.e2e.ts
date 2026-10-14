@@ -272,6 +272,101 @@ async function main(): Promise<void> {
       baseUrl: f.h.origin + '/api/v1',
       token: f.h.tokens.get(101)!
     })
+    if (only === 'hero-layout') {
+      for (const [kind, name] of [
+        ['ordinary', 'Winter Wolves'],
+        [
+          'long',
+          'Winter Wolves International Development Baseball Team With A Very Long Name'
+        ]
+      ]) {
+        await f.h.db
+          .updateTable('teams')
+          .set({ name })
+          .where('id', '=', f.teamA)
+          .execute()
+        for (const [width, height] of [
+          [320, 700],
+          [375, 812],
+          [402, 874],
+          [874, 402],
+          [1440, 900]
+        ]) {
+          await page.setViewport({
+            width,
+            height,
+            deviceScaleFactor: 1,
+            isMobile: width < 600,
+            hasTouch: true
+          })
+          await go(`/groups/team/${f.teamA}`, name)
+          await page.waitForSelector('[aria-label="Manage"]')
+          await page.waitForFunction(() =>
+            document.body.textContent!.includes('1st Place')
+          )
+          await new Promise(resolve => setTimeout(resolve, 200))
+          if (!before) {
+            const metrics = await page.evaluate(() => {
+              const words = document.querySelector<HTMLElement>(
+                '[data-testid="team-hero-words"]'
+              )!
+              const title = words.firstElementChild!.getBoundingClientRect()
+              const record = words.lastElementChild!.getBoundingClientRect()
+              const gear = document
+                .querySelector('[aria-label="Manage"]')!
+                .getBoundingClientRect()
+              const badge = [
+                ...document.querySelectorAll<HTMLElement>(
+                  '[data-testid="settings-pill-badge"]'
+                )
+              ]
+                .find(node => node.textContent === '1st Place')!
+                .getBoundingClientRect()
+              const tabs = document
+                .querySelector('[aria-label="Team sections"]')!
+                .getBoundingClientRect()
+              return {
+                titleWidth: title.width,
+                titleHeight: title.height,
+                recordHeight: record.height,
+                gearX: gear.x,
+                gearY: gear.y,
+                gearRight: gear.right,
+                badgeRight: badge.right,
+                tabsY: tabs.y
+              }
+            })
+            assert(metrics.titleWidth >= 100, JSON.stringify(metrics))
+            assert(
+              metrics.titleHeight < (kind === 'ordinary' ? 100 : 250),
+              JSON.stringify(metrics)
+            )
+            assert(metrics.recordHeight < 50, JSON.stringify(metrics))
+            assert(
+              metrics.badgeRight <= metrics.gearX,
+              'badge clears gear: ' + JSON.stringify(metrics)
+            )
+            assert(
+              metrics.gearRight <= width && metrics.gearY < 130,
+              JSON.stringify(metrics)
+            )
+            assert(
+              metrics.tabsY < 600,
+              'tabs remain within first screen: ' + JSON.stringify(metrics)
+            )
+            await note(
+              'E2/E6 PASS ' +
+                kind +
+                ' hero at ' +
+                width +
+                ': ' +
+                JSON.stringify(metrics)
+            )
+          }
+          await shot(`team-hero-${kind}-${width}`)
+        }
+      }
+    }
     if (only == null || only === 'overview') {
       await go(settings, 'TEAM DETAILS')
       await show('Winter Weekends')
