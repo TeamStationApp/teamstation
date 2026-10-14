@@ -1491,7 +1491,12 @@ describe('chat review final native scroll positions', function () {
     const engine = new ReviewEngine()
     engine.update('cnv_aurora', { messages: [original()] })
     const state = newChatWorkspaceState()
-    state.drafts.set('cnv_aurora', terminalDraft())
+    const tokens = [{ userId: 2, start: 0, end: 14, label: '@Shohei Ohtani' }]
+    state.drafts.set('cnv_aurora', {
+      ...terminalDraft(),
+      text: '@Shohei Ohtani ',
+      mentionTokens: tokens
+    })
     await workspace(engine, state)
     await layout(
       document.querySelector('[data-testid="chat-workspace"]')!,
@@ -1510,6 +1515,10 @@ describe('chat review final native scroll positions', function () {
     for (const phase of ['onScrollEndDrag', 'onMomentumScrollEnd'] as const) {
       await reading.deliver(callbacks, 'onScroll', 22.095)
       expect(state.drafts.get('cnv_aurora')!.scrollOffset).equals(22.095)
+      expect(
+        state.drafts.get('cnv_aurora')!.mentionTokens,
+        'Ordinary native scroll preserves selected encrypted IDs'
+      ).deep.equals(tokens)
       await reading.deliver(callbacks, phase, 0)
       const saved = state.drafts.get('cnv_aurora')!
       expect(saved.scrollOffset, `${phase} carries the real final edge`).equals(
@@ -1517,6 +1526,10 @@ describe('chat review final native scroll positions', function () {
       )
       expect(saved.hasScrollPosition).equals(true)
       expect(saved.followNewest).equals(false)
+      expect(
+        saved.mentionTokens,
+        'Final drag and momentum preserve mention ownership'
+      ).deep.equals(tokens)
       expect(saved.scrollAnchor).deep.equals({
         id: 'msg_original',
         relativeY: 0
@@ -1535,6 +1548,8 @@ describe('chat review final native scroll positions', function () {
     ).equals(false)
     expect(reopened.node.scrollTop).equals(0)
     expect(state.drafts.get('cnv_aurora')!.scrollOffset).equals(0)
+    expect(state.drafts.get('cnv_aurora')!.mentionTokens).deep.equals(tokens)
+    expect(state.drafts.get('cnv_aurora')!.text).equals('@Shohei Ohtani ')
     expect(state.drafts.get('cnv_aurora')!.scrollAnchor).deep.equals({
       id: 'msg_original',
       relativeY: 0
