@@ -130,7 +130,8 @@ private let installId = "00000000-0000-4000-8000-000000000001"
 @MainActor
 private func makeAccount(
   server: String = "https://teamstation.example",
-  keychain: KeychainStore = .inMemory()
+  keychain: KeychainStore = .inMemory(),
+  clock: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 }
 ) -> TeamStationAccount {
   StreamServer.reset()
   keychain.setToken("tok")
@@ -142,7 +143,8 @@ private func makeAccount(
     installId: installId,
     deviceModel: "iPad Pro",
     keychain: keychain,
-    session: URLSession(configuration: configuration)
+    session: URLSession(configuration: configuration),
+    clock: clock
   )
 }
 
@@ -360,6 +362,22 @@ struct ChooseTests {
     StreamServer.refuse = true
     #expect(await account.reportLiveStart(startedAt: started) == false)
     #expect(account.lastError == nil)
+  }
+
+  @Test func measuresTheServersClockAgainstTheClockTheStartIsOn() async throws {
+    // The device's own clock was stepped 30 s back since launch; the steady clock the stream is
+    // timed on was not, and the server reads 2 s ahead of the device's clock as it is now.
+    let account = makeAccount(clock: { Date().timeIntervalSince1970 + 30 })
+    #expect(await account.choose(event: event("g1")))
+    StreamServer.skew = 2
+    let started = Date(timeIntervalSince1970: Date().timeIntervalSince1970 + 30)
+    #expect(await account.reportLiveStart(startedAt: started))
+    let instant = ISO8601DateFormatter()
+    instant.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
+    let text = try #require(StreamServer.bodies.last?["liveStartedAt"])
+    let sent = try #require(instant.date(from: text))
+    // On the server's clock that start is now plus 2 s, not 32 s from now.
+    #expect(abs(sent.timeIntervalSinceNow - 2) < 0.1, "reported \(sent.timeIntervalSinceNow) s from now")
   }
 
   @Test func picksTheShortestRoundTripForTheServersClock() {
