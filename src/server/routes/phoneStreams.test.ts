@@ -1041,6 +1041,43 @@ describe('phones and Directors asking for their streams by device', function () 
       expect(next.body.url).not.equals(old.body.url)
     })
 
+    it('lets an updated Director with no camera name adopt what its old build claimed', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      // An old build at its default name claims with none, and the claim
+      // route calls the camera after the Director.
+      const old = await claim(gameId)
+      const id = await claimedStream(gameId)
+      expect((await stream(id)).label).equals('TS Director')
+      const updated = await ask(gameId, {
+        label: '',
+        deviceId: IPAD,
+        deviceModel: 'iPad Pro'
+      })
+      expect(updated.status).equals(200)
+      expect(updated.body.id).equals(id)
+      expect(updated.body.url).equals(old.body.url)
+      expect(updated.body.label).equals('Camera 1')
+      const adopted = await stream(id)
+      expect(adopted.deviceId).equals(IPAD)
+      expect(adopted.label).equals(null)
+      const title = await db
+        .selectFrom('videos')
+        .select('title')
+        .where('id', '=', adopted.videoId)
+        .executeTakeFirstOrThrow()
+      expect(title.title).equals('Ridge Demo at Harbor Demo — Camera 1')
+      // Asked again without the stream it holds, the same device and no name
+      // find the same stream: no second angle for one Director.
+      const again = await ask(gameId, {
+        deviceId: IPAD,
+        deviceModel: 'iPad Pro'
+      })
+      expect(again.status).equals(200)
+      expect(again.body.id).equals(id)
+      expect(await streamsOn(gameId)).equals(1)
+    })
+
     it('refuses a claim when every slot is held by devices', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()

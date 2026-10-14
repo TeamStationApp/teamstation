@@ -384,33 +384,42 @@ export async function setCameraName(
   id: string,
   label: string | null
 ): Promise<void> {
-  const now = new Date()
   await db.transaction().execute(async trx => {
-    const row = await trx
-      .selectFrom('live_streams')
-      .select(['slot', 'video_id as videoId'])
-      .where('id', '=', id)
-      .executeTakeFirst()
-    await trx
-      .updateTable('live_streams')
-      .set({ label, updated_at: now })
-      .where('id', '=', id)
-      .execute()
-    if (row?.videoId == null) return
-    const video = await trx
-      .selectFrom('videos')
-      .select(['title'])
-      .where('id', '=', row.videoId)
-      .executeTakeFirstOrThrow()
-    await trx
-      .updateTable('videos')
-      .set({
-        title: titledWith(video.title, labelFor({ slot: row.slot, label })),
-        updated_at: now
-      })
-      .where('id', '=', row.videoId)
-      .execute()
+    await writeCameraName(trx, id, label, new Date())
   })
+}
+
+/** `setCameraName`, inside a transaction the caller already holds. */
+async function writeCameraName(
+  trx: Transaction<Database>,
+  id: string,
+  label: string | null,
+  now: Date
+): Promise<void> {
+  const row = await trx
+    .selectFrom('live_streams')
+    .select(['slot', 'video_id as videoId'])
+    .where('id', '=', id)
+    .executeTakeFirst()
+  await trx
+    .updateTable('live_streams')
+    .set({ label, updated_at: now })
+    .where('id', '=', id)
+    .execute()
+  if (row?.videoId == null) return
+  const video = await trx
+    .selectFrom('videos')
+    .select(['title'])
+    .where('id', '=', row.videoId)
+    .executeTakeFirstOrThrow()
+  await trx
+    .updateTable('videos')
+    .set({
+      title: titledWith(video.title, labelFor({ slot: row.slot, label })),
+      updated_at: now
+    })
+    .where('id', '=', row.videoId)
+    .execute()
 }
 
 /**
@@ -595,6 +604,12 @@ export interface DeviceStreamAnswer {
   created: boolean
 }
 
+/**
+ * What the legacy Director claim route calls a camera given no name, which is
+ * every Director left at its default name.
+ */
+export const DIRECTOR_CLAIM_LABEL = 'TS Director'
+
 /** What a redial is told when somebody ended the camera it held. */
 export const ENDED_CAMERA =
   'This camera was ended. Start streaming again to go live'
@@ -664,37 +679,47 @@ export async function requestDeviceStream(
       return { row, key: revealKey(request.sessionSecret, row), created: false }
     }
 
-    const adopted =
-      label == null
-        ? undefined
-        : await activeStream(trx, gameId, userId)
-            .where(nameIs(label))
-            .where('device_id', 'is', null)
-            .where('director_claimed', '=', true)
-            // Only once the old build has stopped publishing on it. While it
-            // still is, the asker is some other device of this account that
-            // happens to share the name, and taking the stream would put two
-            // encoders on one key.
-            .where('state', '<>', 'publishing')
-            .orderBy('slot', 'asc')
-            .executeTakeFirst()
+    // A Director with no camera name of its own asks with none, and the
+    // claim route called its camera `DIRECTOR_CLAIM_LABEL`.
+    const adopted = await activeStream(trx, gameId, userId)
+      .where(eb =>
+        label == null
+          ? eb.or([nameIs(null), nameIs(DIRECTOR_CLAIM_LABEL)])
+          : nameIs(label)
+      )
+      .where('device_id', 'is', null)
+      .where('director_claimed', '=', true)
+      // Only once the old build has stopped publishing on it. While it
+      // still is, the asker is some other device of this account that
+      // happens to share the name, and taking the stream would put two
+      // encoders on one key.
+      .where('state', '<>', 'publishing')
+      .orderBy('slot', 'asc')
+      .executeTakeFirst()
     if (adopted != null) {
       if (await deviceLabelTaken(trx, { gameId, userId, label })) {
         throw labelTaken(label!)
       }
       const recordsLocally = request.recordsLocally === true
+      const now = new Date()
       await trx
         .updateTable('live_streams')
         .set({
           device_id: deviceId,
           device_model: request.deviceModel,
           records_locally: recordsLocally,
-          updated_at: new Date()
+          updated_at: now
         })
         .where('id', '=', adopted.id)
         .execute()
+      // The stream takes the device's own name, none included, so the
+      // device's next request finds it again by that name.
+      if (label == null && adopted.label != null) {
+        await writeCameraName(trx, adopted.id, null, now)
+      }
       const row = {
         ...asRow(adopted),
+        label: label == null ? null : adopted.label,
         deviceId,
         deviceModel: request.deviceModel,
         recordsLocally
