@@ -42,7 +42,11 @@ export interface RsvpScheduleRowProps {
    */
   result?: { label: string; tone: BadgeTone }
   onPress?: () => void
-  /** Independent controls beneath the details, alongside the date column. */
+  /**
+   * Independent controls beneath the details, alongside the date column.
+   * Without them the card is compact: the date column holds only the month
+   * and day, and the weekday leads the time line.
+   */
   footer: React.ReactNode
 }
 
@@ -98,9 +102,10 @@ export function RsvpScheduleRow(
         : (result?.tone ?? 'neutral')
   const teams = second == null ? first : `${first} ${second}`
 
+  const compact = footer == null
   const calendar = (
     <View style={styles.date} testID="schedule-date">
-      {dated.weekday !== '' && (
+      {!compact && dated.weekday !== '' && (
         <>
           <Text
             style={styles.weekday}
@@ -139,8 +144,10 @@ export function RsvpScheduleRow(
         </Text>
       )}
       {dated.when !== '' && (
-        <Text style={styles.detail} numberOfLines={1}>
-          {dated.time}
+        <Text style={styles.time} numberOfLines={1} testID="schedule-time">
+          {compact && dated.weekday !== ''
+            ? `${dated.weekday} ${dated.time}`
+            : dated.time}
         </Text>
       )}
       {venue != null && venue !== '' && (
@@ -194,13 +201,19 @@ export function RsvpScheduleRow(
     </>
   )
 
-  if (onPress == null) return <View style={styles.row}>{content}</View>
+  if (onPress == null)
+    return (
+      <View style={styles.row} testID="schedule-row">
+        {content}
+      </View>
+    )
 
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
+      testID="schedule-row"
       style={({ pressed }) => [styles.row, pressed && styles.pressed]}
     >
       {content}
@@ -276,8 +289,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.875),
     color: theme.secondaryTextColor
   },
+  // The time and the address are bold, so they read at a glance.
+  time: {
+    fontFamily: theme.boldTextFont,
+    fontWeight: '700',
+    fontSize: theme.rem(0.875),
+    color: theme.secondaryTextColor
+  },
   venue: {
-    fontFamily: theme.regularTextFont,
+    fontFamily: theme.boldTextFont,
+    fontWeight: '700',
     fontSize: theme.rem(0.75),
     color: theme.secondaryTextColor,
     opacity: 0.8

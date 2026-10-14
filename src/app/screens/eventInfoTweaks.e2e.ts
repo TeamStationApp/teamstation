@@ -137,6 +137,12 @@ async function main(): Promise<void> {
           const weekday=node.querySelector('[data-testid="schedule-weekday"]'),separator=node.querySelector('[data-testid="schedule-date-separator"]');
           const date=node.getBoundingClientRect(), row=node.closest('[data-testid="schedule-row"]'), body=row?.querySelector('[data-testid="schedule-body"]');
           if (body && Math.abs((body.getBoundingClientRect().left-date.right)-parseFloat(getComputedStyle(row.parentElement).paddingLeft))>1) return false;
+          // A card with no RSVP line is compact: month and day only, and
+          // the weekday leads its bold time.
+          if (row && !row.querySelector('[data-testid^="schedule-rsvps-"]')) {
+            const time=row.querySelector('[data-testid="schedule-time"]');
+            return !weekday && !separator && /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) /.test(time.textContent) && getComputedStyle(time).fontWeight==='700';
+          }
           return weekday && separator && weekday.getBoundingClientRect().bottom<=separator.getBoundingClientRect().top && separator.getBoundingClientRect().height===3 &&
             getComputedStyle(separator).marginTop==='8px' && getComputedStyle(separator).marginBottom==='8px' &&
             getComputedStyle(weekday).fontSize==='15px' && getComputedStyle(node.querySelectorAll('[dir="auto"]')[1]).fontSize==='20px' &&

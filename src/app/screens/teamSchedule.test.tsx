@@ -187,6 +187,54 @@ describe('a team’s schedule', function () {
     expect(opened.map(item => item.title)).deep.equals(['Practice'])
   })
 
+  it('draws a card with nothing to answer or count compact, with the weekday on its time line', async function () {
+    await mount(
+      'live',
+      'schedule',
+      fixtureClient('live', games =>
+        games.map(game =>
+          game.status === 'inProgress'
+            ? { ...game, playerRsvps: { yes: 0, unknown: 0, no: 0 } }
+            : game.status === 'scheduled'
+              ? { ...game, playerRsvps: { yes: 1, unknown: 1, no: 0 } }
+              : game
+        )
+      )
+    )
+    const card = (name: string): HTMLElement =>
+      rows().find(row => linesOf(row).some(line => line.endsWith(name)))!
+    const live = card('Owls')
+    const next = card('Falcons')
+    // The live game has nothing to answer and no replies to count: no RSVP
+    // line, no weekday over a rule, and the weekday leads its time.
+    expect(live.querySelector('[data-testid^="schedule-rsvps-"]')).equals(null)
+    expect(live.querySelector('[data-testid="schedule-weekday"]')).equals(null)
+    expect(
+      live.querySelector('[data-testid="schedule-date-separator"]')
+    ).equals(null)
+    const liveTime = live.querySelector('[data-testid="schedule-time"]')!
+    expect(liveTime.textContent).match(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d/)
+    // A game still to come keeps the RSVP line and the full date column.
+    expect(next.querySelector('[data-testid^="schedule-rsvps-"]')).not.equals(
+      null
+    )
+    expect(next.querySelector('[data-testid="schedule-weekday"]')).not.equals(
+      null
+    )
+    expect(
+      next.querySelector('[data-testid="schedule-time"]')!.textContent
+    ).match(/^\d/)
+    // In both, the time and the address are bold.
+    for (const row of [live, next]) {
+      const time = row.querySelector('[data-testid="schedule-time"]')!
+      const venue = [...row.querySelectorAll('[dir="auto"]')].find(node =>
+        /Park|Field/.test(node.textContent ?? '')
+      )!
+      expect(getComputedStyle(time).fontWeight).equals('700')
+      expect(getComputedStyle(venue).fontWeight).equals('700')
+    }
+  })
+
   it('names events the same way on a visitor’s schedule', async function () {
     const opened = await mount(
       'normal',

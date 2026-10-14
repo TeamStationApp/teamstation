@@ -58,7 +58,7 @@ import {
 } from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
 import { PublicTeamContent } from './PublicTeamContent'
-import { ScheduleRsvpControl } from './ScheduleRsvpControl'
+import { hasScheduleRsvpLine, ScheduleRsvpControl } from './ScheduleRsvpControl'
 import {
   battingColumns,
   pitchingColumns,
@@ -741,13 +741,16 @@ function ScheduleCard(props: {
         <RsvpScheduleRow
           {...rowProps}
           footer={
-            <ScheduleRsvpControl
-              key={`${teamId}/${game.id}`}
-              client={client}
-              game={game}
-              teamId={teamId}
-              label={eventName(game) ?? lines.second}
-            />
+            // Nothing to answer and nothing to count: the compact card.
+            hasScheduleRsvpLine(game) ? (
+              <ScheduleRsvpControl
+                key={`${teamId}/${game.id}`}
+                client={client}
+                game={game}
+                teamId={teamId}
+                label={eventName(game) ?? lines.second}
+              />
+            ) : null
           }
         />
       )}
