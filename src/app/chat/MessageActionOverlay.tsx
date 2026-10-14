@@ -1,0 +1,378 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  Animated,
+  BackHandler,
+  Keyboard,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View
+} from 'react-native'
+
+import { GlassView } from '../components/GlassView'
+import { useMotionPreference } from '../components/useMotionPreference'
+import { lstrings } from '../locales/strings'
+import { useInsets } from '../platform/safeArea'
+import { useTheme } from '../theme/ThemeContext'
+import type { ChatBounds } from './chatInteractionModel'
+import { captureMessageBounds, type MessageSource } from './chatMessageSource'
+import { ChatOverlayPortal } from './ChatOverlayHost'
+import { spotlightLayout } from './chatSpotlightModel'
+import { watchReducedTransparency } from './chatTransparency'
+import { bindPopupKeys, watchVisualViewport } from './chatWebInteractions'
+
+export interface MessageActionOverlayProps {
+  children: React.ReactNode
+  selected: React.ReactNode
+  reactions?: React.ReactNode
+  source?: MessageSource
+  mine: boolean
+  label: string
+  closing: boolean
+  focusHandoff?: boolean
+  onClose: () => void
+  onClosed: () => void
+}
+
+/** Message-only motion leaves ordinary menus and pinned lists unchanged. */
+export function MessageActionOverlay(
+  props: MessageActionOverlayProps
+): React.ReactElement {
+  return (
+    <ChatOverlayPortal modal={!(props.closing && props.focusHandoff === true)}>
+      <SpotlightFrame {...props} />
+    </ChatOverlayPortal>
+  )
+}
+
+function SpotlightFrame(props: MessageActionOverlayProps): React.ReactElement {
+  const theme = useTheme()
+  const handoff = props.closing && props.focusHandoff === true
+  const window = useWindowDimensions()
+  const insets = useInsets()
+  const reduced = useMotionPreference()
+  const [opaque, setOpaque] = useState(true)
+  const frameRef = useRef<React.ComponentRef<typeof View>>(null)
+  const panelRef = useRef<React.ComponentRef<typeof View>>(null)
+  const [frame, setFrame] = useState<ChatBounds>()
+  const [keyboardTop, setKeyboardTop] = useState<number | undefined>(
+    () => Keyboard.metrics?.()?.screenY
+  )
+  const [visual, setVisual] = useState<{
+    bottom: number
+    keyboardOpen: boolean
+  }>()
+  const [preview, setPreview] = useState(
+    props.source?.bounds.height ?? theme.rem(8)
+  )
+  const [panel, setPanel] = useState(theme.rem(12))
+  const [reactions, setReactions] = useState(
+    props.reactions == null ? 0 : theme.rem(3)
+  )
+  const [returnSource, setReturnSource] = useState(props.source?.bounds)
+  const progress = useRef(new Animated.Value(0)).current
+  const latest = useRef(props)
+  latest.current = { ...props, onClosed: props.onClosed }
+  const active = useRef(true)
+  const epoch = useRef(0)
+  const measuring = useRef<(() => void) | undefined>(undefined)
+  const measure = useCallback(() => {
+    measuring.current?.()
+    measuring.current = captureMessageBounds(
+      frameRef.current,
+      () => active.current,
+      bounds => {
+        setFrame(
+          bounds ?? { x: 0, y: 0, width: window.width, height: window.height }
+        )
+      }
+    )
+  }, [window.width, window.height])
+  useEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+      epoch.current += 1
+      measuring.current?.()
+      progress.stopAnimation()
+    }
+  }, [progress])
+  useEffect(measure, [measure])
+  useEffect(() => watchReducedTransparency(setOpaque), [])
+  useEffect(() => watchVisualViewport(setVisual), [])
+  useEffect(() => {
+    const shown = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      event => {
+        setKeyboardTop(event.endCoordinates.screenY)
+        measure()
+      }
+    )
+    const hidden = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardTop(undefined)
+        measure()
+      }
+    )
+    return () => {
+      shown.remove()
+      hidden.remove()
+    }
+  }, [measure])
+  useEffect(() => {
+    const back = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!latest.current.closing) latest.current.onClose()
+      return true
+    })
+    return () => {
+      back.remove()
+    }
+  }, [])
+  const ready = frame != null
+  useEffect(() => {
+    if (!ready) return
+    const version = ++epoch.current
+    progress.stopAnimation()
+    let cancelSource: (() => void) | undefined
+    let animation: ReturnType<typeof Animated.timing> | undefined
+    const animate = (): void => {
+      if (!active.current || version !== epoch.current) return
+      animation = Animated.timing(progress, {
+        toValue: props.closing ? 0 : 1,
+        duration: reduced ? 80 : 200,
+        useNativeDriver: true
+      })
+      animation.start(({ finished }) => {
+        if (
+          finished &&
+          active.current &&
+          version === epoch.current &&
+          props.closing
+        )
+          latest.current.onClosed()
+      })
+    }
+    if (props.closing && props.source != null) {
+      cancelSource = props.source.measure(bounds => {
+        if (!active.current || version !== epoch.current) return
+        setReturnSource(bounds)
+        animate()
+      })
+    } else {
+      if (props.closing) setReturnSource(undefined)
+      animate()
+    }
+    return () => {
+      epoch.current += 1
+      cancelSource?.()
+      animation?.stop()
+    }
+  }, [ready, props.closing, props.source, reduced, progress])
+  const surface = frame ?? {
+    x: 0,
+    y: 0,
+    width: window.width,
+    height: window.height
+  }
+  const source = props.closing ? returnSource : props.source?.bounds
+  const layout = spotlightLayout({
+    frame: surface,
+    safe: {
+      top: Math.max(0, insets.top - surface.y),
+      left: Math.max(0, insets.left - surface.x),
+      right: Math.max(
+        0,
+        surface.x + surface.width - window.width + insets.right
+      ),
+      bottom: Math.max(
+        0,
+        surface.y + surface.height - window.height + insets.bottom
+      )
+    },
+    keyboardTop: visual?.keyboardOpen === true ? visual.bottom : keyboardTop,
+    source: source ?? props.source?.bounds,
+    preview,
+    panel,
+    reactions: props.reactions == null ? 0 : reactions,
+    gap: theme.rem(0.5),
+    maxWidth: theme.rem(28),
+    mine: props.mine,
+    minimumPanel: Math.max(44, theme.rem(3) * window.fontScale)
+  })
+  const controlsVisible = layout.panel > 0
+  useEffect(
+    () =>
+      bindPopupKeys(
+        panelRef.current,
+        () => {
+          if (!latest.current.closing) latest.current.onClose()
+        },
+        !handoff
+      ),
+    [handoff, layout.compact, controlsVisible]
+  )
+  const moving = !reduced && source != null && layout.animateSource
+  return (
+    <View
+      ref={frameRef}
+      testID="chat-message-spotlight"
+      onLayout={measure}
+      style={[StyleSheet.absoluteFill, { zIndex: 100, elevation: 30 }]}
+      pointerEvents={props.closing ? 'none' : 'auto'}
+      accessibilityViewIsModal={!handoff}
+      accessibilityElementsHidden={handoff}
+      importantForAccessibility={handoff ? 'no-hide-descendants' : 'auto'}
+      aria-hidden={handoff}
+      onAccessibilityEscape={() => {
+        latest.current.onClose()
+      }}
+    >
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity: progress }]}>
+        <GlassView
+          androidBlur
+          backdropBlur
+          opaque={opaque}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
+      <Pressable
+        style={StyleSheet.absoluteFill}
+        onPress={props.onClose}
+        accessibilityRole="button"
+        accessibilityLabel={lstrings.chat_cancel}
+      />
+      <View
+        ref={panelRef}
+        testID="chat-message-spotlight-controls"
+        accessibilityLabel={props.label}
+        style={{
+          position: 'absolute',
+          left: layout.left,
+          top: layout.top,
+          width: layout.width,
+          height: layout.panelTop + layout.panel
+        }}
+      >
+        {!layout.compact && props.reactions != null && (
+          <Animated.View
+            style={{
+              opacity: progress,
+              height: layout.reactions,
+              overflow: 'hidden'
+            }}
+          >
+            <ScrollView
+              horizontal
+              keyboardShouldPersistTaps="handled"
+              onContentSizeChange={(_width, height) => {
+                setReactions(height)
+              }}
+            >
+              {props.reactions}
+            </ScrollView>
+          </Animated.View>
+        )}
+        {layout.preview > 0 && (
+          <Animated.View
+            testID="chat-message-spotlight-preview"
+            style={{
+              position: 'absolute',
+              top: layout.previewTop,
+              alignSelf: props.mine ? 'flex-end' : 'flex-start',
+              width: Math.min(source?.width ?? layout.width, layout.width),
+              height: layout.preview,
+              opacity: moving ? 1 : progress,
+              transform: moving
+                ? [
+                    {
+                      translateX: progress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [layout.sourceX, 0]
+                      })
+                    },
+                    {
+                      translateY: progress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [layout.sourceY, 0]
+                      })
+                    }
+                  ]
+                : undefined
+            }}
+          >
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              style={{ maxHeight: layout.preview }}
+              onContentSizeChange={(_width, height) => {
+                setPreview(Math.max(1, height))
+              }}
+            >
+              {props.selected}
+            </ScrollView>
+          </Animated.View>
+        )}
+        {controlsVisible && (
+          <Animated.View
+            testID="chat-message-spotlight-panel"
+            style={{
+              position: 'absolute',
+              top: layout.panelTop,
+              width: '100%',
+              height: layout.panel,
+              opacity: progress,
+              transform:
+                reduced || layout.compact
+                  ? undefined
+                  : [
+                      {
+                        translateY: progress.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [theme.rem(0.5), 0]
+                        })
+                      }
+                    ]
+            }}
+          >
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              style={{
+                flex: 1,
+                borderRadius: theme.rem(1.25),
+                backgroundColor: theme.cardBackgroundColor,
+                borderColor: theme.defaultBorderColor,
+                borderWidth: 1
+              }}
+              contentContainerStyle={{
+                padding: theme.rem(0.5),
+                gap: theme.rem(0.25)
+              }}
+            >
+              {layout.compact && props.reactions != null && (
+                <ScrollView
+                  horizontal
+                  keyboardShouldPersistTaps="handled"
+                  onContentSizeChange={(_width, height) => {
+                    setReactions(height)
+                  }}
+                >
+                  {props.reactions}
+                </ScrollView>
+              )}
+              <View
+                onLayout={event => {
+                  setPanel(event.nativeEvent.layout.height + theme.rem(1))
+                }}
+                style={{ gap: theme.rem(0.25) }}
+              >
+                {props.children}
+              </View>
+            </ScrollView>
+          </Animated.View>
+        )}
+      </View>
+    </View>
+  )
+}

@@ -1,16 +1,34 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { type GestureResponderEvent, Pressable, Text, View } from 'react-native'
+import {
+  type GestureResponderEvent,
+  Image,
+  Pressable,
+  Text,
+  View
+} from 'react-native'
 
 import { lstrings, sprintf } from '../locales/strings'
 import { lightHaptic } from '../scoring/lightHaptic'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { AttachmentView, type ChatFileOps } from './AttachmentView'
+import {
+  AttachmentView,
+  type ChatFileOps,
+  type LoadedChatPicture
+} from './AttachmentView'
+import { ChatAvatar } from './ChatAvatar'
+import { memberIdentity } from './chatIdentityModel'
 import {
   type MessagePressGesture,
   pressPoint,
   pressStamp
 } from './chatInteractionModel'
-import { type MessageAction, messagePreview, readLine } from './chatModel'
+import { captureMessageBounds, type MessageSource } from './chatMessageSource'
+import {
+  type MessageAction,
+  messagePreview,
+  placeholderSize,
+  readLine
+} from './chatModel'
 import {
   bindMessageHover,
   immediatePressProps,
@@ -31,7 +49,11 @@ export interface MessageBubbleProps {
   files: ChatFileOps
   maxWidth: number
   swipe: boolean
-  onLongPress: (message: MessageView, anchor?: unknown) => void
+  onLongPress: (
+    message: MessageView,
+    anchor?: unknown,
+    source?: MessageSource
+  ) => void
   onReply: (message: MessageView) => void
   onToggleReaction: (message: MessageView, emoji: string, mine: boolean) => void
   onReact?: (message: MessageView) => void
@@ -42,6 +64,8 @@ export interface MessageBubbleProps {
   highlighted?: boolean
   gestureGeneration?: React.RefObject<number>
   selected?: boolean
+  showSenderAvatar?: boolean
+  pictures?: ReadonlyMap<string, LoadedChatPicture>
 }
 
 const clock = (iso: string): string =>
@@ -97,6 +121,23 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
   const desktop = isFinePointer()
   const BubbleContainer = props.selected === true ? View : Pressable
   const row = useRef<React.ComponentRef<typeof View>>(null)
+  const bubble = useRef<React.ComponentRef<typeof View>>(null)
+  const live = useRef(true)
+  const latest = useRef(props)
+  latest.current = props
+  const capture = useRef(0)
+  const cancelCapture = useRef<(() => void) | undefined>(undefined)
+  const pictures = useRef(new Map<string, LoadedChatPicture>())
+  useEffect(() => {
+    live.current = true
+    const shownPictures = pictures.current
+    return () => {
+      live.current = false
+      capture.current += 1
+      cancelCapture.current?.()
+      shownPictures.clear()
+    }
+  }, [])
   const [hovered, setHovered] = useState(false)
   const held = useRef({
     x: 0,
@@ -114,6 +155,37 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
         : bindMessageHover(row.current, setHovered),
     [props.selected]
   )
+  const presentActions = (fromHold: boolean): void => {
+    cancelCapture.current?.()
+    const version = ++capture.current
+    const generation = props.gestureGeneration?.current ?? 0
+    const signature = props.actions?.join('|')
+    const valid = (): boolean =>
+      live.current &&
+      version === capture.current &&
+      latest.current.message.id === message.id &&
+      latest.current.message.status === message.status &&
+      latest.current.actions?.join('|') === signature &&
+      (latest.current.gestureGeneration?.current ?? 0) === generation &&
+      (!fromHold || !held.current.cancelled)
+    cancelCapture.current = captureMessageBounds(
+      bubble.current,
+      valid,
+      bounds => {
+        if (!valid()) return
+        const source: MessageSource | undefined =
+          bounds == null
+            ? undefined
+            : {
+                bounds,
+                measure: accept =>
+                  captureMessageBounds(bubble.current, valid, accept),
+                pictures: () => (valid() ? pictures.current : undefined)
+              }
+        latest.current.onLongPress(latest.current.message, undefined, source)
+      }
+    )
+  }
   const openActions = (): void => {
     if (
       held.current.cancelled ||
@@ -124,7 +196,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
       return
     held.current.recognized = true
     lightHaptic(row.current)
-    onLongPress(message)
+    presentActions(true)
   }
   const actions =
     props.actions ??
@@ -168,6 +240,8 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                 nativeStart.timestamp === held.current.nativeStart.timestamp
               )
                 return
+              cancelCapture.current?.()
+              capture.current += 1
               held.current = {
                 x: point?.x ?? 0,
                 y: point?.y ?? 0,
@@ -257,7 +331,26 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                 }}
               />
             )}
+          {!message.mine && props.selected !== true && (
+            <View
+              testID={`chat-avatar-lane-${message.id}`}
+              style={styles.avatarLane}
+            >
+              {props.showSenderAvatar !== false && (
+                <ChatAvatar
+                  identity={memberIdentity(
+                    members.find(
+                      member => member.userId === message.senderUserId
+                    )
+                  )}
+                  size={1.75}
+                />
+              )}
+            </View>
+          )}
           <BubbleContainer
+            ref={bubble}
+            collapsable={false}
             testID={'chat-bubble-' + message.id}
             onLayout={event => {
               const width = event.nativeEvent.layout.width
@@ -277,7 +370,8 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
               styles.bubble,
               message.mine ? styles.bubbleMine : styles.bubbleTheirs,
               said != null && styles.bubbleMuted,
-              { maxWidth: props.maxWidth }
+              { maxWidth: props.maxWidth },
+              props.selected === true && { width: props.maxWidth }
             ]}
           >
             {!message.mine && <Text style={styles.sender}>{sender}</Text>}
@@ -301,12 +395,40 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                 </Text>
               )
             )}
-            {props.selected === true && message.attachments.length > 0 ? (
-              <Text style={styles.body}>
-                {messagePreview({ ...message, body: '' })}
-              </Text>
-            ) : (
-              message.attachments.map(attachment => (
+            {message.attachments.map(attachment => {
+              if (props.selected === true) {
+                const picture = props.pictures?.get(attachment.id)
+                if (picture?.attachment === attachment && picture.valid()) {
+                  const size = placeholderSize(
+                    picture.width,
+                    picture.height,
+                    attachmentWidth,
+                    theme.rem(20)
+                  )
+                  return (
+                    <Image
+                      key={attachment.id}
+                      accessibilityLabel={attachment.fileName}
+                      source={{ uri: picture.uri }}
+                      style={[
+                        size,
+                        { borderRadius: theme.rem(theme.radiusRem) }
+                      ]}
+                      resizeMode="cover"
+                    />
+                  )
+                }
+                return (
+                  <Text key={attachment.id} style={styles.body}>
+                    {messagePreview({
+                      ...message,
+                      body: '',
+                      attachments: [attachment]
+                    })}
+                  </Text>
+                )
+              }
+              return (
                 <AttachmentView
                   key={attachment.id}
                   attachment={attachment}
@@ -314,9 +436,13 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
                   files={props.files}
                   maxWidth={attachmentWidth}
                   messageGesture={messageGesture}
+                  onPicture={picture => {
+                    if (picture == null) pictures.current.delete(attachment.id)
+                    else pictures.current.set(attachment.id, picture)
+                  }}
                 />
-              ))
-            )}
+              )
+            })}
             <View style={styles.footer}>
               {props.pinned === true && (
                 <Text
@@ -368,7 +494,7 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
               accessibilityRole="button"
               accessibilityLabel={lstrings.chat_more_message_actions}
               onPress={() => {
-                onLongPress(message)
+                presentActions(false)
               }}
               style={{ padding: theme.rem(0.375) }}
             >
@@ -377,7 +503,14 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
           )}
         </View>
         {message.reactions.length > 0 && (
-          <View style={[styles.reactions, message.mine && styles.rowMine]}>
+          <View
+            style={[
+              styles.reactions,
+              message.mine && styles.rowMine,
+              !message.mine &&
+                props.selected !== true && { marginLeft: theme.rem(2) }
+            ]}
+          >
             {message.reactions.map(reaction =>
               props.selected === true ? (
                 <View
@@ -437,10 +570,11 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
 const getStyles = cacheStyles((theme: Theme) => ({
   bubbleRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     gap: theme.rem(0.25),
     maxWidth: '100%'
   },
+  avatarLane: { width: theme.rem(1.75), flexShrink: 0 },
   bubbleRowMine: { justifyContent: 'flex-end' },
   row: {
     alignItems: 'flex-start',
