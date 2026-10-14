@@ -73,6 +73,9 @@ class CameraSession(private val context: Context) {
     }
 
     private val thread = HandlerThread("cameraman-capture").apply { start() }
+
+    /** The capture thread, for a test that checks [release] ends it. */
+    internal val captureThread: Thread get() = thread
     private val handler = Handler(thread.looper)
     private val executor = Executor { runnable -> handler.post(runnable) }
     val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -259,16 +262,30 @@ class CameraSession(private val context: Context) {
     }
 
     fun close() {
+        handler.post { closeNow() }
+    }
+
+    /**
+     * Closes the camera and ends the capture thread, for an owner that makes a new session each time
+     * (the phone's streaming screen): one that only closed left a thread behind on every visit.
+     */
+    fun release() {
         handler.post {
-            keepOpen = false
-            runCatching { session?.close() }
-            session = null
-            runCatching { device?.close() }
-            device = null
-            renderer?.release()
-            renderer = null
-            publish(state.copy(isRunning = false))
+            closeNow()
+            runCatching { manager.unregisterAvailabilityCallback(availability) }
+            thread.quitSafely()
         }
+    }
+
+    private fun closeNow() {
+        keepOpen = false
+        runCatching { session?.close() }
+        session = null
+        runCatching { device?.close() }
+        device = null
+        renderer?.release()
+        renderer = null
+        publish(state.copy(isRunning = false))
     }
 
     fun flip() {

@@ -96,7 +96,8 @@ class CameraSessionDevice(context: Context) : PhoneCaptureDevice {
 
     override fun configure(position: CameraPosition, settings: CaptureSettings) = session.configure(position, settings)
     override fun start() = session.start()
-    override fun close() = session.close()
+    /** A device is made per open of the streaming screen, so closing it ends its capture thread too. */
+    override fun close() = session.release()
     override fun reopen() = session.reopen()
     override fun flip() = session.flip()
     override fun setDeviceZoom(value: Double) = session.setDeviceZoom(value)
