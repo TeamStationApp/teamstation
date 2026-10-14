@@ -54,6 +54,7 @@ import { useInsets } from '../platform/safeArea'
 import { sameMoment } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
 import { playerEngine } from '../player/engine'
+import { livePlaybackRetryDelay } from '../player/liveRejoin'
 import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
 import { MultiCamView } from '../player/MultiCamView'
@@ -265,12 +266,6 @@ const HEADER_SCORE_WIDTH = 201
 
 /** How long a chosen highlight's full account stays under the video. */
 const DESCRIPTION_SECONDS = 90
-/**
- * How long a live video the server has no files for yet waits before the page
- * asks for it again: its first segment is written a few seconds after the
- * stream starts publishing.
- */
-const LIVE_PLAYBACK_RETRY_MS = 2000
 
 /**
  * One game: its videos, the highlights under them, and the box score.
@@ -803,6 +798,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       playback.url != null
     )
       return
+    // Backing off, and given up after ten minutes: a refused publish never
+    // writes a segment.
+    const wait = livePlaybackRetryDelay(playbackAsks)
+    if (wait == null) return
     const forVideoId = video.id
     let live = true
     const askAgain = (): void => {
@@ -817,7 +816,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           else setPlayback(found)
         })
         .catch(askAgain)
-    }, LIVE_PLAYBACK_RETRY_MS)
+    }, wait)
     return () => {
       live = false
       clearTimeout(timer)
