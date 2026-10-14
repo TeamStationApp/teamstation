@@ -83,6 +83,11 @@ choices than fit on one line is a list of rows, never pills, and Cancel is red t
 Before adding or changing a route under `/api/v1`, read [docs/api.md](docs/api.md). A filter
 or a search is a query parameter on the collection that already exists, never a new path.
 
+## Dictation phrases
+
+When a sentence scores wrong and you add it to the dictation prompt, add that sentence to the
+Haiku integration tests and rerun all of them. See [docs/dictation.md](docs/dictation.md).
+
 ## TS Director: pass the device UDID
 
 Whenever asked to **fix, change, or finish** TS Director (`mobile/apps/tsDirector`), treat

@@ -168,7 +168,7 @@ function hasExecutableSource(path) {
 }
 const eligible = path =>
   /^src\/.+\.tsx?$/.test(path) &&
-  !/\.(test|e2e)\./.test(path) &&
+  !/\.(test|integration|e2e)\./.test(path) &&
   !path.startsWith('src/test/') &&
   !path.startsWith('src/migrate/') &&
   path !== 'src/server/db/database.ts' &&
@@ -247,6 +247,8 @@ run('node_modules/.bin/c8', [
   ...paths.flatMap(path => ['--include', path]),
   '--exclude',
   '**/*.test.*',
+  '--exclude',
+  '**/*.integration.*',
   '--exclude',
   '**/*.e2e.*',
   '--exclude',

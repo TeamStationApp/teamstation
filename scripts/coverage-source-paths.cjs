@@ -1,7 +1,7 @@
 const { execFileSync } = require('node:child_process')
 
 const SOURCE = /\.tsx?$/
-const NOT_SOURCE = /\.(test|e2e)\./
+const NOT_SOURCE = /\.(test|integration|e2e)\./
 const ROOTS = ['src/app/', 'src/common/']
 
 // The executable source changed since `base`: added, edited, or moved and

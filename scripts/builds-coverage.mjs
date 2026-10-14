@@ -80,6 +80,8 @@ run('node_modules/.bin/c8', [
   '--exclude',
   '**/*.test.*',
   '--exclude',
+  '**/*.integration.*',
+  '--exclude',
   '**/*.e2e.*',
   '--exclude',
   'src/test/**',
@@ -121,7 +123,7 @@ const changes = Object.fromEntries(
   Object.entries(changedLines(git('diff', '--unified=0', baseline))).filter(
     ([file]) =>
       /^src\/(app|common|server|migrate)\/.*\.tsx?$/.test(file) &&
-      !/\.(test|e2e)\./.test(file)
+      !/\.(test|integration|e2e)\./.test(file)
   )
 )
 const coverage = JSON.parse(

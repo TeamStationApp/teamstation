@@ -19,13 +19,21 @@ describe('coverage source enumeration', () => {
         'deleted.ts',
         'kept.ts',
         'unchanged.ts',
-        'ignored.test.ts'
+        'ignored.test.ts',
+        'ignored.integration.ts',
+        'ignored.e2e.ts'
       ])
         writeFileSync(join(dir, 'src/app', name), 'export const value = 1\n')
       git('add', '.')
       git('commit', '-qm', 'Coverage test fixture')
       rmSync(join(dir, 'src/app/deleted.ts'))
-      for (const name of ['kept.ts', 'new.ts', 'ignored.test.ts'])
+      for (const name of [
+        'kept.ts',
+        'new.ts',
+        'ignored.test.ts',
+        'ignored.integration.ts',
+        'ignored.e2e.ts'
+      ])
         writeFileSync(join(dir, 'src/app', name), 'export const value = 2\n')
       const result = coverageSources('HEAD', dir)
       expect(result.paths.sort()).deep.equals([

@@ -2,19 +2,29 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { ACTION_TYPES, toolSchema } from '../../common/scoring/actions'
+import { tagOf, writtenTag } from '../../common/scoring/playerTags'
+import {
+  ROSTER_COMMAND_TYPES,
+  rosterToolSchema,
+  type SaidRosterCommand
+} from '../../common/scoring/rosterCommands'
 import { DICTATION_VOCABULARY } from '../../common/scoring/vocabulary'
 import {
   ASK_SCORER,
   asOpenAiTools,
   callsWrittenAsText,
+  type DictationExchange,
+  dictationExchangeLines,
   followUp,
   gamePrompt,
   Interpretation,
   type InterpreterConfig,
   MAX_FOLLOW_UPS,
   RESULT_MISSING,
+  ROSTER_NOT_ASKED,
   systemPrompt,
-  UNDO
+  UNDO,
+  withTags
 } from './interpreter'
 
 interface Sent {
@@ -203,7 +213,72 @@ describe('dictation interpreter', function () {
     expect(system).match(/is only the out\s+the scorer says/)
     expect(system).match(/never send\s+a result or an out after it/)
     expect(system).match(
+      /"thrown to first for the out, the runner at third scores" is\s+ballInPlay, result field_out and runnerMovement of the runner on third to\s+home/
+    )
+    expect(system).match(
+      /is result hit_by_pitch alone: never send a\s+pitch or a ballInPlay with it/
+    )
+    expect(system).match(
       /A runner who tags up on a catch says the catch happened/
+    )
+    // A tag-up on a foul pop is its catch, its out and the move, with no
+    // question about who caught it.
+    expect(system).match(
+      /the runner's move: ballInPlay, result field_out with outBy catch and\s+foulCaught, and runnerMovement of the runner on second to third/
+    )
+    expect(system).match(
+      /never an\s+ordinary fly out\. Leave out who caught it when the scorer does not say;\s+do not ask/
+    )
+    // A number is a jersey and a base is not a number; a player comes back
+    // as his tag.
+    expect(system).match(
+      /not a batter or runner who wears it\s+too, and his tag is the one GAME gives that fielder/
+    )
+    expect(system).match(
+      /in "SS Mike T\. #27 \(tag QV2\)", SS is where he plays and QV2 is\s+his tag\. Wherever a tool takes a player, give his tag, QV2: never a\s+jersey, a position, a base or any other number/
+    )
+    expect(system).match(
+      /A tag's digit is part\s+of its name and says nothing about bases: QV2 need not be on second/
+    )
+    expect(system).match(
+      /A base is not a number: "steals third" names no #3,\s+and the runner on second is whoever the game lists on second, not #2/
+    )
+    expect(system).match(
+      /His tag is the one GAME gives on that base's\s+line: "On second: …" for the runner on second/
+    )
+    expect(system).match(
+      /"He steals third", "the runner steals third" or "steals third", with\s+runners on first and second, is the runner on second; the runner on\s+first stays on first\. Do not send him to third, and do not ask who/
+    )
+    expect(system).match(
+      /"1st", "2nd" and "3rd", and the words "first", "second" and "third", are\s+first base, second base and third base/
+    )
+    expect(system).match(
+      /"Third" is not "three": third is the base, three is jersey 3/
+    )
+    expect(system).match(
+      /"Caught\s+by the third baseman" is that 3B's tag, never the tag of #3/
+    )
+    expect(system).match(/"one", "two", "three", "four", "five", "six"/)
+    expect(system).match(
+      /"the shortstop boots it"[\s\S]*fieldingPlay with error set to the same tag/
+    )
+    expect(system).match(/"He steals third" is only that "On second" runner/)
+    expect(system).match(/Never the batter, not even when he wears #3/)
+    expect(system).match(
+      /"bats 1st", "bats 2nd" and\s+"bats 3rd" are his place in the batting order/
+    )
+    expect(system).match(
+      /a tag ending in 3 is not on third and does not steal third/
+    )
+    expect(system).match(
+      /"he steals", "and he steals" or "steals",\s+with no base and no name, is that runner stealing the next base: a\s+runner alone on first steals second\. Call baseRunning for him, and\s+never ask, not even to confirm/
+    )
+    expect(system).match(
+      /the runner on first to\s+second\. Never both to the same base, and never the runner on first to\s+third: that runner steals second\. Do not ask\. Call the lead runner's\s+steal first: third before second, home before third/
+    )
+    expect(system).not.match(/\bids?\b/)
+    expect(system).match(
+      /A steal takes one base: "he steals, and scores when the throw gets away"\s+is his steal of the next base, then runnerMovement of him to home\. The\s+throw that gets away is not a wild pitch/
     )
     expect(system).match(
       /barely use position numbers[^]*double play[^]*6 shortstop/
@@ -212,7 +287,48 @@ describe('dictation interpreter', function () {
     // The game finishes a play by rule; the LLM does not ask about it.
     expect(system).includes('Leave fielders off an out nobody described')
     expect(system).match(
-      /On a fielder's choice, send the ball in play and the result/
+      /the second baseman takes\s+the throw when the shortstop or the third baseman fielded the ball/
+    )
+    expect(system).match(
+      /the shortstop takes it when the first baseman or anyone else did/
+    )
+    expect(system).includes("Pop fly to right center field, it's caught")
+    expect(system).includes("Sol's throw to first is late")
+    expect(system).match(
+      /runnerMovement of\s+the runner on third to home, out true/
+    )
+    expect(system).includes('fielders left off')
+    expect(system).includes('result catcher_interference')
+    expect(system).includes('Leave side out on each of these.')
+    expect(system).includes('Jared comes in for Sol.')
+    expect(system).includes('But Casey scores.')
+    expect(system).includes('Casey tags up and takes third.')
+    expect(system).includes('robbing the home run.')
+    expect(system).includes(
+      'Line drive, triple to right center field, and Casey takes home.'
+    )
+    expect(system).includes(
+      'Sacrifice bunt to the shortstop, and Casey takes third.'
+    )
+    expect(system).includes("Third pickoff attempt and he's still safe.")
+    expect(system).match(
+      /On a fielder's choice, send the ball in play and the\s+result/
+    )
+    expect(system).includes('never fielders_choice')
+    expect(system).includes("he's safe at first")
+    expect(system).match(/Never send a runner\s+to the base batter/)
+    expect(system).includes('throws him out at first')
+    expect(system).includes('contact is only swing or bunt')
+    expect(system).includes('Never invent a name, a tag or a placeholder')
+    expect(system).includes('Four pitches, a strike')
+    expect(system).match(
+      /pitch B, pitch B, pitch B, pitch C invents three\s+balls/
+    )
+    expect(system).includes('when the count is 0-0')
+    expect(system).includes('third disengagement')
+    // A runner who went further than the hit took him is the LLM's to report.
+    expect(system).match(
+      /went further than the\s+hit's bases[^]*runnerMovement/
     )
   })
 
@@ -323,6 +439,39 @@ describe('dictation interpreter', function () {
         question: 'Which Chase?',
         options: [{ label: 'Chase L.' }, { label: 'Chase M.' }]
       })
+    })
+
+    it('takes the prompt’s tags, and an old app’s ids, out of the question and the labels', async function () {
+      const stub = provider([
+        ask(
+          [
+            { label: `Freeman F. #5 ${writtenTag(6)}, Visitors` },
+            { label: `Freeman T. (#13) (${tagOf(16)}) (id 16)` },
+            { label: writtenTag(7) }
+          ],
+          `Which Freeman ${writtenTag(6)} or (id 16)?`
+        )
+      ])
+      const turn = await new Interpretation(
+        config(stub.fetch),
+        'c',
+        'Freeman at first'
+      ).start()
+      expect(turn).deep.equals({
+        kind: 'ask',
+        question: 'Which Freeman or?',
+        options: [
+          { label: 'Freeman F. #5, Visitors' },
+          { label: 'Freeman T. (#13)' }
+        ]
+      })
+    })
+
+    it('tells the model a shared first name is a question, by example', function () {
+      expect(systemPrompt()).contains(
+        '"Chase was picked\n  off" asks which Chase'
+      )
+      expect(systemPrompt()).contains('never a tag')
     })
 
     it('keeps an option’s actions only when they all clean', async function () {
@@ -530,8 +679,7 @@ describe('dictation interpreter, calls written as text', function () {
         choices: [
           {
             message: {
-              content:
-                '{"type":"function","name":"ballInPlay","parameters":{"contact":"swing","trajectory":"popup","fielder":13}}{"type":"function","name":"result","parameters":{"eventType":"field_out","outBy":"catch"}}',
+              content: `{"type":"function","name":"ballInPlay","parameters":{"contact":"swing","trajectory":"popup","fielder":"${tagOf(13)}"}}{"type":"function","name":"result","parameters":{"eventType":"field_out","outBy":"catch"}}`,
               tool_calls: [call('c1', 'gameFlow', { kind: 'closePlay' })]
             }
           }
@@ -541,7 +689,7 @@ describe('dictation interpreter, calls written as text', function () {
     expect(
       await new Interpretation(
         config(stub.fetch),
-        'ctx',
+        `2B Ian K. #4 ${writtenTag(13)}`,
         'Pop out to the second baseman.'
       ).start()
     ).deep.equals({
@@ -698,6 +846,93 @@ describe('dictation interpreter, a ball in play sent without its result', functi
   })
 })
 
+describe('dictation interpreter, the prompt log', function () {
+  it('logs the model, the prompt and the tool calls', async function () {
+    const exchanges: DictationExchange[] = []
+    const stub = provider([call('c1', 'pitch', { call: 'B' })])
+    await new Interpretation(
+      config(stub.fetch, {
+        log: exchange => {
+          exchanges.push(exchange)
+        }
+      }),
+      'Top of the 1st.',
+      'ball'
+    ).start()
+    expect(exchanges).to.have.length(1)
+    const [exchange] = exchanges
+    expect(exchange.model).equals('grok-4.7')
+    expect(exchange.said).equals('')
+    expect(exchange.calls).deep.equals([
+      { name: 'pitch', arguments: { call: 'B' } }
+    ])
+    expect(
+      exchange.messages.map(message => message.content).join('\n')
+    ).includes('Top of the 1st.')
+    expect(
+      exchange.messages.map(message => message.content).join('\n')
+    ).includes('ball')
+    expect(exchange.messages[0].content).equals(systemPrompt())
+    const lines = dictationExchangeLines('utt-1', exchange)
+    expect(
+      lines.some(line => line.includes('"tag":"dictation-exchange"'))
+    ).equals(true)
+    expect(lines.some(line => line.includes('"model":"grok-4.7"'))).equals(true)
+    expect(lines.some(line => line.includes('"tag":"dictation-calls"'))).equals(
+      true
+    )
+    expect(lines.some(line => line.includes('Bearer'))).equals(false)
+    expect(lines.join('\n')).not.includes('"apiKey"')
+    for (const line of lines) expect(line.length).to.be.below(48_000)
+  })
+
+  it('logs a provider failure with the prompt and no calls', async function () {
+    const exchanges: DictationExchange[] = []
+    const stub = provider({ status: 500, text: 'nope' })
+    const turn = await new Interpretation(
+      config(stub.fetch, {
+        model: 'claude-haiku-5-5',
+        log: exchange => {
+          exchanges.push(exchange)
+        }
+      }),
+      'Top of the 1st.',
+      'ball'
+    ).start()
+    expect(turn.kind).equals('error')
+    expect(exchanges).to.have.length(1)
+    expect(exchanges[0].model).equals('claude-haiku-5-5')
+    expect(exchanges[0].calls).deep.equals([])
+    expect(exchanges[0].error).includes('answered 500')
+    expect(exchanges[0].messages.at(-1)?.content).equals('ball')
+  })
+
+  it('splits a prompt message that would overflow one journal line', function () {
+    const content = 'x'.repeat(30_000)
+    const lines = dictationExchangeLines('utt-2', {
+      model: 'claude-haiku-5-5',
+      messages: [{ role: 'system', content }],
+      calls: [],
+      said: ''
+    })
+    const prompts = lines
+      .map(
+        line =>
+          JSON.parse(line) as {
+            tag: string
+            content?: string
+            part?: number
+            parts?: number
+          }
+      )
+      .filter(line => line.tag === 'dictation-prompt')
+    expect(prompts.length).to.be.greaterThan(1)
+    expect(prompts.map(line => line.content).join('')).equals(content)
+    expect(prompts[0].parts).equals(prompts.length)
+    for (const line of lines) expect(line.length).to.be.below(48_000)
+  })
+})
+
 describe('dictation interpreter, cache routing', function () {
   it('sends a cache key as xAI’s routing header, and to OpenAI as prompt_cache_key', async function () {
     const xai = provider([call('c1', 'pitch', { call: 'B' })])
@@ -773,7 +1008,7 @@ describe('dictation interpreter, other providers', function () {
     const turn = await new Interpretation(
       config(fetch, {
         apiKey: 'anthropic-key',
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-haiku-5-5',
         baseUrl: 'https://api.anthropic.com/v1',
         api: 'messages'
       }),
@@ -804,7 +1039,8 @@ describe('dictation interpreter, other providers', function () {
       { type: 'text', text: gamePrompt('the game') }
     ])
     expect(request.body.tool_choice).deep.equals({ type: 'any' })
-    expect(request.body.temperature).equals(0)
+    // Claude Haiku 5.5 refuses a temperature.
+    expect(request.body).not.have.property('temperature')
     expect(
       request.body.tools.map((tool: { name: string }) => tool.name)
     ).deep.equals([...ACTION_TYPES, 'askScorer', 'undo'])
@@ -832,7 +1068,7 @@ describe('dictation interpreter, other providers', function () {
       [{ type: 'tool_use', id: 't1', name: 'pitch', input: { call: 'B' } }]
     )
     const interpretation = new Interpretation(
-      config(fetch, { api: 'messages', model: 'claude-haiku-4-5-20251001' }),
+      config(fetch, { api: 'messages', model: 'claude-haiku-5-5' }),
       'ctx',
       'Noah took ball one.'
     )
@@ -936,7 +1172,12 @@ describe('dictation interpreter, a model that makes one call a reply', function 
             {
               label: 'Noah D.',
               actions: [
-                { type: 'baseRunning', kind: 'steal', runner: 4, to: '2B' }
+                {
+                  type: 'baseRunning',
+                  kind: 'steal',
+                  runner: tagOf(4),
+                  to: '2B'
+                }
               ]
             },
             { label: 'Noah K.' }
@@ -946,7 +1187,7 @@ describe('dictation interpreter, a model that makes one call a reply', function 
     )
     const interpretation = new Interpretation(
       config(fetch, { followUp: true }),
-      'ctx',
+      `On first: Noah D. #4 ${writtenTag(4)}.`,
       'Ball, and Noah stole second.'
     )
     expect(await interpretation.start()).deep.include({ kind: 'ask' })
@@ -967,24 +1208,29 @@ describe('dictation interpreter, a model that makes one call a reply', function 
       runner: 3,
       to: '3B'
     }
+    const said = { ...steal, runner: tagOf(3) }
     const { fetch, sent } = provider(
       [
-        call('c1', 'baseRunning', steal),
+        call('c1', 'baseRunning', said),
         call('c2', 'gameFlow', { kind: 'closePlay' })
       ],
       [
-        call('c3', 'baseRunning', steal),
+        call('c3', 'baseRunning', said),
         call('c4', 'gameFlow', { kind: 'closePlay' })
       ],
       [call('c5', 'pitch', { call: 'B' })]
     )
     const turn = await new Interpretation(
       config(fetch, { followUp: true }),
-      'ctx',
+      `On second: Ian K. #9 ${writtenTag(3)}.`,
       'And he steals third.'
     ).start()
     expect(turn).deep.equals({ kind: 'actions', actions: [steal], dropped: [] })
     expect(sent).to.have.length(2)
+    // The model is told what it said: the runner by his tag.
+    expect(sent[1].body.messages.at(-2)?.content).includes(
+      `"runner":"${tagOf(3)}"`
+    )
   })
 
   it('tells the model everything recorded so far, so a call said twice counts', async function () {
@@ -1021,11 +1267,16 @@ describe('dictation interpreter, a model that makes one call a reply', function 
 
   it('keeps a runner move once, whatever fielders a repeat names', async function () {
     const out = (fielders: number[]): object =>
-      call('m', 'runnerMovement', { runner: 1, to: '1B', out: true, fielders })
+      call('m', 'runnerMovement', {
+        runner: tagOf(1),
+        to: '1B',
+        out: true,
+        fielders: fielders.map(tagOf)
+      })
     const { fetch, sent } = provider([out([13, 12])], [out([13, 12, 12])], [])
     const turn = await new Interpretation(
       config(fetch, { followUp: true }),
-      'ctx',
+      [1, 12, 13].map(writtenTag).join(' '),
       'Six four three.'
     ).start()
     expect(turn.kind === 'actions' && turn.actions).deep.equals([
@@ -1191,5 +1442,662 @@ describe('dictation interpreter, undo', function () {
       'Undo.'
     ).start()
     expect(twice.sent).to.have.length(2)
+  })
+})
+
+describe('dictation interpreter, roster commands', function () {
+  const rosterTools = rosterToolSchema()
+  const ball = { type: 'pitch', call: 'B' }
+  // As said: number 3, with no team named; and Betts by name.
+  const atThird = {
+    type: 'setPositions',
+    places: [{ player: { jersey: '3' }, position: '3B' }]
+  }
+  const pinchHitter = {
+    type: 'pinchHitter' as const,
+    player: { name: 'Betts' }
+  }
+
+  it('offers a scope’s roster tools beside its scoring tools, to either provider', async function () {
+    const stub = provider([
+      call('c1', 'pinchHitter', { player: { name: 'Betts' } })
+    ])
+    await new Interpretation(
+      config(stub.fetch, { tools: [], rosterTools }),
+      'c',
+      'Betts pinch hits'
+    ).start()
+    expect(stub.sent[0].body.tools.map(t => t.function.name)).deep.equals([
+      ...ROSTER_COMMAND_TYPES,
+      'askScorer',
+      'undo'
+    ])
+    const claude = anthropic([
+      {
+        type: 'tool_use',
+        id: 't1',
+        name: 'pinchHitter',
+        input: { player: { name: 'Betts' } }
+      }
+    ])
+    const turn = await new Interpretation(
+      config(claude.fetch, {
+        baseUrl: 'https://api.anthropic.com/v1',
+        api: 'messages',
+        rosterTools
+      }),
+      'c',
+      'Betts pinch hits'
+    ).start()
+    expect(
+      claude.sent[0].body.tools.map((tool: { name: string }) => tool.name)
+    ).deep.equals([
+      ...ACTION_TYPES,
+      ...ROSTER_COMMAND_TYPES,
+      'askScorer',
+      'undo'
+    ])
+    expect(turn).deep.equals({
+      kind: 'actions',
+      actions: [],
+      roster: [pinchHitter],
+      dropped: []
+    })
+  })
+
+  it('returns roster tool calls as said commands, in order, and drops one that does not clean', async function () {
+    const stub = provider([
+      call('c1', 'setPositions', {
+        places: [{ player: { jersey: '3' }, position: '3B' }]
+      }),
+      call('c2', 'setPositions', { side: 'both', places: [] }),
+      call('c3', 'placeInLineup', 'not json'),
+      call('c4', 'placeInLineup', {
+        side: 'home',
+        places: [{ player: { jersey: '6', name: 'Soto' }, slot: 'end' }]
+      }),
+      // An id is no player as said.
+      call('c5', 'pinchHitter', { player: 12 })
+    ])
+    const turn = await new Interpretation(
+      config(stub.fetch, { rosterTools }),
+      'c',
+      'Number 3 subs in at third base, and the Hosts’ Soto, six, bats last'
+    ).start()
+    expect(turn).deep.equals({
+      kind: 'actions',
+      actions: [],
+      roster: [
+        atThird,
+        {
+          type: 'placeInLineup',
+          side: 'home',
+          places: [{ player: { jersey: '6', name: 'Soto' }, slot: 'end' }]
+        }
+      ],
+      dropped: [
+        {
+          code: 'malformed',
+          message:
+            'setPositions: Expected one of: "away" | "home", got "both" at .side'
+        },
+        {
+          code: 'malformed',
+          message: 'placeInLineup: arguments are not an object'
+        },
+        {
+          code: 'malformed',
+          message: 'pinchHitter: Expected an object, got 12 at .player'
+        }
+      ]
+    })
+  })
+
+  it('says why when no roster call cleans', async function () {
+    const stub = provider([call('c1', 'pinchHitter', { player: 'Betts' })])
+    const turn = await new Interpretation(
+      config(stub.fetch, { rosterTools }),
+      'c',
+      'Betts pinch hits'
+    ).start()
+    expect(turn.kind).equals('error')
+    expect(turn.kind === 'error' && turn.message).match(
+      /^Nothing usable came back: pinchHitter: /
+    )
+  })
+
+  it('reads a roster tool the scope does not offer as an unknown action', async function () {
+    const stub = provider([
+      call('c1', 'pinchHitter', { player: { name: 'Betts' } }),
+      call('c2', 'pitch', { call: 'B' })
+    ])
+    const turn = await new Interpretation(
+      config(stub.fetch),
+      'c',
+      'ball'
+    ).start()
+    expect(turn.kind === 'actions' && turn.actions).deep.equals([ball])
+    expect(turn.kind === 'actions' && turn.roster).equals(undefined)
+    expect(turn.kind === 'actions' && turn.dropped[0].code).equals(
+      'unknownAction'
+    )
+  })
+
+  it('passes a sentence of both kinds through, for the client to refuse', async function () {
+    const stub = provider([
+      call('c1', 'pitch', { call: 'B' }),
+      call('c2', 'pinchHitter', { player: { name: 'Betts' } })
+    ])
+    const turn = await new Interpretation(
+      config(stub.fetch, { rosterTools }),
+      'c',
+      'Ball, and Betts pinch hits'
+    ).start()
+    expect(turn).deep.equals({
+      kind: 'actions',
+      actions: [ball],
+      roster: [pinchHitter],
+      dropped: []
+    })
+  })
+
+  it('reads roster calls a model wrote out as text', async function () {
+    const said =
+      '{"name": "pinchHitter", "parameters": {"player": {"name": "Betts"}}}'
+    const fetchText = (async () =>
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: said } }] }),
+        { status: 200 }
+      )) as unknown as typeof fetch
+    const turn = await new Interpretation(
+      config(fetchText, { rosterTools }),
+      'c',
+      'Betts pinch hits'
+    ).start()
+    expect(turn.kind === 'actions' && turn.roster).deep.equals([pinchHitter])
+  })
+
+  it('tells a follow-up model the commands recorded so far', async function () {
+    const { fetch, sent } = provider(
+      [call('c1', 'pinchHitter', { player: { name: 'Betts' } })],
+      []
+    )
+    const turn = await new Interpretation(
+      config(fetch, { followUp: true, rosterTools }),
+      'c',
+      'Betts pinch hits'
+    ).start()
+    expect(turn.kind === 'actions' && turn.roster).deep.equals([pinchHitter])
+    expect(sent[1].body.messages.at(-1)).deep.equals({
+      role: 'tool',
+      tool_call_id: 'c1',
+      content: followUp([pinchHitter])
+    })
+  })
+
+  it('tells the model to report a roster change as said, and to leave finding the player to the screen', function () {
+    const system = systemPrompt()
+    expect(system).includes('\nROSTER\n')
+    expect(system).match(
+      /Report each player just as the scorer said him: a number as jersey, in\s+digits \("number 3" is jersey "3"\), a name as name/
+    )
+    expect(system).match(
+      /Never add a name or a number the scorer did not say, and never give a\s+tag/
+    )
+    expect(system).match(/A new player joins only through addPlayer/)
+    expect(system).match(/Give side only when the scorer says the team/)
+    expect(system).match(
+      /even when both teams have the name or number: the\s+screen takes a defensive change from the team in the field/
+    )
+    expect(system).match(
+      /Never call askScorer about a roster change, whatever the rules above say\s+about asking: not which team, not which player, not whether to add him/
+    )
+    expect(system).match(
+      /With Mike T\. and Mike B\. listed, "Mike Trout pitches" is setPositions with\s+name "Mike Trout": no question/
+    )
+    expect(system).match(/Report a name even when ROSTERS shows nobody by it/)
+    expect(system).match(
+      /The screen finds the\s+player, and asks the scorer\s+itself/
+    )
+    expect(system).match(/"moves to short" — is setPositions\. Place only/)
+    expect(system).match(
+      /A\s+pinch hitter or a pinch runner is the one who comes in/
+    )
+    expect(system).match(/The runner he replaces is named by base alone/)
+    expect(system).includes('"forth" is fourth')
+    expect(system).match(
+      /"Set this lineup" followed by names is setLineup with every name, in the\s+order said/
+    )
+    expect(system).includes(
+      'A sentence carries roster changes or scoring actions, never both.'
+    )
+    expect(system).includes('Add Jarrett to the lineup')
+    expect(system).includes('name "Jared Hale"')
+    expect(system).includes('Substitute A for B in the lineup')
+    expect(system).includes('the team ROSTERS lists A on')
+    // Nothing tells it to find a player's team or id itself.
+    expect(system).not.match(/draws on|team is open|one option for each team/)
+    expect(ASK_SCORER.function.description).includes(
+      'Never about a roster change: the screen finds its players.'
+    )
+  })
+
+  describe('a question about a roster change', function () {
+    const which = (more: Record<string, unknown> = {}): object =>
+      call('q1', 'askScorer', {
+        question: 'Which number 3?',
+        options: [{ label: 'Visitors' }, { label: 'Hosts' }],
+        ...more
+      })
+
+    it('is turned back to the model once, which then reports the change as said', async function () {
+      const stub = provider(
+        [which({ about: 'roster' })],
+        [call('c2', 'setPositions', atThird)]
+      )
+      const turn = await new Interpretation(
+        config(stub.fetch, { rosterTools }),
+        'c',
+        'Number 3 subs in at third base'
+      ).start()
+      expect(turn).deep.equals({
+        kind: 'actions',
+        actions: [],
+        roster: [atThird],
+        dropped: []
+      })
+      expect(stub.sent).to.have.length(2)
+      expect(stub.sent[1].body.messages.slice(-2)).deep.equals([
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [which({ about: 'roster' })]
+        },
+        { role: 'tool', tool_call_id: 'q1', content: ROSTER_NOT_ASKED }
+      ])
+      // It must answer with a call.
+      expect(stub.sent[1].body.tool_choice).equals('required')
+    })
+
+    it('is any question in the roster scope, and one whose options carry a roster change, ids and all', async function () {
+      const scope = provider([which()], [call('c2', 'setPositions', atThird)])
+      const sheet = await new Interpretation(
+        config(scope.fetch, { tools: [], rosterTools }),
+        'c',
+        'Number 3 plays third'
+      ).start()
+      expect(sheet.kind === 'actions' && sheet.roster).deep.equals([atThird])
+      const carried = provider(
+        [
+          which({
+            options: [
+              {
+                label: 'Visitors',
+                actions: [
+                  {
+                    type: 'setPositions',
+                    side: 'away',
+                    places: [{ player: 4, position: '3B' }]
+                  }
+                ]
+              },
+              { label: 'Hosts' }
+            ]
+          })
+        ],
+        [call('c2', 'setPositions', atThird)]
+      )
+      const scoring = await new Interpretation(
+        config(carried.fetch, { rosterTools }),
+        'c',
+        'Number 3 subs in at third base'
+      ).start()
+      expect(scoring.kind === 'actions' && scoring.roster).deep.equals([
+        atThird
+      ])
+    })
+
+    it('goes to the scorer when asked again, and a play’s question goes at once', async function () {
+      const twice = provider(
+        [which({ about: 'roster' })],
+        [which({ about: 'roster' })]
+      )
+      const again = await new Interpretation(
+        config(twice.fetch, { rosterTools }),
+        'c',
+        'Number 3 subs in at third base'
+      ).start()
+      expect(again).deep.include({ kind: 'ask', question: 'Which number 3?' })
+      expect(twice.sent).to.have.length(2)
+      const play = provider([which({ about: 'play' })])
+      expect(
+        await new Interpretation(
+          config(play.fetch, { rosterTools }),
+          'c',
+          'Number 3 was picked off'
+        ).start()
+      ).deep.include({ kind: 'ask' })
+      expect(play.sent).to.have.length(1)
+      // Without roster tools, a question is never turned back.
+      const plays = provider([which({ about: 'roster' })])
+      expect(
+        await new Interpretation(config(plays.fetch), 'c', 'x').start()
+      ).deep.include({ kind: 'ask' })
+    })
+
+    it('is told apart by the model, in askScorer’s about', function () {
+      const { parameters } = ASK_SCORER.function as {
+        parameters: {
+          required: string[]
+          properties: Record<string, { enum?: string[] }>
+        }
+      }
+      expect(parameters.required).deep.equals(['about', 'question', 'options'])
+      expect(parameters.properties.about.enum).deep.equals(['play', 'roster'])
+    })
+  })
+
+  describe('askScorer', function () {
+    const ask = (options: unknown): object =>
+      call('q1', 'askScorer', { question: 'Which number 3?', options })
+    const awayAtThird = { ...atThird, side: 'away' }
+    const homeAtThird = { ...atThird, side: 'home' }
+
+    // Asked a second time: the first is turned back to the model.
+    it('lets an option carry roster commands, and keeps them only when all clean', async function () {
+      const options = [
+        { label: 'Home #3', actions: [homeAtThird] },
+        { label: 'Away #3', actions: [awayAtThird] },
+        { label: 'Both kinds', actions: [ball, pinchHitter] },
+        {
+          label: 'Half good',
+          actions: [homeAtThird, { type: 'setPositions', side: 'home' }]
+        },
+        { label: 'By id', actions: [{ type: 'pinchHitter', player: 12 }] }
+      ]
+      const stub = provider([ask(options)], [ask(options)])
+      const turn = await new Interpretation(
+        config(stub.fetch, { rosterTools }),
+        'c',
+        'Number 3 subs in at third base'
+      ).start()
+      expect(turn).deep.equals({
+        kind: 'ask',
+        question: 'Which number 3?',
+        options: [
+          { label: 'Home #3', roster: [homeAtThird] },
+          { label: 'Away #3', roster: [awayAtThird] },
+          { label: 'Both kinds', actions: [ball], roster: [pinchHitter] },
+          { label: 'Half good' },
+          { label: 'By id' }
+        ]
+      })
+    })
+
+    it('answers with an option’s roster commands and calls nobody', async function () {
+      const options = [
+        { label: 'Home #3', actions: [homeAtThird] },
+        { label: 'Away #3', actions: [awayAtThird] }
+      ]
+      const stub = provider([ask(options)], [ask(options)])
+      const it = new Interpretation(
+        config(stub.fetch, { rosterTools }),
+        'c',
+        'Number 3 subs in at third base'
+      )
+      await it.start()
+      expect(await it.answer(1)).deep.equals({
+        kind: 'actions',
+        actions: [],
+        roster: [awayAtThird],
+        dropped: []
+      })
+      expect(stub.sent).to.have.length(2)
+    })
+  })
+})
+
+describe('dictation interpreter, player tags', function () {
+  const GAME = `On first: Ian K. #4 ${writtenTag(4)}. On second: Joe B. #9 ${writtenTag(3)}.\nFielders: SS Noah D. #5 ${writtenTag(14)}, 3B Liam O. #6 ${writtenTag(15)}.`
+  const steal = (runner: unknown, to = '3B'): object =>
+    call(`s${String(runner)}`, 'baseRunning', { kind: 'steal', runner, to })
+
+  it('reads each player back from his tag, and hands the client ids', async function () {
+    const stub = provider([
+      steal(tagOf(3)),
+      steal(tagOf(4).toLowerCase(), '2B'),
+      call('f', 'fieldingPlay', {
+        fielders: [tagOf(14), tagOf(15)],
+        error: tagOf(15)
+      }),
+      call('w', 'batteryEvent', {
+        kind: 'wild_pitch',
+        advances: [{ runner: tagOf(3), to: 'home' }]
+      })
+    ])
+    const turn = await new Interpretation(
+      config(stub.fetch),
+      GAME,
+      'Double steal, then a wild pitch'
+    ).start()
+    expect(turn).deep.equals({
+      kind: 'actions',
+      actions: [
+        { type: 'baseRunning', kind: 'steal', runner: 3, to: '3B' },
+        { type: 'baseRunning', kind: 'steal', runner: 4, to: '2B' },
+        { type: 'fieldingPlay', fielders: [14, 15], error: 15 },
+        {
+          type: 'batteryEvent',
+          kind: 'wild_pitch',
+          advances: [{ runner: 3, to: 'home' }]
+        }
+      ],
+      dropped: []
+    })
+    // The model reads tags, never ids.
+    const game = stub.sent[0].body.messages[1].content ?? ''
+    expect(game).includes(`Joe B. #9 (tag ${tagOf(3)})`)
+    expect(game).not.match(/\bid\b/)
+  })
+
+  it('drops a call that names a player by a number, a base or a tag the game does not give', async function () {
+    const stub = provider([
+      steal(3),
+      steal('3'),
+      steal('3B'),
+      steal(tagOf(5)),
+      steal(tagOf(3))
+    ])
+    const turn = await new Interpretation(
+      config(stub.fetch),
+      GAME,
+      'He steals third'
+    ).start()
+    expect(turn.kind === 'actions' && turn.actions).deep.equals([
+      { type: 'baseRunning', kind: 'steal', runner: 3, to: '3B' }
+    ])
+    // A tag is never repeated to the scorer, not even one of nobody.
+    expect(turn.kind === 'actions' && turn.dropped).deep.equals([
+      ...[3, '3', '3B'].map(runner => ({
+        code: 'unknownPlayer',
+        message: `the steal — the runner ${JSON.stringify(runner)} is no player in the game`
+      })),
+      {
+        code: 'unknownPlayer',
+        message: 'the steal — the runner is no player in the game'
+      }
+    ])
+  })
+
+  it('reads a fielder said by his position as the player the game lists there, and never a runner', async function () {
+    const stub = provider([
+      call('b', 'ballInPlay', {
+        contact: 'swing',
+        trajectory: 'line_drive',
+        direction: 'left',
+        fielder: 'LF'
+      }),
+      call('r', 'result', { eventType: 'single' }),
+      call('m', 'runnerMovement', {
+        runner: tagOf(3),
+        to: 'home',
+        fielders: ['the left fielder', 'C']
+      }),
+      steal('SS', '2B')
+    ])
+    const turn = await new Interpretation(
+      config(stub.fetch),
+      `${GAME.slice(0, -1)}, LF Max S. #7 ${writtenTag(16)}, C nobody.`,
+      'Single to left. Fielded by the left fielder. The runner at second scored.'
+    ).start()
+    expect(turn.kind === 'actions' && turn.actions).deep.equals([
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        trajectory: 'line_drive',
+        direction: 'left',
+        fielder: 16
+      },
+      { type: 'result', eventType: 'single' }
+    ])
+    // Nobody catches, and a position names no runner: each said plainly.
+    expect(turn.kind === 'actions' && turn.dropped).deep.equals([
+      {
+        code: 'unknownPlayer',
+        message: `the runner's move — a fielder "C" is no player in the game`
+      },
+      {
+        code: 'unknownPlayer',
+        message: 'the steal — the runner "SS" is no player in the game'
+      }
+    ])
+  })
+
+  it('names the players of a question and its labels, and never shows the scorer a tag', async function () {
+    const stub = provider([
+      call('q1', 'askScorer', {
+        about: 'play',
+        question: `Did ${tagOf(4)} steal, or Joe B. ${writtenTag(3)}?`,
+        options: [
+          {
+            label: `Yes, ${tagOf(4)} steals second`,
+            actions: [
+              { type: 'baseRunning', kind: 'steal', runner: tagOf(4), to: '2B' }
+            ]
+          },
+          { label: `${tagOf(3)} (Joe B.) steals third` },
+          { label: `Double steal: [${tagOf(3)}] and (${tagOf(4)})` },
+          { label: `No, ${tagOf(9)} stays` },
+          { label: writtenTag(9) }
+        ]
+      })
+    ])
+    expect(
+      await new Interpretation(
+        config(stub.fetch),
+        GAME,
+        'And he steals.'
+      ).start()
+    ).deep.equals({
+      kind: 'ask',
+      question: 'Did Ian K. steal, or Joe B.?',
+      options: [
+        {
+          label: 'Yes, Ian K. steals second',
+          actions: [{ type: 'baseRunning', kind: 'steal', runner: 4, to: '2B' }]
+        },
+        { label: 'Joe B. steals third' },
+        { label: 'Double steal: Joe B. and Ian K.' },
+        { label: 'No, stays' }
+      ]
+    })
+  })
+
+  it('names the players of what a model wrote in place of a call', async function () {
+    const fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: `Cannot tell whether ${tagOf(4)} or ${writtenTag(9)} ran.`
+              }
+            }
+          ]
+        }),
+        { status: 200 }
+      )) as typeof globalThis.fetch
+    expect(
+      await new Interpretation(config(fetch), GAME, 'He ran').start()
+    ).deep.equals({
+      kind: 'error',
+      message:
+        'Nothing to score in "He ran": Cannot tell whether Ian K. or ran.'
+    })
+  })
+
+  it('reads an option’s players from their tags, and keeps an option naming nobody as its label', async function () {
+    const stub = provider([
+      call('q1', 'askScorer', {
+        question: 'Who stole?',
+        options: [
+          {
+            label: `Joe B. ${writtenTag(3)}`,
+            actions: [
+              { type: 'baseRunning', kind: 'steal', runner: tagOf(3), to: '3B' }
+            ]
+          },
+          {
+            label: 'Ian K.',
+            actions: [
+              { type: 'baseRunning', kind: 'steal', runner: 4, to: '2B' }
+            ]
+          }
+        ]
+      })
+    ])
+    expect(
+      await new Interpretation(config(stub.fetch), GAME, 'He stole').start()
+    ).deep.equals({
+      kind: 'ask',
+      question: 'Who stole?',
+      options: [
+        {
+          label: 'Joe B.',
+          actions: [{ type: 'baseRunning', kind: 'steal', runner: 3, to: '3B' }]
+        },
+        { label: 'Ian K.' }
+      ]
+    })
+  })
+
+  it('tags the players of an older app’s game, which named them by id', async function () {
+    expect(withTags('Batter: Ian K. #4 (id 4). Pitcher: X (id 99999).')).equals(
+      `Batter: Ian K. #4 ${writtenTag(4)}. Pitcher: X (id 99999).`
+    )
+    const stub = provider([steal(tagOf(3))])
+    const turn = await new Interpretation(
+      config(stub.fetch),
+      'On second: Joe B. #9 (id 3).',
+      'He steals third'
+    ).start()
+    expect(turn.kind === 'actions' && turn.actions).deep.equals([
+      { type: 'baseRunning', kind: 'steal', runner: 3, to: '3B' }
+    ])
+    expect(stub.sent[0].body.messages[1].content).equals(
+      `GAME\nOn second: Joe B. #9 ${writtenTag(3)}.`
+    )
+  })
+
+  it('tells a follow-up model what it reported, each player by his tag', function () {
+    const said = { type: 'pinchRunner', player: { name: 'Soto' }, base: '2B' }
+    expect(
+      followUp([
+        { type: 'baseRunning', kind: 'steal', runner: 3, to: '3B' },
+        said as unknown as SaidRosterCommand
+      ])
+    ).includes(
+      `[{"type":"baseRunning","kind":"steal","runner":"${tagOf(3)}","to":"3B"},${JSON.stringify(said)}]`
+    )
   })
 })

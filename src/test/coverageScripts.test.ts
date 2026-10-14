@@ -219,12 +219,13 @@ describe('the changed-line check', function () {
     expect(missing.log).to.include('  src/server/lost.ts: no coverage record')
   })
 
-  it('counts only the named extensions, and never tests or end-to-end files', function () {
+  it('counts only the named extensions, and never test, integration or end-to-end files', function () {
     const files = {
       'src/app/Screen.tsx': 5,
       'scripts/run.sh': 5,
       'maestro/flow.yaml': 5,
       'src/server/thing.test.ts': 5,
+      'src/server/thing.integration.ts': 5,
       'src/server/thing.e2e.ts': 5
     }
     const run = check(

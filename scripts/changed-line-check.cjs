@@ -23,7 +23,8 @@ const {
 //
 // The lines are those this branch changed under the pathspecs, from
 // `git merge-base origin/master HEAD` to HEAD. A changed file is executable
-// when its extension is one of `--ext`, it is no `*.test.*` or `*.e2e.*`,
+// when its extension is one of `--ext`, it is no `*.test.*`,
+// `*.integration.*` or `*.e2e.*`,
 // and no `--exclude` matches it. The gate fails when covered changed lines
 // are under 90%, when an added file covers under 90% of its own lines, when
 // an executable changed file has no coverage record, and when nothing under
@@ -100,7 +101,8 @@ function excluder(topLevel, excludes, cwd) {
 
 function executableFile(path, exts) {
   return (
-    exts.some(ext => path.endsWith(ext)) && !/\.(test|e2e)\.[^/]+$/.test(path)
+    exts.some(ext => path.endsWith(ext)) &&
+    !/\.(test|integration|e2e)\.[^/]+$/.test(path)
   )
 }
 
