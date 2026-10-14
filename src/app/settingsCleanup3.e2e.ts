@@ -85,6 +85,9 @@ async function main(): Promise<void> {
     console.log(line)
     await appendFile(join(artifacts!, 'settings-cleanup3-e2e.log'), line + '\n')
   }
+  page.on('pageerror', error => {
+    console.error('Browser error:', String(error))
+  })
   const go = async (path: string, text: string): Promise<void> => {
     await m.openLink({ link: f.h.origin + path })
     await contains(page, text)
@@ -357,8 +360,17 @@ async function main(): Promise<void> {
       ]) {
         await go(path, text)
         if (name === 'discovery-team-tiles') {
+          const searched = page.waitForResponse(
+            response =>
+              new URL(response.url()).pathname.endsWith('/teams') &&
+              new URL(response.url()).searchParams.get('query') === 'Winter'
+          )
           await fill(m, 'Search by name or city', 'Winter')
+          await searched
           await contains(page, 'Winter Wolves')
+          await page.waitForFunction(
+            () => !document.body.textContent!.includes('Orchard Owls')
+          )
         }
         await shot(name)
         if (
@@ -718,6 +730,78 @@ async function main(): Promise<void> {
         await note('E3 PASS practice and titled-event hero gears')
       }
     }
+    if (only === 'cancel-audit') {
+      for (const [scene, primary] of [
+        ['date-range', 'Use this range'],
+        ['stat-filter', 'Show these'],
+        ['roles', 'Save'],
+        ['promote', 'Send administrator invitation'],
+        ['group-link', 'Send invitation'],
+        ['game-form', 'Save'],
+        ['game-retry', 'Retry game'],
+        ['event-date', 'Use date'],
+        ['event-time', 'Use time'],
+        ['placeholder', 'Continue'],
+        ['location-error', 'Retry'],
+        ['people-error', 'Retry']
+      ]) {
+        await page.setViewport({
+          width: 402,
+          height:
+            scene === 'roles'
+              ? 1500
+              : scene === 'date-range' || scene === 'event-date'
+                ? 1200
+                : 874,
+          deviceScaleFactor: 1,
+          isMobile: true,
+          hasTouch: true
+        })
+        await m.openLink({
+          link:
+            f.h.origin +
+            '/cancel-visual.html?case=' +
+            scene +
+            '&team=' +
+            f.teamA
+        })
+        if (scene === 'group-link') {
+          await page.waitForSelector('[aria-label="Search by name or city"]')
+          await fill(m, 'Search by name or city', 'Demo League B')
+          await tap(m, 'Choose Demo League B')
+        }
+        await contains(page, primary)
+        await show(primary)
+        await show('Cancel')
+        if (!before) await cancelCheck(false)
+        await shot('cancel-audit-' + scene)
+        await note(
+          'Cancel audit rendered ' + scene + ': primary and Cancel in frame'
+        )
+      }
+    }
+    if (only === 'evidence') {
+      await go('/discover?kind=team', 'Discover')
+      const searched = page.waitForResponse(
+        response =>
+          new URL(response.url()).pathname.endsWith('/teams') &&
+          new URL(response.url()).searchParams.get('query') === 'Winter'
+      )
+      await fill(m, 'Search by name or city', 'Winter')
+      await searched
+      await contains(page, 'Winter Wolves')
+      await page.waitForFunction(
+        () => !document.body.textContent!.includes('Orchard Owls')
+      )
+      await shot('discovery-team-tiles')
+      await go(settings + '/people', 'Add People')
+      await show('Send invite')
+      await cancelCheck(false)
+      await shot('cancel-add-people')
+      await note(
+        'Evidence PASS: completed Winter search and visible Send/Cancel footer'
+      )
+    }
     if (only === 'invite') {
       await go(settings + '/invites', 'Create invite link')
       await tap(m, 'Create invite link')
@@ -821,6 +905,7 @@ async function main(): Promise<void> {
       await shot('cancel-photo')
       await tap(m, 'Cancel')
       await go(settings + '/people', 'Add People')
+      await show('Send invite')
       await cancelCheck(false)
       await shot('cancel-add-people')
       await go(settings + '/invites', 'Create invite link')
