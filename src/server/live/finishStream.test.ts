@@ -24,6 +24,7 @@ import {
   liveVideoDir,
   REPLACED_BY_UPLOAD,
   settleLiveWork,
+  sweepLocalCopies,
   sync
 } from './controller'
 import { LIVE_PLAYLIST_NAME } from './splitter'
@@ -468,6 +469,41 @@ describe('the end of a live stream', function () {
       () => undefined
     )
     expect(held.size).equals(uploadsBefore)
+  })
+
+  it('packs up a replaced copy and sends it to the Space once its upload is deleted', async function () {
+    if (options == null || db == null) this.skip()
+    // The copy the case above kept: finished while replaced, so still in its
+    // segments. Deleting the upload that replaced it does what the delete
+    // route does — the foreign key clears the pointer, and the hiding and the
+    // purge date are undone — and it is an ordinary finished live copy again.
+    await db
+      .updateTable('videos')
+      .set({ hidden: false, purge_after: null })
+      .where('replaced_by', '=', 'vid_upload')
+      .execute()
+    await db.deleteFrom('videos').where('id', '=', 'vid_upload').execute()
+    // Past the wait before a retry.
+    await db
+      .updateTable('videos')
+      .set({ updated_at: new Date(Date.now() - 3_600_000) })
+      .where('id', '=', 'vid_replaced')
+      .execute()
+
+    await sweepLocalCopies(options)
+    await settleLiveWork()
+
+    const dir = liveVideoDir(mediaRoot, 'vid_replaced')
+    expect((await stat(join(dir, 'video.mp4'))).size).greaterThan(0)
+    const row = await db
+      .selectFrom('videos')
+      .select(['storage', 'replaced_by as replacedBy'])
+      .where('id', '=', 'vid_replaced')
+      .executeTakeFirstOrThrow()
+    expect(row).deep.equals({ storage: 'spaces', replacedBy: null })
+    expect(
+      [...held.keys()].some(key => key.endsWith('vid_replaced/video.mp4'))
+    ).equals(true)
   })
 
   it('says nothing about late sound kept at its stream time', async function () {

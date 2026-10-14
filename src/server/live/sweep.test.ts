@@ -15,7 +15,7 @@ import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import type { SpaceSettings } from '../media/spacesHls'
 import type { LiveControllerOptions } from './controller'
-import { liveVideoDir, sweepLocalCopies } from './controller'
+import { liveVideoDir, settleLiveWork, sweepLocalCopies } from './controller'
 
 /**
  * The two jobs of the five-minute round: letting go of a local copy the Space
@@ -195,8 +195,8 @@ describe('the live sweep', function () {
       { storage: 'spaces', verifiedAt: LONG_AGO, deleteAfter: future },
       'packed'
     )
-    // Left as segments so the retry in the same round passes it over, and
-    // this case stays about the sweep alone.
+    // Left as segments of nothing: the retry tries to pack it up, cannot, and
+    // leaves it where it is.
     await makeVideo(
       'vid_neverWent',
       { storage: 'local', deleteAfter: past },
@@ -204,6 +204,7 @@ describe('the live sweep', function () {
     )
 
     await sweepLocalCopies(options)
+    await settleLiveWork()
 
     const gone = await stat(liveVideoDir(mediaRoot, 'vid_gone')).catch(
       () => undefined
@@ -225,6 +226,16 @@ describe('the live sweep', function () {
       .where('id', '=', 'vid_gone')
       .executeTakeFirst()
     expect(row?.deleteAfter).equals(null)
+    // And the copy that could not be packed says so, and is not tried again.
+    const unpacked = await db
+      ?.selectFrom('videos')
+      .select(['storage', 'status_message as message'])
+      .where('id', '=', 'vid_neverWent')
+      .executeTakeFirst()
+    expect(unpacked).deep.equals({
+      storage: 'local',
+      message: 'This recording could not be packed up'
+    })
   })
 
   it('a recording that could not be packed does not block the next one', async function () {

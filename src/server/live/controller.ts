@@ -97,6 +97,10 @@ const LOCAL_GRACE_MS = 6 * 3_600_000
 const SWEEP_INTERVAL_MS = 5 * 60_000
 /** How long a recording waits before the Space is tried again. */
 const RETRY_AFTER_MS = 15 * 60_000
+
+/** What a live copy's row says when its remux failed. */
+const COULD_NOT_PACK = 'This recording could not be packed up'
+
 /** How often a live stream's status snapshot is written down. */
 const STATUS_WRITE_MS = 2000
 
@@ -287,10 +291,9 @@ async function retryTheSpace(current: LiveControllerOptions): Promise<void> {
 
   const stale = new Date(Date.now() - RETRY_AFTER_MS)
   // A handful rather than one, and the first of them that is actually packed
-  // up. A recording the remux could not finish stays `local` for ever with an
-  // `updated_at` that never moves, so it sits at the head of this order for
-  // good — and asking only for the head would mean one broken game stopping
-  // every later one from ever reaching the Space.
+  // up. A recording the remux could not finish is left out by its message:
+  // it stays `local` for ever with an `updated_at` that never moves, so it
+  // would sit at the head of this order for good.
   //
   // A live copy an upload replaced is not waiting for the Space at all: it
   // was finished already replaced, so it stays here in its segments for the
@@ -303,17 +306,45 @@ async function retryTheSpace(current: LiveControllerOptions): Promise<void> {
     .where('status', '=', 'ready')
     .where('storage', '=', 'local')
     .where('replaced_by', 'is', null)
+    .where(eb =>
+      eb.or([
+        eb('status_message', 'is', null),
+        eb('status_message', '<>', COULD_NOT_PACK)
+      ])
+    )
     .where('updated_at', '<', stale)
     .orderBy('updated_at', 'asc')
     .limit(5)
     .execute()
 
+  // Still in its segments: never packed up at all. That is a copy finished
+  // while an upload replaced it whose upload has since been deleted, which
+  // brings it back, or one whose packing a restart cut short. It gets the
+  // whole of what a finished stream gets, once nothing packed is waiting.
+  let unpacked: string | undefined
   for (const row of rows) {
     const dir = liveVideoDir(mediaRoot, row.id)
-    if (!(await isRecordingShape(dir))) continue
+    if (!(await isRecordingShape(dir))) {
+      unpacked ??= row.id
+      continue
+    }
     await toTheSpace(current, row.id, dir, RECORDING_FILES)
     return
   }
+  if (unpacked == null) return
+  const videoId = unpacked
+  // Behind any finish of the same video still running, and only if nothing
+  // has replaced it or sent it in the meantime.
+  queue(`finish:${videoId}`, async () => {
+    const still = await db
+      .selectFrom('videos')
+      .select('id')
+      .where('id', '=', videoId)
+      .where('storage', '=', 'local')
+      .where('replaced_by', 'is', null)
+      .executeTakeFirst()
+    if (still != null) await putAway(current, videoId)
+  })
 }
 
 export function stopLiveController(): void {
@@ -1075,7 +1106,7 @@ async function putAway(
     await db
       .updateTable('videos')
       .set({
-        status_message: 'This recording could not be packed up',
+        status_message: COULD_NOT_PACK,
         updated_at: new Date()
       })
       .where('id', '=', videoId)
