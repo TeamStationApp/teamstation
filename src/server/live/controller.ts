@@ -54,6 +54,9 @@ import {
  */
 
 const SYNC_INTERVAL_MS = 1000
+/** Why a stream whose recording an upload replaced was closed. */
+export const REPLACED_BY_UPLOAD =
+  'the recording uploaded from the phone replaced it'
 /**
  * How long a stream that stopped arriving is kept open for.
  *
@@ -650,7 +653,8 @@ export async function sync(
       'live_streams.closes_at as closesAt',
       'live_streams.video_id as videoId',
       'live_streams.last_published_at as lastPublishedAt',
-      'live_streams.last_error as lastError'
+      'live_streams.last_error as lastError',
+      'live_streams.local_recording as localRecording'
     ])
     .where(eb =>
       eb.or([
@@ -680,7 +684,9 @@ export async function sync(
       await finishStream(
         current,
         row.id,
-        row.lastError ?? 'streaming permission was removed'
+        row.localRecording === 'uploaded'
+          ? REPLACED_BY_UPLOAD
+          : (row.lastError ?? 'streaming permission was removed')
       )
       continue
     }
@@ -968,6 +974,19 @@ export async function finishStream(
     })
     .where('id', '=', row.videoId)
     .execute()
+
+  // A recording uploaded from the phone replaced this one while it was
+  // between publishes. It is kept here, whole and watchable, for the month
+  // in which the replacement may be undone, and the purge deletes it with
+  // its work directory after that: packing it up and paying the Space for a
+  // copy nobody sees would be work for nothing.
+  const replaced = await db
+    .selectFrom('videos')
+    .select('id')
+    .where('id', '=', row.videoId)
+    .where('replaced_by', 'is not', null)
+    .executeTakeFirst()
+  if (replaced != null) return
 
   const videoId = row.videoId
   queue(`finish:${videoId}`, async () => {
