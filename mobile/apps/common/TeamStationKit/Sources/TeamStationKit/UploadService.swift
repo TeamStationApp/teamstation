@@ -55,12 +55,39 @@ public actor UploadService {
     case gaveUp(step: String, because: String)
   }
 
+  /// Sends one part, telling its last argument how many of the part's bytes have gone.
+  typealias PartSender = @Sendable (
+    _ uploadId: String,
+    _ index: Int,
+    _ bytes: Data,
+    _ onSent: @escaping @Sendable (Int) -> Void
+  ) async throws -> Void
+
   /// How many times one part is tried before the upload stops.
   private let tries = 4
   private let client: TeamStationClient
+  private let sendPart: PartSender
+  /// Seconds on a steady clock, for spacing the progress reports within a part.
+  private let now: @Sendable () -> TimeInterval
+  /// The least time between two reports within a part: four a second.
+  private let progressInterval: TimeInterval
 
   public init(client: TeamStationClient) {
+    self.init(client: client, sendPart: nil)
+  }
+
+  init(
+    client: TeamStationClient,
+    sendPart: PartSender?,
+    now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+    progressInterval: TimeInterval = 0.25
+  ) {
     self.client = client
+    self.sendPart = sendPart ?? { uploadId, index, bytes, onSent in
+      _ = try await client.sendPart(uploadId: uploadId, index: index, bytes: bytes, onSent: onSent)
+    }
+    self.now = now
+    self.progressInterval = progressInterval
   }
 
   /// Sends the file, and answers with the video it became.
@@ -84,7 +111,7 @@ public actor UploadService {
     liveStreamId: String? = nil,
     wholeStream: Bool? = nil,
     onOpened: @Sendable (String) -> Void = { _ in },
-    onProgress: @Sendable (Progress) -> Void = { _ in }
+    onProgress: @escaping @Sendable (Progress) -> Void = { _ in }
   ) async throws -> String {
     let size = try fileSize(file)
 
@@ -122,11 +149,13 @@ public actor UploadService {
     defer { try? handle.close() }
 
     var have = opened.have
+    let resumedAt = min(size, have.count * opened.partSize)
+    let pacing = ProgressPacing(interval: progressInterval, startingAt: resumedAt, now: now())
     onProgress(
       Progress(
         sent: have.count,
         parts: opened.parts,
-        bytesSent: have.count * opened.partSize,
+        bytesSent: resumedAt,
         bytesTotal: size
       )
     )
@@ -142,19 +171,27 @@ public actor UploadService {
         )
       }
 
+      // Within the part, the bytes as they go, four times a second at most. A retried part starts
+      // from nothing again, and the bar waits for it rather than going back.
+      let done = have.count
+      let before = min(size, done * opened.partSize)
+      let now = self.now
+      let onSent: @Sendable (Int) -> Void = { sent in
+        let bytesSent = min(size, before + min(sent, length))
+        guard pacing.admits(bytesSent, at: now()) else { return }
+        onProgress(Progress(sent: done, parts: opened.parts, bytesSent: bytesSent, bytesTotal: size))
+      }
       _ = try await withRetries("part \(index)") {
-        try await self.client.sendPart(
-          uploadId: opened.id,
-          index: index,
-          bytes: bytes
-        )
+        try await self.sendPart(opened.id, index, bytes, onSent)
       }
       have.insert(index)
+      let after = min(size, have.count * opened.partSize)
+      pacing.reached(after, at: now())
       onProgress(
         Progress(
           sent: have.count,
           parts: opened.parts,
-          bytesSent: min(size, have.count * opened.partSize),
+          bytesSent: after,
           bytesTotal: size
         )
       )
@@ -244,6 +281,8 @@ public actor UploadService {
     var wait: UInt64 = 1
     var last = ""
     for attempt in 1 ... tries {
+      // A cancelled upload stops here rather than firing its remaining tries at the server.
+      try Task.checkCancellation()
       do {
         return try await work()
       } catch {
@@ -262,5 +301,39 @@ public actor UploadService {
       throw UploadError.cannotRead("\(file.lastPathComponent) is empty or missing")
     }
     return size
+  }
+}
+
+/// When a report of the bytes sent within a part is worth making: once `interval` has passed since
+/// the last report, and only for more bytes than any report so far. Told from the session's
+/// delegate queue and from the upload alike, hence the lock.
+final class ProgressPacing: @unchecked Sendable {
+  private let lock = NSLock()
+  private let interval: TimeInterval
+  private var reported: Int
+  private var reportedAt: TimeInterval
+
+  init(interval: TimeInterval, startingAt bytes: Int, now: TimeInterval) {
+    self.interval = interval
+    reported = bytes
+    reportedAt = now
+  }
+
+  /// Whether `bytes` at `time` should be reported; if so, it counts as reported.
+  func admits(_ bytes: Int, at time: TimeInterval) -> Bool {
+    lock.withLock {
+      guard bytes > reported, time - reportedAt >= interval else { return false }
+      reported = bytes
+      reportedAt = time
+      return true
+    }
+  }
+
+  /// A report made regardless, at a part's end.
+  func reached(_ bytes: Int, at time: TimeInterval) {
+    lock.withLock {
+      reported = max(reported, bytes)
+      reportedAt = time
+    }
   }
 }

@@ -229,15 +229,19 @@ public struct TeamStationClient: Sendable {
     try await send("director/uploads/\(escape(uploadId))", method: "GET")
   }
 
-  /// One part of the recording.
+  /// One part of the recording. `onSent` is told how many of its bytes have gone so far, as the
+  /// system hands them to the network: a part is minutes on a field's uplink, and a bar that moves
+  /// only between parts looks stuck.
   public func sendPart(
     uploadId: String,
     index: Int,
-    bytes: Data
+    bytes: Data,
+    onSent: (@Sendable (Int) -> Void)? = nil
   ) async throws -> TeamStationPartTaken {
     try await sendBytes(
       "director/uploads/\(escape(uploadId))/parts/\(index)",
-      bytes: bytes
+      bytes: bytes,
+      onSent: onSent
     )
   }
 
@@ -401,7 +405,8 @@ public struct TeamStationClient: Sendable {
   /// question deserves — a part on a field's uplink is not a question.
   private func sendBytes<Reply: Decodable>(
     _ path: String,
-    bytes: Data
+    bytes: Data,
+    onSent: (@Sendable (Int) -> Void)? = nil
   ) async throws -> Reply {
     var request = URLRequest(url: Self.apiBase(baseURL).appending(path: path))
     request.httpMethod = "PUT"
@@ -415,7 +420,11 @@ public struct TeamStationClient: Sendable {
     let data: Data
     let response: URLResponse
     do {
-      (data, response) = try await session.upload(for: request, from: bytes)
+      (data, response) = try await session.upload(
+        for: request,
+        from: bytes,
+        delegate: onSent.map(BodySentDelegate.init)
+      )
     } catch {
       throw TeamStationError.offline
     }
@@ -523,4 +532,23 @@ public struct TeamStationClient: Sendable {
     includingFractionalSeconds: true
   )
   private static let whole = Date.ISO8601FormatStyle()
+}
+
+/// Hands on how much of one request's body has gone, from the task's own delegate.
+final class BodySentDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+  private let onSent: @Sendable (Int) -> Void
+
+  init(_ onSent: @escaping @Sendable (Int) -> Void) {
+    self.onSent = onSent
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    didSendBodyData bytesSent: Int64,
+    totalBytesSent: Int64,
+    totalBytesExpectedToSend: Int64
+  ) {
+    onSent(Int(totalBytesSent))
+  }
 }

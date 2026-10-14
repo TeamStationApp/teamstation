@@ -545,9 +545,24 @@ extension PhoneStreamTests {
         try again.startRecording(rtmpUrl: sink.url, liveStreamId: Self.stream, gameId: Self.game,
                                  angleName: Self.angle, request: rig.request)
       }
-      // Called twice in a row, one upload runs, and it carries on from the server's parts.
+      // Called twice in a row, one upload runs, and it carries on from the server's parts. Nothing
+      // listens to this engine, as at a launch before any screen is up: where the upload stands is
+      // read from it, from the half the server already had on.
+      StubServer.with { $0.holdFromPart = 3 }
       #expect(again.resumePendingUploads(apiBase: rig.request.apiBase, token: rig.request.token) == 1)
       #expect(again.resumePendingUploads(apiBase: rig.request.apiBase, token: rig.request.token) == 0)
+      #expect(
+        await waitUntil(Self.exportWait) { (again.runningUploadProgress[take.recordingID]?.fraction ?? 0) >= 0.74 },
+        "progress: \(String(describing: again.runningUploadProgress[take.recordingID]))"
+      )
+      let partway = try #require(again.runningUploadProgress[take.recordingID])
+      #expect(partway.state == .uploading)
+      #expect(partway.liveStreamId == Self.stream)
+      #expect(partway.bytesSent < partway.bytesTotal)
+      await again.interruptUploads()
+      #expect(again.runningUploadProgress.isEmpty)
+      StubServer.with { $0.holdFromPart = nil }
+      #expect(again.resumePendingUploads(apiBase: rig.request.apiBase, token: rig.request.token) == 1)
       let video = try await again.uploadRecording(
         liveStreamId: Self.stream,
         apiBase: rig.request.apiBase,
@@ -559,6 +574,7 @@ extension PhoneStreamTests {
       #expect(StubServer.read { $0.stateAsks } >= 1)
       #expect(StubServer.read { $0.finishes } == 1)
       #expect(StubServer.read { $0.partsSent } == [ 0, 1, 2, 3 ])
+      #expect(again.runningUploadProgress.isEmpty)
       let uploaded = try #require(try again.recordings().first)
       #expect(uploaded.isUploaded)
       #expect(uploaded.videoId == "vid_0001")

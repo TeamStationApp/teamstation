@@ -125,6 +125,8 @@ public final class PhoneStreamEngine {
   private var uploads: [Int64: Task<String, Error>] = [:]
   /// What each running upload was started with, so a cancel can abandon it on the server.
   private var uploadServers: [Int64: (server: URL, token: String)] = [:]
+  /// Where each running upload stands, by take, for a host that starts listening part-way.
+  private var uploadProgress: [Int64: PhoneUploadProgress] = [:]
 
   public init(environment: PhoneStreamEnvironment) throws {
     self.environment = environment
@@ -806,6 +808,11 @@ public final class PhoneStreamEngine {
   /// The ids of the takes whose upload is running in this process.
   public var runningUploads: Set<Int64> { Set(uploads.keys) }
 
+  /// Where each upload running in this process stands now, by take: its last report. An upload
+  /// resumed at launch reports before any screen listens, so a screen that opens part-way reads
+  /// this instead of waiting for the next report.
+  public var runningUploadProgress: [Int64: PhoneUploadProgress] { uploadProgress }
+
   /// Stops the upload of `liveStreamId` and abandons it on the server, so the take can be recorded
   /// on or uploaded afresh.
   public func cancelUpload(liveStreamId: String) async {
@@ -846,7 +853,10 @@ public final class PhoneStreamEngine {
     let id = recording.recordingID
     uploadServers[id] = (server, token)
     let task = Task { @MainActor [self] () throws -> String in
-      defer { uploads[id] = nil }
+      defer {
+        uploads[id] = nil
+        uploadProgress[id] = nil
+      }
       let work = environment.backgroundWork.begin("Upload \(recording.angleName)")
       defer { environment.backgroundWork.end(work) }
       do {
@@ -854,11 +864,11 @@ public final class PhoneStreamEngine {
         uploadServers[id] = nil
         return videoId
       } catch {
-        emit(.upload(PhoneUploadProgress(
+        report(PhoneUploadProgress(
           liveStreamId: recording.liveStreamId,
           state: .failed,
           message: "\(error)"
-        )))
+        ), for: id)
         throw error
       }
     }
@@ -868,7 +878,7 @@ public final class PhoneStreamEngine {
 
   private func upload(_ recording: PhoneRecording, server: URL, token: String, title: String) async throws -> String {
     let liveStreamId = recording.liveStreamId
-    emit(.upload(PhoneUploadProgress(liveStreamId: liveStreamId, state: .exporting)))
+    report(PhoneUploadProgress(liveStreamId: liveStreamId, state: .exporting), for: recording.recordingID)
     if recording.endedAt == nil { try catalog.closeAtLastAnchor(recording.recordingID) }
     guard let summary = try index.recordings().first(where: { $0.id == recording.recordingID }) else {
       throw PhoneStreamError.noRecording
@@ -917,14 +927,14 @@ public final class PhoneStreamEngine {
       },
       onProgress: { [weak self] progress in
         Task { @MainActor in
-          self?.emit(.upload(PhoneUploadProgress(
+          self?.report(PhoneUploadProgress(
             liveStreamId: liveStreamId,
             state: progress.step == nil ? .uploading : .processing,
             fraction: progress.fraction,
             bytesSent: progress.bytesSent,
             bytesTotal: progress.bytesTotal,
             step: progress.step
-          )))
+          ), for: recordingID)
         }
       }
     )
@@ -933,8 +943,31 @@ public final class PhoneStreamEngine {
       recordingID: recordingID,
       in: storage.prepared
     ))
-    emit(.upload(PhoneUploadProgress(liveStreamId: liveStreamId, state: .uploaded, fraction: 1, videoId: videoId)))
+    report(
+      PhoneUploadProgress(liveStreamId: liveStreamId, state: .uploaded, fraction: 1, videoId: videoId),
+      for: recordingID
+    )
     return videoId
+  }
+
+  /// Tells the host where an upload stands, and keeps it for a host that asks later. Progress comes
+  /// from the upload's own queue and the network's, so a report can land late: one for an upload
+  /// that has ended, or one that would take the bar back, is dropped.
+  private func report(_ progress: PhoneUploadProgress, for id: Int64) {
+    switch progress.state {
+    case .exporting:
+      uploadProgress[id] = progress
+    case .uploading, .processing:
+      guard let current = uploadProgress[id] else { return }
+      if progress.state == .uploading {
+        if current.state == .processing { return }
+        if current.state == .uploading, progress.bytesSent < current.bytesSent { return }
+      }
+      uploadProgress[id] = progress
+    case .uploaded, .failed:
+      uploadProgress[id] = nil
+    }
+    emit(.upload(progress))
   }
 
   /// Everything stops where it is, as a killed process would leave it: nothing is finished, no
