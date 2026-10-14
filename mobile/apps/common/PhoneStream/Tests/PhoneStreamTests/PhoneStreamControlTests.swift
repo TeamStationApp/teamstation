@@ -434,6 +434,36 @@ extension PhoneStreamTests {
       #expect((try? opened.get()) != nil)
     }
 
+    @Test("The event relay registers once, and a stop that overtakes its start leaves nothing registered")
+    func eventRelay() async throws {
+      let rig = EngineRig(root: try scratchDirectory())
+      let engine = try rig.engine()
+      let heard = Heard()
+      let relay = PhoneStreamEventRelay(engine: { engine }, deliver: { _ in heard.add() })
+      // Stopped before the start has reached the main actor.
+      let overtaken = relay.start()
+      relay.stop()
+      await overtaken.value
+      #expect(!relay.isObserving)
+      try engine.open(angleName: Self.angle)
+      try await Task.sleep(for: .milliseconds(300))
+      #expect(heard.count == 0)
+      // Started twice, it hears each event once.
+      await relay.start().value
+      await relay.start().value
+      #expect(relay.isObserving)
+      let before = heard.count
+      engine.publishStatus()
+      #expect(heard.count == before + 1)
+      relay.stop()
+      #expect(!relay.isObserving)
+      // No engine: nothing to register with.
+      let none = PhoneStreamEventRelay(engine: { nil }, deliver: { _ in heard.add() })
+      await none.start().value
+      #expect(!none.isObserving)
+      await engine.close()
+    }
+
     @Test("A stopped camera keeps its callbacks, which the capture queue reads, and delivers nothing more")
     func cameraCallbacksAfterStop() throws {
       let device = FakeCaptureDevice()
