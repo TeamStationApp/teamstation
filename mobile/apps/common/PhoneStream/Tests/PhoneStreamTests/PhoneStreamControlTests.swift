@@ -3,6 +3,7 @@ import CameramanCore
 import DirectorCore
 import DirectorExport
 import DirectorMedia
+import DirectorSources
 import Foundation
 import TeamStationKit
 import Testing
@@ -411,6 +412,33 @@ extension PhoneStreamTests {
       work.end(second)
       work.end(second)
       #expect(calls.ended == [ first, second ])
+    }
+
+    @Test("A stopped camera keeps its callbacks, which the capture queue reads, and delivers nothing more")
+    func cameraCallbacksAfterStop() throws {
+      let device = FakeCaptureDevice()
+      let source = PhoneCameraSource(input: .camera(device))
+      let delivered = Heard()
+      try source.start(sinks: FrameSinks(pixel: { _ in delivered.add() }, audio: { _ in delivered.add() }))
+      let video = try #require(device.onVideoFrame)
+      let audio = try #require(device.onAudioFrame)
+      video(SampleBuffer(videoSample(at: 1)))
+      audio(SampleBuffer(audioSample(at: 1)))
+      #expect(delivered.count == 2)
+      source.stop()
+      // Not cleared from here: the device reads them on its own queue until it has stopped.
+      #expect(device.onVideoFrame != nil)
+      #expect(device.onAudioFrame != nil)
+      #expect(device.stopped == 1)
+      // A buffer the session delivers while stopping goes nowhere.
+      video(SampleBuffer(videoSample(at: 2)))
+      audio(SampleBuffer(audioSample(at: 2)))
+      #expect(delivered.count == 2)
+      // Started again, the same callbacks deliver to the new sinks.
+      try source.start(sinks: FrameSinks(pixel: { _ in delivered.add() }, audio: { _ in delivered.add() }))
+      device.onVideoFrame?(SampleBuffer(videoSample(at: 3)))
+      #expect(delivered.count == 3)
+      source.stop()
     }
 
     @Test("The engine follows the app into the background and back")

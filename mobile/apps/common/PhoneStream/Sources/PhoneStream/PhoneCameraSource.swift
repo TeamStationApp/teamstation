@@ -93,6 +93,12 @@ public final class PhoneCameraSource: FrameSource, @unchecked Sendable {
   private let lock = NSLock()
   private var running = false
   private var frameID: UInt64 = 0
+  /// Where the camera's buffers go while running; nil once stopped. The capture device reads its
+  /// callbacks on its own queue, so they are set once, before its first start, and never cleared
+  /// from here: they read this under the lock instead, and a buffer delivered after `stop` (the
+  /// session stops asynchronously) goes nowhere.
+  private var cameraSinks: FrameSinks?
+  private var callbacksInstalled = false
 
   public init(input: Input, mapping: CaptureClockMapping = .system, converter: PixelConverter = PixelConverter()) {
     self.input = input
@@ -142,11 +148,17 @@ public final class PhoneCameraSource: FrameSource, @unchecked Sendable {
       return
     }
     running = true
+    let install = !callbacksInstalled
+    callbacksInstalled = true
+    if case .camera = input { cameraSinks = sinks }
     lock.unlock()
     switch input {
     case let .camera(device):
-      device.onVideoFrame = { [weak self] sample in self?.deliverVideo(sample.buffer, to: sinks) }
-      device.onAudioFrame = { [weak self] sample in self?.deliverAudio(sample.buffer, to: sinks) }
+      if install {
+        // Before the device's first start, so its queue is not yet reading them.
+        device.onVideoFrame = { [weak self] sample in self?.cameraVideo(sample.buffer) }
+        device.onAudioFrame = { [weak self] sample in self?.cameraAudio(sample.buffer) }
+      }
       device.start()
     case let .synthetic(source):
       try source.start(sinks: FrameSinks(
@@ -159,11 +171,10 @@ public final class PhoneCameraSource: FrameSource, @unchecked Sendable {
   public func stop() {
     lock.lock()
     running = false
+    cameraSinks = nil
     lock.unlock()
     switch input {
     case let .camera(device):
-      device.onVideoFrame = nil
-      device.onAudioFrame = nil
       device.stop()
     case let .synthetic(source):
       source.stop()
@@ -178,6 +189,23 @@ public final class PhoneCameraSource: FrameSource, @unchecked Sendable {
   }
 
   // MARK: - The camera
+
+  /// The sinks a camera buffer goes to now, nil once stopped.
+  private var currentCameraSinks: FrameSinks? {
+    lock.lock()
+    defer { lock.unlock() }
+    return cameraSinks
+  }
+
+  private func cameraVideo(_ buffer: CMSampleBuffer) {
+    guard let sinks = currentCameraSinks else { return }
+    deliverVideo(buffer, to: sinks)
+  }
+
+  private func cameraAudio(_ buffer: CMSampleBuffer) {
+    guard let sinks = currentCameraSinks else { return }
+    deliverAudio(buffer, to: sinks)
+  }
 
   /// A captured picture, stamped with its capture time on the steady wall clock.
   ///
