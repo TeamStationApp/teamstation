@@ -376,4 +376,34 @@ class PhoneStreamUnitTest {
         assertTrue(rules.mustStop(499_999_999))
         assertFalse(rules.mustStop(500_000_000))
     }
+
+    @Test
+    fun aFlushAtAPartsEndNeverOvertakesRunsAPumpHasTaken() {
+        val mix = PhoneSoundMix(sampleRate = 1_000, runSeconds = 0.02, capacitySeconds = 4.0)
+        val heard = java.util.concurrent.ConcurrentLinkedQueue<Double>()
+        val inSink = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val output = PhoneSoundMix.Output(0.1) { frame ->
+            heard += frame.wallClock
+            // The first run the pump hands over takes its time, as an encoder's can.
+            if (heard.size == 1) {
+                inSink.countDown()
+                release.await(5, TimeUnit.SECONDS)
+            }
+        }
+        mix.add(output)
+        mix.start(0.0)
+        val pumping = Thread { mix.pump(0.5) }.apply { start() }
+        assertTrue(inSink.await(5, TimeUnit.SECONDS))
+        // The part ends while the pump is still handing over what it took.
+        val flushing = Thread { mix.flush(output, 1.0) }.apply { start() }
+        Thread.sleep(100)
+        release.countDown()
+        pumping.join(5_000)
+        flushing.join(5_000)
+        val times = heard.toList()
+        assertTrue(times.size > 40)
+        assertEquals(times.sorted(), times)
+        assertEquals(times.distinct(), times)
+    }
 }
