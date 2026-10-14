@@ -340,7 +340,9 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                 </Text>
               )}
             </View>
-            {place != null && <Badge label={placeLabel(place)} tone="honour" />}
+            {place != null && onManage != null && (
+              <Badge label={placeLabel(place)} tone="honour" />
+            )}
             {(place != null || follows || onManage != null) && (
               <View
                 testID="team-card-end"

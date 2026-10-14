@@ -337,6 +337,14 @@ describe('the team card’s right-hand column', function () {
           : 'empty gear'
         : (child.textContent ?? '')
     )
+    const hero = end!.parentElement!
+    const placeLabels = [...hero.querySelectorAll('*')].filter(
+      node => node.children.length === 0 && node.textContent === '1st Place'
+    )
+    expect(
+      placeLabels,
+      `${viewer} has exactly one place badge across the hero`
+    ).length(1)
     return { end: end!, parts }
   }
 
