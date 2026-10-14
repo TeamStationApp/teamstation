@@ -104,6 +104,9 @@ const FLOATING_GAP_REM = 2
  * screens ask rather than repeat a number that would then have to be kept in
  * step with the capsule's size.
  */
+export const FLOATING_HEIGHT_REM =
+  FLOATING_DISC_REM + FLOATING_PAD_REM * 2 + 2 / 16
+
 export const NAV_CLEARANCE_REM =
   FLOATING_BOTTOM_REM +
   FLOATING_DISC_REM +
@@ -120,6 +123,7 @@ export interface AppNavProps {
   mode: NavMode
   /** Tabs with something unread, which carry a dot. */
   dots?: Partial<Record<NavTabId, boolean>>
+  onHeight?: (height: number) => void
 }
 
 /**
@@ -153,6 +157,9 @@ export function AppNav(props: AppNavProps): React.ReactElement {
 
   return (
     <GlassView
+      onLayout={event => {
+        props.onHeight?.(event.nativeEvent.layout.height)
+      }}
       accessibilityRole="tablist"
       // Interactive, unlike the header: this is the one surface a thumb
       // presses, and on iOS 26 that is what makes the glass deform under it

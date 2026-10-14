@@ -610,10 +610,15 @@ describe('a conversation', function () {
         onMembers={over.onMembers ?? (() => {})}
         onTitle={title => titles.push(title)}
         files={fakeFiles(log)}
+        paneHeader
         swipe={over.swipe ?? false}
       />
     )
-    await until('the chat', () => text().includes('member'))
+    await until(
+      'the chat',
+      () =>
+        document.querySelector('[data-testid="chat-message-history"]') != null
+    )
     return { engine, log, titles }
   }
 
@@ -925,7 +930,7 @@ describe('a conversation', function () {
       engine.calls.includes('react cnv_1 msg_2 👍 true')
     )
     await press('Review')
-    await press('Members')
+    await press('Hawks, Team Members')
     expect(onMembers).deep.equals(['members', 'members'])
     await press('Load earlier messages')
     await until('earlier', () => engine.calls.includes('loadEarlier cnv_1'))
@@ -1020,13 +1025,15 @@ describe('a conversation', function () {
       })
     )
     expect(titles.at(-1)).equals('Eli C (left)')
-    expect(text()).contains('1 member')
+    expect(text()).not.contains('1 member')
+    expect(labelled('Eli C (left), Direct message')).not.equals(null)
   })
 
-  it('counts one member as one', async function () {
+  it('keeps the member count out of the compact conversation identity', async function () {
     await open(view({ conversation: chat({ memberCount: 1 }) }))
-    expect(text()).contains('1 member')
+    expect(text()).not.contains('1 member')
     expect(text()).not.contains('1 members')
+    expect(labelled('Hawks, Team Members')).not.equals(null)
   })
 
   it('draws pictures from their bytes, opens a video, and saves a file', async function () {

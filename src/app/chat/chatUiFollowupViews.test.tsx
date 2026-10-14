@@ -626,13 +626,18 @@ describe('chat UI follow-up workspace', function () {
 })
 
 describe('chat UI follow-up mounted reading session', function () {
-  function screen(engine: FakeEngine, readingSession = 1): React.ReactElement {
+  function screen(
+    engine: FakeEngine,
+    readingSession = 1,
+    paneHeader = false
+  ): React.ReactElement {
     return (
       <ConversationScreen
         engine={engine}
         conversationId="Aurora"
         userId={1}
         embedded
+        paneHeader={paneHeader}
         readingSession={readingSession}
         onMembers={() => {}}
       />
@@ -656,11 +661,14 @@ describe('chat UI follow-up mounted reading session', function () {
     ).equals(true)
   })
 
-  it('keeps member counts and personal direct-message titles in the conversation header', async function () {
+  it('keeps personal direct-message identity in the compact pane header without member counts', async function () {
     const engine = new FakeEngine()
     engine.add(item('Aurora', { memberCount: 7 }))
-    await render(screen(engine))
-    expect(document.body.textContent).contains('7 members')
+    await render(screen(engine, 1, true))
+    expect(document.body.textContent).not.contains('7 members')
+    expect(
+      document.querySelector('[data-testid="chat-conversation-identity"]')
+    ).not.equals(null)
     const direct = new FakeEngine()
     direct.add(
       item('Aurora', {
@@ -670,9 +678,9 @@ describe('chat UI follow-up mounted reading session', function () {
         memberCount: 2
       })
     )
-    await render(screen(direct))
+    await render(screen(direct, 1, true))
     expect(document.body.textContent).contains('Mookie Betts')
-    expect(document.body.textContent).contains('2 members')
+    expect(document.body.textContent).not.contains('2 members')
   })
 
   it('keeps draft text, reply context and prepared files when a send fails', async function () {
@@ -740,7 +748,7 @@ describe('chat UI follow-up mounted reading session', function () {
     expect(document.querySelector('[aria-label="Message"]')).equals(null)
   })
 
-  it('keeps a newly marked unread revision through pane updates and menu-close focus restoration until deliberate reading', async function () {
+  it('keeps a newly marked unread revision through pane updates until deliberate reading', async function () {
     const engine = new FakeEngine()
     engine.add(item('Aurora', { preferences: preferences() }), {
       messages: [message({ senderName: 'Mookie Betts', body: 'Bring water' })]
@@ -750,9 +758,11 @@ describe('chat UI follow-up mounted reading session', function () {
       labelled('Message').focus()
       await wait()
     })
-    await press('Conversation actions')
     const start = engine.reads.length
-    await press('Mark unread')
+    await act(async () => {
+      await engine.setPreferences('Aurora', { manualUnread: true })
+      await wait()
+    })
     expect(
       engine.views.get('Aurora')?.conversation.preferences?.manualUnread
     ).equals(true)

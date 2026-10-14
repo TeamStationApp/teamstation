@@ -37,7 +37,8 @@ await build({
     contents: [
       ...globSync('src/app/chat/**/*.test.tsx'),
       'src/app/components/Emblem.test.tsx',
-      'src/app/components/GlassView.test.tsx'
+      'src/app/components/GlassView.test.tsx',
+      'src/app/components/AppNav.test.tsx'
     ]
       .map(path => `import './${path}'`)
       .join('\n'),

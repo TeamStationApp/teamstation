@@ -1190,7 +1190,7 @@ describe('chat devices in the app', function () {
       name: 'conversation',
       conversationId: 'cnv_hawks'
     })
-    await press('Members')
+    await press('Hawks, Team Members')
     await until('the members', () =>
       text().includes('Members of Hawks Members')
     )
