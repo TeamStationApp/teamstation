@@ -127,6 +127,66 @@ public enum PhoneStreamEvent: Sendable, Equatable {
   case upload(PhoneUploadProgress)
 }
 
+/// A host's one subscription to the engine's events, which it starts and stops from any thread.
+///
+/// The engine lives on the main actor, so `start` registers there a moment later. A `stop` that
+/// lands in that moment is not lost: the observer registered after it is cancelled at once, and a
+/// second `start` while one is registered adds nothing.
+public final class PhoneStreamEventRelay: @unchecked Sendable {
+  private let lock = NSLock()
+  private let engine: @MainActor () -> PhoneStreamEngine?
+  private let deliver: @Sendable (PhoneStreamEvent) -> Void
+  private var observation: PhoneStreamObservation?
+  private var wanted = false
+
+  /// `engine` is read on the main actor at each `start`; `deliver` gets every event there.
+  public init(
+    engine: @escaping @MainActor () -> PhoneStreamEngine?,
+    deliver: @escaping @Sendable (PhoneStreamEvent) -> Void
+  ) {
+    self.engine = engine
+    self.deliver = deliver
+  }
+
+  /// Whether an observer is registered now.
+  public var isObserving: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return observation != nil
+  }
+
+  /// Registers with the engine, on the main actor. Answers when that is done.
+  @discardableResult
+  public func start() -> Task<Void, Never> {
+    lock.lock()
+    wanted = true
+    lock.unlock()
+    return Task { @MainActor in
+      guard let engine = self.engine() else { return }
+      let needed = self.lock.withLock { self.wanted && self.observation == nil }
+      guard needed else { return }
+      let deliver = self.deliver
+      let made = engine.observe { deliver($0) }
+      let kept = self.lock.withLock {
+        guard self.wanted, self.observation == nil else { return false }
+        self.observation = made
+        return true
+      }
+      if !kept { made.cancel() }
+    }
+  }
+
+  /// Stops delivering, whether or not `start` has registered yet.
+  public func stop() {
+    lock.lock()
+    wanted = false
+    let observation = self.observation
+    self.observation = nil
+    lock.unlock()
+    observation?.cancel()
+  }
+}
+
 /// Keeps one observer registered until it is cancelled or released.
 public final class PhoneStreamObservation: @unchecked Sendable {
   private let lock = NSLock()
