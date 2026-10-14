@@ -11,11 +11,13 @@ import { pickFiles, readPicked } from './chatFiles'
 import type { PickedFile } from './chatFileTypes'
 import {
   bindComposerKeys,
+  bindUserScroll,
   readDocumentActive,
   watchReadDocumentActive
 } from './chatWebInteractions'
 import {
   bindComposerKeys as bindNativeComposerKeys,
+  bindUserScroll as bindNativeUserScroll,
   readDocumentActive as nativeReadDocumentActive,
   watchReadDocumentActive as nativeWatchReadDocumentActive
 } from './chatWebInteractions.native'
@@ -367,5 +369,100 @@ describe('chat desktop file preparation', function () {
       .dispatchEvent(new window.Event('cancel'))
     expect(await cancelled).deep.equals([])
     expect(document.querySelector('input[type="file"]')).equals(null)
+  })
+})
+
+describe('physical history motion before RNW throttling', function () {
+  it('observes exact history X/Y changes without manufacturing read intent and ignores duplicate/child events', function () {
+    const node = document.createElement('div')
+    const child = document.createElement('div')
+    node.append(child)
+    document.body.append(node)
+    let reads = 0
+    const positions: number[] = []
+    let motions = 0
+    const stop = bindUserScroll(
+      node,
+      () => {
+        reads += 1
+      },
+      top => positions.push(top),
+      () => {
+        motions += 1
+      }
+    )
+    try {
+      node.scrollTop = 700
+      node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      node.scrollTop = 701
+      node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(motions).equals(2)
+      node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      child.scrollTop = 10
+      child.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(motions).equals(2)
+      node.scrollLeft = 1
+      node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(motions).equals(3)
+      Object.defineProperty(node, 'scrollHeight', {
+        configurable: true,
+        value: 3000
+      })
+      node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(motions, 'Content extent alone is not physical motion').equals(3)
+      expect(reads).equals(0)
+      expect(positions).deep.equals([])
+    } finally {
+      stop()
+    }
+    node.scrollTop = 702
+    node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+    expect(motions, 'Detached listener cannot cancel a later owner').equals(3)
+    node.remove()
+  })
+
+  it('reports an uncertain raw coordinate conservatively and leaves native listeners untouched', function () {
+    const node = document.createElement('div')
+    document.body.append(node)
+    let motions = 0
+    const stop = bindUserScroll(
+      node,
+      () => {},
+      undefined,
+      () => {
+        motions += 1
+      }
+    )
+    try {
+      Object.defineProperty(node, 'scrollLeft', {
+        configurable: true,
+        value: Number.NaN
+      })
+      node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+      expect(motions).equals(1)
+    } finally {
+      stop()
+    }
+    const nativeStop = bindNativeUserScroll(
+      node,
+      () => {},
+      undefined,
+      () => {
+        motions += 1
+      }
+    )
+    node.scrollTop = 10
+    node.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+    nativeStop()
+    expect(motions).equals(1)
+    expect(() => {
+      bindUserScroll(
+        undefined,
+        () => {},
+        undefined,
+        () => {}
+      )()
+    }).not.throws()
+    node.remove()
   })
 })
