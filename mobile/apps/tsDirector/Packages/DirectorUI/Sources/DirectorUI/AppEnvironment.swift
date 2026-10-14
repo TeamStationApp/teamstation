@@ -2063,13 +2063,16 @@ public final class AppEnvironment {
   // MARK: - TeamStation
 
   private func makeAccount() -> TeamStationAccount {
-    TeamStationAccount(
+    let clock = self.clock
+    return TeamStationAccount(
       serverURL: AppServer.url,
       deviceName: UIDevice.current.name,
       appOrigin: AppServer.appOrigin,
       // TeamStation keys this Director's stream on the installation and lists it by model.
       installId: DirectorInstallID.persisted(in: .standard),
-      deviceModel: DeviceModelName.current
+      deviceModel: DeviceModelName.current,
+      // The live start it reports is on the stream's clock, so the server-clock offset is too.
+      clock: { clock.now.seconds }
     )
   }
 

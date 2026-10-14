@@ -68,6 +68,10 @@ public final class TeamStationAccount: TeamStationEventService {
   public let installId: String
   /// What the device is, for every list of the game's cameras ("iPad Pro").
   public let deviceModel: String
+  /// The clock, in seconds since 1970, that the instants this account reports are read on: the
+  /// server-clock offset is measured against it, so it lines up with them. Director times its
+  /// stream on the steady wall clock, which an NTP step of the device's own clock does not move.
+  private let clock: @Sendable () -> Double
 
   public init(
     serverURL: URL,
@@ -76,8 +80,10 @@ public final class TeamStationAccount: TeamStationEventService {
     installId: String = "",
     deviceModel: String = DeviceModelName.current,
     keychain: KeychainStore = KeychainStore(service: "app.teamstation.director"),
-    session: URLSession = .shared
+    session: URLSession = .shared,
+    clock: @escaping @Sendable () -> Double = { Date().timeIntervalSince1970 }
   ) {
+    self.clock = clock
     self.serverURL = serverURL
     self.appOrigin = appOrigin
     self.deviceName = deviceName
@@ -616,13 +622,17 @@ public final class TeamStationAccount: TeamStationEventService {
    * captured, which is where TeamStation places the stream's live video.
    * Nothing is asked when no stream is held. A failure is not the operator's
    * to hear about: the server then places the video by when it heard it.
+   *
+   * `startedAt` is on this account's `clock`, and so is the offset to the
+   * server's: measured against `Date()` instead, an NTP step since launch
+   * would move the reported start by that step.
    */
   @discardableResult
   public func reportLiveStart(startedAt: Date) async -> Bool {
     guard let current = chosen, let streamId = current.streamId else { return false }
     do {
       // On the server's clock (`ServerClock`); an iPad's own is usually right, but not always.
-      let offset = try await client.serverClockOffset()
+      let offset = try await client.serverClockOffset(now: clock)
       try await client.reportLiveStart(
         gameId: current.gameId,
         streamId: streamId,
