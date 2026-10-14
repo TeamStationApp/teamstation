@@ -665,6 +665,8 @@ export async function sync(
         ])
       ])
     )
+    // In a fixed order, so one tick goes through the streams as the last did.
+    .orderBy('live_streams.id')
     .execute()
 
   // One syscall a second, and only asked at all when there is something that
@@ -682,104 +684,117 @@ export async function sync(
   // Streams being finished, side by side rather than one after another: each
   // waits for its own writer to exit, and angles ended together should not
   // hold up every other stream's tick for the sum of those waits.
-  const finishing: Array<Promise<void>> = []
-  for (const row of rows) {
-    if (row.state === 'revoked') {
-      finishing.push(
-        finishStream(
-          current,
+  //
+  // Each is caught the moment it starts, and what it threw is kept: one that
+  // fails while a later row is still being looked at would otherwise be a
+  // rejection nobody is waiting on yet, and Node ends the whole server for
+  // that.
+  const finishing: Array<Promise<{ error: unknown } | undefined>> = []
+  const finish = (liveStreamId: string, reason: string): void => {
+    finishing.push(
+      finishStream(current, liveStreamId, reason).then(
+        () => undefined,
+        (error: unknown) => ({ error })
+      )
+    )
+  }
+  let failure: { error: unknown } | undefined
+  try {
+    for (const row of rows) {
+      if (row.state === 'revoked') {
+        finish(
           row.id,
           row.localRecording === 'uploaded'
             ? REPLACED_BY_UPLOAD
             : (row.lastError ?? 'streaming permission was removed')
         )
-      )
-      continue
-    }
-    if (!(await mayPublish(db, row))) {
-      await revokePublishing(db, row.id, now)
-      finishing.push(
-        finishStream(current, row.id, 'streaming permission was removed')
-      )
-      continue
-    }
-    // `closes_at` is now the moment somebody ended it rather than a window
-    // shutting on its own, so this is what End stream, a rotation and a
-    // removal all come through.
-    const closesAt = row.closesAt == null ? null : new Date(row.closesAt)
-    if (closesAt != null && now >= closesAt) {
-      finishing.push(finishStream(current, row.id, 'the stream was ended'))
-      continue
-    }
-    // Nothing has arrived for a long time, and something did once. The game is
-    // over, whether or not anybody pressed anything.
-    if (row.state === 'idle' && row.lastPublishedAt != null) {
-      const silentFor = now.getTime() - new Date(row.lastPublishedAt).getTime()
-      if (silentFor > SILENCE_LIMIT_MS) {
-        finishing.push(
-          finishStream(current, row.id, 'the stream stopped arriving')
+        continue
+      }
+      if (!(await mayPublish(db, row))) {
+        await revokePublishing(db, row.id, now)
+        finish(row.id, 'streaming permission was removed')
+        continue
+      }
+      // `closes_at` is now the moment somebody ended it rather than a window
+      // shutting on its own, so this is what End stream, a rotation and a
+      // removal all come through.
+      const closesAt = row.closesAt == null ? null : new Date(row.closesAt)
+      if (closesAt != null && now >= closesAt) {
+        finish(row.id, 'the stream was ended')
+        continue
+      }
+      // Nothing has arrived for a long time, and something did once. The game is
+      // over, whether or not anybody pressed anything.
+      if (row.state === 'idle' && row.lastPublishedAt != null) {
+        const silentFor =
+          now.getTime() - new Date(row.lastPublishedAt).getTime()
+        if (silentFor > SILENCE_LIMIT_MS) {
+          finish(row.id, 'the stream stopped arriving')
+          continue
+        }
+      }
+      if (row.videoId == null) continue
+      await closeAfterGrace(current, row, now)
+
+      // A stream already running is left alone: cutting a game off part way
+      // through is worse than letting it use the last of the disk, and ffmpeg
+      // will say so itself if it truly runs out.
+      if (!room.ok && row.state !== 'publishing') {
+        await sayOnce(db, row.id, row.lastError, room.reason ?? null, now)
+        continue
+      }
+
+      let key: string
+      try {
+        key = openSecret(sessionSecret, row.keyCipher)
+      } catch {
+        // The server's secret changed under a key that was already issued. Say
+        // so on the row rather than leaving a stream that can never be used.
+        await sayOnce(
+          db,
+          row.id,
+          row.lastError,
+          'This key cannot be read any more. Rotate it.',
+          now
         )
         continue
       }
-    }
-    if (row.videoId == null) continue
-    await closeAfterGrace(current, row, now)
 
-    // A stream already running is left alone: cutting a game off part way
-    // through is worse than letting it use the last of the disk, and ffmpeg
-    // will say so itself if it truly runs out.
-    if (!room.ok && row.state !== 'publishing') {
-      await sayOnce(db, row.id, row.lastError, room.reason ?? null, now)
-      continue
-    }
+      // A key that has been rotated is a key somebody wanted stopped — that is
+      // the whole point of rotating one — so the old key goes now, taking any
+      // stream publishing with it, rather than lasting until the game ends. The
+      // sweep below cannot do it: this row's entry is about to be overwritten
+      // with the new key, and the old one would never be looked at again.
+      const known = tracked.get(row.id)
+      if (known != null && known.key !== key) {
+        clearLive(known.key, 'the key was replaced')
+      }
 
-    let key: string
-    try {
-      key = openSecret(sessionSecret, row.keyCipher)
-    } catch {
-      // The server's secret changed under a key that was already issued. Say
-      // so on the row rather than leaving a stream that can never be used.
-      await sayOnce(
-        db,
-        row.id,
-        row.lastError,
-        'This key cannot be read any more. Rotate it.',
-        now
-      )
-      continue
+      const hlsDir = liveVideoDir(mediaRoot, row.videoId)
+      await mkdir(hlsDir, { recursive: true })
+      setLive(key, { liveStreamId: row.id, hlsDir, destinations: [] })
+      tracked.set(row.id, { key, videoId: row.videoId })
+      wanted.add(key)
     }
 
-    // A key that has been rotated is a key somebody wanted stopped — that is
-    // the whole point of rotating one — so the old key goes now, taking any
-    // stream publishing with it, rather than lasting until the game ends. The
-    // sweep below cannot do it: this row's entry is about to be overwritten
-    // with the new key, and the old one would never be looked at again.
-    const known = tracked.get(row.id)
-    if (known != null && known.key !== key) {
-      clearLive(known.key, 'the key was replaced')
+    // Anything the ingest still holds that this pass did not ask for: a revoked
+    // key, a rotated one, a window that closed.
+    for (const [liveStreamId, entry] of tracked) {
+      if (wanted.has(entry.key)) continue
+      clearLive(entry.key, 'no longer open')
+      tracked.delete(liveStreamId)
     }
-
-    const hlsDir = liveVideoDir(mediaRoot, row.videoId)
-    await mkdir(hlsDir, { recursive: true })
-    setLive(key, { liveStreamId: row.id, hlsDir, destinations: [] })
-    tracked.set(row.id, { key, videoId: row.videoId })
-    wanted.add(key)
+  } catch (error) {
+    failure = { error }
   }
 
-  // Anything the ingest still holds that this pass did not ask for: a revoked
-  // key, a rotated one, a window that closed.
-  for (const [liveStreamId, entry] of tracked) {
-    if (wanted.has(entry.key)) continue
-    clearLive(entry.key, 'no longer open')
-    tracked.delete(liveStreamId)
-  }
-
-  // Every finish runs to its end before the tick does, and the first failure
-  // is the tick's, as it was when they ran in turn.
-  const failed = (await Promise.allSettled(finishing)).find(
-    (one): one is PromiseRejectedResult => one.status === 'rejected'
-  )
-  if (failed != null) throw failed.reason
+  // Every finish runs to its end before the tick does, even a tick that
+  // failed part way, so nothing it started is left running unwatched. The
+  // tick's own failure is the one it reports, and otherwise the first
+  // finish's, as it was when they ran in turn.
+  const finished = await Promise.all(finishing)
+  failure ??= finished.find(one => one != null)
+  if (failure != null) throw failure.error
 }
 
 /**
