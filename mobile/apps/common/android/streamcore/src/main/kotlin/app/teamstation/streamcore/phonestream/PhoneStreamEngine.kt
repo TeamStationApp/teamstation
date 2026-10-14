@@ -256,7 +256,9 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         }
         this.disabledLenses = disabledLenses
         val opened = environment.makeSource()
-        opened.device.onStateChange = { state -> scope.launch { cameraChanged(state) } }
+        val camera = opened.device
+        // Only this open's camera: a closed one's last state can still be on its way to the engine.
+        camera.onStateChange = { state -> scope.launch { if (source?.device === camera) cameraChanged(state) } }
         opened.device.configure(CameraPosition.BACK, PhoneStreamProfile.captureSettings(disabledLenses))
         val now = environment.clock.now()
         programme.start(now)
@@ -281,6 +283,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         cameraReopen = null
         cameraLost = false
         if (lastError == PhoneStreamError.CAMERA_UNAVAILABLE) lastError = null
+        source?.device?.onStateChange = null
         source?.stop()
         source = null
         mix.stop()

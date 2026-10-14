@@ -39,6 +39,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -400,6 +401,8 @@ class PhoneStreamEngineTest {
     /** The threads the radar fleet was driven from. */
     private val radarThreads = ConcurrentLinkedQueue<String>()
 
+    /** Each open gets a camera of its own, as the app's does, rather than the one fake. */
+    private var newDeviceEachOpen = false
     private var storageCheckSeconds = 3_600.0
     private var cameraReopenSeconds = 3_600.0
 
@@ -417,7 +420,10 @@ class PhoneStreamEngineTest {
             storage = PhoneStorage(File(folder.root, "phoneStream")),
             clock = { wall },
             uptime = { uptime },
-            makeSource = { PhoneCameraSource(device, microphone, mapping, { wall }, runsSoundThread = false) },
+            makeSource = {
+                if (newDeviceEachOpen) device = FakeDevice()
+                PhoneCameraSource(device, microphone, mapping, { wall }, runsSoundThread = false)
+            },
             makeRecordingVideoEncoder = {
                 if (failVideo) error("no encoder")
                 FakeVideo { finishGate }.also { videos += it }
@@ -1171,6 +1177,31 @@ class PhoneStreamEngineTest {
         capture(1.0)
         runBlocking { engine.stopRecording() }
         assertEquals(2, runBlocking { engine.recordings() }.single().parts)
+    }
+
+    @Test
+    fun aClosedCamerasLastStateDoesNotReachTheNextOpen() {
+        newDeviceEachOpen = true
+        val engine = opened()
+        val first = device
+        first.onStateChange!!(CameraSession.State(isRunning = true))
+        on { }
+        // The state the first camera posts as it closes is on its way when the screen opens again.
+        val stale = first.onStateChange!!
+        runBlocking { engine.close() }
+        assertNull(first.onStateChange)
+        runBlocking { engine.open("Home Plate") }
+        assertNotSame(first, device)
+        device.onStateChange!!(CameraSession.State(isRunning = true))
+        stale(CameraSession.State(isRunning = false, isInterrupted = true, interruptionReason = "videoInUse"))
+        on { }
+        assertNull(on { engine.status }.error)
+        assertEquals(0, device.reopens)
+        // Record is not refused.
+        start(engine)
+        capture(1.0)
+        runBlocking { engine.stopRecording() }
+        assertEquals(1, runBlocking { engine.recordings() }.single().parts)
     }
 
     @Test
