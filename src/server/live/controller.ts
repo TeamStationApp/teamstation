@@ -1,4 +1,5 @@
-import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
+import { readFileSync, writeFileSync } from 'fs'
+import { mkdir, readFile, rm, stat } from 'fs/promises'
 import { type Kysely, sql } from 'kysely'
 import { join } from 'path'
 
@@ -826,10 +827,12 @@ async function closeAfterGrace(
   if (now.getTime() - leftAt <= RECONNECT_GRACE_MS) return
   if (closedAfterGrace.get(row.id) === leftAt) return
   const key = tracked.get(row.id)?.key
-  if (key != null && statusFor(key)?.ingress.publishing === true) return
+  const away = (): boolean =>
+    key == null || statusFor(key)?.ingress.publishing !== true
+  if (!away()) return
   if (row.videoId == null) return
   closedAfterGrace.set(row.id, leftAt)
-  await closePlaylist(current.mediaRoot, row.videoId)
+  await closePlaylist(current.mediaRoot, row.videoId, away)
 }
 
 /** A key belongs to an active account filming a current side of this game. */
@@ -1226,7 +1229,12 @@ async function toTheSpace(
  */
 async function closePlaylist(
   mediaRoot: string,
-  videoId: string
+  videoId: string,
+  /**
+   * Whether the publisher is still away. Asked again at the last moment,
+   * when it may have come back while the playlist was being read.
+   */
+  stillAway: () => boolean = () => true
 ): Promise<void> {
   const path = join(liveVideoDir(mediaRoot, videoId), LIVE_PLAYLIST_NAME)
   let playlist: string
@@ -1236,8 +1244,21 @@ async function closePlaylist(
     return
   }
   if (playlist.includes('#EXT-X-ENDLIST')) return
+  // The last look, the read and the write happen together, with nothing
+  // awaited between them. A publisher coming back reopens the playlist the
+  // same way (`reopenPlaylist`), so it either came back before this, which
+  // the look sees, or comes back after, and finds an `ENDLIST` to take off.
+  // An awaited write here could land after the new writer had started
+  // appending, and put the `ENDLIST` back under it.
+  if (!stillAway()) return
+  try {
+    playlist = readFileSync(path, 'utf8')
+  } catch {
+    return
+  }
+  if (playlist.includes('#EXT-X-ENDLIST')) return
   const ended = playlist.endsWith('\n')
     ? `${playlist}#EXT-X-ENDLIST\n`
     : `${playlist}\n#EXT-X-ENDLIST\n`
-  await writeFile(path, ended)
+  writeFileSync(path, ended)
 }
