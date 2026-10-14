@@ -151,10 +151,10 @@ try {
   await swipeTabs('Away Team', 'Home Team')
   await visible('^Hawks$')
   await shot('home-selector')
-  await swipeTabs('Set Lineup', 'Set Defense')
+  await swipeTabs('Lineup', 'Defense')
   await visible('Hold a player briefly, then drag into a defensive position.')
   await shot('defense-selector')
-  await tap('Set Lineup')
+  await tap('Lineup')
   await tap('Away Team')
   await visible('^Owls$')
   await m.scrollUntilVisible({

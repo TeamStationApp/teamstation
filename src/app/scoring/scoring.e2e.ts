@@ -1317,7 +1317,7 @@ describe('scoring browser', function () {
       await page.setViewport({ width: 390, height: 500 })
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      await click(page, 'Set Defense')
+      await click(page, 'Defense')
       await page.waitForFunction(
         () =>
           document
@@ -1576,7 +1576,7 @@ describe('scoring browser', function () {
       await click(page, 'Save Rosters')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      await click(page, 'Set Defense')
+      await click(page, 'Defense')
       expect(await page.$eval(target, node => node.textContent)).includes(name)
       expect(
         await page.$eval(
@@ -1594,7 +1594,7 @@ describe('scoring browser', function () {
       await page.setViewport({ width: 390, height: 844 })
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      await click(page, 'Set Defense')
+      await click(page, 'Defense')
       await click(page, 'Clear P')
       const supported = await page.evaluate(() => {
         Reflect.set(window, 'gestureHaptics', [])
@@ -1684,7 +1684,7 @@ describe('scoring browser', function () {
       await click(page, 'Cancel')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      await click(page, 'Set Defense')
+      await click(page, 'Defense')
       await click(page, 'Clear P')
       await page.emulateMediaFeatures([
         { name: 'prefers-reduced-motion', value: 'reduce' }
@@ -1757,14 +1757,14 @@ describe('scoring browser', function () {
       await click(page, 'Apply Override')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      await click(page, 'Set Lineup')
+      await click(page, 'Lineup')
       const removals = await page.$$eval('[aria-label^="Remove "]', nodes =>
         nodes
           .map(node => node.getAttribute('aria-label')!)
           .filter(label => label !== 'Remove Player 2')
       )
       for (const label of removals) await click(page, label)
-      await click(page, 'Set Defense')
+      await click(page, 'Defense')
       await new Promise(resolve => setTimeout(resolve, 500))
       for (const width of [320, 390]) {
         await page.setViewport({ width, height: 400 })
@@ -1776,7 +1776,7 @@ describe('scoring browser', function () {
               .getBoundingClientRect()
             return { x: b.x, right: b.right }
           }
-          return ['Away Team', 'Home Team', 'Set Lineup', 'Set Defense'].map(r)
+          return ['Away Team', 'Home Team', 'Lineup', 'Defense'].map(r)
         })
         for (let i = 0; i < controls.length; i++) {
           expect(controls[i].x).at.least(16)
@@ -1834,7 +1834,7 @@ describe('scoring browser', function () {
       expect(await page.$('[aria-label="Add Placeholder Players"]')).equals(
         null
       )
-      await click(page, 'Set Defense')
+      await click(page, 'Defense')
       expect(await page.$$('[data-roster-target^="defense-"]')).length(9)
       await click(page, 'Clear P')
       const source = '[data-roster-target="roster"] [data-roster-player="1"]'
@@ -1860,7 +1860,7 @@ describe('scoring browser', function () {
       await click(page, 'Cancel')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      await click(page, 'Set Defense')
+      await click(page, 'Defense')
       await page.waitForSelector('[aria-label="Clear P"]')
       await click(page, 'Create Player')
       await page.waitForFunction(
@@ -2270,10 +2270,8 @@ describe('scoring browser', function () {
       await page.waitForSelector(
         '[aria-label="Home Team"][aria-selected="true"]'
       )
-      await swipe('[aria-label="Set Lineup"]', '[aria-label="Set Defense"]')
-      await page.waitForSelector(
-        '[aria-label="Set Defense"][aria-selected="true"]'
-      )
+      await swipe('[aria-label="Lineup"]', '[aria-label="Defense"]')
+      await page.waitForSelector('[aria-label="Defense"][aria-selected="true"]')
       await click(page, 'Clear P')
       // A tap in defense never implies a slot; a direct drag replaces C.
       await click(page, 'Player 1')
@@ -2293,10 +2291,8 @@ describe('scoring browser', function () {
         await page.$('[data-roster-target="roster"] [data-roster-player="11"]')
       ).not.equals(null)
       await swipe('[aria-label="Home Team"]', '[aria-label="Away Team"]')
-      await swipe('[aria-label="Set Defense"]', '[aria-label="Set Lineup"]')
-      await page.waitForSelector(
-        '[aria-label="Set Lineup"][aria-selected="true"]'
-      )
+      await swipe('[aria-label="Defense"]', '[aria-label="Lineup"]')
+      await page.waitForSelector('[aria-label="Lineup"][aria-selected="true"]')
       await page.$eval('[aria-label="Batting lineup"]', n => {
         n.scrollTop = 0
       })
@@ -2482,7 +2478,7 @@ describe('scoring browser', function () {
       })
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      await click(page, 'Set Defense')
+      await click(page, 'Defense')
       await click(page, 'Clear P')
       const source = '[data-roster-target="roster"] [data-roster-player="1"]'
       const target = '[data-roster-target="defense-P"]'
@@ -4106,7 +4102,7 @@ describe('scoring browser', function () {
         )
       ).equals('true')
       await click(page, 'Add Jordan K. to Lineup')
-      await click(page, 'Set Defense')
+      await click(page, 'Defense')
       await click(page, 'Clear P')
       expect(
         await page.$eval('[aria-label="Save Rosters"]', node =>
@@ -5095,7 +5091,7 @@ describe('scoring browser', function () {
         expect(loose).equals(0)
         // Both pills show whole inside the editor's top area.
         const top = await box('[data-testid="Roster editor top"]')
-        for (const tab of ['Away Team', 'Set Lineup', 'Set Defense']) {
+        for (const tab of ['Away Team', 'Lineup', 'Defense']) {
           const r = await box(`[aria-label="${tab}"]`)
           expect(r.y).at.least(top.y - 0.5)
           expect(r.y + r.height).at.most(top.y + top.height + 0.5)
@@ -5200,9 +5196,9 @@ describe('scoring browser', function () {
         [...unnumbered].sort((a, b) => a.localeCompare(b))
       )
       expect(unnumbered).includes('Amy Blank')
-      await click(page, 'Set Defense')
+      await click(page, 'Defense')
       expect(await roster()).deep.equals(rows)
-      await click(page, 'Set Lineup')
+      await click(page, 'Lineup')
       // The lineup keeps the order it is built in.
       await click(page, 'Add Zed Ten to Lineup')
       const lineup = await page.$$eval(
@@ -5308,7 +5304,7 @@ describe('scoring browser', function () {
         expect(awayTab.x).closeTo(footer.x, 1)
         expect(homeTab.x + homeTab.width).closeTo(footer.x + footer.width, 1)
         expect(awayTab.width).closeTo(homeTab.width, 1)
-        expect((await rect('[aria-label="Set Lineup"]')).height).equals(36)
+        expect((await rect('[aria-label="Lineup"]')).height).equals(36)
         expect(footer.bottom).at.most(height)
         expect(height - footer.bottom).lessThan(30)
         for (const label of ['Roster players', 'Batting lineup']) {

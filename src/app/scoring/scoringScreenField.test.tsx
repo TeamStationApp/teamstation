@@ -95,7 +95,7 @@ function dictate(
     const ref = hook.memoizedState as
       { current?: Partial<UseDictationOptions> } | undefined
     if (ref?.current != null && typeof ref.current.onActions === 'function') {
-      ref.current.onActions(transcript, actions)
+      ref.current.onActions(transcript, actions, [])
       return
     }
   }
@@ -535,15 +535,20 @@ describe('scoring screen field wiring', function () {
           jersey == null ? '1. Mike T' : '1. #99 Mike T'
         )
         expect(live.state.gameData.players[id]).deep.equals(savedPlayer)
-        await click('Save Rosters')
-        await live.flush()
-        expect(live.state.gameData.players[id]).deep.equals(savedPlayer)
-        const unchanged = live.actions.find(
-          action => action.type === 'lineup' && action.kind === 'roster'
-        )
-        expect(unchanged?.type).equals('lineup')
-        if (unchanged?.type === 'lineup' && unchanged.kind === 'roster')
-          expect(unchanged.setup?.players[id]).deep.equals(savedPlayer)
+        // The game has recorded nothing, so Save Rosters is lit to accept
+        // its lineups. The roster's current labels are shown, not saved:
+        // Cancel logs no roster.
+        expect(
+          document
+            .querySelector('[aria-label="Save Rosters"]')!
+            .getAttribute('aria-disabled')
+        ).equals(null)
+        await click('Cancel')
+        expect(
+          live.actions.some(
+            action => action.type === 'lineup' && action.kind === 'roster'
+          )
+        ).equals(false)
         await openEditor()
         await click('Remove Player 2')
         await click('Save Rosters')

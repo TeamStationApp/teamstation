@@ -301,9 +301,9 @@ async function main(): Promise<void> {
       )
     ]
     assert.deepEqual(order.slice(0, 2), ['Reorder Mike T', 'Reorder Mookie B'])
-    await tap('Set Defense')
+    await tap('Defense')
     await shown('CF')
-    await tap('Set Lineup')
+    await tap('Lineup')
     await tap('Create Player')
     if (native) await m.hideKeyboard()
     else await m.tapOn({ text: '^Done$', timeout: 10000 })
@@ -340,9 +340,9 @@ async function main(): Promise<void> {
     await tap('Add Placeholder Players')
     await tap('Add')
     await tap('Cancel')
-    await tap('Edit Roster')
+    await tap('Roster')
     await shown('game-only player')
-    await tap('Set Defense')
+    await tap('Defense')
     await tap('Clear P')
     await shown('Assign P')
     const defenders = flat(await m.hierarchy())
@@ -366,7 +366,7 @@ async function main(): Promise<void> {
     await shown('Undo Ball')
     await tap('Open scoring menu')
     await tap('Set Team Rosters')
-    await tap('Edit Roster')
+    await tap('Roster')
     await reach('Mookie Betts')
     await tap('Mookie Betts')
     await shown('JERSEY NUMBER')
@@ -471,9 +471,9 @@ async function main(): Promise<void> {
       await tap('Open scoring menu')
     }
     await tap('Set Team Rosters')
-    await shown('Set Lineup')
+    await shown('Lineup')
     if (section === 'namesPersisted' || section === 'names') {
-      await tap('Edit Roster')
+      await tap('Roster')
       await tap('Mookie Betts')
       await shown('FIRST NAME')
       await input('First name', '')
@@ -566,7 +566,7 @@ async function main(): Promise<void> {
         await shown('Open scoring menu')
         await tap('Open scoring menu')
         await tap('Set Team Rosters')
-        await tap('Edit Roster')
+        await tap('Roster')
       }
       await reopen()
       await tap('Jose Ramirez')
@@ -628,10 +628,10 @@ async function main(): Promise<void> {
     }
     await capture(`lineup-${phase}`)
     if (phase === 'after' && section === 'all') await tap('Remove Aaron J')
-    await tap('Set Defense')
+    await tap('Defense')
     await capture(`defense-${phase}`)
     if (phase === 'after') {
-      await tap('Edit Roster')
+      await tap('Roster')
       await capture('edit-roster')
       await shown('Mookie Betts')
       await shown('bats right, throws right')
@@ -778,7 +778,7 @@ async function main(): Promise<void> {
               ),
             'Roster refresh must finish before saving the draft'
           )
-          await tap('Set Lineup')
+          await tap('Lineup')
           assert(
             !flat(await m.hierarchy()).some(
               node => node.text === 'Remove Aaron J'
@@ -806,7 +806,7 @@ async function main(): Promise<void> {
           )
           await tap('Open scoring menu')
           await tap('Set Team Rosters')
-          await tap('Edit Roster')
+          await tap('Roster')
         }
         await reach('Mookie Betts')
         await fixture.roles([])
@@ -837,7 +837,7 @@ async function main(): Promise<void> {
         await tap('Cancel')
         await tap('Open scoring menu')
         await tap('Set Team Rosters')
-        await tap('Edit Roster')
+        await tap('Roster')
         await shown('Mookie Betts, jersey 14')
         await reach('Mookie Betts')
         await tap('Mookie Betts')

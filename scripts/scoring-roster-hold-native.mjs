@@ -146,7 +146,7 @@ try {
   })
   await visible('^Reorder Player 2$')
   await shot('held-drop')
-  await tap('Set Defense')
+  await tap('Defense')
   await tap('Clear P')
   await m.dragAndDrop({
     from: { text: '^Player 1$' },

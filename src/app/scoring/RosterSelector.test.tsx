@@ -41,7 +41,7 @@ describe('roster selector', function () {
   })
 
   it('sizes the thumb from the measured pill, not a percentage a phone misreads', function () {
-    // Set Lineup / Set Defense on a Pixel: the pill measures 214 dp while the
+    // Lineup / Defense on a Pixel: the pill measures 214 dp while the
     // row offered it 378 dp, and Yoga drew a `50%` thumb 189 dp wide.
     expect(rosterThumbWidth(214, 2, false)).equals(107)
     expect(rosterThumbWidth(214, 2, true)).equals(107)
@@ -62,7 +62,7 @@ describe('roster selector', function () {
         <ThemeProvider>
           <RosterSelector
             fitContent
-            labels={['Set Lineup', 'Set Defense']}
+            labels={['Lineup', 'Defense']}
             value={0}
             onChange={() => {}}
           />
@@ -74,6 +74,47 @@ describe('roster selector', function () {
     )!
     expect(thumb.style.width).equals('50%')
     expect(thumb.style.position).equals('absolute')
+  })
+
+  it('names the roster screen’s three and four tabs by their words', async function () {
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    for (const [labels, width] of [
+      [['Roster', 'Lineup', 'Defense'], `${100 / 3}%`],
+      [['Box Score', 'Roster', 'Lineup', 'Defense'], '25%']
+    ] as const) {
+      const chosen: number[] = []
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <RosterSelector
+              fitContent
+              labels={[...labels]}
+              value={1}
+              onChange={index => {
+                chosen.push(index)
+              }}
+            />
+          </ThemeProvider>
+        )
+      })
+      const tabs = [...host.querySelectorAll<HTMLElement>('[role="tab"]')]
+      expect(tabs.map(tab => tab.getAttribute('aria-label'))).deep.equals(
+        labels
+      )
+      expect(tabs.map(tab => tab.textContent)).deep.equals(labels)
+      expect(tabs[1].getAttribute('aria-selected')).equals('true')
+      expect(
+        host.querySelector<HTMLElement>(
+          '[data-testid="Roster selector thumb"]'
+        )!.style.width
+      ).equals(width)
+      await act(async () => {
+        tabs.at(-1)!.click()
+      })
+      expect(chosen).deep.equals([labels.length - 1])
+    }
   })
 
   it('uses themed halves and supports tap, immediate swipe, child capture loss and cancellation', async function () {

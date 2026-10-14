@@ -1,5 +1,6 @@
 import type { DictationModel, Health } from '../../common/api'
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
+import type { SaidRosterCommand } from '../../common/scoring/rosterCommands'
 import type { DictationQuestion, ScoringSessionState } from './scoringTypes'
 
 /**
@@ -39,18 +40,34 @@ export interface DictationAsk {
   options: Array<{ label: string }>
 }
 
-export interface UseDictationOptions {
+/**
+ * A sentence's actions and its roster commands as said, for the screen to
+ * find the players of; `undo` first takes back the last thing scored.
+ */
+export type OnDictated = (
+  transcript: string,
+  actions: ScoringAction[],
+  roster: SaidRosterCommand[],
+  undo?: boolean
+) => void
+
+/** What a sentence is about, and the game the model is told of with it. */
+export interface DictationTopic {
+  /** The server's scope for the sentence: `scoring` when absent. */
+  scope?: string
+  /** What the scope speaks about: `{ gameId }` when absent. */
+  target?: Record<string, unknown>
+  /** The game as the model is told of it: `dictationContext` when absent. */
+  contextOf?: () => string
+}
+
+export interface UseDictationOptions extends DictationTopic {
   url: string
   gameId: string
   /** The screen's own copy of the game, which is the one the scorer sees. */
   session: ScoringSessionState
   log: readonly ScoringAction[]
-  /** A sentence's actions; `undo` first takes back the last thing scored. */
-  onActions: (
-    transcript: string,
-    actions: ScoringAction[],
-    undo?: boolean
-  ) => void
+  onActions: OnDictated
   model?: DictationModel
   /** The session token a phone puts on the socket. The browser uses its cookie. */
   token?: string
@@ -81,7 +98,16 @@ export interface Dictation {
   dismiss: () => void
 }
 
-export interface DictationButtonProps {
+export interface DictationButtonProps extends DictationTopic {
+  /**
+   * The scoring screen's pill above Bunt and Swing, or the roster screen's
+   * round button in its bottom bar, `size` across. A round control leaves its
+   * question to the screen, which shows it in its chat.
+   */
+  shape?: 'pill' | 'round'
+  size?: number
+  /** Switched on as soon as the server is known to dictate. */
+  startEnabled?: boolean
   suspended?: boolean
   /** Whether this server takes dictation. The control shows only when it does. */
   health: () => Promise<Health>
@@ -99,6 +125,11 @@ export interface DictationButtonProps {
   played?: { id: number; lines: string[] }
   /** What a dictated undo took back, for the log; `id` changes per undo. */
   undone?: { id: number; line: string }
+  /**
+   * Why the screen took nothing from a sentence it did not score, such as a
+   * substitution said with a play, for the log; `id` changes per refusal.
+   */
+  refused?: { id: number; message: string }
   /** A press shorter than this is a tap. Tests shorten it. */
   tapMs?: number
   /** How long audio keeps flowing after a release. Tests shorten it. */
@@ -110,11 +141,7 @@ export interface DictationButtonProps {
    * off while the field has a use for Space.
    */
   spaceTalks?: boolean
-  onActions: (
-    transcript: string,
-    actions: ScoringAction[],
-    undo?: boolean
-  ) => void
+  onActions: OnDictated
   /** The LLM the scorer picked in settings; absent, the server's own. */
   model?: DictationModel
   /**

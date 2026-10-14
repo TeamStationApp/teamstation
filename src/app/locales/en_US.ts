@@ -118,6 +118,17 @@ export const enUs = {
   game_box_score: 'Box score',
   /** The game page's one scoring pill, and the screen it opens. */
   game_score_game: 'Score Game',
+  /** The game page's pill for a head coach, and the screen it opens. */
+  game_coach_game: 'Coach Game',
+  /** Asked of a head coach of both teams before Coach Game opens. */
+  game_coach_which: 'Coach which team?',
+  /** Asked before a coach leaves Coach Game with changes not saved. */
+  coach_discard_title: 'Discard unsaved roster changes?',
+  coach_discard: 'Discard',
+  coach_keep_editing: 'Keep editing',
+  coach_not_coach: 'Only a head coach of this team can coach it here.',
+  coach_load_failed: 'Unable to load the game. Please try again.',
+  coach_save_failed: 'Unable to save the lineup. Please try again.',
   /** The title of the simplified scoreboard, the 1.0 override dashboard. */
   game_override_scoreboard: 'Override Scoreboard',
   /** The Videos tab of a game nothing was recorded of, in place of a player. */
@@ -140,6 +151,8 @@ export const enUs = {
   /** Under a non-member's line score, in place of each side's lines. */
   box_score_members_only:
     'You need to be a member of one of these teams to see individual player stats.',
+  /** Under a coach's empty line score, before the game has a line score. */
+  box_score_not_started: 'The game has not started',
 
   // Four angles at once
   angles_open: 'All angles',
@@ -546,9 +559,11 @@ export const enUs = {
   scoring_history_hint: 'Your last action appears here',
   scoring_undo_hint: 'Undo last action',
   scoring_place_runner: 'Place a Runner',
-  scoring_edit_roster: 'Edit Roster',
+  scoring_roster_tab: 'Roster',
   scoring_edit_roster_instruction: 'Tap a player to edit settings.',
   scoring_roster_empty: 'No players on this team.',
+  scoring_roster_conflict:
+    'Another user has edited the roster. Your pending changes may overwrite theirs. Hit Cancel to revert to their changes.',
   scoring_game_only_player: 'Game-only player',
   scoring_roster_edit_unavailable:
     'Player settings are unavailable for this team.',
@@ -636,6 +651,12 @@ export const enUs = {
     'The connection dropped and that was not scored. Say it again.',
   dictation_left_out: 'Left out: %s',
   dictation_mic_unavailable: 'The microphone is not available: %s',
+  dictation_chat: 'Dictation chat',
+  dictation_changes_discarded: 'Changes discarded',
+  dictation_roster_play: 'That is a play — score it on the scoring screen',
+  dictation_roster_other_team: 'Only the %s roster changes here',
+  dictation_substitution_separately:
+    'Say a substitution separately from a play',
 
   // Shared
   common_done: 'Done',

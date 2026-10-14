@@ -3,9 +3,12 @@
 # mono 16-bit WAV with half a second of silence either side. A synthesised
 # voice is what makes the scenarios repeatable; it is not a claim about how a
 # real scorer sounds. Regenerate with: sh src/app/scoring/fixtures/audio/make.sh
+# and make only some with their names: sh …/make.sh lineupJudgeFourth
 set -e
 cd "$(dirname "$0")"
+only=" $* "
 clip() {
+  case "$only" in "  " | *" $1 "*) ;; *) return 0 ;; esac
   say -o "/tmp/$1.aiff" "$2"
   afconvert -f WAVE -d LEI16@16000 -c 1 "/tmp/$1.aiff" "/tmp/$1.raw.wav"
   python3 - "$1" <<'PY'
@@ -66,3 +69,18 @@ clip tagThrownHome 'Pop fly to center field. The man at third tags up but gets t
 # E21: a steal whose runner scored, and a caught foul with a runner tagging
 clip stealScores 'He steals, and scores when the throw gets away.'
 clip foulPopTagThird 'The runner on second tags up to third on the foul pop out.'
+# R1-R5: the roster screen, against the lineup fixture's rosters
+# (src/server/dev/lineupFixture.ts)
+clip lineupJudgeFourth 'Put Judge fourth.'
+clip defenseThree 'Soto at short, Harper at second, and Turner in center field.'
+clip setThisLineup 'Set this lineup: Betts, Springer, Judge, Altuve, Bregman, Alvarez, Tucker, Semien, Pena.'
+clip mixedLineupDefense 'Put Altuve leadoff and Betts at short.'
+clip freemanAtFirst 'Freeman plays first base.'
+# S1-S5: substitutions said on the scoring screen, against the same rosters.
+# S1 names a player by a jersey both teams wear: the side in the field's #3
+# (Alonso, from first base), found by the screen with no question.
+clip subThirdBase 'Number 3 subs in at third base.'
+clip sotoPitches 'Soto subs in for the pitcher.'
+clip bettsPinchHits 'Betts pinch hits.'
+clip freemanRunsSecond 'Freeman runs for the runner on second.'
+clip ballAndPinchRunner 'Ball one, and Freeman pinch runs at first.'

@@ -1,3 +1,4 @@
+import { shortName } from '../../common/names'
 import {
   baseIds,
   battingSide,
@@ -18,13 +19,19 @@ export const playerRef = refOf
 
 export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
   const board = scoreboardOfGame(session)
-  // Field labels already carry short names; keep the entire supplied name.
+  // The board's own formatter takes a first name and a last name. A stored
+  // label may already be a short name, or it may be the whole name.
   const person = (
     fullName: string
-  ): { firstName: string; lastName: string } => ({
-    firstName: fullName,
-    lastName: ''
-  })
+  ): { firstName: string; lastName: string } => {
+    const shown = shortName({ id: 0, displayName: fullName })
+    const words = shown.split(/\s+/).filter(word => word !== '')
+    if (words.length <= 1) return { firstName: words[0] ?? '', lastName: '' }
+    return {
+      firstName: words.slice(0, -1).join(' '),
+      lastName: words[words.length - 1] ?? ''
+    }
+  }
   return {
     awayTeam: session.gameData.teams.away.name,
     homeTeam: session.gameData.teams.home.name,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { asDictationReply } from '../../common/api'
 import { keyterms, promptContext } from '../../common/scoring/actions'
+import { rosterPrompt } from '../../common/scoring/rosterCommands'
 import { nextDecision } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { lstrings, sprintf } from '../locales/strings'
@@ -14,18 +15,28 @@ import type {
   UseDictationOptions
 } from './dictationTypes'
 import { openMicrophone as browserMicrophone } from './microphone'
-import type { ScoringSessionState } from './scoringTypes'
+import type { ScoringSessionState, Side } from './scoringTypes'
 
 /**
- * Dictation on the scoring screen: the socket, the microphone, and what the
- * scorer is shown while they talk.
+ * Dictation on the scoring and roster screens: the socket, the microphone,
+ * and what the scorer is shown while they talk.
  *
  * Turning it on opens the microphone and one socket for the session, and
  * sends the key terms for the at-bat. Holding the button sends a `start`
- * carrying the game as it stands, then audio; releasing ends the utterance.
- * What comes back — actions — goes to `onActions`, which puts them through
- * the screen's reducer exactly as a tap would. Nothing here changes a game.
+ * naming the scope and its target and carrying the game as it stands, then
+ * audio; releasing ends the utterance. What comes back — actions and roster
+ * commands — goes to `onActions`: the scoring screen puts actions through its
+ * reducer exactly as a tap would, and the roster screen stages commands on
+ * its draft. Nothing here changes a game.
  */
+
+/** A coach's side, when the screen's target names one. */
+function coachSide(
+  target: Record<string, unknown> | undefined
+): Side | undefined {
+  const side = target?.side
+  return side === 'away' || side === 'home' ? side : undefined
+}
 
 /**
  * The game as the next sentence will find it. A decided play stays open for
@@ -47,10 +58,13 @@ export function upcoming(session: ScoringSessionState): {
   }
 }
 
-/** What the LLM is told about the game with each sentence. */
+/**
+ * What the LLM is told about the game with each sentence: the at-bat, then
+ * both teams' rosters, bench and all, so a substitution can name anyone.
+ */
 export function dictationContext(session: ScoringSessionState): string {
   const { state, closed } = upcoming(session)
-  const context = promptContext(state)
+  const context = `${promptContext(state)}\nROSTERS\n${rosterPrompt(state, ['away', 'home'])}`
   return closed == null
     ? context
     : `The last play (${closed}) is decided and closes when the next pitch or play is reported. The game below is the at-bat after it.\n${context}`
@@ -104,7 +118,10 @@ export function useDictation(options: UseDictationOptions): Dictation {
 
   /** Sends the key terms for the game as it stands, unless they were the last sent. */
   const sendTerms = useCallback((): void => {
-    const terms = keyterms(upcoming(latest.current.session).state)
+    const terms = keyterms(
+      upcoming(latest.current.session).state,
+      coachSide(latest.current.target)
+    )
     const key = JSON.stringify(terms)
     if (key === sentTerms.current) return
     if (send({ kind: 'keyterms', keyterms: terms })) sentTerms.current = key
@@ -161,7 +178,12 @@ export function useDictation(options: UseDictationOptions): Dictation {
               )
             : null
         )
-        latest.current.onActions(reply.transcript, reply.actions, reply.undo)
+        latest.current.onActions(
+          reply.transcript,
+          reply.actions,
+          reply.roster ?? [],
+          reply.undo
+        )
         return
       case 'error':
         settle(reply.message)
@@ -304,7 +326,14 @@ export function useDictation(options: UseDictationOptions): Dictation {
       if (utterance.current != null || socket.current?.readyState !== OPEN)
         return
       const id = `u${Date.now().toString(36)}${(counter.current++).toString(36)}`
-      const { gameId, session, model } = latest.current
+      const {
+        gameId,
+        session,
+        model,
+        scope = 'scoring',
+        target = { gameId },
+        contextOf
+      } = latest.current
       utterance.current = id
       holdingNow.current = true
       setHolding(true)
@@ -314,9 +343,9 @@ export function useDictation(options: UseDictationOptions): Dictation {
       send({
         kind: 'start',
         id,
-        scope: 'scoring',
-        target: { gameId },
-        context: dictationContext(session),
+        scope,
+        target,
+        context: contextOf == null ? dictationContext(session) : contextOf(),
         ...(model == null ? {} : { model })
       })
       if (since != null)
