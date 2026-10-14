@@ -55,6 +55,16 @@ class PhoneStreamMapsTest {
         assertEquals(true, map["uploadRunning"])
         assertFalse(map.containsKey("uploadedAt"))
         assertFalse(map.containsKey("videoId"))
+        assertFalse(map.containsKey("uploadProgress"))
+
+        // A running upload's last report goes with its take, for a screen that opens part-way.
+        val progress = PhoneUploadProgress(
+            "lst_00000000000000000001", PhoneUploadProgress.State.UPLOADING, fraction = 0.52, bytesSent = 52, bytesTotal = 100
+        )
+        val running = PhoneStreamMaps.recording(recording, running = true, progress = progress)
+        assertEquals(PhoneStreamMaps.upload(progress), running["uploadProgress"])
+        // One that is not running here has none, whatever was last heard.
+        assertFalse(PhoneStreamMaps.recording(recording, running = false, progress = progress).containsKey("uploadProgress"))
     }
 
     @Test

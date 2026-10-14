@@ -64,7 +64,8 @@ object PhoneStreamMaps {
             "message" to upload.message
         )
 
-    fun recording(recording: PhoneRecording, running: Boolean): Map<String, Any?> =
+    /** A take, with where its upload stands when one runs in this process: a screen opened part-way through starts from that. */
+    fun recording(recording: PhoneRecording, running: Boolean, progress: PhoneUploadProgress? = null): Map<String, Any?> =
         present(
             "liveStreamId" to recording.liveStreamId,
             "gameId" to recording.gameId,
@@ -78,7 +79,8 @@ object PhoneStreamMaps {
             "videoId" to recording.videoId,
             "stoppedForLowStorage" to recording.stoppedForLowStorage,
             "publishedOutsideParts" to recording.publishedOutsideParts,
-            "uploadRunning" to running
+            "uploadRunning" to running,
+            "uploadProgress" to progress?.takeIf { running }?.let(::upload)
         )
 
     fun zoomScale(scale: PhoneZoomScale): Map<String, Any?> =

@@ -100,6 +100,8 @@ export interface NativePhoneRecording {
   publishedOutsideParts: boolean
   /** Its upload is running in this process now. */
   uploadRunning: boolean
+  /** Where that running upload stands now: its last `onUpload`, for a screen that opens part-way. */
+  uploadProgress?: NativeUploadProgress
 }
 
 export interface NativeUploadProgress {

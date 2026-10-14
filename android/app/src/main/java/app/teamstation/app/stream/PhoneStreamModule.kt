@@ -199,7 +199,8 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
     override fun recordings(promise: Promise) =
         settle(promise) {
             val running = engine.runningUploads()
-            engine.recordings().map { PhoneStreamMaps.recording(it, it.recordingID in running) }
+            val progress = engine.runningUploadProgress()
+            engine.recordings().map { PhoneStreamMaps.recording(it, it.recordingID in running, progress[it.recordingID]) }
         }
 
     override fun uploadRecording(liveStreamId: String, apiBase: String, token: String, title: String, promise: Promise) =

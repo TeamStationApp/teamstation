@@ -101,6 +101,11 @@ export interface PhoneRecording {
   hasPendingUpload: boolean
   /** Its upload is running in this process now. */
   uploadRunning: boolean
+  /**
+   * Where that running upload stands as the list was read. An upload resumed
+   * at launch reports before any screen listens, so its row starts from this.
+   */
+  uploadProgress: UploadProgress | null
 }
 
 export type UploadState =
@@ -295,7 +300,11 @@ export function toRecording(recording: NativePhoneRecording): PhoneRecording {
     stoppedForLowStorage: recording.stoppedForLowStorage,
     publishedOutsideParts: recording.publishedOutsideParts,
     hasPendingUpload: uploadId != null && uploadedAt == null,
-    uploadRunning: recording.uploadRunning
+    uploadRunning: recording.uploadRunning,
+    uploadProgress:
+      recording.uploadRunning && recording.uploadProgress != null
+        ? toUploadProgress(recording.uploadProgress)
+        : null
   }
 }
 

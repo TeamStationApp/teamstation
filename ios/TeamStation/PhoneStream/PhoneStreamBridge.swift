@@ -264,7 +264,10 @@ final class TSPhoneStreamBridge: NSObject {
   @objc func recordings(_ reply: @escaping PhoneStreamReply) {
     Self.run(reply) { engine in
       let running = engine.runningUploads
-      return try engine.recordings().map { Self.dictionary($0, running: running.contains($0.recordingID)) }
+      let progress = engine.runningUploadProgress
+      return try engine.recordings().map {
+        Self.dictionary($0, running: running.contains($0.recordingID), progress: progress[$0.recordingID])
+      }
     }
   }
 
@@ -422,7 +425,13 @@ final class TSPhoneStreamBridge: NSObject {
     return value
   }
 
-  static func dictionary(_ recording: PhoneRecording, running: Bool) -> [String: Any] {
+  /// A take, with where its upload stands when one runs in this process: a screen opened part-way
+  /// through starts from that rather than from nothing.
+  static func dictionary(
+    _ recording: PhoneRecording,
+    running: Bool,
+    progress: PhoneUploadProgress? = nil
+  ) -> [String: Any] {
     var value: [String: Any] = [
       "liveStreamId": recording.liveStreamId,
       "gameId": recording.gameId,
@@ -438,6 +447,7 @@ final class TSPhoneStreamBridge: NSObject {
     if let title = recording.uploadTitle { value["uploadTitle"] = title }
     if let uploadedAt = recording.uploadedAt { value["uploadedAt"] = uploadedAt.seconds * 1_000 }
     if let videoId = recording.videoId { value["videoId"] = videoId }
+    if running, let progress { value["uploadProgress"] = dictionary(progress) }
     return value
   }
 }

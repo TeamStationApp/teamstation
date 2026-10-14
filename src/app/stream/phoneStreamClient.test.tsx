@@ -214,14 +214,29 @@ describe('the phone stream bridge', function () {
           endedAt: 1_790_000_060_000,
           uploadId: 'upl_00000000000000000001',
           uploadTitle: 'Home Plate',
-          uploadRunning: true
+          uploadRunning: true,
+          uploadProgress: {
+            liveStreamId: 'lst_00000000000000000002',
+            state: 'uploading',
+            fraction: 0.52,
+            bytesSent: 52,
+            bytesTotal: 100
+          }
         },
         {
           ...RECORDING,
           liveStreamId: 'lst_00000000000000000003',
           uploadId: 'upl_00000000000000000002',
           uploadedAt: 1_790_000_900_000,
-          videoId: 'vid_00000000000000000001'
+          videoId: 'vid_00000000000000000001',
+          // Not running here: whatever it last said is not where it stands.
+          uploadProgress: {
+            liveStreamId: 'lst_00000000000000000003',
+            state: 'uploading',
+            fraction: 0.9,
+            bytesSent: 90,
+            bytesTotal: 100
+          }
         }
       ],
       interruptedSession: {
@@ -276,6 +291,20 @@ describe('the phone stream bridge', function () {
       ['lst_00000000000000000001', false, false, null],
       ['lst_00000000000000000002', true, true, 1_790_000_060_000],
       ['lst_00000000000000000003', false, false, null]
+    ])
+    expect(recordings.map(recording => recording.uploadProgress)).deep.equals([
+      null,
+      {
+        liveStreamId: 'lst_00000000000000000002',
+        state: 'uploading',
+        fraction: 0.52,
+        bytesSent: 52,
+        bytesTotal: 100,
+        step: null,
+        videoId: null,
+        message: null
+      },
+      null
     ])
     expect(await stream.interruptedSession()).deep.equals({
       liveStreamId: 'lst_00000000000000000001',
