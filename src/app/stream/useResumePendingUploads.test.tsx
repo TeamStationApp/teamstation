@@ -193,6 +193,40 @@ describe('resuming recording uploads', function () {
     expect([...signedIn.listed].sort()).deep.equals([GAME, OTHER_GAME])
   })
 
+  it('resumes a take the server already opened even once its stream is revoked as uploaded', async function () {
+    const native = fakePhoneStreamModule({
+      capabilities: SUPPORTED,
+      recordings: [
+        // Cut off during processing; the server then finished it, so its
+        // stream is revoked and the camera list leaves it out.
+        cutOff('liv_uploaded', { uploadId: 'dup_00000000000000000001' }),
+        // Never opened, and not this account's stream: still waits.
+        cutOff('liv_theirs'),
+        // Opened on a game whose cameras cannot be read.
+        cutOff('liv_elsewhere', {
+          gameId: OTHER_GAME,
+          uploadId: 'dup_00000000000000000002'
+        })
+      ]
+    })
+    const signedIn = client('token-0000', {
+      [GAME]: [],
+      [OTHER_GAME]: 'refused'
+    })
+    await mount({
+      client: signedIn,
+      signedInAs: 7,
+      phone: makePhoneStream(native),
+      appState: fakeAppState()
+    })
+    expect(resumed(native)).deep.equals([
+      ['liv_uploaded', API, 'token-0000', 'liv_uploaded upload'],
+      ['liv_elsewhere', API, 'token-0000', 'liv_elsewhere upload']
+    ])
+    // Every take on the other game was opened, so its cameras are not asked.
+    expect(signedIn.listed).deep.equals([GAME])
+  })
+
   it('does nothing signed out, without a token, or on a phone that cannot record', async function () {
     const native = fakePhoneStreamModule({
       capabilities: SUPPORTED,
