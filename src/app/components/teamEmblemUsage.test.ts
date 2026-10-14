@@ -1,5 +1,6 @@
-import { expect } from 'chai'
 import { readFileSync } from 'node:fs'
+
+import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 /** Guard the audited identity boundaries without banning person initials. */
