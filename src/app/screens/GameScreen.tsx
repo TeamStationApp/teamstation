@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -29,13 +28,12 @@ import {
   AnglePickerModal,
   AnglesUnavailableModal,
   Card,
-  FLOATING_BOTTOM_REM,
   GameHeroCard,
   GlassView,
   HandoffView,
   LivePill,
-  NAV_CLEARANCE_REM,
   PillTabs,
+  Screen,
   StreamPanel,
   type TeamStatLine,
   useHandoff,
@@ -47,7 +45,14 @@ import {
 } from '../components'
 import { ContentInsetContext, NO_INSET } from '../components/contentInset'
 import { EventTagText } from '../components/EventTagText'
-import { navClearanceAboveInset } from '../components/navClearance'
+import {
+  CardBand,
+  PillBand,
+  PinnedContent,
+  PinnedSpacer
+} from '../components/PinnedBands'
+import { useScreenBottom } from '../components/Screen'
+import { usePinnedTabs } from '../components/usePinnedTabs'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { highlightColumnsFor } from '../layout/grid'
 import { watchLayout, type WatchMode } from '../layout/watch'
@@ -312,6 +317,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // One measured number: the header overlays the content, so the card clears
   // it with padding and the pegged player sticks below it.
   const { headerHeight } = useHeaderSlot()
+  const screenBottom = useScreenBottom()
 
   const requestedTab =
     initialTab ??
@@ -559,6 +565,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     if (shortWindow.current) progress.value = 1
     else handoff.handleScroll()
   }, [handoff, progress])
+  const { pinned, selectTab } = usePinnedTabs({
+    head: { headerHeight, handoff },
+    ready: game != null,
+    tab,
+    anchorOnRow: false
+  })
   const headerScore = useMemo(
     () =>
       game == null ? null : game.eventKind === 'event' ? (
@@ -602,9 +614,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // The width the content actually gets, not the width of the screen.
     width: width - insets.left - insets.right,
     height,
-    // The header alone: the card and the pills scroll away above the picture,
-    // which then pegs under the header with the whole window below it.
-    chromeHeight: headerHeight,
+    // The picture leaves room for the section pills pinned below the header.
+    chromeHeight: headerHeight + tabsHeight,
     // The camera-angle buttons are pegged with the picture and have to stay
     // on the screen with it. Twice the small space as well: `onLayout`
     // measures the card and not the margin above it, and the second keeps the
@@ -1123,6 +1134,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           })
         }
         explicitSelection.current = true
+        selectTab(next)
         setTab(next)
         onTab?.(next)
       }}
@@ -1354,29 +1366,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       </ContentInsetContext.Provider>
     </View>
   )
-  const head = (
-    <>
-      {/*
-        The card alone is what hands its score up, not the block it shares
-        with the pills: measured across both, the score only arrived once the
-        pills had gone under too, which is long after the thing it is a copy
-        of has left the screen.
-      */}
-      <View collapsable={false} ref={handoff.ref}>
-        {scoreboard}
-      </View>
-      {sections}
-    </>
-  )
 
-  // Two regions, not one scroll view: the card, the pills and the player are
-  // fixed, and the highlights scroll underneath them. Reading to the bottom of
-  // a long game must not take the video off the screen.
-  //
-  // How those three are arranged is the one piece of this app that exists
-  // twice — `position: sticky` and a nested scroller have no React Native
-  // equivalent that is a style — so it lives in `GameWatchLayout`, which takes
-  // what to draw and knows nothing about a game.
+  // The shared pinned head owns navigation; the watch layout also pegs the picture.
   const anglePicker = picking ? (
     <AnglePickerModal
       videos={game.videos}
@@ -1483,17 +1474,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   return (
     <>
-      {/*
-        The card and the pills scroll with every section, from the same place
-        at the top of each, so switching sections does not move them. On
-        Videos they scroll away above the picture, which pegs under the
-        header while the highlights scroll on under it and its angle buttons.
-      */}
       <View style={styles.watch}>
         <View style={styles.tabPane} testID="gameSection">
           {tab === 'watch' ? (
             <GameWatchLayout
-              head={head}
+              pinned={pinned}
+              head={scoreboard}
               player={player}
               description={description}
               sections={sections}
@@ -1520,22 +1506,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               style={styles.tabPane}
               contentStyle={[
                 styles.watchContent,
-                sideBySide ? styles.watchSplit : styles.watchStacked,
-                short && styles.watchSplitShort
+                styles.watchStacked,
+                { paddingBottom: screenBottom }
               ]}
               headStyle={styles.head}
-              columnHeadStyle={styles.columnHead}
             />
           ) : (
-            <ScrollView
-              style={styles.tabPane}
-              onScroll={handleWatchScroll}
-              scrollEventThrottle={16}
-              contentContainerStyle={{ paddingTop: headerHeight }}
-            >
-              <View style={styles.head}>{head}</View>
-              {below}
-            </ScrollView>
+            <Screen {...pinned.screen} wide>
+              <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
+              <PillBand part={pinned.pillBand}>{tabs}</PillBand>
+              <PinnedContent
+                key={tab}
+                part={pinned.content}
+                testID="eventTabContent"
+              >
+                {below}
+              </PinnedContent>
+              <PinnedSpacer part={pinned.spacer} />
+            </Screen>
           )}
         </View>
       </View>
@@ -2149,41 +2137,13 @@ const getStyles = cacheStyles((theme: Theme) =>
     // starts where the card starts.
     tabBody: {
       width: '100%',
-      paddingHorizontal: theme.rem(theme.spaceMdRem),
-      paddingBottom: theme.rem(NAV_CLEARANCE_REM),
       gap: theme.rem(theme.spaceMdRem)
     },
     watchContent: {
-      // No padding here: the picture is edge to edge on a phone, so the
-      // margins belong to the pieces either side of it rather than to the
-      // column they share.
-      paddingBottom: navClearanceAboveInset(
-        Platform.OS,
-        theme.rem(NAV_CLEARANCE_REM),
-        theme.rem(FLOATING_BOTTOM_REM)
-      ),
       gap: theme.rem(theme.spaceSmRem)
     },
     watchStacked: {
       flexDirection: 'column'
-    },
-    // A wrapping row: the card takes the whole width and forces the wrap, then
-    // the player and the list share the line under it.
-    watchSplit: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      alignItems: 'flex-start',
-      columnGap: theme.rem(1.5)
-    },
-    // A phone on its side never wraps. The card that forces the wrap above is
-    // not drawn on a short window at all, so there is nothing legitimate for a
-    // second line to hold — and if the two columns are ever a few points too
-    // wide for the glass, wrapping is the worst of the available answers: the
-    // list goes *under* the pegged picture, where it reads as an empty column
-    // beside the video rather than as a layout that did not fit. Refusing to
-    // wrap keeps the mistake visible instead of hiding it.
-    watchSplitShort: {
-      flexWrap: 'nowrap'
     },
     head: {
       width: '100%',
@@ -2201,17 +2161,6 @@ const getStyles = cacheStyles((theme: Theme) =>
       paddingBottom: theme.rem(theme.spaceLgRem),
       gap: theme.rem(theme.spaceLgRem)
     },
-    // The same pieces, stacked in the column on the right on a short window.
-    columnHead: {
-      gap: theme.rem(theme.spaceSmRem),
-      marginBottom: theme.rem(theme.spaceSmRem)
-    },
-
-    // Pegged under the header in both layouts, once the card and the pills
-    // have gone by. `sticky` is a web position React Native has no name for;
-    // this app renders to the DOM, and `webStyle` is the one place that cast
-    // lives.
-
     player: {
       alignSelf: 'center',
       backgroundColor: theme.videoBackgroundColor,

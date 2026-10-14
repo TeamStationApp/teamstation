@@ -54,7 +54,8 @@ export async function browserSession(
   device: string,
   width: number,
   height: number,
-  artifacts: string
+  artifacts: string,
+  browserName: 'chromium' | 'chrome' = 'chromium'
 ): Promise<BrowserSession> {
   const profile = join(artifacts, 'support', 'browser-profiles', device)
   await mkdir(profile, { recursive: true })
@@ -65,6 +66,7 @@ export async function browserSession(
     appId: `about:blank#${device}`,
     artifacts: 'on-failure',
     extra: {
+      browser: browserName,
       windowSize: `${width}x${height}`,
       headed: false,
       userDataDir: profile

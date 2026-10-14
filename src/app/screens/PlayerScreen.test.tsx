@@ -396,6 +396,8 @@ describe('a player’s filters', function () {
     expect(asked.stats).deep.equals([{ teamId: 't1' }])
     // The pill says what the list is narrowed to.
     expect(find('Filter videos')?.textContent).equals('filter_altHawks')
+    await press('Stats')
+    expect(find('Filter stats')?.textContent).equals('filter_altHawks')
   })
 
   it('start on a career from anywhere else', async function () {
@@ -411,6 +413,8 @@ describe('a player’s filters', function () {
     expect(asked.highlights).deep.equals([{ before: undefined }])
     expect(asked.stats).deep.equals([{}])
     expect(find('Filter videos')?.textContent).equals('filter_altCareer')
+    await press('Stats')
+    expect(find('Filter stats')?.textContent).equals('filter_altCareer')
   })
 
   it('start on what the address or the tap asked for, over the team', async function () {
@@ -908,7 +912,7 @@ describe('a player’s Settings tab', function () {
         }}
       />
     )
-    await press('Filter')
+    await press('Filter stats')
     await press('Owls')
     await press('Show these')
     expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])

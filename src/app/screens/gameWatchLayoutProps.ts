@@ -1,6 +1,7 @@
 import type React from 'react'
 import type { StyleProp, ViewStyle } from 'react-native'
 
+import type { PinnedHead } from '../components/pinnedHead'
 import type { WatchLayout } from '../layout/watch'
 
 /**
@@ -17,13 +18,15 @@ import type { WatchLayout } from '../layout/watch'
  * the game screen and the two drift apart.
  */
 export interface GameWatchLayoutProps {
-  /** The card and the section pills, drawn above everything where they fit. */
+  /** The same pinned head used by every event section. */
+  pinned: PinnedHead
+  /** The card, drawn above the section pills where it fits. */
   head: React.ReactNode
   /** The picture, and the camera-angle strip under it. */
   player: React.ReactNode
   /** The chosen play's full account. */
   description: React.ReactNode
-  /** The section pills on their own, for the narrow column. */
+  /** The section pills, pinned across the screen above the picture. */
   sections: React.ReactNode
   highlightList: React.ReactNode
   /** The stream panel and the refresh button, at the end of the list. */
@@ -51,5 +54,4 @@ export interface GameWatchLayoutProps {
   style?: StyleProp<ViewStyle>
   contentStyle?: StyleProp<ViewStyle>
   headStyle?: StyleProp<ViewStyle>
-  columnHeadStyle?: StyleProp<ViewStyle>
 }
