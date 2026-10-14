@@ -107,6 +107,21 @@ class RtmpCodecTest {
         val extended2 = byteArrayOf((2 shl 6 or 6).toByte(), -1, -1, -1, 0, 0, 0, 2, 3)
         assertEquals(4L, reader.push(extended2).single().timestamp)
 
+        // A fmt 3 header carries an extended timestamp only when the header it follows did, not
+        // whenever the timestamp has grown past 24 bits: here the deltas are small and it has none.
+        val late = RTMPMessage(1, RTMPMessageType.AUDIO, 0xFFFFF0L, byteArrayOf(0))
+        assertEquals(late, reader.push(RTMPChunk.encode(late, 7, 128)).single())
+        val pastWrap = reader.push(byteArrayOf((2 shl 6 or 7).toByte(), 0, 0, 0x20, 1))
+        assertEquals(RTMPMessage(1, RTMPMessageType.AUDIO, 0x1000010L, byteArrayOf(1)), pastWrap.single())
+        val plainFmt3 = reader.push(byteArrayOf((3 shl 6 or 7).toByte(), 2))
+        assertEquals(RTMPMessage(1, RTMPMessageType.AUDIO, 0x1000010L, byteArrayOf(2)), plainFmt3.single())
+        // After an extended header the fmt 3 field is there, and is not payload.
+        val extendedFmt3 = reader.push(byteArrayOf((3 shl 6 or 6).toByte(), 0, 0, 0, 2, 3))
+        assertEquals(RTMPMessage(1, RTMPMessageType.AUDIO, 4, byteArrayOf(3)), extendedFmt3.single())
+        // Split inside that field, it waits for the rest.
+        assertEquals(emptyList<RTMPMessage>(), reader.push(byteArrayOf((3 shl 6 or 6).toByte(), 0, 0)))
+        assertEquals(RTMPMessage(1, RTMPMessageType.AUDIO, 4, byteArrayOf(5)), reader.push(byteArrayOf(0, 2, 5)).single())
+
         // A set chunk size changes how the next chunks are read.
         val setSize = RTMPMessage(0, RTMPMessageType.SET_CHUNK_SIZE, 0, byteArrayOf(0, 0, 1, 0))
         reader.push(RTMPChunk.encode(setSize, 2, 128))

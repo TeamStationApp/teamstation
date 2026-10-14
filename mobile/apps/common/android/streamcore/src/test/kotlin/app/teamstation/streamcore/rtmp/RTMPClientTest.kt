@@ -90,6 +90,10 @@ class RTMPClientTest {
         waitFor { server.messages(RTMPMessageType.USER_CONTROL).isNotEmpty() }
         val pong = server.messages(RTMPMessageType.USER_CONTROL).single().payload
         assertEquals(listOf<Byte>(0, 7, 0, 0, 0, 42), pong.toList())
+        // The handshake trace holds the handshake, and nothing the live stream received after it.
+        val trace = client.handshakeTraceForTesting
+        assertTrue(trace, trace.contains("_result#1"))
+        assertFalse(trace, trace.contains(" t4/"))
 
         waitFor { client.metrics.queuedBytes == 0 }
         val sample = client.congestionSample()
@@ -417,6 +421,30 @@ class RTMPClientTest {
             RTMPClient.SendOutcome.NOT_LIVE,
             client.sendVideo(99_033, FLVTag.videoFrame(RTMPVideoCodec.HEVC, false, ByteArray(100)))
         )
+    }
+
+    @Test
+    fun aShedKeepsTheWriteInFlightAtTheHeadOfTheQueueDelay() {
+        val peer = StalledPeer().also { closers += it }
+        val transport = ChannelRTMPTransport.wrap(peer.sender, sendTimeoutSeconds = 0.05)
+        val client = RTMPClient()
+        closers += AutoCloseable { client.stop() }
+        client.attachForTesting(transport, budgetBytes = 4_000_000, stallDeadlineSeconds = 10.0)
+        fun keyframe(bytes: Int) = FLVTag.videoFrame(RTMPVideoCodec.HEVC, true, ByteArray(bytes))
+
+        // A picture far larger than the sockets hold goes in flight and stays there.
+        client.sendVideo(0, keyframe(3_000_000))
+        Thread.sleep(300)
+        // Three more cross the budget, so the oldest waiting goes: the ledger is rebuilt from what is
+        // left, and the write in flight is still the oldest the socket has not taken.
+        repeat(3) { client.sendVideo(33L * (it + 1), keyframe(500_000)) }
+        assertTrue(client.metrics.droppedPackets > 0)
+        assertTrue("queue delay ${client.congestionSample().queueDelay}", client.congestionSample().queueDelay >= 0.25)
+
+        // The link comes back: the ledger drains with the socket, not ahead of it.
+        peer.drain()
+        waitFor { client.metrics.queuedBytes == 0 }
+        assertEquals(0.0, client.congestionSample().queueDelay, 0.0)
     }
 
     @Test
