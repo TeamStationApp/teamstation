@@ -518,4 +518,116 @@ describe('what the ingest is told', function () {
       })
     }
   })
+
+  it('waits for every finish before a tick that fails part way, and loses none', async function () {
+    if (options == null || db == null) this.skip()
+    const now = new Date()
+    const owner = await db
+      .selectFrom('live_streams')
+      .select('user_id as userId')
+      .where('id', '=', 'liv_1')
+      .executeTakeFirstOrThrow()
+    await db
+      .insertInto('games')
+      .values({
+        id: 'gam_tick',
+        home_team_id: 'tem_home',
+        away_team_id: 'tem_away',
+        start_at: now,
+        created_at: now,
+        updated_at: now
+      })
+      .execute()
+    // liv_5 has been ended, and finishing it fails, as on a dropped database
+    // connection. liv_6 comes after it, and its directory cannot be made.
+    const streams = [
+      ['liv_5', 'vid_5', 'ts_tickfivetickfivetickfi', 1, now],
+      ['liv_6', 'vid_6', 'ts_ticksixticksixticksixt', 2, null]
+    ] as const
+    for (const [id, videoId, key, slot, closesAt] of streams) {
+      await db
+        .insertInto('videos')
+        .values({
+          id: videoId,
+          game_id: 'gam_tick',
+          kind: 'live',
+          title: `Angle ${slot}`,
+          storage: 'local',
+          status: 'processing',
+          hidden: true,
+          created_at: now,
+          updated_at: now
+        })
+        .execute()
+      await db
+        .insertInto('live_streams')
+        .values({
+          id,
+          game_id: 'gam_tick',
+          team_id: 'tem_home',
+          user_id: owner.userId,
+          key_hash: hashToken(key),
+          key_prefix: key.slice(0, 8),
+          key_cipher: sealSecret(SECRET, key),
+          state: 'idle',
+          slot,
+          opens_at: new Date(now.getTime() - 3_600_000),
+          closes_at: closesAt,
+          video_id: videoId,
+          created_at: now,
+          updated_at: now
+        })
+        .execute()
+    }
+    const blocked = liveVideoDir(mediaRoot, 'vid_6')
+    await mkdir(join(blocked, '..'), { recursive: true })
+    await writeFile(blocked, 'not a directory')
+
+    const real = db
+    const failing = new Proxy(real, {
+      get(target, property) {
+        if (property === 'updateTable') {
+          return (table: string) => {
+            if (table === 'live_streams') throw new Error('connection lost')
+            return target.updateTable(table as 'live_streams')
+          }
+        }
+        const value = Reflect.get(target, property) as unknown
+        return typeof value === 'function'
+          ? (value as (...args: unknown[]) => unknown).bind(target)
+          : value
+      }
+    })
+    const unhandled: unknown[] = []
+    const record = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', record)
+    try {
+      let thrown: unknown
+      await sync({ ...options, db: failing }).catch((error: unknown) => {
+        thrown = error
+      })
+      for (let i = 0; i < 10; i++)
+        await new Promise(resolve => setImmediate(resolve))
+      // The tick says what stopped it, and the finish it had started was
+      // waited for and caught rather than left to fail on its own.
+      expect((thrown as NodeJS.ErrnoException | undefined)?.code).equals(
+        'EEXIST'
+      )
+      expect(unhandled).deep.equals([])
+    } finally {
+      process.off('unhandledRejection', record)
+      await rm(blocked, { force: true })
+    }
+
+    // With the database back, the next tick finishes it.
+    await sync(options)
+    const ended = await real
+      .selectFrom('live_streams')
+      .select('state')
+      .where('id', '=', 'liv_5')
+      .executeTakeFirstOrThrow()
+    expect(ended.state).equals('ended')
+  })
 })
