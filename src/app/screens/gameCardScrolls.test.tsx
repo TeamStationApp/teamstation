@@ -75,15 +75,20 @@ describe('the game page’s card', function () {
     expect(pane.contains(pill('Videos'))).equals(true)
     expect(pane.textContent).includes('Owls')
     // And they come first in that scroller, before the block that sticks.
-    const sticky = Array.from(pane.querySelectorAll<HTMLElement>('div')).find(
-      node => node.style.position === 'sticky'
+    const sticky = pane.querySelector<HTMLElement>(
+      '[data-testid="event-pegged-video"]'
     )
     if (sticky == null) throw new Error('no pegged player block')
-    const content = sticky.parentElement
+    const content = sticky.parentElement?.parentElement
     const card = content?.firstElementChild
     expect(card).not.equals(sticky)
     expect(card?.textContent).includes('Owls')
-    expect(card?.contains(pill('Box score'))).equals(true)
+    expect(card?.contains(pill('Box score'))).equals(false)
+    const band = pane.querySelector<HTMLElement>(
+      '[data-testid="event-pill-band"]'
+    )!
+    expect(band.contains(pill('Box score'))).equals(true)
+    expect(band.style.position).equals('sticky')
   })
 
   it('scrolls with the box score too, from the same place at the top', async function () {
