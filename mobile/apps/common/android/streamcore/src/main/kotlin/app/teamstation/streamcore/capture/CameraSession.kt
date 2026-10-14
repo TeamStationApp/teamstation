@@ -408,7 +408,9 @@ class CameraSession(private val context: Context) {
                 availableFormats = descriptors,
                 activeFormat = wanted,
                 mapping = mapping.extendedBySoftwareZoom(),
-                failure = null,
+                // A failure stands until the repeating request runs ([startRepeating]): cleared here,
+                // a camera lost and opening again read as back before it was, and one whose open
+                // never called back could not be asked to open again.
                 // Start at the wide lens rather than the ultra-wide: 1x is what an operator
                 // pointing a phone at a field expects to see, and 0.5x on a multi-lens camera is a
                 // noticeably distorted framing.
@@ -538,7 +540,7 @@ class CameraSession(private val context: Context) {
         requestBuilder = builder
         try {
             configured.setRepeatingRequest(builder.build(), null, handler)
-            publish(state.copy(isRunning = true, isInterrupted = false, interruptionReason = null))
+            publish(state.copy(isRunning = true, isInterrupted = false, interruptionReason = null, failure = null))
         } catch (error: Exception) {
             publish(state.copy(failure = "could not start capture: ${error.message}"))
         }
