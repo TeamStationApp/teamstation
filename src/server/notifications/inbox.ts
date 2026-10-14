@@ -430,17 +430,20 @@ export async function inbox(
         : isNews(row)
   )
   if (options.cursor != null) {
-    const [time, id] = options.cursor.split('|')
-    if (!Number.isFinite(Date.parse(time)) || id == null)
+    // The last row of the page before, rank and all, so a page that ended
+    // among the reminders carries on there even when that reminder has been
+    // dismissed since. A cursor without a rank is from before reminders were
+    // listed first, when every row was of the second rank.
+    const parts = options.cursor.split('|')
+    const [rankText, time, id] = parts.length === 2 ? ['1', ...parts] : parts
+    if (
+      (rankText !== '0' && rankText !== '1') ||
+      !Number.isFinite(Date.parse(time)) ||
+      id == null ||
+      parts.length > 3
+    )
       throw forbidden('Invalid notification cursor')
-    // The cursor names the last row of the page before; its rank is that
-    // row's own, so a page that ended among the reminders carries on there.
-    const named = projected.find(row => row.requestId === id)
-    const at = {
-      rank: named == null ? 1 : rankOf(named),
-      sentAt: time,
-      requestId: id
-    }
+    const at = { rank: Number(rankText), sentAt: time, requestId: id }
     visible = visible.filter(
       row =>
         compareRows(
@@ -457,7 +460,7 @@ export async function inbox(
     hasPending,
     nextCursor:
       visible.length > limit && last != null
-        ? `${last.sentAt}|${last.requestId}`
+        ? `${rankOf(last)}|${last.sentAt}|${last.requestId}`
         : null
   }
 }
