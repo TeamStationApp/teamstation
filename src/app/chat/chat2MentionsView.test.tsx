@@ -208,6 +208,63 @@ async function choose(id: number): Promise<void> {
 
 const token = { userId: 2, start: 0, end: 12, label: '@Aaron Judge' }
 describe('current-member mention picker', function () {
+  for (const width of [390, 1440])
+    it(`anchors the glass title and Cancel above Search outside scroll flow (${width})`, async function () {
+      restoreViewport = measureChatTestViewport({ width, height: 844 })
+      let closed = 0
+      const node = await render(
+        <MentionPicker
+          members={[member(2, 'Aaron Judge')]}
+          onSelect={() => {}}
+          onClose={() => {
+            closed++
+          }}
+        />
+      )
+      const title = [...node.querySelectorAll<HTMLElement>('*')].find(
+        element =>
+          element.childElementCount === 0 &&
+          element.textContent === 'Mention a member'
+      )!
+      const cancel = button('Cancel')
+      let header = title.parentElement!
+      while (!header.contains(cancel)) header = header.parentElement!
+      const slot = header.parentElement!
+      const transition = node.querySelector<HTMLElement>(
+        '[data-testid="chat-picker-transition"]'
+      )!
+      const scroll = node.querySelector<HTMLElement>(
+        '[data-testid="chat-picker-content"]'
+      )!
+      expect(getComputedStyle(slot).position).equals('absolute')
+      expect(getComputedStyle(slot).top).equals('0px')
+      expect(getComputedStyle(slot).left).equals('0px')
+      expect(getComputedStyle(slot).right).equals('0px')
+      expect(slot.parentElement).equals(transition)
+      expect(scroll.parentElement).equals(transition)
+      expect(slot.contains(title) && slot.contains(cancel)).equals(true)
+      const search = labelled('Search members')
+      expect(scroll.contains(search)).equals(true)
+      expect(document.activeElement).equals(search)
+      const measured = header as HTMLElement & {
+        __reactLayoutHandler: (event: unknown) => void
+      }
+      for (const height of [76, 128]) {
+        await act(async () => {
+          measured.__reactLayoutHandler({
+            nativeEvent: { layout: { x: 0, y: 0, width, height } }
+          })
+        })
+        expect(getComputedStyle(scroll.firstElementChild!).paddingTop).equals(
+          `${height + tsBallpark.rem(1)}px`
+        )
+        expect(getComputedStyle(slot).top).equals('0px')
+        expect(document.activeElement).equals(search)
+      }
+      await click(cancel)
+      expect(closed).equals(1)
+    })
+
   for (const reduced of [false, true])
     it(`enters the shared full-height scene from below with a reduced-motion fade (${reduced})`, async function () {
       const saved = Object.getOwnPropertyDescriptor(

@@ -142,24 +142,29 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
           >
             {props.children}
           </ScrollView>
-          <AppHeader
-            title={props.label}
-            contentHeight={Math.max(
-              theme.rem(3),
-              theme.rem(2.25) * window.fontScale
-            )}
-            onHeight={setHeaderHeight}
-            nav={
-              <Button
-                label={lstrings.chat_cancel}
-                kind="text"
-                textColor={theme.dangerColor}
-                onPress={() => {
-                  close.current()
-                }}
-              />
-            }
-          />
+          <View
+            testID="chat-picker-header"
+            style={{ position: 'absolute', top: 0, left: 0, right: 0 }}
+          >
+            <AppHeader
+              title={props.label}
+              contentHeight={Math.max(
+                theme.rem(3),
+                theme.rem(2.25) * window.fontScale
+              )}
+              onHeight={setHeaderHeight}
+              nav={
+                <Button
+                  label={lstrings.chat_cancel}
+                  kind="text"
+                  textColor={theme.dangerColor}
+                  onPress={() => {
+                    close.current()
+                  }}
+                />
+              }
+            />
+          </View>
         </Animated.View>
       </View>
     )
