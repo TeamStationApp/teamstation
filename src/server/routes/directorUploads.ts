@@ -8,6 +8,7 @@ import type { Kysely, Selectable } from 'kysely'
 import {
   badRequest,
   conflict,
+  forbidden,
   notFound,
   unauthorized
 } from '../../common/errors'
@@ -98,6 +99,13 @@ const asNewUpload = asObject({
 /** What an upload of an angle that is still on the air is told. */
 export const STOP_STREAMING_FIRST =
   'Stop streaming this angle before uploading its recording'
+
+/**
+ * A recording of a stream another account owns: a take made on a phone that
+ * somebody else has since signed in on. It is theirs to upload.
+ */
+export const ANOTHER_ACCOUNTS_RECORDING =
+  'This recording was made on another account. Sign in as that account to upload it'
 
 /** The largest single part this will take, with room over `PART_SIZE`. */
 const PART_LIMIT = PART_SIZE + 1024 * 1024
@@ -234,6 +242,21 @@ export function directorUploadRoutes(
               .where('local_recording', '<>', 'uploaded')
               .executeTakeFirst()
       if (named?.state === 'publishing') throw conflict(STOP_STREAMING_FIRST)
+      // Somebody else's stream is refused, not ignored. Opened unnamed, the
+      // take would go down the coverage rule as this account's upload — it
+      // can hide this account's own live copies — and its maker's reminder
+      // would never settle. Any other stream it may not use is ignored, as
+      // before: those are all this account's own, or none at all.
+      if (named == null && body.liveStreamId != null) {
+        const owner = await db
+          .selectFrom('live_streams')
+          .select('user_id as userId')
+          .where('id', '=', body.liveStreamId)
+          .executeTakeFirst()
+        if (owner != null && owner.userId !== actor.userId) {
+          throw forbidden(ANOTHER_ACCOUNTS_RECORDING)
+        }
+      }
 
       const uploadId = makeId('directorUpload')
       await ensureUploadDir(options.uploadsDir, uploadId)
