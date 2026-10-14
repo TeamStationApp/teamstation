@@ -1033,5 +1033,47 @@ extension PhoneStreamTests {
       await engine.close()
       sink.drop()
     }
+
+    @Test("Leaving the camera and recording again continues the same take and redials the held stream")
+    func leavingAndRecordingAgainContinuesTheSameTake() async throws {
+      StubServer.reset()
+      let sink = TestRTMPSink()
+      try sink.start()
+      StubServer.with { $0.streamURL = sink.url }
+      let rig = EngineRig(root: try scratchDirectory())
+      let engine = try rig.engine()
+      try engine.open(angleName: Self.angle)
+      try engine.startRecording(
+        rtmpUrl: sink.url, liveStreamId: Self.stream, gameId: Self.game,
+        angleName: Self.angle, request: rig.request
+      )
+      #expect(await waitUntil { engine.status.phase == "live" })
+      try await Task.sleep(for: .seconds(1))
+      let id = try #require(try engine.recordings().first).recordingID
+      await engine.stopRecording()
+      await engine.close()
+
+      let again = try rig.engine()
+      try again.open(angleName: Self.angle)
+      #expect(!again.isStreaming)
+      try again.startRecording(
+        rtmpUrl: sink.url, liveStreamId: Self.stream, gameId: Self.game,
+        angleName: Self.angle, request: rig.request
+      )
+      #expect(await waitUntil { again.status.phase == "live" })
+      sink.drop()
+      #expect(await waitUntil {
+        StubServer.read { requests in
+          requests.streamRequests.contains { $0["heldStreamId"] as? String == Self.stream }
+        }
+      })
+      try await Task.sleep(for: .seconds(1))
+      await again.stopRecording()
+      let takes = try again.recordings().filter { $0.liveStreamId == Self.stream }
+      #expect(takes.count == 1)
+      #expect(takes.first?.recordingID == id)
+      #expect(takes.first?.parts == 2)
+      await again.close()
+    }
   }
 }
