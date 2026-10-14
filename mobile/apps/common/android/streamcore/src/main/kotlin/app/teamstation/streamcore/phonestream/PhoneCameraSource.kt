@@ -67,6 +67,9 @@ interface PhoneCaptureDevice {
     fun configure(position: CameraPosition, settings: CaptureSettings)
     fun start()
     fun close()
+
+    /** Opens the camera again after it was lost: taken by another app, or failed. */
+    fun reopen() = Unit
     fun flip()
     fun setDeviceZoom(value: Double)
     fun setDisplayedZoom(value: Double)
@@ -94,6 +97,7 @@ class CameraSessionDevice(context: Context) : PhoneCaptureDevice {
     override fun configure(position: CameraPosition, settings: CaptureSettings) = session.configure(position, settings)
     override fun start() = session.start()
     override fun close() = session.close()
+    override fun reopen() = session.reopen()
     override fun flip() = session.flip()
     override fun setDeviceZoom(value: Double) = session.setDeviceZoom(value)
     override fun setDisplayedZoom(value: Double) = session.setDisplayedZoom(value)

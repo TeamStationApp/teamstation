@@ -116,13 +116,26 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     private var finishing: Job? = null
 
     /**
-     * A take whose part was cut short (its encoder failed) and that goes on as its next part once the
-     * cut part is finished. Stop closes it as it stands.
+     * A take whose part was cut short (its encoder failed, or the camera was lost) and that goes on as
+     * its next part once the cut part is finished and the camera is back. Stop closes it as it stands.
      */
     private var pausedTakeID: Long? = null
 
     /** Parts opened again after their encoder failed, this recording; past [MAX_ENCODER_RECOVERIES] the part stops instead. */
     private var encoderRecoveries = 0
+
+    /**
+     * The camera stopped on its own (another app took it, or it failed) and has not come back. The
+     * status says `cameraUnavailable`, Record is refused, and a part being written pauses rather than
+     * fill with the last picture held.
+     */
+    private var cameraLost = false
+    private var cameraReopen: Job? = null
+
+    /** How many times the lost camera was asked to open again, for a test. */
+    @Volatile
+    internal var cameraReopens = 0
+        private set
 
     /**
      * Set as a session starts streaming, until TeamStation has been told when its first published
@@ -222,11 +235,13 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         setAudioEnabledNow(audioEnabled)
         if (isOpen) {
             setDisabledLensesNow(disabledLenses)
+            // The screen came back while the camera was lost: try it again now.
+            if (cameraLost) reopenCamera()
             return@onEngine
         }
         this.disabledLenses = disabledLenses
         val opened = environment.makeSource()
-        opened.device.onStateChange = { state -> scope.launch { cameraState = state } }
+        opened.device.onStateChange = { state -> scope.launch { cameraChanged(state) } }
         opened.device.configure(CameraPosition.BACK, PhoneStreamProfile.captureSettings(disabledLenses))
         val now = environment.clock.now()
         programme.start(now)
@@ -247,11 +262,66 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         awaitFinishing()
         statusJob?.cancel()
         statusJob = null
+        cameraReopen?.cancel()
+        cameraReopen = null
+        cameraLost = false
+        if (lastError == PhoneStreamError.CAMERA_UNAVAILABLE) lastError = null
         source?.stop()
         source = null
         mix.stop()
         isOpen = false
         publishStatus()
+    }
+
+    // MARK: - A camera that stops on its own
+
+    /**
+     * Each change of the camera's state. A camera lost while the engine is open (taken by another app,
+     * or failed) is asked to open again, sooner and then less often, until it is back; meanwhile the
+     * status says so, Record is refused, and a part being written is finished and continued as the
+     * take's next part once the camera is back, so no stretch of the last picture held is recorded as
+     * if it were live. TS Director's phone build restarts its capture the same way.
+     */
+    private suspend fun cameraChanged(state: CameraSession.State) {
+        cameraState = state
+        val lost = isOpen && cameraIsLost(state)
+        if (lost == cameraLost) return
+        cameraLost = lost
+        if (lost) {
+            telemetry.recordError("camera lost: ${state.interruptionReason ?: state.failure ?: "stopped"}")
+            lastError = PhoneStreamError.CAMERA_UNAVAILABLE
+            startCameraReopen()
+            publishStatus()
+            recordingTakeID?.let { id ->
+                pausedTakeID = id
+                finishPart(environment.clock.now(), closingTake = false)
+                publishStatus()
+            }
+        } else {
+            cameraReopen?.cancel()
+            cameraReopen = null
+            if (lastError == PhoneStreamError.CAMERA_UNAVAILABLE) lastError = null
+            publishStatus()
+            resumePausedPart()
+        }
+    }
+
+    private fun startCameraReopen() {
+        cameraReopen?.cancel()
+        cameraReopen = scope.launch {
+            var wait = environment.cameraReopenSeconds
+            while (isActive && cameraLost && isOpen) {
+                delay((wait * 1000).toLong())
+                if (!cameraLost || !isOpen) break
+                reopenCamera()
+                wait = minOf(wait * 2, CAMERA_REOPEN_MAX_SECONDS)
+            }
+        }
+    }
+
+    private fun reopenCamera() {
+        cameraReopens += 1
+        source?.device?.reopen()
     }
 
     /** Where the preview draws, straight from the capture: a `TextureView`'s surface. */
@@ -288,6 +358,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     ) = onEngine {
         awaitFinishing()
         if (!isOpen || take != null) throw PhoneStreamException(PhoneStreamError.NOT_READY)
+        // Nothing to record from: the screen shows why.
+        if (cameraLost) throw PhoneStreamException(PhoneStreamError.CAMERA_UNAVAILABLE)
         val existing = catalog.current(liveStreamId)
         if (existing != null && (existing.hasPendingUpload || uploads.containsKey(existing.recordingID))) {
             throw PhoneStreamException(PhoneStreamError.UPLOAD_IN_PROGRESS)
@@ -447,8 +519,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     private suspend fun resumePausedPart() {
         awaitFinishing()
         val id = pausedTakeID ?: return
-        // Stopped meanwhile: Stop closes the take.
-        if (take == null) return
+        // Stopped meanwhile, Stop closes the take; with the camera lost it waits for the camera.
+        if (take == null || cameraLost) return
         pausedTakeID = null
         if (!continuePart(id)) {
             runCatching { recordingSession.close(environment.clock.now()) }
@@ -596,7 +668,11 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
             resumed?.recordingID ?: catalog.current(live.liveStreamId)?.recordingID
         )
         if (resumed != null) {
-            if (environment.storageRules.canStart(environment.freeDiskBytes())) {
+            if (cameraLost) {
+                // Nothing to record from yet: the take goes on as its next part once the camera is back.
+                recordingSession.adopt(resumed)
+                pausedTakeID = resumed.recordingID
+            } else if (environment.storageRules.canStart(environment.freeDiskBytes())) {
                 try {
                     recordingSession.resume(resumed, environment.clock.now(), PhoneStreamProfile.recordingSettings)
                     openRecordingVideo()
@@ -1019,6 +1095,12 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
 
         /** How many times one recording's part is opened again after its encoder failed, before it stops instead. */
         const val MAX_ENCODER_RECOVERIES = 3
+
+        /** The longest wait between two tries at opening a lost camera. */
+        const val CAMERA_REOPEN_MAX_SECONDS = 30.0
+
+        /** Whether the camera stopped on its own: interrupted, or failed, and not running. */
+        fun cameraIsLost(state: CameraSession.State): Boolean = !state.isRunning && (state.isInterrupted || state.failure != null)
 
         /**
          * How many times the live start is offered to TeamStation, [LIVE_START_RETRY_MILLIS] apart,

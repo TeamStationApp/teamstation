@@ -35,6 +35,12 @@ enum class PhoneStreamError(val rawValue: String) {
     INSUFFICIENT_STORAGE("insufficientStorage"),
 
     /**
+     * The camera stopped on its own (another app took it, or it failed) and is being opened again:
+     * Record is refused, and a recording pauses until it is back.
+     */
+    CAMERA_UNAVAILABLE("cameraUnavailable"),
+
+    /**
      * The take of this stream is being uploaded, or its upload was cut off and will resume: no part
      * may be added after the export being sent was made.
      */
