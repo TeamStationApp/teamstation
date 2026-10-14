@@ -27,6 +27,8 @@ import { ChatDropTarget } from './ChatDropTarget'
 import * as platformFiles from './chatFiles'
 import type { PickedFile, PickSource } from './chatFileTypes'
 import { anchorAfterChromeChange } from './chatLayoutModel'
+import { endsIncomingRun } from './chatMessageRuns'
+import type { MessageSource } from './chatMessageSource'
 import {
   actionsFor,
   approvalsIn,
@@ -190,6 +192,13 @@ export function ConversationScreen(
   const [reported, setReported] = useState(false)
   const [menu, setMenu] = useState<MessageView | undefined>(undefined)
   const [menuAnchor, setMenuAnchor] = useState<unknown>(undefined)
+  const [menuSource, setMenuSource] = useState<MessageSource>()
+  useEffect(() => {
+    if (props.active === false) {
+      setMenu(undefined)
+      setMenuSource(undefined)
+    }
+  }, [props.active])
   const [pinsOpen, setPinsOpen] = useState(false)
   const [highlight, setHighlight] = useState<string | undefined>(undefined)
   const jumpGeneration = useRef(0)
@@ -301,6 +310,10 @@ export function ConversationScreen(
   const atBottom = useRef(
     !scrolled.current.hasPosition || scrolled.current.followNewest
   )
+  const menuReading = useRef<
+    | { offset: number; anchor: { id: string; relativeY: number } | undefined }
+    | undefined
+  >(undefined)
   const readingAnchor = useCallback(
     (
       positions: Map<string, number>
@@ -740,6 +753,7 @@ export function ConversationScreen(
       !paneActive.current ||
       current?.conversation.id !== conversationId ||
       !scrolled.current.hasPosition ||
+      menuReading.current != null ||
       scrolled.current.followNewest ||
       restoreTarget.current != null ||
       restoreAnchor.current != null ||
@@ -914,6 +928,26 @@ export function ConversationScreen(
 
   const restoreForGeometry = useRef(restoreReadingAnchor)
   restoreForGeometry.current = restoreReadingAnchor
+  useEffect(() => {
+    if (
+      menuReading.current == null ||
+      (menu != null &&
+        props.active !== false &&
+        view?.messages.some(message => message.id === menu.id) === true)
+    )
+      return
+    menuReading.current = undefined
+    restoreTarget.current = undefined
+    restoreAnchor.current = undefined
+    restoringAnchor.current = false
+    restoreAnchorDirty.current = false
+    // Dismissal resumes following only if the reader still occupies the end.
+    // Arrivals while the actions were open must remain below that reader.
+    scrolled.current.followNewest =
+      scrolled.current.offset + scrolled.current.height >=
+      scrolled.current.content - 48
+    atBottom.current = scrolled.current.followNewest
+  }, [menu, view?.messages, props.active])
   const previousClearances = useRef({
     top: viewport.readableTop,
     bottom: viewport.contentBottom
@@ -935,6 +969,11 @@ export function ConversationScreen(
       !scrolled.current.hasPosition
     )
       return
+    if (menuReading.current != null) {
+      restoreAnchor.current = menuReading.current.anchor
+      restoreForGeometry.current()
+      return
+    }
     if (scrolled.current.followNewest || atBottom.current) {
       scroller.current?.scrollToEnd({ animated: false })
       return
@@ -1277,13 +1316,14 @@ export function ConversationScreen(
 
   const typing = typingNames(view.typing, lstrings.chat_someone)
   const currentMenu =
-    menu == null
+    menu == null || props.active === false
       ? undefined
       : view.messages.find(message => message.id === menu.id)
   const selectedFor = (action: MessageAction): MessageView | undefined => {
     const current = engine.view(conversationId)
     const selected = current?.messages.find(message => message.id === menu?.id)
     if (
+      props.active === false ||
       current == null ||
       selected == null ||
       !actionsFor(selected, current).includes(action)
@@ -1505,6 +1545,16 @@ export function ConversationScreen(
               restoreExhaustedPage()
               previous.content = height
             }
+            const held = menuReading.current
+            if (held != null) {
+              scrolled.current.content = height
+              if (held.anchor != null) {
+                restoreAnchor.current = held.anchor
+                restoreReadingAnchor()
+              } else
+                scroller.current?.scrollTo({ y: held.offset, animated: false })
+              return
+            }
             if (restoreTarget.current != null) {
               scrolled.current.content = height
               scroller.current?.scrollTo({
@@ -1630,10 +1680,31 @@ export function ConversationScreen(
                 onJump={jumpTo}
                 highlighted={highlight === message.id}
                 gestureGeneration={gestureGeneration}
-                onLongPress={(pressed, anchor) => {
+                showSenderAvatar={endsIncomingRun(
+                  view.messages,
+                  index,
+                  notices.has(index + 1)
+                )}
+                onLongPress={(pressed, anchor, source) => {
                   if (actionsFor(pressed, view).length > 0) {
+                    const visible = readMessageScrollPosition(
+                      scroller.current,
+                      messageRefs.current
+                    )
+                    menuReading.current = {
+                      offset: visible?.offset ?? scrolled.current.offset,
+                      anchor:
+                        visible?.anchor ??
+                        readingAnchor(messagePositions.current)
+                    }
+                    scrolled.current.offset = menuReading.current.offset
+                    scrolled.current.anchor = menuReading.current.anchor
+                    scrolled.current.hasPosition = true
+                    scrolled.current.followNewest = false
+                    atBottom.current = false
                     setMenu(pressed)
                     setMenuAnchor(anchor)
+                    setMenuSource(source)
                   }
                 }}
                 onReact={pressed => {
@@ -1755,6 +1826,7 @@ export function ConversationScreen(
           actions={actionsFor(currentMenu, view)}
           desktop={isFinePointer() && menuAnchor != null}
           anchor={menuAnchor}
+          source={menuSource}
           selected={
             <MessageBubble
               message={currentMenu}
@@ -1762,9 +1834,13 @@ export function ConversationScreen(
               members={view.members}
               engine={engine}
               files={files}
-              maxWidth={bubbleWidth}
+              maxWidth={Math.min(
+                bubbleWidth,
+                menuSource?.bounds.width ?? bubbleWidth
+              )}
               swipe={false}
               selected
+              pictures={menuSource?.pictures?.()}
               actions={[]}
               userId={userId}
               pinned={view.pins?.some(pin => pin.messageId === currentMenu.id)}
@@ -1775,12 +1851,12 @@ export function ConversationScreen(
           }
           onClose={() => {
             setMenu(undefined)
+            setMenuSource(undefined)
           }}
           onReply={() => {
             const selected = selectedFor('reply')
             if (selected == null) return
             reply(selected)
-            setMenu(undefined)
           }}
           onReact={emoji => {
             const selected = selectedFor('react')
@@ -1792,12 +1868,10 @@ export function ConversationScreen(
                 reaction => reaction.emoji === emoji && reaction.mine
               )
             )
-            setMenu(undefined)
           }}
           onMoreEmoji={() => {
             const selected = selectedFor('react')
             if (selected != null) setReacting(selected)
-            setMenu(undefined)
           }}
           onCopy={async () => {
             const selected = selectedFor('copy')
@@ -1807,7 +1881,6 @@ export function ConversationScreen(
           onPin={pinned => {
             const selected = selectedFor(pinned ? 'pin' : 'unpin')
             if (selected == null) return
-            setMenu(undefined)
             run(async () => {
               if (engine.pinMessage == null) throw new Error('Pins unavailable')
               await engine.pinMessage(conversationId, selected.id, pinned)
@@ -1816,7 +1889,6 @@ export function ConversationScreen(
           onDelete={() => {
             const selected = selectedFor('delete')
             if (selected == null) return
-            setMenu(undefined)
             run(async () => {
               await engine.deleteMessage(conversationId, selected.id)
             })
@@ -1824,7 +1896,6 @@ export function ConversationScreen(
           onDeleteForEveryone={() => {
             const selected = selectedFor('deleteForEveryone')
             if (selected == null) return
-            setMenu(undefined)
             run(async () => {
               await engine.moderatorDelete(conversationId, selected.id)
             })

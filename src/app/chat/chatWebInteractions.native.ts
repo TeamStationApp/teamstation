@@ -16,7 +16,11 @@ export function bindMessageTooltips(_view: unknown): () => void {
 export function isRestoringPopupFocus(): boolean {
   return false
 }
-export function bindPopupKeys(_view: unknown, _close: () => void): () => void {
+export function bindPopupKeys(
+  _view: unknown,
+  _close: () => void,
+  _trap = true
+): () => void {
   return () => {}
 }
 export function isFinePointer(): boolean {

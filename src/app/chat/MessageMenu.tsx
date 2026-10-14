@@ -4,11 +4,12 @@ import { Pressable, Text, View } from 'react-native'
 import { Button } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { ChatActionOverlay } from './ChatActionOverlay'
 import { ChatAnchoredMenu } from './ChatAnchoredMenu'
+import type { MessageSource } from './chatMessageSource'
 import { type MessageAction, QUICK_REACTIONS } from './chatModel'
 import { focusPopupControl } from './chatWebInteractions'
 import type { MessageView } from './engine/apply'
+import { MessageActionOverlay } from './MessageActionOverlay'
 
 export interface MessageMenuProps {
   message: MessageView
@@ -16,6 +17,7 @@ export interface MessageMenuProps {
   desktop?: boolean
   anchor?: unknown
   selected?: React.ReactNode
+  source?: MessageSource
   onReply: () => void
   onReact: (emoji: string) => void
   onMoreEmoji: () => void
@@ -33,7 +35,60 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState(false)
   const [copying, setCopying] = useState(false)
+  const live = useRef(true)
+  const latest = useRef(props)
+  latest.current = {
+    ...props,
+    onReply: props.onReply,
+    onReact: props.onReact,
+    onMoreEmoji: props.onMoreEmoji,
+    onCopy: props.onCopy,
+    onPin: props.onPin,
+    onDelete: props.onDelete,
+    onDeleteForEveryone: props.onDeleteForEveryone,
+    onClose: props.onClose
+  }
+  const [closing, setClosing] = useState(false)
+  const [focusHandoff, setFocusHandoff] = useState(false)
+  const closingNow = useRef(false)
+  const afterClose = useRef<(() => void) | undefined>(undefined)
+  const permissionKey = `${props.message.id}:${props.message.status}:${props.actions.join('|')}`
+  const initialPermissions = useRef(permissionKey)
+  useEffect(() => {
+    live.current = true
+    return () => {
+      live.current = false
+    }
+  }, [])
+  useEffect(() => {
+    if (permissionKey !== initialPermissions.current) latest.current.onClose()
+  }, [permissionKey])
+  const finish = (): void => {
+    if (!live.current) return
+    const after = afterClose.current
+    afterClose.current = undefined
+    latest.current.onClose()
+    after?.()
+  }
+  const dismiss = (after?: () => void): void => {
+    if (!live.current || closingNow.current) return
+    closingNow.current = true
+    afterClose.current = after
+    if (latest.current.desktop === true) finish()
+    else setClosing(true)
+  }
   const has = (action: MessageAction): boolean => props.actions.includes(action)
+  const invoke = (
+    action: MessageAction,
+    work: () => void,
+    focus = false
+  ): void => {
+    if (closingNow.current || !latest.current.actions.includes(action)) return
+    // Reply's focus and clipboard calls stay inside the trusted activation.
+    if (focus) setFocusHandoff(true)
+    work()
+    dismiss()
+  }
   const name = props.message.mine
     ? lstrings.chat_you
     : (props.message.senderName ?? lstrings.chat_former_member)
@@ -46,7 +101,9 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
           accessibilityRole="button"
           accessibilityLabel={sprintf(lstrings.chat_react, emoji)}
           onPress={() => {
-            props.onReact(emoji)
+            invoke('react', () => {
+              latest.current.onReact(emoji)
+            })
           }}
           style={styles.reaction}
         >
@@ -56,7 +113,12 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={lstrings.chat_more_emoji}
-        onPress={props.onMoreEmoji}
+        onPress={() => {
+          if (has('react'))
+            dismiss(() => {
+              latest.current.onMoreEmoji()
+            })
+        }}
         style={styles.reaction}
       >
         <Text style={styles.emoji}>＋</Text>
@@ -65,10 +127,15 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
   )
   const children = confirming ? (
     <DeleteConfirmation
-      onClose={props.onClose}
+      onClose={() => {
+        dismiss()
+      }}
       onDelete={() => {
-        if (has('delete')) props.onDelete()
-        else props.onDeleteForEveryone?.()
+        const action = has('delete') ? 'delete' : 'deleteForEveryone'
+        invoke(action, () => {
+          if (action === 'delete') latest.current.onDelete()
+          else latest.current.onDeleteForEveryone?.()
+        })
       }}
     />
   ) : (
@@ -77,7 +144,15 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
         <Button
           label={lstrings.chat_reply}
           kind="text"
-          onPress={props.onReply}
+          onPress={() => {
+            invoke(
+              'reply',
+              () => {
+                latest.current.onReply()
+              },
+              true
+            )
+          }}
         />
       )}
       {has('copy') && (
@@ -90,22 +165,31 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
           kind="text"
           disabled={copying}
           onPress={() => {
+            if (closingNow.current || !latest.current.actions.includes('copy'))
+              return
             setError(false)
             setCopying(true)
             // Invoke before teardown: browser clipboard requires this user gesture.
-            const work = props.onCopy?.()
+            let work: Promise<void> | undefined
+            try {
+              work = latest.current.onCopy?.()
+            } catch {
+              work = undefined
+            }
             if (work == null) {
               setCopying(false)
               setError(true)
               return
             }
             work
-              .then(props.onClose)
+              .then(() => {
+                dismiss()
+              })
               .catch(() => {
-                setError(true)
+                if (live.current && !closingNow.current) setError(true)
               })
               .finally(() => {
-                setCopying(false)
+                if (live.current && !closingNow.current) setCopying(false)
               })
           }}
         />
@@ -114,7 +198,11 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
         <Button
           label={has('unpin') ? lstrings.chat_unpin : lstrings.chat_pin}
           kind="text"
-          onPress={() => props.onPin?.(!has('unpin'))}
+          onPress={() => {
+            invoke(has('unpin') ? 'unpin' : 'pin', () =>
+              latest.current.onPin?.(!has('unpin'))
+            )
+          }}
         />
       )}
       {(has('delete') || has('deleteForEveryone')) && (
@@ -123,7 +211,7 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
           kind="text"
           textColor={theme.dangerColor}
           onPress={() => {
-            setConfirming(true)
+            if (!closingNow.current) setConfirming(true)
           }}
         />
       )}
@@ -138,17 +226,26 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
     <ChatAnchoredMenu
       anchor={props.anchor}
       label={label}
-      onClose={props.onClose}
+      onClose={() => {
+        dismiss()
+      }}
     >
       {children}
     </ChatAnchoredMenu>
   ) : (
-    <ChatActionOverlay
+    <MessageActionOverlay
       label={label}
-      onClose={props.onClose}
+      source={props.source}
+      mine={props.message.mine}
+      closing={closing}
+      focusHandoff={focusHandoff}
+      onClose={() => {
+        dismiss()
+      }}
+      onClosed={finish}
+      reactions={!confirming && has('react') ? reactions : undefined}
       selected={
         <>
-          {!confirming && reactions}
           {props.selected ?? (
             <View style={styles.selected}>
               <Text style={styles.detail}>{name}</Text>
@@ -161,7 +258,7 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
       }
     >
       {children}
-    </ChatActionOverlay>
+    </MessageActionOverlay>
   )
 }
 /** The confirmation mounts inside the portal, after its controls exist. */
@@ -201,7 +298,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderRadius: theme.rem(1.5),
     backgroundColor: theme.cardBackgroundColor,
     padding: theme.rem(0.25),
-    marginBottom: theme.rem(0.5)
+    minHeight: theme.rem(3)
   },
   reaction: {
     width: theme.rem(2.5),

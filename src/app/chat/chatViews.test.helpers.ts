@@ -1,3 +1,5 @@
+import { act } from 'react'
+
 import type { MessageView } from './engine/apply'
 import type {
   ConversationListItem,
@@ -6,6 +8,66 @@ import type {
 } from './engine/engine'
 
 /** Views as the engine hands them to the chat screens, for their tests. */
+
+/** Browser fixtures supply the same public viewport measurements as a window. */
+export function measureChatTestViewport(
+  options: { width?: number; height?: number } = {}
+): () => void {
+  const element = document.documentElement
+  const saved = ['clientWidth', 'clientHeight'].map(key => ({
+    key,
+    descriptor: Object.getOwnPropertyDescriptor(element, key)
+  }))
+  Object.defineProperties(element, {
+    clientWidth: {
+      configurable: true,
+      get: () => options.width ?? window.innerWidth
+    },
+    clientHeight: {
+      configurable: true,
+      get: () => options.height ?? window.innerHeight
+    }
+  })
+  window.dispatchEvent(new window.Event('resize'))
+  return () => {
+    for (const { key, descriptor } of saved) {
+      if (descriptor == null) Reflect.deleteProperty(element, key)
+      else Object.defineProperty(element, key, descriptor)
+    }
+    window.dispatchEvent(new window.Event('resize'))
+  }
+}
+
+/** Wait for rendered geometry and public animation opacity, with a fixed bound. */
+export async function settleChatMessageActions(
+  phase?: 'open' | 'closed'
+): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const overlay = document.querySelector<HTMLElement>(
+      '[data-testid="chat-message-spotlight"]'
+    )
+    if (overlay == null) return
+    const opacity = Number(getComputedStyle(overlay.firstElementChild!).opacity)
+    const controls = overlay.querySelector<HTMLElement>(
+      '[data-testid="chat-message-spotlight-controls"]'
+    )
+    const desired =
+      phase ??
+      (getComputedStyle(overlay).pointerEvents === 'none' ? 'closed' : 'open')
+    if (
+      desired === 'closed'
+        ? opacity === 0
+        : opacity === 1 &&
+          controls != null &&
+          parseFloat(getComputedStyle(controls).height) > 0
+    )
+      return
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+  }
+  throw new Error(`Message actions did not finish their ${phase} transition`)
+}
 
 export function chat(
   over: Partial<ConversationListItem> = {}
