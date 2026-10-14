@@ -200,4 +200,5 @@ export async function syncReads(
 ): Promise<void> {
   const state = await stateOf(ctx, conversationId)
   state.reads = await ctx.client.chatReads(conversationId)
+  state.readsReady = true
 }
