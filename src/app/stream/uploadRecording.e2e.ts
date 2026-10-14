@@ -25,8 +25,8 @@
 //      no new Center Field stream exists, and Director stays off the air until
 //      it is uploaded from Director's Upload menu and started again by hand,
 //      which this waits for (step 5: a fresh Center Field stream id).
-//   Expect: the angle's stream is replaced (`localRecording` "uploaded", read
-//   through `reveal`, since a replaced stream is no longer listed); the game's
+//   Expect: the angle's stream is replaced (revoked: no longer listed, and
+//   `reveal` answers 404, as for every revoked stream); the game's
 //   video for the angle is a new one, which ffprobe reads at its playback URL
 //   as HEVC 1920×1080 at about 6 Mbit/s with no gap of more than a frame
 //   between its pictures; the other angle's live copy (TS_STREAM_OTHER_ANGLE,
@@ -80,9 +80,35 @@ const RECORDING_MBIT = 6
  * The longest step between two pictures of a video at `url`, against its
  * usual step, from the packets ffprobe reads there (no decoding).
  */
+/**
+ * The file a playback URL plays. A ready video is served as HLS: one fMP4
+ * file cut into byte ranges, of which ffmpeg's HLS reader reads only the
+ * first (180 pictures of a 90 s upload), so the file itself, the media
+ * playlist's EXT-X-MAP, is read instead.
+ */
+async function wholeFile(playback: string): Promise<string> {
+  const master = await (await fetch(playback)).text()
+  if (!master.startsWith('#EXTM3U')) return playback
+  const mediaLine = master
+    .split('\n')
+    .find(line => line.trim() !== '' && !line.startsWith('#'))
+  assert(mediaLine != null, 'the HLS playlist names its media playlist')
+  const mediaUrl = new URL(mediaLine.trim(), playback).toString()
+  const media = await (await fetch(mediaUrl)).text()
+  const map = /#EXT-X-MAP:URI="([^"]+)"/.exec(media)?.[1]
+  assert(map != null, 'the media playlist names its file')
+  return new URL(map, mediaUrl).toString()
+}
+
+/**
+ * The picture packets of the playback URL: how many, the usual step and the
+ * longest one between them, and their bit rate. Read from the packets because
+ * the URL can be an HLS playlist, whose `format=bit_rate` is the playlist's.
+ */
 async function longestStep(
-  url: string
-): Promise<{ frames: number; step: number; longest: number }> {
+  playback: string
+): Promise<{ frames: number; step: number; longest: number; mbit: number }> {
+  const url = await wholeFile(playback)
   const { stdout } = await run(
     'ffprobe',
     [
@@ -91,22 +117,29 @@ async function longestStep(
       '-select_streams',
       'v:0',
       '-show_entries',
-      'packet=pts_time',
+      'packet=pts_time,size',
       '-of',
       'csv=p=0',
       url
     ],
     { timeout: 600000, maxBuffer: 1 << 28 }
   )
-  const times = stdout
+  const packets = stdout
     .split('\n')
-    .map(line => Number(line.split(',')[0]))
-    .filter(time => Number.isFinite(time))
-    .sort((a, b) => a - b)
+    .map(line => line.split(',').map(Number))
+    .filter(([time, size]) => Number.isFinite(time) && Number.isFinite(size))
+  const times = packets.map(([time]) => time).sort((a, b) => a - b)
+  const bytes = packets.reduce((sum, [, size]) => sum + size, 0)
   assert(times.length > 1, 'the uploaded copy has pictures')
   const steps = times.slice(1).map((time, index) => time - times[index])
   const step = [...steps].sort((a, b) => a - b)[Math.floor(steps.length / 2)]
-  return { frames: times.length, step, longest: Math.max(...steps) }
+  const span = times[times.length - 1] - times[0] + step
+  return {
+    frames: times.length,
+    step,
+    longest: Math.max(...steps),
+    mbit: (bytes * 8) / span / 1e6
+  }
 }
 
 async function main(): Promise<void> {
@@ -310,14 +343,13 @@ async function main(): Promise<void> {
     say(probe)
     assert(probe.includes('codec_name=hevc'), 'the uploaded copy is HEVC')
     assert(probe.includes('width=1920|height=1080'), 'and 1920×1080')
-    const bitRate = Number(/bit_rate=(\d+)/.exec(probe)?.[1] ?? 'NaN') / 1e6
+    const { frames, step, longest, mbit: bitRate } = await longestStep(url)
+    say(
+      `$ ffprobe -show_entries packet=pts_time,size: ${frames} pictures, step ${(step * 1000).toFixed(1)} ms, longest ${(longest * 1000).toFixed(1)} ms, ${bitRate.toFixed(2)} Mbit/s`
+    )
     assert(
       bitRate >= RECORDING_MBIT * 0.75 && bitRate <= RECORDING_MBIT * 1.25,
       `the uploaded copy is about ${RECORDING_MBIT} Mbit/s (${bitRate.toFixed(2)})`
-    )
-    const { frames, step, longest } = await longestStep(url)
-    say(
-      `$ ffprobe -show_entries packet=pts_time: ${frames} pictures, step ${(step * 1000).toFixed(1)} ms, longest ${(longest * 1000).toFixed(1)} ms`
     )
     assert(
       longest <= step * 2 + 0.001,
@@ -329,11 +361,14 @@ async function main(): Promise<void> {
       {},
       token
     )
-    assert.equal(revealed.status, 200, `the replaced stream ${stream.id}`)
-    const { localRecording } = (await revealed.json()) as {
-      localRecording?: string
-    }
-    assert.equal(localRecording, 'uploaded', 'the stream says it was uploaded')
+    // A replaced stream is revoked (`state` 'revoked', `local_recording`
+    // 'uploaded'), and the server finds no revoked stream to reveal, so its
+    // 404 is the answer the replacement gives: neither listed nor revealable.
+    assert.equal(
+      revealed.status,
+      404,
+      `the replaced stream ${stream.id} is revoked`
+    )
     const other = optional('TS_STREAM_OTHER_ANGLE') ?? 'Home Plate'
     const others = (await gameVideos(token)).filter(video =>
       video.title.endsWith(` — ${other}`)
@@ -343,7 +378,7 @@ async function main(): Promise<void> {
       `${other}'s live copy is still on the game: only ${angle}'s was replaced`
     )
     results.push(
-      `5 ${angle} plays ${videos[0].id} (live copy ${liveVideo ?? '-'} replaced, localRecording ${localRecording}): ${probe.split('\n').join(' ; ')}; ${bitRate.toFixed(2)} Mbit/s; ${frames} pictures, longest step ${(longest * 1000).toFixed(1)} ms; ${other} still has ${others.map(video => video.id).join(', ')}`
+      `5 ${angle} plays ${videos[0].id} (live copy ${liveVideo ?? '-'} replaced, stream ${stream.id} revoked): ${probe.split('\n').join(' ; ')}; ${bitRate.toFixed(2)} Mbit/s; ${frames} pictures, longest step ${(longest * 1000).toFixed(1)} ms; ${other} still has ${others.map(video => video.id).join(', ')}`
     )
     const dir = optional('TS_STREAM_ARTIFACT_DIR')
     if (dir != null) {
