@@ -809,8 +809,8 @@ async function main(): Promise<void> {
     const token = await apiToken()
 
     // 1. Record video, the prompt, Start.
-    say(`$ openLink teamstation://games/${game}`)
-    await m.openLink({ link: `teamstation://games/${game}` })
+    say(`$ openLink teamstation://games/${game}?tab=watch`)
+    await m.openLink({ link: `teamstation://games/${game}?tab=watch` })
     await sleep(3000)
     if (android) {
       // maestro-d's scroll swipes across the middle of the screen, which on
