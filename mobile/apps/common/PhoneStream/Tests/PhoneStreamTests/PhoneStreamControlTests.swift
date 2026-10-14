@@ -457,6 +457,12 @@ extension PhoneStreamTests {
       #expect(heard.count == before + 1)
       relay.stop()
       #expect(!relay.isObserving)
+      // The engine lets the observer go a moment after the stop; an event in that moment goes nowhere.
+      engine.publishStatus()
+      #expect(heard.count == before + 1)
+      try await Task.sleep(for: .milliseconds(100))
+      engine.publishStatus()
+      #expect(heard.count == before + 1)
       // No engine: nothing to register with.
       let none = PhoneStreamEventRelay(engine: { nil }, deliver: { _ in heard.add() })
       await none.start().value
