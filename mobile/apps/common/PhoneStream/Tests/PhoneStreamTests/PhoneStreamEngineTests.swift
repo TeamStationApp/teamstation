@@ -133,8 +133,13 @@ extension PhoneStreamTests {
         guard let last = previous.output.recordingFrames.last, let first = tick.output.recordingFrames.first,
           first - last > 1
         else { continue }
-        if tick.at - previous.at <= hold {
-          unexplained.append("\(first - last - 1) slots after frame \(last), tick \(tick.at - previous.at) s late")
+        let waited = tick.at - previous.at
+        if waited <= hold {
+          unexplained.append("\(first - last - 1) slots after frame \(last), tick \(waited) s late")
+        } else if Double(first - last - 1) > (waited * 30).rounded(.up) {
+          // Behind a late tick a hole is only the slots that fell due while it waited: one wider
+          // than that lost slots the clock had already passed.
+          unexplained.append("\(first - last - 1) slots after frame \(last), wider than the \(waited) s the tick waited")
         }
       }
       #expect(unexplained.isEmpty, "\(frames.count) of \(covered) slots sent; holes not behind a late tick: \(unexplained)")
@@ -191,8 +196,10 @@ extension PhoneStreamTests {
       // encodes HEVC in software, and on a loaded machine its writer takes only some of the pictures
       // the grid offers (79 of 525 at a load average of 400). VideoToolbox's rate control spreads the
       // rate over the pictures it gets and misses by more on so few, within about a fifth either way
-      // (7.0 and 5.3 Mbps measured), so the tolerance widens with the share of the grid it took. That
-      // is the processor, not the recording: a phone's hardware encoder takes every picture.
+      // (7.0 and 5.3 Mbps measured; 7.03 Mbps under coverage at a load average of about 36), so the
+      // tolerance widens with the share of the grid it took. Held to a tenth there, the check failed
+      // on a loaded simulator with nothing wrong in the recording. That is the processor, not the
+      // recording: a phone's hardware encoder takes every picture.
       let share = Double(reading.pictureTimes.count) / max(1, reading.videoSeconds * 30)
       let tolerance = share >= 0.9 ? 0.1 : 0.25
       #expect(
