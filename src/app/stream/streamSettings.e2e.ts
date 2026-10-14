@@ -371,8 +371,8 @@ async function main(): Promise<void> {
     }
 
     // 1. The streaming screen, live.
-    say(`$ openLink teamstation://games/${game}`)
-    await m.openLink({ link: `teamstation://games/${game}` })
+    say(`$ openLink teamstation://games/${game}?tab=watch`)
+    await m.openLink({ link: `teamstation://games/${game}?tab=watch` })
     await sleep(3000)
     if (android) {
       // maestro-d's scroll swipes across the middle of the screen, which on
@@ -611,8 +611,8 @@ async function main(): Promise<void> {
     say('$ launchApp')
     await m.launchApp({ appId: APP, stopApp: true })
     await sleep(3000)
-    say(`$ openLink teamstation://games/${game}`)
-    await m.openLink({ link: `teamstation://games/${game}` })
+    say(`$ openLink teamstation://games/${game}?tab=watch`)
+    await m.openLink({ link: `teamstation://games/${game}?tab=watch` })
     const angleTab = await find(byText(renamed), 15000)
     assert(angleTab?.bounds != null, 'the game’s angle pill reads the new name')
     // The strip scrolls sideways: bring the pill into view.
