@@ -56,6 +56,8 @@ export interface ConversationState {
   /** Older messages remain on the server. */
   hasEarlier: boolean
   reads: ChatRead[]
+  /** A completed read sync distinguishes an absent own cursor from pending data. */
+  readsReady: boolean
   /** Who is typing, by user id, until when (milliseconds). */
   typing: Map<number, number>
 }
@@ -99,6 +101,7 @@ export function newConversationState(
     oldestSeq: undefined,
     hasEarlier: false,
     reads: [],
+    readsReady: false,
     typing: new Map()
   }
 }
