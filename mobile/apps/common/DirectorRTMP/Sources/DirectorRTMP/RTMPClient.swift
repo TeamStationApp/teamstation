@@ -81,6 +81,11 @@ public final class RTMPClient: @unchecked Sendable {
   private var droppedPackets: UInt64 = 0
   private var sendQueue: [Queued] = []
   private var isSending = false
+  /// The message `flush()` has taken off `sendQueue` and is writing: when it was submitted and how
+  /// much of it the socket has not taken. A shed rebuilds the ledger from the queue, and this keeps
+  /// that message at its head rather than crediting its last bytes to the queue behind it.
+  private var inFlightSubmittedAt: Double = 0
+  private var inFlightUnsent = 0
   /// Bytes written but not yet on the wire, wherever they are parked.
   ///
   /// Summing `sendQueue` cannot measure this. `flush()` takes an item off the queue and then
@@ -867,9 +872,10 @@ public final class RTMPClient: @unchecked Sendable {
     if shedPicture, !sendQueue.contains(where: { $0.isVideo && !$0.isSequenceHeader }) {
       awaitingKeyframe = true
     }
+    let inFlight = inFlightUnsent > 0
     ledger.resetWaiting(
-      bytes: sendQueue.map { $0.data.count },
-      since: sendQueue.map { $0.submittedAt }
+      bytes: (inFlight ? [ inFlightUnsent ] : []) + sendQueue.map { $0.data.count },
+      since: (inFlight ? [ inFlightSubmittedAt ] : []) + sendQueue.map { $0.submittedAt }
     )
     return newestGone
   }
@@ -980,7 +986,10 @@ public final class RTMPClient: @unchecked Sendable {
         lock.unlock()
         return
       }
-      let data = sendQueue.removeFirst().data
+      let next = sendQueue.removeFirst()
+      inFlightSubmittedAt = next.submittedAt
+      inFlightUnsent = next.data.count
+      let data = next.data
       let fd = socketFD
       lock.unlock()
       guard fd >= 0 else {
@@ -1043,6 +1052,7 @@ public final class RTMPClient: @unchecked Sendable {
     lock.lock()
     bytesSent += UInt64(sent)
     bytesThisWindow += UInt64(sent)
+    inFlightUnsent = max(0, inFlightUnsent - sent)
     ledger.delivered(bytes: sent)
     refreshMegabitsLocked()
     lock.unlock()
@@ -1051,6 +1061,7 @@ public final class RTMPClient: @unchecked Sendable {
   private func release(queued count: Int) {
     lock.lock()
     queuedBytes = max(0, queuedBytes - count)
+    inFlightUnsent = 0
     lock.unlock()
   }
 
@@ -1090,6 +1101,7 @@ public final class RTMPClient: @unchecked Sendable {
     sendQueue.removeAll()
     isSending = false
     queuedBytes = 0
+    inFlightUnsent = 0
     ledger.clear()
     awaitingKeyframe = false
     lock.unlock()
