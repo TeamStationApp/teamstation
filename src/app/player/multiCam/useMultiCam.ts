@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TeamStationClient, VideoSummary } from '../../../common/api'
 import { lstrings } from '../../locales/strings'
 import { FLASH_MS, type SeekFlash, useFlash } from '../GestureFeedback'
+import { livePlaybackRetryDelay } from '../liveRejoin'
 import type { BufferControl, PlayIntent } from '../playIntent'
 import { SLOW_RATE } from '../slowMotion'
 import { useKeyboardShortcuts } from '../useKeyboardShortcuts'
@@ -95,6 +96,11 @@ export interface MultiCamOptions {
    * can animate the change it is about to draw.
    */
   beforeShuffle?: () => void
+  /**
+   * How long to wait before asking again for a live angle that has no
+   * address yet, after so many asks; undefined to stop. Tests shorten it.
+   */
+  liveRetryDelay?: (asks: number) => number | undefined
 }
 
 /**
@@ -255,7 +261,13 @@ export function useMultiCam(
 ): MultiCam {
   const { client, videos, order, audioId, zoomedId, atMs, onChange, onMoment } =
     props
-  const { width, height, debug = false, beforeShuffle } = options
+  const {
+    width,
+    height,
+    debug = false,
+    beforeShuffle,
+    liveRetryDelay = livePlaybackRetryDelay
+  } = options
 
   const chosen = useMemo(
     () =>
@@ -496,6 +508,33 @@ export function useMultiCam(
       live = false
     }
   }, [chosen, client, urls])
+
+  // A live angle is listed the moment its stream starts publishing, a few
+  // seconds before its first segment is written, and until then `playback`
+  // has no address for it. A grid opened in that moment drew the tile "not
+  // available" and never asked again, so a viewer who opened All angles as a
+  // camera came on saw it dead until a reload. Like the single player, the
+  // grid asks again, backing off from 2 s to 30 s and giving up after ten
+  // minutes, when a refused publish has plainly never written a segment.
+  const [liveAsks, setLiveAsks] = useState<Record<string, number>>({})
+  useEffect(() => {
+    const timers: Array<ReturnType<typeof setTimeout>> = []
+    for (const video of chosen) {
+      if (video.status !== 'live' || urls[video.id] !== null) continue
+      const asks = liveAsks[video.id] ?? 0
+      const wait = liveRetryDelay(asks)
+      if (wait == null) continue
+      timers.push(
+        setTimeout(() => {
+          setLiveAsks(current => ({ ...current, [video.id]: asks + 1 }))
+          askAgain(video.id)
+        }, wait)
+      )
+    }
+    return () => {
+      for (const timer of timers) clearTimeout(timer)
+    }
+  }, [askAgain, chosen, liveAsks, liveRetryDelay, urls])
 
   const takeElement = useCallback(
     (id: string) =>

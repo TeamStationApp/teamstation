@@ -476,6 +476,21 @@ function liveVideo(id: string, startOffsetSec: number): VideoSummary {
   return { ...video(id, startOffsetSec), status: 'live', durationSec: null }
 }
 
+/** Lets the grid run until `done` holds, or `ms` have passed. */
+async function until(done: () => boolean, ms = 3000): Promise<void> {
+  for (const end = Date.now() + ms; !done() && Date.now() < end;) {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 25))
+    })
+  }
+}
+
+/** Asks again at once, as often as needed: a grid test's live retry. */
+const quickRetry = (): number => 10
+/** Asks again twice, then gives up. */
+const twoQuickRetries = (asks: number): number | undefined =>
+  asks < 2 ? 10 : undefined
+
 describe('useMultiCam on live angles', function () {
   // A began at the take's start and B a minute later. Each opens near its own
   // live edge: A 100 s in, B 30 s in, which is 90 s into the take.
@@ -507,6 +522,84 @@ describe('useMultiCam on live angles', function () {
     expect(tiles.A.paused).equals(false)
     expect(tiles.B.paused).equals(false)
     expect(mc().waiting).equals(false)
+  })
+
+  it('asks again for a live angle that has no address yet, until it has one', async function () {
+    this.timeout(5000)
+    // B's stream is publishing, but its first segment is not written yet: the
+    // server has no address for it on the first two asks.
+    const asked: string[] = []
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.playback = async (id: string) => {
+      asked.push(id)
+      const ready = id !== 'B' || asked.filter(one => one === 'B').length > 2
+      return {
+        videoId: id,
+        storage: 'spaces',
+        url: ready ? `https://media/${id}.m3u8` : null,
+        expiresAt: null,
+        durationSec: null,
+        unavailable: false
+      }
+    }
+    const { mc } = await grid(
+      { ...live, client },
+      { liveRetryDelay: quickRetry },
+      atTheirEdges
+    )
+    expect(mc().urls.B).equals(null)
+    await until(() => mc().urls.B != null)
+    expect(mc().urls.B).equals('https://media/B.m3u8')
+    expect(asked.filter(one => one === 'B').length).equals(3)
+    // A had its address at once and was not asked for again.
+    expect(asked.filter(one => one === 'A').length).equals(1)
+  })
+
+  it('stops asking for a live angle once the delay says to give up', async function () {
+    this.timeout(5000)
+    const asked: string[] = []
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.playback = async (id: string) => {
+      asked.push(id)
+      return {
+        videoId: id,
+        storage: 'spaces',
+        url: id === 'B' ? null : `https://media/${id}.m3u8`,
+        expiresAt: null,
+        durationSec: null,
+        unavailable: false
+      }
+    }
+    const { mc } = await grid(
+      { ...live, client },
+      { liveRetryDelay: twoQuickRetries },
+      atTheirEdges
+    )
+    await until(() => asked.filter(one => one === 'B').length >= 3)
+    await until(() => false, 500)
+    expect(mc().urls.B).equals(null)
+    expect(asked.filter(one => one === 'B').length).equals(3)
+  })
+
+  it('never asks again for a recorded angle with no address', async function () {
+    this.timeout(5000)
+    const asked: string[] = []
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.playback = async (id: string) => {
+      asked.push(id)
+      return {
+        videoId: id,
+        storage: 'spaces',
+        url: id === 'B' ? null : `https://media/${id}.m3u8`,
+        expiresAt: null,
+        durationSec: null,
+        unavailable: true
+      }
+    }
+    const { mc } = await grid({ client }, { liveRetryDelay: quickRetry })
+    await until(() => false, 500)
+    expect(mc().urls.B).equals(null)
+    expect(asked.filter(one => one === 'B').length).equals(1)
   })
 
   it('waits a moment for a tile with no picture yet, and then opens without it', async function () {
