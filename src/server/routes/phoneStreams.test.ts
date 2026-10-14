@@ -1071,6 +1071,51 @@ describe('phones and Directors asking for their streams by device', function () 
       expect((await stream(web.body.id)).directorClaimed).equals(true)
     })
 
+    it('never hands an installed Director a website stream somebody has published on', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      // The coach's streaming software, on the air on its key from the website.
+      const web = await ask(gameId, { label: 'Center Field' })
+      await db
+        .updateTable('live_streams')
+        .set({ first_published_at: new Date() })
+        .where('id', '=', web.body.id)
+        .execute()
+
+      const claimed = await claim(gameId, 'Center Field')
+      expect(claimed.status).equals(200)
+      expect(claimed.body.url).not.equals(web.body.url)
+      const website = await stream(web.body.id)
+      expect(website.directorClaimed).equals(false)
+      expect(website.label).equals('Center Field')
+      const again = await claim(gameId)
+      expect(again.body.url).equals(claimed.body.url)
+
+      // The stream route reads the Director's camera, not the coach's.
+      await db
+        .updateTable('live_streams')
+        .set({ last_error: 'The coach’s own trouble' })
+        .where('id', '=', web.body.id)
+        .execute()
+      const status = await call(
+        'GET',
+        `/director/events/${gameId}/stream`,
+        OWNER
+      )
+      expect(status.body.lastError).equals(null)
+
+      // Nor does a device with the website stream's name adopt it.
+      await db
+        .updateTable('live_streams')
+        .set({ label: 'Backstop' })
+        .where('id', '=', web.body.id)
+        .execute()
+      const asked = await ask(gameId, phone('Backstop'))
+      expect(asked.status).equals(201)
+      expect(asked.body.id).not.equals(web.body.id)
+      expect((await stream(web.body.id)).deviceId).equals(null)
+    })
+
     it('lets the new Director build adopt what an old build claimed', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()
