@@ -59,7 +59,7 @@ describe('compact defensive field', function () {
         null
       )
       await act(async () => {
-        host.querySelector<HTMLElement>('[aria-label="Set Defense"]')!.click()
+        host.querySelector<HTMLElement>('[aria-label="Defense"]')!.click()
       })
       expect(
         host.querySelector<HTMLElement>('[data-testid="Roster editor top"]')!

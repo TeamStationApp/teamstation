@@ -9,6 +9,9 @@ import { fileURLToPath } from 'node:url'
  * one or store one: `apply`, `gumbo`, and `document`, which alone writes a
  * stored play. `scoreboardOf` reads what a game's scoreboard shows, so the
  * scorer's field scoreboard and the public one agree; it changes nothing.
+ * `startingSetup` makes the lineups a game starts from, `rosterCommands`
+ * changes a draft of the lineups, never the game, and `playerTags` names a
+ * player to a dictation model.
  */
 export const APP_MAY_IMPORT = [
   'state',
@@ -16,7 +19,10 @@ export const APP_MAY_IMPORT = [
   'transitions',
   'session',
   'rules',
-  'scoreboardOf'
+  'scoreboardOf',
+  'startingSetup',
+  'rosterCommands',
+  'playerTags'
 ]
 const LIBRARY = 'src/common/scoring'
 

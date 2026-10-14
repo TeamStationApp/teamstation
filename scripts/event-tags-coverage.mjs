@@ -111,6 +111,8 @@ run('node_modules/.bin/c8', [
   '--exclude',
   '**/*.test.*',
   '--exclude',
+  '**/*.integration.*',
+  '--exclude',
   '**/*.e2e.*',
   '--exclude-after-remap'
 ])

@@ -130,6 +130,8 @@ const report = spawnSync(
     '--exclude',
     '**/*.test.*',
     '--exclude',
+    '**/*.integration.ts',
+    '--exclude',
     '**/*.e2e.ts',
     '--exclude',
     'src/test/**',
@@ -241,7 +243,7 @@ if (changedBase != null) {
         .map((_, i) => i + 1)
     )
   for (const path of Object.keys(changes))
-    if (!/\.tsx?$/.test(path) || /\.(test|e2e)\./.test(path))
+    if (!/\.tsx?$/.test(path) || /\.(test|integration|e2e)\./.test(path))
       delete changes[path]
   const raw = JSON.parse(readFileSync('coverage/coverage-final.json', 'utf8'))
   const coverage = Object.fromEntries(

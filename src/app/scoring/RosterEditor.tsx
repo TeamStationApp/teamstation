@@ -1,4 +1,11 @@
-import React, { useContext, useEffect, useMemo, useRef, useState } from 'react'
+import React, {
+  type ReactNode,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   Platform,
   Pressable,
@@ -9,9 +16,16 @@ import {
 } from 'react-native'
 
 import type { RosterEntry } from '../../common/api'
+import {
+  ROSTER_TAB,
+  type RosterQuestion,
+  type RosterTab,
+  type StagedRunner
+} from '../../common/scoring/rosterCommands'
 import { rosterError } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
 import { Button } from '../components/Button'
+import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { withRosterDetails } from './currentSetup'
@@ -24,10 +38,18 @@ import {
   editLocalPlayerDraft
 } from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
+import type { ChatTurn } from './RosterChat'
+import {
+  type RosterDictationOptions,
+  useRosterDictation
+} from './rosterDictation'
+import { rosterDirty, rosterSavable } from './rosterDirty'
 import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
+import { RosterConflictBanner } from './rosterLive'
 import { byJersey } from './rosterOrder'
 import { RosterRemoveButton } from './RosterRemoveButton'
 import { RosterSelector } from './RosterSelector'
+import { CONTROL_COLORS } from './scoringControlStyle'
 import { copyState } from './scoringMachine'
 import { ScoringPlayerCard, scoringPlayerCardStyle } from './ScoringPlayerCard'
 import { editRosterRows } from './scoringRosterEdit'
@@ -40,13 +62,60 @@ import type {
   Side
 } from './scoringTypes'
 
-export type RosterMode = 'editRoster' | 'lineup' | 'defense'
+/** The roster screen's tabs: a coach's begins with the game's box score. */
+export type RosterMode = 'boxScore' | RosterTab
+/**
+ * Who the roster screen is for. A scorekeeper edits either team's roster for
+ * the scoring screen, and leaves by Save or Cancel; a coach edits his own
+ * team's, saves without leaving, and leaves by the screen's back chevron.
+ */
+export type RosterAudience = 'scorekeeper' | 'coach'
+/** Each tab's label, which is also its accessible name. */
+export const ROSTER_MODE_LABELS: Record<RosterMode, string> = {
+  boxScore: 'Box Score',
+  editRoster: lstrings.scoring_roster_tab,
+  lineup: 'Lineup',
+  defense: 'Defense'
+}
+/** The tabs the mode slider offers, in order. */
+export const rosterModes = (audience: RosterAudience): RosterMode[] =>
+  audience === 'coach'
+    ? ['boxScore', 'editRoster', 'lineup', 'defense']
+    : ['editRoster', 'lineup', 'defense']
+/**
+ * The bottom bar's sizes: Save Rosters' height, which a crowded Defense tab
+ * shrinks, and the round microphone's diameter, twelve points more.
+ */
+export function rosterFooterSizes(
+  dense: boolean,
+  defense: boolean
+): { save: number; mic: number } {
+  const save = dense && defense ? 28 : 36
+  return { save, mic: save + 12 }
+}
 export interface RosterEditorDraft {
   draft: ScoringSessionState
   side: Side
   mode: RosterMode
   scrollOffsets?: Partial<Record<Side, number>>
   nextBatter?: number
+  /** Pinch runners staged by dictation, saved with the draft. */
+  runners?: StagedRunner[]
+  /**
+   * The chat's turns as the sheet opens: a substitution said on the scoring
+   * screen opens the sheet with it staged and its words shown.
+   */
+  chat?: ChatTurn[]
+  /**
+   * What the chat asks as the sheet opens: which player a substitution said
+   * on the scoring screen means, when the player said fits two or more.
+   */
+  question?: RosterQuestion
+  /**
+   * The game the draft was opened over, when it is not the screen's own
+   * session: Save Rosters lights when the draft differs from it.
+   */
+  base?: ScoringSessionState
 }
 /**
  * A roster, lineup or defence card's name, on one line. A phone scales text
@@ -77,32 +146,95 @@ export function defenseRosterMinimum(
 }
 export function RosterEditor({
   state,
+  audience = 'scorekeeper',
+  fixedSide,
+  renderBoxScore,
+  dictation,
+  dictate,
+  dictationAvailable = false,
   initialDraft,
   defaultSide,
   rosters,
+  unaccepted = false,
+  conflict = false,
   onDraftChange,
+  onDirtyChange,
   onEditPlayer,
   rosterLoading,
   rosterError: editError,
   onRetryRoster,
   canEditTeams,
   onCancel,
+  onReload,
   onSave
 }: {
+  /** A coach's state is never read-only, so his game's own players stay editable. */
   state: ScoringState
+  audience?: RosterAudience
+  /** A coach's team: the screen shows that side alone, with no Away/Home slider. */
+  fixedSide?: Side
+  /** The Box Score tab's content, offered to a coach. */
+  renderBoxScore?: () => ReactNode
+  /**
+   * Dictation's round control, drawn in the bottom bar's centre, and its
+   * chat, drawn above the tabs.
+   */
+  dictation?: { control: ReactNode; chat: ReactNode }
+  /**
+   * Dictation's server and the scorer's choices: the screen draws its own
+   * round control and chat, and stages what is said on the draft.
+   */
+  dictate?: RosterDictationOptions
+  /**
+   * Whether the server dictates. Without a control, the bar shows the
+   * microphone's glyph only when it does.
+   */
+  dictationAvailable?: boolean
+  /** A scorekeeper's Cancel: the screen closes the sheet, dropping the draft. */
   onCancel?: () => void
+  /**
+   * A coach's Cancel, after every staged change is discarded: the screen
+   * reloads the game, so the draft starts again from the latest copy.
+   */
+  onReload?: () => void
   initialDraft?: RosterEditorDraft
   defaultSide?: Side
   /** Current labels only; roster edits retain the game's saved player details. */
   rosters?: Readonly<Record<string, readonly RosterEntry[]>>
+  /**
+   * The game does not hold this lineup yet: a scorekeeper's game that has
+   * recorded nothing, opened on the teams' default lineups or rosters, or a
+   * coach's side the game has no lineup for. Save Rosters is lit with no
+   * change, as saving the lineup as it stands accepts it.
+   */
+  unaccepted?: boolean
+  /**
+   * Another device changed the lineups under this draft's unsaved changes:
+   * the warning shows at the top while the draft stays dirty.
+   */
+  conflict?: boolean
   onDraftChange?: (draft: RosterEditorDraft) => void
+  /** Whether the draft differs from the game it was opened over, as it changes. */
+  onDirtyChange?: (dirty: boolean) => void
   onEditPlayer?: (userId: number, name: string, teamId: string) => void
   rosterLoading?: boolean
   rosterError?: string
   onRetryRoster?: () => void
   canEditTeams?: Readonly<Record<string, boolean>>
-  onSave: (draft: ScoringSessionState, nextBatter?: number) => void
+  /**
+   * Save Rosters, lit when the draft validates and has changed or is
+   * `unaccepted`. A scorekeeper's screen applies the draft and closes the
+   * sheet; a coach's saves it and stays, answering once it is saved, or
+   * failing when the save is refused. The chat closes once the draft is
+   * saved, and stays over a save refused, to say what was staged.
+   */
+  onSave: (
+    draft: ScoringSessionState,
+    nextBatter?: number,
+    runners?: StagedRunner[]
+  ) => void | Promise<void>
 }): React.ReactElement {
+  const coach = audience === 'coach'
   const theme = useTheme()
   const { height, width } = useWindowDimensions()
   const measuredHeight = useContext(ScoringSheetHeight)
@@ -112,15 +244,23 @@ export function RosterEditor({
     copyState(initialDraft?.draft ?? state.session)
   )
   const [side, setSide] = useState<Side>(
-    initialDraft?.side ?? defaultSide ?? battingSide(state.session)
+    fixedSide ?? initialDraft?.side ?? defaultSide ?? battingSide(state.session)
   )
-  const sideChosen = useRef(initialDraft != null || rosterLoading !== true)
+  const sideChosen = useRef(
+    fixedSide != null || initialDraft != null || rosterLoading !== true
+  )
   useEffect(() => {
     if (sideChosen.current || rosterLoading === true) return
     sideChosen.current = true
     if (defaultSide != null) setSide(defaultSide)
   }, [defaultSide, rosterLoading])
-  const [mode, setMode] = useState<RosterMode>(initialDraft?.mode ?? 'lineup')
+  const modes = rosterModes(audience)
+  const [mode, setMode] = useState<RosterMode>(
+    initialDraft != null && modes.includes(initialDraft.mode)
+      ? initialDraft.mode
+      : 'lineup'
+  )
+  const boxScore = mode === 'boxScore'
   const [scrollOffsets, setScrollOffsets] = useState(
     initialDraft?.scrollOffsets ?? {}
   )
@@ -135,9 +275,35 @@ export function RosterEditor({
   const [nextBatter, setNextBatter] = useState<number | undefined>(
     initialDraft?.nextBatter
   )
+  const [runners, setRunners] = useState<StagedRunner[]>(
+    initialDraft?.runners ?? []
+  )
+  // The game as the editor opened: a newer one shown behind the sheet (the
+  // scoring screen following another device) leaves the draft clean until
+  // the screen opens the editor again over it.
+  const [opened] = useState(() => state.session)
+  const base = initialDraft?.base ?? opened
+  const openedOver = initialDraft?.base
   useEffect(() => {
-    onDraftChange?.({ draft, side, mode, nextBatter, scrollOffsets })
-  }, [draft, side, mode, nextBatter, scrollOffsets, onDraftChange])
+    onDraftChange?.({
+      draft,
+      side,
+      mode,
+      nextBatter,
+      scrollOffsets,
+      ...(runners.length === 0 ? {} : { runners }),
+      ...(openedOver == null ? {} : { base: openedOver })
+    })
+  }, [
+    draft,
+    side,
+    mode,
+    nextBatter,
+    runners,
+    scrollOffsets,
+    onDraftChange,
+    openedOver
+  ])
   const edit = (change: (next: ScoringSessionState) => void): void => {
     setDraft(previous => {
       const next = copyState(previous)
@@ -185,6 +351,37 @@ export function RosterEditor({
     })
   }
   const validation = rosterError(state.session, setupOf(draft), nextBatter)
+  const dirty = rosterDirty(base, draft, runners, nextBatter)
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+  }, [dirty, onDirtyChange])
+  const sizes = rosterFooterSizes(dense, defense)
+  // A dictated sentence is staged whole: the draft, its runners and next
+  // batter, and the tab, and for a scorekeeper the team, that show it.
+  const spoken = useRosterDictation({
+    options: dictate,
+    game: state.session,
+    draft,
+    fixedSide,
+    runners,
+    nextBatter,
+    size: sizes.mic,
+    chat: initialDraft?.chat,
+    question: initialDraft?.question,
+    onStage: staged => {
+      setDraft(staged.draft)
+      setRunners(staged.runners)
+      setNextBatter(staged.nextBatter)
+      setMode(ROSTER_TAB[staged.category])
+      if (fixedSide == null) {
+        sideChosen.current = true
+        setSide(staged.side)
+      }
+    }
+  })
+  const shown =
+    dictation ??
+    (dictate == null || spoken.control == null ? undefined : spoken)
   const text = {
     color: theme.primaryTextColor,
     fontFamily: theme.regularTextFont,
@@ -200,6 +397,8 @@ export function RosterEditor({
         gap: dense && defense ? 2 : dense ? 4 : 8
       }}
     >
+      {conflict && dirty && <RosterConflictBanner />}
+      {shown?.chat}
       <ScrollView
         testID="Roster editor top"
         // Browser chrome can leave much less room than the screen height.
@@ -212,53 +411,46 @@ export function RosterEditor({
         keyboardShouldPersistTaps="handled"
       >
         <View style={{ flexDirection: dense ? 'row' : 'column', gap: 4 }}>
-          <View style={{ flex: dense ? 1 : undefined, minWidth: 0 }}>
-            <RosterSelector
-              labels={[
-                draft.gameData.teams.away.name,
-                draft.gameData.teams.home.name
-              ]}
-              captions={dense ? undefined : ['Away', 'Home']}
-              compact={height < 500}
-              accessibilityLabels={['Away Team', 'Home Team']}
-              value={side === 'away' ? 0 : 1}
-              onChange={index => {
-                sideChosen.current = true
-                setSide(index === 0 ? 'away' : 'home')
-              }}
-            />
-          </View>
+          {fixedSide == null && (
+            <View style={{ flex: dense ? 1 : undefined, minWidth: 0 }}>
+              <RosterSelector
+                labels={[
+                  draft.gameData.teams.away.name,
+                  draft.gameData.teams.home.name
+                ]}
+                captions={dense ? undefined : ['Away', 'Home']}
+                compact={height < 500}
+                accessibilityLabels={['Away Team', 'Home Team']}
+                value={side === 'away' ? 0 : 1}
+                onChange={index => {
+                  sideChosen.current = true
+                  setSide(index === 0 ? 'away' : 'home')
+                }}
+              />
+            </View>
+          )}
           <View style={{ flex: dense ? 1 : undefined, minWidth: 0 }}>
             <RosterSelector
               fitContent={!narrowDefense}
               compact={narrowDefense}
-              labels={[
-                lstrings.scoring_edit_roster,
-                'Set Lineup',
-                'Set Defense'
-              ]}
-              accessibilityLabels={['Edit Roster', 'Set Lineup', 'Set Defense']}
-              value={mode === 'editRoster' ? 0 : defense ? 2 : 1}
+              labels={modes.map(each => ROSTER_MODE_LABELS[each])}
+              value={Math.max(0, modes.indexOf(mode))}
               onChange={index => {
-                setMode(
-                  index === 0
-                    ? 'editRoster'
-                    : index === 2
-                      ? 'defense'
-                      : 'lineup'
-                )
+                setMode(modes[index])
               }}
             />
           </View>
         </View>
-        <Text numberOfLines={defense ? 1 : undefined} style={text}>
-          {mode === 'editRoster'
-            ? lstrings.scoring_edit_roster_instruction
-            : defense
-              ? 'Drag player into position. On touch, hold briefly first.'
-              : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
-        </Text>
-        {state.phase === 'awaitingBatter' && (
+        {!boxScore && (
+          <Text numberOfLines={defense ? 1 : undefined} style={text}>
+            {mode === 'editRoster'
+              ? lstrings.scoring_edit_roster_instruction
+              : defense
+                ? 'Drag player into position. On touch, hold briefly first.'
+                : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
+          </Text>
+        )}
+        {state.phase === 'awaitingBatter' && !boxScore && (
           <View style={{ gap: 6 }}>
             <Text style={text}>Choose Next Batter</Text>
             {draft.liveData.boxscore.teams[battingSide(draft)].battingOrder.map(
@@ -278,6 +470,11 @@ export function RosterEditor({
           </View>
         )}
       </ScrollView>
+      {boxScore && (
+        <View testID="Roster box score" style={{ flex: 1, minHeight: 0 }}>
+          {renderBoxScore?.()}
+        </View>
+      )}
       <View
         style={{
           flex: 1,
@@ -325,7 +522,7 @@ export function RosterEditor({
         style={{
           flex: 1,
           minHeight: 0,
-          display: mode === 'editRoster' ? 'none' : 'flex'
+          display: mode === 'lineup' || defense ? 'flex' : 'none'
         }}
       >
         <RosterDragGroup key={`${side}:${mode}`}>
@@ -549,31 +746,80 @@ export function RosterEditor({
       )}
       <View testID="Roster footer" style={{ gap: dense && defense ? 2 : 6 }}>
         {!inlineValidation && <ScoringError message={validation} />}
-        <View style={{ flexDirection: 'row', gap: 12 }}>
-          <View style={{ flex: 1 }}>
-            <Button
-              color={theme.scoringMenuActiveBackground}
-              textColor={theme.scoringMenuActiveText}
-              compact
-              style={dense && defense ? { minHeight: 28 } : undefined}
+        <View
+          testID="Roster footer bar"
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}
+        >
+          <View style={{ flex: 1, alignItems: 'flex-start' }}>
+            <Pressable
+              accessibilityRole="button"
               accessibilityLabel="Create Player"
-              label="Add Player"
+              hitSlop={{ top: 6, bottom: 6 }}
               onPress={() => {
                 setAdding(true)
               }}
-            />
+              style={{
+                minHeight: sizes.save,
+                justifyContent: 'center',
+                paddingHorizontal: 4
+              }}
+            >
+              {/* The sheet's green text action, as Add Placeholder Players. */}
+              <Text
+                numberOfLines={1}
+                style={{
+                  color: theme.successColor,
+                  fontFamily: theme.semiBoldTextFont,
+                  fontSize: 16
+                }}
+              >
+                Add Player
+              </Text>
+            </Pressable>
           </View>
+          {shown != null ? (
+            <View
+              testID="Roster mic"
+              style={{
+                width: sizes.mic,
+                height: sizes.mic,
+                borderRadius: sizes.mic / 2,
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              {shown.control}
+            </View>
+          ) : (
+            dictationAvailable && <RosterMicGlyph size={sizes.mic} />
+          )}
           <View style={{ flex: 1 }}>
             <Button
               color={theme.scoringMenuActiveBackground}
               textColor={theme.scoringMenuActiveText}
               compact
-              style={dense && defense ? { minHeight: 28 } : undefined}
+              style={dense && defense ? { minHeight: sizes.save } : undefined}
               accessibilityLabel="Save Rosters"
               label="Save Rosters"
-              disabled={validation != null}
+              disabled={!rosterSavable(dirty, unaccepted, validation)}
               onPress={() => {
-                onSave(draft, nextBatter)
+                const saving = onSave(
+                  draft,
+                  nextBatter,
+                  runners.length === 0 ? undefined : runners
+                )
+                if (saving instanceof Promise)
+                  saving.then(
+                    () => {
+                      spoken.clear()
+                    },
+                    (error: unknown) => {
+                      const message =
+                        error instanceof Error ? error.message : ''
+                      if (message !== '') spoken.problem(message)
+                    }
+                  )
+                else spoken.clear()
               }}
             />
           </View>
@@ -601,7 +847,17 @@ export function RosterEditor({
             accessibilityRole="button"
             accessibilityLabel="Cancel"
             onPress={() => {
-              onCancel?.()
+              if (!coach) {
+                onCancel?.()
+                return
+              }
+              setDraft(copyState(base))
+              setNextBatter(undefined)
+              setRunners([])
+              setAdding(false)
+              setEditingLocal(undefined)
+              spoken.note(lstrings.dictation_changes_discarded)
+              onReload?.()
             }}
             style={{
               minHeight: dense ? (defense ? 28 : 36) : 44,
@@ -623,6 +879,32 @@ export function RosterEditor({
           {inlineValidation && <View style={{ flex: 1 }} />}
         </View>
       </View>
+    </View>
+  )
+}
+
+/**
+ * The scoring microphone's glyph, round, for a screen whose dictation is not
+ * wired to the bar: it shows that the server dictates, and presses nothing.
+ */
+function RosterMicGlyph({ size }: { size: number }): React.ReactElement {
+  return (
+    <View
+      testID="Roster mic"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        borderWidth: 1,
+        borderColor: CONTROL_COLORS.micOff.border,
+        backgroundColor: CONTROL_COLORS.micOff.bottom,
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}
+    >
+      <Icon name="mic_off" size={1.5} color={CONTROL_COLORS.micOff.text} />
     </View>
   )
 }

@@ -17,8 +17,11 @@ import { HttpError } from '../../common/errors'
 import { type Actor, actorForToken } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
+import { gameStateLogLines } from './gameStateSummary'
 import {
   type AskOption,
+  dictationExchangeLines,
+  dictationReplyLine,
   Interpretation,
   type InterpreterConfig,
   type Turn
@@ -245,7 +248,7 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
   const finish = (flight: InFlight, outcome: string): void => {
     if (current === flight) current = null
     log(
-      `dictation ${flight.start.id} user ${actor.userId} ${outcome} after ${Date.now() - flight.startedAt}ms`
+      `dictation ${flight.start.id} model ${flight.model} user ${actor.userId} ${outcome} after ${Date.now() - flight.startedAt}ms`
     )
   }
 
@@ -275,6 +278,14 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
       }
       flight.phase = 'interpreting'
       flight.transcript = text
+      for (const line of gameStateLogLines({
+        id: flight.start.id,
+        model: flight.model,
+        scope: flight.start.scope,
+        context: flight.start.context,
+        said: text
+      }))
+        log(line)
       const conversation = (
         options.converse ??
         ((c, context, t) => new Interpretation(c, context, t))
@@ -283,7 +294,15 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
           ...endpointFor(flight.model, config)!,
           model: flight.model,
           tools: flight.scope.tools,
-          cacheKey
+          rosterTools: flight.scope.rosterTools,
+          cacheKey,
+          log: exchange => {
+            for (const line of dictationExchangeLines(
+              flight.start.id,
+              exchange
+            ))
+              log(line)
+          }
         },
         flight.start.context,
         text
@@ -315,6 +334,7 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
     if (current !== flight || closed) return
     const { id } = flight.start
     const { transcript } = flight
+    log(dictationReplyLine(id, flight.model, transcript, turn))
     switch (turn.kind) {
       case 'actions':
         send({
@@ -322,12 +342,13 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
           id,
           transcript,
           actions: turn.actions,
+          ...(turn.roster == null ? {} : { roster: turn.roster }),
           dropped: turn.dropped,
           ...(turn.undo === true ? { undo: true } : {})
         })
         finish(
           flight,
-          `${turn.undo === true ? 'undo, ' : ''}${turn.actions.length} actions, ${turn.dropped.length} dropped`
+          `${turn.undo === true ? 'undo, ' : ''}${turn.actions.length} actions, ${turn.roster == null ? '' : `${turn.roster.length} roster commands, `}${turn.dropped.length} dropped`
         )
         return
       case 'ask':

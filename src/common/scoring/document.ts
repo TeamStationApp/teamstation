@@ -1320,7 +1320,9 @@ function playEventsOf(
           )
         : event.isSubstitution === true
           ? substitutionDocument(event, who, score)
-          : actionDocument(state, setup, play, event, made, score)
+          : event.details.code === 'ts_courtesy_runner'
+            ? courtesyRunnerDocument(event, who, score)
+            : actionDocument(state, setup, play, event, made, score)
     )
     for (const announced of events.after.get(event.index) ?? [])
       written.push(substitutionDocument(announced, who, score))
@@ -1377,6 +1379,40 @@ function substitutionDocument(
       ordered && event.replacedPlayer != null
         ? who(event.replacedPlayer)
         : undefined,
+    startTime: null,
+    endTime: null
+  })
+}
+
+/**
+ * A pinch runner who leaves the batting order as it is: TeamStation's own
+ * `ts_courtesy_runner`, naming the runner and the man he runs for. It is no
+ * substitution, so it takes nobody's place in the order or on the field, and
+ * it moves nobody: the runner's later entries name him.
+ */
+function courtesyRunnerDocument(
+  event: PlayEvent,
+  who: (ref: PlayerRef) => Person,
+  score: Score
+): Record<string, unknown> {
+  return withoutUndefined({
+    index: event.index,
+    isPitch: false,
+    type: 'action',
+    details: {
+      description: event.details.description,
+      event: mlbEventName('ts_courtesy_runner'),
+      eventType: 'ts_courtesy_runner',
+      awayScore: score.away,
+      homeScore: score.home,
+      isScoringPlay: false,
+      isOut: false,
+      hasReview: false
+    },
+    count: { ...event.count },
+    player: who(event.player),
+    replacedPlayer:
+      event.replacedPlayer == null ? undefined : who(event.replacedPlayer),
     startTime: null,
     endTime: null
   })
@@ -1461,6 +1497,7 @@ export const HIGHLIGHT_CREDITED = {
     'defensive_substitution',
     'defensive_switch',
     'ts_batting_order',
+    'ts_courtesy_runner',
     'final_score'
   ])
 } as const satisfies Record<string, ReadonlySet<string>>

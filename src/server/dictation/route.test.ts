@@ -17,9 +17,11 @@ import { HttpError } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
 import { toolSchema } from '../../common/scoring/actions'
+import { rosterToolSchema } from '../../common/scoring/rosterCommands'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import type { Actor } from '../auth/sessions'
 import { hashToken, SESSION_COOKIE } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -42,9 +44,17 @@ const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const MEMBER = 'tok_dictation_member_0000000000000'
 const STRANGER = 'tok_dictation_stranger_00000000000'
+const COACH = 'tok_dictation_coach_000000000000000'
 
 const member = mintUserId(() => false)
 const stranger = mintUserId(id => id === member.userId)
+const coach = mintUserId(id => [member, stranger].some(u => u.userId === id))
+const assistant = mintUserId(id =>
+  [member, stranger, coach].some(u => u.userId === id)
+)
+const scorekeeper = mintUserId(id =>
+  [member, stranger, coach, assistant].some(u => u.userId === id)
+)
 
 const CONFIG: DictationConfig = {
   apiKey: 'key',
@@ -174,7 +184,18 @@ describe('dictation route', function () {
           display_name: 'Bea',
           created_at: now,
           updated_at: now
-        }
+        },
+        ...[
+          [coach, 'Judge'],
+          [assistant, 'Soto'],
+          [scorekeeper, 'Betts']
+        ].map(([user, name]) => ({
+          id: (user as typeof coach).userId,
+          legacyId: (user as typeof coach).legacyId,
+          display_name: name as string,
+          created_at: now,
+          updated_at: now
+        }))
       ])
       .execute()
     const expires = new Date(now.getTime() + 3_600_000)
@@ -192,6 +213,13 @@ describe('dictation route', function () {
           id: 'ses_dictation_stranger',
           user_id: stranger.userId,
           token_hash: hashToken(STRANGER),
+          created_at: now,
+          expires_at: expires
+        },
+        {
+          id: 'ses_dictation_coach',
+          user_id: coach.userId,
+          token_hash: hashToken(COACH),
           created_at: now,
           expires_at: expires
         }
@@ -225,8 +253,38 @@ describe('dictation route', function () {
           user_id: member.userId,
           team_id: home,
           role: 'member'
+        },
+        ...[coach, assistant].map(user => ({
+          id: makeId('membership'),
+          user_id: user.userId,
+          team_id: home,
+          role: 'member' as const
+        })),
+        {
+          id: makeId('membership'),
+          user_id: scorekeeper.userId,
+          team_id: away,
+          role: 'member'
         }
       ])
+      .execute()
+    await db
+      .insertInto('scope_roles')
+      .values(
+        (
+          [
+            [coach, home, 'coach'],
+            [assistant, home, 'assistant'],
+            [scorekeeper, away, 'scorekeeper']
+          ] as const
+        ).map(([user, teamId, role]) => ({
+          id: makeId('scopeRole'),
+          user_id: user.userId,
+          scope_type: 'team' as const,
+          scope_id: teamId,
+          role
+        }))
+      )
       .execute()
 
     scopes.set('broken', {
@@ -616,7 +674,10 @@ describe('dictation route', function () {
     expect(conversation.transcript).equals('Ball.')
     expect(conversation.config.model).equals('grok-4.7')
     expect(conversation.config.baseUrl).equals('https://llm.example/v1')
-    expect(conversation.config.tools).deep.equals(toolSchema())
+    expect(conversation.config.tools).deep.equals(
+      toolSchema().filter(tool => tool.name !== 'lineup')
+    )
+    expect(conversation.config.rosterTools).deep.equals(rosterToolSchema())
     // Audio after the utterance is over is dropped.
     client.audio(2)
     await pause()
@@ -1077,8 +1138,13 @@ describe('dictation route', function () {
 
   it('registers scoring with the library’s tools and the visible-game check', async function () {
     const scoring = SCOPES.get('scoring')
-    expect(scoring?.tools).deep.equals(toolSchema())
-    expect([...SCOPES.keys()]).deep.equals(['scoring'])
+    // Substitutions are roster commands: the model is offered no lineup tool.
+    expect(scoring?.tools.map(tool => tool.name)).not.includes('lineup')
+    expect(scoring?.tools).deep.equals(
+      toolSchema().filter(tool => tool.name !== 'lineup')
+    )
+    expect(scoring?.rosterTools).deep.equals(rosterToolSchema())
+    expect([...SCOPES.keys()]).deep.equals(['scoring', 'roster'])
     let refused: unknown
     try {
       await scoring?.authorise(
@@ -1091,5 +1157,162 @@ describe('dictation route', function () {
     }
     expect(refused).instanceOf(HttpError)
     expect((refused as HttpError).status).equals(404)
+  })
+
+  describe('the roster scope', function () {
+    const roster = SCOPES.get('roster')!
+    const actor = (user: { userId: number }): Actor => ({
+      userId: user.userId,
+      isAdmin: false,
+      scopes: []
+    })
+    const refusal = async (
+      user: { userId: number },
+      target: Record<string, unknown>
+    ): Promise<unknown> => {
+      try {
+        await roster.authorise(db!, actor(user), target)
+      } catch (error) {
+        return error
+      }
+      return undefined
+    }
+
+    it('offers the roster tools only', function () {
+      expect(roster.tools).deep.equals([])
+      expect(roster.rosterTools).deep.equals(rosterToolSchema())
+    })
+
+    it('admits a scorekeeper of either team, with or without a side', async function () {
+      expect(await refusal(scorekeeper, { gameId: ownGame })).equals(undefined)
+      expect(
+        await refusal(scorekeeper, { gameId: ownGame, side: 'home' })
+      ).equals(undefined)
+    })
+
+    it('admits a head coach for his own side', async function () {
+      expect(await refusal(coach, { gameId: ownGame, side: 'home' })).equals(
+        undefined
+      )
+    })
+
+    it('refuses a head coach with no side or the other side, an assistant and a member', async function () {
+      for (const [user, target] of [
+        [coach, { gameId: ownGame }],
+        [coach, { gameId: ownGame, side: 'away' }],
+        [assistant, { gameId: ownGame, side: 'home' }],
+        [member, { gameId: ownGame, side: 'home' }]
+      ] as const) {
+        const error = await refusal(user, target)
+        expect(error).instanceOf(HttpError)
+        expect((error as HttpError).status).equals(403)
+        expect((error as HttpError).message).equals(
+          "Only the team's head coach or a scorekeeper may change its lineup"
+        )
+      }
+    })
+
+    it('refuses a game the person cannot see, and a target it cannot read', async function () {
+      const hidden = await refusal(stranger, { gameId: ownGame, side: 'home' })
+      expect(hidden).instanceOf(HttpError)
+      expect((hidden as HttpError).status).equals(404)
+      expect(
+        await refusal(coach, { gameId: ownGame, side: 'left' })
+      ).instanceOf(TypeError)
+      expect(await refusal(coach, { side: 'home' })).instanceOf(TypeError)
+    })
+
+    it('hands a coach’s sentence the roster tools, and its commands back on the wire', async function () {
+      const client = await connect({ authorization: `Bearer ${COACH}` })
+      const recogniser = recognisers[recognisers.length - 1]
+      client.send(
+        start('r1', {
+          scope: 'roster',
+          target: { gameId: ownGame, side: 'away' }
+        })
+      )
+      expect(await client.next()).deep.equals({
+        kind: 'error',
+        id: 'r1',
+        message:
+          "Only the team's head coach or a scorekeeper may change its lineup"
+      })
+      client.send(
+        start('r2', {
+          scope: 'roster',
+          target: { gameId: ownGame, side: 'home' }
+        })
+      )
+      await settled(recogniser, 'begin')
+      client.audio(4)
+      client.send({ kind: 'release', id: 'r2' })
+      await settled(recogniser, 'end')
+      // As said: number 3, the team found by the client.
+      const atThird = {
+        type: 'setPositions' as const,
+        places: [{ player: { jersey: '3' }, position: '3B' as const }]
+      }
+      script.push({
+        kind: 'actions',
+        actions: [],
+        roster: [atThird],
+        dropped: []
+      })
+      recogniser.handlers.onFinal('Number 3 subs in at third base.')
+      await client.next()
+      expect(await client.next()).deep.equals({
+        kind: 'actions',
+        id: 'r2',
+        transcript: 'Number 3 subs in at third base.',
+        actions: [],
+        roster: [atThird],
+        dropped: []
+      })
+      const conversation = conversations[conversations.length - 1]
+      expect(conversation.config.tools).deep.equals([])
+      expect(conversation.config.rosterTools).deep.equals(rosterToolSchema())
+      expect(logs.at(-1)).match(
+        /dictation r2 model grok-4\.7 user .+ 0 actions, 1 roster commands, 0 dropped/
+      )
+      expect(
+        logs.some(
+          line =>
+            line.startsWith('dictation-state r2 ') &&
+            line.includes('screen=set roster') &&
+            line.includes('model=grok-4.7')
+        )
+      ).equals(true)
+      expect(
+        logs.some(
+          line =>
+            line.includes('"tag":"dictation-reply"') &&
+            line.includes('"model":"grok-4.7"') &&
+            line.includes('Number 3 subs in at third base.')
+        )
+      ).equals(true)
+      conversation.config.log?.({
+        model: 'claude-haiku-5-5',
+        messages: [{ role: 'user', content: conversation.transcript }],
+        calls: [{ name: 'setPositions', arguments: { jersey: '3' } }],
+        said: ''
+      })
+      expect(
+        logs.some(
+          line =>
+            line.includes('"tag":"dictation-prompt"') &&
+            line.includes('"model":"claude-haiku-5-5"') &&
+            line.includes(conversation.transcript)
+        )
+      ).equals(true)
+      expect(
+        logs.some(
+          line =>
+            line.includes('"tag":"dictation-calls"') &&
+            line.includes('setPositions') &&
+            line.includes('claude-haiku-5-5')
+        )
+      ).equals(true)
+      client.ws.close()
+    })
   })
 })

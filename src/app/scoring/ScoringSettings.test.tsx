@@ -61,11 +61,7 @@ describe('the settings sheet', function () {
   it('lists every dictation model first, the server’s ones to pick', async function () {
     const picked: DictationModel[] = []
     await render('models', {
-      health: health(true, [
-        'grok-4.3',
-        'gpt-6-luna',
-        'claude-haiku-4-5-20251001'
-      ]),
+      health: health(true, ['grok-4.3', 'gpt-6-luna', 'claude-haiku-5-5']),
       onDictationModelChange: model => picked.push(model)
     })
     const group = find('Dictation Model')!
@@ -74,9 +70,9 @@ describe('the settings sheet', function () {
       [...group.querySelectorAll('[role="radio"]')].map(node =>
         node.getAttribute('aria-label')
       )
-    ).deep.equals(['Grok 4.3', 'GPT-6 Luna', 'GPT-6 Sol', 'Claude Haiku 4.5'])
+    ).deep.equals(['Grok 4.3', 'GPT-6 Luna', 'GPT-6 Sol', 'Claude Haiku 5.5'])
     // Nothing picked yet: the default, which this server offers.
-    expect(chosen()).deep.equals(['Claude Haiku 4.5'])
+    expect(chosen()).deep.equals(['Claude Haiku 5.5'])
     expect(find('GPT-6 Sol')?.getAttribute('aria-disabled')).equals('true')
     expect(find('GPT-6 Sol')?.textContent).includes('not set up')
     // It comes before the other settings.
@@ -124,16 +120,12 @@ describe('the settings sheet', function () {
   })
 
   it('picks the model dictation uses', function () {
-    const all = ['grok-4.3', 'claude-haiku-4-5-20251001']
-    expect(dictationModelOf(undefined, all)).equals('claude-haiku-4-5-20251001')
-    expect(dictationModelOf('claude-haiku-4-5-20251001', all)).equals(
-      'claude-haiku-4-5-20251001'
-    )
+    const all = ['grok-4.3', 'claude-haiku-5-5']
+    expect(dictationModelOf(undefined, all)).equals('claude-haiku-5-5')
+    expect(dictationModelOf('claude-haiku-5-5', all)).equals('claude-haiku-5-5')
     // A pick the server no longer offers falls to the default, or else the
     // first it does offer.
-    expect(dictationModelOf('gpt-6-sol', all)).equals(
-      'claude-haiku-4-5-20251001'
-    )
+    expect(dictationModelOf('gpt-6-sol', all)).equals('claude-haiku-5-5')
     expect(dictationModelOf('gpt-6-sol', ['gpt-6-luna'])).equals('gpt-6-luna')
     expect(dictationModelOf(undefined, [])).equals(undefined)
   })

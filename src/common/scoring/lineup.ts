@@ -190,7 +190,9 @@ export function validateRoster(
 
 /**
  * Takes the players and lineups of `setup`, keeping each side's pitch counts
- * and choosing who bats next: the batter due when he is still in the order,
+ * and choosing who bats next. Before the game (`beforeTheGame`) nobody is
+ * due yet, so each side's new order bats from its top. Once it has begun:
+ * the batter due when he is still in the order,
  * else the man who took his place (a pinch hitter), `nextBatter` when the
  * batter due was on base, and otherwise the next one in the old order who is
  * still in the new one and not on base. Who took whose place is read by
@@ -229,6 +231,7 @@ export function applyRoster(
     ) === true
   )
     return { error: 'Finish the at-bat before clearing the lineup.' }
+  const opening = beforeTheGame(state)
   const activeOrder = state.liveData.boxscore.teams[activeSide].battingOrder
   const keepAwaiting =
     state.awaitingBatter != null &&
@@ -273,6 +276,11 @@ export function applyRoster(
     }
     if (side === activeSide && keepAwaiting) {
       after.battingIndex = before.battingIndex
+      next.liveData.boxscore.teams[side] = after
+      continue
+    }
+    if (opening) {
+      after.battingIndex = 0
       next.liveData.boxscore.teams[side] = after
       continue
     }
@@ -516,6 +524,14 @@ export function pinchSaid(
 }
 
 /**
+ * A pinch runner who leaves the batting order as it is, which the feed has no
+ * words for.
+ */
+export function courtesyRunnerSaid(name: string, replaced: string): string {
+  return `Pinch-runner ${name} runs for ${replaced}; the batting order is unchanged`
+}
+
+/**
  * A player coming in to field, as the feed words it: "replaces pinch-runner
  * X" when the man leaving came in to hit or run and never fielded.
  */
@@ -577,6 +593,22 @@ export function begun(state: GameState): boolean {
     state.liveData.plays.currentPlay?.playEvents.some(
       event => event.isSubstitution !== true
     ) === true
+  )
+}
+
+/**
+ * Nothing has happened yet: the game has not begun, and it stands at the top
+ * of the first with nobody on base and no batter awaited. A game picked up
+ * part way through by a correction by hand has a situation, and is under way.
+ */
+function beforeTheGame(state: GameState): boolean {
+  const line = state.liveData.linescore
+  return (
+    !begun(state) &&
+    state.awaitingBatter == null &&
+    line.currentInning === 1 &&
+    line.isTopInning &&
+    baseIds(state).every(id => id == null)
   )
 }
 

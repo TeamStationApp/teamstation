@@ -11,12 +11,10 @@ import {
 } from 'react-native'
 
 import type {
-  BattingRow,
   BoxScore as BoxScoreData,
   GameDetail,
   Highlight,
   LineScoreSide,
-  PitchingRow,
   Playback,
   TeamStationClient,
   TeamSummary,
@@ -25,6 +23,7 @@ import type {
 import { eventName } from '../../common/eventInfo'
 import { eventHeroLines, viewerTimezone } from '../../common/eventTime'
 import type { GameSocket } from '../../common/gameSocket'
+import type { Side } from '../../common/scoring/state'
 import {
   AnglePickerModal,
   AnglesUnavailableModal,
@@ -41,10 +40,9 @@ import {
   useHandoff,
   useHeaderHandoff,
   useHeaderSlot,
-  VideoPoster,
-  webStyle,
-  WideTable
+  VideoPoster
 } from '../components'
+import { ChoiceSheet } from '../components/ChoiceSheet'
 import { ContentInsetContext, NO_INSET } from '../components/contentInset'
 import { EventTagText } from '../components/EventTagText'
 import { navClearanceAboveInset } from '../components/navClearance'
@@ -67,17 +65,13 @@ import { windowOf } from '../player/wallClock'
 import { ScoreGameOptions } from '../scoreboard/ScoreGameScreen'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
+import { BoxScore } from './BoxScore'
 import { EventInfoTab } from './EventInfoTab'
 import { defaultEventTab, eventEndTime } from './eventTabPolicy'
 import { gameStatusLine, winnerOf } from './format'
 import { gameTabs } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { openableTeams as teamsWithAPage } from './openableTeams'
-import {
-  STAT_COLUMN_GAP_REM,
-  type StatColumn,
-  statColumnWidths
-} from './statColumns'
 
 export interface GameScreenProps {
   client: TeamStationClient
@@ -92,6 +86,11 @@ export interface GameScreenProps {
    */
   /** Opens DJ Game, for a songkeeper of either team. */
   onDjGame?: () => void
+  /**
+   * Opens Coach Game on a team the viewer head-coaches. A head coach of both
+   * teams picks one first.
+   */
+  onCoachGame?: (teamId: string) => void
   /** Opens a separate scheduling settings screen for a participating team admin. */
   onSettings?: () => void
   /**
@@ -450,6 +449,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const [withheld, setWithheld] = useState<string | null>(null)
   const [dropped, setDropped] = useState(0)
   const [box, setBox] = useState<BoxScoreData | undefined>(undefined)
+  // A head coach of both teams, choosing which to coach.
+  const [choosingCoach, setChoosingCoach] = useState(false)
   /**
    * The two sides' teams, where they are ones that can actually be opened.
    *
@@ -1090,6 +1091,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       />
     )
 
+  const teamOf = (side: Side): string =>
+    side === 'home' ? game.homeTeamId : game.awayTeamId
+  // Straight to the one team a head coach coaches; a head coach of both
+  // picks one.
+  const openCoach = (): void => {
+    const [only, other] = game.coachSides
+    if (other == null) props.onCoachGame?.(teamOf(only))
+    else setChoosingCoach(true)
+  }
   const tabs = (
     <PillTabs
       tabs={gameTabs({
@@ -1097,6 +1107,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         now: clockNow,
         music: props.music,
         onDjGame: props.onDjGame,
+        onCoachGame: props.onCoachGame == null ? undefined : openCoach,
         canManage: canManageSchedule,
         onSettings: props.onSettings
       })}
@@ -1108,6 +1119,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         }
         if (next === 'dj') {
           props.onDjGame?.()
+          return
+        }
+        if (next === 'coach') {
+          openCoach()
           return
         }
         // Leaving the video unmounts it, so where it had got to is written
@@ -1541,443 +1556,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       </View>
       {anglePicker}
       {multiCam}
-    </>
-  )
-}
-
-interface BoxScoreProps {
-  game: GameDetail
-  /** `undefined` while it is still loading. */
-  box: BoxScoreData | undefined
-  theme: Theme
-  /** Away and home side by side, rather than one at a time. */
-  sideBySide: boolean
-  /**
-   * Opening a line. The game's season and the side that line belongs to go
-   * with it, so the player's stats open on the season being read rather than
-   * on a career total nobody asked for. The side goes again as `onTeam`, the
-   * team a coach's Settings tab edits the player on.
-   */
-  onOpenPlayer?: (
-    userId: number,
-    name: string,
-    from?: { seasonId?: string; teamId?: string; onTeam?: string }
-  ) => void
-}
-
-/**
- * The box score: the innings across the top, then each side's batting and
- * pitching.
- *
- * Away on the left and home on the right, the same way round as the card above
- * — and the same way round as every scoreboard ever printed. On a phone there
- * is no room for two columns, so the four tables run one under another, home
- * first, which is a scroll rather than four decisions.
- *
- * A side with no batting lines, or no pitching lines, leaves that section
- * out. The totals are still in the line score above.
- */
-function BoxScore(props: BoxScoreProps): React.ReactElement {
-  const { game, box, theme, sideBySide, onOpenPlayer } = props
-  const styles = getStyles(theme)
-
-  // The innings and the runs are a non-member's; each side's lines are not.
-  if (game.nonMemberView) {
-    return (
-      <View style={styles.boxScore}>
-        <LineScore game={game} theme={theme} />
-        <Text accessibilityRole="alert" style={styles.notice}>
-          {lstrings.box_score_members_only}
-        </Text>
-      </View>
-    )
-  }
-
-  if (box == null) {
-    return (
-      <View style={styles.centre}>
-        <ActivityIndicator color={theme.primaryTextColor} />
-      </View>
-    )
-  }
-
-  const sides = [
-    { key: 'away', teamId: game.awayTeamId, name: game.awayTeamName },
-    { key: 'home', teamId: game.homeTeamId, name: game.homeTeamName }
-  ] as const
-
-  const tables = (side: (typeof sides)[number]): React.ReactElement => {
-    const batting = box.batting.filter(row => row.teamId === side.teamId)
-    const pitching = box.pitching.filter(row => row.teamId === side.teamId)
-    const open =
-      onOpenPlayer == null
-        ? undefined
-        : (userId: number, name: string) => {
-            onOpenPlayer(userId, name, {
-              seasonId: game.seasonId ?? undefined,
-              teamId: side.teamId,
-              onTeam: side.teamId
-            })
-          }
-    return (
-      <View style={styles.boxSide}>
-        <BattingTable
-          name={side.name}
-          rows={batting}
-          theme={theme}
-          onOpenPlayer={open}
+      {choosingCoach && (
+        <ChoiceSheet
+          title={lstrings.game_coach_which}
+          choices={(['away', 'home'] as const).map(side => ({
+            label: side === 'away' ? game.awayTeamName : game.homeTeamName,
+            onPress: () => {
+              props.onCoachGame?.(teamOf(side))
+            }
+          }))}
+          onClose={() => {
+            setChoosingCoach(false)
+          }}
         />
-        <PitchingTable
-          name={side.name}
-          rows={pitching}
-          theme={theme}
-          onOpenPlayer={open}
-        />
-      </View>
-    )
-  }
-
-  return (
-    <View style={styles.boxScore}>
-      <LineScore game={game} theme={theme} />
-
-      {sideBySide ? (
-        <View style={styles.boxColumns}>
-          {sides.map(side => (
-            <View key={side.key} style={styles.boxColumn}>
-              {tables(side)}
-            </View>
-          ))}
-        </View>
-      ) : (
-        // One long column rather than a row of pills. Four tables of nine
-        // rows is a scroll, not a decision, and a pill for each is four taps
-        // to read what one thumb can.
-        <View style={styles.boxSide}>
-          {[...sides].reverse().map(side => (
-            <View key={side.key}>{tables(side)}</View>
-          ))}
-        </View>
       )}
-    </View>
-  )
-}
-
-/**
- * Runs by inning, the way a scoreboard draws them, with the totals at the end.
- *
- * Hits and errors sit beside the runs because that is where fifty years of
- * scoreboards have put them; home runs and hit batters follow, since both are
- * counted from the plays and neither fits in a batting table without crowding
- * the columns that matter.
- */
-function LineScore(props: {
-  game: GameDetail
-  theme: Theme
-}): React.ReactElement | null {
-  const { game, theme } = props
-  const styles = getStyles(theme)
-  const line = game.linescore
-  if (line == null) return null
-
-  const innings = Math.max(line.away.runs.length, line.home.runs.length)
-  const sides = [
-    { name: game.awayTeamName, side: line.away },
-    { name: game.homeTeamName, side: line.home }
-  ]
-  // Runs, hits, errors and home runs. A hit batter belongs in the pitcher's
-  // line and the batter's, not up here beside the innings. A non-member is sent
-  // the runs alone.
-  const counted = !game.nonMemberView
-  const totals = counted ? ['R', 'H', 'E', 'HR'] : ['R']
-
-  return (
-    // Seven innings and five totals is wider than a phone. It scrolls sideways
-    // rather than being cut off at the runs column, which is the half somebody
-    // opened the box score for.
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={styles.lineScore}
-      contentContainerStyle={styles.lineScoreContent}
-    >
-      <View style={[styles.tableRow, styles.tableHead]}>
-        <Text
-          style={[styles.cellName, styles.cellHead, styles.lineScoreName]}
-          numberOfLines={1}
-        />
-        {Array.from({ length: innings }, (unused, index) => (
-          <Text key={index} style={[styles.cell, styles.cellHead]}>
-            {index + 1}
-          </Text>
-        ))}
-        {totals.map(label => (
-          <Text key={label} style={[styles.cell, styles.cellHead]}>
-            {label}
-          </Text>
-        ))}
-      </View>
-      {sides.map(({ name, side }) => (
-        <View key={name} style={styles.tableRow}>
-          <Text
-            style={[styles.cellName, styles.lineScoreName]}
-            numberOfLines={1}
-          >
-            {name}
-          </Text>
-          {Array.from({ length: innings }, (unused, index) => (
-            <Text key={index} style={styles.cell}>
-              {side.runs[index] ?? '–'}
-            </Text>
-          ))}
-          <Text style={[styles.cell, styles.cellStrong]}>{side.r}</Text>
-          {counted && (
-            <>
-              <Text style={styles.cell}>{side.h ?? '–'}</Text>
-              <Text style={styles.cell}>{side.e ?? '–'}</Text>
-              <Text style={styles.cell}>{side.hr ?? '–'}</Text>
-            </>
-          )}
-        </View>
-      ))}
-    </ScrollView>
-  )
-}
-
-function statCellSize(
-  theme: Theme,
-  width: number,
-  index: number
-): { width: number; paddingLeft: number; fontVariant: Array<'tabular-nums'> } {
-  const gap = index === 0 ? 0 : STAT_COLUMN_GAP_REM
-  return {
-    width: theme.rem(width + gap),
-    paddingLeft: theme.rem(gap),
-    fontVariant: ['tabular-nums']
-  }
-}
-
-/**
- * One person's line, in any of the four tables.
- *
- * The whole row is the target rather than the name: a name is a few characters
- * at one end of a row read on a phone at the edge of a field, and the rest of
- * the row is the part the thumb actually lands on.
- */
-function StatRow(props: {
-  name: string
-  cells: string[]
-  widths: number[]
-  theme: Theme
-  onPress?: () => void
-}): React.ReactElement {
-  const { name, cells, widths, theme, onPress } = props
-  const styles = getStyles(theme)
-  const content = (
-    <>
-      <Text style={[styles.cellName, styles.statName]} numberOfLines={1}>
-        {name}
-      </Text>
-      {cells.map((value, index) => (
-        <Text
-          key={index}
-          style={[styles.cell, statCellSize(theme, widths[index], index)]}
-          // A figure is one line. Whatever it measures, it must not be
-          // allowed to make its row taller than the row above.
-          numberOfLines={1}
-        >
-          {value}
-        </Text>
-      ))}
     </>
   )
-  if (onPress == null) {
-    return <View style={[styles.tableRow, styles.playerRow]}>{content}</View>
-  }
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={name}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.tableRow,
-        styles.playerRow,
-        pressed && styles.playerRowPressed
-      ]}
-    >
-      {content}
-    </Pressable>
-  )
 }
 
-function BattingTable(props: {
-  name: string
-  rows: BattingRow[]
-  theme: Theme
-  onOpenPlayer?: (userId: number, name: string) => void
-}): React.ReactElement | null {
-  const { name, rows, theme, onOpenPlayer } = props
-  const { fontScale } = useWindowDimensions()
-  if (rows.length === 0) return null
-  const styles = getStyles(theme)
-  // The server preserves each side’s first plate-appearance order.
-  const lines = rows
-  const widths = statColumnWidths(
-    battingColumns,
-    rows,
-    0.8125,
-    0.8125,
-    0,
-    fontScale
-  )
-  return (
-    <View style={styles.table}>
-      <Text style={styles.heading}>
-        {lstrings.game_batting} — {name}
-      </Text>
-      <WideTable>
-        <View style={[styles.tableRow, styles.tableHead]}>
-          <Text style={[styles.cellName, styles.statName, styles.cellHead]}>
-            {lstrings.stats_player}
-          </Text>
-          {battingColumns.map((column, index) => (
-            <Text
-              key={column.label}
-              style={[
-                styles.cell,
-                styles.cellHead,
-                statCellSize(theme, widths[index], index)
-              ]}
-              numberOfLines={1}
-            >
-              {column.label}
-            </Text>
-          ))}
-        </View>
-        {lines.map(line => (
-          <StatRow
-            key={line.userId}
-            name={line.shortName ?? ''}
-            cells={battingColumns.map(column => column.value(line))}
-            widths={widths}
-            theme={theme}
-            onPress={
-              onOpenPlayer == null
-                ? undefined
-                : () => {
-                    onOpenPlayer(line.userId, line.shortName ?? '')
-                  }
-            }
-          />
-        ))}
-      </WideTable>
-    </View>
-  )
-}
-
-function PitchingTable(props: {
-  name: string
-  rows: PitchingRow[]
-  theme: Theme
-  onOpenPlayer?: (userId: number, name: string) => void
-}): React.ReactElement | null {
-  const { name, rows, theme, onOpenPlayer } = props
-  const { fontScale } = useWindowDimensions()
-  if (rows.length === 0) return null
-  const styles = getStyles(theme)
-  const widths = statColumnWidths(
-    pitchingColumns,
-    rows,
-    0.8125,
-    0.8125,
-    0,
-    fontScale
-  )
-  return (
-    <View style={styles.table}>
-      <Text style={styles.heading}>
-        {lstrings.game_pitching} — {name}
-      </Text>
-      <WideTable>
-        <View style={[styles.tableRow, styles.tableHead]}>
-          <Text style={[styles.cellName, styles.statName, styles.cellHead]}>
-            {lstrings.stats_player}
-          </Text>
-          {pitchingColumns.map((column, index) => (
-            <Text
-              key={column.label}
-              style={[
-                styles.cell,
-                styles.cellHead,
-                statCellSize(theme, widths[index], index)
-              ]}
-              numberOfLines={1}
-            >
-              {column.label}
-            </Text>
-          ))}
-        </View>
-        {rows.map(line => (
-          <StatRow
-            key={line.userId}
-            name={line.shortName ?? ''}
-            cells={pitchingColumns.map(column => column.value(line))}
-            widths={widths}
-            theme={theme}
-            onPress={
-              onOpenPlayer == null
-                ? undefined
-                : () => {
-                    onOpenPlayer(line.userId, line.shortName ?? '')
-                  }
-            }
-          />
-        ))}
-      </WideTable>
-    </View>
-  )
-}
-
-const pitchingColumns: Array<StatColumn<PitchingRow>> = [
-  { label: lstrings.stats_innings, sample: '9.2', value: row => row.ip },
-  { label: 'BF', value: row => String(row.bf) },
-  { label: lstrings.stats_hits, value: row => String(row.h) },
-  { label: lstrings.stats_runs, value: row => String(row.r) },
-  // Earned runs, worked out by replaying the inning the way a scorebook
-  // does — the one figure on this line that a play-by-play cannot produce.
-  { label: lstrings.stats_earned_runs, value: row => String(row.er) },
-  { label: lstrings.stats_walks, value: row => String(row.bb) },
-  { label: lstrings.stats_strikeouts, value: row => String(row.k) },
-  { label: 'HR', value: row => String(row.hr) },
-  { label: 'HBP', value: row => String(row.hbp) }
-]
-
-const battingColumns: Array<StatColumn<BattingRow>> = [
-  { label: lstrings.stats_at_bats, value: row => String(row.ab) },
-  { label: lstrings.stats_hits, value: row => String(row.h) },
-  { label: lstrings.stats_runs, value: row => String(row.r) },
-  { label: lstrings.stats_runs_batted_in, value: row => String(row.rbi) },
-  { label: lstrings.stats_walks, value: row => String(row.bb) },
-  { label: lstrings.stats_strikeouts, value: row => String(row.k) },
-  { label: 'HR', value: row => String(row.hr) },
-  { label: 'HBP', value: row => String(row.hbp) },
-  {
-    // The season's, not the afternoon's: three at-bats say nothing about a
-    // hitter, and the number beside a name is read as what kind of hitter
-    // they are.
-    label: lstrings.stats_average,
-    value: row => (row.seasonAvg == null ? '–' : average(row.seasonAvg)),
-    sample: '1.000'
-  }
-]
-
-/** `.667`, in the way a box score writes it: no leading zero. */
-export function average(value: number | undefined): string {
-  if (value == null) return lstrings.stats_no_average
-  return value.toFixed(3).replace(/^0/, '')
-}
-
-/** `M:SS`, or `H:MM:SS` once a game runs past the hour. */
 export function timecode(seconds: number): string {
   const whole = Math.max(0, Math.floor(seconds))
   const hours = Math.floor(whole / 3600)
@@ -2134,6 +1730,23 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontSize: theme.rem(0.75),
       fontWeight: '700'
     },
+    eventHero: { padding: theme.rem(1.25), gap: theme.rem(0.5) },
+    eventTitle: {
+      fontFamily: theme.semiBoldTextFont,
+      fontSize: theme.rem(1.75),
+      color: theme.primaryTextColor
+    },
+    eventHeaderTitle: {
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(0.875),
+      color: theme.primaryTextColor
+    },
+    eventTiming: {
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(0.875 * 1.25),
+      lineHeight: theme.rem(0.875 * 1.25 * 1.4),
+      color: '#000000'
+    },
     playerBlock: {
       alignItems: 'center'
     },
@@ -2247,127 +1860,6 @@ const getStyles = cacheStyles((theme: Theme) =>
       fontSize: theme.rem(0.95)
     },
     scoring: { color: theme.scoringPlayColor },
-    boxSide: {
-      gap: theme.rem(theme.spaceMdRem)
-    },
-    boxColumns: {
-      width: '100%',
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: theme.rem(theme.spaceLgRem)
-    },
-    boxColumn: {
-      flex: 1,
-      // Or the wider of the two tables spills over the other.
-      overflow: 'hidden',
-      // Zero basis in a row measures the width, which is what is wanted here:
-      // two even columns, away on the left and home on the right, the same way
-      // round as the card above them.
-      flexBasis: 0,
-      minWidth: 0
-    },
-    lineScore: {
-      flexGrow: 0,
-      borderWidth: 1,
-      borderColor: theme.defaultBorderColor,
-      borderRadius: theme.rem(theme.radiusRem),
-      backgroundColor: theme.cardBackgroundColor,
-      paddingHorizontal: theme.rem(theme.spaceSmRem),
-      paddingVertical: theme.rem(theme.spaceXsRem)
-    },
-    lineScoreContent: {
-      flexDirection: 'column'
-    },
-    // The line score is a white card, so its pinned names are white too. The
-    // page colour `cellName` paints is for the tables that sit on the page.
-    lineScoreName: {
-      backgroundColor: theme.cardBackgroundColor
-    },
-    cellStrong: {
-      fontFamily: theme.boldTextFont,
-      fontWeight: '700',
-      color: theme.primaryTextColor
-    },
-    eventHero: { padding: theme.rem(1.25), gap: theme.rem(0.5) },
-    eventTitle: {
-      fontFamily: theme.semiBoldTextFont,
-      fontSize: theme.rem(1.75),
-      color: theme.primaryTextColor
-    },
-    eventHeaderTitle: {
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.875),
-      color: theme.primaryTextColor
-    },
-    eventTiming: {
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.875 * 1.25),
-      lineHeight: theme.rem(0.875 * 1.25 * 1.4),
-      color: '#000000'
-    },
-    boxScore: {
-      // No cap: the whole point of a wide window here is two sides at once,
-      // and a reading-width cap made for a line of text held both tables to
-      // half of one column.
-      width: '100%',
-      gap: theme.rem(theme.spaceMdRem),
-      paddingBottom: theme.rem(1)
-    },
-    table: { paddingBottom: theme.rem(0.5), overflow: 'hidden' },
-    tableRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginHorizontal: theme.rem(0.75),
-      paddingVertical: theme.rem(0.3)
-    },
-    tableHead: {
-      borderBottomColor: theme.defaultBorderColor,
-      borderBottomWidth: 1
-    },
-    // A line about a person, which opens their page. The head row and the
-    // line score keep the tighter `tableRow`: neither is a target, and
-    // growing them would spend the height these rows just took.
-    playerRow: {
-      minHeight: theme.rem(2.75),
-      paddingVertical: theme.rem(theme.spaceSmRem)
-    },
-    playerRowPressed: {
-      backgroundColor: theme.highlightRowActiveBackground
-    },
-    cellName: {
-      color: theme.primaryTextColor,
-      // Wide enough for a name before anything else gets a say, and greedy
-      // for whatever a wide window has left over. It never gives any back:
-      // inside a horizontal scroll a shrinking name is a column of ellipses
-      // where there was room to scroll instead.
-      flexBasis: theme.rem(6.5),
-      flexGrow: 1,
-      flexShrink: 0,
-      // And pinned, so a row scrolled to its last column is still somebody's.
-      // `sticky` is a position React Native has no name for; this app renders
-      // to the DOM, where it does. The background is what the numbers pass
-      // under rather than through.
-      ...webStyle({ position: 'sticky', left: 0, zIndex: 1 }),
-      backgroundColor: theme.backgroundColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.9)
-    },
-    statName: { minWidth: theme.rem(6.5) },
-    cell: {
-      color: theme.primaryTextColor,
-      fontFamily: theme.regularTextFont,
-      fontSize: theme.rem(0.8125),
-      // Fixed, so the columns of two tables beside each other line up and
-      // neither can push the other out of its half.
-      width: theme.rem(2),
-      flexGrow: 0,
-      flexShrink: 0,
-      textAlign: 'right'
-    },
-    cellHead: {
-      color: theme.secondaryTextColor,
-      fontFamily: theme.semiBoldTextFont
-    },
     footnote: {
       color: theme.secondaryTextColor,
       fontFamily: theme.regularTextFont,

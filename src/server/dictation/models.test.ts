@@ -26,7 +26,7 @@ describe('dictation models', function () {
       followUp: true,
       gameInUserMessage: true
     })
-    expect(endpointFor('claude-haiku-4-5-20251001', ALL)).deep.equals({
+    expect(endpointFor('claude-haiku-5-5', ALL)).deep.equals({
       api: 'messages',
       apiKey: 'anthropic',
       baseUrl: 'https://api.anthropic.com/v1'
@@ -38,6 +38,6 @@ describe('dictation models', function () {
     expect(modelsOf(ALL)).deep.equals([...DICTATION_MODELS])
     expect(modelsOf(XAI)).deep.equals(['grok-4.3'])
     expect(endpointFor('gpt-6-luna', XAI)).equals(undefined)
-    expect(endpointFor('claude-haiku-4-5-20251001', XAI)).equals(undefined)
+    expect(endpointFor('claude-haiku-5-5', XAI)).equals(undefined)
   })
 })

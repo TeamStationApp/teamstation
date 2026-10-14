@@ -1,5 +1,38 @@
 #import <TeamStationWalkUpMusicSpec/TeamStationWalkUpMusicSpec.h>
 
+#import "../TSCatch.h"
+
+NSString *TSInstallDictationTap(AVAudioEngine *engine, AVAudioNodeTapBlock tap)
+{
+  AVAudioInputNode *input = nil;
+  @try {
+    // Reading the input node, or preparing the engine before this, throws
+    // when the node does not exist yet. Swift cannot catch that, so it is
+    // caught here. nil uses the bus format: a format read before the route
+    // settles does not match it, and that mismatch throws too.
+    input = engine.inputNode;
+    AVAudioFormat *format = [input outputFormatForBus:0];
+    if (format.sampleRate == 0 || format.channelCount == 0) {
+      return @"This phone has no microphone";
+    }
+    // A tap left from a start that died is what makes the next install throw.
+    @try {
+      [input removeTapOnBus:0];
+    } @catch (NSException *ignored) {
+    }
+    [input installTapOnBus:0 bufferSize:4096 format:nil block:tap];
+  } @catch (NSException *exception) {
+    if (input != nil) {
+      @try {
+        [input removeTapOnBus:0];
+      } @catch (NSException *ignored) {
+      }
+    }
+    return exception.reason ?: @"The microphone could not be read";
+  }
+  return nil;
+}
+
 NS_ASSUME_NONNULL_BEGIN
 
 /**

@@ -151,7 +151,7 @@ try {
   }
   await swipeTabs('Away Team', 'Home Team')
   await shot('home-slider')
-  await swipeTabs('Set Lineup', 'Set Defense')
+  await swipeTabs('Lineup', 'Defense')
   await visible('Tap and drag players into their defensive positions.')
   await tap('Clear P')
   const from = center(await find(/^Player 1$/))
@@ -159,7 +159,7 @@ try {
   await gesture([from, { x: slot.x - 65, y: slot.y + slot.height / 2 }], 0)
   await shot('defense-replaced')
   await swipeTabs('Home Team', 'Away Team')
-  await swipeTabs('Set Defense', 'Set Lineup')
+  await swipeTabs('Defense', 'Lineup')
   await visible('Tap players to add them to the lineup')
   const source = center(await find(/^Drag Jordan K\.$/))
   const target = center(await find(/^Drag Player 3$/))

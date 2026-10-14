@@ -55,15 +55,17 @@ function context(
  * Both teams' default lineups. A default that fails to load is none, so the
  * side starts from its roster.
  */
-async function defaultsOf(
+export async function defaultsOf(
   client: TeamStationClient,
   game: GameDetail
 ): Promise<DefaultLineups> {
-  const load = async (teamId: string): Promise<Lineup | null> =>
-    await client
-      .defaultLineup(teamId)
-      .then(found => found.lineup)
-      .catch(() => null)
+  const load = async (teamId: string): Promise<Lineup | null> => {
+    try {
+      return (await client.defaultLineup(teamId)).lineup
+    } catch {
+      return null
+    }
+  }
   const [away, home] = await Promise.all([
     load(game.awayTeamId),
     load(game.homeTeamId)

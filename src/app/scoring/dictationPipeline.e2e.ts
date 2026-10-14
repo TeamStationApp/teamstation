@@ -12,6 +12,8 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
 import NodeSocket from 'ws'
 
 import { DICTATION_MODEL_NAMES, DICTATION_MODELS } from '../../common/api'
+import { idOfTag } from '../../common/scoring/playerTags'
+import { fakeMicrophone } from '../../test/fakeMicrophone.e2e'
 import { signInTestAccount } from '../../test/passwordFixtures'
 
 /**
@@ -27,20 +29,21 @@ import { signInTestAccount } from '../../test/passwordFixtures'
  * Needs what `scoringServer.e2e.ts` needs — the API (`npm start`), the web app
  * built against it (`npm run start.web`), the scorer from `npm run seed` and
  * `npm run scoring-game` — with the `dictation` block in `serverConfig.json`.
+ * The scenarios that rename players write to the API's database,
+ * `TS_E2E_DATABASE` on port `TS_E2E_DATABASE_PORT` (5433 when unset).
  * Two scenarios need the API started differently, and run only when told:
  *
  *   TS_E2E_DICTATION=providerDown   dictation.baseUrl at an unreachable host (E5)
  *   TS_E2E_DICTATION=off            no dictation block at all (E8)
  *
- * The microphone is the page's own `getUserMedia`, replaced with a stream the
- * test plays each clip into once the button is held. Chrome's fake-device
- * flags are not used: on macOS Chrome never resolves `getUserMedia` with
- * them. Everything after the stream — the AudioWorklet, the PCM, the socket,
- * the server, xAI — is the real path.
+ * The microphone is `fakeMicrophone`, which the test plays each clip into
+ * once the button is held. Everything after it — the AudioWorklet, the PCM,
+ * the socket, the server, xAI — is the real path.
  */
 const APP = process.env.TS_SCORING_TEST_URL ?? 'http://127.0.0.1:8080'
 const API = process.env.TS_API_TEST_URL ?? 'http://127.0.0.1:9100/api/v1'
 const DATABASE = process.env.TS_E2E_DATABASE ?? 'AppDb_scoringCore'
+const DATABASE_PORT = process.env.TS_E2E_DATABASE_PORT ?? '5433'
 const MODE = process.env.TS_E2E_DICTATION ?? 'on'
 const API_LOG = process.env.TS_E2E_API_LOG
 const SCORER = {
@@ -91,7 +94,7 @@ function scoringGame(games = 1): Fixture {
 function sql(query: string): string {
   return execFileSync(
     'psql',
-    ['-h', 'localhost', '-p', '5433', '-d', DATABASE, '-tAc', query],
+    ['-h', 'localhost', '-p', DATABASE_PORT, '-d', DATABASE, '-tAc', query],
     {
       encoding: 'utf8'
     }
@@ -229,29 +232,6 @@ async function launch(): Promise<Browser> {
   })
 }
 
-/**
- * The microphone is a stream that is silent until the test plays the clip into
- * it, which it does once the button is held; `__playClip` resolves when the
- * clip has finished.
- */
-function fakeMicrophone(wavBase64: string): void {
-  const bytes = Uint8Array.from(atob(wavBase64), c => c.charCodeAt(0))
-  const context = new AudioContext()
-  const destination = context.createMediaStreamDestination()
-  ;(window as any).__playClip = async () => {
-    await context.resume()
-    const buffer = await context.decodeAudioData(bytes.buffer.slice(0))
-    const source = context.createBufferSource()
-    source.buffer = buffer
-    source.connect(destination)
-    await new Promise(resolve => {
-      source.onended = resolve
-      source.start()
-    })
-  }
-  navigator.mediaDevices.getUserMedia = async () => destination.stream
-}
-
 async function open(
   browser: Browser,
   token: string,
@@ -268,7 +248,8 @@ async function open(
       fakeMicrophone,
       readFileSync(clip).toString('base64')
     )
-  // Every dictation frame, both ways, for the assertions below.
+  // Every dictation frame, both ways, for the assertions below. The scoring
+  // screen's game socket is not watched: only the dictation socket.
   await page.evaluateOnNewDocument(() => {
     const heard = {
       sent: [] as unknown[],
@@ -282,6 +263,7 @@ async function open(
     class Watched extends Native {
       constructor(url: string | URL, protocols?: string | string[]) {
         super(url, protocols)
+        if (!String(url).endsWith('/dictation')) return
         heard.sockets.push(this)
         this.addEventListener('message', event => {
           heard.received.push(JSON.parse(String(event.data)))
@@ -289,6 +271,10 @@ async function open(
       }
 
       send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+        if (!this.url.endsWith('/dictation')) {
+          super.send(data)
+          return
+        }
         if (typeof data === 'string') heard.sent.push(JSON.parse(data))
         else {
           heard.audioFrames++
@@ -551,11 +537,14 @@ async function fieldShown(page: Page): Promise<FieldMoment[]> {
     }
   })
 }
-/** A player's id, as the sentence's context named him. */
+/** A player's id, from the tag the sentence's context named him by. */
 function idIn(context: string, label: string): number {
-  const match = new RegExp(`${label}: [^(]*\\(id (\\d+)\\)`).exec(context)
-  if (match == null) throw new Error(`No ${label} in ${context}`)
-  return Number(match[1])
+  const match = new RegExp(`${label}: [^(]*\\(tag ([A-Z]{2}[0-9])\\)`).exec(
+    context
+  )
+  const id = match == null ? undefined : idOfTag(match[1])
+  if (id == null) throw new Error(`No ${label} in ${context}`)
+  return id
 }
 /** One utterance watched: the reply and what the field showed of it. */
 async function dictateWatched(
@@ -659,6 +648,9 @@ async function dictate(
   trace(`${clip}: ${JSON.stringify(reply)}`)
   const sent = await heard(page)
   trace(`${clip}: ${sent.audioFrames} audio frames, peak ${sent.audioPeak}`)
+  trace(
+    `${clip}: model ${String(sent.sent.filter(f => f.kind === 'start').at(-1)?.model)}`
+  )
   if (process.env.TS_E2E_TRACE != null) {
     await new Promise(resolve => setTimeout(resolve, 300))
     const shown = await page.evaluate(() => {
@@ -823,8 +815,8 @@ describe('dictation, end to end', function () {
         const context = String(
           heard.sent.find(f => f.kind === 'start')!.context
         )
-        const third = /3B [^,]*#6 \(id (\d+)\)/.exec(context)
-        const short = /SS [^,]*#5 \(id (\d+)\)/.exec(context)
+        const third = /3B [^,]*#6 \(tag ([A-Z]{2}[0-9])\)/.exec(context)
+        const short = /SS [^,]*#5 \(tag ([A-Z]{2}[0-9])\)/.exec(context)
         expect(third, context).not.equal(null)
         expect(short, context).not.equal(null)
         expect(reply.kind, JSON.stringify(reply)).equals('actions')
@@ -832,7 +824,7 @@ describe('dictation, end to end', function () {
           (a: any) => a.type === 'fieldingPlay'
         )
         expect(charged?.error, JSON.stringify(reply.actions)).equals(
-          Number(third![1])
+          idOfTag(third![1])
         )
         expect(
           reply.actions.find((a: any) => a.type === 'result')?.eventType

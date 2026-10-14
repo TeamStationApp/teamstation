@@ -380,6 +380,8 @@ async function open(fixture: Fixture = {}): Promise<{
         body = { id: 999, displayName: 'Scorer', isAdmin: false }
       else if (u.pathname === '/api/v1/me/roles')
         body = { teams: [], players: [] }
+      else if (u.pathname === '/api/v1/me/notifications/summary')
+        body = { hasPending: false }
       else if (u.pathname === '/api/v1/health')
         body = {
           status: 'ok',
@@ -421,6 +423,20 @@ async function open(fixture: Fixture = {}): Promise<{
                 fromGameId: null,
                 setAt: null
               }
+      } else if (u.pathname === '/api/v1/games/g1/lineups') {
+        // Read as the roster sheet opens, for the digest it follows.
+        const side = (teamId: string, teamName: string): unknown => ({
+          teamId,
+          teamName,
+          start: null,
+          changes: [],
+          current: null
+        })
+        body = {
+          away: side('away', game.awayTeamName),
+          home: side('home', game.homeTeamName),
+          digest: `d${held.plays.length}`
+        }
       } else if (u.pathname === '/api/v1/teams') body = []
       else if (u.pathname.endsWith('/live-streams'))
         body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
@@ -748,7 +764,7 @@ describe('current defensive scoring setup browser', function () {
             await page.$('[aria-label="Away Team"][aria-selected="true"]')
           ).not.equals(null)
           expect(
-            await page.$('[aria-label="Set Lineup"][aria-selected="true"]')
+            await page.$('[aria-label="Lineup"][aria-selected="true"]')
           ).not.equals(null)
           if (count === 0) {
             await click(page, `Add ${roster('away')[0].shortName} to Lineup`)
@@ -915,6 +931,8 @@ describe('current defensive scoring setup browser', function () {
         ])
         if (route === 'lineup') {
           await click(page, 'Set Lineup')
+          // Save Rosters lights for a change: the ninth batter.
+          await click(page, `Add ${roster('away')[8].shortName} to Lineup`)
           await click(page, 'Save Rosters')
         } else await choose(page, 'P', 1)
         await page.waitForSelector('[aria-label*="2 balls"]')

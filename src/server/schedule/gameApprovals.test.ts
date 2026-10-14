@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { asGameProposal, type GameIntent } from '../../common/gameApprovals'
 import { asParentActions } from '../../common/groupLinks'
+import { asPostEventsBody } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import {
   actor,
@@ -11,6 +12,7 @@ import {
   type GroupFixture,
   groupFixture
 } from '../../test/groupFixtures'
+import { postGamePlays } from '../events/postPlays'
 import { applyParents, previewParents } from '../groups/relationships'
 import { setScopeRoles } from '../invites/people'
 import { withdrawFromGame } from './gameApprovals'
@@ -477,6 +479,71 @@ describe('approved games and shared schedule ownership', function () {
         .where('id', '=', published.gameId!)
         .executeTakeFirstOrThrow()
     ).deep.equals({ away_team_id: f.standaloneTeam, venue: 'Demo Other Field' })
+  })
+  // U8b: a head coach's lineup saved before the game begins names its
+  // side's team, so the game keeps its teams, as after a scorer's.
+  it('refuses to change the teams of a game whose lineup was saved before it began', async () => {
+    const published = await accept(await send())
+    await postGamePlays(
+      f.h.db,
+      published.gameId!,
+      asPostEventsBody({
+        mode: 'live',
+        source: { system: 'teamstation' },
+        plays: [],
+        currentPlay: {
+          about: {
+            atBatIndex: 0,
+            inning: 1,
+            halfInning: 'top',
+            isComplete: false
+          },
+          matchup: { batter: { fullName: 'Judge' } },
+          playEvents: []
+        }
+      }),
+      undefined,
+      { startsGame: false }
+    )
+    await setScopeRoles(
+      f.h.db,
+      'team',
+      f.teamA,
+      102,
+      { admin: true, flags: [] },
+      101
+    )
+    const snapshot = (await (
+      await f.h.request(
+        'GET',
+        `/games/${published.gameId}/scheduling`,
+        undefined,
+        102
+      )
+    ).json()) as { version: string }
+    const response = await f.h.request(
+      'POST',
+      '/game-requests',
+      {
+        sender: { kind: 'season', id: f.seasonB },
+        game: { ...game(), awayTeamId: f.standaloneTeam },
+        gameId: published.gameId,
+        expected: snapshot.version,
+        idempotencyKey: 'replace-after-lineup'
+      },
+      102
+    )
+    expect(response.status).equals(409)
+    expect(((await response.json()) as { message: string }).message).equals(
+      'Keep played games on their original teams; use an administrative identity correction when necessary'
+    )
+    expect(
+      await f.h.db
+        .selectFrom('games')
+        .select(['away_team_id', 'status'])
+        .where('id', '=', published.gameId!)
+        .executeTakeFirstOrThrow()
+    ).deep.equals({ away_team_id: f.teamA, status: 'scheduled' })
   })
   it('expires exactly at seven days, atomically resends and serializes racing acceptance with withdrawal', async () => {
     const id = await send()

@@ -527,7 +527,7 @@ async function main(): Promise<void> {
       await shot('roster-spacing')
       spaced('roster', await cards('Add ', ' to Lineup'))
       spaced('lineup', await lineup())
-      await m.tapOn({ text: 'Set Defense', timeout: 10000 })
+      await m.tapOn({ text: 'Defense', timeout: 10000 })
       await pause(800)
       await shot('defense-spacing')
       // A defense card is the view that directly holds its Clear button.
@@ -547,7 +547,7 @@ async function main(): Promise<void> {
     if (only.includes('D6')) {
       log('D6 held defensive drop')
       await open()
-      await m.tapOn({ text: 'Set Defense', timeout: 10000 })
+      await m.tapOn({ text: 'Defense', timeout: 10000 })
       await pause(600)
       await m.tapOn({ text: 'Clear P', timeout: 10000 })
       await pause(600)

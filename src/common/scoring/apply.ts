@@ -40,6 +40,7 @@ import {
   baseIds,
   battingSide,
   canSwitchBatter,
+  courtesyRunnerSaid,
   fieldingSide,
   lineupChanges,
   ordinal,
@@ -1643,9 +1644,64 @@ function pinchedFor(ctx: Ctx, action: LineupAction): number {
   return runner
 }
 
+/**
+ * A pinch runner who leaves the batting order as it is: he takes the base,
+ * and the charges, of the man he runs for, who keeps his place in the order
+ * and on the field. The play writes it as `ts_courtesy_runner`, not as a
+ * substitution, so nothing reads him as having taken that man's place.
+ */
+function courtesyRunner(ctx: Ctx, action: LineupAction): void {
+  const state = ctx.state
+  const play = current(ctx)
+  const incoming = action.player
+  if (action.base == null || incoming == null)
+    refuse('malformed', 'Say who runs, and for the runner on which base')
+  const side = battingSide(state)
+  if (action.side !== side)
+    refuse('illegal', 'A pinch runner runs for the side at bat')
+  const bases = baseIds(state)
+  const index = destinationBase(action.base) - 1
+  const runner = bases[index]
+  if (runner == null) refuse('illegal', `Nobody is on ${action.base}`)
+  const player = state.gameData.players[incoming]
+  if (player?.teamId !== state.gameData.teams[side].id)
+    refuse('unknownPlayer', `Player ${incoming} is not on the side at bat`)
+  if (bases.includes(incoming) || incoming === play.matchup.batter.id)
+    refuse('illegal', `${player.fullName} is already batting or on base`)
+  const team = state.liveData.boxscore.teams[side]
+  if (!team.players.includes(incoming)) team.players.push(incoming)
+  // He takes the charges of the man he runs for (9.16).
+  ctx.charges.set(incoming, chargeOf(state, ctx.charges, runner))
+  ctx.charges.delete(runner)
+  const replaced = playerRef(state, runner)
+  line(ctx).offense[BASE_KEYS[index]] = playerRef(state, incoming)
+  play.source.teamstation.lineupChanged = true
+  play.playEvents.push({
+    index: play.playEvents.length,
+    isPitch: false,
+    type: 'action',
+    details: {
+      description: courtesyRunnerSaid(player.fullName, replaced.fullName),
+      code: 'ts_courtesy_runner'
+    },
+    isSubstitution: false,
+    replacedPlayer: replaced,
+    count: count(ctx),
+    player: playerRef(state, incoming)
+  })
+  ctx.out.push({
+    type: 'batterChanged',
+    batter: line(ctx).offense.batter?.id ?? null
+  })
+}
+
 function lineup(ctx: Ctx, action: LineupAction): void {
   const state = ctx.state
   if (state.pending != null) refuse('notNow', 'Finish the current play first')
+  if (action.kind === 'runner') {
+    courtesyRunner(ctx, action)
+    return
+  }
   if (action.kind === 'batterSide') {
     const side = action.batSide
     const play = state.liveData.plays.currentPlay

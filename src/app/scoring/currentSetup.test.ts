@@ -18,8 +18,10 @@ import {
   defensiveRosterLabel,
   emptyDefensePlayers,
   lineupCountMessage,
+  lineupsHeld,
   missingDefense,
   setupEditable,
+  shortPlayerNames,
   withRosterDetails
 } from './currentSetup'
 import { createDevelopmentSession } from './developmentSession'
@@ -27,7 +29,11 @@ import { gameFixture } from './isUnscoredGame.test'
 import { addPlaceholderPlayers } from './placeholderPlayers'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { memoryStore } from './scoringSource'
-import { POSITIONS, type ScoringSessionState } from './scoringTypes'
+import {
+  POSITIONS,
+  type ScoringPlayer,
+  type ScoringSessionState
+} from './scoringTypes'
 
 const applyAction = (
   state: ScoringSessionState,
@@ -236,6 +242,28 @@ describe('current scoring setup', function () {
     expect(moved.liveData.boxscore.teams.home.players).deep.equals(
       original.liveData.boxscore.teams.home.players
     )
+  })
+  it('holds the lineups once a roster is saved or a pitch made, and not before or after Undo', function () {
+    const fresh = initialScoringState(game())
+    expect(lineupsHeld(fresh)).equals(false)
+    // Saved as it stands, the lineup the game opened on is the game's.
+    const saved = scoringReducer(fresh, {
+      type: 'ROSTER',
+      draft: copyState(fresh.session)
+    })
+    expect(saved.log.map(action => action.type)).deep.equals(['lineup'])
+    expect(lineupsHeld(saved)).equals(true)
+    expect(lineupsHeld(scoringReducer(saved, { type: 'UNDO' }))).equals(false)
+    expect(
+      lineupsHeld(scoringReducer(fresh, { type: 'PITCH', kind: 'ball' }))
+    ).equals(true)
+    // A game read back with plays and no actions of its own holds them too.
+    const played = copyState(fresh.session)
+    played.liveData.plays.allPlays.push(
+      applyAction(fresh.session, { type: 'pitch', call: 'B' }).state.liveData
+        .plays.currentPlay!
+    )
+    expect(lineupsHeld(initialScoringState(played))).equals(true)
   })
   it('formats actual lineup counts, stable acceptance keys and roster names', function () {
     expect(lineupCountMessage(0)).equals('No players in lineup')
@@ -502,5 +530,49 @@ describe('current scoring setup', function () {
         setup: setupOf(unsafe)
       }).problems
     ).has.length(1)
+  })
+})
+
+describe('names drawn on the field', function () {
+  const player = (
+    id: number,
+    fullName: string,
+    parts?: { firstName: string; lastName: string }
+  ): ScoringPlayer => ({
+    id,
+    userId: null,
+    teamId: 'home',
+    fullName,
+    firstName: parts?.firstName,
+    lastName: parts?.lastName,
+    jersey: '',
+    bats: 'right',
+    throws: 'right',
+    positions: [],
+    local: parts != null
+  })
+
+  it('draws a whole surname as a first name and last initial', function () {
+    const names = shortPlayerNames([
+      player(1, 'Alex Rivera', { firstName: 'Alex', lastName: 'Rivera' }),
+      player(2, 'Daniel M')
+    ])
+    expect(names.get(1)).equals('Alex R')
+    expect(names.get(2)).equals('Daniel M')
+  })
+
+  it('keeps an initial that already has its period', function () {
+    expect(shortPlayerNames([player(1, 'Jordan K.')]).get(1)).equals(
+      'Jordan K.'
+    )
+  })
+
+  it('takes another letter when two players would read the same', function () {
+    const names = shortPlayerNames([
+      player(1, 'Luis Garcia', { firstName: 'Luis', lastName: 'Garcia' }),
+      player(2, 'Luis Gibson', { firstName: 'Luis', lastName: 'Gibson' })
+    ])
+    expect(names.get(1)).equals('Luis Ga')
+    expect(names.get(2)).equals('Luis Gi')
   })
 })

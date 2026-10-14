@@ -11,16 +11,20 @@ import {
 import { asLiteral } from '../asLiteral'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import { asUserId } from '../userIdNumber'
+import type { ScoringAction } from './actions'
 import { recordOf, replayPlays } from './gumbo'
-import { begun } from './lineup'
+import { addPlayer, begun } from './lineup'
 import {
+  copyState,
   type GamePlayer,
   type GameSetup,
+  type GameState,
   type GameTeam,
   type Lineups,
   lineupsOf,
   type Position,
   POSITIONS,
+  setupOf,
   type Side
 } from './state'
 
@@ -102,8 +106,43 @@ export interface LineupContext {
   fenceDistanceFt?: number
 }
 
+/** A pinch runner who keeps the batting order, as the play records him. */
+export interface CourtesyRunner {
+  atBatIndex: number
+  player: LineupPerson
+  replaced: LineupPerson | null
+}
+
+/**
+ * Who is due up when that is not the next man the order would send. Either
+ * the man the order names is on base and nobody has been chosen, or a save
+ * has chosen someone else and he is the one at the plate.
+ */
+export interface DueBatter {
+  awaiting: boolean
+  player: LineupPerson
+}
+
 export interface GameLineups {
   sides: Record<Side, SideLineups>
+  /**
+   * People on the roster who are in neither the batting order nor the
+   * field. A change to one of them is not a lineup change, and the digest
+   * of the lineups counts them so a save of one is seen.
+   */
+  bench: Record<Side, LineupPerson[]>
+  /**
+   * Pinch runners who keep the batting order. Each is recorded on the play
+   * and changes no lineup, and the digest of the lineups counts them so a
+   * save of one is seen.
+   */
+  courtesy: CourtesyRunner[]
+  /**
+   * Who is due up when the order alone does not say so. Null when the man
+   * the order names is the one at the plate, so a pitch leaves the digest
+   * alone.
+   */
+  due: DueBatter | null
   /**
    * Whether the game has begun, as `begun` says; null when the record no
    * longer replays, so nobody can say.
@@ -111,6 +150,31 @@ export interface GameLineups {
   begun: boolean | null
   /** Why the record did not replay, or null. */
   problem: string | null
+}
+
+const noBench = (): Record<Side, LineupPerson[]> => ({ away: [], home: [] })
+
+/** People on `side` who are not in its batting order or its defense. */
+function benchOf(state: GameState): Record<Side, LineupPerson[]> {
+  const people = (side: Side): LineupPerson[] => {
+    const team = state.liveData.boxscore.teams[side]
+    const playing = new Set<number>(team.battingOrder)
+    for (const position of POSITIONS) {
+      const id = team.defense[position]
+      if (id != null) playing.add(id)
+    }
+    return team.players
+      .filter(id => !playing.has(id))
+      .map(id => {
+        const player = state.gameData.players[id]
+        return {
+          userId: player?.userId ?? null,
+          name: player?.fullName ?? '',
+          jersey: player?.jersey ?? ''
+        }
+      })
+  }
+  return { away: people('away'), home: people('home') }
 }
 
 const asLineupPerson: Cleaner<LineupPerson> = asObject({
@@ -218,6 +282,234 @@ export function sameArrangement(a: Lineup, b: Lineup): boolean {
   )
 }
 
+/** One side of a roster setup, as two lineups compare it. */
+function lineupFromSetup(setup: GameSetup, side: Side): Lineup {
+  return lineupOf(
+    {
+      away: {
+        battingOrder: setup.sides.away.battingOrder,
+        defense: setup.sides.away.defense
+      },
+      home: {
+        battingOrder: setup.sides.home.battingOrder,
+        defense: setup.sides.home.defense
+      }
+    },
+    side,
+    setup.players
+  )
+}
+
+/**
+ * Sides whose starting lineup is still the roster order a save wrote because
+ * the saver could not see that team, and that order. A later roster save
+ * drops a side when it confirms the side and the arrangement is no longer
+ * that order. A later action that arranges the side drops it too. Actions
+ * after the game begins belong to the game, not to the lineup it began with.
+ */
+function placeholderMarks(actions: readonly ScoringAction[]): {
+  sides: ReadonlySet<Side>
+  lineups: ReadonlyMap<Side, Lineup>
+} {
+  const sides = new Set<Side>()
+  const lineups = new Map<Side, Lineup>()
+  for (const action of actions) {
+    if (action.type !== 'lineup') break
+    if (action.kind === 'roster' && action.setup != null) {
+      const setup = action.setup
+      for (const side of action.unseen ?? []) {
+        if (!sides.has(side)) lineups.set(side, lineupFromSetup(setup, side))
+        sides.add(side)
+      }
+      for (const side of action.confirmed ?? []) {
+        const was = lineups.get(side)
+        if (
+          was == null ||
+          !sameArrangement(was, lineupFromSetup(setup, side))
+        ) {
+          sides.delete(side)
+          lineups.delete(side)
+        }
+      }
+    } else if (
+      action.side != null &&
+      (action.kind === 'battingOrder' ||
+        action.kind === 'position' ||
+        action.kind === 'addPlayer' ||
+        action.kind === 'substitute' ||
+        action.kind === 'pinchRunner')
+    ) {
+      sides.delete(action.side)
+      lineups.delete(action.side)
+    }
+  }
+  return { sides, lineups }
+}
+
+/** Sides still held as the roster order a save left because it could not see them. */
+export function placeholderSidesOf(
+  actions: readonly ScoringAction[]
+): ReadonlySet<Side> {
+  return placeholderMarks(actions).sides
+}
+
+/**
+ * The roster order a save left for `side` because it could not see that
+ * team, while that order is still the side's starting lineup. Null once
+ * the side was arranged, or was never unseen.
+ */
+export function unseenLineup(
+  actions: readonly ScoringAction[],
+  side: Side
+): Lineup | null {
+  return placeholderMarks(actions).lineups.get(side) ?? null
+}
+
+/**
+ * Sides a roster save confirms. A side still unseen is confirmed only when
+ * `setup` is no longer the roster order that save left. Every other side is
+ * confirmed. An empty result means the save confirms nothing.
+ */
+export function confirmedSides(
+  actions: readonly ScoringAction[],
+  setup: GameSetup
+): Side[] {
+  return (['away', 'home'] as const).filter(side => {
+    const placeholder = unseenLineup(actions, side)
+    if (placeholder == null) return true
+    return !sameArrangement(placeholder, lineupFromSetup(setup, side))
+  })
+}
+
+/**
+ * Sides still unseen whose arrangement in `setup` is no longer that roster
+ * order. A play scored from that arrangement logs it first, so the saved
+ * game scores the lineup the screen showed.
+ */
+export function revealedSides(
+  actions: readonly ScoringAction[],
+  setup: GameSetup
+): Side[] {
+  return confirmedSides(actions, setup).filter(
+    side => unseenLineup(actions, side) != null
+  )
+}
+
+/**
+ * Whether `side` is still the roster order a save left because it could not
+ * see that team. A shown snapshot may replace that side and no other.
+ */
+function stillUnseenOrder(
+  actions: readonly ScoringAction[],
+  state: GameState,
+  side: Side
+): boolean {
+  const placeholder = unseenLineup(actions, side)
+  if (placeholder == null) return false
+  return sameArrangement(
+    lineupOf(lineupsOf(state), side, state.gameData.players),
+    placeholder
+  )
+}
+
+/**
+ * The action a rebase replays. A roster marked `shown` is the lineup the
+ * scoring screen was showing in place of an unseen order, ahead of a play.
+ * It may replace only a side that is still that order. Every other side
+ * stays as the server holds it, players off the card included. A person on
+ * the side it does replace is the server's player of that user id, or of
+ * that placeholder's name, and a placeholder the server does not have yet
+ * is allocated from the server's ids. Null when the snapshot replaces
+ * nothing, so the pitch follows the server. A roster the scorer saved from
+ * the sheet carries no such mark and is returned as it is.
+ */
+export function reconcileShownLineup(
+  action: ScoringAction,
+  actions: readonly ScoringAction[],
+  state: GameState
+): ScoringAction | null {
+  if (
+    action.type !== 'lineup' ||
+    action.kind !== 'roster' ||
+    action.shown !== true ||
+    action.setup == null
+  )
+    return action
+  const replace = (['away', 'home'] as const).filter(side =>
+    stillUnseenOrder(actions, state, side)
+  )
+  if (replace.length === 0) return null
+  const current = setupOf(state)
+  const setup = action.setup
+  const players = copyState(current.players)
+  const identities = copyState(current.identities)
+  const sides = {
+    away: copyState(current.sides.away),
+    home: copyState(current.sides.home)
+  }
+  const draft = {
+    gameData: { teams: state.gameData.teams, players },
+    liveData: { boxscore: { teams: sides } },
+    meta: { identities }
+  }
+  for (const side of replace) {
+    const snap = setup.sides[side]
+    const byUser = new Map<number, number>()
+    const byName = new Map<string, number>()
+    for (const id of sides[side].players) {
+      const player = players[id]
+      if (player == null) continue
+      if (player.userId != null) byUser.set(player.userId, id)
+      else byName.set(player.fullName, id)
+    }
+    const idOf = (snapId: number | null): number | null => {
+      if (snapId == null) return null
+      const person = setup.players[snapId]
+      if (person == null) return null
+      if (person.userId != null) return byUser.get(person.userId) ?? null
+      const known = byName.get(person.fullName)
+      if (known != null) return known
+      const id = addPlayer(draft, side, person.fullName, person.jersey)
+      byName.set(person.fullName, id)
+      return id
+    }
+    const order: number[] = []
+    for (const id of snap.battingOrder) {
+      const next = idOf(id)
+      if (next != null && !order.includes(next)) order.push(next)
+    }
+    const defense = Object.fromEntries(
+      POSITIONS.map(position => [position, null])
+    ) as Record<Position, number | null>
+    const fielding = new Set<number>()
+    for (const position of POSITIONS) {
+      const id = idOf(snap.defense[position])
+      if (id != null && !fielding.has(id)) {
+        defense[position] = id
+        fielding.add(id)
+      }
+    }
+    const roster = [...sides[side].players]
+    for (const id of [
+      ...order,
+      ...POSITIONS.map(position => defense[position])
+    ])
+      if (id != null && !roster.includes(id)) roster.push(id)
+    sides[side] = {
+      ...copyState(sides[side]),
+      players: roster,
+      battingOrder: order,
+      battingIndex: 0,
+      defense
+    }
+  }
+  return {
+    ...action,
+    setup: { players, sides, identities },
+    confirmed: replace
+  }
+}
+
 /** Both sides' lineups: start, changes and current. */
 export function lineupHistory(
   stored: StoredLineupGame,
@@ -244,6 +536,9 @@ export function readLineups(
       eventsOf(stored.currentPlay).some(event => event.isSubstitution !== true)
     return {
       sides: sidesOf(changesOf(played, context, {}), null, null),
+      bench: noBench(),
+      courtesy: courtesyOf(played, {}),
+      due: null,
       begun: hasBegun,
       problem: null
     }
@@ -264,6 +559,9 @@ export function readLineups(
   if (replayed == null || problem != null)
     return {
       sides: sidesOf(changesOf(played, context, {}), null, null),
+      bench: noBench(),
+      courtesy: courtesyOf(played, {}),
+      due: null,
       begun: null,
       problem
     }
@@ -280,9 +578,40 @@ export function readLineups(
       side => (began == null ? null : lineupOf(began, side, players)),
       side => lineupOf(now, side, players)
     ),
+    bench: benchOf(state),
+    courtesy: courtesyOf(played, players),
+    due: dueOf(state, stored),
     begun: hasBegun,
     problem: null
   }
+}
+
+/** Who is due up when the order alone does not say so, or null. */
+function dueOf(state: GameState, stored: StoredLineupGame): DueBatter | null {
+  const players = state.gameData.players
+  const person = (id: number): LineupPerson => {
+    const player = players[id]
+    return {
+      userId: player?.userId ?? null,
+      name: player?.fullName ?? '',
+      jersey: player?.jersey ?? ''
+    }
+  }
+  const waiting = state.awaitingBatter
+  if (waiting != null)
+    return { awaiting: true, player: person(waiting.duePlayerId) }
+  const side = state.liveData.linescore.isTopInning ? 'away' : 'home'
+  const team = state.liveData.boxscore.teams[side]
+  const dueId = team.battingOrder[team.battingIndex]
+  if (dueId == null) return null
+  if (state.liveData.linescore.offense.batter?.id !== dueId) return null
+  const chosen = (recordOf(stored.currentPlay)?.actions ?? []).find(
+    action =>
+      action.type === 'lineup' &&
+      action.kind === 'roster' &&
+      action.nextBatter === dueId
+  )
+  return chosen == null ? null : { awaiting: false, player: person(dueId) }
 }
 
 function sidesOf(
@@ -385,6 +714,32 @@ function positionOf(raw: unknown): string | null {
 }
 
 const TYPES: ReadonlySet<string> = new Set(SUBSTITUTION_TYPES)
+
+/**
+ * Pinch runners who keep the batting order, in index then event order. A
+ * lineup change does not announce them.
+ */
+function courtesyOf(
+  plays: Array<GumboPlay | CurrentPlay>,
+  players: Record<number, GamePlayer>
+): CourtesyRunner[] {
+  const runners: CourtesyRunner[] = []
+  for (const play of plays) {
+    for (const event of eventsOf(play)) {
+      if (event.details?.eventType !== 'ts_courtesy_runner') continue
+      runners.push({
+        atBatIndex: play.about.atBatIndex,
+        player: storedPerson(event.player, players) ?? {
+          userId: null,
+          name: '',
+          jersey: ''
+        },
+        replaced: storedPerson(event.replacedPlayer, players)
+      })
+    }
+  }
+  return runners
+}
 
 /** Every substitution event the plays carry, in index then event order. */
 function changesOf(

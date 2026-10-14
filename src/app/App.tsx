@@ -64,6 +64,7 @@ import { ScoringPlayerSettingsFlow } from './scoring/ScoringPlayerSettingsFlow'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
+import { CoachGameScreen } from './screens/CoachGameScreen'
 import { CreateGroupScreen } from './screens/CreateGroupScreen'
 import { DiscoverScreen } from './screens/DiscoverScreen'
 import { EventSettingsScreen } from './screens/EventSettingsScreen'
@@ -138,6 +139,8 @@ type ScoringSettingsRefresh = () => void
 type Pushed =
   | CreationRoute
   | { name: 'scoreGame'; gameId: string }
+  /** Coach Game: a head coach's own team in a game, full screen. */
+  | { name: 'coachGame'; gameId: string; teamId: string }
   /**
    * DJ Game, on a phone. The side showing is kept here, so coming back from
    * the song picker lands on the list the songkeeper left.
@@ -1278,6 +1281,7 @@ function Shell(props: AppProps): React.ReactElement {
         music={walkUpMusic}
         resolveSong={resolveDjSong}
         fadeAppleMusic={walkUpSettings.fadeAppleMusic}
+        socket={gameSocket}
         onEditPlayer={(userId, title, teamId) => {
           refreshRoles()
           scoringApproved.current = false
@@ -1830,6 +1834,9 @@ function Shell(props: AppProps): React.ReactElement {
         onDjGame={() => {
           push({ name: 'djGame', gameId: top.gameId })
         }}
+        onCoachGame={teamId => {
+          push({ name: 'coachGame', gameId: top.gameId, teamId })
+        }}
         music={walkUpMusic}
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
@@ -1848,6 +1855,31 @@ function Shell(props: AppProps): React.ReactElement {
           showRoute(signIn)
         }}
       />
+    ) : top.name === 'coachGame' ? (
+      <CoachGameScreen
+        key={`${signedInAs ?? 'local'}:${top.gameId}:${top.teamId}`}
+        client={client}
+        gameId={top.gameId}
+        teamId={top.teamId}
+        userId={signedInAs}
+        socket={gameSocket}
+        onExit={() => {
+          // Back to the game, on its Box score tab: a coach who does not
+          // score has no Score Game tab to come back to.
+          popRoute()
+          setStacks(current => {
+            const held = current[tab].slice(0, -1)
+            const last = held.at(-1)
+            return {
+              ...current,
+              [tab]:
+                last?.name === 'game' && last.gameId === top.gameId
+                  ? [...held.slice(0, -1), { ...last, tab: 'boxScore' }]
+                  : [...held, gameUnder(top.gameId, 'boxScore')]
+            }
+          })
+        }}
+      />
     ) : top.name === 'scoreGame' ? null : top.name === 'game' ? (
       <GameScreen
         socket={gameSocket}
@@ -1864,6 +1896,9 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onDjGame={() => {
           push({ name: 'djGame', gameId: top.gameId })
+        }}
+        onCoachGame={teamId => {
+          push({ name: 'coachGame', gameId: top.gameId, teamId })
         }}
         music={walkUpMusic}
         onOpenPlayer={openPlayer}
@@ -2007,7 +2042,9 @@ function Shell(props: AppProps): React.ReactElement {
   // element with it, which is what used to stop playback dead mid-drag. Keyed,
   // the pane is matched to the pane and nothing below it notices.
   const immersiveField =
-    props.fieldPreview === true || top?.name === 'scoreGame'
+    props.fieldPreview === true ||
+    top?.name === 'scoreGame' ||
+    top?.name === 'coachGame'
 
   return (
     <GestureHandlerRootView style={styles.root}>
@@ -2099,6 +2136,9 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   if (isCreationRoute(route)) return { [tab]: [route] }
   if (route.name === 'scoreGame') return { [tab]: [route] }
   if (route.name === 'djGame') return { [tab]: [route] }
+  // Over the game's Box score, where the coach's Back returns.
+  if (route.name === 'coachGame')
+    return { [tab]: [gameUnder(route.gameId, 'boxScore'), route] }
   // The dashboard sits on the game's Score Game section, so Back returns to
   // the hero and the three pills with Score Game still selected.
   if (route.name === 'scoreboardOverride') {
@@ -2179,7 +2219,11 @@ function routeOf(
   if (top != null) {
     if (isCreationRoute(top)) return top
     if (top.name === 'djGame') return { name: 'djGame', gameId: top.gameId }
-    if (top.name === 'scoreGame' || top.name === 'scoreboardOverride') {
+    if (
+      top.name === 'scoreGame' ||
+      top.name === 'coachGame' ||
+      top.name === 'scoreboardOverride'
+    ) {
       return top
     }
     if (top.name === 'team') {

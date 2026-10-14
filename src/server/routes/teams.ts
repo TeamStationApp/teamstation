@@ -19,6 +19,7 @@ import {
   canScore,
   canSeeGame,
   canSeeTeam,
+  isHeadCoach,
   nonMemberTeam,
   roleScopes,
   type VisibleScopes,
@@ -510,7 +511,8 @@ export function teamRoutes(
       // Whether to offer Score Game: a scorekeeper of either team, which
       // every administrator of it is. The events route holds the same rule.
       // And whether to offer DJ Game: a songkeeper of either team, which
-      // every scorekeeper is.
+      // every scorekeeper is. And the sides whose lineups this caller saves
+      // as their team's head coach, as the lineups route allows.
       const roles = await roleScopes(db, actor.userId, actor.isAdmin)
 
       // Each side's record in the season this game was played in.
@@ -610,6 +612,14 @@ export function teamRoutes(
           !nonMemberView &&
           (canKeepSongs(roles, game.home_team_id) ||
             canKeepSongs(roles, game.away_team_id)),
+        coachSides: nonMemberView
+          ? []
+          : (['away', 'home'] as const).filter(side =>
+              isHeadCoach(
+                roles,
+                side === 'home' ? game.home_team_id : game.away_team_id
+              )
+            ),
         // Whether this is the non-member view, so the app draws it as one.
         nonMemberView,
         scoreboard: await scoreboardOf(store, mayOverride, {

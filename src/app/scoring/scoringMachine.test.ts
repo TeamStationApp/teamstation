@@ -2,9 +2,16 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asRosterEntry } from '../../common/api'
+import { lineupOf } from '../../common/scoring/lineupHistory'
 import { allocatePlayer, createIdentityMap } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
-import { asSessionId } from '../../common/scoring/state'
+import { shownWithDefault } from '../../common/scoring/startingSetup'
+import {
+  asSessionId,
+  copyState,
+  lineupsOf,
+  setupOf
+} from '../../common/scoring/state'
 import { completeMotions, singleCorrection } from '../../test/scoringHelpers'
 import { advancePlayer } from '../field/fieldModel'
 import {
@@ -14,7 +21,12 @@ import {
 import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
 import { asScoringPlay } from './scoringContract'
-import { initialScoringState, scoringReducer } from './scoringMachine'
+import {
+  initialScoringState,
+  resumedScoringState,
+  rosterRefusal,
+  scoringReducer
+} from './scoringMachine'
 import { scoringPreferenceStore } from './scoringPreferenceStore'
 import {
   baseIds,
@@ -102,6 +114,21 @@ describe('local scoring sessions', function () {
       userId: null,
       jersey: '',
       local: true
+    })
+  })
+  it('puts a full surname on the scoreboard as a last initial', function () {
+    const session = initial().session
+    const batter = session.liveData.linescore.offense.batter
+    if (batter == null) throw new Error('Missing batter')
+    batter.fullName = 'Alex Rivera'
+    expect(scoreboardFor(session).batter).deep.equals({
+      firstName: 'Alex',
+      lastName: 'R'
+    })
+    batter.fullName = 'Jordan K.'
+    expect(scoreboardFor(session).batter).deep.equals({
+      firstName: 'Jordan',
+      lastName: 'K'
     })
   })
   it('allocates local identities without parsing or conflating persisted ids', function () {
@@ -558,6 +585,61 @@ describe('the screen and the actions it logs', function () {
   })
 })
 
+describe('a saved roster with pinch runners', function () {
+  it('appends the setup and then each runner, as one Undo step', function () {
+    // A walk puts the batter on first.
+    const walked = pitch(initial(), 'ball', 4)
+    const onFirst = walked.session.liveData.linescore.offense.first!.id
+    const draft = copyState(walked.session)
+    const runner = addDevelopmentPlayer(draft, 'away', 'Betts', '50')
+    const saved = completeMotions(
+      scoringReducer(walked, {
+        type: 'ROSTER',
+        draft,
+        runners: [{ base: '1B', player: runner }]
+      })
+    )
+    expect(saved.log.slice(walked.log.length)).deep.equals([
+      {
+        type: 'lineup',
+        kind: 'roster',
+        setup: setupOf(draft),
+        confirmed: ['away', 'home']
+      },
+      {
+        type: 'lineup',
+        kind: 'runner',
+        side: 'away',
+        base: '1B',
+        player: runner
+      }
+    ])
+    expect(saved.session.liveData.linescore.offense.first!.id).equals(runner)
+    expect(saved.session.liveData.boxscore.teams.away.battingOrder).deep.equals(
+      walked.session.liveData.boxscore.teams.away.battingOrder
+    )
+    const undone = scoringReducer(saved, { type: 'UNDO' })
+    expect(undone.log).deep.equals(walked.log)
+    expect(undone.session.liveData.linescore.offense.first!.id).equals(onFirst)
+  })
+
+  it('saves nothing when a runner is refused', function () {
+    const state = initial()
+    const draft = copyState(state.session)
+    const runner = addDevelopmentPlayer(draft, 'away', 'Betts', '50')
+    expect(
+      scoringReducer(state, {
+        type: 'ROSTER',
+        draft,
+        runners: [{ base: '2B', player: runner }]
+      })
+    ).equals(state)
+    expect(
+      rosterRefusal(state, draft, undefined, [{ base: '2B', player: runner }])
+    ).equals('Nobody is on 2B')
+  })
+})
+
 describe('a decided play picked up by the screen', function () {
   function decided(): ScoringState {
     let session = createDevelopmentSession(gameFixture, roster, [])
@@ -681,5 +763,131 @@ describe('the play animation setting', function () {
     const resumed = initialScoringState(session, false)
     expect(resumed.phase).equals('correctionWindow')
     expect(resumed.pendingPlay?.outcome).equals('Single')
+  })
+})
+
+describe('a scorekeeper and a side left unseen', function () {
+  function players(first: number): Array<ReturnType<typeof asRosterEntry>> {
+    return Array.from({ length: 9 }, (_, index) =>
+      asRosterEntry({
+        userId: first + index,
+        shortName: `Owl ${first + index}`,
+        jersey: String(index + 1),
+        positions: [],
+        isPlayer: true,
+        role: 'member',
+        section: 'player',
+        staffRoles: [],
+        inheritedFrom: null
+      })
+    )
+  }
+  /** The stored game: the visitors are still the roster order a blind save left. */
+  function storedOrder(): ScoringState {
+    const base = initialScoringState(
+      createDevelopmentSession(gameFixture, players(101), players(201))
+    )
+    const blind: ScoringState['log'][number] = {
+      type: 'lineup',
+      kind: 'roster',
+      setup: setupOf(base.session),
+      unseen: ['away'],
+      confirmed: ['home']
+    }
+    const applied = applyAction(base.session, blind)
+    expect(applied.problems).deep.equals([])
+    return resumedScoringState(applied.state, [blind])
+  }
+  /** That game as the scorekeeper is shown it: the visitors' default, not the stored order. */
+  function shownOrder(): { stored: ScoringState; screen: ScoringState } {
+    const stored = storedOrder()
+    const away = lineupOf(
+      lineupsOf(stored.session),
+      'away',
+      stored.session.gameData.players
+    )
+    const reversed = { ...away, batters: [...away.batters].reverse() }
+    const session = shownWithDefault(
+      stored.session,
+      stored.log,
+      'away',
+      reversed
+    )
+    expect(session).not.equals(stored.session)
+    return { stored, screen: { ...stored, session } }
+  }
+
+  it('does not confirm a save that is still the unseen roster order', function () {
+    const stored = storedOrder()
+    const saved = scoringReducer(stored, {
+      type: 'ROSTER',
+      draft: copyState(stored.session)
+    })
+    const roster = saved.log[saved.log.length - 1]
+    expect(roster).includes({ type: 'lineup', kind: 'roster' })
+    if (roster.type !== 'lineup') throw new Error('roster save')
+    expect(roster.confirmed).deep.equals(['home'])
+    expect(roster.shown).equals(undefined)
+  })
+
+  it('confirms a save of the default he is shown', function () {
+    const { screen } = shownOrder()
+    const saved = scoringReducer(screen, {
+      type: 'ROSTER',
+      draft: copyState(screen.session)
+    })
+    const rosters = saved.log.filter(
+      action => action.type === 'lineup' && action.kind === 'roster'
+    )
+    expect(rosters).length(2)
+    const roster = rosters[1]
+    if (roster.type !== 'lineup' || roster.setup == null)
+      throw new Error('roster save')
+    expect(roster.confirmed).deep.equals(['away', 'home'])
+    expect(roster.shown).equals(undefined)
+    expect(roster.setup.sides.away.battingOrder[0]).equals(
+      screen.session.liveData.boxscore.teams.away.battingOrder[0]
+    )
+  })
+
+  it('scores the first pitch from the default and logs that lineup first', function () {
+    const { stored, screen } = shownOrder()
+    const leadoff = screen.session.liveData.boxscore.teams.away.battingOrder[0]
+    const pitched = completeMotions(
+      scoringReducer(screen, { type: 'PITCH', kind: 'ball' })
+    )
+    const added = pitched.log.slice(stored.log.length)
+    expect(added.map(action => action.type)).deep.equals(['lineup', 'pitch'])
+    const roster = added[0]
+    if (roster.type !== 'lineup') throw new Error('lineup')
+    expect(roster.confirmed).deep.equals(['away'])
+    expect(roster.shown).equals(true)
+    expect(
+      pitched.session.liveData.plays.currentPlay?.matchup.batter.id
+    ).equals(leadoff)
+    let replayed = stored.session
+    for (const action of added) {
+      const applied = applyAction(replayed, action)
+      expect(applied.problems, JSON.stringify(action)).deep.equals([])
+      replayed = applied.state
+    }
+    expect(replayed.liveData.boxscore.teams.away.battingOrder).deep.equals(
+      pitched.session.liveData.boxscore.teams.away.battingOrder
+    )
+    expect(replayed.liveData.plays.currentPlay?.matchup.batter.id).equals(
+      pitched.session.liveData.plays.currentPlay?.matchup.batter.id
+    )
+    const again = scoringReducer(pitched, { type: 'PITCH', kind: 'called' })
+    expect(
+      again.log.slice(pitched.log.length).map(action => action.type)
+    ).deep.equals(['pitch'])
+  })
+
+  it('pitches the stored order when he cannot see a default', function () {
+    const stored = storedOrder()
+    const pitched = scoringReducer(stored, { type: 'PITCH', kind: 'ball' })
+    expect(
+      pitched.log.slice(stored.log.length).map(action => action.type)
+    ).deep.equals(['pitch'])
   })
 })

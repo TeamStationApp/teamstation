@@ -20,10 +20,18 @@ export type GameChangeKind = 'plays' | 'lineups' | 'walkUpSong' | 'game'
 
 /** The `data` of each kind of change. */
 export interface GameChangeData {
-  /** The stored plays and the at-bat in progress, as `GET /events` answers. */
-  plays: { plays: unknown[]; currentPlay: unknown }
-  /** Both sides' lineups, as `GET /games/:gameId/lineups` answers. */
-  lineups: { home: TeamLineups; away: TeamLineups }
+  /**
+   * The stored plays and the at-bat in progress, as `GET /events` answers,
+   * with their `playsDigest`: a screen tells its own save's echo from
+   * another device's plays by it.
+   */
+  plays: { plays: unknown[]; currentPlay: unknown; digest: string }
+  /**
+   * Both sides' lineups and their digest, as `GET /games/:gameId/lineups`
+   * answers: a screen tells its own save's echo from another device's
+   * change by the digest.
+   */
+  lineups: { home: TeamLineups; away: TeamLineups; digest: string }
   /** One player's song on one team, or null once it is removed. */
   walkUpSong: { teamId: string; userId: number; song: WalkUpSong | null }
   game: {

@@ -6,7 +6,11 @@ import { join } from 'path'
 import { eventTypeName, isGumboEventType } from '../../common/gumboEventTypes'
 import type { GumboPlay } from '../../common/gumboPlay'
 import { namedPlayerIds } from '../statsBuilder/builder'
-import { gameStatLines, type PlayerGameLine } from './gumboStats'
+import {
+  eventTypeCounts,
+  gameStatLines,
+  type PlayerGameLine
+} from './gumboStats'
 
 const teams = { homeTeamId: 'home', awayTeamId: 'away' }
 const known = new Set([
@@ -1249,8 +1253,10 @@ describe('gameStatLines', function () {
       'batter_timeout',
       'game_advisory',
       'final_score',
-      'score_correction'
+      'score_correction',
+      'ts_courtesy_runner'
     ] as const) {
+      expect(eventTypeCounts(eventType), eventType).equals(null)
       const play = paPlay(eventType, { end: 'score' })
       expect(gameStatLines([play], teams, known), eventType).deep.equals({
         kind: 'lines',

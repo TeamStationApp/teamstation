@@ -1,5 +1,6 @@
 import './backfillLinescore'
 import './demo'
+import './lineupFixture'
 import './mergeTeam'
 import './repairPeople'
 import './seed'

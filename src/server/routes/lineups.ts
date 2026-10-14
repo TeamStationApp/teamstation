@@ -1,31 +1,103 @@
+import { isDeepStrictEqual } from 'node:util'
+
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import type { DjBatter, DjGame, DjSide } from '../../common/api'
+import {
+  asSaveLineupsBody,
+  type DjBatter,
+  type DjGame,
+  type DjSide,
+  type SaveLineupsBody
+} from '../../common/api'
 import { atBatFromCurrentPlay } from '../../common/djAtBat'
-import { notFound, unauthorized } from '../../common/errors'
+import {
+  badRequest,
+  conflict,
+  forbidden,
+  type HttpError,
+  notFound,
+  unauthorized
+} from '../../common/errors'
+import {
+  asPostEventsBody,
+  type CurrentPlay,
+  type GumboPlay
+} from '../../common/gumboPlay'
 import { shortNames } from '../../common/names'
+import type { Problem, ScoringAction } from '../../common/scoring/actions'
+import { addPlayer, begun } from '../../common/scoring/lineup'
 import {
   type Lineup,
-  NO_DEFAULT_LINEUP
+  NO_DEFAULT_LINEUP,
+  placeholderSidesOf
 } from '../../common/scoring/lineupHistory'
-import type { Side } from '../../common/scoring/state'
+import { awaitingResult } from '../../common/scoring/rules'
+import {
+  type EventStore,
+  ScoringSession,
+  type SessionContext,
+  type StoredGame
+} from '../../common/scoring/session'
+import { startingSetup, teamsOf } from '../../common/scoring/startingSetup'
+import {
+  type GameSetup,
+  type GameState,
+  type Position,
+  POSITIONS,
+  setupOf,
+  type Side
+} from '../../common/scoring/state'
 import {
   canKeepSongs,
+  canScore,
   canSeeGame,
   canSeeTeam,
+  isHeadCoach,
   roleScopes,
   visibleScopes
 } from '../access'
 import type { Database } from '../db/database'
+import { postGamePlays, readPlays } from '../events/postPlays'
+import { requireVisibleGame } from '../events/requireVisibleGame'
 import {
   defaultOf,
   gameLineups,
+  lineupsAnswer,
+  storedLineupsDigest,
   type TeamSideLineups
 } from '../events/teamLineups'
+import { fenceDistanceFor } from '../games/fenceDistance'
+import { cleanBody } from '../jsonBody'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { contextOf } from '../scoring/replayContext'
+import { teamRoster } from '../teams/teamRoster'
 import { teamWalkUpSongs } from './walkUpSongs'
+
+type Trx = Kysely<Database>
+
+export interface LineupRouteOptions {
+  /**
+   * Called with the game's id once a lineup save has committed, as
+   * `eventRoutes`' hook is, so the game's scoreboard follows a coach's change.
+   * Fire and forget: whatever it throws is logged and never fails the save.
+   */
+  onGameWritten?: (gameId: string) => void
+  /**
+   * Called each time a save has replayed the game, just before it writes:
+   * where a test posts a scorer's play, as one arriving mid-save would.
+   */
+  beforeSave?: (gameId: string) => Promise<void>
+  /**
+   * Called once a save has committed, before its answer is read: where a test
+   * saves another device's change, as one landing in between would.
+   */
+  afterSave?: (gameId: string) => Promise<void>
+}
+
+/** How many times a save replays a game that changed under it. */
+const SAVE_ATTEMPTS = 3
 
 /**
  * Lineups, read back out of what TeamStation stores.
@@ -38,9 +110,27 @@ import { teamWalkUpSongs } from './walkUpSongs'
  * `GET /games/:gameId/lineups` is each side's lineups in the game: the one it
  * began with (null until the game has begun), every substitution the stored
  * plays announce, and the lineup as it stands now, including a change not
- * announced yet. A game TeamStation did not score, or whose record no longer
- * replays, has only its announced changes. It needs somebody who can see the
- * game; anybody else gets 404.
+ * announced yet, with the `digest` the game keeps of them. A game
+ * TeamStation did not score, or whose record no longer replays, has only its
+ * announced changes. It needs somebody who can see the game; anybody else
+ * gets 404.
+ *
+ * `POST /games/:gameId/lineups` saves one side's players, batting order and
+ * defence (`SaveLineupsBody`), as its head coach or a scorekeeper of either
+ * team sets them; anybody else who can see the game gets 403. The game is
+ * replayed as the scoring screen replays it, the side's lineup is applied as
+ * a scorer's roster change, and only what that changes is posted, through
+ * `postGamePlays`, as a scorer's save is. The other side is never read from
+ * the body, so it cannot change. A change the game refuses is 409 when it
+ * cannot be made now (a play to finish, a game over) and 400 when it cannot
+ * be made at all. A game that changes while the save replays it is replayed
+ * again, up to three times, and then answers 409. A save before the game
+ * begins does not start it. A game with no record yet opens as the scoring
+ * screen of the one saving opens it: each team's default lineup arranges its
+ * side only when he may see that team, else its roster order does. The
+ * answer is the lineups as `GET` reads them, with the digest the save itself
+ * left, read as it was written (or the one it found, when it changed
+ * nothing), so a later save is never taken for this one.
  *
  * `GET /games/:gameId/dj` is what DJ Game lists: each side's batters in
  * order, with their walk-up songs on that team. The order is the game's own
@@ -50,7 +140,10 @@ import { teamWalkUpSongs } from './walkUpSongs'
  * caller keeps that team's songs. Game lineups share game visibility;
  * defaults and rosters require team visibility.
  */
-export function lineupRoutes(db: Kysely<Database>): Router {
+export function lineupRoutes(
+  db: Kysely<Database>,
+  options: LineupRouteOptions = {}
+): Router {
   const router = Router()
 
   router.get(
@@ -81,7 +174,13 @@ export function lineupRoutes(db: Kysely<Database>): Router {
       const gameId = pathParam(req.params.gameId)
       const game = await db
         .selectFrom('games')
-        .select(['home_team_id', 'away_team_id', 'season_id', 'currentPlay'])
+        .select([
+          'home_team_id',
+          'away_team_id',
+          'season_id',
+          'currentPlay',
+          'lineups_digest'
+        ])
         .where('id', '=', gameId)
         .executeTakeFirst()
       if (game == null) throw notFound()
@@ -94,14 +193,79 @@ export function lineupRoutes(db: Kysely<Database>): Router {
         })
       )
         throw notFound()
-      res.json(
-        await gameLineups(db, {
-          id: gameId,
-          home_team_id: game.home_team_id,
-          away_team_id: game.away_team_id,
-          currentPlay: game.currentPlay
-        })
-      )
+      res.json(await lineupsAnswer(db, { id: gameId, ...game }))
+    })
+  )
+
+  router.post(
+    '/games/:gameId/lineups',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const gameId = pathParam(req.params.gameId)
+      const body = cleanBody(asSaveLineupsBody, req.body)
+      await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
+      // The side's head coach, or a scorekeeper of either team. Asked before
+      // the game is replayed, so a save with nothing to change is refused
+      // too, and again on the locked row the save is written against.
+      const mayPost = async (
+        reader: Trx,
+        game: { home_team_id: string; away_team_id: string }
+      ): Promise<void> => {
+        const roles = await roleScopes(reader, actor.userId, actor.isAdmin)
+        const teamId =
+          body.side === 'home' ? game.home_team_id : game.away_team_id
+        if (
+          !isHeadCoach(roles, teamId) &&
+          !canScore(roles, game.home_team_id) &&
+          !canScore(roles, game.away_team_id)
+        )
+          throw forbidden(
+            "Only the team's head coach or a scorekeeper may save its lineup"
+          )
+      }
+      const teams = await db
+        .selectFrom('games')
+        .select(['home_team_id', 'away_team_id'])
+        .where('id', '=', gameId)
+        .executeTakeFirst()
+      if (teams == null) throw notFound()
+      await mayPost(db, teams)
+      // A team's default lineup is only for somebody who may see the team.
+      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+      const sees = (teamId: string): boolean => canSeeTeam(scopes, teamId)
+      let saved: SideSaved | undefined
+      for (let attempt = 0; ; attempt++) {
+        if (attempt === SAVE_ATTEMPTS)
+          throw conflict('The game changed while saving; try again')
+        const outcome = await saveSide(db, gameId, body, mayPost, sees, options)
+        if (outcome.outcome === 'moved') continue
+        saved = outcome
+        break
+      }
+      if (saved.outcome === 'saved') {
+        await options.afterSave?.(gameId)
+        try {
+          options.onGameWritten?.(gameId)
+        } catch (error) {
+          console.error(`onGameWritten ${gameId}`, error)
+        }
+      }
+      const game = await db
+        .selectFrom('games')
+        .select([
+          'home_team_id',
+          'away_team_id',
+          'currentPlay',
+          'lineups_digest'
+        ])
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow()
+      res.json({
+        ...(await lineupsAnswer(db, { id: gameId, ...game })),
+        digest: saved.digest
+      })
     })
   )
 
@@ -153,6 +317,324 @@ export function lineupRoutes(db: Kysely<Database>): Router {
   )
 
   return router
+}
+
+/** A game that changed between its replay and its save, which tries again. */
+class GameMoved extends Error {
+  constructor() {
+    super('The game changed while saving')
+  }
+}
+
+/** What a save replayed: the game's lineups digest, at-bat and plays. */
+function snapshotOf(
+  game: { currentPlay: unknown; lineups_digest: string | null },
+  plays: Array<{ id: string }>
+): string {
+  return JSON.stringify([
+    game.lineups_digest,
+    game.currentPlay,
+    plays.map(play => play.id)
+  ])
+}
+
+/**
+ * What a save did, and the lineups digest that goes with it: the one it
+ * wrote, or the one it found when there was nothing to write.
+ */
+type SideSaved =
+  { outcome: 'saved' | 'unchanged'; digest: string } | { outcome: 'moved' }
+
+/**
+ * Replays the game, applies one side's lineup from `body` to it, and posts
+ * what changed. `'moved'` when the game changed between the replay and the
+ * save, so nothing was written; `'unchanged'` when there was nothing to save.
+ * A game with no record yet opens with the defaults of the teams `sees`.
+ */
+async function saveSide(
+  db: Kysely<Database>,
+  gameId: string,
+  body: SaveLineupsBody,
+  mayPost: (
+    trx: Trx,
+    game: { home_team_id: string; away_team_id: string }
+  ) => Promise<void>,
+  sees: (teamId: string) => boolean,
+  options: LineupRouteOptions
+): Promise<SideSaved> {
+  // The plays and the game row as one moment.
+  const read = await db
+    .transaction()
+    .setIsolationLevel('repeatable read')
+    .execute(async trx => {
+      const game = await trx
+        .selectFrom('games')
+        .select([
+          'home_team_id',
+          'away_team_id',
+          'currentPlay',
+          'lineups_digest'
+        ])
+        .where('id', '=', gameId)
+        .executeTakeFirst()
+      if (game == null) throw notFound()
+      const rows = await readPlays(trx, gameId)
+      const stored: StoredGame = {
+        plays: rows.map(row => row.gumbo as GumboPlay),
+        currentPlay: game.currentPlay as CurrentPlay | null
+      }
+      const context =
+        (await contextOf(trx, gameId, game, stored)) ??
+        (await startingContext(trx, gameId, game, sees))
+      return {
+        stored,
+        context,
+        snapshot: snapshotOf(game, rows),
+        digest: await storedLineupsDigest(trx, { id: gameId, ...game })
+      }
+    })
+
+  let startsGame = true
+  let failure: Error | undefined
+  // The digest the save left, read in the transaction that wrote it.
+  let wrote: string | undefined
+  const store: EventStore = {
+    load: async () => read.stored,
+    save: async (_gameId, change) => {
+      try {
+        const posted = await postGamePlays(
+          db,
+          gameId,
+          asPostEventsBody({
+            mode: 'live',
+            source: { system: 'teamstation' },
+            plays: change.plays,
+            remove: change.remove,
+            currentPlay: change.currentPlay,
+            fenceDistanceFt: change.fenceDistanceFt
+          }),
+          async (trx, game) => {
+            await mayPost(trx, game)
+            const now = await trx
+              .selectFrom('games')
+              .select(['currentPlay', 'lineups_digest'])
+              .where('id', '=', gameId)
+              .executeTakeFirstOrThrow()
+            if (snapshotOf(now, await readPlays(trx, gameId)) !== read.snapshot)
+              throw new GameMoved()
+          },
+          { startsGame }
+        )
+        // A live post always keeps one.
+        wrote = posted.lineupsDigest ?? read.digest
+        return {
+          plays: posted.plays.map(play => play.gumbo as GumboPlay),
+          currentPlay: posted.currentPlay as CurrentPlay | null
+        }
+      } catch (error) {
+        failure = error instanceof Error ? error : new Error(String(error))
+        throw failure
+      }
+    }
+  }
+  const session = await ScoringSession.open(store, gameId, read.context, {
+    requireCurrentSetup: true,
+    // The request saves once, with `flush`; no retry outlives it.
+    setTimer: () => null,
+    clearTimer: () => undefined
+  })
+  // A game with no record of its lineups yet takes them as they stand: a
+  // coach accepts the lineup it opens on by saving it unchanged.
+  const held =
+    session.actions.length > 0 ||
+    session.state.liveData.plays.allPlays.length > 0
+  const actions = sideActions(session.state, body, held)
+  markRosterVisibility(
+    actions,
+    session.actions,
+    body.side,
+    held,
+    read.context.teams,
+    sees
+  )
+  if (actions.length === 0) return { outcome: 'unchanged', digest: read.digest }
+  // The game takes a lineup change with a ball in play; the scorer's screen
+  // offers none until the play has its result, and nor does this.
+  if (awaitingResult(session.state))
+    throw conflict('Finish the current play first')
+  for (const action of actions) {
+    const problem = session.apply(action).problems[0]
+    if (problem != null) throw refusal(problem)
+  }
+  startsGame = begun(session.state)
+  await options.beforeSave?.(gameId)
+  // A refused store is kept in the session's state, so its error is rethrown
+  // here, and its 400, 403 or 409 reaches the caller.
+  await session.flush()
+  if (failure instanceof GameMoved) return { outcome: 'moved' }
+  if (failure != null) throw failure
+  return wrote == null
+    ? { outcome: 'unchanged', digest: read.digest }
+    : { outcome: 'saved', digest: wrote }
+}
+
+/**
+ * The lineups a game with no TeamStation record opens with, as the scoring
+ * screen of somebody who `sees` the teams it does opens it: the teams'
+ * rosters as they stand, never topped up with made-up players, each arranged
+ * as its team's default lineup when he may see that team (as
+ * `GET /teams/:teamId/default-lineup` asks), else in roster order.
+ */
+export async function startingContext(
+  db: Trx,
+  gameId: string,
+  game: { home_team_id: string; away_team_id: string },
+  sees: (teamId: string) => boolean
+): Promise<SessionContext> {
+  const rows = await db
+    .selectFrom('teams')
+    .select(['id', 'name', 'logo_path', 'default_lineup'])
+    .where('id', 'in', [game.home_team_id, game.away_team_id])
+    .execute()
+  const row = (id: string): (typeof rows)[number] | undefined =>
+    rows.find(item => item.id === id)
+  const teams = {
+    awayTeamId: game.away_team_id,
+    awayTeamName: row(game.away_team_id)?.name ?? '',
+    awayLogoUrl: row(game.away_team_id)?.logo_path ?? null,
+    homeTeamId: game.home_team_id,
+    homeTeamName: row(game.home_team_id)?.name ?? '',
+    homeLogoUrl: row(game.home_team_id)?.logo_path ?? null
+  }
+  return {
+    gamePk: gameId,
+    teams: teamsOf(teams),
+    setup: startingSetup(
+      teams,
+      await teamRoster(db, undefined, game.away_team_id),
+      await teamRoster(db, undefined, game.home_team_id),
+      {
+        away: sees(game.away_team_id)
+          ? defaultOf(row(game.away_team_id)?.default_lineup)?.lineup
+          : null,
+        home: sees(game.home_team_id)
+          ? defaultOf(row(game.home_team_id)?.default_lineup)?.lineup
+          : null
+      },
+      false
+    ),
+    fenceDistanceFt: await fenceDistanceFor(db, gameId)
+  }
+}
+
+/**
+ * Marks the roster action with the side this save sets, and, on a game with
+ * no record yet, the sides the saver could not see. He can set only his own
+ * side: the other side is never confirmed, so this save does not take that
+ * team's lineup or its default. A side he could not see is in roster order
+ * in that setup. The first pitch leaves that team's default as it stands. A
+ * side an earlier save already left unseen stays unseen: the saver is
+ * looking at an order the game does not hold as that team's lineup.
+ */
+function markRosterVisibility(
+  actions: ScoringAction[],
+  prior: readonly ScoringAction[],
+  saved: Side,
+  held: boolean,
+  teams: Record<Side, { id: string }>,
+  sees: (teamId: string) => boolean
+): void {
+  const sides: Side[] = ['away', 'home']
+  const seen = (side: Side): boolean => sees(teams[side].id)
+  const blocked = placeholderSidesOf(prior)
+  const unseen = held ? [] : sides.filter(side => !seen(side))
+  const confirmed = seen(saved) && !blocked.has(saved) ? [saved] : []
+  if (unseen.length === 0 && confirmed.length === 0) return
+  for (const action of actions) {
+    if (action.type !== 'lineup' || action.kind !== 'roster') continue
+    if (unseen.length > 0) action.unseen = unseen
+    if (confirmed.length > 0) action.confirmed = confirmed
+  }
+}
+
+/**
+ * The actions that make one side's lineup the one `body` names: a roster
+ * change carrying the game's setup with that side's players, order and
+ * defence replaced, then a pinch runner per runner. None when the lineup is
+ * already that one and the game `held` it.
+ *
+ * Each body player is the side's player of the same user id, else its
+ * made-up player of the same name and jersey, else a new made-up player.
+ */
+function sideActions(
+  state: GameState,
+  body: SaveLineupsBody,
+  held = true
+): ScoringAction[] {
+  const side = body.side
+  const setup: GameSetup = setupOf(state)
+  const team = setup.sides[side]
+  const draft = {
+    gameData: { teams: state.gameData.teams, players: setup.players },
+    liveData: { boxscore: { teams: setup.sides } },
+    meta: { identities: setup.identities }
+  }
+  const ids: number[] = []
+  for (const player of body.players) {
+    const known = team.players.find(id => {
+      const existing = setup.players[id]
+      return player.userId != null
+        ? existing.userId === player.userId
+        : existing.local &&
+            !ids.includes(id) &&
+            existing.fullName === player.fullName.trim() &&
+            existing.jersey === player.jersey
+    })
+    if (known == null && player.userId != null)
+      throw badRequest(`${player.fullName} is not on this team's roster`)
+    const id = known ?? addPlayer(draft, side, player.fullName, player.jersey)
+    if (ids.includes(id))
+      throw badRequest(`${player.fullName} is named more than once`)
+    ids.push(id)
+  }
+  team.players = ids
+  team.battingOrder = body.battingOrder.map(index => ids[index])
+  team.defense = Object.fromEntries(
+    POSITIONS.map(position => {
+      const index = body.defense[position]
+      return [position, index == null ? null : ids[index]]
+    })
+  ) as Record<Position, number | null>
+  const runners = body.runners ?? []
+  if (
+    held &&
+    body.nextBatter == null &&
+    runners.length === 0 &&
+    isDeepStrictEqual(setup, setupOf(state))
+  )
+    return []
+  return [
+    {
+      type: 'lineup',
+      kind: 'roster',
+      setup,
+      ...(body.nextBatter == null ? {} : { nextBatter: ids[body.nextBatter] })
+    },
+    ...runners.map((runner): ScoringAction => ({
+      type: 'lineup',
+      kind: 'runner',
+      side,
+      base: runner.base,
+      player: ids[runner.player]
+    }))
+  ]
+}
+
+/** The game's refusal as an answer: 409 for not now, 400 for not at all. */
+function refusal(problem: Problem): HttpError {
+  return problem.code === 'notNow' || problem.code === 'gameOver'
+    ? conflict(problem.message)
+    : badRequest(problem.message)
 }
 
 /**

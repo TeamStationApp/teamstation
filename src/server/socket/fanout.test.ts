@@ -11,6 +11,7 @@ import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { GameScope } from '../access'
 import { type Database, makeDatabase } from '../db/database'
+import { playsDigest } from '../events/postPlays'
 import { readWalkUpSong } from '../routes/walkUpSongs'
 import { GameFanout } from './fanout'
 import { GAME_CHANGES_CHANNEL } from './gameChanges'
@@ -239,7 +240,12 @@ describe('the game socket fan-out (U15)', function () {
     await until(() => heard.sent.length > 0, 'the plays')
     await wait(250)
     expect(heard.sent).lengthOf(1)
-    expect(heard.sent[0].data).deep.equals({ plays: [], currentPlay: null })
+    // With the digest `GET /events` and a post's answer give the same plays.
+    expect(heard.sent[0].data).deep.equals({
+      plays: [],
+      currentPlay: null,
+      digest: playsDigest([], null)
+    })
     // A later one, outside the window, is sent again.
     await notify({ game: today, kind: 'plays' })
     await until(() => heard.sent.length === 2, 'the second plays')
@@ -311,6 +317,25 @@ describe('the game socket fan-out (U15)', function () {
       start: null
     })
     expect(data.away).to.include({ teamId: rival, teamName: 'Rival' })
+    // U22: with the digest the game keeps, or, before any live post has
+    // kept one, the one a post would.
+    const digest = (heard.sent[0].data as { digest: string }).digest
+    expect(digest).match(/^[0-9a-f]{64}$/)
+    await db!
+      .updateTable('games')
+      .set({ lineups_digest: 'kept' })
+      .where('id', '=', today)
+      .execute()
+    try {
+      await one.deliver(JSON.stringify({ game: today, kind: 'lineups' }))
+      expect((heard.sent[1].data as { digest: string }).digest).equals('kept')
+    } finally {
+      await db!
+        .updateTable('games')
+        .set({ lineups_digest: null })
+        .where('id', '=', today)
+        .execute()
+    }
     await one.close()
   })
 

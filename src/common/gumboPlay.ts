@@ -258,7 +258,13 @@ const asPostEventsShape = asObject({
    * from 1 to 600 is left out, and the game's own fence is fixed instead.
    */
   fenceDistanceFt: (raw: unknown): number | undefined =>
-    isFenceDistance(raw) ? raw : undefined
+    isFenceDistance(raw) ? raw : undefined,
+  /**
+   * On a live post: the lineups digest the sender last read or saved. When
+   * the game's lineups have moved on since, the post is refused, so a
+   * scorer's save never undoes a lineup somebody else saved meanwhile.
+   */
+  lineupsBase: asOptional(asString)
 })
 
 export type PostEventsBody = ReturnType<typeof asPostEventsShape>

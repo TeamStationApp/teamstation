@@ -101,7 +101,8 @@ export const EVENT_CLASS: Record<
   score_correction: { countable: false },
   ts_manual_placement: { countable: true },
   ts_batter_out: { countable: true },
-  ts_batting_order: { countable: false }
+  ts_batting_order: { countable: false },
+  ts_courtesy_runner: { countable: false }
 }
 
 function classOf(

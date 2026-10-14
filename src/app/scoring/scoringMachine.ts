@@ -1,4 +1,6 @@
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
+import { confirmedSides } from '../../common/scoring/lineupHistory'
+import type { StagedRunner } from '../../common/scoring/rosterCommands'
 import {
   awaitingResult,
   completesHitOffer,
@@ -38,7 +40,11 @@ import {
 } from './scoringFlow'
 import { approachFirst } from './scoringMotion'
 import { outBatterPoint, pitchPresentation } from './scoringPresentation'
-import { bottomActionsAllowed, canSwitchBatter } from './scoringSelectors'
+import {
+  battingSide,
+  bottomActionsAllowed,
+  canSwitchBatter
+} from './scoringSelectors'
 import {
   CORRECTION_WINDOW_MS,
   type GameCheckpoint,
@@ -151,6 +157,62 @@ export function screenOf(state: ScoringState): ScoringScreenState {
     ...screen
   } = state
   return copyState(screen)
+}
+
+/**
+ * The roster save the screen logs: the setup, then each pinch runner, as one
+ * Undo step. A side still in the roster order a save left, because that save
+ * could not see the team, is not confirmed, so the first pitch does not take
+ * that order as the team's default. Every other side is confirmed.
+ */
+function applyRosterSave(
+  next: ScoringSnapshot,
+  draft: ScoringSessionState,
+  nextBatter: number | undefined,
+  runners: readonly StagedRunner[] | undefined
+): void {
+  const setup = setupOf(draft)
+  const confirmed = confirmedSides(next.log, setup)
+  act(next, {
+    type: 'lineup',
+    kind: 'roster',
+    setup,
+    ...(confirmed.length === 0 ? {} : { confirmed }),
+    ...(nextBatter == null ? {} : { nextBatter })
+  })
+  // One Undo step: a refused runner takes back the setup too.
+  for (const runner of runners ?? [])
+    act(next, {
+      type: 'lineup',
+      kind: 'runner',
+      side: battingSide(next.session),
+      base: runner.base,
+      player: runner.player
+    })
+}
+
+/**
+ * Why this roster save would not land, before the screen logs it. Undefined
+ * when the reducer would keep the save, or would leave the screen as it is.
+ */
+export function rosterRefusal(
+  state: ScoringState,
+  draft: ScoringSessionState,
+  nextBatter?: number,
+  runners?: readonly StagedRunner[]
+): string | undefined {
+  if (
+    state.moreDraft != null ||
+    (state.phase !== 'ready' && state.phase !== 'awaitingBatter')
+  )
+    return undefined
+  try {
+    applyRosterSave(snapshotOf(state), draft, nextBatter, runners)
+  } catch (error) {
+    if (error instanceof Refused) return error.problems[0]?.message
+    throw error
+  }
+  return undefined
 }
 
 /** The plate appearance a game is on: the plays it has finished. */
@@ -751,14 +813,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       event.type === 'ROSTER' ? 'Set team roster' : 'Override game state',
       next => {
         if (event.type === 'ROSTER')
-          act(next, {
-            type: 'lineup',
-            kind: 'roster',
-            setup: setupOf(event.draft),
-            ...(event.nextBatter == null
-              ? {}
-              : { nextBatter: event.nextBatter })
-          })
+          applyRosterSave(next, event.draft, event.nextBatter, event.runners)
         else
           act(next, {
             type: 'gameFlow',

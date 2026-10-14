@@ -1,4 +1,5 @@
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
+import type { StagedRunner } from '../../common/scoring/rosterCommands'
 import type { HomeRunKind, Override } from '../../common/scoring/rules'
 import type {
   BatSide,
@@ -292,7 +293,13 @@ export type ScoringEvent =
        */
       dragged?: boolean
     }
-  | { type: 'ROSTER'; draft: ScoringSessionState; nextBatter?: number }
+  | {
+      type: 'ROSTER'
+      draft: ScoringSessionState
+      nextBatter?: number
+      /** Pinch runners who keep the batting order, put on after the setup. */
+      runners?: readonly StagedRunner[]
+    }
   | { type: 'OVERRIDE'; draft: OverrideDraft }
   | { type: 'TIEBREAKER_OUTS'; outs: number }
   | { type: 'PITCH'; kind: 'ball' | 'called' | 'swing' | 'foul' }

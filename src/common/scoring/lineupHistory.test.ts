@@ -3,16 +3,21 @@ import { describe, it } from 'mocha'
 
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
-import { newSetup } from './lineup'
+import { applyAction } from './apply'
+import { addPlayer, freshGame, newSetup } from './lineup'
 import {
   asLineup,
+  confirmedSides,
   type Lineup,
   type LineupChange,
   lineupHistory,
   lineupOf,
   type LineupPerson,
+  placeholderSidesOf,
   readLineups,
-  sameArrangement
+  reconcileShownLineup,
+  sameArrangement,
+  unseenLineup
 } from './lineupHistory'
 import {
   type EventStore,
@@ -255,6 +260,33 @@ describe('lineup history (U9)', function () {
     expect(users(sides.away.current)[0]).equals(110)
   })
 
+  it('lists no change for a pinch runner who keeps the batting order (U4)', async function () {
+    const { kept } = await scored([
+      ...single,
+      {
+        type: 'lineup',
+        kind: 'runner',
+        side: 'away',
+        base: '1B',
+        player: 10
+      },
+      ...K
+    ])
+    const stored = kept.game.plays.flatMap(play => play.playEvents ?? [])
+    expect(
+      stored.some(
+        event =>
+          (event as { details?: { eventType?: string } }).details?.eventType ===
+          'ts_courtesy_runner'
+      )
+    ).equals(true)
+    const sides = lineupHistory(kept.game, context)
+    expect([...sides.away.changes, ...sides.home.changes]).deep.equals([])
+    expect(users(sides.away.current)).deep.equals([
+      101, 102, 103, 104, 105, 106, 107, 108, 109
+    ])
+  })
+
   it("writes a side's fielding changes when it next takes the field, and a reorder at once", async function () {
     const swap: ScoringAction = {
       type: 'lineup',
@@ -473,5 +505,141 @@ describe('lineup history (U9)', function () {
       ).batters
     ).deep.equals([{ userId: null, name: '', jersey: '' }])
     expect(lineupsOf).a('function')
+  })
+})
+
+describe('a side left unseen', function () {
+  const rosterOrder = (): ScoringAction => ({
+    type: 'lineup',
+    kind: 'roster',
+    setup: setup(),
+    unseen: ['away'],
+    confirmed: ['home']
+  })
+  const swapped = (): GameSetup => {
+    const made = setup()
+    const order = made.sides.away.battingOrder
+    made.sides.away.battingOrder = [order[1], order[0], ...order.slice(2)]
+    return made
+  }
+
+  it('keeps the side when a later save confirms the same order', function () {
+    const again = setup()
+    expect([
+      ...placeholderSidesOf([
+        rosterOrder(),
+        {
+          type: 'lineup',
+          kind: 'roster',
+          setup: again,
+          confirmed: ['away', 'home']
+        }
+      ])
+    ]).deep.equals(['away'])
+    expect(unseenLineup([rosterOrder()], 'away')).not.equals(null)
+    expect(unseenLineup([rosterOrder()], 'home')).equals(null)
+  })
+
+  it('drops the side when a later save confirms a different order', function () {
+    expect([
+      ...placeholderSidesOf([
+        rosterOrder(),
+        {
+          type: 'lineup',
+          kind: 'roster',
+          setup: swapped(),
+          confirmed: ['away', 'home']
+        }
+      ])
+    ]).deep.equals([])
+  })
+
+  it('confirms a side only once the save is no longer that order', function () {
+    expect(confirmedSides([rosterOrder()], setup())).deep.equals(['home'])
+    expect(confirmedSides([rosterOrder()], swapped())).deep.equals([
+      'away',
+      'home'
+    ])
+    expect(confirmedSides([], setup())).deep.equals(['away', 'home'])
+  })
+
+  it('keeps the side when a later save does not confirm it', function () {
+    expect([
+      ...placeholderSidesOf([
+        rosterOrder(),
+        { type: 'lineup', kind: 'roster', setup: swapped() }
+      ])
+    ]).deep.equals(['away'])
+  })
+
+  it('replays a shown roster only for a side still on the unseen order', function () {
+    const start = freshGame('g1', TEAMS, setup())
+    const blind = rosterOrder()
+    const held = applyAction(start, blind)
+    expect(held.problems).deep.equals([])
+    const coachSetup = swapped()
+    const coach: ScoringAction = {
+      type: 'lineup',
+      kind: 'roster',
+      setup: coachSetup
+    }
+    const moved = applyAction(held.state, coach)
+    expect(moved.problems).deep.equals([])
+    const shownSetup = setup()
+    const order = shownSetup.sides.away.battingOrder
+    shownSetup.sides.away.battingOrder = [...order].reverse()
+    const shown: ScoringAction = {
+      type: 'lineup',
+      kind: 'roster',
+      setup: shownSetup,
+      confirmed: ['away'],
+      shown: true
+    }
+    // The visitors' coach already replaced that side, so the snapshot adds nothing.
+    expect(reconcileShownLineup(shown, [blind, coach], moved.state)).equals(
+      null
+    )
+    const open = reconcileShownLineup(shown, [blind], held.state)
+    if (open?.type !== 'lineup' || open.setup == null) throw new Error('shown')
+    expect(open.setup.sides.away.battingOrder).deep.equals(
+      shownSetup.sides.away.battingOrder
+    )
+    expect(open.setup.sides.home.battingOrder).deep.equals(
+      held.state.liveData.boxscore.teams.home.battingOrder
+    )
+    const { shown: _shown, ...sheet } = shown
+    expect(reconcileShownLineup(sheet, [blind, coach], moved.state)).equals(
+      sheet
+    )
+    const homeSetup = setup()
+    const homeOrder = homeSetup.sides.home.battingOrder
+    homeSetup.sides.home.battingOrder = [
+      homeOrder[1],
+      homeOrder[0],
+      ...homeOrder.slice(2)
+    ]
+    const homeCoach: ScoringAction = {
+      type: 'lineup',
+      kind: 'roster',
+      setup: homeSetup
+    }
+    const homeMoved = applyAction(held.state, homeCoach)
+    expect(homeMoved.problems).deep.equals([])
+    const bench = addPlayer(homeMoved.state, 'home', 'Home Bench', '99')
+    const kept = reconcileShownLineup(
+      shown,
+      [blind, homeCoach],
+      homeMoved.state
+    )
+    if (kept?.type !== 'lineup' || kept.setup == null) throw new Error('kept')
+    expect(kept.setup.sides.away.battingOrder).deep.equals(
+      shownSetup.sides.away.battingOrder
+    )
+    expect(kept.setup.sides.home.battingOrder).deep.equals(
+      homeSetup.sides.home.battingOrder
+    )
+    expect(kept.setup.sides.home.players).includes(bench)
+    expect(kept.setup.players[bench].fullName).equals('Home Bench')
+    expect(kept.confirmed).deep.equals(['away'])
   })
 })

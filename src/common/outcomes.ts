@@ -106,7 +106,8 @@ export const OUTCOME_BY_TYPE: Record<GumboEventType, string | null> = {
   score_correction: null,
   ts_manual_placement: 'Placed on base',
   ts_batter_out: null,
-  ts_batting_order: 'Batting order change'
+  ts_batting_order: 'Batting order change',
+  ts_courtesy_runner: 'Pinch runner'
 }
 
 /** The strikeouts, which read by who is credited with them. */

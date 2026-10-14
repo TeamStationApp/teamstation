@@ -1238,7 +1238,7 @@ describe('scoring into the server', function () {
       })
       await click(page, `Remove ${dueBatter}`)
       await click(page, 'Home Team')
-      await click(page, 'Set Defense')
+      await click(page, 'Defense')
       await createPlayer('Relief', 'Pitcher')
       // Held, then dragged onto the mound.
       const from = await page.waitForSelector('[aria-label="Relief Pitcher"]')

@@ -185,7 +185,7 @@ describe('scoring slide-up sheets', function () {
       writes++
     })
     await menu('Set Team Rosters')
-    await click('Set Defense')
+    await click('Defense')
     const originalWrites = writes
     await click('Clear P')
     await drag(
@@ -203,7 +203,7 @@ describe('scoring slide-up sheets', function () {
     })
     expect(writes).greaterThan(originalWrites)
     await menu('Set Team Rosters')
-    await click('Set Defense')
+    await click('Defense')
     expect(
       document.querySelector('[data-roster-target="defense-P"]')!.textContent
     ).includes('Player 2')
@@ -225,7 +225,7 @@ describe('scoring slide-up sheets', function () {
     ).equals(null)
     const footer = document.querySelector('[data-testid="Roster footer"]')!
     expect(footer.textContent).includes('Add PlayerSave RostersCancel')
-    await click('Set Defense')
+    await click('Defense')
     expect(document.body.textContent).includes(
       'Drag player into position. On touch, hold briefly first.'
     )
@@ -275,7 +275,7 @@ describe('scoring slide-up sheets', function () {
     ).includes('Player 2')
     await click('Cancel')
     await menu('Set Team Rosters')
-    await click('Set Defense')
+    await click('Defense')
     expect(
       document.querySelector('[data-roster-target="defense-P"]')!.textContent
     ).includes('Player 1')
@@ -348,10 +348,10 @@ describe('scoring slide-up sheets', function () {
       expect(lineup.findIndex(row => row.includes('Zed'))).equals(
         lineup.findIndex(row => row.startsWith('#10 '))
       )
-      await click('Set Defense')
+      await click('Defense')
       inOrder(roster())
       expect(roster().every(row => lineup.includes(row))).equals(true)
-      await click('Set Lineup')
+      await click('Lineup')
       // Adding to the lineup puts him last there; the lineup is not sorted.
       await click('Add Zed Ten to Lineup')
       const last = Array.from(
@@ -399,7 +399,7 @@ describe('scoring slide-up sheets', function () {
     await input('Last Name', 'Local')
     await click('Add Player')
     await click('Add Alex Local to Lineup')
-    await click('Set Defense')
+    await click('Defense')
     await click('Clear P')
     expect(
       document
@@ -412,7 +412,7 @@ describe('scoring slide-up sheets', function () {
     )
     await click('Home Team')
     expect(document.body.textContent).includes('Hawks')
-    await click('Set Lineup')
+    await click('Lineup')
     await click('Remove Player 9')
     await click('Away Team')
     await click('Save Rosters')
@@ -446,7 +446,7 @@ describe('scoring slide-up sheets', function () {
     expect(
       document.querySelector('[data-roster-target="roster"]')!.textContent
     ).not.includes('#1 Player 1')
-    await click('Set Defense')
+    await click('Defense')
     expect(
       document.querySelector('[data-roster-target="defense-P"]')!.textContent
     ).includes('P · #1 Player 1')

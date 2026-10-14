@@ -9,46 +9,20 @@ import {
   promptContext,
   type ScoringAction
 } from '../../common/scoring/actions'
+import {
+  rosterPrompt,
+  type SaidRosterCommand
+} from '../../common/scoring/rosterCommands'
+import { FakeDictationSocket } from '../../test/dictationFakes'
 import { completeMotions } from '../../test/scoringHelpers'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { createDevelopmentSession } from './developmentSession'
 import { useDictationControls } from './DictationButton'
-import type { DictationButtonProps, DictationSocket } from './dictationTypes'
+import type { DictationButtonProps } from './dictationTypes'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import type { ScoringState } from './scoringTypes'
 import { dictationContext, dictationUrl, upcoming } from './useDictation'
-
-class FakeSocket implements DictationSocket {
-  readyState = 0
-  binaryType = ''
-  sent: Array<string | ArrayBuffer> = []
-  closed = false
-  onopen: (() => void) | null = null
-  onmessage: ((event: { data: unknown }) => void) | null = null
-  onclose: (() => void) | null = null
-  onerror: (() => void) | null = null
-  constructor(readonly url: string) {}
-  send(data: string | ArrayBuffer): void {
-    this.sent.push(data)
-  }
-
-  close(): void {
-    this.closed = true
-    this.readyState = 3
-    this.onclose?.()
-  }
-
-  get frames(): Array<Record<string, unknown>> {
-    return this.sent
-      .filter((f): f is string => typeof f === 'string')
-      .map(f => JSON.parse(f) as Record<string, unknown>)
-  }
-
-  get audio(): ArrayBuffer[] {
-    return this.sent.filter((f): f is ArrayBuffer => f instanceof ArrayBuffer)
-  }
-}
 
 let root: Root | undefined
 let host: HTMLDivElement
@@ -62,11 +36,12 @@ async function unmount(): Promise<void> {
 afterEach(unmount)
 
 interface Harness {
-  sockets: FakeSocket[]
-  socket: () => FakeSocket
+  sockets: FakeDictationSocket[]
+  socket: () => FakeDictationSocket
   dictated: Array<{
     transcript: string
     actions: ScoringAction[]
+    roster?: SaidRosterCommand[]
     undo?: boolean
   }>
   microphone: {
@@ -96,7 +71,7 @@ function harness(
   state = fresh(),
   more: Partial<DictationButtonProps> = {}
 ): Harness {
-  const sockets: FakeSocket[] = []
+  const sockets: FakeDictationSocket[] = []
   const dictated: Harness['dictated'] = []
   const microphone: Harness['microphone'] = { stopped: false, opened: 0 }
   const props: DictationButtonProps = {
@@ -105,11 +80,16 @@ function harness(
     gameId: 'gam_1',
     session: state.session,
     log: state.log,
-    onActions: (transcript, actions, undo) => {
-      dictated.push({ transcript, actions, ...(undo === true ? { undo } : {}) })
+    onActions: (transcript, actions, roster, undo) => {
+      dictated.push({
+        transcript,
+        actions,
+        ...(roster.length === 0 ? {} : { roster }),
+        ...(undo === true ? { undo } : {})
+      })
     },
     openSocket: url => {
-      const socket = new FakeSocket(url)
+      const socket = new FakeDictationSocket(url)
       sockets.push(socket)
       return socket
     },
@@ -181,12 +161,15 @@ async function pointer(type: 'pointerdown' | 'pointerup'): Promise<void> {
     )
   })
 }
-async function server(socket: FakeSocket, reply: object): Promise<void> {
+async function server(
+  socket: FakeDictationSocket,
+  reply: object
+): Promise<void> {
   await act(async () => {
     socket.onmessage?.({ data: JSON.stringify(reply) })
   })
 }
-async function opened(socket: FakeSocket): Promise<void> {
+async function opened(socket: FakeDictationSocket): Promise<void> {
   await act(async () => {
     socket.readyState = 1
     socket.onopen?.()
@@ -197,7 +180,7 @@ async function tap(): Promise<void> {
   await pointer('pointerdown')
   await pointer('pointerup')
 }
-async function enable(h: Harness): Promise<FakeSocket> {
+async function enable(h: Harness): Promise<FakeDictationSocket> {
   await tap()
   const socket = h.socket()
   await opened(socket)
@@ -358,9 +341,9 @@ describe('the dictation control', function () {
     expect(context).match(/^The last play \(Single\) is decided/)
     expect(context).includes(promptContext(next.state))
     expect(context).includes('count 0-0')
-    // An undecided play is described as it is.
+    // An undecided play is described as it is; both rosters follow.
     expect(dictationContext(fresh().session)).equals(
-      promptContext(fresh().session)
+      `${promptContext(fresh().session)}\nROSTERS\n${rosterPrompt(fresh().session, ['away', 'home'])}`
     )
   })
 
@@ -394,7 +377,7 @@ describe('the dictation control', function () {
     const h = harness(fresh(), {
       health: async () => ({
         ...(await healthy()),
-        dictationModels: ['grok-4.3', 'claude-haiku-4-5-20251001']
+        dictationModels: ['grok-4.3', 'claude-haiku-5-5']
       })
     })
     await h.render()
@@ -402,7 +385,7 @@ describe('the dictation control', function () {
     await pointer('pointerdown')
     expect(socket.frames.at(-1)).deep.include({
       kind: 'start',
-      model: 'claude-haiku-4-5-20251001'
+      model: 'claude-haiku-5-5'
     })
     await pointer('pointerup')
   })
@@ -421,8 +404,9 @@ describe('the dictation control', function () {
       kind: 'start',
       scope: 'scoring',
       target: { gameId: 'gam_1' },
-      context: promptContext(h.props.session)
+      context: dictationContext(h.props.session)
     })
+    expect(start.context).includes(promptContext(h.props.session))
     expect(start.id).is.a('string')
     expect(text('Dictation status')).equals('Listening…')
     h.microphone.pcm!(pcm(6))
@@ -1016,6 +1000,36 @@ describe('the dictation control', function () {
     )
   })
 
+  it('logs the screen’s refusal of a substitution, once each', async function () {
+    const h = harness()
+    await h.render()
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    const start = socket.frames.at(-1)!
+    await pointer('pointerup')
+    await server(socket, {
+      kind: 'actions',
+      id: start.id,
+      transcript: 'Ball one, and Freeman runs at first',
+      actions: [{ type: 'pitch', call: 'B' }],
+      roster: [
+        { type: 'pinchRunner', player: { name: 'Freeman' }, base: '1B' }
+      ],
+      dropped: []
+    })
+    const refused = {
+      id: 1,
+      message: 'Say a substitution separately from a play'
+    }
+    await h.render({ refused })
+    expect(text('Dictation message')).equals(refused.message)
+    await h.render({ refused })
+    await h.render({ refused: { ...refused, id: 2 } })
+    expect(find('Dictation log')!.textContent).equals(
+      `Ball one, and Freeman runs at first${refused.message}${refused.message}`
+    )
+  })
+
   it('keeps a log of what was heard, the plays and messages, four lines tall', async function () {
     const h = harness()
     await h.render()
@@ -1089,7 +1103,7 @@ describe('the dictation control', function () {
       })
       return event.defaultPrevented
     }
-    const starts = (socket: FakeSocket): number =>
+    const starts = (socket: FakeDictationSocket): number =>
       socket.frames.filter(f => f.kind === 'start').length
 
     it('holds while Space is down, and lets go when it comes up', async function () {
@@ -1339,6 +1353,143 @@ describe('a question the screen asks', function () {
     expect(find('Dictation question')?.textContent).not.includes(
       'The screen asks'
     )
+  })
+})
+
+describe('the dictation control on another screen', function () {
+  // "Put Judge fourth", as said.
+  const placed: SaidRosterCommand = {
+    type: 'placeInLineup',
+    places: [{ player: { name: 'Judge' }, slot: 4 }]
+  }
+
+  it('starts in the scope, target and context the screen gives', async function () {
+    const h = harness(fresh(), {
+      scope: 'roster',
+      target: { gameId: 'gam_1', side: 'home' },
+      contextOf: () => 'ROSTERS\nHOME — Hosts'
+    })
+    await h.render()
+    const socket = await enable(h)
+    expect(socket.frames[0]).deep.equals({
+      kind: 'keyterms',
+      keyterms: keyterms(h.props.session, 'home')
+    })
+    await pointer('pointerdown')
+    expect(socket.frames.at(-1)).deep.include({
+      kind: 'start',
+      scope: 'roster',
+      target: { gameId: 'gam_1', side: 'home' },
+      context: 'ROSTERS\nHOME — Hosts'
+    })
+    await pointer('pointerup')
+  })
+
+  it('hands a reply’s roster commands to the screen beside its actions', async function () {
+    const h = harness()
+    await h.render()
+    const socket = await enable(h)
+    await pointer('pointerdown')
+    const { id } = socket.frames.at(-1)!
+    await pointer('pointerup')
+    await server(socket, {
+      kind: 'actions',
+      id,
+      transcript: 'Put Judge fourth',
+      actions: [],
+      roster: [placed],
+      dropped: []
+    })
+    expect(h.dictated).deep.equals([
+      { transcript: 'Put Judge fourth', actions: [], roster: [placed] }
+    ])
+  })
+
+  it('is round when asked, and keeps tap to switch on and hold to talk', async function () {
+    const h = harness(fresh(), { shape: 'round', size: 48, tapMs: 50 })
+    await h.render()
+    const button = find('Dictation')!
+    expect(getComputedStyle(button).width).equals('48px')
+    expect(getComputedStyle(button).height).equals('48px')
+    expect(getComputedStyle(button).borderTopLeftRadius).equals('24px')
+    // A tap switches it on.
+    await tap()
+    const socket = h.socket()
+    await opened(socket)
+    expect(text('Dictation status')).equals('Push to talk')
+    // A press that outlasts a tap talks, and its release ends the sentence.
+    await pointer('pointerdown')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 80))
+    })
+    const start = socket.frames.at(-1)!
+    expect(start.kind).equals('start')
+    expect(text('Dictation status')).equals('Listening…')
+    await pointer('pointerup')
+    expect(socket.frames.at(-1)).deep.equals({ kind: 'release', id: start.id })
+    // Its question is the screen's to show, and there is no log.
+    await server(socket, {
+      kind: 'ask',
+      id: start.id,
+      question: 'Which Freeman?',
+      options: [{ label: 'Away' }, { label: 'Home' }]
+    })
+    expect(find('Dictation question')).equals(null)
+    expect(find('Dictation log')).equals(null)
+  })
+
+  it('switches on by itself once the server dictates, when handed over on', async function () {
+    const states: boolean[] = []
+    let setEnabled: ((on: boolean) => void) | undefined
+    function Handed(props: DictationButtonProps): React.ReactElement {
+      const controls = useDictationControls(props)
+      states.push(controls.enabled)
+      setEnabled = controls.setEnabled
+      return <>{controls.control}</>
+    }
+    const h = harness(fresh(), { startEnabled: true })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <Handed {...h.props} />
+        </ThemeProvider>
+      )
+    })
+    expect(states.at(-1)).equals(true)
+    expect(h.sockets).to.have.length(1)
+    expect(h.microphone.opened).equals(1)
+    await act(async () => {
+      setEnabled!(false)
+    })
+    expect(states.at(-1)).equals(false)
+    expect(h.socket().closed).equals(true)
+    // Handed over once: switched off, it stays off.
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <Handed {...h.props} />
+        </ThemeProvider>
+      )
+    })
+    expect(states.at(-1)).equals(false)
+    await act(async () => {
+      setEnabled!(true)
+    })
+    expect(states.at(-1)).equals(true)
+    expect(h.sockets).to.have.length(2)
+  })
+
+  it('stays off when handed over on to a server that does not dictate', async function () {
+    const h = harness(fresh(), {
+      startEnabled: true,
+      health: async () => ({ ...(await healthy()), dictation: false })
+    })
+    await h.render()
+    expect(h.sockets).to.have.length(0)
+    expect(h.microphone.opened).equals(0)
   })
 })
 

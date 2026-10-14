@@ -76,6 +76,11 @@ export type Route =
   | { name: 'oauthNative'; handle: string }
   | { name: 'scoreGame'; gameId: string }
   /**
+   * Coach Game: a head coach's own team in a game, its box score, roster,
+   * lineup and defence, which he saves for it.
+   */
+  | { name: 'coachGame'; gameId: string; teamId: string }
+  /**
    * DJ Game: both teams' batters and their walk-up songs, on a phone. The
    * web has no music to play, and shows the game instead.
    */
@@ -415,6 +420,8 @@ export function parseRoute(path: string, search = ''): Route {
         return { name: 'gameSettings', gameId: decodeURIComponent(id) }
       if (parts[2] === 'score') return { name: 'scoreGame', gameId: id }
       if (parts[2] === 'dj') return { name: 'djGame', gameId: id }
+      if (parts[2] === 'coach' && parts[3] != null)
+        return { name: 'coachGame', gameId: id, teamId: parts[3] }
       // The Score Game section of the game page. The same address it had as
       // its own screen, so a link to it still opens, with the hero above it.
       if (parts[2] === 'score-game') {
@@ -525,6 +532,8 @@ export function routePath(route: Route): string {
       return `/games/${route.gameId}/score`
     case 'djGame':
       return `/games/${route.gameId}/dj`
+    case 'coachGame':
+      return `/games/${route.gameId}/coach/${route.teamId}`
     case 'scoreboardOverride':
       return `/games/${route.gameId}/scoreboard-override`
     case 'videos':

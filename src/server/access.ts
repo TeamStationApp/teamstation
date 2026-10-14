@@ -653,6 +653,15 @@ export function canCoach(scopes: RoleScopes, teamId: string): boolean {
   )
 }
 
+/**
+ * The team's head coach: the coach flag itself, which every administrator of
+ * the team holds. An assistant is not one, so he may not save the team's
+ * lineup in a game.
+ */
+export function isHeadCoach(scopes: RoleScopes, teamId: string): boolean {
+  return hasRole(scopes, 'coach', teamId)
+}
+
 /** Scorekeepers can edit player settings and view full names because they
  * may be the only person responsible for maintaining the team roster.
  * This intentional roster-management exception must survive broader

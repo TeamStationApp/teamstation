@@ -1973,6 +1973,7 @@ describe('every set keyed by event type covers what the engine produces (U15)', 
       'defensive_substitution',
       'defensive_switch',
       'ts_batting_order',
+      'ts_courtesy_runner',
       'final_score'
     ])
     for (const type of produced) {

@@ -518,7 +518,10 @@ describe('whether a viewer may score a game', function () {
     'songkeeper',
     'awaySongkeeper',
     'videographer',
-    'member'
+    'member',
+    'assistant',
+    'bothCoach',
+    'outsider'
   ]
   const idOf = (name: string): number => viewers.get(name) ?? -1
 
@@ -597,13 +600,17 @@ describe('whether a viewer may score a game', function () {
     await db
       .insertInto('memberships')
       .values(
-        NAMES.filter(name => name !== 'siteAdmin').map(name => ({
-          id: makeId('membership'),
-          user_id: idOf(name),
-          team_id: name.startsWith('away') ? away : home,
-          role:
-            name === 'awayManager' ? ('manager' as const) : ('member' as const)
-        }))
+        NAMES.filter(name => name !== 'siteAdmin' && name !== 'outsider').map(
+          name => ({
+            id: makeId('membership'),
+            user_id: idOf(name),
+            team_id: name.startsWith('away') ? away : home,
+            role:
+              name === 'awayManager'
+                ? ('manager' as const)
+                : ('member' as const)
+          })
+        )
       )
       .execute()
     const role = (
@@ -626,6 +633,9 @@ describe('whether a viewer may score a game', function () {
         role('seasonScorekeeper', 'season', season, 'scorekeeper'),
         role('leagueScorekeeper', 'league', league, 'scorekeeper'),
         role('coach', 'team', home, 'coach'),
+        role('assistant', 'team', home, 'assistant'),
+        role('bothCoach', 'team', home, 'coach'),
+        role('bothCoach', 'team', away, 'coach'),
         role('songkeeper', 'league', league, 'songkeeper'),
         role('awaySongkeeper', 'team', away, 'songkeeper'),
         role('videographer', 'season', season, 'videographer')
@@ -700,6 +710,23 @@ describe('whether a viewer may score a game', function () {
     ]) {
       expect(await canScoreFor(name), name).equals(false)
     }
+  })
+
+  // U10: the sides whose lineup this viewer saves as its head coach.
+  it('lists the sides whose team the viewer head-coaches, and none for an assistant or a non-member', async function () {
+    const sidesFor = async (name: string): Promise<string[]> => {
+      const response = await fetch(`${base}/games/${game}`, {
+        headers: { 'x-test-user': String(idOf(name)) }
+      })
+      expect(response.status, name).equals(200)
+      return asGameDetail(await response.json()).coachSides
+    }
+    expect(await sidesFor('coach')).deep.equals(['home'])
+    expect(await sidesFor('awayManager')).deep.equals(['away'])
+    expect(await sidesFor('bothCoach')).deep.equals(['away', 'home'])
+    expect(await sidesFor('siteAdmin')).deep.equals(['away', 'home'])
+    for (const name of ['assistant', 'homeScorekeeper', 'member', 'outsider'])
+      expect(await sidesFor(name), name).deep.equals([])
   })
 
   const canDjFor = async (name: string): Promise<boolean> => {

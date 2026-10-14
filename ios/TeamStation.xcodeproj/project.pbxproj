@@ -399,6 +399,7 @@
 				PRODUCT_NAME = TeamStation;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_INCLUDE_PATHS = "$(inherited) $(PODS_ROOT)/Argon2Swift/Sources/Modules";
+				SWIFT_OBJC_BRIDGING_HEADER = TeamStation/TeamStation-Bridging-Header.h;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -432,6 +433,7 @@
 				PRODUCT_NAME = TeamStation;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_INCLUDE_PATHS = "$(inherited) $(PODS_ROOT)/Argon2Swift/Sources/Modules";
+				SWIFT_OBJC_BRIDGING_HEADER = TeamStation/TeamStation-Bridging-Header.h;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VERSIONING_SYSTEM = "apple-generic";

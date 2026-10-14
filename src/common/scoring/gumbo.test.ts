@@ -332,6 +332,44 @@ describe('reading a game back', function () {
     expect(replayed.state.liveData.linescore.offense.batter!.id).equals(4)
   })
 
+  it('keeps a pinch runner who keeps the batting order, stored and replayed (U4)', function () {
+    const runner: ScoringAction = {
+      type: 'lineup',
+      kind: 'runner',
+      side: 'away',
+      base: '1B',
+      player: 19
+    }
+    const scored = score(game(), [
+      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Freeman' },
+      ...inning.slice(0, 3),
+      runner,
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'gameFlow', kind: 'closePlay' }
+    ])
+    const [, walk] = scored.plays
+    const stored = (
+      (walk.playEvents ?? []) as Array<{ details: { eventType?: string } }>
+    ).map(event => event.details.eventType)
+    expect(stored[0]).equals('ts_courtesy_runner')
+    const replayed = replayPlays(
+      { plays: scored.plays, currentPlay: scored.current },
+      context
+    )
+    expect(replayed.problems).deep.equals([])
+    expect(replayed.state).deep.equals(scored.state)
+    expect(replayed.state.liveData.linescore.offense.first?.id).equals(2)
+    expect(replayed.state.liveData.linescore.offense.second?.id).equals(19)
+    expect(
+      replayed.state.liveData.boxscore.teams.away.battingOrder
+    ).deep.equals([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    // The record keeps the action, which the replay applies again.
+    expect(replayed.segments[1].actions[0]).deep.equals(runner)
+  })
+
   it('rebuilds a lineup set before the first pitch from the current play alone', function () {
     const scored = score(game(), [
       {

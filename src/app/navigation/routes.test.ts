@@ -242,9 +242,23 @@ describe('addresses', function () {
     expect(routePath({ name: 'djGame', gameId: 'g1' })).equals('/games/g1/dj')
   })
 
+  it('reads and writes Coach Game at /games/<id>/coach/<teamId> (U26)', function () {
+    expect(parseRoute('/games/g1/coach/tea_1')).deep.equals({
+      name: 'coachGame',
+      gameId: 'g1',
+      teamId: 'tea_1'
+    })
+    expect(
+      routePath({ name: 'coachGame', gameId: 'g1', teamId: 'tea_1' })
+    ).equals('/games/g1/coach/tea_1')
+    // Without a team it is the game itself.
+    expect(parseRoute('/games/g1/coach').name).equals('game')
+  })
+
   it('round-trips every kind of screen', function () {
     const routes: Route[] = [
       { name: 'scoreGame', gameId: 'g1' },
+      { name: 'coachGame', gameId: 'g1', teamId: 'tea_1' },
       { name: 'djGame', gameId: 'g1' },
       { name: 'home' },
       { name: 'videos', when: 'past' },

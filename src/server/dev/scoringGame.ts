@@ -1,8 +1,10 @@
+import type { Kysely, Transaction } from 'kysely'
+
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
 import { addEmail, findUserByEmail } from '../auth/emails'
 import { hashPassword } from '../auth/passwords'
-import { makeDatabase } from '../db/database'
+import { type Database, makeDatabase } from '../db/database'
 import { serverConfig } from '../serverConfig'
 
 /**
@@ -16,14 +18,216 @@ import { serverConfig } from '../serverConfig'
  *
  * Prints each game id and the user ids of the first nine players a side, in
  * batting order.
+ *
+ * Other development fixtures build on the same pieces: `userMinter`,
+ * `createScoringGame` and `loginUser`.
  */
 const POSITIONS = ['P', 'C', '1B', '2B', 'SS', '3B', 'LF', 'CF', 'RF']
 
-async function main(): Promise<void> {
+export type Mint = () => { userId: number; legacyId: string }
+
+/** Mints user ids no user in the database, or minted before, holds. */
+export async function userMinter(trx: Transaction<Database>): Promise<Mint> {
+  const held = new Set(
+    (await trx.selectFrom('users').select('id').execute()).map(row => row.id)
+  )
+  return () => {
+    const minted = mintUserId(id => held.has(id))
+    held.add(minted.userId)
+    return minted
+  }
+}
+
+export interface ScoringGameFixture {
+  leagueId: string
+  seasonId: string
+  homeTeamId: string
+  awayTeamId: string
+  games: string[]
+  /** Each side's players' user ids, in roster order. */
+  roster: Record<'home' | 'away', number[]>
+}
+
+/**
+ * The league, season, teams, rosters and scheduled games. Each side's
+ * players are named by `names` (a name is one word, the last name, or a
+ * first and a last), or `Host 01` to `Host 12` and `Visitor 01` to
+ * `Visitor 12` by default. Player i wears i + 1, and the first nine play P to
+ * RF, so they bat one to nine and take the field in that order. The teams are
+ * named `teams`, or `Hosts` and `Visitors` with a stamp that tells one run's
+ * from another's.
+ */
+export async function createScoringGame(
+  trx: Transaction<Database>,
+  mint: Mint,
+  options: {
+    games?: number
+    names?: Record<'home' | 'away', readonly string[]>
+    teams?: Record<'home' | 'away', string>
+  } = {}
+): Promise<ScoringGameFixture> {
+  const stamp = Date.now().toString(36)
+  const leagueId = makeId('league')
+  const seasonId = makeId('season')
+  const homeTeamId = makeId('team')
+  const awayTeamId = makeId('team')
+  await trx
+    .insertInto('leagues')
+    .values({
+      id: leagueId,
+      name: `Scoring League ${stamp}`,
+      short_name: 'SCR'
+    })
+    .execute()
+  await trx
+    .insertInto('seasons')
+    .values({
+      id: seasonId,
+      league_id: leagueId,
+      name: `Scoring Season ${stamp}`,
+      year: 2026,
+      term: 'Fall'
+    })
+    .execute()
+  await trx
+    .insertInto('teams')
+    .values([
+      { id: homeTeamId, name: options.teams?.home ?? `Hosts ${stamp}` },
+      { id: awayTeamId, name: options.teams?.away ?? `Visitors ${stamp}` }
+    ])
+    .execute()
+  await trx
+    .insertInto('season_teams')
+    .values([
+      { season_id: seasonId, team_id: homeTeamId },
+      { season_id: seasonId, team_id: awayTeamId }
+    ])
+    .execute()
+
+  const roster: Record<'home' | 'away', number[]> = { home: [], away: [] }
+  for (const [side, teamId] of [
+    ['away', awayTeamId],
+    ['home', homeTeamId]
+  ] as const) {
+    const names =
+      options.names?.[side] ??
+      // Padded so the roster, which lists players by name, lists them in
+      // this order: the first nine bat one to nine and play P to RF.
+      Array.from(
+        { length: 12 },
+        (_, i) =>
+          `${side === 'home' ? 'Host' : 'Visitor'} ${String(i + 1).padStart(2, '0')}`
+      )
+    for (const [i, name] of names.entries()) {
+      const minted = mint()
+      const words = name.split(' ')
+      await trx
+        .insertInto('users')
+        .values({
+          id: minted.userId,
+          legacyId: minted.legacyId,
+          display_name: name,
+          first_name: words.length > 1 ? words[0] : null,
+          last_name: words.length > 1 ? words.slice(1).join(' ') : name,
+          bats: i % 3 === 0 ? 'left' : 'right',
+          throws: 'right'
+        })
+        .execute()
+      await trx
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: minted.userId,
+          team_id: teamId,
+          role: 'member',
+          is_player: true,
+          jersey: String(i + 1),
+          positions: i < POSITIONS.length ? [POSITIONS[i]] : []
+        })
+        .execute()
+      roster[side].push(minted.userId)
+    }
+  }
+
+  const games: string[] = []
+  for (let i = 0; i < (options.games ?? 1); i++) {
+    const gameId = makeId('game')
+    await trx
+      .insertInto('games')
+      .values({
+        id: gameId,
+        home_team_id: homeTeamId,
+        away_team_id: awayTeamId,
+        season_id: seasonId,
+        start_at: new Date(Date.now() + i * 3600_000),
+        venue: 'Scoring Field',
+        status: 'scheduled'
+      })
+      .execute()
+    games.push(gameId)
+  }
+  return { leagueId, seasonId, homeTeamId, awayTeamId, games, roster }
+}
+
+/**
+ * A person who signs in with this e-mail and password, never an
+ * administrator: created, or the one who has the e-mail updated, with
+ * `displayName` (the e-mail's name by default) for a new one.
+ */
+export async function loginUser(
+  trx: Transaction<Database>,
+  mint: Mint,
+  email: string,
+  password: string,
+  displayName?: string
+): Promise<number> {
+  const normalised = email.trim().toLowerCase()
+  const passwordHash = await hashPassword(password)
+  const existing = await findUserByEmail(trx, normalised)
+  if (existing != null) {
+    await trx
+      .updateTable('users')
+      .set({
+        password_hash: passwordHash,
+        login_enabled: true,
+        is_admin: false
+      })
+      .where('id', '=', existing.id)
+      .execute()
+    return existing.id
+  }
+  const minted = mint()
+  await trx
+    .insertInto('users')
+    .values({
+      id: minted.userId,
+      legacyId: minted.legacyId,
+      display_name: displayName ?? normalised.split('@')[0],
+      password_hash: passwordHash,
+      login_enabled: true,
+      is_admin: false
+    })
+    .execute()
+  await addEmail(trx, minted.userId, normalised, {
+    isPrimary: true,
+    source: 'manual'
+  })
+  return minted.userId
+}
+
+/**
+ * Runs the command line against `db`, printing each line to `print`.
+ * Refuses to run in production, and throws the usage for arguments it does
+ * not understand.
+ */
+export async function runScoringGame(
+  db: Kysely<Database>,
+  args: string[],
+  print: (line: string) => void
+): Promise<void> {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('The scoring-game script does not run in production')
   }
-  const args = process.argv.slice(2)
   const gamesAt = args.indexOf('--games')
   const count = gamesAt < 0 ? 1 : Number(args[gamesAt + 1])
   const [email, password] = args.filter(
@@ -40,162 +244,36 @@ async function main(): Promise<void> {
     )
   }
 
+  const out = await db.transaction().execute(async trx => {
+    const mint = await userMinter(trx)
+    const { games, roster, homeTeamId } = await createScoringGame(trx, mint, {
+      games: count
+    })
+    const viewerId = await loginUser(trx, mint, email, password)
+    await trx
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: viewerId,
+        team_id: homeTeamId,
+        role: 'member'
+      })
+      .execute()
+    return { games, roster, viewerId }
+  })
+  for (const game of out.games) print(`GAME_ID=${game}`)
+  print(`AWAY=${out.roster.away.slice(0, 9).join(',')}`)
+  print(`HOME=${out.roster.home.slice(0, 9).join(',')}`)
+  print(`VIEWER=${out.viewerId}`)
+}
+
+/* c8 ignore start */
+async function main(): Promise<void> {
   const db = makeDatabase(serverConfig.databaseUrl)
   try {
-    const out = await db.transaction().execute(async trx => {
-      const held = new Set(
-        (await trx.selectFrom('users').select('id').execute()).map(
-          row => row.id
-        )
-      )
-      const mint = (): { userId: number; legacyId: string } => {
-        const minted = mintUserId(id => held.has(id))
-        held.add(minted.userId)
-        return minted
-      }
-      const stamp = Date.now().toString(36)
-      const leagueId = makeId('league')
-      const seasonId = makeId('season')
-      const homeTeamId = makeId('team')
-      const awayTeamId = makeId('team')
-      await trx
-        .insertInto('leagues')
-        .values({
-          id: leagueId,
-          name: `Scoring League ${stamp}`,
-          short_name: 'SCR'
-        })
-        .execute()
-      await trx
-        .insertInto('seasons')
-        .values({
-          id: seasonId,
-          league_id: leagueId,
-          name: `Scoring Season ${stamp}`,
-          year: 2026,
-          term: 'Fall'
-        })
-        .execute()
-      await trx
-        .insertInto('teams')
-        .values([
-          { id: homeTeamId, name: `Hosts ${stamp}` },
-          { id: awayTeamId, name: `Visitors ${stamp}` }
-        ])
-        .execute()
-      await trx
-        .insertInto('season_teams')
-        .values([
-          { season_id: seasonId, team_id: homeTeamId },
-          { season_id: seasonId, team_id: awayTeamId }
-        ])
-        .execute()
-
-      const roster: Record<'home' | 'away', number[]> = { home: [], away: [] }
-      for (const [side, teamId] of [
-        ['away', awayTeamId],
-        ['home', homeTeamId]
-      ] as const)
-        for (let i = 0; i < 12; i++) {
-          const minted = mint()
-          // Padded so the roster, which lists players by name, lists them in
-          // this order: the first nine bat one to nine and play P to RF.
-          const number = String(i + 1).padStart(2, '0')
-          const name = `${side === 'home' ? 'Host' : 'Visitor'} ${number}`
-          await trx
-            .insertInto('users')
-            .values({
-              id: minted.userId,
-              legacyId: minted.legacyId,
-              display_name: name,
-              first_name: name.split(' ')[0],
-              last_name: number,
-              bats: i % 3 === 0 ? 'left' : 'right',
-              throws: 'right'
-            })
-            .execute()
-          await trx
-            .insertInto('memberships')
-            .values({
-              id: makeId('membership'),
-              user_id: minted.userId,
-              team_id: teamId,
-              role: 'member',
-              is_player: true,
-              jersey: String(i + 1),
-              positions: i < POSITIONS.length ? [POSITIONS[i]] : []
-            })
-            .execute()
-          roster[side].push(minted.userId)
-        }
-
-      const games: string[] = []
-      for (let i = 0; i < count; i++) {
-        const gameId = makeId('game')
-        await trx
-          .insertInto('games')
-          .values({
-            id: gameId,
-            home_team_id: homeTeamId,
-            away_team_id: awayTeamId,
-            season_id: seasonId,
-            start_at: new Date(Date.now() + i * 3600_000),
-            venue: 'Scoring Field',
-            status: 'scheduled'
-          })
-          .execute()
-        games.push(gameId)
-      }
-
-      const normalised = email.trim().toLowerCase()
-      const passwordHash = await hashPassword(password)
-      const existing = await findUserByEmail(trx, normalised)
-      let viewerId: number
-      if (existing != null) {
-        viewerId = existing.id
-        await trx
-          .updateTable('users')
-          .set({
-            password_hash: passwordHash,
-            login_enabled: true,
-            is_admin: false
-          })
-          .where('id', '=', viewerId)
-          .execute()
-      } else {
-        const minted = mint()
-        viewerId = minted.userId
-        await trx
-          .insertInto('users')
-          .values({
-            id: viewerId,
-            legacyId: minted.legacyId,
-            display_name: normalised.split('@')[0],
-            password_hash: passwordHash,
-            login_enabled: true,
-            is_admin: false
-          })
-          .execute()
-        await addEmail(trx, viewerId, normalised, {
-          isPrimary: true,
-          source: 'manual'
-        })
-      }
-      await trx
-        .insertInto('memberships')
-        .values({
-          id: makeId('membership'),
-          user_id: viewerId,
-          team_id: homeTeamId,
-          role: 'member'
-        })
-        .execute()
-      return { games, roster, viewerId }
+    await runScoringGame(db, process.argv.slice(2), line => {
+      console.log(line)
     })
-    for (const game of out.games) console.log(`GAME_ID=${game}`)
-    console.log(`AWAY=${out.roster.away.slice(0, 9).join(',')}`)
-    console.log(`HOME=${out.roster.home.slice(0, 9).join(',')}`)
-    console.log(`VIEWER=${out.viewerId}`)
   } finally {
     await db.destroy()
   }
@@ -208,3 +286,4 @@ if (entry.endsWith('/scoringGame.ts') || entry.endsWith('/scoringGame.js')) {
     process.exit(1)
   })
 }
+/* c8 ignore stop */

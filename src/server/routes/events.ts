@@ -19,10 +19,12 @@ import {
 import {
   documentOf,
   playJson,
+  playsDigest,
   postGamePlays,
   readPlays
 } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
+import { storedLineupsDigest } from '../events/teamLineups'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { notifyGameChange } from '../socket/gameChanges'
@@ -63,6 +65,19 @@ export interface EventRouteOptions {
  * cancelled. The scorer is the record, so a live post never marks a score
  * mismatch. The owning TeamStation scorer may post to a final game to
  * correct it; nobody else may.
+ *
+ * A live post may name `lineupsBase`, the lineups digest its sender last read
+ * (`lineupsDigest` on `GET` and on each post's answer). When the game's
+ * lineups have changed since, someone else saved over them, and the post is
+ * refused with 409 and `details: { stale: true }`: the sender reads the game
+ * again and posts its own changes on top. A post naming none is written as
+ * before.
+ *
+ * `GET` and each live post's answer carry `playsDigest`, a digest of the
+ * stored plays and the at-bat in progress, as the game socket's `plays`
+ * notices do; a live post's answer also carries `priorPlaysDigest`, the same
+ * of the game as the post found it. A sender whose last digest that is holds
+ * everything stored, and can pass over the notice of its own post.
  *
  * The write itself is `postGamePlays` in `events/postPlays.ts`, which the
  * refold script calls too.
@@ -194,12 +209,22 @@ export function eventRoutes(
         const stored = await readPlays(trx, gameId)
         const game = await trx
           .selectFrom('games')
-          .select('currentPlay')
+          .select([
+            'home_team_id',
+            'away_team_id',
+            'currentPlay',
+            'lineups_digest'
+          ])
           .where('id', '=', gameId)
-          .executeTakeFirst()
+          .executeTakeFirstOrThrow()
         return {
           plays: stored.map(playJson),
-          currentPlay: game?.currentPlay ?? null
+          currentPlay: game.currentPlay ?? null,
+          playsDigest: playsDigest(stored, game.currentPlay),
+          lineupsDigest: await storedLineupsDigest(trx, {
+            id: gameId,
+            ...game
+          })
         }
       })
       res.json(result)

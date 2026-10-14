@@ -64,6 +64,8 @@ const report = spawnSync(
     '--exclude',
     '**/*.test.*',
     '--exclude',
+    '**/*.integration.ts',
+    '--exclude',
     '**/*.e2e.ts',
     '--exclude',
     'src/test/**',

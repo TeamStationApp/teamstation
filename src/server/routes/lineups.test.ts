@@ -3,26 +3,52 @@ import type { AddressInfo } from 'node:net'
 import { expect } from 'chai'
 import express from 'express'
 import type { Insertable, Kysely } from 'kysely'
-import { after, before, describe, it } from 'mocha'
-import { Pool } from 'pg'
+import { after, before, beforeEach, describe, it } from 'mocha'
+import { Client, Pool } from 'pg'
 
-import { asDjGame, asGameLineupsResponse } from '../../common/api'
-import { asPostEventsBody } from '../../common/gumboPlay'
+import {
+  asDjGame,
+  asGameLineupsResponse,
+  type SaveLineupsBody
+} from '../../common/api'
+import {
+  asPostEventsBody,
+  type CurrentPlay,
+  type GumboPlay
+} from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
+import type { ScoringAction } from '../../common/scoring/actions'
 import { newSetup } from '../../common/scoring/lineup'
-import { asDefaultLineup } from '../../common/scoring/lineupHistory'
+import {
+  asDefaultLineup,
+  confirmedSides,
+  type Lineup,
+  type LineupPerson
+} from '../../common/scoring/lineupHistory'
 import { ScoringSession } from '../../common/scoring/session'
+import {
+  shownWithDefault,
+  withVisibleDefaults
+} from '../../common/scoring/startingSetup'
+import {
+  type GameSetup,
+  type GameState,
+  POSITIONS,
+  setupOf,
+  type Side
+} from '../../common/scoring/state'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import { type Database, makeDatabase } from '../db/database'
-import { postGamePlays } from '../events/postPlays'
+import { postGamePlays, readPlays } from '../events/postPlays'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
-import { lineupRoutes } from './lineups'
+import { GAME_CHANGES_CHANNEL } from '../socket/gameChanges'
+import { lineupRoutes, startingContext } from './lineups'
 
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_lineups_route_${Date.now()}`
@@ -535,5 +561,1530 @@ describe('the lineup routes (U11)', function () {
       expect((await get(`/games/nope/dj`, ADMIN)).status).equals(404)
       expect((await get(`/games/${scored}/dj`, null)).status).equals(401)
     })
+  })
+})
+
+const COACH = 'tok_lineups_post_coach_00000000000'
+const ASSISTANT = 'tok_lineups_post_assistant_0000000'
+const AWAY_COACH = 'tok_lineups_post_away_coach_000000'
+const TEAM_ADMIN = 'tok_lineups_post_team_admin_000000'
+const SCORER = 'tok_lineups_post_scorer_0000000000'
+const FAN = 'tok_lineups_post_member_0000000000'
+
+/**
+ * U8: a head coach saves his side's lineup, replayed over the stored game
+ * and written as a scorer's save is.
+ */
+describe("saving a side's lineup (U8)", function () {
+  this.timeout(120000)
+
+  const scratch = `teamstation_lineups_post_${Date.now()}`
+  const url = adminUrl.replace(/\/[^/]*$/, `/${scratch}`)
+  let adminPool: Pool | undefined
+  let db: Kysely<Database> | undefined
+  let listener: Client | undefined
+  let server: ReturnType<express.Express['listen']> | undefined
+  let base = ''
+  const taken = new Set<number>()
+  const mint = (): { userId: number; legacyId: string } => {
+    const minted = mintUserId(id => taken.has(id))
+    taken.add(minted.userId)
+    return minted
+  }
+  const coach = mint()
+  const assistant = mint()
+  const awayCoach = mint()
+  const teamAdmin = mint()
+  const scorer = mint()
+  const fan = mint()
+  const homePlayers = Array.from({ length: 10 }, mint)
+  const awayPlayers = Array.from({ length: 9 }, mint)
+  const home = makeId('team')
+  const away = makeId('team')
+  const games = {
+    fresh: makeId('game'),
+    unheld: makeId('game'),
+    live: makeId('game'),
+    locals: makeId('game'),
+    runner: makeId('game'),
+    pending: makeId('game'),
+    final: makeId('game'),
+    race: makeId('game'),
+    busy: makeId('game'),
+    stale: makeId('game'),
+    blind: makeId('game'),
+    seen: makeId('game'),
+    between: makeId('game'),
+    kept: makeId('game'),
+    revised: makeId('game'),
+    set: makeId('game'),
+    accept: makeId('game'),
+    keeper: makeId('game'),
+    shown: makeId('game')
+  }
+  const TEAMS = {
+    away: { id: away, name: 'Visitors' },
+    home: { id: home, name: 'Hosts' }
+  }
+  const SURNAMES = [
+    'Judge',
+    'Soto',
+    'Betts',
+    'Ohtani',
+    'Freeman',
+    'Trout',
+    'Machado',
+    'Lindor',
+    'Alonso',
+    'Harper'
+  ]
+  const roster = (
+    users: Array<{ userId: number }>,
+    prefix: string
+  ): Array<{ userId: number; shortName: string; jersey: string }> =>
+    users.map((user, i) => ({
+      userId: user.userId,
+      shortName: `${prefix}${SURNAMES[i]}`,
+      jersey: String(i + 1)
+    }))
+  // Nine of the hosts' ten bat; the tenth is on the bench.
+  const setup = (): GameSetup => {
+    const made = newSetup(TEAMS, {
+      away: roster(awayPlayers, 'A'),
+      home: roster(homePlayers, 'H')
+    })
+    made.sides.home.battingOrder = made.sides.home.battingOrder.slice(0, 9)
+    return made
+  }
+  const written: string[] = []
+  const heard: string[] = []
+  let beforeSave: ((gameId: string) => Promise<void>) | undefined
+  let afterSave: ((gameId: string) => Promise<void>) | undefined
+
+  before(async function () {
+    adminPool = new Pool({ connectionString: adminUrl })
+    try {
+      await adminPool.query('select 1')
+    } catch {
+      await adminPool.end()
+      adminPool = undefined
+      this.skip()
+      return
+    }
+    await adminPool.query(`create database ${scratch}`)
+    const pool = new Pool({ connectionString: url })
+    await migrateUp(pool, migrations)
+    await pool.end()
+    db = makeDatabase(url)
+    const now = new Date()
+    const players = [...homePlayers, ...awayPlayers]
+    await db
+      .insertInto('users')
+      .values(
+        [coach, assistant, awayCoach, teamAdmin, scorer, fan, ...players].map(
+          user => ({
+            id: user.userId,
+            legacyId: user.legacyId,
+            display_name: `User ${user.userId}`,
+            created_at: now,
+            updated_at: now
+          })
+        )
+      )
+      .execute()
+    await db
+      .insertInto('auth_sessions')
+      .values(
+        (
+          [
+            [coach, COACH],
+            [assistant, ASSISTANT],
+            [awayCoach, AWAY_COACH],
+            [teamAdmin, TEAM_ADMIN],
+            [scorer, SCORER],
+            [fan, FAN]
+          ] as const
+        ).map(([user, token]) => ({
+          id: `ses_${token}`,
+          user_id: user.userId,
+          token_hash: hashToken(token),
+          created_at: now,
+          expires_at: new Date(now.getTime() + 3_600_000)
+        }))
+      )
+      .execute()
+    await db
+      .insertInto('teams')
+      .values([
+        { id: home, name: 'Hosts', kind: 'full' },
+        { id: away, name: 'Visitors', kind: 'full' }
+      ])
+      .execute()
+    await db
+      .insertInto('games')
+      .values(
+        Object.values(games).map(id => ({
+          id,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: now
+        }))
+      )
+      .execute()
+    const membership = (
+      user: { userId: number },
+      teamId: string,
+      role: 'member' | 'manager' = 'member',
+      jersey: string | null = null
+    ): Insertable<Database['memberships']> => ({
+      id: makeId('membership'),
+      user_id: user.userId,
+      team_id: teamId,
+      role,
+      is_player: jersey != null,
+      jersey
+    })
+    await db
+      .insertInto('memberships')
+      .values([
+        membership(coach, home),
+        membership(assistant, home),
+        membership(fan, home),
+        membership(teamAdmin, home, 'manager'),
+        membership(awayCoach, away),
+        membership(scorer, away),
+        ...homePlayers.map((user, i) =>
+          membership(user, home, 'member', String(i + 1))
+        ),
+        ...awayPlayers.map((user, i) =>
+          membership(user, away, 'member', String(i + 1))
+        )
+      ])
+      .execute()
+    const flag = (
+      user: { userId: number },
+      teamId: string,
+      role: 'coach' | 'assistant' | 'scorekeeper'
+    ): Insertable<Database['scope_roles']> => ({
+      id: makeId('scopeRole'),
+      user_id: user.userId,
+      scope_type: 'team',
+      scope_id: teamId,
+      role
+    })
+    await db
+      .insertInto('scope_roles')
+      .values([
+        flag(coach, home, 'coach'),
+        flag(assistant, home, 'assistant'),
+        flag(awayCoach, away, 'coach'),
+        flag(scorer, away, 'scorekeeper')
+      ])
+      .execute()
+
+    // Each game but the fresh and the final one is under way: a ball to the
+    // first batter. The pending one has a ball in play waiting for its result.
+    for (const gameId of [
+      games.live,
+      games.locals,
+      games.runner,
+      games.pending,
+      games.race,
+      games.busy,
+      games.stale,
+      games.between
+    ])
+      await score(gameId, [{ type: 'pitch', call: 'B' }])
+    await score(games.locals, [
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        side: 'home',
+        name: 'Guest',
+        jersey: '77'
+      }
+    ])
+    await score(games.runner, [
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' }
+    ])
+    await score(games.pending, [{ type: 'ballInPlay', contact: 'swing' }])
+    await db
+      .updateTable('games')
+      .set({ status: 'final' })
+      .where('id', '=', games.final)
+      .execute()
+
+    listener = new Client({ connectionString: url })
+    await listener.connect()
+    listener.on('notification', message => {
+      if (message.payload != null) heard.push(message.payload)
+    })
+    await listener.query(`listen ${GAME_CHANGES_CHANNEL}`)
+
+    const app = express()
+    app.use(jsonBody)
+    app.use(withActor(db))
+    app.use(
+      '/api/v1',
+      lineupRoutes(db, {
+        onGameWritten: gameId => {
+          written.push(gameId)
+        },
+        beforeSave: async gameId => {
+          await beforeSave?.(gameId)
+        },
+        afterSave: async gameId => {
+          await afterSave?.(gameId)
+        }
+      })
+    )
+    app.use(errorHandler)
+    server = app.listen(0, '127.0.0.1')
+    await new Promise<void>(resolve => server?.once('listening', resolve))
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`
+  })
+
+  after(async function () {
+    server?.close()
+    await listener?.end()
+    if (db != null) await db.destroy()
+    if (adminPool != null) {
+      await adminPool.query(`drop database if exists ${scratch}`)
+      await adminPool.end()
+    }
+  })
+
+  beforeEach(function () {
+    beforeSave = undefined
+    afterSave = undefined
+  })
+
+  /** A scorer's session on the game, saving as the scoring screen does. */
+  async function scoring(gameId: string): Promise<ScoringSession> {
+    const database = db!
+    return await ScoringSession.open(
+      {
+        load: async () => ({
+          plays: (await readPlays(database, gameId)).map(
+            row => row.gumbo as GumboPlay
+          ),
+          currentPlay: (
+            await database
+              .selectFrom('games')
+              .select('currentPlay')
+              .where('id', '=', gameId)
+              .executeTakeFirstOrThrow()
+          ).currentPlay as CurrentPlay | null
+        }),
+        save: async (id, change) => {
+          const posted = await postGamePlays(
+            database,
+            id,
+            asPostEventsBody({
+              mode: 'live',
+              source: { system: 'teamstation' },
+              plays: change.plays,
+              remove: change.remove,
+              currentPlay: change.currentPlay
+            })
+          )
+          return {
+            plays: posted.plays.map(row => row.gumbo as GumboPlay),
+            currentPlay: posted.currentPlay as CurrentPlay | null
+          }
+        }
+      },
+      gameId,
+      { gamePk: gameId, teams: TEAMS, setup: setup() },
+      { requireCurrentSetup: true }
+    )
+  }
+
+  /** Scores `actions` into the game, as a scorer would. */
+  async function score(
+    gameId: string,
+    actions: ScoringAction[]
+  ): Promise<GameState> {
+    const session = await scoring(gameId)
+    for (const action of actions)
+      expect(
+        session.apply(action).problems,
+        JSON.stringify(action)
+      ).deep.equals([])
+    await session.flush()
+    expect(session.problem).equals(null)
+    return session.state
+  }
+
+  /** One side's lineup as the game holds it, as a save names it. */
+  function bodyOf(state: GameState, side: Side): SaveLineupsBody {
+    const team = state.liveData.boxscore.teams[side]
+    const players = team.players.map(id => {
+      const player = state.gameData.players[id]
+      return {
+        userId: player.userId,
+        fullName: player.fullName,
+        jersey: player.jersey
+      }
+    })
+    const index = (id: number): number => team.players.indexOf(id)
+    const defense: SaveLineupsBody['defense'] = {}
+    for (const position of POSITIONS) {
+      const id = team.defense[position]
+      if (id != null) defense[position] = index(id)
+    }
+    return {
+      side,
+      base: '',
+      players,
+      battingOrder: team.battingOrder.map(index),
+      defense
+    }
+  }
+
+  async function ask(
+    method: 'GET' | 'POST',
+    path: string,
+    token: string,
+    body?: unknown
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const response = await fetch(`${base}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' })
+      },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    })
+    return {
+      status: response.status,
+      body: (await response.json()) as Record<string, unknown>
+    }
+  }
+
+  const save = async (
+    gameId: string,
+    token: string,
+    body: unknown
+  ): ReturnType<typeof ask> =>
+    await ask('POST', `/games/${gameId}/lineups`, token, body)
+
+  async function gameRow(gameId: string): Promise<{
+    status: string
+    currentPlay: unknown
+    lineups_digest: string | null
+    updated_at: Date
+  }> {
+    return await db!
+      .selectFrom('games')
+      .select(['status', 'currentPlay', 'lineups_digest', 'updated_at'])
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+  }
+
+  /** The `lineups` notifies heard for a game, once they have arrived. */
+  async function lineupNotifies(gameId: string): Promise<number> {
+    await listener!.query('select 1')
+    await new Promise(resolve => setTimeout(resolve, 200))
+    return heard.filter(
+      payload => payload === JSON.stringify({ game: gameId, kind: 'lineups' })
+    ).length
+  }
+
+  const batters = (side: { current: unknown }): Array<number | null> =>
+    (side.current as { batters: Array<{ userId: number | null }> }).batters.map(
+      person => person.userId
+    )
+
+  it('saves a head coach’s side before the first pitch, leaving the game scheduled', async function () {
+    // The hosts start from their roster: the first nine of ten bat.
+    const players = homePlayers.map((user, i) => ({
+      userId: user.userId,
+      fullName: `H${SURNAMES[i]}`,
+      jersey: String(i + 1)
+    }))
+    const body: SaveLineupsBody = {
+      side: 'home',
+      base: '',
+      players,
+      battingOrder: [9, 8, 7, 6, 5, 4, 3, 2, 1],
+      defense: {
+        P: 9,
+        C: 8,
+        '1B': 7,
+        '2B': 6,
+        '3B': 5,
+        SS: 4,
+        LF: 3,
+        CF: 2,
+        RF: 1
+      }
+    }
+    const answer = await save(games.fresh, COACH, body)
+    expect(answer.status, JSON.stringify(answer.body)).equals(200)
+    const read = asGameLineupsResponse(answer.body)
+    expect(batters(read.home)).deep.equals(
+      body.battingOrder.map(index => homePlayers[index].userId)
+    )
+    expect(read.home.current?.defense.P?.userId).equals(homePlayers[9].userId)
+    const row = await gameRow(games.fresh)
+    expect(row.status).equals('scheduled')
+    expect(row.currentPlay).not.equals(null)
+    expect(read.digest).equals(row.lineups_digest)
+    // The answer is what reading the lineups now says, digest and all.
+    const again = await ask('GET', `/games/${games.fresh}/lineups`, FAN)
+    expect(again.status).equals(200)
+    expect(again.body).deep.equals(answer.body)
+    expect(written).deep.equals([games.fresh])
+    expect(await lineupNotifies(games.fresh)).equals(1)
+  })
+
+  it('takes a head coach’s side as the game opens on it, unchanged, so the game holds it', async function () {
+    // The lineups the route opens a game with no record on, saved as they
+    // stand: the coach accepts them.
+    // As the hosts' coach, who may see his own team alone.
+    const context = await startingContext(
+      db!,
+      games.unheld,
+      { home_team_id: home, away_team_id: away },
+      teamId => teamId === home
+    )
+    const opened = await ScoringSession.open(
+      {
+        load: async () => ({ plays: [], currentPlay: null }),
+        save: async () => {
+          throw new Error('Not saved here')
+        }
+      },
+      games.unheld,
+      context,
+      { requireCurrentSetup: true }
+    )
+    const before = await ask('GET', `/games/${games.unheld}/lineups`, FAN)
+    expect(asGameLineupsResponse(before.body).home.current).equals(null)
+    const answer = await save(games.unheld, COACH, bodyOf(opened.state, 'home'))
+    expect(answer.status, JSON.stringify(answer.body)).equals(200)
+    const read = asGameLineupsResponse(answer.body)
+    expect(read.home.current).not.equals(null)
+    expect(batters(read.home)).deep.equals(
+      opened.state.liveData.boxscore.teams.home.battingOrder.map(
+        id => opened.state.gameData.players[id].userId
+      )
+    )
+    const row = await gameRow(games.unheld)
+    expect(row.status).equals('scheduled')
+    expect(row.currentPlay).not.equals(null)
+    expect(written).includes(games.unheld)
+    // Held now: the same save again changes nothing.
+    const writes = written.length
+    expect(
+      (await save(games.unheld, COACH, bodyOf(opened.state, 'home'))).status
+    ).equals(200)
+    expect(written).lengthOf(writes)
+  })
+
+  it('arranges the other side from its default only for somebody who may see that team', async function () {
+    // The visitors keep a default lineup: their roster the other way round.
+    const roster = await startingContext(
+      db!,
+      games.blind,
+      { home_team_id: home, away_team_id: away },
+      () => false
+    )
+    const order = roster.setup.sides.away.battingOrder.map(
+      id => roster.setup.players[id].userId
+    )
+    const person = (userId: number | null): LineupPerson => ({
+      userId,
+      name: `User ${userId}`,
+      jersey: ''
+    })
+    const reversed: Lineup = {
+      batters: [...order].reverse().map(person),
+      defense: Object.fromEntries(
+        POSITIONS.map(position => [position, null])
+      ) as Lineup['defense']
+    }
+    await db!
+      .updateTable('teams')
+      .set({
+        default_lineup: {
+          lineup: reversed,
+          fromGameId: games.live,
+          setAt: new Date().toISOString()
+        }
+      })
+      .where('id', '=', away)
+      .execute()
+    try {
+      const awayBatters = async (gameId: string): Promise<unknown> =>
+        batters(
+          asGameLineupsResponse(
+            (await ask('GET', `/games/${gameId}/lineups`, FAN)).body
+          ).away
+        )
+      const opened = await ScoringSession.open(
+        {
+          load: async () => ({ plays: [], currentPlay: null }),
+          save: async () => {
+            throw new Error('Not saved here')
+          }
+        },
+        games.blind,
+        roster,
+        { requireCurrentSetup: true }
+      )
+      const hosts = bodyOf(opened.state, 'home')
+      hosts.battingOrder.reverse()
+      // The hosts' coach may not see the visitors: his save leaves them in
+      // roster order, as his own screen showed them, never their default.
+      const blind = await save(games.blind, COACH, hosts)
+      expect(blind.status, JSON.stringify(blind.body)).equals(200)
+      expect(await awayBatters(games.blind)).deep.equals(order)
+      // The visitors' scorekeeper may: his save arranges them as their default.
+      const seen = await save(games.seen, SCORER, hosts)
+      expect(seen.status, JSON.stringify(seen.body)).equals(200)
+      expect(await awayBatters(games.seen)).deep.equals([...order].reverse())
+    } finally {
+      await db!
+        .updateTable('teams')
+        .set({ default_lineup: null })
+        .where('id', '=', away)
+        .execute()
+    }
+  })
+
+  it('keeps an unseen side’s default when the first pitch takes the lineups', async function () {
+    // Both teams keep a default that is not roster order. The hosts' coach
+    // can see his own and saves them back in roster order. He cannot see
+    // the visitors, so his save leaves them in roster order on the game.
+    const roster = await startingContext(
+      db!,
+      games.kept,
+      { home_team_id: home, away_team_id: away },
+      () => false
+    )
+    const orderOf = (side: Side): Array<number | null> =>
+      roster.setup.sides[side].battingOrder.map(
+        id => roster.setup.players[id].userId
+      )
+    const personOf = (id: number): LineupPerson => {
+      const player = roster.setup.players[id]
+      return {
+        userId: player.userId,
+        name: player.fullName,
+        jersey: player.jersey
+      }
+    }
+    const reversed = (side: Side): Lineup => {
+      const team = roster.setup.sides[side]
+      return {
+        batters: [...team.battingOrder].reverse().map(personOf),
+        defense: Object.fromEntries(
+          POSITIONS.map(position => {
+            const id = team.defense[position]
+            return [position, id == null ? null : personOf(id)]
+          })
+        ) as Lineup['defense']
+      }
+    }
+    const storedAt = new Date().toISOString()
+    await db!
+      .updateTable('teams')
+      .set({
+        default_lineup: {
+          lineup: reversed('away'),
+          fromGameId: games.live,
+          setAt: storedAt
+        }
+      })
+      .where('id', '=', away)
+      .execute()
+    await db!
+      .updateTable('teams')
+      .set({
+        default_lineup: {
+          lineup: reversed('home'),
+          fromGameId: games.live,
+          setAt: storedAt
+        }
+      })
+      .where('id', '=', home)
+      .execute()
+    const teamDefault = async (
+      teamId: string
+    ): Promise<{
+      lineup: { batters: Array<{ userId: number | null }> }
+      fromGameId: string
+      setAt: string
+    } | null> => {
+      const row = await db!
+        .selectFrom('teams')
+        .select('default_lineup')
+        .where('id', '=', teamId)
+        .executeTakeFirstOrThrow()
+      return row.default_lineup as never
+    }
+    try {
+      const opened = await ScoringSession.open(
+        {
+          load: async () => ({ plays: [], currentPlay: null }),
+          save: async () => {
+            throw new Error('Not saved here')
+          }
+        },
+        games.kept,
+        await startingContext(
+          db!,
+          games.kept,
+          { home_team_id: home, away_team_id: away },
+          teamId => teamId === home
+        ),
+        { requireCurrentSetup: true }
+      )
+      const hosts = bodyOf(opened.state, 'home')
+      hosts.battingOrder.reverse()
+      const saved = await save(games.kept, COACH, hosts)
+      expect(saved.status, JSON.stringify(saved.body)).equals(200)
+      const visitors = await teamDefault(away)
+      expect(visitors?.lineup.batters.map(item => item.userId)).deep.equals(
+        [...orderOf('away')].reverse()
+      )
+      await score(games.kept, [{ type: 'pitch', call: 'B' }])
+      expect(await teamDefault(away)).deep.equals(visitors)
+      const taken = await teamDefault(home)
+      expect(taken?.fromGameId).equals(games.kept)
+      expect(taken?.lineup.batters.map(item => item.userId)).deep.equals(
+        orderOf('home')
+      )
+      const begun = await db!
+        .selectFrom('games')
+        .select('lineup_started_at')
+        .where('id', '=', games.kept)
+        .executeTakeFirstOrThrow()
+      expect(begun.lineup_started_at).instanceOf(Date)
+    } finally {
+      await db!
+        .updateTable('teams')
+        .set({ default_lineup: null })
+        .where('id', 'in', [away, home])
+        .execute()
+    }
+  })
+
+  it('keeps an unseen side’s default when its coach later changes that order', async function () {
+    // The visitors' default is not roster order. The hosts' coach saves
+    // before the game, leaving the visitors in roster order. Their coach,
+    // who can see them, changes that order and saves. The first pitch still
+    // leaves their default as it stands.
+    const roster = await startingContext(
+      db!,
+      games.revised,
+      { home_team_id: home, away_team_id: away },
+      () => false
+    )
+    const orderOf = (side: Side): Array<number | null> =>
+      roster.setup.sides[side].battingOrder.map(
+        id => roster.setup.players[id].userId
+      )
+    const personOf = (id: number): LineupPerson => {
+      const player = roster.setup.players[id]
+      return {
+        userId: player.userId,
+        name: player.fullName,
+        jersey: player.jersey
+      }
+    }
+    const reversed = (side: Side): Lineup => {
+      const team = roster.setup.sides[side]
+      return {
+        batters: [...team.battingOrder].reverse().map(personOf),
+        defense: Object.fromEntries(
+          POSITIONS.map(position => {
+            const id = team.defense[position]
+            return [position, id == null ? null : personOf(id)]
+          })
+        ) as Lineup['defense']
+      }
+    }
+    const storedAt = new Date().toISOString()
+    await db!
+      .updateTable('teams')
+      .set({
+        default_lineup: {
+          lineup: reversed('away'),
+          fromGameId: games.live,
+          setAt: storedAt
+        }
+      })
+      .where('id', '=', away)
+      .execute()
+    await db!
+      .updateTable('teams')
+      .set({
+        default_lineup: {
+          lineup: reversed('home'),
+          fromGameId: games.live,
+          setAt: storedAt
+        }
+      })
+      .where('id', '=', home)
+      .execute()
+    const teamDefault = async (
+      teamId: string
+    ): Promise<{
+      lineup: { batters: Array<{ userId: number | null }> }
+      fromGameId: string
+      setAt: string
+    } | null> => {
+      const row = await db!
+        .selectFrom('teams')
+        .select('default_lineup')
+        .where('id', '=', teamId)
+        .executeTakeFirstOrThrow()
+      return row.default_lineup as never
+    }
+    try {
+      const opened = await ScoringSession.open(
+        {
+          load: async () => ({ plays: [], currentPlay: null }),
+          save: async () => {
+            throw new Error('Not saved here')
+          }
+        },
+        games.revised,
+        await startingContext(
+          db!,
+          games.revised,
+          { home_team_id: home, away_team_id: away },
+          teamId => teamId === home
+        ),
+        { requireCurrentSetup: true }
+      )
+      const hosts = bodyOf(opened.state, 'home')
+      hosts.battingOrder.reverse()
+      const saved = await save(games.revised, COACH, hosts)
+      expect(saved.status, JSON.stringify(saved.body)).equals(200)
+      const visitors = await teamDefault(away)
+      const hostsLineup = batters(asGameLineupsResponse(saved.body).home)
+      const replayed = await scoring(games.revised)
+      const body = bodyOf(replayed.state, 'away')
+      const [first, second, ...rest] = body.battingOrder
+      body.battingOrder = [second, first, ...rest]
+      const changed = await save(games.revised, AWAY_COACH, body)
+      expect(changed.status, JSON.stringify(changed.body)).equals(200)
+      // His save changes the visitors only. The hosts' lineup stays.
+      expect(batters(asGameLineupsResponse(changed.body).home)).deep.equals(
+        hostsLineup
+      )
+      await score(games.revised, [{ type: 'pitch', call: 'B' }])
+      expect(await teamDefault(away)).deep.equals(visitors)
+      const taken = await teamDefault(home)
+      expect(taken?.fromGameId).equals(games.revised)
+      expect(taken?.lineup.batters.map(item => item.userId)).deep.equals(
+        orderOf('home')
+      )
+    } finally {
+      await db!
+        .updateTable('teams')
+        .set({ default_lineup: null })
+        .where('id', 'in', [away, home])
+        .execute()
+    }
+  })
+
+  it('accepts his default when a blind save left his side unseen', async function () {
+    // The visitors' default is not roster order. The hosts' coach saves
+    // first, leaving the visitors in roster order. Their coach is shown that
+    // default with nothing edited, and saving it is what the game holds.
+    // The first pitch leaves their stored default as it stands.
+    const roster = await startingContext(
+      db!,
+      games.accept,
+      { home_team_id: home, away_team_id: away },
+      () => false
+    )
+    const orderOf = (side: Side): Array<number | null> =>
+      roster.setup.sides[side].battingOrder.map(
+        id => roster.setup.players[id].userId
+      )
+    const personOf = (id: number): LineupPerson => {
+      const player = roster.setup.players[id]
+      return {
+        userId: player.userId,
+        name: player.fullName,
+        jersey: player.jersey
+      }
+    }
+    const team = roster.setup.sides.away
+    const reversed: Lineup = {
+      batters: [...team.battingOrder].reverse().map(personOf),
+      defense: Object.fromEntries(
+        POSITIONS.map(position => {
+          const id = team.defense[position]
+          return [position, id == null ? null : personOf(id)]
+        })
+      ) as Lineup['defense']
+    }
+    await db!
+      .updateTable('teams')
+      .set({
+        default_lineup: {
+          lineup: reversed,
+          fromGameId: games.live,
+          setAt: new Date().toISOString()
+        }
+      })
+      .where('id', '=', away)
+      .execute()
+    const teamDefault = async (): Promise<{
+      lineup: { batters: Array<{ userId: number | null }> }
+      fromGameId: string
+    } | null> => {
+      const row = await db!
+        .selectFrom('teams')
+        .select('default_lineup')
+        .where('id', '=', away)
+        .executeTakeFirstOrThrow()
+      return row.default_lineup as never
+    }
+    try {
+      const opened = await ScoringSession.open(
+        {
+          load: async () => ({ plays: [], currentPlay: null }),
+          save: async () => {
+            throw new Error('Not saved here')
+          }
+        },
+        games.accept,
+        await startingContext(
+          db!,
+          games.accept,
+          { home_team_id: home, away_team_id: away },
+          teamId => teamId === home
+        ),
+        { requireCurrentSetup: true }
+      )
+      const hosts = bodyOf(opened.state, 'home')
+      const saved = await save(games.accept, COACH, hosts)
+      expect(saved.status, JSON.stringify(saved.body)).equals(200)
+      const before = asGameLineupsResponse(
+        (await ask('GET', `/games/${games.accept}/lineups`, FAN)).body
+      )
+      expect(batters(before.away)).deep.equals(orderOf('away'))
+      const visitors = await teamDefault()
+      const replayed = await scoring(games.accept)
+      const resumed = replayed.resumable()
+      const shown = shownWithDefault(
+        resumed.state,
+        resumed.actions,
+        'away',
+        reversed
+      )
+      const hostsLineup = batters(asGameLineupsResponse(saved.body).home)
+      const changed = await save(
+        games.accept,
+        AWAY_COACH,
+        bodyOf(shown, 'away')
+      )
+      expect(changed.status, JSON.stringify(changed.body)).equals(200)
+      const after = asGameLineupsResponse(changed.body)
+      expect(batters(after.away)).deep.equals(
+        reversed.batters.map(person => person.userId)
+      )
+      expect(batters(after.home)).deep.equals(hostsLineup)
+      await score(games.accept, [{ type: 'pitch', call: 'B' }])
+      expect(await teamDefault()).deep.equals(visitors)
+    } finally {
+      await db!
+        .updateTable('teams')
+        .set({ default_lineup: null })
+        .where('id', 'in', [away, home])
+        .execute()
+    }
+  })
+
+  it('takes a scorekeeper’s lineup when it is not the unseen roster order', async function () {
+    const roster = await startingContext(
+      db!,
+      games.set,
+      { home_team_id: home, away_team_id: away },
+      () => false
+    )
+    const personOf = (id: number): LineupPerson => {
+      const player = roster.setup.players[id]
+      return {
+        userId: player.userId,
+        name: player.fullName,
+        jersey: player.jersey
+      }
+    }
+    const team = roster.setup.sides.away
+    const reversed: Lineup = {
+      batters: [...team.battingOrder].reverse().map(personOf),
+      defense: Object.fromEntries(
+        POSITIONS.map(position => {
+          const id = team.defense[position]
+          return [position, id == null ? null : personOf(id)]
+        })
+      ) as Lineup['defense']
+    }
+    await db!
+      .updateTable('teams')
+      .set({
+        default_lineup: {
+          lineup: reversed,
+          fromGameId: games.live,
+          setAt: new Date().toISOString()
+        }
+      })
+      .where('id', '=', away)
+      .execute()
+    try {
+      const opened = await ScoringSession.open(
+        {
+          load: async () => ({ plays: [], currentPlay: null }),
+          save: async () => {
+            throw new Error('Not saved here')
+          }
+        },
+        games.set,
+        await startingContext(
+          db!,
+          games.set,
+          { home_team_id: home, away_team_id: away },
+          teamId => teamId === home
+        ),
+        { requireCurrentSetup: true }
+      )
+      const hosts = bodyOf(opened.state, 'home')
+      const saved = await save(games.set, COACH, hosts)
+      expect(saved.status, JSON.stringify(saved.body)).equals(200)
+      const session = await scoring(games.set)
+      const setup = setupOf(session.state)
+      const order = setup.sides.away.battingOrder
+      setup.sides.away.battingOrder = [order[1], order[0], ...order.slice(2)]
+      const wanted = setup.sides.away.battingOrder.map(
+        id => session.state.gameData.players[id].userId
+      )
+      await score(games.set, [
+        {
+          type: 'lineup',
+          kind: 'roster',
+          setup,
+          confirmed: ['away', 'home']
+        },
+        { type: 'pitch', call: 'B' }
+      ])
+      const taken = await db!
+        .selectFrom('teams')
+        .select('default_lineup')
+        .where('id', '=', away)
+        .executeTakeFirstOrThrow()
+      const lineup = taken.default_lineup as {
+        lineup: { batters: Array<{ userId: number | null }> }
+        fromGameId: string
+      }
+      expect(lineup.fromGameId).equals(games.set)
+      expect(lineup.lineup.batters.map(item => item.userId)).deep.equals(wanted)
+    } finally {
+      await db!
+        .updateTable('teams')
+        .set({ default_lineup: null })
+        .where('id', '=', away)
+        .execute()
+    }
+  })
+
+  it('leaves the default when a scorekeeper saves the unseen roster order', async function () {
+    // The visitors' default is not roster order. The hosts' coach saves
+    // first. A scorekeeper's save that is still that roster order does not
+    // confirm the visitors, and the first pitch leaves their default.
+    const roster = await startingContext(
+      db!,
+      games.keeper,
+      { home_team_id: home, away_team_id: away },
+      () => false
+    )
+    const orderOf = (side: Side): Array<number | null> =>
+      roster.setup.sides[side].battingOrder.map(
+        id => roster.setup.players[id].userId
+      )
+    const personOf = (id: number): LineupPerson => {
+      const player = roster.setup.players[id]
+      return {
+        userId: player.userId,
+        name: player.fullName,
+        jersey: player.jersey
+      }
+    }
+    const team = roster.setup.sides.away
+    const reversed: Lineup = {
+      batters: [...team.battingOrder].reverse().map(personOf),
+      defense: Object.fromEntries(
+        POSITIONS.map(position => {
+          const id = team.defense[position]
+          return [position, id == null ? null : personOf(id)]
+        })
+      ) as Lineup['defense']
+    }
+    await db!
+      .updateTable('teams')
+      .set({
+        default_lineup: {
+          lineup: reversed,
+          fromGameId: games.live,
+          setAt: new Date().toISOString()
+        }
+      })
+      .where('id', '=', away)
+      .execute()
+    const teamDefault = async (): Promise<unknown> => {
+      const row = await db!
+        .selectFrom('teams')
+        .select('default_lineup')
+        .where('id', '=', away)
+        .executeTakeFirstOrThrow()
+      return row.default_lineup
+    }
+    try {
+      const opened = await ScoringSession.open(
+        {
+          load: async () => ({ plays: [], currentPlay: null }),
+          save: async () => {
+            throw new Error('Not saved here')
+          }
+        },
+        games.keeper,
+        await startingContext(
+          db!,
+          games.keeper,
+          { home_team_id: home, away_team_id: away },
+          teamId => teamId === home
+        ),
+        { requireCurrentSetup: true }
+      )
+      const saved = await save(
+        games.keeper,
+        COACH,
+        bodyOf(opened.state, 'home')
+      )
+      expect(saved.status, JSON.stringify(saved.body)).equals(200)
+      const before = await teamDefault()
+      const session = await scoring(games.keeper)
+      const setup = setupOf(session.state)
+      const confirmed = confirmedSides(session.actions, setup)
+      expect(confirmed).deep.equals(['home'])
+      await score(games.keeper, [
+        { type: 'lineup', kind: 'roster', setup, confirmed },
+        { type: 'pitch', call: 'B' }
+      ])
+      expect(await teamDefault()).deep.equals(before)
+      const after = asGameLineupsResponse(
+        (await ask('GET', `/games/${games.keeper}/lineups`, FAN)).body
+      )
+      expect(batters(after.away)).deep.equals(orderOf('away'))
+      expect(batters(after.home)).deep.equals(
+        batters(asGameLineupsResponse(saved.body).home)
+      )
+    } finally {
+      await db!
+        .updateTable('teams')
+        .set({ default_lineup: null })
+        .where('id', 'in', [away, home])
+        .execute()
+    }
+  })
+
+  it('scores the default a scorekeeper can see, and the first pitch leaves it', async function () {
+    const roster = await startingContext(
+      db!,
+      games.shown,
+      { home_team_id: home, away_team_id: away },
+      () => false
+    )
+    const personOf = (id: number): LineupPerson => {
+      const player = roster.setup.players[id]
+      return {
+        userId: player.userId,
+        name: player.fullName,
+        jersey: player.jersey
+      }
+    }
+    const team = roster.setup.sides.away
+    const reversed: Lineup = {
+      batters: [...team.battingOrder].reverse().map(personOf),
+      defense: Object.fromEntries(
+        POSITIONS.map(position => {
+          const id = team.defense[position]
+          return [position, id == null ? null : personOf(id)]
+        })
+      ) as Lineup['defense']
+    }
+    await db!
+      .updateTable('teams')
+      .set({
+        default_lineup: {
+          lineup: reversed,
+          fromGameId: games.live,
+          setAt: new Date().toISOString()
+        }
+      })
+      .where('id', '=', away)
+      .execute()
+    const teamDefault = async (): Promise<unknown> => {
+      const row = await db!
+        .selectFrom('teams')
+        .select('default_lineup')
+        .where('id', '=', away)
+        .executeTakeFirstOrThrow()
+      return row.default_lineup
+    }
+    try {
+      const opened = await ScoringSession.open(
+        {
+          load: async () => ({ plays: [], currentPlay: null }),
+          save: async () => {
+            throw new Error('Not saved here')
+          }
+        },
+        games.shown,
+        await startingContext(
+          db!,
+          games.shown,
+          { home_team_id: home, away_team_id: away },
+          teamId => teamId === home
+        ),
+        { requireCurrentSetup: true }
+      )
+      const hosts = bodyOf(opened.state, 'home')
+      const saved = await save(games.shown, COACH, hosts)
+      expect(saved.status, JSON.stringify(saved.body)).equals(200)
+      const fan = asGameLineupsResponse(
+        (await ask('GET', `/games/${games.shown}/lineups`, FAN)).body
+      )
+      const orderOf = roster.setup.sides.away.battingOrder.map(
+        id => roster.setup.players[id].userId
+      )
+      expect(batters(fan.away)).deep.equals(orderOf)
+      const before = await teamDefault()
+      const replayed = await scoring(games.shown)
+      const resumed = replayed.resumable()
+      const shown = withVisibleDefaults(resumed.state, resumed.actions, {
+        away: reversed
+      })
+      const setup = setupOf(shown)
+      const confirmed = confirmedSides(resumed.actions, setup)
+      expect(confirmed).includes('away')
+      await score(games.shown, [
+        { type: 'lineup', kind: 'roster', setup, confirmed },
+        { type: 'pitch', call: 'B' }
+      ])
+      const after = asGameLineupsResponse(
+        (await ask('GET', `/games/${games.shown}/lineups`, FAN)).body
+      )
+      expect(batters(after.away)).deep.equals(
+        reversed.batters.map(person => person.userId)
+      )
+      expect(batters(after.home)).deep.equals(
+        batters(asGameLineupsResponse(saved.body).home)
+      )
+      expect(await teamDefault()).deep.equals(before)
+    } finally {
+      await db!
+        .updateTable('teams')
+        .set({ default_lineup: null })
+        .where('id', 'in', [away, home])
+        .execute()
+    }
+  })
+
+  it('answers the digest its own save left, though another lands before the answer', async function () {
+    const session = await scoring(games.between)
+    const body = bodyOf(session.state, 'home')
+    body.battingOrder.reverse()
+    let own: string | null = null
+    afterSave = async gameId => {
+      own = (await gameRow(gameId)).lineups_digest
+      // A scorer swaps the visitors' first two batters in between.
+      const scorer = await scoring(gameId)
+      const setup = setupOf(scorer.state)
+      const [first, second, ...rest] = setup.sides.away.battingOrder
+      setup.sides.away.battingOrder = [second, first, ...rest]
+      await score(gameId, [{ type: 'lineup', kind: 'roster', setup }])
+    }
+    const answer = await save(games.between, COACH, body)
+    expect(answer.status, JSON.stringify(answer.body)).equals(200)
+    expect(own).not.equals(null)
+    expect(asGameLineupsResponse(answer.body).digest).equals(own)
+    expect((await gameRow(games.between)).lineups_digest).not.equals(own)
+  })
+
+  it('saves mid-game, leaving the other side and the status be', async function () {
+    const before = asGameLineupsResponse(
+      (await ask('GET', `/games/${games.live}/lineups`, FAN)).body
+    )
+    const session = await scoring(games.live)
+    const body = bodyOf(session.state, 'home')
+    // Left and right fielders change places, and the players come in another
+    // order than the game numbers them.
+    const left = body.defense.LF!
+    body.defense.LF = body.defense.RF
+    body.defense.RF = left
+    const order = body.players.map((_, i) => body.players.length - 1 - i)
+    const shuffled: SaveLineupsBody = {
+      ...body,
+      base: before.digest,
+      players: order.map(i => body.players[i]),
+      battingOrder: body.battingOrder.map(i => order.indexOf(i)),
+      defense: Object.fromEntries(
+        Object.entries(body.defense).map(([position, i]) => [
+          position,
+          order.indexOf(i)
+        ])
+      )
+    }
+    const answer = await save(games.live, COACH, shuffled)
+    expect(answer.status, JSON.stringify(answer.body)).equals(200)
+    const read = asGameLineupsResponse(answer.body)
+    expect(read.home.current?.defense.LF).deep.equals(
+      before.home.current?.defense.RF
+    )
+    expect(read.home.current?.defense.RF).deep.equals(
+      before.home.current?.defense.LF
+    )
+    expect(batters(read.home)).deep.equals(batters(before.home))
+    expect(read.away.current).deep.equals(before.away.current)
+    expect(read.digest).not.equals(before.digest)
+    expect((await gameRow(games.live)).status).equals('inProgress')
+    // The ball before it is still there.
+    const after = await scoring(games.live)
+    expect(after.state.liveData.linescore.balls).equals(1)
+    expect(written.filter(id => id === games.live)).lengthOf(1)
+  })
+
+  it('matches a made-up player by name and jersey, and adds a new one', async function () {
+    const session = await scoring(games.locals)
+    const body = bodyOf(session.state, 'home')
+    body.players.push({ userId: null, fullName: 'Newcomer', jersey: '88' })
+    body.defense.LF = body.players.length - 1
+    const answer = await save(games.locals, COACH, body)
+    expect(answer.status, JSON.stringify(answer.body)).equals(200)
+    const read = asGameLineupsResponse(answer.body)
+    expect(read.home.current?.defense.LF).deep.include({
+      userId: null,
+      name: 'Newcomer'
+    })
+    const after = await scoring(games.locals)
+    const named = (name: string): number =>
+      after.state.liveData.boxscore.teams.home.players.filter(
+        id => after.state.gameData.players[id].fullName === name
+      ).length
+    expect(named('Guest')).equals(1)
+    expect(named('Newcomer')).equals(1)
+  })
+
+  it('lets a scorekeeper save either side, with a pinch runner who keeps the order', async function () {
+    const session = await scoring(games.runner)
+    expect(session.state.liveData.linescore.offense.first).not.equals(null)
+    const body = bodyOf(session.state, 'away')
+    body.players.push({ userId: null, fullName: 'Freeman', jersey: '5' })
+    body.runners = [{ base: '1B', player: body.players.length - 1 }]
+    const answer = await save(games.runner, SCORER, body)
+    expect(answer.status, JSON.stringify(answer.body)).equals(200)
+    const after = await scoring(games.runner)
+    expect(after.state.liveData.linescore.offense.first?.fullName).equals(
+      'Freeman'
+    )
+    expect(after.state.liveData.boxscore.teams.away.battingOrder).deep.equals(
+      session.state.liveData.boxscore.teams.away.battingOrder
+    )
+    const current = (await gameRow(games.runner)).currentPlay as {
+      playEvents: Array<{ details: { eventType?: string } }>
+    }
+    expect(
+      current.playEvents.filter(
+        event => event.details.eventType === 'ts_courtesy_runner'
+      )
+    ).lengthOf(1)
+    // A scorekeeper of the visitors saves the hosts' side too.
+    const hosts = bodyOf(after.state, 'home')
+    hosts.battingOrder = [...hosts.battingOrder.slice(1), hosts.battingOrder[0]]
+    expect((await save(games.runner, SCORER, hosts)).status).equals(200)
+  })
+
+  it('refuses an assistant, a member and the other team’s coach', async function () {
+    const session = await scoring(games.live)
+    const body = bodyOf(session.state, 'home')
+    body.battingOrder.reverse()
+    for (const token of [ASSISTANT, FAN, AWAY_COACH]) {
+      const answer = await save(games.live, token, body)
+      expect(answer.status, token).equals(403)
+      expect(answer.body.message).equals(
+        "Only the team's head coach or a scorekeeper may save its lineup"
+      )
+    }
+    // A team's admin is its head coach.
+    const away = bodyOf(session.state, 'away')
+    expect((await save(games.live, AWAY_COACH, away)).status).equals(200)
+    expect((await save(games.live, TEAM_ADMIN, body)).status).equals(200)
+  })
+
+  it('refuses a save with nothing to change to a member, and writes nothing for a coach', async function () {
+    const session = await scoring(games.live)
+    const body = bodyOf(session.state, 'home')
+    expect((await save(games.live, FAN, body)).status).equals(403)
+    const before = await gameRow(games.live)
+    const writes = written.length
+    const answer = await save(games.live, COACH, body)
+    expect(answer.status).equals(200)
+    expect(asGameLineupsResponse(answer.body).digest).equals(
+      before.lineups_digest
+    )
+    expect(await gameRow(games.live)).deep.equals(before)
+    expect(written).lengthOf(writes)
+  })
+
+  it('answers 409 with the game’s reason while a play is pending, or the game is final', async function () {
+    const session = await scoring(games.pending)
+    const body = bodyOf(session.state, 'home')
+    body.battingOrder.reverse()
+    const pending = await save(games.pending, COACH, body)
+    expect(pending.status).equals(409)
+    expect(pending.body.message).equals('Finish the current play first')
+    const fresh = await scoring(games.final)
+    const final = bodyOf(fresh.state, 'home')
+    final.battingOrder.reverse()
+    const refused = await save(games.final, COACH, final)
+    expect(refused.status).equals(409)
+    expect(refused.body.message).equals('This game is final')
+  })
+
+  it('answers 400 for an index past the players, a stranger, a player twice or a change the game cannot make', async function () {
+    const session = await scoring(games.live)
+    const body = bodyOf(session.state, 'home')
+    const past = await save(games.live, COACH, { ...body, battingOrder: [99] })
+    expect(past.status).equals(400)
+    expect(past.body.message).match(/Player 99 is not one of the 10 players/)
+    const stranger = await save(games.live, COACH, {
+      ...body,
+      players: [
+        ...body.players,
+        { userId: fan.userId, fullName: 'Fan', jersey: '' }
+      ]
+    })
+    expect(stranger.status).equals(400)
+    expect(stranger.body.message).equals("Fan is not on this team's roster")
+    const twice = await save(games.live, COACH, {
+      ...body,
+      players: [...body.players, body.players[0]]
+    })
+    expect(twice.status).equals(400)
+    const empty = await save(games.live, SCORER, {
+      ...bodyOf(session.state, 'away'),
+      runners: [{ base: '3B', player: 0 }]
+    })
+    expect(empty.status).equals(400)
+    expect(empty.body.message).equals('Nobody is on 3B')
+    expect(
+      (await save(games.live, COACH, { ...body, side: 'nowhere' })).status
+    ).equals(400)
+  })
+
+  it('replays a game a scorer saved to mid-save, keeping his pitch', async function () {
+    const session = await scoring(games.race)
+    const body = bodyOf(session.state, 'home')
+    const left = body.defense.LF!
+    body.defense.LF = body.defense.CF
+    body.defense.CF = left
+    let tries = 0
+    beforeSave = async gameId => {
+      tries++
+      if (tries === 1) await score(gameId, [{ type: 'pitch', call: 'C' }])
+    }
+    const answer = await save(games.race, COACH, body)
+    expect(answer.status, JSON.stringify(answer.body)).equals(200)
+    expect(tries).equals(2)
+    const after = await scoring(games.race)
+    expect(after.state.liveData.linescore.balls).equals(1)
+    expect(after.state.liveData.linescore.strikes).equals(1)
+    const home = after.state.liveData.boxscore.teams.home
+    expect(home.defense.LF).equals(
+      session.state.liveData.boxscore.teams.home.defense.CF
+    )
+  })
+
+  it('refuses a scorer’s post built on the lineups a coach has saved over since', async function () {
+    // The scorer reads the game, and its lineups' digest, before the save.
+    const read = asGameLineupsResponse(
+      (await ask('GET', `/games/${games.stale}/lineups`, FAN)).body
+    )
+    const before = await gameRow(games.stale)
+    const session = await scoring(games.stale)
+    const body = bodyOf(session.state, 'home')
+    body.battingOrder.reverse()
+    const saved = await save(games.stale, COACH, body)
+    expect(saved.status, JSON.stringify(saved.body)).equals(200)
+    const coached = asGameLineupsResponse(saved.body)
+    // His next post would write back the at-bat it read, without the
+    // coach's lineup: it names the digest it read, and is refused.
+    const post = async (
+      currentPlay: unknown,
+      lineupsBase?: string
+    ): Promise<unknown> =>
+      await postGamePlays(
+        db!,
+        games.stale,
+        asPostEventsBody({
+          mode: 'live',
+          source: { system: 'teamstation' },
+          plays: [],
+          currentPlay,
+          ...(lineupsBase == null ? {} : { lineupsBase })
+        })
+      )
+    let refused: unknown
+    await post(before.currentPlay, read.digest).catch((error: unknown) => {
+      refused = error
+    })
+    expect(refused).deep.include({
+      code: 'conflict',
+      details: { stale: true }
+    })
+    const after = asGameLineupsResponse(
+      (await ask('GET', `/games/${games.stale}/lineups`, FAN)).body
+    )
+    expect(after.digest).equals(coached.digest)
+    expect(batters(after.home)).deep.equals(batters(coached.home))
+    // Built on the coach's lineups, it is written, and answers the digest.
+    const posted = (await post(
+      (await gameRow(games.stale)).currentPlay,
+      coached.digest
+    )) as { lineupsDigest: string }
+    expect(posted.lineupsDigest).equals(coached.digest)
+    // A post that names no base is written as it always was: the last one
+    // saved wins.
+    await post(before.currentPlay)
+    expect((await gameRow(games.stale)).lineups_digest).equals(read.digest)
+  })
+
+  it('gives up with 409 after three replays that each found the game changed', async function () {
+    const session = await scoring(games.busy)
+    const body = bodyOf(session.state, 'home')
+    body.battingOrder.reverse()
+    let tries = 0
+    beforeSave = async gameId => {
+      tries++
+      await score(gameId, [{ type: 'pitch', call: 'F' }])
+    }
+    const answer = await save(games.busy, COACH, body)
+    expect(answer.status).equals(409)
+    expect(answer.body.message).equals(
+      'The game changed while saving; try again'
+    )
+    expect(tries).equals(3)
+    expect(written).not.include(games.busy)
   })
 })

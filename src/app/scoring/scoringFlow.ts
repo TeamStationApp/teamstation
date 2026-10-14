@@ -5,6 +5,7 @@ import {
   type RunnerReason,
   type ScoringAction
 } from '../../common/scoring/actions'
+import { revealedSides } from '../../common/scoring/lineupHistory'
 import {
   closesAutomatically,
   completesHitOffer,
@@ -15,6 +16,7 @@ import {
   runnerReasons as gameRunnerReasons
 } from '../../common/scoring/rules'
 import { type Applied, applyAction } from '../../common/scoring/session'
+import { setupOf } from '../../common/scoring/state'
 import { BASES } from '../field/fieldModel'
 import { advanceReel } from './dictatedReel'
 import {
@@ -53,9 +55,27 @@ export class Refused extends Error {
  * and turns what it did into motions. A play the game closed leaves the
  * screen's drawing of it behind; its runners finish moving on their own.
  */
-export function act(next: ScoringSnapshot, action: ScoringAction): Applied {
-  if (next.readOnly === true)
-    throw new Refused([{ code: 'notNow', message: 'Scoring is read-only' }])
+/**
+ * Logs the lineup on the screen when a side still unseen in the log is no
+ * longer that roster order. The first play then scores that lineup, and so
+ * does the game the play is saved into. Opening the screen logs nothing.
+ * `shown` marks the snapshot as the screen's. A rebase lets it replace
+ * only a side that is still the unseen roster order.
+ */
+function recordSeenLineup(next: ScoringSnapshot): void {
+  const setup = setupOf(next.session)
+  const confirmed = revealedSides(next.log, setup)
+  if (confirmed.length === 0) return
+  applyLogged(next, {
+    type: 'lineup',
+    kind: 'roster',
+    setup,
+    confirmed,
+    shown: true
+  })
+}
+
+function applyLogged(next: ScoringSnapshot, action: ScoringAction): Applied {
   const before = next.session
   // On a copy that shares the finished plays (`copyGame`): `applyAction`'s
   // own copy is of the whole game, a stall that grew with it.
@@ -84,6 +104,16 @@ export function act(next: ScoringSnapshot, action: ScoringAction): Applied {
       trajectoryAccepted: true
     }
   return applied
+}
+
+export function act(next: ScoringSnapshot, action: ScoringAction): Applied {
+  if (next.readOnly === true)
+    throw new Refused([{ code: 'notNow', message: 'Scoring is read-only' }])
+  // A roster save names its own confirmation. Any other play first records
+  // a lineup the screen is already showing in place of an unseen roster order.
+  if (action.type !== 'lineup' || action.kind !== 'roster')
+    recordSeenLineup(next)
+  return applyLogged(next, action)
 }
 
 export function destination(base: number): Destination {

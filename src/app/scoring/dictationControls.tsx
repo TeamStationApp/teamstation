@@ -6,11 +6,12 @@ import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { dictationOn } from './dictationPlatform'
-import type { DictationButtonProps } from './dictationTypes'
+import type { Dictation, DictationButtonProps } from './dictationTypes'
 import { MODAL_ORIENTATIONS } from './modalOrientations'
 import { ControlBackdrop } from './ScoringControlArt'
 import {
   CONTROL_COLORS,
+  CONTROL_HEIGHT,
   controlFrame,
   DICTATION_LOG_HEIGHT,
   DICTATION_LOG_LINE_HEIGHT,
@@ -38,19 +39,36 @@ interface LogEntry {
   text: string
 }
 
-/**
- * Dictation on the scoring screen, as two pieces for two places: the
- * microphone button that sits above Bunt and Swing, and the log that sits in
- * the top-left corner. Both come from the one hook that owns the socket.
- */
-export function useDictationControls(props: DictationButtonProps): {
+export interface DictationControls {
   control: React.ReactElement | null
   log: React.ReactElement | null
-} {
+  /** Whether dictation is on, and switching it, for a screen handing it over. */
+  enabled: boolean
+  setEnabled: (on: boolean) => void
+  /** The hook itself, for a screen that shows the words and questions itself. */
+  dictation: Dictation
+}
+
+/**
+ * Dictation as two pieces for two places. On the scoring screen they are the
+ * microphone pill that sits above Bunt and Swing and the log in the top-left
+ * corner; on the roster screen, the round button in the bottom bar, whose
+ * words and questions the screen's chat shows instead of a log. Both come
+ * from the one hook that owns the socket.
+ */
+export function useDictationControls(
+  props: DictationButtonProps
+): DictationControls {
   const theme = useTheme()
   const [available, setAvailable] = useState(false)
   const [offered, setOffered] = useState<readonly string[]>([])
   const {
+    shape = 'pill',
+    size = CONTROL_HEIGHT,
+    startEnabled = false,
+    scope,
+    target,
+    contextOf,
     health,
     url,
     gameId,
@@ -60,6 +78,7 @@ export function useDictationControls(props: DictationButtonProps): {
     question,
     played,
     undone,
+    refused,
     onAnswer,
     onDismissQuestion,
     spaceTalks = true,
@@ -76,6 +95,9 @@ export function useDictationControls(props: DictationButtonProps): {
   const dictation = useDictation({
     url,
     gameId,
+    scope,
+    target,
+    contextOf,
     session,
     log: actions,
     onActions,
@@ -130,7 +152,15 @@ export function useDictationControls(props: DictationButtonProps): {
   useEffect(() => {
     if (suspended === true) setEnabled(false)
   }, [suspended, setEnabled])
-  const entries = useLog(dictation, problem?.message, played, undone)
+  // Handed over switched on: on once the server is known to dictate, once.
+  const started = useRef(false)
+  useEffect(() => {
+    if (started.current || !available || !startEnabled || suspended === true)
+      return
+    started.current = true
+    setEnabled(true)
+  }, [available, startEnabled, suspended, setEnabled])
+  const entries = useLog(dictation, problem?.message, played, undone, refused)
   const linger = useLinger(
     entries,
     dictation.holding ||
@@ -167,8 +197,9 @@ export function useDictationControls(props: DictationButtonProps): {
     },
     []
   )
+  const handle = { enabled: dictation.enabled, setEnabled, dictation }
   if (!available || !dictationOn(Platform.OS))
-    return { control: null, log: null }
+    return { control: null, log: null, ...handle }
 
   const { enabled, connected, holding, busy, ask } = dictation
   const ready = enabled && connected && !busy
@@ -205,7 +236,142 @@ export function useDictationControls(props: DictationButtonProps): {
           ? lstrings.dictation_working
           : lstrings.dictation_push
   const kind = !enabled ? 'micOff' : holding ? 'micLive' : 'micOn'
-  const control = (
+  const round = shape === 'round'
+  const statusText = status != null && (
+    <Text
+      accessibilityLabel={lstrings.dictation_status}
+      accessibilityLiveRegion="polite"
+      numberOfLines={1}
+      style={{
+        color: theme.scoringInstructionText,
+        fontFamily: theme.semiBoldTextFont,
+        fontSize: 13,
+        textShadowColor: '#000000',
+        textShadowRadius: 3
+      }}
+    >
+      {status}
+    </Text>
+  )
+  const button = (
+    <View
+      accessibilityRole="button"
+      accessibilityLabel={lstrings.dictation_button}
+      accessibilityState={{ selected: enabled }}
+      aria-pressed={enabled}
+      focusable
+      accessibilityActions={[
+        { name: 'activate' },
+        { name: 'pushToTalk', label: lstrings.dictation_push }
+      ]}
+      onAccessibilityTap={() => {
+        dictation.setEnabled(!enabled)
+      }}
+      onAccessibilityAction={event => {
+        if (event.nativeEvent.actionName !== 'pushToTalk') return
+        if (!enabled) {
+          dictation.setEnabled(true)
+          return
+        }
+        if (holding) dictation.release()
+        else if (ready) dictation.hold(Date.now())
+      }}
+      onPointerDown={event => {
+        beginPress(() => {
+          const target = event.currentTarget as unknown as {
+            setPointerCapture?: (id: number) => void
+          }
+          try {
+            // Keeps the release on this button when the finger drifts off it.
+            target.setPointerCapture?.(event.nativeEvent.pointerId)
+          } catch {
+            /* A pointer the browser no longer knows; the press still counts. */
+          }
+        })
+      }}
+      onPointerUp={() => {
+        finishPress()
+      }}
+      onPointerCancel={() => {
+        endPress()
+        dictation.release()
+      }}
+      onStartShouldSetResponder={() => true}
+      onResponderTerminationRequest={() => false}
+      onResponderGrant={() => {
+        beginPress()
+      }}
+      onResponderRelease={() => {
+        finishPress()
+      }}
+      onResponderTerminate={() => {
+        endPress()
+        dictation.release()
+      }}
+      onKeyDown={event => {
+        const key = (event.nativeEvent as { key?: string }).key
+        if (key === 'Enter') dictation.setEnabled(!enabled)
+      }}
+      style={
+        round
+          ? {
+              width: size,
+              height: size,
+              borderRadius: size / 2,
+              borderWidth: 1,
+              borderColor: CONTROL_COLORS[kind].border,
+              backgroundColor: CONTROL_COLORS[kind].bottom,
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: enabled && !ready && !holding ? 0.7 : 1
+            }
+          : {
+              ...controlFrame,
+              borderColor: CONTROL_COLORS[kind].border,
+              backgroundColor: CONTROL_COLORS[kind].bottom,
+              opacity: enabled && !ready && !holding ? 0.7 : 1
+            }
+      }
+    >
+      {!round && <ControlBackdrop kind={kind} />}
+      <Icon
+        name={enabled ? 'mic' : 'mic_off'}
+        size={round ? 1.5 : 1.75}
+        color={CONTROL_COLORS[kind].text}
+      />
+    </View>
+  )
+  // The round button's status sits over it, centred on one line, on a dark
+  // chip so it reads over the list it may cover; its question is the
+  // screen's to show.
+  const control = round ? (
+    <View pointerEvents="box-none">
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          bottom: '100%',
+          left: -80,
+          right: -80,
+          alignItems: 'center',
+          paddingBottom: 2
+        }}
+      >
+        {statusText !== false && (
+          <View
+            style={{
+              borderRadius: 8,
+              paddingHorizontal: 6,
+              backgroundColor: 'rgba(0, 0, 0, 0.6)'
+            }}
+          >
+            {statusText}
+          </View>
+        )}
+      </View>
+      {button}
+    </View>
+  ) : (
     <View pointerEvents="box-none" style={{ gap: 6 }}>
       <View
         pointerEvents="box-none"
@@ -252,95 +418,9 @@ export function useDictationControls(props: DictationButtonProps): {
             onDismiss={() => onDismissQuestion?.()}
           />
         )}
-        {status != null && (
-          <Text
-            accessibilityLabel={lstrings.dictation_status}
-            accessibilityLiveRegion="polite"
-            numberOfLines={1}
-            style={{
-              color: theme.scoringInstructionText,
-              fontFamily: theme.semiBoldTextFont,
-              fontSize: 13,
-              textShadowColor: '#000000',
-              textShadowRadius: 3
-            }}
-          >
-            {status}
-          </Text>
-        )}
+        {statusText}
       </View>
-      <View
-        accessibilityRole="button"
-        accessibilityLabel={lstrings.dictation_button}
-        accessibilityState={{ selected: enabled }}
-        aria-pressed={enabled}
-        focusable
-        accessibilityActions={[
-          { name: 'activate' },
-          { name: 'pushToTalk', label: lstrings.dictation_push }
-        ]}
-        onAccessibilityTap={() => {
-          dictation.setEnabled(!enabled)
-        }}
-        onAccessibilityAction={event => {
-          if (event.nativeEvent.actionName !== 'pushToTalk') return
-          if (!enabled) {
-            dictation.setEnabled(true)
-            return
-          }
-          if (holding) dictation.release()
-          else if (ready) dictation.hold(Date.now())
-        }}
-        onPointerDown={event => {
-          beginPress(() => {
-            const target = event.currentTarget as unknown as {
-              setPointerCapture?: (id: number) => void
-            }
-            try {
-              // Keeps the release on this button when the finger drifts off it.
-              target.setPointerCapture?.(event.nativeEvent.pointerId)
-            } catch {
-              /* A pointer the browser no longer knows; the press still counts. */
-            }
-          })
-        }}
-        onPointerUp={() => {
-          finishPress()
-        }}
-        onPointerCancel={() => {
-          endPress()
-          dictation.release()
-        }}
-        onStartShouldSetResponder={() => true}
-        onResponderTerminationRequest={() => false}
-        onResponderGrant={() => {
-          beginPress()
-        }}
-        onResponderRelease={() => {
-          finishPress()
-        }}
-        onResponderTerminate={() => {
-          endPress()
-          dictation.release()
-        }}
-        onKeyDown={event => {
-          const key = (event.nativeEvent as { key?: string }).key
-          if (key === 'Enter') dictation.setEnabled(!enabled)
-        }}
-        style={{
-          ...controlFrame,
-          borderColor: CONTROL_COLORS[kind].border,
-          backgroundColor: CONTROL_COLORS[kind].bottom,
-          opacity: enabled && !ready && !holding ? 0.7 : 1
-        }}
-      >
-        <ControlBackdrop kind={kind} />
-        <Icon
-          name={enabled ? 'mic' : 'mic_off'}
-          size={1.75}
-          color={CONTROL_COLORS[kind].text}
-        />
-      </View>
+      {button}
     </View>
   )
   // Shown while dictation is on, and after it goes off with something to say
@@ -348,6 +428,7 @@ export function useDictationControls(props: DictationButtonProps): {
   // under it hidden, only while something is said or asked and for a while
   // after its last new line.
   const showLog =
+    !round &&
     entries.length > 0 &&
     (enabled || entries.at(-1)?.kind === 'message') &&
     linger !== 'gone'
@@ -409,7 +490,7 @@ export function useDictationControls(props: DictationButtonProps): {
       })}
     </Animated.View>
   )
-  return { control, log }
+  return { control, log, ...handle }
 }
 
 /**
@@ -422,7 +503,8 @@ function useLog(
   dictation: ReturnType<typeof useDictation>,
   problem: string | undefined,
   played: DictationButtonProps['played'],
-  undone: DictationButtonProps['undone']
+  undone: DictationButtonProps['undone'],
+  refused: DictationButtonProps['refused']
 ): LogEntry[] {
   const [entries, setEntries] = useState<LogEntry[]>([])
   const next = useRef(0)
@@ -458,6 +540,12 @@ function useLog(
     shownUndo.current = undone.id
     add('play', undone.line)
   }, [undone])
+  const shownRefusal = useRef<number | null>(null)
+  useEffect(() => {
+    if (refused == null || refused.id === shownRefusal.current) return
+    shownRefusal.current = refused.id
+    add('message', refused.message)
+  }, [refused])
   const shownPlay = useRef<number | null>(null)
   useEffect(() => {
     if (played == null || played.id === shownPlay.current) return
@@ -471,9 +559,9 @@ function useLog(
 }
 
 /** What the scorer said, in the log's right-hand column. */
-const SAID_COLOR = '#FFFFFF'
+export const SAID_COLOR = '#FFFFFF'
 /** A message, told apart from the yellow plays; 5:1 on the log's brown. */
-const MESSAGE_COLOR = '#FFC9BD'
+export const MESSAGE_COLOR = '#FFC9BD'
 
 /** How long the log stays up after its last new line, and its fade. */
 export const LOG_LINGER_MS = 8000
@@ -507,7 +595,7 @@ function useLinger(
 }
 
 /** The LLM's question: one button per option, and a dismissal. */
-function AskCard(props: {
+export function AskCard(props: {
   question: string
   options: string[]
   onChoose: (index: number) => void

@@ -1,5 +1,6 @@
 import { createStartingPlayers } from '../field/batterModel'
 import { BASES, createPlayers, type FieldPlayer } from '../field/fieldModel'
+import { shortPlayerNames } from './currentSetup'
 import { baseIds } from './scoringSelectors'
 import { POSITIONS, type ScoringSessionState } from './scoringTypes'
 
@@ -7,6 +8,8 @@ import { POSITIONS, type ScoringSessionState } from './scoringTypes'
 export function fieldPlayersFor(session: ScoringSessionState): FieldPlayer[] {
   const templates = createPlayers()
   const line = session.liveData.linescore
+  const labels = shortPlayerNames(Object.values(session.gameData.players))
+  const label = (id: number): string => labels.get(id) ?? ''
   const players: FieldPlayer[] = []
   for (const position of POSITIONS) {
     const ref = line.defense[position]
@@ -18,8 +21,8 @@ export function fieldPlayersFor(session: ScoringSessionState): FieldPlayer[] {
       ...template,
       id: `defense-${ref.id}`,
       playerId: ref.id,
-      name: ref.fullName,
-      displayName: ref.fullName,
+      name: label(ref.id),
+      displayName: label(ref.id),
       uniformSide:
         player.teamId === session.gameData.teams.home.id ? 'home' : 'away',
       jersey: player.jersey
@@ -33,8 +36,8 @@ export function fieldPlayersFor(session: ScoringSessionState): FieldPlayer[] {
       id: `offense-${id}`,
       playerId: id,
       label: `R${index + 1}`,
-      name: player.fullName,
-      displayName: player.fullName,
+      name: label(id),
+      displayName: label(id),
       uniformSide:
         player.teamId === session.gameData.teams.home.id ? 'home' : 'away',
       jersey: player.jersey,
@@ -60,8 +63,8 @@ export function fieldPlayersFor(session: ScoringSessionState): FieldPlayer[] {
       ...template,
       id: `offense-${batter.id}`,
       playerId: batter.id,
-      name: batter.fullName,
-      displayName: batter.fullName,
+      name: label(batter.id),
+      displayName: label(batter.id),
       uniformSide:
         player.teamId === session.gameData.teams.home.id ? 'home' : 'away',
       jersey: player.jersey,

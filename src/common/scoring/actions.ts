@@ -10,6 +10,7 @@ import {
 
 import { asLiteral } from '../asLiteral'
 import { PITCH_DATA_CLEANERS, PITCH_DATA_TOOL_FIELDS } from './pitchLocation'
+import { idOfWrittenTag, positionSaid, tagOf, writtenTag } from './playerTags'
 import {
   asGameSetup,
   asSessionId,
@@ -17,6 +18,7 @@ import {
   type Optional,
   type PlayerRef,
   POSITIONS,
+  type Side,
   withoutUndefined
 } from './state'
 import { DICTATION_TERMS } from './vocabulary'
@@ -142,7 +144,8 @@ export const LINEUP_KINDS = [
   'addPlayer',
   'substitute',
   'pinchRunner',
-  'batterSide'
+  'batterSide',
+  'runner'
 ] as const
 export type LineupKind = (typeof LINEUP_KINDS)[number]
 
@@ -201,6 +204,7 @@ export const PRODUCED_EVENT_TYPES = [
   'defensive_substitution',
   'defensive_switch',
   'ts_batting_order',
+  'ts_courtesy_runner',
   'final_score'
 ] as const
 
@@ -291,6 +295,25 @@ const actionCleaners = {
     kind: asOneOf(LINEUP_KINDS),
     side: asOptional(asSideName),
     setup: asOptional(asGameSetup),
+    /**
+     * Sides of a roster setup left in roster order because the saver could
+     * not see that team's default. The game shows that order, and the first
+     * pitch leaves that team's default as it stands.
+     */
+    unseen: asOptional(asArray(asSideName)),
+    /**
+     * Sides of a roster setup the saver could see. The first pitch takes
+     * one as the lineup the game begins with, except a side an earlier save
+     * left unseen whose arrangement is still that roster order.
+     */
+    confirmed: asOptional(asArray(asSideName)),
+    /**
+     * The screen logged this roster because it was showing a default in
+     * place of an unseen order, ahead of a play. A rebase lets it replace
+     * only a side that is still that order. Every other side stays as the
+     * server holds it.
+     */
+    shown: asOptional(asLiteral(true)),
     nextBatter: asOptional(asSessionId),
     order: asOptional(asArray(asSessionId)),
     position: asOptional(asPosition),
@@ -410,6 +433,149 @@ export function dictatedAction(
   return { action }
 }
 
+/** The fields of an action that name one player, and those that name several. */
+const PLAYER_FIELDS = [
+  'fielder',
+  'error',
+  'runner',
+  'nextBatter',
+  'player',
+  'replaces',
+  'batter',
+  'pitcher'
+]
+const PLAYERS_FIELDS = ['fielders', 'order', 'bases']
+
+/**
+ * Each player an action names, through `each`, field by field: a runner of a
+ * battery event's advances too. A null among `bases` is an empty base.
+ */
+function mapPlayers(
+  raw: Record<string, unknown>,
+  each: (value: unknown, field: string) => unknown
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...raw }
+  for (const field of PLAYER_FIELDS)
+    if (out[field] != null) out[field] = each(out[field], field)
+  for (const field of PLAYERS_FIELDS)
+    if (Array.isArray(out[field]))
+      out[field] = (out[field] as unknown[]).map(value =>
+        value == null ? value : each(value, field)
+      )
+  if (Array.isArray(out.advances))
+    out.advances = out.advances.map((advance: unknown) =>
+      advance != null && typeof advance === 'object'
+        ? mapPlayers(advance as Record<string, unknown>, each)
+        : advance
+    )
+  return out
+}
+
+/** The fields of an action that name a fielder: his tag, or his position. */
+const FIELDER_FIELDS = ['fielder', 'error', 'fielders']
+
+/** What a dictated action is to the scorer, for a call left out. */
+const SAID_ACTIONS: Readonly<Record<string, string>> = {
+  pitch: 'the pitch',
+  ballInPlay: 'the ball in play',
+  result: 'the result',
+  fieldingPlay: 'the error',
+  runnerMovement: "the runner's move",
+  baseRunning: "the runner's play",
+  steal: 'the steal',
+  caught_stealing: 'the caught stealing',
+  pickoff: 'the pickoff',
+  pickoff_safe: 'the pickoff throw',
+  defensive_indifference: "the runner's advance",
+  batteryEvent: 'the wild pitch, passed ball or balk',
+  wild_pitch: 'the wild pitch',
+  passed_ball: 'the passed ball',
+  balk: 'the balk',
+  lineup: 'the lineup change',
+  gameFlow: 'the game change'
+}
+
+/** Who a player field names, to the scorer. */
+const SAID_FIELDS: Readonly<Record<string, string>> = {
+  fielder: 'the fielder',
+  error: 'the fielder charged with the error',
+  fielders: 'a fielder',
+  runner: 'the runner',
+  nextBatter: 'the next batter',
+  player: 'the player',
+  replaces: 'the player leaving',
+  batter: 'the batter',
+  pitcher: 'the pitcher',
+  order: 'a batter in the order',
+  bases: 'a runner on base'
+}
+
+/**
+ * A dictated action with its players' tags read back as their ids, before it
+ * is cleaned. A model names a player only by a tag `game` gives, and a
+ * fielder by his tag or by the position `fielding` gives him (`LF`, "the left
+ * fielder"): anything else — a tag of nobody in the game, a number, a
+ * position for a runner, or a whole setup (which names players by id) — is a
+ * problem, never a guess. A problem says, as the scorer reads it, what was
+ * left out and why, and never repeats a tag.
+ */
+export function untaggedAction(
+  raw: Record<string, unknown> & { type: string },
+  game: ReadonlySet<number>,
+  fielding: ReadonlyMap<string, number> = new Map()
+): { raw: Record<string, unknown> } | { problem: Problem } {
+  // No action at all: the cleaner says so.
+  if (!(ACTION_TYPES as readonly string[]).includes(raw.type)) return { raw }
+  const kind = typeof raw.kind === 'string' ? SAID_ACTIONS[raw.kind] : undefined
+  const what =
+    raw.type === 'baseRunning' || raw.type === 'batteryEvent'
+      ? (kind ?? SAID_ACTIONS[raw.type])
+      : SAID_ACTIONS[raw.type]
+  if (raw.setup != null)
+    return {
+      problem: {
+        code: 'malformed',
+        message: `${what} — a whole game setup is never dictated`
+      }
+    }
+  let unknown: { value: unknown; field: string } | undefined
+  const untagged = mapPlayers(raw, (value, field) => {
+    const said = typeof value === 'string' ? value : undefined
+    let id = said == null ? undefined : idOfWrittenTag(said)
+    if (id == null && said != null && FIELDER_FIELDS.includes(field)) {
+      const position = positionSaid(said)
+      id = position == null ? undefined : fielding.get(position)
+    }
+    if (id != null && game.has(id)) return id
+    unknown ??= { value, field }
+    return value
+  })
+  if (unknown == null) return { raw: untagged }
+  const who = SAID_FIELDS[unknown.field]
+  const { value } = unknown
+  // A tag, which the scorer never reads, is not repeated to him.
+  const shown =
+    (typeof value === 'string' &&
+      value.trim() !== '' &&
+      idOfWrittenTag(value) == null) ||
+    typeof value === 'number'
+      ? ` ${JSON.stringify(value)}`
+      : ''
+  return {
+    problem: {
+      code: 'unknownPlayer',
+      message: `${what} — ${who}${shown} is no player in the game`
+    }
+  }
+}
+
+/** An action as a model reads it back: each player by his tag. */
+export function taggedAction(action: ScoringAction): Record<string, unknown> {
+  return mapPlayers(action, value =>
+    typeof value === 'number' ? tagOf(value) : value
+  )
+}
+
 export function destinationBase(to: Destination): number {
   return DESTINATIONS.indexOf(to)
 }
@@ -417,9 +583,11 @@ export function baseDestination(base: number): Destination {
   return DESTINATIONS[Math.max(0, Math.min(4, base))]
 }
 
-interface JsonSchema {
+export interface JsonSchema {
   type?: string
   enum?: readonly unknown[]
+  anyOf?: JsonSchema[]
+  minimum?: number
   items?: JsonSchema
   properties?: Record<string, JsonSchema>
   required?: string[]
@@ -432,14 +600,18 @@ export interface Tool {
   input_schema: JsonSchema
 }
 
+// A player by his tag (`playerTags.ts`), never a number: a model handed
+// players by number sent a jersey or a base for one.
+const TAG =
+  "the player's tag from GAME, like KT4; never a jersey or base number"
 const id = (description: string): JsonSchema => ({
-  type: 'integer',
-  description
+  type: 'string',
+  description: `${description}: ${TAG}`
 })
 const ids = (description: string): JsonSchema => ({
   type: 'array',
-  items: { type: 'integer' },
-  description
+  items: { type: 'string' },
+  description: `${description}: each ${TAG}`
 })
 const oneOf = (values: readonly string[], description: string): JsonSchema => ({
   type: 'string',
@@ -572,7 +744,7 @@ export function toolSchema(): Tool[] {
           items: {
             type: 'object',
             properties: {
-              runner: { type: 'integer' },
+              runner: id('The runner'),
               to: { type: 'string', enum: DESTINATIONS }
             },
             required: ['runner', 'to']
@@ -587,7 +759,7 @@ export function toolSchema(): Tool[] {
       {
         kind: oneOf(
           LINEUP_KINDS,
-          'What changed: substitute puts player in for replaces; pinchRunner puts player on base in place of the runner there'
+          'What changed: substitute puts player in for replaces; pinchRunner puts player on base in place of the runner there; runner does the same and leaves the batting order as it is'
         ),
         side: oneOf(['away', 'home'], 'Which team'),
         order: ids('For battingOrder: the whole order'),
@@ -596,7 +768,7 @@ export function toolSchema(): Tool[] {
         replaces: id('For substitute: the player leaving'),
         base: oneOf(
           BASES,
-          'For pinchRunner: the base of the runner he runs for'
+          'For pinchRunner and runner: the base of the runner he runs for'
         ),
         name: { type: 'string', description: 'For addPlayer' },
         jersey: { type: 'string', description: 'For addPlayer' },
@@ -623,11 +795,6 @@ function ordinal(n: number): string {
   return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
 }
 
-/**
- * What a model is told before it hears the scorer: the situation, and who is
- * where, by name with the id the model must use. It names no score and no
- * at-bat index, because the model must never echo those back.
- */
 /**
  * How a player is named to a model: first name and last initial, the way a
  * scorer says it. A full surname belongs to a child and is never put in front
@@ -669,8 +836,9 @@ function nextBatter(state: GameState): PlayerRef | null {
 
 /**
  * What a model is told before it hears the scorer: the situation, and who is
- * where, by short name with the id the model must use. It names no score and
- * no at-bat index, because the model must never echo those back.
+ * where, by short name with the tag the model must use (`playerTags.ts`),
+ * never his id. It names no score and no at-bat index, because the model must
+ * never echo those back.
  */
 export function promptContext(state: GameState): string {
   const line = state.liveData.linescore
@@ -680,7 +848,7 @@ export function promptContext(state: GameState): string {
     if (ref == null) return 'nobody'
     const player = players[ref.id]
     const jersey = player?.jersey.trim() ?? ''
-    return `${shortName(player ?? ref)}${jersey === '' ? '' : ` #${jersey}`} (id ${ref.id})`
+    return `${shortName(player ?? ref)}${jersey === '' ? '' : ` #${jersey}`} ${writtenTag(ref.id)}`
   }
   const batting = line.isTopInning ? 'away' : 'home'
   const fielding = batting === 'away' ? 'home' : 'away'
@@ -702,20 +870,35 @@ export function promptContext(state: GameState): string {
  * the two team names, then `DICTATION_TERMS`. Names are short names. No term
  * is empty or longer than the recogniser's 50 characters, and none repeats.
  * The recogniser takes at most 100, and the order is what the caller truncates.
+ *
+ * A coach passes his side. The list is then that roster only — the players
+ * of his who are in the at-bat first, then the rest of his roster — then his
+ * team's name, then the same scoring words.
  */
-export function keyterms(state: GameState): string[] {
+export function keyterms(state: GameState, side?: Side): string[] {
   const line = state.liveData.linescore
   const players = state.gameData.players
   const boxscore = state.liveData.boxscore.teams
-  const refs: Array<PlayerRef | null | number> = [
+  const roster =
+    side == null
+      ? [...boxscore.away.players, ...boxscore.home.players]
+      : boxscore[side].players
+  const his = new Set(roster)
+  const live: Array<PlayerRef | null | number> = [
     line.offense.batter,
     line.defense.P,
     line.offense.first,
     line.offense.second,
     line.offense.third,
-    ...POSITIONS.map(position => line.defense[position]),
-    ...boxscore.away.players,
-    ...boxscore.home.players
+    ...POSITIONS.map(position => line.defense[position])
+  ]
+  const refs = [
+    ...live.filter(ref => {
+      if (ref == null || side == null) return true
+      const id = typeof ref === 'number' ? ref : ref.id
+      return his.has(id)
+    }),
+    ...roster
   ]
   const out: string[] = []
   const seen = new Set<string>()
@@ -732,8 +915,10 @@ export function keyterms(state: GameState): string[] {
     const player = players[id] ?? (typeof ref === 'number' ? undefined : ref)
     if (player != null) add(shortName(player))
   }
-  add(state.gameData.teams.away.name)
-  add(state.gameData.teams.home.name)
+  if (side == null) {
+    add(state.gameData.teams.away.name)
+    add(state.gameData.teams.home.name)
+  } else add(state.gameData.teams[side].name)
   for (const term of DICTATION_TERMS) add(term)
   return out
 }

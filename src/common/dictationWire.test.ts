@@ -30,6 +30,14 @@ describe('dictation wire', function () {
     expect(() => asDictationStart({ ...start, model: 'gpt-5' })).throws()
     // Grok 4.7 is not offered.
     expect(() => asDictationStart({ ...start, model: 'grok-4.7' })).throws()
+    // An app installed before Claude Haiku 5.5 asks for Haiku 4.5, and gets 5.5.
+    expect(
+      asDictationStart({ ...start, model: 'claude-haiku-4-5-20251001' }).model
+    ).equals('claude-haiku-5-5')
+    expect(
+      asDictationStart({ ...start, model: 'claude-haiku-5-5' }).model
+    ).equals('claude-haiku-5-5')
+    expect(() => asDictationStart({ ...start, model: 42 })).throws()
     expect(() => asDictationStart({ ...start, target: 'gam_1' })).throws()
     expect(() => asDictationStart({ ...start, target: null })).throws()
     expect(() => asDictationStart({ ...start, kind: 'keyterms' })).throws()
@@ -162,5 +170,42 @@ describe('dictation wire', function () {
         actions: [{ type: 'walk' }]
       })
     ).throws()
+  })
+
+  it('cleans roster commands as said, drops a malformed one, and leaves them out when not sent', function () {
+    const atThird = {
+      type: 'setPositions',
+      places: [{ player: { jersey: '3' }, position: '3B' }]
+    }
+    const pinchHitter = { type: 'pinchHitter', player: { name: 'Betts' } }
+    const reply = {
+      kind: 'actions',
+      id: 'u1',
+      transcript: 'Number 3 subs in at third base',
+      actions: [],
+      roster: [atThird],
+      dropped: []
+    }
+    expect(asDictationReply(reply)).deep.equals(reply)
+    expect(
+      asDictationReply({
+        ...reply,
+        roster: [
+          { type: 'setPositions', side: 'both', places: [] },
+          pinchHitter,
+          // An id is no player as said.
+          { type: 'pinchHitter', player: 12 },
+          { type: 'walk' },
+          'Betts'
+        ]
+      })
+    ).deep.equals({ ...reply, roster: [pinchHitter] })
+    const { roster, ...scored } = reply
+    expect(asDictationReply(scored)).deep.equals(scored)
+    expect(asDictationReply(scored)).not.to.have.property('roster')
+    expect(() => asDictationReply({ ...reply, roster: atThird })).throws(
+      /list of commands/
+    )
+    expect(roster).to.have.length(1)
   })
 })

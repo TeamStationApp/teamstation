@@ -18,6 +18,7 @@ import {
   type Segment,
   segmentAfter
 } from './gumbo'
+import { reconcileShownLineup } from './lineupHistory'
 import { awaitingResult } from './rules'
 import {
   copyGame,
@@ -51,6 +52,16 @@ export { type Applied, applyAction }
 export interface StoredGame {
   plays: GumboPlay[]
   currentPlay: CurrentPlay | null
+  /**
+   * The digest the server keeps of the game's lineups, as it read them or as
+   * this save left them: what the next save names as its `lineupsBase`.
+   * Absent from a store that keeps none.
+   */
+  lineupsDigest?: string
+  /** A digest of the stored plays and the at-bat in progress, as read or left. */
+  playsDigest?: string
+  /** On a save's answer, the same digest of the game as the save found it. */
+  priorPlaysDigest?: string
 }
 export interface SaveChange {
   plays: GumboPlay[]
@@ -62,6 +73,11 @@ export interface SaveChange {
    * without one. The game's first plays fix it there.
    */
   fenceDistanceFt?: number
+  /**
+   * The lineups digest the change was built on. A store whose lineups have
+   * moved on since refuses the change as stale (409, `details.stale`).
+   */
+  lineupsBase?: string
 }
 /** Where a session reads and writes its game. It does no I/O of its own. */
 export interface EventStore {
@@ -89,6 +105,25 @@ export interface SessionOptions {
 
 const FIRST_RETRY_MS = 1000
 const LAST_RETRY_MS = 30000
+/** How many times one save reads the game again over lineups that moved. */
+const STALE_REBASES = 3
+
+/** How many of its own digests a session remembers, for late echoes. */
+const HELD_DIGESTS = 20
+
+/** `list` with `digest` last, keeping the newest few. */
+function held(list: readonly string[], digest: string): string[] {
+  return [...list.filter(each => each !== digest), digest].slice(-HELD_DIGESTS)
+}
+
+/** A save refused because the lineups it was built on have moved on. */
+function stale(error: unknown): boolean {
+  return (
+    error instanceof HttpError &&
+    error.code === 'conflict' &&
+    (error.details as { stale?: unknown } | undefined)?.stale === true
+  )
+}
 
 interface Completed {
   play: GamePlay
@@ -104,6 +139,25 @@ interface Mark {
   game: GameState
   completed: number
   segment: Segment
+}
+
+/**
+ * Whether two actions say the same, whatever order their keys are in: JSON
+ * with each object's keys sorted, unless the plain JSON already agrees.
+ */
+function sameAction(a: ScoringAction, b: ScoringAction): boolean {
+  if (JSON.stringify(a) === JSON.stringify(b)) return true
+  const sorted = (value: ScoringAction): string =>
+    JSON.stringify(value, (_key, item: unknown) =>
+      item != null && typeof item === 'object' && !Array.isArray(item)
+        ? Object.fromEntries(
+            Object.entries(item).sort(([x], [y]) =>
+              x < y ? -1 : x > y ? 1 : 0
+            )
+          )
+        : item
+    )
+  return sorted(a) === sorted(b)
 }
 
 /** A folded play as the server is sent it, written out once per play. */
@@ -176,6 +230,24 @@ export class ScoringSession {
 
   /** What `open` read the game with, so `reload` can read it again. */
   private context: SessionContext | null = null
+  /**
+   * The lineups digest of the server's copy as this session last read or
+   * saved it: the base each save names, so a save built on lineups somebody
+   * else has saved over since is refused rather than written over them.
+   */
+  private lineupsBase: string | undefined
+  /**
+   * The digests of the server's plays, and of its lineups, that this session
+   * has read or saved itself, newest last: a notice of one of them is its own
+   * echo. A save that found the game as somebody else left it holds none of
+   * the plays until the game is read again.
+   */
+  private heldPlays: string[] = []
+  private heldLineups: string[] = []
+  /** Counts each time a save took the server's copy up under its own changes. */
+  private rebaseCount = 0
+  /** What a rebase could not keep of this session's own changes, and why. */
+  private dropped: string | null = null
 
   private constructor(
     private readonly store: EventStore,
@@ -220,6 +292,10 @@ export class ScoringSession {
     const replayed = replayPlays(loaded, context)
     const session = new ScoringSession(store, gameId, replayed.base, options)
     session.context = context
+    session.lineupsBase = loaded.lineupsDigest
+    session.heldPlays = loaded.playsDigest == null ? [] : [loaded.playsDigest]
+    session.heldLineups =
+      loaded.lineupsDigest == null ? [] : [loaded.lineupsDigest]
     const reopened = loaded.currentPlay?.about.atBatIndex
     const plays = loaded.plays
       .filter(play => play.about.atBatIndex !== reopened)
@@ -429,6 +505,14 @@ export class ScoringSession {
     )
   }
 
+  /**
+   * A save is on its way to the server, so `reload()` would decline. The
+   * session tells its listeners when it stops.
+   */
+  get saving(): boolean {
+    return this.running != null
+  }
+
   /** The last save never left the device; it will be tried again. */
   get offline(): boolean {
     return this.isOffline
@@ -440,7 +524,30 @@ export class ScoringSession {
   }
 
   get problem(): string | null {
-    return this.refusal ?? this.failure
+    return this.refusal ?? this.failure ?? this.dropped
+  }
+
+  /**
+   * Whether the server's plays with this digest (a `plays` notice's) are ones
+   * this session read or saved itself, so reading them again changes nothing.
+   */
+  holdsPlays(digest: string): boolean {
+    return this.heldPlays.includes(digest)
+  }
+
+  /** Whether the server's lineups with this digest are ones this session read or saved. */
+  holdsLineups(digest: string): boolean {
+    return this.heldLineups.includes(digest)
+  }
+
+  /**
+   * Counts the times a save found that somebody else had saved the lineups
+   * since this session read them, and so read the server's copy again and
+   * put this session's unsaved changes back on top of it. A screen that
+   * keeps its own copy of the log starts again from `actions` when it moves.
+   */
+  get rebases(): number {
+    return this.rebaseCount
   }
 
   subscribe(listener: () => void): () => void {
@@ -486,6 +593,7 @@ export class ScoringSession {
     this.log.push(action)
     this.record(action, applied)
     this.blocked = false
+    this.dropped = null
     this.changed()
     return applied
   }
@@ -504,6 +612,7 @@ export class ScoringSession {
     this.log.pop()
     this.rebuild()
     this.blocked = false
+    this.dropped = null
     this.changed()
     return {
       state: this.game,
@@ -528,9 +637,14 @@ export class ScoringSession {
       // compare as the same object; writing each out again every sync cost
       // a phone about 25 ms a pitch by the 30th plate appearance.
       (this.log[same] === target[same] ||
-        JSON.stringify(this.log[same]) === JSON.stringify(target[same]))
-    )
+        sameAction(this.log[same], target[same]))
+    ) {
+      // An action read back from the server can list its keys in another
+      // order. Taken as the screen's own object, it compares at once next
+      // time, and the plays it made are not built and posted again.
+      this.log[same] = target[same]
       same++
+    }
     if (same < this.log.length) {
       this.log = this.log.slice(0, same)
       this.rebuild()
@@ -569,6 +683,9 @@ export class ScoringSession {
       // An acknowledgment or competing reload can land during the read.
       if (snapshot === this.tagSnapshot) break
     }
+    this.lineupsBase = fresh.lineupsBase
+    this.heldPlays = fresh.heldPlays
+    this.heldLineups = fresh.heldLineups
     if (
       fresh.refusal === this.refusal &&
       JSON.stringify(fresh.log) === JSON.stringify(this.log) &&
@@ -576,6 +693,16 @@ export class ScoringSession {
       JSON.stringify(fresh.eventTargets) === JSON.stringify(this.eventTargets)
     )
       return false
+    this.adopt(fresh)
+    this.notify()
+    return true
+  }
+
+  /** Takes up everything `fresh`, a new read of the same game, holds. */
+  private adopt(fresh: ScoringSession): void {
+    this.lineupsBase = fresh.lineupsBase
+    this.heldPlays = fresh.heldPlays
+    this.heldLineups = fresh.heldLineups
     this.tagIdentities = fresh.tagIdentities
     this.tagSnapshot++
     this.importedDocuments.clear()
@@ -610,11 +737,85 @@ export class ScoringSession {
       for (const value of source) target.add(value)
     }
     this.revision++
-    this.notify()
-    return true
   }
 
-  /** Saves whatever the server has not acknowledged. Tests await it. */
+  /**
+   * After a save was refused as stale: reads the server's copy again and puts
+   * this session's own unsaved changes back on top of it, each through the
+   * engine. What the server holds of what this session saved stays as the
+   * server holds it; somebody else's changes come next; then this session's
+   * own, from where its log left what it saved. One the game no longer takes
+   * is dropped, and `problem` says so.
+   */
+  private async rebase(): Promise<void> {
+    const fresh = await ScoringSession.open(
+      this.store,
+      this.gameId,
+      this.context!,
+      this.options
+    )
+    // Read after the server answers: a change applied meanwhile is in the log.
+    const agree = (
+      a: readonly ScoringAction[],
+      b: readonly ScoringAction[]
+    ): number => {
+      let count = 0
+      while (
+        count < a.length &&
+        count < b.length &&
+        sameAction(a[count], b[count])
+      )
+        count++
+      return count
+    }
+    const same = agree(this.savedLog, this.log)
+    const kept = agree(this.savedLog, fresh.log)
+    const ours = this.log.slice(same)
+    const theirs = fresh.log.slice(kept)
+    const times = new Map(this.times)
+    this.adopt(fresh)
+    // An action of this session's undone before the server's came after it.
+    const replay = same < kept ? [...theirs, ...ours] : ours
+    if (same < kept) {
+      this.log = this.log.slice(0, same)
+      this.rebuild()
+    }
+    // Plays this session started keep the times it started them.
+    for (const [index, time] of times)
+      if (!this.times.has(index)) this.times.set(index, time)
+    const refused: string[] = []
+    for (const action of replay) {
+      // A roster the screen logged while showing a default in place of an
+      // unseen order. It replaces only a side that is still that order.
+      // Every other side stays as the server holds it, and the pitch that
+      // follows is scored from that lineup.
+      const roster = reconcileShownLineup(action, this.log, this.game)
+      if (roster == null) continue
+      const applied = applyAction(copyGame(this.game), roster, {
+        inPlace: true,
+        requireCurrentSetup: this.options.requireCurrentSetup === true
+      })
+      if (applied.problems.length > 0) {
+        refused.push(applied.problems[0].message)
+        continue
+      }
+      this.log.push(roster)
+      this.record(roster, applied)
+    }
+    this.dropped =
+      refused.length === 0
+        ? null
+        : `${refused.length === 1 ? 'A change' : `${refused.length} changes`} could not follow another device's lineup change: ${refused[0]}`
+    this.rebaseCount++
+    this.notify()
+  }
+
+  /**
+   * Saves whatever the server has not acknowledged. Tests await it. Once the
+   * save has stopped, listeners are told once more, so one waiting for the
+   * session to be idle (to read the game again) hears that it is: the save's
+   * own notices all come while it is still running.
+   */
   async flush(): Promise<void> {
     if (this.timer != null) {
       this.clearTimer(this.timer)
@@ -626,6 +827,7 @@ export class ScoringSession {
     }
     this.running = this.save().finally(() => {
       this.running = null
+      this.notify()
     })
     await this.running
   }
@@ -849,6 +1051,7 @@ export class ScoringSession {
   }
 
   private async save(): Promise<void> {
+    let rebased = 0
     for (;;) {
       if (this.refusal != null || this.blocked) return
       const covering = [...this.log]
@@ -859,12 +1062,41 @@ export class ScoringSession {
         change.currentPlay === undefined
       )
         return
+      let answer: StoredGame | undefined
       try {
-        await this.store.save(this.gameId, change)
+        answer = await this.store.save(
+          this.gameId,
+          this.lineupsBase === undefined
+            ? change
+            : { ...change, lineupsBase: this.lineupsBase }
+        )
       } catch (error) {
+        // Somebody else saved the lineups since this session read them: it
+        // takes theirs up and saves its own changes on top, never over them.
+        if (stale(error) && this.context != null && rebased < STALE_REBASES) {
+          rebased++
+          try {
+            await this.rebase()
+          } catch (reading) {
+            this.failed(reading)
+            return
+          }
+          continue
+        }
         this.failed(error)
         return
       }
+      if (answer?.lineupsDigest !== undefined) {
+        this.lineupsBase = answer.lineupsDigest
+        this.heldLineups = held(this.heldLineups, answer.lineupsDigest)
+      }
+      // Found as this session last had it, the game holds only its own.
+      if (answer?.playsDigest !== undefined)
+        this.heldPlays =
+          answer.priorPlaysDigest !== undefined &&
+          answer.priorPlaysDigest === this.heldPlays.at(-1)
+            ? held(this.heldPlays, answer.playsDigest)
+            : []
       for (const play of change.plays) {
         this.posted.set(play.about.atBatIndex, written(play))
         this.stored.add(play.about.atBatIndex)
@@ -887,11 +1119,13 @@ export class ScoringSession {
     const code = error instanceof HttpError ? error.code : null
     const message = error instanceof Error ? error.message : String(error)
     // Signed out, the scorer signs in again and the waiting changes go then.
+    // Lineups that keep changing under each read are tried again later.
     if (
       code === 'offline' ||
       code === 'rateLimited' ||
       code === 'internal' ||
-      code === 'unauthorized'
+      code === 'unauthorized' ||
+      stale(error)
     ) {
       this.isOffline = code === 'offline'
       this.failure = code === 'offline' ? null : message

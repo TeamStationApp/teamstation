@@ -20,8 +20,9 @@ import type { DictationQuestion } from './scoringTypes'
  * told — who put the batter out, where the batter went, who made the error,
  * whether the runner sent home was safe. A sentence that leaves the play
  * waiting like that is finished here: by rule where the answer is clear, and
- * by a question for the dictation control where it is not. Nothing is credited
- * that was not said.
+ * by a question for the dictation control where it is not. A throw the scorer
+ * did not name is credited to the fielder the ball went to and the fielder
+ * who covers the base it was thrown to.
  */
 
 const WAITS: readonly Decision[] = [
@@ -249,6 +250,30 @@ const COVERS: Partial<Record<Destination, 'C' | '3B' | '1B'>> = {
   '3B': '3B',
   '1B': '1B'
 }
+
+/**
+ * Who takes a throw at second. The second baseman covers when the ball went
+ * to the shortstop or the third baseman. The shortstop covers when it went
+ * to the first baseman, and when it went to anyone else.
+ */
+function secondCover(
+  fielder: number | undefined,
+  at: (position: (typeof POSITIONS)[number]) => number | undefined
+): '2B' | 'SS' {
+  return fielder != null && (fielder === at('SS') || fielder === at('3B'))
+    ? '2B'
+    : 'SS'
+}
+
+/** The fielder who takes a throw at a base, second included. */
+function coverAt(
+  to: Destination,
+  fielder: number | undefined,
+  at: (position: (typeof POSITIONS)[number]) => number | undefined
+): 'C' | '1B' | '2B' | '3B' | 'SS' | undefined {
+  if (to === '2B') return secondCover(fielder, at)
+  return COVERS[to]
+}
 /** Results a ball in play comes to. */
 const BATTED: ReadonlySet<string> = new Set([
   'single',
@@ -369,9 +394,12 @@ function saidSide(
  * - a ball sent a direction lands there, and a caught foul in foul
  *   territory on its fielder's side, or away from the batter;
  * - the batter is not also sent out on a caught ball: the catch is his out;
- * - a runner thrown out at home, third or first with no fielders named,
- *   after a caught ball, was thrown out by the one who caught it to the
- *   fielder covering the base. A chain the model sent is kept as sent.
+ * - a runner thrown out with no fielders named was thrown out by the one
+ *   who fielded the ball — who caught it, or the outfielder for its
+ *   direction — to the fielder covering the base. Second base is the
+ *   second baseman's when the shortstop or the third baseman fielded it,
+ *   and the shortstop's when the first baseman or anyone else did. A chain
+ *   the model sent is kept as sent.
  */
 export function playDefaults(
   game: GameState,
@@ -458,7 +486,8 @@ export function playDefaults(
   const foul = result?.eventType === 'field_out' && result.foulCaught === true
   const caught =
     result?.eventType === 'field_out' && (result.outBy === 'catch' || foul)
-  let caughtBy: number | undefined
+  const oneBall =
+    sentence.filter(action => action.type === 'ballInPlay').length === 1
   const filled = sentence.flatMap((action, index): ScoringAction[] => {
     if (action.type === 'result') {
       if (action.foulCaught === true && action.outBy == null)
@@ -499,6 +528,29 @@ export function playDefaults(
         const other = catchSaid.some(id => id !== fielder)
         if (fielder != null && !other) next.fielder = fielder
       }
+      // "Grounder to third" names the third baseman when the play left him off.
+      if (next.fielder == null && !ownCatch && oneBall) {
+        const position = groundFielder(transcript)
+        const id = position == null ? undefined : defense[position]?.id
+        if (id != null) next.fielder = id
+      }
+      // Left center and right center are the center fielder's, unless the
+      // scorer named the corner outfielder the model chose.
+      if (
+        (next.direction === 'left_center' ||
+          next.direction === 'right_center') &&
+        next.fielder != null
+      ) {
+        const center = defense.CF?.id
+        const corner =
+          next.direction === 'left_center' ? defense.LF?.id : defense.RF?.id
+        if (
+          center != null &&
+          next.fielder === corner &&
+          !namedFielder(game, transcript, next.fielder)
+        )
+          next.fielder = center
+      }
       if (next.location == null) {
         if (ownFoul) next.location = foulPoint(game, next.fielder)
         else if (next.direction != null)
@@ -510,24 +562,157 @@ export function playDefaults(
               next.trajectory === 'chopper'
           )
       }
-      if (ownCatch) caughtBy = next.fielder
       return [next]
     }
-    if (action.type === 'runnerMovement' && action.out === true) {
-      if (caught && action.runner === batter) return []
-      const cover = COVERS[action.to]
-      const receiver = cover == null ? undefined : defense[cover]?.id
-      const chain = action.fielders ?? []
-      const thrower =
-        chain.length === 0 && action.runner !== batter && caughtBy != null
-          ? caughtBy
-          : undefined
-      if (receiver != null && thrower != null && thrower !== receiver)
-        return [{ ...action, fielders: [thrower, receiver] }]
-    }
+    if (
+      action.type === 'runnerMovement' &&
+      action.out === true &&
+      caught &&
+      action.runner === batter
+    )
+      return []
     return [action]
   })
-  return holding(game, doublePlay(game, filled, transcript))
+  return holding(
+    game,
+    doublePlay(game, creditThrowOuts(game, filled, transcript), transcript)
+  )
+}
+
+/** Where a ground ball or a bunt was hit, said as "to third" or "to short". */
+const GROUND_WORD =
+  'ground(?:er| ?ball)?|grabber|chopper|roller|hopper|bunt(?:s|ed)?|sacrifice(?: bunt)?|sac bunt|tapper|tapped'
+const GROUND_AT: Record<string, (typeof POSITIONS)[number]> = {
+  shortstop: 'SS',
+  short: 'SS',
+  pitcher: 'P',
+  catcher: 'C',
+  'first baseman': '1B',
+  'second baseman': '2B',
+  'third baseman': '3B',
+  first: '1B',
+  second: '2B',
+  third: '3B'
+}
+
+/**
+ * The infielder a ground ball was hit to, from the words. A throw's "to
+ * first" and a runner's "to third" are not where the ball was hit.
+ */
+function groundFielder(
+  transcript: string
+): (typeof POSITIONS)[number] | undefined {
+  const match = new RegExp(
+    `\\b(?:${GROUND_WORD})\\b(?:(?!\\b(?:and|but|he|she|they|runner|throw|thrown|throws|tags?|tagged|goes|went|out|safe)\\b)[^.;]){0,40}?\\b(?:to|toward|towards)\\s+(?:the\\s+)?(third baseman|second baseman|first baseman|shortstop|pitcher|catcher|short|first|second|third)(?:\\s+base)?\\b`,
+    'i'
+  ).exec(transcript)
+  const word = match?.[1]?.toLowerCase()
+  return word == null ? undefined : GROUND_AT[word]
+}
+
+/** Whether the words name this fielder, by name or by his position. */
+function namedFielder(
+  game: GameState,
+  transcript: string,
+  id: number
+): boolean {
+  if (namesPlayer(game, id, transcript)) return true
+  const defense = game.liveData.linescore.defense
+  const position = POSITIONS.find(place => defense[place]?.id === id)
+  const noun = FIELDER_NOUNS.find(([, place]) => place === position)?.[0]
+  return noun != null && new RegExp(`\\b(?:${noun})\\b`, 'i').test(transcript)
+}
+
+/**
+ * The fielder the words say took the throw at this base: a position they
+ * said the throw went to, a player they named there, or a shortstop or
+ * second baseman they said threw on from second.
+ */
+function namedAt(
+  game: GameState,
+  transcript: string,
+  to: Destination,
+  thrower: number
+): number | undefined {
+  const defense = game.liveData.linescore.defense
+  const idOf = (position: (typeof POSITIONS)[number]): number | undefined =>
+    defense[position]?.id
+  const legal = (position: (typeof POSITIONS)[number]): boolean =>
+    to === '2B'
+      ? position === '2B' || position === 'SS'
+      : to === 'home'
+        ? position === 'C'
+        : to === '3B'
+          ? position === '3B'
+          : to === '1B'
+            ? position === '1B' || position === 'P'
+            : false
+  const said = receiversSaid(transcript).between.find(
+    position => legal(position) && idOf(position) !== thrower
+  )
+  if (said != null && idOf(said) != null) return idOf(said)
+  for (const [noun, position] of FIELDER_NOUNS) {
+    if (!legal(position) || idOf(position) === thrower) continue
+    if (
+      new RegExp(`\\b(?:to|by)\\s+(?:the\\s+)?(?:${noun})\\b`, 'i').test(
+        transcript
+      )
+    )
+      return idOf(position)
+  }
+  for (const position of POSITIONS) {
+    if (!legal(position)) continue
+    const id = idOf(position)
+    if (id == null || id === thrower || !namesPlayer(game, id, transcript))
+      continue
+    const addressed = playerPatterns(game, id).some(pattern =>
+      new RegExp(
+        `\\b(?:to|by)\\s+(?:\\w+\\s+){0,3}?${pattern}|${pattern}(?:'s)?\\s+throw`,
+        'i'
+      ).test(transcript)
+    )
+    if (addressed) return id
+  }
+  return undefined
+}
+
+/**
+ * A throw-out whose fielders were left off: the fielder the ball went to,
+ * then the one who covers the base. A chain already sent is kept.
+ */
+function creditThrowOuts(
+  game: GameState,
+  actions: readonly ScoringAction[],
+  transcript: string
+): ScoringAction[] {
+  const defense = game.liveData.linescore.defense
+  const idOf = (position: (typeof POSITIONS)[number]): number | undefined =>
+    defense[position]?.id
+  let thrower: number | undefined
+  return actions.map(action => {
+    if (action.type === 'ballInPlay') {
+      const onGround =
+        action.trajectory === 'ground_ball' ||
+        action.trajectory === 'chopper' ||
+        action.contact === 'bunt'
+      thrower =
+        action.fielder ??
+        (!onGround && action.direction != null
+          ? idOf(OUTFIELDER[action.direction])
+          : undefined)
+      return action
+    }
+    if (action.type !== 'runnerMovement' || action.out !== true) return action
+    if ((action.fielders?.length ?? 0) > 0 || thrower == null) return action
+    const named = namedAt(game, transcript, action.to, thrower)
+    const cover = coverAt(action.to, thrower, idOf)
+    const receiver = named ?? (cover == null ? undefined : idOf(cover))
+    if (receiver == null) return action
+    return {
+      ...action,
+      fielders: receiver === thrower ? [thrower] : [thrower, receiver]
+    }
+  })
 }
 
 /** Pitches that are a strike whatever the count; a foul only below two. */
@@ -1048,13 +1233,7 @@ function doublePlay(
   // usual cover at the base, and the first baseman at the end. Otherwise
   // the model made them up, and the usual double play stands.
   const usualCover =
-    base === '2B'
-      ? idOf(
-          inPlay.fielder === idOf('SS') || inPlay.fielder === idOf('3B')
-            ? '2B'
-            : 'SS'
-        )
-      : covers[0]
+    base === '2B' ? idOf(secondCover(inPlay.fielder, idOf)) : covers[0]
   const accounted = new Set(
     [
       inPlay.fielder,
@@ -1123,13 +1302,8 @@ function doublePlay(
   else if (long != null) sequence = long
   else if (runnerTrusted) sequence = chainOf([...runnerChainSent, first])
   else if (inPlay.fielder != null) {
-    const position = POSITIONS.find(
-      position => idOf(position) === inPlay.fielder
-    )
     const cover =
-      base === '2B'
-        ? idOf(position === 'SS' || position === '3B' ? '2B' : 'SS')
-        : covers[0]
+      base === '2B' ? idOf(secondCover(inPlay.fielder, idOf)) : covers[0]
     sequence = chainOf([inPlay.fielder, cover, first])
   }
   if (chains == null && sequence.length >= 2)
@@ -1609,6 +1783,67 @@ function runnerClauses(
     .filter(clause => test.test(clause))
 }
 
+/**
+ * The fielder the words say threw: "the catcher picks him off", "pitcher
+ * to first". The first one said, so "pitcher to the second baseman" is the
+ * pitcher's throw.
+ */
+function throwerSaid(
+  transcript: string
+): (typeof POSITIONS)[number] | undefined {
+  let found: { index: number; position: (typeof POSITIONS)[number] } | undefined
+  for (const [noun, position] of FIELDER_NOUNS) {
+    const re = new RegExp(
+      `\\b(?:by|from)\\s+(?:the\\s+)?(?:${noun})\\b|\\b(?:${noun})\\b(?:'s)?\\s+throw|\\b(?:${noun})\\b[^.]{0,24}\\b(?:throws|threw|throwing|picks|picked)\\b|\\b(?:${noun})\\b(?=\\s+to\\b)`,
+      'gi'
+    )
+    const match = re.exec(transcript)
+    if (match != null && (found == null || match.index < found.index))
+      found = { index: match.index, position }
+  }
+  return found?.position
+}
+
+/**
+ * Fielders for a caught stealing or a pickoff the play left blank. A caught
+ * stealing is the catcher's throw: the pitcher gets no assist after the
+ * pitch. A pickoff is the pitcher's throw unless the words name who threw.
+ * The fielder at the base gets the putout. At second that is the same cover
+ * as any other throw there.
+ */
+function runningOutFielders(
+  game: GameState,
+  action: Extract<ScoringAction, { type: 'baseRunning' }>,
+  transcript: string
+): number[] | undefined {
+  const defense = game.liveData.linescore.defense
+  const idOf = (position: (typeof POSITIONS)[number]): number | undefined =>
+    defense[position]?.id
+  const said = throwerSaid(transcript)
+  const to = action.to
+  if (to == null) return undefined
+  if (action.kind === 'caught_stealing') {
+    const throwerPos = said != null && said !== 'P' ? said : 'C'
+    const thrower = idOf(throwerPos)
+    if (thrower == null) return undefined
+    const cover = coverAt(to, thrower, idOf)
+    const receiver = cover == null ? undefined : idOf(cover)
+    if (receiver == null || receiver === thrower) return [thrower]
+    return [thrower, receiver]
+  }
+  if (action.kind !== 'pickoff') return undefined
+  const throwerPos = said ?? 'P'
+  const thrower = idOf(throwerPos)
+  if (thrower == null) return undefined
+  const cover =
+    to === '2B' || to === '1B' || to === '3B' || to === 'home'
+      ? coverAt(to, thrower, idOf)
+      : undefined
+  const receiver = cover == null ? undefined : idOf(cover)
+  if (receiver == null || receiver === thrower) return [thrower]
+  return [thrower, receiver]
+}
+
 const BASE_INDEX: Partial<Record<Destination, number>> = {
   '2B': 2,
   '3B': 3,
@@ -1628,7 +1863,10 @@ const BASE_INDEX: Partial<Record<Destination, number>> = {
  * kept to one base, whose runner his own words say scored (and not that he
  * did not), is followed by his run.
  * A pickoff is of the runner on the base it was at. Fielders sent for
- * another base are not kept.
+ * another base are not kept. A caught stealing left with no fielders is
+ * the catcher's throw to the fielder at the base, and a pickoff that gets
+ * the runner is the pitcher's throw there, unless someone else threw. A
+ * pickoff the runner is safe on credits nobody.
  */
 export function stealsByBase(
   game: GameState,
@@ -1719,6 +1957,14 @@ export function stealsByBase(
           to: TO[to]
         }
       }
+    }
+    if (
+      next.type === 'baseRunning' &&
+      (next.kind === 'caught_stealing' || next.kind === 'pickoff') &&
+      (next.fielders == null || next.fielders.length === 0)
+    ) {
+      const fielders = runningOutFielders(state, next, transcript)
+      if (fielders != null) next = { ...next, fielders }
     }
     const prior = state
     fixed.push(next)

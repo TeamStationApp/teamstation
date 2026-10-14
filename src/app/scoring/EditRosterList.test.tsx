@@ -23,7 +23,7 @@ const row = (id: number, jersey: string): EditRosterRow => ({
   throws: 'left',
   positions: ['P', 'SS', 'CF']
 })
-describe('Edit Roster cards and selector', function () {
+describe('Roster tab cards and selector', function () {
   it('uses the staff team once roles finish loading and preserves chosen or retained sides', async function () {
     const state = initialScoringState(
       createDevelopmentSession(gameFixture, [], [])
@@ -221,7 +221,7 @@ describe('Edit Roster cards and selector', function () {
           </ThemeProvider>
         )
       })
-      await click('Edit Roster')
+      await click('Roster')
       const account = host.querySelector<HTMLElement>(
         '[aria-label^="Mookie B,"]'
       )!
@@ -329,16 +329,21 @@ describe('Edit Roster cards and selector', function () {
       }
       expect(
         host
-          .querySelector('[aria-label="Set Lineup"]')
+          .querySelector('[aria-label="Lineup"]')
           ?.getAttribute('aria-selected')
       ).equals('true')
-      for (const mode of ['Edit Roster', 'Set Defense', 'Set Lineup'])
-        await click(mode)
+      for (const mode of ['Roster', 'Defense', 'Lineup']) await click(mode)
       await click('Home Team')
-      await click('Edit Roster')
+      await click('Roster')
       expect(host.textContent).includes('Tap a player to edit settings.')
+      // Nothing changed on the way, so Save Rosters stays dim and saves nothing.
+      expect(
+        host
+          .querySelector('[aria-label="Save Rosters"]')
+          ?.getAttribute('aria-disabled')
+      ).equals('true')
       await click('Save Rosters')
-      expect(saved).deep.equals(state.session)
+      expect(saved).equals(undefined)
     } finally {
       await act(async () => {
         root.unmount()
