@@ -372,8 +372,8 @@ async function main(): Promise<void> {
     )
 
     await visit(admin, `/games/${seed.gameId}`)
-    await contains(admin.page, 'Settings')
-    await tap(admin.m, 'Settings')
+    await contains(admin.page, 'Event settings')
+    await tap(admin.m, 'Event settings')
     await contains(admin.page, 'Game Settings')
     await capture(admin.m, artifacts, 'game-settings-after.png')
     const before = await game(seed.gameId)
@@ -904,7 +904,7 @@ async function main(): Promise<void> {
       throw new Error('Accepted host-only proposal has no published game')
     await visit(admin, `/games/${hostPublished.game_id}`)
     await contains(admin.page, 'No videos.')
-    await absent(admin.page, 'Settings')
+    await absent(admin.page, 'Event settings')
     const requestCount = (
       await f.h.db.selectFrom('group_requests').select('id').execute()
     ).length
