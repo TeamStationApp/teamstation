@@ -299,7 +299,9 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
      */
     private suspend fun cameraChanged(state: CameraSession.State) {
         cameraState = state
-        val lost = isOpen && cameraIsLost(state)
+        // A lost camera is back once it runs, not when it is being opened again: one that fails
+        // again then neither opens a part nor starts the tries over.
+        val lost = isOpen && if (cameraLost) !state.isRunning else cameraIsLost(state)
         if (lost == cameraLost) return
         cameraLost = lost
         if (lost) {
