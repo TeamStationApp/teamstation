@@ -1272,6 +1272,15 @@ class FakeEngine implements ChatScreenEngine {
   }
 
   async open(): Promise<ConversationView> {
+    // These ordinary paging fixtures begin with their loaded posts already read.
+    this.current = {
+      ...this.current,
+      readsReady: true,
+      ownReadSeq: Math.max(
+        this.current.conversation.lastSeq,
+        ...this.current.messages.map(message => message.seq)
+      )
+    }
     return this.current
   }
 
@@ -1644,6 +1653,36 @@ describe('chat follow-up conversation message integration', function () {
     expect(visible.row.getBoundingClientRect().top).equals(-95)
     expect(saved.scrollOffset).equals(6795)
     expect(saved.followNewest).equals(false)
+  })
+
+  it('reports the draft mention tokens with every scroll position it saves', async function () {
+    pointer(true)
+    const engine = new FakeEngine()
+    const original = safeMessage({ body: 'Current mention target' })
+    engine.current.messages = [original]
+    const tokens = [
+      { userId: userIdOfGumbo(2), start: 0, end: 14, label: '@Shohei Ohtani' }
+    ]
+    const changes: ChatDraft[] = []
+    await screen(
+      engine,
+      {
+        text: '@Shohei Ohtani ',
+        mentionTokens: tokens,
+        picked: [],
+        scrollOffset: 0
+      },
+      next => {
+        changes.push(next)
+      }
+    )
+    const visible = readingGeometry(original.id)
+    await visible.layout()
+    await visible.userScroll(647)
+    await visible.userScroll(320)
+    expect(changes.some(change => change.scrollOffset === 320)).equals(true)
+    for (const change of changes)
+      expect(change.mentionTokens).deep.equals(tokens)
   })
 
   it('keeps newly typed text, reply context and prepared files after queued scrolling and a retained older active-pane scroll callback', async function () {
@@ -2668,6 +2707,20 @@ describe('chat follow-up conversation message integration', function () {
           ? 'Load earlier messages'
           : 'Jump to message from Former member: Message unavailable'
       )
+      if (cancelAt === 'manual-overlap') {
+        expect(
+          finish,
+          'A new page waits for the prior saved-anchor measurement'
+        ).equals(undefined)
+        expect(measurements).length(1)
+        await act(async () => {
+          nativeAnchor.measureLayout = measureCurrentAnchor
+          measurements.splice(0).forEach(finishMeasurement => {
+            finishMeasurement()
+          })
+          await wait(30)
+        })
+      }
       expect(finish).not.equals(undefined)
       const userScroll = async (): Promise<void> => {
         await act(async () => {
@@ -2716,15 +2769,6 @@ describe('chat follow-up conversation message integration', function () {
         if (cancelAt === 'manual-overlap')
           nativeAnchor.measureLayout = measureCurrentAnchor
         finish!(next)
-        if (cancelAt === 'manual-overlap') {
-          // Let paging replace the anchor while the earlier measurement is
-          // still pending, then retire that earlier measurement.
-          await wait(10)
-          expect(measurements.length).equals(1)
-          measurements.forEach(finishMeasurement => {
-            finishMeasurement()
-          })
-        }
         await wait(cancelAt === 'manual-overlap' ? 20 : 80)
       })
       if (cancelAt === 'after-resolution-growth') {
@@ -3052,7 +3096,9 @@ describe('chat follow-up conversation message integration', function () {
     geometry = readingGeometry(reading.id, 344, 944)
     await geometry.layout()
     await geometry.userScroll(80)
+    geometry.geometry.y = 444
     await measured(geometry.row, 640, 800, 444)
+    expect(geometry.row.getBoundingClientRect().top).equals(364)
     expect(saved.scrollAnchor).deep.equals({ id: reading.id, relativeY: 364 })
   })
 

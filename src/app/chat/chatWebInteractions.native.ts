@@ -1,5 +1,6 @@
 /** Native focus/back are handled by accessible views and BackHandler. */
 import type { ChatBounds } from './chatInteractionModel'
+export { useEffect as useChatOverlayCommit } from 'react'
 export function readDocumentActive(): boolean {
   return true
 }
@@ -21,7 +22,8 @@ export function bindPopupKeys(
   _close: () => void,
   _trap = true,
   _initialField = false,
-  _rowSelector?: string
+  _rowSelector?: string,
+  _returnFocus?: unknown
 ): () => void {
   return () => {}
 }
@@ -47,7 +49,11 @@ export function readMessageScrollPosition(
   _view: unknown,
   _rows: ReadonlyMap<string, unknown>
 ):
-  | { offset: number; anchor: { id: string; relativeY: number } | undefined }
+  | {
+      offset: number
+      anchor: { id: string; relativeY: number } | undefined
+      geometry?: { height: number; content: number }
+    }
   | undefined {
   return undefined
 }

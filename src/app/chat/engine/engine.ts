@@ -153,6 +153,9 @@ export interface ConversationView {
   hasEarlier: boolean
   /** Verified envelope paging cursor, including pages without visible posts. */
   historyBefore?: number
+  /** Read metadata is unavailable until a completed server synchronization. */
+  readsReady?: boolean
+  ownReadSeq?: number
   /** "<name>'s safety number changed", where the record says so. */
   safetyChanges: Array<{
     userId: number
@@ -656,21 +659,24 @@ export class ChatEngine {
   async open(conversationId: string): Promise<ConversationView> {
     const ctx = this.ctx
     this.active.add(conversationId)
+    let opened: ConversationView
     try {
-      await this.serial(conversationId, async () => {
+      opened = await this.serial(conversationId, async () => {
         await syncMembers(ctx, conversationId)
         await syncLog(ctx, conversationId)
         await syncEpochs(ctx, conversationId)
         await syncMessages(ctx, conversationId)
         await syncReads(ctx, conversationId)
         await this.readPins(conversationId)
+        // Keep the visit's synchronized cursor before any queued acknowledgement.
+        return this.mustView(conversationId)
       })
     } catch (error) {
       if (isGone(error)) this.active.delete(conversationId)
       throw error
     }
     this.memory.emit({ type: 'conversation', conversationId })
-    return this.mustView(conversationId)
+    return opened
   }
 
   /** The screen left the chat: hints no longer read it. */
@@ -758,6 +764,11 @@ export class ChatEngine {
             : 'enabled',
       hasEarlier: state.hasEarlier,
       historyBefore: state.oldestSeq,
+      readsReady: state.readsReady,
+      ownReadSeq: state.readsReady
+        ? (state.reads.find(read => read.userId === this.options.userId)?.seq ??
+          0)
+        : undefined,
       safetyChanges: (head?.resets ?? []).map(reset => ({
         ...reset,
         name: names.get(reset.userId)
@@ -991,6 +1002,7 @@ export class ChatEngine {
     const ctx = this.ctx
     const moved = await this.serial(conversationId, async () => {
       const state = await stateOf(ctx, conversationId)
+      if (!state.readsReady) await syncReads(ctx, conversationId)
       const seq = state.newestSeq
       const mine = state.reads.find(read => read.userId === ctx.userId)
       const preferences = state.summary.preferences

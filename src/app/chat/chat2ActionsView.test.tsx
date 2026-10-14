@@ -1383,6 +1383,149 @@ describe('chat message presentation', function () {
       )
     })
 
+    describe('desktop message menu opener ownership', function () {
+      async function mountMenu(): Promise<{
+        composer: HTMLTextAreaElement
+        trigger: HTMLElement
+        history: HTMLElement
+        removeSource: () => void
+      }> {
+        Object.defineProperty(globalThis, 'matchMedia', {
+          configurable: true,
+          value: () => ({ matches: true })
+        })
+        let removeSource = (): void => {}
+        function Scene(): React.ReactElement {
+          const [anchor, setAnchor] = useState<unknown>(undefined)
+          const [showSource, setShowSource] = useState(true)
+          removeSource = () => {
+            setShowSource(false)
+          }
+          return (
+            <ChatOverlayHost>
+              <textarea aria-label="Composer" defaultValue="Unsent draft" />
+              <div aria-label="Reader">
+                {showSource && (
+                  <MessageBubble
+                    {...bubble({
+                      actions: ['reply', 'copy'],
+                      onLongPress: (_message, target) => {
+                        setAnchor(target)
+                      }
+                    })}
+                  />
+                )}
+              </div>
+              {anchor != null && (
+                <MessageMenu
+                  {...menu({
+                    desktop: true,
+                    anchor,
+                    actions: ['reply', 'copy'],
+                    onReply: () => {
+                      document
+                        .querySelector<HTMLElement>('[aria-label="Composer"]')!
+                        .focus()
+                    },
+                    onClose: () => {
+                      setAnchor(undefined)
+                    }
+                  })}
+                />
+              )}
+            </ChatOverlayHost>
+          )
+        }
+        const node = await render(<Scene />)
+        const composer = node.querySelector<HTMLTextAreaElement>(
+          '[aria-label="Composer"]'
+        )!
+        const history = node.querySelector<HTMLElement>(
+          '[aria-label="Reader"]'
+        )!
+        history.scrollTop = 200
+        return {
+          composer,
+          trigger: button('More message actions'),
+          history,
+          removeSource: () => {
+            removeSource()
+          }
+        }
+      }
+      async function escapeMenu(): Promise<void> {
+        await act(async () => {
+          document.dispatchEvent(
+            new window.KeyboardEvent('keydown', {
+              key: 'Escape',
+              bubbles: true,
+              cancelable: true
+            })
+          )
+          await new Promise(resolve => setTimeout(resolve, 25))
+        })
+      }
+      for (const focusedTrigger of [false, true]) {
+        it(`returns Escape to the actual More opener when trigger focus is ${String(focusedTrigger)}`, async function () {
+          const { composer, trigger, history } = await mountMenu()
+          await act(async () => {
+            composer.focus()
+            if (focusedTrigger) trigger.focus()
+          })
+          await press('More message actions')
+          expect(trigger.closest('[aria-hidden="true"]')).not.equals(null)
+          expect(document.activeElement).equals(button('Copy text'))
+          await escapeMenu()
+          expect(
+            host!.querySelector('[aria-label="Message from Trea Turner"]')
+          ).equals(null)
+          expect(trigger.closest('[aria-hidden="true"]')).equals(null)
+          expect(
+            document.activeElement,
+            'The actual More opener owns dismissal focus'
+          ).equals(trigger)
+          expect(composer.value).equals('Unsent draft')
+          expect(history.scrollTop).equals(200)
+        })
+      }
+      it('preserves an explicit later focus handoff to the composer', async function () {
+        const { composer, trigger } = await mountMenu()
+        await act(async () => {
+          composer.focus()
+        })
+        await press('More message actions')
+        await act(async () => {
+          composer.focus()
+        })
+        await escapeMenu()
+        expect(document.activeElement).equals(composer)
+        expect(trigger.closest('[aria-hidden="true"]')).equals(null)
+        expect(
+          host!.querySelector('[aria-label="Message from Trea Turner"]')
+        ).equals(null)
+      })
+      it('retires a disconnected More opener without focusing it', async function () {
+        const { composer, trigger, removeSource } = await mountMenu()
+        await act(async () => {
+          composer.focus()
+        })
+        await press('More message actions')
+        let focused = 0
+        trigger.addEventListener('focus', () => {
+          focused += 1
+        })
+        await act(async () => {
+          removeSource()
+          await new Promise(resolve => setTimeout(resolve, 25))
+        })
+        expect(trigger.isConnected).equals(false)
+        expect(focused).equals(0)
+        expect(
+          host!.querySelector('[aria-label="Message from Trea Turner"]')
+        ).equals(null)
+      })
+    })
+
     it('filters desktop More and revalidates permission changes while a copy promise is pending', async function () {
       let closed = 0
       let complete: (() => void) | undefined
