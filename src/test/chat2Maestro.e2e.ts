@@ -83,6 +83,16 @@ interface Bounds {
   width: number
   height: number
 }
+interface CaptureViewport {
+  width: number
+  height: number
+  dpr: number
+  coarse: boolean
+  scale: number
+  scrollX: number
+  scrollY: number
+}
+
 export interface PublicNode {
   id?: string
   type?: string
@@ -354,6 +364,14 @@ export class Chat2UI {
   private readonly root: string
   private readonly artifactRoot: string
   private readonly daemonName: string
+  private webFrame?: {
+    width: number
+    height: number
+    dpr: number
+    coarse: boolean
+  }
+
+  private webZoom?: CaptureViewport
   private reportsDir?: string
   private connectCleanup?: () => Promise<Daemon>
 
@@ -692,6 +710,7 @@ export class Chat2UI {
       matches,
       'Actual viewport/pointer/pixel scale differs from requested surface'
     )
+    this.webFrame = { ...metrics }
   }
 
   metrics(): { width: number; height: number; coarse: boolean; dpr: number } {
@@ -788,10 +807,10 @@ export class Chat2UI {
   async renderedPhoto(selected: Args): Promise<Args> {
     const box = await this.observedBounds(selected)
     const path = join(this.runDir, 'photo-avatar-' + Date.now() + '.png')
-    const capture = saveCapture(await this.device.screenshot(), path)
+    const capture = await this.captureImage(path)
     const screen: Args = this.native
       ? await this.device.platformInfo()
-      : this.metrics()
+      : object(object(capture.captureObserver).before)
     const width = Number(screen.screenWidth ?? screen.width)
     const height = Number(screen.screenHeight ?? screen.height)
     assert(
@@ -925,6 +944,8 @@ export class Chat2UI {
       }
     })
     assert(matches, 'Actual resized viewport/pointer/pixel scale differs')
+    this.webFrame = expected
+    this.webZoom = undefined
   }
 
   /** OS Settings UI is an explicit observed private recipe, driven only by Maestro. */
@@ -1101,6 +1122,8 @@ export class Chat2UI {
             'Browser accessibility setting must enlarge actual glyph/line-box or observed viewport pixel scale'
           )
           row.textGrowth = { before, after: actual }
+          this.webZoom = await this.captureViewport()
+          row.captureGeometry = this.webZoom
         }
         row.environment = actual
       }
@@ -1135,6 +1158,7 @@ export class Chat2UI {
         })
         await this.cdp?.send('Emulation.setEmulatedMedia', { features: [] })
         await this.cdp?.send('Emulation.setEmulatedOSTextScale', { scale: 1 })
+        this.webZoom = undefined
       }
       row.restoredAt = new Date().toISOString()
       this.steps.push({ ...row, variant: name, name: 'Accessibility variant' })
@@ -1341,6 +1365,133 @@ export class Chat2UI {
     }
   }
 
+  private async captureViewport(): Promise<CaptureViewport> {
+    const value = await this.dom(
+      'return {width:innerWidth,height:innerHeight,dpr:devicePixelRatio,coarse:matchMedia("(pointer:coarse)").matches,scale:typeof visualViewport==="undefined"||visualViewport===null?1:visualViewport.scale,scrollX,scrollY}'
+    )
+    assert(
+      ['width', 'height', 'dpr', 'scale'].every(
+        key =>
+          typeof value[key] === 'number' &&
+          Number.isFinite(value[key]) &&
+          Number(value[key]) > 0
+      ) &&
+        ['scrollX', 'scrollY'].every(
+          key => typeof value[key] === 'number' && Number.isFinite(value[key])
+        ) &&
+        typeof value.coarse === 'boolean',
+      'Actual browser capture geometry required'
+    )
+    return value as unknown as CaptureViewport
+  }
+
+  /** Observe pixels on the same owned tab; never alter its rendering geometry. */
+  async captureImage(destination: string): Promise<Args> {
+    if (this.native)
+      return {
+        ...saveCapture(await this.device.screenshot(), destination),
+        captureObserver: {
+          method: 'maestro-d native screenshot',
+          source: this.binding.source
+        }
+      }
+    const cdp = need(this.cdp, 'Owned tab CDP capture observer required')
+    const frame = need(
+      this.webFrame,
+      'Strictly measured browser frame required before capture'
+    )
+    const expectedRaster = {
+      width: frame.width * frame.dpr,
+      height: frame.height * frame.dpr
+    }
+    const before = await this.captureViewport()
+    const expected = this.webZoom ?? { ...frame, scale: 1 }
+    const parameters = {
+      format: 'png' as const,
+      captureBeyondViewport: false,
+      fromSurface: true
+    }
+    const observation: Args = {
+      name: 'Read-only viewport capture observer',
+      method: 'CDP Page.captureScreenshot on the owned Maestro-controlled tab',
+      source: this.binding.source,
+      parameters,
+      frame,
+      expectedRaster,
+      before,
+      zoomGeometry: this.webZoom
+    }
+    this.steps.push(observation)
+    try {
+      assert(
+        ['width', 'height', 'dpr', 'coarse', 'scale'].every(
+          key =>
+            before[key as keyof CaptureViewport] ===
+            expected[key as keyof typeof expected]
+        ),
+        'Browser capture geometry differs from its measured frame or observed variant'
+      )
+      assert(
+        Number.isInteger(expectedRaster.width) &&
+          Number.isInteger(expectedRaster.height),
+        'Measured browser raster must have exact integral dimensions'
+      )
+      if (this.webZoom != null)
+        assert(
+          Math.abs(before.width * before.dpr - expectedRaster.width) <
+            before.dpr + 0.000001 &&
+            Math.abs(before.height * before.dpr - expectedRaster.height) <
+              before.dpr + 0.000001,
+          'Observed browser zoom must preserve the measured physical frame'
+        )
+      const screenshot = await cdp.send('Page.captureScreenshot', parameters)
+      assert(typeof screenshot.data === 'string', 'Raw CDP PNG bytes required')
+      const bytes = Buffer.from(screenshot.data, 'base64')
+      const rawPath =
+        destination +
+        (bytes.subarray(0, 8).equals(PNG) ? '.raw.png' : '.raw.bin')
+      writeFileSync(rawPath, bytes, { mode: 0o600, flag: 'wx' })
+      const rawSha256 = digest(rawPath)
+      observation.rawPath = rawPath
+      observation.rawSha256 = rawSha256
+      const after = await this.captureViewport()
+      observation.after = after
+      assert(
+        (Object.keys(before) as Array<keyof CaptureViewport>).every(
+          key => before[key] === after[key]
+        ),
+        'Read-only capture changed browser viewport, pixel scale or scroll'
+      )
+      assert(
+        bytes.length >= 24 &&
+          bytes.subarray(0, 8).equals(PNG) &&
+          bytes.toString('ascii', 12, 16) === 'IHDR',
+        'CDP capture must return actual PNG bytes without conversion'
+      )
+      const width = bytes.readUInt32BE(16)
+      const height = bytes.readUInt32BE(20)
+      observation.actualRaster = { width, height }
+      assert(
+        width === expectedRaster.width && height === expectedRaster.height,
+        'Viewport PNG dimensions differ from the exact measured browser raster'
+      )
+      writeFileSync(destination, bytes, { mode: 0o600, flag: 'wx' })
+      observation.outcome = 'passed'
+      return {
+        rawPath,
+        rawSha256,
+        sha256: digest(destination),
+        format: 'PNG',
+        width,
+        height,
+        captureObserver: observation
+      }
+    } catch (error) {
+      observation.outcome = 'failed'
+      throw error
+    }
+  }
+
   async shot(kind: string, note: string): Promise<void> {
     assert(/^[a-z][a-z-]+$/.test(kind), 'Safe proof name required')
     const file = `${this.surface}-${kind}-after.png`
@@ -1348,7 +1499,7 @@ export class Chat2UI {
       this.runDir,
       String(this.captures.length + 1).padStart(3, '0') + '-' + file
     )
-    const image = saveCapture(await this.device.screenshot(), path)
+    const image = await this.captureImage(path)
     this.captures.push({
       file,
       path,
@@ -1365,10 +1516,7 @@ export class Chat2UI {
     try {
       if (outcome !== 'passed' && this.device != null) {
         try {
-          saveCapture(
-            await this.device.screenshot(),
-            join(this.runDir, 'failure.png')
-          )
+          await this.captureImage(join(this.runDir, 'failure.png'))
         } catch {}
         try {
           privateJson(
@@ -1542,7 +1690,7 @@ export class Chat2UI {
             ),
       completedAt: new Date().toISOString(),
       method:
-        'All UI actions through maestro-d TypeScript; CDP only for browser environment; captures prove composition, no smoothness/physical-haptic claim'
+        'All UI actions through maestro-d TypeScript; CDP only for browser environment and read-only viewport capture observation; native capture through Maestro; captures prove composition, no smoothness/physical-haptic claim'
     }
     privateJson(receipt, result)
     if (result.outcome === 'passed' && this.scenario === 'capture') {
@@ -1567,7 +1715,9 @@ export class Chat2UI {
           imageFormat: 'PNG',
           evidenceStatus: 'captured',
           scenario: this.scenario,
-          driver: 'maestro-d TypeScript'
+          driver: this.native
+            ? 'maestro-d TypeScript'
+            : 'maestro-d TypeScript actions; read-only CDP viewport capture'
         })
       }
       privateJson(indexPath, index)
