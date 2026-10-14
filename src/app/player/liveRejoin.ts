@@ -3,7 +3,7 @@
  *
  * The server keeps a live playlist open while its publisher may come back, so
  * a phone that loses its signal for half a minute costs the people watching a
- * stall, not the game. Past a minute it is closed, and every player reads that
+ * stall, not the game. Past eight minutes it is closed, and every player reads that
  * `EXT-X-ENDLIST` as the end of the broadcast and stops asking for more, for
  * good. The game is not over, though — the camera can still come back and
  * carry on in the same playlist — and the server still lists the video as
@@ -14,7 +14,7 @@
  * as it always has.
  *
  * The looks back off, from every 5 s to every 30 s, and stop once the
- * playlist has been closed for ten minutes on top of the minute's grace: a
+ * playlist has been closed for ten minutes on top of the eight-minute grace: a
  * phone that tapped Stop without End leaves its video listed as live for as
  * long as nobody ends it, and every open player asking about it every few
  * seconds for ever is a load on the server for nothing. A camera that comes
