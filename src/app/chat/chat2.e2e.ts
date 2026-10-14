@@ -34,6 +34,7 @@ import {
 import {
   Chat2UI,
   exactText,
+  flattenPublicHierarchy,
   type PublicNode,
   until
 } from '../../test/chat2Maestro.e2e'
@@ -319,6 +320,234 @@ export async function observeSpotlightCaptureReady(
         }
       }
       await new Promise(resolve => setTimeout(resolve, 50))
+    }
+  } catch (error) {
+    observation.error = error instanceof Error ? error.message : String(error)
+    throw error
+  }
+}
+
+/** Static stills require outgoing overlays to finish without changing UI timing. */
+export async function observeComposerCaptureReady(
+  ui: Chat2UI,
+  expected: { focused?: boolean; reply?: boolean } = {},
+  timeout = 8000
+): Promise<Json> {
+  type Box = NonNullable<PublicNode['bounds']>
+  const samples: Json[] = []
+  const observation: Json = {
+    name: 'Settled composer capture readiness',
+    outcome: 'failed',
+    method: ui.native
+      ? 'Public accessibility absence, visible controls and stable raw Maestro frames; physical unmount is not inferred'
+      : 'Atomic public DOM physical overlay absence, visibility, focus and geometry',
+    expected,
+    stableForMs: 200,
+    timeoutMs: timeout,
+    samples
+  }
+  ui.steps.push(observation)
+  const deadline = Date.now() + timeout
+  const message = 'Timed out waiting for settled composer presentation'
+  const remaining = (): number => {
+    assert(Date.now() < deadline, message)
+    return Math.max(1, deadline - Date.now())
+  }
+  const device = ui.device as unknown as {
+    hierarchy: (options: { signal: AbortSignal }) => Promise<unknown>
+    screenshot: (options: { signal: AbortSignal }) => Promise<Uint8Array>
+    assertVisible: (
+      args: Json,
+      options: { signal: AbortSignal }
+    ) => Promise<{ element?: { bounds?: Box } }>
+    evalBrowserScript: (
+      args: Json,
+      options: { signal: AbortSignal }
+    ) => Promise<{ data?: unknown }>
+  }
+  const nativeProbe = async (selector: Json): Promise<Box | undefined> => {
+    try {
+      const args = { ...selector, timeout: Math.min(120, remaining()) }
+      const options = { signal: AbortSignal.timeout(remaining()) }
+      return (await device.assertVisible(args, options)).element?.bounds
+    } catch (error) {
+      remaining()
+      if (
+        error != null &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'COMMAND_FAILED'
+      )
+        return undefined
+      throw error
+    }
+  }
+  try {
+    let reference: string | undefined
+    let stableSince = Date.now()
+    for (;;) {
+      remaining()
+      const sample: Json = { startedAt: new Date().toISOString() }
+      samples.push(sample)
+      if (samples.length > 24) samples.splice(1, 1)
+      let geometry: Record<string, Box>
+      let eligible: boolean
+      if (ui.native) {
+        const nodes = flattenPublicHierarchy(
+          await device.hierarchy({ signal: AbortSignal.timeout(remaining()) })
+        )
+        const overlays = nodes
+          .filter(n =>
+            ['chat-message-spotlight', 'chat-picker-scene'].includes(n.id ?? '')
+          )
+          .map(n => n.id)
+        geometry = {}
+        let visible = true
+        for (const [name, selector] of [
+          ['composer', { id: 'chat-composer' }],
+          ['band', { id: 'chat-composer-band' }],
+          ['attach', { text: exactText('Attach') }],
+          ['send', { text: exactText('Send') }]
+        ] as const) {
+          const found = await nativeProbe(selector)
+          if (found == null) visible = false
+          else geometry[name] = found
+        }
+        let focused = expected.focused !== true
+        if (expected.focused === true)
+          focused =
+            (await nativeProbe({ id: 'chat-composer', focused: true })) != null
+        const cancel = nodes.find(n => n.text === 'Cancel reply')
+        let reply =
+          expected.reply == null || (!expected.reply && cancel == null)
+        if (expected.reply === true) {
+          const found = await nativeProbe({ text: exactText('Cancel reply') })
+          reply = found != null
+          if (found != null) geometry.reply = found
+        }
+        let keyboard = expected.focused !== true
+        if (expected.focused === true) {
+          const container = nodes.find(
+            n => /keyboard/i.test(n.type ?? '') && n.bounds != null
+          )
+          if (container?.bounds != null) {
+            geometry.keyboard = container.bounds
+            keyboard = true
+          } else {
+            keyboard = true
+            for (const key of ['q', 'w', 'e']) {
+              const found = await nativeProbe({
+                text: '^[' + key + key.toUpperCase() + ']$'
+              })
+              if (found == null) keyboard = false
+              else geometry['key-' + key] = found
+            }
+          }
+        }
+        sample.publicAccessibility = {
+          overlays,
+          visible,
+          focused,
+          reply,
+          keyboard
+        }
+        const bytes = Buffer.from(
+          await device.screenshot({ signal: AbortSignal.timeout(remaining()) })
+        )
+        const raster = captureRaster(bytes)
+        assert(
+          raster.width > 0 && raster.height > 0,
+          'Positive native screenshot dimensions required'
+        )
+        sample.image = {
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          bytes: bytes.length,
+          ...raster
+        }
+        eligible =
+          overlays.length === 0 && visible && focused && reply && keyboard
+      } else {
+        const script = `
+          const overlays=['chat-message-spotlight','chat-picker-scene'].filter(id=>document.querySelector('[data-testid="'+id+'"]')!==null);
+          const composer=document.querySelector('[data-testid="chat-composer"]');
+          const band=document.querySelector('[data-testid="chat-composer-band"]');
+          const geometry={},styles={};let visible=true;
+          const entries=[['composer',composer],['band',band],['attach',band&&band.querySelector('[aria-label="Attach"]')],['send',band&&band.querySelector('[aria-label="Send"]')]];
+          if(${expected.reply === true})entries.push(['reply',band&&band.querySelector('[aria-label="Cancel reply"]')]);
+          for(const [name,node] of entries){
+            if(node===null){visible=false;continue;}
+            const box=node.getBoundingClientRect();geometry[name]={x:box.x,y:box.y,width:box.width,height:box.height};
+            const chain=[];for(let current=node;current!==null;current=current.parentElement){const style=getComputedStyle(current);chain.push({opacity:style.opacity,transform:style.transform,display:style.display,visibility:style.visibility});if(current.getAttribute('aria-hidden')==='true'||style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse'||Number(style.opacity)===0)visible=false;}
+            styles[name]=chain;
+          }
+          const focused=composer!==null&&composer===document.activeElement;
+          const editable=composer!==null&&!composer.disabled&&!composer.readOnly;
+          const hasReply=band!==null&&band.querySelector('[aria-label="Cancel reply"]')!==null;
+          const viewport={width:innerWidth,height:innerHeight};
+          if(typeof visualViewport!=='undefined'&&visualViewport!==null)Object.assign(viewport,{visualWidth:visualViewport.width,visualHeight:visualViewport.height,offsetTop:visualViewport.offsetTop,offsetLeft:visualViewport.offsetLeft,scale:visualViewport.scale});
+          return {overlays,geometry,styles,visible,focused,editable,hasReply,viewport};
+        `
+        const result = await device.evalBrowserScript(
+          {
+            script: 'return JSON.stringify((()=>{' + script + '})())',
+            timeout: Math.min(500, remaining())
+          },
+          { signal: AbortSignal.timeout(remaining()) }
+        )
+        const actual = (
+          typeof result.data === 'string'
+            ? JSON.parse(result.data)
+            : result.data
+        ) as Json
+        assert(
+          actual != null && typeof actual === 'object',
+          'Actual public composer observation required'
+        )
+        sample.publicDOM = actual
+        geometry = (actual.geometry ?? {}) as Record<string, Box>
+        eligible =
+          Array.isArray(actual.overlays) &&
+          actual.overlays.length === 0 &&
+          actual.visible === true &&
+          actual.editable === true &&
+          (expected.focused !== true || actual.focused === true) &&
+          (expected.reply == null || actual.hasReply === expected.reply)
+      }
+      sample.bounds = geometry
+      const finite =
+        Object.keys(geometry).length >= 4 &&
+        Object.values(geometry).every(
+          box =>
+            [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+            box.width > 0 &&
+            box.height > 0
+        )
+      sample.ready = eligible && finite
+      sample.completedAt = new Date().toISOString()
+      const signature = JSON.stringify({
+        geometry,
+        publicDOM: sample.publicDOM,
+        publicAccessibility: sample.publicAccessibility,
+        image: sample.image
+      })
+      const stable = eligible && finite && signature === reference
+      if (!stable) {
+        reference = eligible && finite ? signature : undefined
+        stableSince = Date.now()
+      }
+      remaining()
+      if (stable && Date.now() - stableSince >= 200) {
+        observation.outcome = 'passed'
+        return {
+          composerCaptureReady: true,
+          method: observation.method,
+          expected,
+          stableForMs: Date.now() - stableSince
+        }
+      }
+      await new Promise(resolve =>
+        setTimeout(resolve, Math.min(50, remaining()))
+      )
     }
   } catch (error) {
     observation.error = error instanceof Error ? error.message : String(error)
@@ -3040,6 +3269,7 @@ export class Scenarios {
                 : ' desktop More menu and accessible controls; touch spotlight not applicable')
           )
           await this.dismiss()
+          this.observations.push(await observeComposerCaptureReady(ui))
           await this.openInfo()
           await ui.present('chat-info-hero')
           this.observations.push(await observeInfoCaptureReady(ui))
@@ -3069,6 +3299,12 @@ export class Scenarios {
           )
           await ui.id('chat-mention-member-' + member.userId)
           await ui.assertKeyboard()
+          this.observations.push(
+            await observeComposerCaptureReady(ui, {
+              focused: true,
+              reply: false
+            })
+          )
           await this.nativeKeyboardGeometry()
           assert((await ui.draft()).includes('@' + member.name))
           await ui.shot(
@@ -3132,6 +3368,9 @@ export class Scenarios {
       await this.reply()
     }
     await ui.assertKeyboard()
+    this.observations.push(
+      await observeComposerCaptureReady(ui, { focused: true, reply: true })
+    )
     await ui.shot(
       'reply-keyboard',
       'Explicit Reply focus/keyboard checked before typing'
@@ -3156,6 +3395,9 @@ export class Scenarios {
       'Current member required'
     )
     await ui.id('chat-mention-member-' + member.userId)
+    this.observations.push(
+      await observeComposerCaptureReady(ui, { focused: true, reply: false })
+    )
     await ui.shot(
       'mention-composer',
       'Actual selected readable mention and focused composer'
@@ -3167,6 +3409,9 @@ export class Scenarios {
     )
     if (ui.native) {
       await ui.id('chat-composer')
+      this.observations.push(
+        await observeComposerCaptureReady(ui, { focused: true, reply: false })
+      )
       await ui.shot('keyboard-pins', 'Actual keyboard/pin/composer layout')
     }
   }
