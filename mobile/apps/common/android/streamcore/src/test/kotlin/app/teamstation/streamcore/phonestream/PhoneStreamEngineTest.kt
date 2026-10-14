@@ -675,6 +675,25 @@ class PhoneStreamEngineTest {
     }
 
     @Test
+    fun anOrdinaryTakeIsCopiedNotRebuilt() {
+        // One part, never resumed, its first picture captured a picture delay before Record: the hold
+        // at Stop reaches the take's end on the wall clock, so the export copies the part as it is.
+        val engine = opened()
+        // The preview runs before Record, so the part's first picture was captured before the take began.
+        capture(1.0)
+        start(engine)
+        capture(5.0)
+        runBlocking { engine.stopRecording() }
+        val take = runBlocking { engine.recordings() }.single()
+        assertEquals(1, take.parts)
+        val partStart = app.teamstation.streamcore.record.RecordingCatalog.partStarts(engine.index.programAnchors(take.recordingID)).getValue(1)
+        assertEquals(take.startedAt - PhoneStreamProfile.pictureDelaySeconds, partStart, 0.05)
+        runBlocking { engine.uploadRecording("s1", server.url("/").toString(), "token-0000", "Home Plate") }
+        val export = engine.lastExport!!
+        assertTrue(export.plan.description, export.plan is app.teamstation.streamcore.record.ProgrammeExport.Plan.Copy)
+    }
+
+    @Test
     fun theLiveVideoIsPlacedByTheFirstPublishedPictureOncePerSession() {
         val engine = opened()
         start(engine)
