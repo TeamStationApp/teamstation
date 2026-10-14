@@ -559,7 +559,8 @@ export class Chat2UI {
       'utf8'
     ).split('\n')[0]
     this.browser = await puppeteer.connect({
-      browserURL: 'http://127.0.0.1:' + port
+      browserURL: 'http://127.0.0.1:' + port,
+      defaultViewport: null
     })
     const pages = await this.browser.pages()
     const page = need(
@@ -582,12 +583,21 @@ export class Chat2UI {
     const actual = await this.dom(
       'return {width:innerWidth,height:innerHeight,coarse:matchMedia("(pointer:coarse)").matches}'
     )
-    assert(
+    const matches =
       actual.width === metrics.width &&
-        actual.height === metrics.height &&
-        actual.coarse === metrics.coarse,
-      'Actual viewport/pointer differs from requested surface'
-    )
+      actual.height === metrics.height &&
+      actual.coarse === metrics.coarse
+    this.steps.push({
+      name: 'Viewport and pointer measurements',
+      outcome: matches ? 'passed' : 'failed',
+      expected: metrics,
+      actual: {
+        width: actual.width,
+        height: actual.height,
+        coarse: actual.coarse
+      }
+    })
+    assert(matches, 'Actual viewport/pointer differs from requested surface')
   }
 
   metrics(): { width: number; height: number; coarse: boolean } {
