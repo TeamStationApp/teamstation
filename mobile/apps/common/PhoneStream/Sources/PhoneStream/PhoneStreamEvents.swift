@@ -131,13 +131,25 @@ public enum PhoneStreamEvent: Sendable, Equatable {
 ///
 /// The engine lives on the main actor, so `start` registers there a moment later. A `stop` that
 /// lands in that moment is not lost: the observer registered after it is cancelled at once, and a
-/// second `start` while one is registered adds nothing.
+/// second `start` while one is registered adds nothing. The engine drops a cancelled observer a
+/// moment later too, so each observer delivers only while its own registration stands: an event
+/// in that moment goes nowhere rather than to a host that has stopped listening.
 public final class PhoneStreamEventRelay: @unchecked Sendable {
   private let lock = NSLock()
   private let engine: @MainActor () -> PhoneStreamEngine?
   private let deliver: @Sendable (PhoneStreamEvent) -> Void
   private var observation: PhoneStreamObservation?
+  /// The registration in force, which `stop` closes.
+  private var gate: Gate?
   private var wanted = false
+
+  /// Whether one registration's observer still delivers.
+  private final class Gate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var open = true
+    var isOpen: Bool { lock.withLock { open } }
+    func close() { lock.withLock { open = false } }
+  }
 
   /// `engine` is read on the main actor at each `start`; `deliver` gets every event there.
   public init(
@@ -166,13 +178,20 @@ public final class PhoneStreamEventRelay: @unchecked Sendable {
       let needed = self.lock.withLock { self.wanted && self.observation == nil }
       guard needed else { return }
       let deliver = self.deliver
-      let made = engine.observe { deliver($0) }
+      let gate = Gate()
+      let made = engine.observe { event in
+        if gate.isOpen { deliver(event) }
+      }
       let kept = self.lock.withLock {
         guard self.wanted, self.observation == nil else { return false }
         self.observation = made
+        self.gate = gate
         return true
       }
-      if !kept { made.cancel() }
+      if !kept {
+        gate.close()
+        made.cancel()
+      }
     }
   }
 
@@ -182,7 +201,10 @@ public final class PhoneStreamEventRelay: @unchecked Sendable {
     wanted = false
     let observation = self.observation
     self.observation = nil
+    let gate = self.gate
+    self.gate = nil
     lock.unlock()
+    gate?.close()
     observation?.cancel()
   }
 }
