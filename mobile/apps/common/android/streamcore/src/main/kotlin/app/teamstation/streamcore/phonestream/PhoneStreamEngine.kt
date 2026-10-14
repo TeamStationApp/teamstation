@@ -127,6 +127,9 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     private val uploads = mutableMapOf<Long, Deferred<String>>()
     private val uploadServers = mutableMapOf<Long, Pair<String, String>>()
 
+    /** Where each running upload stands, by take, for a host that starts listening part-way. Told from the network's thread too. */
+    private val uploadProgress = mutableMapOf<Long, PhoneUploadProgress>()
+
     init {
         environment.storage.prepare()
         index = RecordingCatalog(environment.storage.index)
@@ -675,6 +678,13 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     /** The ids of the takes whose upload is running in this process. */
     suspend fun runningUploads(): Set<Long> = onEngine { uploads.keys.toSet() }
 
+    /**
+     * Where each upload running in this process stands now, by take: its last report. An upload
+     * resumed at launch reports before any screen listens, so a screen that opens part-way reads this
+     * instead of waiting for the next report.
+     */
+    fun runningUploadProgress(): Map<Long, PhoneUploadProgress> = synchronized(uploadProgress) { uploadProgress.toMap() }
+
     /** Stops the upload of [liveStreamId] and abandons it on the server, so the take can be recorded on or uploaded afresh. */
     suspend fun cancelUpload(liveStreamId: String) = onEngine {
         val recording = catalog.recordings().firstOrNull { it.liveStreamId == liveStreamId } ?: return@onEngine
@@ -704,10 +714,11 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                 upload(recording, server, token, title).also { uploadServers.remove(id) }
             } catch (error: Throwable) {
                 if (error !is CancellationException) {
-                    emit(PhoneStreamEvent.Upload(PhoneUploadProgress(recording.liveStreamId, PhoneUploadProgress.State.FAILED, message = error.message)))
+                    report(PhoneUploadProgress(recording.liveStreamId, PhoneUploadProgress.State.FAILED, message = error.message), id)
                 }
                 throw error
             } finally {
+                synchronized(uploadProgress) { uploadProgress.remove(id) }
                 uploads.remove(id)
                 if (uploads.isEmpty()) environment.foreground.uploadsFinished()
             }
@@ -719,7 +730,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     private suspend fun upload(recording: PhoneRecording, server: String, token: String, title: String): String {
         val liveStreamId = recording.liveStreamId
         val id = recording.recordingID
-        emit(PhoneStreamEvent.Upload(PhoneUploadProgress(liveStreamId, PhoneUploadProgress.State.EXPORTING)))
+        report(PhoneUploadProgress(liveStreamId, PhoneUploadProgress.State.EXPORTING), id)
         if (recording.endedAt == null) catalog.closeAtLastAnchor(id)
         val summary = index.recording(id) ?: throw PhoneStreamException(PhoneStreamError.NO_RECORDING)
         val output = environment.storage.export(id)
@@ -770,24 +781,46 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
             wholeStream = if (recording.coversWholeStream) true else null,
             onOpened = { uploadId -> catalog.setUpload(uploadId, uploadTitle, id) },
             onProgress = { progress ->
-                emit(
-                    PhoneStreamEvent.Upload(
-                        PhoneUploadProgress(
-                            liveStreamId,
-                            if (progress.step == null) PhoneUploadProgress.State.UPLOADING else PhoneUploadProgress.State.PROCESSING,
-                            fraction = progress.fraction,
-                            bytesSent = progress.bytesSent,
-                            bytesTotal = progress.bytesTotal,
-                            step = progress.step
-                        )
-                    )
+                report(
+                    PhoneUploadProgress(
+                        liveStreamId,
+                        if (progress.step == null) PhoneUploadProgress.State.UPLOADING else PhoneUploadProgress.State.PROCESSING,
+                        fraction = progress.fraction,
+                        bytesSent = progress.bytesSent,
+                        bytesTotal = progress.bytesTotal,
+                        step = progress.step
+                    ),
+                    id
                 )
             }
         )
         catalog.markUploaded(id, videoId, environment.clock.now())
         output.parentFile?.deleteRecursively()
-        emit(PhoneStreamEvent.Upload(PhoneUploadProgress(liveStreamId, PhoneUploadProgress.State.UPLOADED, fraction = 1.0, videoId = videoId)))
+        report(PhoneUploadProgress(liveStreamId, PhoneUploadProgress.State.UPLOADED, fraction = 1.0, videoId = videoId), id)
         return videoId
+    }
+
+    /**
+     * Tells the host where an upload stands, and keeps it for a host that asks later. A report for an
+     * upload that has ended, or one that would take the bar back, is dropped.
+     */
+    private fun report(progress: PhoneUploadProgress, id: Long) {
+        synchronized(uploadProgress) {
+            when (progress.state) {
+                PhoneUploadProgress.State.EXPORTING -> uploadProgress[id] = progress
+                PhoneUploadProgress.State.UPLOADING, PhoneUploadProgress.State.PROCESSING -> {
+                    val current = uploadProgress[id] ?: return
+                    if (progress.state == PhoneUploadProgress.State.UPLOADING) {
+                        if (current.state == PhoneUploadProgress.State.PROCESSING) return
+                        if (current.state == PhoneUploadProgress.State.UPLOADING && progress.bytesSent < current.bytesSent) return
+                    }
+                    uploadProgress[id] = progress
+                }
+                PhoneUploadProgress.State.UPLOADED, PhoneUploadProgress.State.FAILED -> uploadProgress.remove(id)
+            }
+            // Inside the lock, so two reports reach the host in the order they were kept.
+            emit(PhoneStreamEvent.Upload(progress))
+        }
     }
 
     /** Every running upload stops where it is and keeps its id, as a killed process's would. */

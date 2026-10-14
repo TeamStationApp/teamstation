@@ -90,6 +90,14 @@ class PhoneStreamEngineTest {
     @Volatile
     private var serverReceived = emptyList<Int>()
 
+    /** The stand-in server's part size. */
+    @Volatile
+    private var partSize = 65_536
+
+    /** When set, parts from this index on are refused and not kept: an upload cut off part-way. */
+    @Volatile
+    private var refuseFromPart: Int? = null
+
     private var uptime = 500.0
     private var wall = 1_760_000_000.0
     private var free = 10_000_000_000L
@@ -117,18 +125,22 @@ class PhoneStreamEngineTest {
                     request.method == "PATCH" && path.contains("/live-streams/") -> patchAnswers.poll() ?: json("{}")
                     path.contains("/live-streams") -> liveStreamAnswer
                     request.method == "POST" && path.endsWith("/director/uploads") ->
-                        json("""{"uploadId":"u1","partSize":65536,"parts":${partsFor(JSONObject(request.body.clone().readUtf8()).getLong("sizeBytes"))},"received":[]}""")
+                        json("""{"uploadId":"u1","partSize":$partSize,"parts":${partsFor(JSONObject(request.body.clone().readUtf8()).getLong("sizeBytes"))},"received":[]}""")
                     request.method == "PUT" -> {
-                        partGate?.await(2, TimeUnit.SECONDS)
                         val index = path.substringAfterLast('/').toInt()
-                        synchronized(parts) { parts[index] = request.body.readByteArray() }
-                        json("""{"received":${parts.size},"parts":0,"missing":[]}""")
+                        if (refuseFromPart?.let { index >= it } == true) {
+                            MockResponse().setResponseCode(503).setBody("""{"message":"cut off"}""")
+                        } else {
+                            partGate?.await(2, TimeUnit.SECONDS)
+                            synchronized(parts) { parts[index] = request.body.readByteArray() }
+                            json("""{"received":${parts.size},"parts":0,"missing":[]}""")
+                        }
                     }
                     request.method == "GET" && path.contains("/director/uploads/") -> {
                         val received = synchronized(parts) { parts.keys.sorted() }
                         val state = if (path.endsWith("ready")) "ready" else "open"
                         json(
-                            """{"uploadId":"u1","state":"$state","partSize":65536,"parts":${uploadParts},"received":${received},"missing":[],"receivedBytes":0,"videoId":"v1"}"""
+                            """{"uploadId":"u1","state":"$state","partSize":$partSize,"parts":${uploadParts},"received":${received},"missing":[],"receivedBytes":0,"videoId":"v1"}"""
                         )
                     }
                     path.endsWith("/finish") -> json("""{"videoId":"v1","state":"ready"}""")
@@ -143,7 +155,7 @@ class PhoneStreamEngineTest {
     @Volatile
     private var uploadParts = 0
 
-    private fun partsFor(size: Long): Int = ((size + 65_535) / 65_536).toInt().also { uploadParts = it }
+    private fun partsFor(size: Long): Int = ((size + partSize - 1) / partSize).toInt().also { uploadParts = it }
 
     @After
     fun tearDown() {
@@ -751,6 +763,42 @@ class PhoneStreamEngineTest {
         assertTrue(requests.none { it.method == "POST" && it.path!!.endsWith("/director/uploads") })
         assertEquals(1, requests.count { it.method == "GET" && it.path!!.endsWith("/director/uploads/u1") })
         assertEquals("v1", runBlocking { second.recordings() }.single().videoId)
+    }
+
+    @Test
+    fun whereARunningUploadStandsIsReadFromTheEngineAfterARelaunch() {
+        partSize = 1_024
+        val first = opened()
+        start(first)
+        capture(3.0)
+        runBlocking { first.stopRecording() }
+        // Cut off after its first part: the server has that one and refuses the rest.
+        refuseFromPart = 1
+        runCatching { runBlocking { first.uploadRecording("s1", server.url("/").toString(), "token-0000", "Home Plate") } }
+        assertTrue(first.runningUploadProgress().isEmpty())
+        assertEquals(PhoneUploadProgress.State.FAILED, uploads().last().state)
+        val take = runBlocking { first.recordings() }.single()
+        assertTrue(take.hasPendingUpload)
+        assertTrue(uploadParts > 2)
+        runBlocking { first.abandonForTesting() }
+
+        // The relaunch resumes it before anything listens: where it stands is read from the engine,
+        // from the part the server already had, not from nothing.
+        refuseFromPart = null
+        partGate = CountDownLatch(1)
+        val second = opened()
+        requests.clear()
+        assertEquals(1, runBlocking { second.resumePendingUploads(server.url("/").toString(), "token-0000") })
+        waitFor { requests.any { it.method == "PUT" } }
+        val partway = second.runningUploadProgress()[take.recordingID] ?: error("no progress for the running upload")
+        assertEquals(PhoneUploadProgress.State.UPLOADING, partway.state)
+        assertEquals("s1", partway.liveStreamId)
+        assertEquals(1_024L, partway.bytesSent)
+        assertEquals(1_024.0 / partway.bytesTotal, partway.fraction, 1e-9)
+        partGate!!.countDown()
+        partGate = null
+        waitFor { runBlocking { second.recordings() }.single().isUploaded }
+        waitFor { second.runningUploadProgress().isEmpty() }
     }
 
     @Test

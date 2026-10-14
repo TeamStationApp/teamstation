@@ -23,7 +23,11 @@ class UploadService(
     /** Waits, in milliseconds; tests record them. */
     private val sleep: suspend (Long) -> Unit = { delay(it) },
     private val pollMillis: Long = 5_000,
-    private val pollLimitMillis: Long = 900_000
+    private val pollLimitMillis: Long = 900_000,
+    /** Milliseconds on a steady clock, for spacing the progress reports within a part. */
+    private val now: () -> Long = { android.os.SystemClock.elapsedRealtime() },
+    /** The least time between two reports within a part: four a second. */
+    private val progressIntervalMillis: Long = 250
 ) {
     data class Progress(
         val sent: Int,
@@ -78,7 +82,9 @@ class UploadService(
 
         onOpened(opened.uploadId)
         val have = opened.received.toMutableSet()
-        onProgress(Progress(have.size, opened.parts, minOf(size, have.size.toLong() * opened.partSize), size))
+        val resumedAt = minOf(size, have.size.toLong() * opened.partSize)
+        val pacing = ProgressPacing(progressIntervalMillis, resumedAt, now())
+        onProgress(Progress(have.size, opened.parts, resumedAt, size))
         // One part's worth of memory for the whole upload: a buffer per part left a two-hour take's
         // upload a few garbage collections from the heap limit (245 MB of 256 on a 24-minute take).
         val buffer = ByteArray(minOf(opened.partSize.toLong(), size).toInt())
@@ -90,9 +96,20 @@ class UploadService(
                 if (length <= 0) throw UploadError.CannotRead("part $index of ${file.name} is short on this phone")
                 handle.seek(start)
                 handle.readFully(buffer, 0, length)
-                withRetries("part $index") { client.sendPart(opened.uploadId, index, buffer, length) }
+                // Within the part, the bytes as they go, four times a second at most. A retried part
+                // starts from nothing again, and the bar waits for it rather than going back.
+                val done = have.size
+                val before = minOf(size, done.toLong() * opened.partSize)
+                withRetries("part $index") {
+                    client.sendPart(opened.uploadId, index, buffer, length) { sent ->
+                        val bytesSent = minOf(size, before + minOf(sent, length))
+                        if (pacing.admits(bytesSent, now())) onProgress(Progress(done, opened.parts, bytesSent, size))
+                    }
+                }
                 have += index
-                onProgress(Progress(have.size, opened.parts, minOf(size, have.size.toLong() * opened.partSize), size))
+                val after = minOf(size, have.size.toLong() * opened.partSize)
+                pacing.reached(after, now())
+                onProgress(Progress(have.size, opened.parts, after, size))
             }
         }
         return finish(opened.uploadId, opened.parts, size, onProgress)
@@ -139,5 +156,30 @@ class UploadService(
             }
         }
         throw UploadError.GaveUp(step, last)
+    }
+}
+
+/**
+ * When a report of the bytes sent within a part is worth making: once [intervalMillis] has passed
+ * since the last report, and only for more bytes than any report so far.
+ */
+internal class ProgressPacing(private val intervalMillis: Long, startingAt: Long, now: Long) {
+    private var reported = startingAt
+    private var reportedAt = now
+
+    /** Whether [bytes] at [time] should be reported; if so, it counts as reported. */
+    @Synchronized
+    fun admits(bytes: Long, time: Long): Boolean {
+        if (bytes <= reported || time - reportedAt < intervalMillis) return false
+        reported = bytes
+        reportedAt = time
+        return true
+    }
+
+    /** A report made regardless, at a part's end. */
+    @Synchronized
+    fun reached(bytes: Long, time: Long) {
+        reported = maxOf(reported, bytes)
+        reportedAt = time
     }
 }
