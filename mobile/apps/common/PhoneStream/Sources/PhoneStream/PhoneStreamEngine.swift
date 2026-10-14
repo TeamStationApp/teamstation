@@ -120,6 +120,9 @@ public final class PhoneStreamEngine {
   private var recordingTakeID: Int64?
   /// A part finished by the background, waiting for the foreground to continue it.
   private var suspendedInBackground = false
+  /// Counts the app's moves to the background and back, so a foreground that waited for a finish
+  /// resumes only if the app is still in the foreground when the finish is done.
+  private var applicationTransitions = 0
   private var lastError: PhoneStreamError?
   /// A part being finished: its hold fill and its writer's close take a second or more. Cleared by
   /// the finish itself as its last step, so whoever awaits it finds it gone when they resume.
@@ -594,6 +597,7 @@ public final class PhoneStreamEngine {
   /// The app went to the background: capture ends, so the part is finished, the heartbeat stops and
   /// the stream drops. The take stays open for the foreground to continue.
   public func enterBackground() async {
+    applicationTransitions += 1
     guard stream != nil else { return }
     suspendedInBackground = true
     streamController.stop()
@@ -607,9 +611,15 @@ public final class PhoneStreamEngine {
   }
 
   /// Back in the foreground with the engine still open: the take continues as its next part. A
-  /// resume that cannot run is reported in the status rather than lost.
+  /// resume that cannot run is reported in the status rather than lost. One that waited for the
+  /// background's finish and found the app gone to the background again meanwhile leaves the resume
+  /// to the next foreground: resumed then, it started a part and a redial in the background, with
+  /// no background task.
   public func enterForeground() async {
+    applicationTransitions += 1
+    let transition = applicationTransitions
     await partFinished()
+    guard transition == applicationTransitions else { return }
     guard suspendedInBackground, isOpen, let take = stream else { return }
     stream = nil
     suspendedInBackground = false

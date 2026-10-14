@@ -802,6 +802,42 @@ extension PhoneStreamTests {
       sink.drop()
     }
 
+    @Test("""
+      Background, foreground and background again while the part finishes: nothing resumes in the \
+      background, and the next foreground continues the take
+      """)
+    func backgroundAgainWhileFinishing() async throws {
+      StubServer.reset()
+      let sink = TestRTMPSink()
+      try sink.start()
+      StubServer.with { $0.streamURL = sink.url }
+      let rig = EngineRig(root: try scratchDirectory())
+      let (engine, _) = try await recording(rig, sink: sink)
+      try await Task.sleep(for: .seconds(2))
+      let background = Task { @MainActor in await engine.enterBackground() }
+      #expect(await waitUntil { engine.isFinishingPart })
+      let foreground = Task { @MainActor in await engine.enterForeground() }
+      // The foreground reaches its wait for the finish before the app leaves again.
+      for _ in 0 ..< 10 { await Task.yield() }
+      await engine.enterBackground()
+      await foreground.value
+      await background.value
+      // Still in the background: no part, no redial.
+      #expect(!engine.isRecording)
+      #expect(engine.status.phase == "idle")
+      try await Task.sleep(for: .milliseconds(500))
+      #expect(engine.status.phase == "idle")
+      // The real foreground continues the take as its next part.
+      await engine.enterForeground()
+      #expect(engine.isRecording)
+      #expect(await waitUntil { engine.status.phase == "live" })
+      try await Task.sleep(for: .seconds(2))
+      await engine.stopRecording()
+      #expect(try engine.recordings().first?.parts == 2)
+      await engine.close()
+      sink.drop()
+    }
+
     @Test("A foreground resume that cannot run says so in the status instead of going quiet")
     func foregroundResumeThatFails() async throws {
       StubServer.reset()
