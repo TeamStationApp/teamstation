@@ -693,12 +693,18 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                 recordingSession.adopt(resumed)
                 pausedTakeID = resumed.recordingID
             } else if (environment.storageRules.canStart(environment.freeDiskBytes())) {
+                val now = environment.clock.now()
                 try {
-                    recordingSession.resume(resumed, environment.clock.now(), PhoneStreamProfile.recordingSettings)
+                    recordingSession.resume(resumed, now, PhoneStreamProfile.recordingSettings)
                     openRecordingVideo()
                     recordingTakeID = resumed.recordingID
                 } catch (error: Exception) {
                     telemetry.recordRecordingError(error.message ?: error.javaClass.simpleName)
+                    // The part may have opened before its encoder failed: it is finished and the take
+                    // closed, as a failed Record does, so the next Record does not write into it.
+                    if (encoder.running) runCatching { recordingSession.finishProgramme(now) }
+                    runCatching { recordingSession.close(now) }
+                    recordingSession.endLiveSession(recording = true, stillLive = true)
                     lastError = PhoneStreamError.RECORDING_FAILED
                 }
             } else {
