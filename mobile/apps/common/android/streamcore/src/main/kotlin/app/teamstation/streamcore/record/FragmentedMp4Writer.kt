@@ -35,7 +35,12 @@ class FragmentedMp4Writer(
      */
     private val syncEachFragment: Boolean = true,
     /** How the file is forced to storage: `FileDescriptor.sync`, or a refusal in a test. */
-    private val forceToStorage: (FileDescriptor) -> Unit = FileDescriptor::sync
+    private val forceToStorage: (FileDescriptor) -> Unit = FileDescriptor::sync,
+    /**
+     * Told, on the writing thread, each time a fragment reaches the file unforced, so the owner can
+     * have [syncPending] run elsewhere. Only without [syncEachFragment].
+     */
+    private val onFragmentWritten: (() -> Unit)? = null
 ) {
     /** A picture track: the codec, its size, and its decoder configuration record (`hvcC` or `avcC`). */
     class VideoTrack(
@@ -207,8 +212,13 @@ class FragmentedMp4Writer(
         sequence += 1
         writeFragment(sequence)
         out.flush()
-        if (syncEachFragment) forceToStorage(fileOut.fd)
         flushedFragments = sequence
+        if (syncEachFragment) {
+            forceToStorage(fileOut.fd)
+            syncedFragments = sequence
+        } else {
+            onFragmentWritten?.invoke()
+        }
         videoSamples += videoQueue.size
         audioSamples += audioQueue.size
         audioTicks += audioQueueTicks
