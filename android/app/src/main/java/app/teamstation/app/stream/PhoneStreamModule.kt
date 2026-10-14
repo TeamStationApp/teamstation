@@ -11,14 +11,12 @@ import app.teamstation.app.walkup.NativePhoneStreamSpec
 import app.teamstation.streamcore.phonestream.PhoneStreamCapabilities
 import app.teamstation.streamcore.phonestream.PhoneStreamEngine
 import app.teamstation.streamcore.phonestream.PhoneStreamEvent
-import app.teamstation.streamcore.phonestream.PhoneStreamException
 import app.teamstation.streamcore.phonestream.PhoneStreamRequest
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,6 +28,8 @@ import kotlinx.coroutines.launch
  * ([PhoneStreamEngine]), one per process, behind the calls `NativePhoneStream.ts` describes. It only
  * converts arguments, results and events ([PhoneStreamMaps]); a refusal rejects with the engine's
  * error code, such as `uploadInProgress`. The engine's foreground work runs [PhoneStreamService].
+ * An engine that could not be made answers unsupported, and every call rejects with `unsupported`
+ * and why ([EngineOnce]), as on iOS, so the app carries on without streaming.
  *
  * While the engine is open it follows the display's rotation, which the capture turns the picture
  * by so the field is upright in either landscape.
@@ -48,7 +48,12 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
 
     override fun initialize() {
         super.initialize()
-        stopObserving = engine.observe(::deliver)
+        stopObserving = try {
+            engine.observe(::deliver)
+        } catch (error: PhoneStreamUnavailable) {
+            Log.w(TAG, error.reason, error.cause)
+            null
+        }
     }
 
     override fun invalidate() {
@@ -82,16 +87,23 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
     /** Runs [work] off the JavaScript thread, resolving with what it answers or rejecting with its refusal. */
     private fun settle(promise: Promise, work: suspend () -> Any?) {
         scope.launch {
-            try {
-                promise.resolve(native(work()))
-            } catch (error: PhoneStreamException) {
-                promise.reject(error.code.rawValue, error.message, error)
-            } catch (error: CancellationException) {
-                promise.reject("cancelled", "cancelled", error)
+            val answer = try {
+                Result.success(work())
             } catch (error: Exception) {
-                promise.reject("failed", error.message ?: error.javaClass.simpleName, error)
+                Result.failure(error)
             }
+            reply(promise, answer)
         }
+    }
+
+    private fun reply(promise: Promise, answer: Result<Any?>) {
+        answer
+            .mapCatching { native(it) }
+            .onSuccess { promise.resolve(it) }
+            .onFailure { error ->
+                val (code, message) = PhoneStreamRefusal.of(error)
+                promise.reject(code, message, error)
+            }
     }
 
     private fun native(value: Any?): Any? =
@@ -112,8 +124,13 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
     private fun strings(array: ReadableArray): Set<String> =
         (0 until array.size()).mapNotNull { array.getString(it) }.toSet()
 
+    /** Unsupported when the engine could not be made, so the app offers no Record video. */
     override fun capabilities(promise: Promise) =
-        settle(promise) { PhoneStreamMaps.capabilities(PhoneStreamCapabilities.current()) }
+        settle(promise) {
+            val current = PhoneStreamCapabilities.current()
+            val made = engineOrNull(reactApplicationContext) != null
+            PhoneStreamMaps.capabilities(if (made) current else current.copy(supported = false))
+        }
 
     override fun open(angleName: String, audioEnabled: Boolean, disabledLenses: ReadableArray, promise: Promise) {
         val lenses = strings(disabledLenses)
@@ -252,19 +269,28 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
         @Volatile
         private var preview: Triple<Surface, Int, Int>? = null
 
-        /** The process's engine, whose foreground work runs [PhoneStreamService]. */
+        private val engines = EngineOnce<PhoneStreamEngine>()
+
+        /**
+         * The process's engine, whose foreground work runs [PhoneStreamService]. Throws
+         * [PhoneStreamUnavailable] when it could not be made.
+         */
         fun engine(context: Context): PhoneStreamEngine =
-            PhoneStreamEngine.shared(context.applicationContext, PhoneStreamService.Work(context))
+            engines.get { PhoneStreamEngine.shared(context.applicationContext, PhoneStreamService.Work(context)) }
+
+        /** The process's engine, or null when it could not be made. */
+        fun engineOrNull(context: Context): PhoneStreamEngine? =
+            engines.getOrNull { PhoneStreamEngine.shared(context.applicationContext, PhoneStreamService.Work(context)) }
 
         fun setPreview(context: Context, surface: Surface, width: Int, height: Int) {
             preview = Triple(surface, width, height)
-            engine(context).attachPreview(surface, width, height)
+            engineOrNull(context)?.attachPreview(surface, width, height)
         }
 
         fun clearPreview(context: Context, surface: Surface) {
             if (preview?.first !== surface) return
             preview = null
-            engine(context).attachPreview(null, 0, 0)
+            engineOrNull(context)?.attachPreview(null, 0, 0)
         }
     }
 }
