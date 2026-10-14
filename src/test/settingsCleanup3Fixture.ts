@@ -38,12 +38,17 @@ export async function seedSettingsCleanup3(f: GroupFixture): Promise<void> {
     .execute()
   await f.h.db
     .updateTable('seasons')
-    .set({ name: 'Winter Weekends' })
+    .set({ name: 'Winter Weekends', year: 2027 })
     .where('id', '=', f.seasonA)
     .execute()
   await f.h.db
     .updateTable('seasons')
-    .set({ name: 'Spring Playoffs' })
+    .set({
+      name: 'Spring Playoffs',
+      year: 2028,
+      starts_on: '2028-03-01',
+      ends_on: '2028-05-31'
+    })
     .where('id', '=', f.playoffs)
     .execute()
   for (const season of [f.seasonA, f.playoffs])
@@ -52,7 +57,7 @@ export async function seedSettingsCleanup3(f: GroupFixture): Promise<void> {
       .values({
         season_id: season,
         team_id: f.teamA,
-        joined_at: new Date(),
+        joined_at: new Date('2027-01-01T00:00:00Z'),
         active: true
       })
       .onConflict(oc =>
