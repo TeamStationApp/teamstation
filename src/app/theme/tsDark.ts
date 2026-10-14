@@ -107,6 +107,8 @@ export const tsDark: Theme = {
   successColor: palette.tsLightOlive,
   warningColor: palette.amber,
   dangerColor: palette.coralRed,
+  addEventCardColor: palette.blue,
+  addEventCardTextColor: '#000000',
   linkTextColor: palette.blue,
   liveColor: palette.coralRed,
   scheduledColor: palette.tsMediumOlive,
