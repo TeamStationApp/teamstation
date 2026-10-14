@@ -838,6 +838,41 @@ extension PhoneStreamTests {
       sink.drop()
     }
 
+    @Test("""
+      Two Upload taps while the part finishes after Stop send one upload, of the take as the finish \
+      closed it
+      """)
+    func uploadTappedTwiceDuringTheFinish() async throws {
+      StubServer.reset()
+      let sink = TestRTMPSink()
+      try sink.start()
+      let rig = EngineRig(root: try scratchDirectory())
+      let (engine, _) = try await recording(rig, sink: sink)
+      try await Task.sleep(for: .seconds(3))
+      let stopping = Task { @MainActor in await engine.stopRecording() }
+      #expect(await waitUntil { engine.isFinishingPart })
+      let taps = (0 ..< 2).map { _ in
+        Task { @MainActor in
+          try await engine.uploadRecording(liveStreamId: Self.stream, apiBase: rig.request.apiBase,
+                                           token: rig.request.token, title: Self.angle)
+        }
+      }
+      await stopping.value
+      let closed = try #require(try engine.recordings().first?.endedAt)
+      for tap in taps {
+        #expect(try await tap.value == "vid_0001")
+      }
+      #expect(StubServer.read { $0.opens }.count == 1)
+      #expect(StubServer.read { $0.finishes } == 1)
+      // The end the finish wrote stands: the upload did not close the take again at its last anchor.
+      let uploaded = try #require(try engine.recordings().first)
+      #expect(uploaded.endedAt == closed)
+      #expect(uploaded.isUploaded)
+      #expect(engine.runningUploads.isEmpty)
+      await engine.close()
+      sink.drop()
+    }
+
     @Test("A foreground resume that cannot run says so in the status instead of going quiet")
     func foregroundResumeThatFails() async throws {
       StubServer.reset()
