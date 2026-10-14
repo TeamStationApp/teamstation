@@ -35,6 +35,7 @@ export interface ComposerProps {
   onAttach: (source: PickSource) => void
   onSend: () => void
   onRead?: () => void
+  onOverlay?: (open: boolean) => void
   /** Register a synchronous user-action focus handoff, scoped to this mount. */
   registerFocus?: (focus: (selection?: ComposerSelection) => void) => () => void
 }
@@ -53,12 +54,19 @@ export function Composer(props: ComposerProps): React.ReactElement {
     sending,
     context,
     attachments,
-    registerFocus
+    registerFocus,
+    onOverlay
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const [emoji, setEmoji] = useState(false)
   const [choosing, setChoosing] = useState(false)
+  useEffect(() => {
+    onOverlay?.(emoji || choosing)
+    return () => {
+      onOverlay?.(false)
+    }
+  }, [emoji, choosing, onOverlay])
   const input = useRef<React.ComponentRef<typeof TextInput>>(null)
   const selection = useRef<ComposerSelection>({
     start: text.length,
