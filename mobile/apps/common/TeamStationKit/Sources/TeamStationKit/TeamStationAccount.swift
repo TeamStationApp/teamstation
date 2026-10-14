@@ -652,7 +652,10 @@ public final class TeamStationAccount: TeamStationEventService {
    * far more than the socket's, which can only say a connection closed.
    *
    * The row read is this device's own among the game's cameras: the one whose
-   * `deviceId` is this installation's.
+   * `deviceId` is this installation's. Its state and its window come first,
+   * because the ingest refuses those without writing anything: a camera
+   * somebody ended, or a window that has not opened or has closed. After
+   * those, the ingest's own last word.
    *
    * `nil` when it has nothing to add, which includes every case where the
    * network is the problem: then the socket's own message is the true one.
@@ -664,8 +667,23 @@ public final class TeamStationAccount: TeamStationEventService {
     guard let streams = try? await client.liveStreams(gameId: gameId) else {
       return nil
     }
-    let mine = streams.mine.first { $0.deviceId == installId }
-    guard let said = mine?.lastError, !said.isEmpty else { return nil }
+    guard let mine = streams.mine.first(where: { $0.deviceId == installId }) else { return nil }
+    return Self.refusal(of: mine, now: Date(timeIntervalSince1970: clock()))
+  }
+
+  /// Why the ingest would refuse `stream` at `now`, nil when nothing on its row says.
+  static func refusal(of stream: TeamStationDeviceStream, now: Date) -> String? {
+    if stream.state == "ended" || stream.state == "revoked" {
+      return TeamStationError.streamEnded.localizedDescription
+    }
+    let time = Date.FormatStyle(date: .omitted, time: .shortened)
+    if let opensAt = stream.opensAt, now < opensAt {
+      return "This camera can go live from \(opensAt.formatted(time))."
+    }
+    if let closesAt = stream.closesAt, now >= closesAt {
+      return "This camera's streaming window closed at \(closesAt.formatted(time))."
+    }
+    guard let said = stream.lastError, !said.isEmpty else { return nil }
     return said
   }
 
