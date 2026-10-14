@@ -575,6 +575,37 @@ describe('phones and Directors asking for their streams by device', function () 
       expect(redial.status).equals(200)
       expect(redial.body.id).equals(made.body.id)
     })
+
+    it('returns a held stream renamed since, whatever name the redial sends', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      const renamed = await call(
+        'PATCH',
+        `/games/${gameId}/live-streams/${made.body.id}`,
+        OWNER,
+        { label: 'First Base' }
+      )
+      expect(renamed.status).equals(200)
+
+      // An engine that has not heard of the rename redials with the old name.
+      const stale = await ask(
+        gameId,
+        phone('Home Plate', IPHONE, { heldStreamId: made.body.id })
+      )
+      expect(stale.status).equals(200)
+      expect(stale.body.id).equals(made.body.id)
+      expect(stale.body.label).equals('First Base')
+      // And one that has, with the new one.
+      const fresh = await ask(
+        gameId,
+        phone('First Base', IPHONE, { heldStreamId: made.body.id })
+      )
+      expect(fresh.status).equals(200)
+      expect(fresh.body.id).equals(made.body.id)
+      expect(await streamsOn(gameId)).equals(1)
+      expect((await stream(made.body.id)).label).equals('First Base')
+    })
   })
 
   describe('S2 camera names and the slot cap', function () {

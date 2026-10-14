@@ -613,9 +613,11 @@ export const ENDED_CAMERA =
  * 3. **Create** one in the lowest free slot, after revoking any ended stream
  *    of this device and name, which frees its slot and leaves its video.
  *
- * A redial names the stream it holds. If somebody ended or revoked that
- * stream, it is refused with 410 and nothing is created: End keeps a camera
- * off the air until its operator starts it again.
+ * A redial names the stream it holds. While that stream is still active on
+ * this device it is returned, whatever name the redial sends, so a camera
+ * renamed mid-take keeps its stream. If somebody ended or revoked it, the
+ * redial is refused with 410 and nothing is created: End keeps a camera off
+ * the air until its operator starts it again.
  */
 export async function requestDeviceStream(
   db: Kysely<Database>,
@@ -625,18 +627,25 @@ export async function requestDeviceStream(
   return await db.transaction().execute(async trx => {
     await lockKeys(trx, [`liveStreams:${gameId}`])
 
-    if (request.heldStreamId != null) {
-      const held = await activeStream(trx, gameId, userId)
-        .where('id', '=', request.heldStreamId)
-        .executeTakeFirst()
-      if (held == null) throw gone(ENDED_CAMERA)
-    }
+    const held =
+      request.heldStreamId == null
+        ? undefined
+        : await activeStream(trx, gameId, userId)
+            .where('id', '=', request.heldStreamId)
+            .executeTakeFirst()
+    if (request.heldStreamId != null && held == null) throw gone(ENDED_CAMERA)
 
-    const reused = await activeStream(trx, gameId, userId)
-      .where(nameIs(label))
-      .where('device_id', '=', deviceId)
-      .orderBy('slot', 'asc')
-      .executeTakeFirst()
+    // A redial keeps the stream it holds even when the camera was renamed
+    // since, whatever name it sends: the rename moved the stream, not the
+    // device.
+    const reused =
+      held?.deviceId === deviceId
+        ? held
+        : await activeStream(trx, gameId, userId)
+            .where(nameIs(label))
+            .where('device_id', '=', deviceId)
+            .orderBy('slot', 'asc')
+            .executeTakeFirst()
     if (reused != null) {
       if (
         request.deviceModel != null &&
