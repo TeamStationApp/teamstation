@@ -382,15 +382,7 @@ class Scenarios {
   }
 
   async targetBounds(id: string): Promise<NonNullable<PublicNode['bounds']>> {
-    const node = (await this.ui.nodes()).find(
-      n => n.id === id && n.bounds != null
-    )
-    if (node?.bounds != null) return node.bounds
-    const result = await this.ui.device.copyTextFrom({ id })
-    return need(
-      result.element?.bounds,
-      'Public target bounds unavailable; do not invent gesture/anchor evidence'
-    )
+    return await this.ui.publicBounds(id)
   }
 
   async action(
@@ -565,10 +557,7 @@ class Scenarios {
         ['Home', 'Videos', 'Schedule', 'Chat'].includes(n.text ?? '')
     )
     const bottom = Math.min(height - 8, ...footer.map(n => n.bounds!.y - 8))
-    let bounds = need(
-      (await ui.device.copyTextFrom(selector)).element?.bounds,
-      'Actual member row bounds required'
-    )
+    let bounds = await ui.observedBounds(selector)
     for (
       let step = 0;
       step < 8 && (bounds.y < top || bounds.y + bounds.height > bottom);
@@ -581,10 +570,7 @@ class Scenarios {
         endY: Math.round(bounds.y < top ? bottom - 16 : top + 16),
         duration: 350
       })
-      bounds = need(
-        (await ui.device.copyTextFrom(selector)).element?.bounds,
-        'Member row must remain observable after public scroll'
-      )
+      bounds = await ui.observedBounds(selector)
     }
     assert(
       bounds.height > 0 &&

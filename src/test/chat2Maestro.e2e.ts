@@ -111,6 +111,95 @@ function bounds(raw: unknown): Bounds | undefined {
     return b as unknown as Bounds
 }
 
+/** Read public DOM geometry; keep serialized code free of module-scoped helpers. */
+export function publicWebNodes(parentId?: string): PublicNode[] {
+  const root =
+    parentId == null
+      ? document.body
+      : document.querySelector<HTMLElement>(
+          '[data-testid=' + JSON.stringify(parentId) + ']'
+        )
+  if (root == null) throw new Error('Observed public parent element required')
+  return [root, ...root.querySelectorAll<HTMLElement>('*')].flatMap(node => {
+    if (node.closest('script,style,[hidden],[aria-hidden="true"]') != null)
+      return []
+    for (
+      let ancestor: Element | null = node;
+      ancestor != null;
+      ancestor = ancestor.parentElement
+    ) {
+      const style = getComputedStyle(ancestor)
+      if (
+        style.display === 'none' ||
+        style.visibility === 'hidden' ||
+        style.visibility === 'collapse' ||
+        Number.parseFloat(style.opacity) === 0
+      )
+        return []
+    }
+    const rect = node.getBoundingClientRect()
+    if (
+      ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) ||
+      rect.width <= 0 ||
+      rect.height <= 0
+    )
+      return []
+    let id: string | undefined
+    const identifier = node.getAttribute('data-testid')
+    if (identifier !== null && identifier !== '') id = identifier
+    let role: string | undefined
+    const namedRole = node.getAttribute('role')
+    if (namedRole !== null && namedRole !== '') role = namedRole
+    let labelIds = ''
+    const labelledBy = node.getAttribute('aria-labelledby')
+    if (labelledBy !== null) labelIds = labelledBy
+    const labelled = labelIds
+      .split(/\s+/)
+      .filter(Boolean)
+      .map(id => {
+        const label = document.getElementById(id)
+        if (label == null) return ''
+        const content = label.textContent
+        if (content == null) return ''
+        return content.trim()
+      })
+      .filter(Boolean)
+      .join(' ')
+    let text: string | undefined
+    const label = node.getAttribute('aria-label')
+    if (label !== null) text = label
+    else if (labelled !== '') text = labelled
+    else if (
+      node.childElementCount === 0 ||
+      role != null ||
+      node.tagName === 'BUTTON'
+    ) {
+      const content = node.textContent
+      if (content !== null) text = content.trim()
+    }
+    let type = node.tagName.toLowerCase()
+    if (role !== undefined) type = role
+    if (id == null && role == null && (text == null || text === '')) return []
+    return [
+      {
+        id,
+        type,
+        text,
+        bounds: {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height
+        },
+        focused: node === document.activeElement,
+        enabled:
+          !node.hasAttribute('disabled') &&
+          node.getAttribute('aria-disabled') !== 'true'
+      }
+    ]
+  })
+}
+
 /** Supports documented normalized nodes and the supported native backends. */
 export function flattenPublicHierarchy(raw: unknown): PublicNode[] {
   if (Array.isArray(raw)) return raw.flatMap(flattenPublicHierarchy)
@@ -573,7 +662,7 @@ export class Chat2UI {
     await this.cdp.send('Emulation.setDeviceMetricsOverride', {
       width: metrics.width,
       height: metrics.height,
-      deviceScaleFactor: 1,
+      deviceScaleFactor: metrics.dpr,
       mobile: metrics.coarse
     })
     await this.cdp.send('Emulation.setTouchEmulationEnabled', {
@@ -581,12 +670,13 @@ export class Chat2UI {
       maxTouchPoints: 1
     })
     const actual = await this.dom(
-      'return {width:innerWidth,height:innerHeight,coarse:matchMedia("(pointer:coarse)").matches}'
+      'return {width:innerWidth,height:innerHeight,coarse:matchMedia("(pointer:coarse)").matches,dpr:devicePixelRatio}'
     )
     const matches =
       actual.width === metrics.width &&
       actual.height === metrics.height &&
-      actual.coarse === metrics.coarse
+      actual.coarse === metrics.coarse &&
+      actual.dpr === metrics.dpr
     this.steps.push({
       name: 'Viewport and pointer measurements',
       outcome: matches ? 'passed' : 'failed',
@@ -594,13 +684,17 @@ export class Chat2UI {
       actual: {
         width: actual.width,
         height: actual.height,
-        coarse: actual.coarse
+        coarse: actual.coarse,
+        dpr: actual.dpr
       }
     })
-    assert(matches, 'Actual viewport/pointer differs from requested surface')
+    assert(
+      matches,
+      'Actual viewport/pointer/pixel scale differs from requested surface'
+    )
   }
 
-  metrics(): { width: number; height: number; coarse: boolean } {
+  metrics(): { width: number; height: number; coarse: boolean; dpr: number } {
     return {
       width:
         this.surface === 'web-wide'
@@ -614,7 +708,8 @@ export class Chat2UI {
           : this.surface === 'web-320'
             ? 700
             : 844,
-      coarse: this.surface === 'web-touch' || this.surface === 'web-320'
+      coarse: this.surface === 'web-touch' || this.surface === 'web-320',
+      dpr: 2
     }
   }
 
@@ -691,10 +786,7 @@ export class Chat2UI {
   }
 
   async renderedPhoto(selected: Args): Promise<Args> {
-    const box = need(
-      (await this.device.copyTextFrom(selected)).element?.bounds,
-      'Measured public photo avatar bounds required'
-    )
+    const box = await this.observedBounds(selected)
     const path = join(this.runDir, 'photo-avatar-' + Date.now() + '.png')
     const capture = saveCapture(await this.device.screenshot(), path)
     const screen: Args = this.native
@@ -740,17 +832,47 @@ export class Chat2UI {
     return { box, capture, path, ...proof }
   }
 
-  async publicBounds(id: string): Promise<Bounds> {
-    const found = (await this.nodes()).find(
-      n => n.id === id && n.bounds != null
-    )?.bounds
+  async observedBounds(selected: Args): Promise<Bounds> {
+    const id = typeof selected.id === 'string' ? selected.id : undefined
+    const child = object(selected.childOf)
+    if (!this.native) {
+      const text = typeof selected.text === 'string' ? selected.text : undefined
+      assert(
+        id != null || text != null,
+        'Public identifier or text selector required'
+      )
+      assert(
+        selected.childOf == null || typeof child.id === 'string',
+        'Public parent identifier required'
+      )
+      const pattern = text == null ? undefined : new RegExp(text)
+      const nodes = await this.nodes(
+        typeof child.id === 'string' ? child.id : undefined
+      )
+      return need(
+        nodes.find(node =>
+          id != null ? node.id === id : pattern!.test(node.text ?? '')
+        )?.bounds,
+        'Measured public DOM element bounds required'
+      )
+    }
+    const found =
+      id != null && selected.childOf == null
+        ? (await this.nodes()).find(
+            node => node.id === id && node.bounds != null
+          )?.bounds
+        : undefined
     return (
       found ??
       need(
-        (await this.device.copyTextFrom({ id })).element?.bounds,
-        'Measured public element bounds required: ' + id
+        (await this.device.copyTextFrom(selected)).element?.bounds,
+        'Measured public element bounds required'
       )
     )
+  }
+
+  async publicBounds(id: string): Promise<Bounds> {
+    return await this.observedBounds({ id })
   }
 
   async publicText(id: string): Promise<string> {
@@ -776,19 +898,33 @@ export class Chat2UI {
       !this.native && this.cdp != null,
       'Only owned browser environment may resize'
     )
+    const expected = { ...this.metrics(), width, height }
     await this.cdp.send('Emulation.setDeviceMetricsOverride', {
       width,
       height,
-      deviceScaleFactor: 1,
-      mobile: this.metrics().coarse
+      deviceScaleFactor: expected.dpr,
+      mobile: expected.coarse
     })
     const actual = await this.dom(
-      'return {width:innerWidth,height:innerHeight}'
+      'return {width:innerWidth,height:innerHeight,coarse:matchMedia("(pointer:coarse)").matches,dpr:devicePixelRatio}'
     )
-    assert(
-      actual.width === width && actual.height === height,
-      'Actual resized viewport differs'
-    )
+    const matches =
+      actual.width === width &&
+      actual.height === height &&
+      actual.coarse === expected.coarse &&
+      actual.dpr === expected.dpr
+    this.steps.push({
+      name: 'Resized viewport and pointer measurements',
+      outcome: matches ? 'passed' : 'failed',
+      expected,
+      actual: {
+        width: actual.width,
+        height: actual.height,
+        coarse: actual.coarse,
+        dpr: actual.dpr
+      }
+    })
+    assert(matches, 'Actual resized viewport/pointer/pixel scale differs')
   }
 
   /** OS Settings UI is an explicit observed private recipe, driven only by Maestro. */
@@ -1020,8 +1156,18 @@ export class Chat2UI {
     }
   }
 
-  async nodes(): Promise<PublicNode[]> {
-    return flattenPublicHierarchy(await this.device.hierarchy())
+  async nodes(parentId?: string): Promise<PublicNode[]> {
+    if (this.native)
+      return flattenPublicHierarchy(await this.device.hierarchy())
+    const result = await this.dom(
+      'return {nodes:(' +
+        publicWebNodes.toString() +
+        ')(' +
+        JSON.stringify(parentId) +
+        ')}'
+    )
+    assert(Array.isArray(result.nodes), 'Observed public DOM nodes required')
+    return result.nodes as PublicNode[]
   }
 
   async dom(script: string): Promise<Args> {
