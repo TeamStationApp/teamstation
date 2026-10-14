@@ -82,6 +82,7 @@ export interface Theme {
   successColor: string
   warningColor: string
   dangerColor: string
+  linkTextColor: string
   liveColor: string
   scheduledColor: string
 

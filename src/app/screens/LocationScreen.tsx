@@ -311,13 +311,19 @@ export function LocationScreen({
               save().catch(() => undefined)
             }}
           />
-          <DangerText label="Cancel" disabled={saving} onPress={onCancel} />
+          <DangerText
+            label="Cancel"
+            style={styles.cancel}
+            disabled={saving}
+            onPress={onCancel}
+          />
         </View>
       </Screen>
     </KeyboardAvoidingView>
   )
 }
 const getStyles = cacheStyles((theme: Theme) => ({
+  cancel: { alignSelf: 'center' as const },
   page: { flex: 1 },
   body: { flex: 1 },
   search: { marginTop: theme.rem(1) },

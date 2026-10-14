@@ -12,6 +12,7 @@ import type { Theme } from './types'
  */
 const palette = {
   selectorGray: '#575D54',
+  blue: '#90CAF9',
   white: '#FFFFFF',
   black: '#000000',
   transparent: '#00000000',
@@ -106,6 +107,7 @@ export const tsDark: Theme = {
   successColor: palette.tsLightOlive,
   warningColor: palette.amber,
   dangerColor: palette.coralRed,
+  linkTextColor: palette.blue,
   liveColor: palette.coralRed,
   scheduledColor: palette.tsMediumOlive,
 
