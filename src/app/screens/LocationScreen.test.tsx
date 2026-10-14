@@ -121,6 +121,7 @@ describe('search-only city selection', () => {
       .not.includes('Use my location')
       .and.not.includes('Enter location manually')
     expect(find('Save')?.getAttribute('aria-disabled')).equals('true')
+    expect(getComputedStyle(find('Cancel')!).alignSelf).equals('center')
     await fill('City', 'a')
     await settle(300)
     expect(f.searches).length(0)

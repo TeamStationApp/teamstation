@@ -4,7 +4,6 @@ import { Modal, Pressable, Text, View } from 'react-native'
 import type { ParentPreview } from '../../common/groupLinks'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
-import { DangerText } from './DangerText'
 
 export interface BreakParentSheetProps {
   preview: ParentPreview
@@ -98,7 +97,15 @@ export function BreakParentSheet(
               onPress={onKeep}
             />
           ) : (
-            <DangerText label={cancelLabel} disabled={busy} onPress={onKeep} />
+            <Button
+              label={cancelLabel}
+              accessibilityLabel={cancelLabel}
+              kind="text"
+              textColor={theme.linkTextColor}
+              style={styles.cancel}
+              disabled={busy}
+              onPress={onKeep}
+            />
           )}
         </View>
       </View>
@@ -107,6 +114,7 @@ export function BreakParentSheet(
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  cancel: { alignSelf: 'center' },
   scrim: { flex: 1, justifyContent: 'flex-end' },
   behind: {
     position: 'absolute',

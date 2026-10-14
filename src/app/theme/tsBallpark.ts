@@ -54,6 +54,7 @@ const palette = {
   winInk: '#385E26',
   crimson: '#BA1A1A',
   crimsonPale: '#FFDAD6',
+  blue: '#1565C0',
 
   shadow: 'rgba(28, 35, 24, 0.10)',
   buttonShadow: 'rgba(28, 35, 24, 0.24)',
@@ -136,6 +137,7 @@ export const tsBallpark: Theme = {
   successColor: palette.winInk,
   warningColor: palette.gold,
   dangerColor: palette.crimson,
+  linkTextColor: palette.blue,
   liveColor: palette.liveRed,
   scheduledColor: palette.ash,
 

@@ -520,10 +520,10 @@ export const enUs = {
   // Coming in through an invite
   join_header: 'Invitation',
   join_loading: 'Checking that invite…',
-  join_unknown: 'That invite link is not good',
+  join_unknown: 'Invalid invite link',
   join_unknown_detail:
-    'It may have been stopped, or the address may have been copied out of an e-mail with a piece missing.',
-  join_dead: 'That invite link is no longer good',
+    'The link may have expired or been revoked, or its address may be incomplete.',
+  join_dead: 'Invalid invite link',
   join_title: 'You have been invited',
   join_scope_team: 'You are invited to watch %s',
   join_scope_season: 'You are invited to watch the whole %s season',
