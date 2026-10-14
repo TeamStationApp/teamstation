@@ -5,11 +5,13 @@ import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Emblem } from './Emblem'
 import { LivePill } from './LivePill'
+import { SettingsGear } from './SettingsGear'
 import { teamInitialsOf, teamTint } from './teamTile'
 import { useBreakpoint } from './useBreakpoint'
 import { VideoPoster } from './VideoPoster'
 
 export interface GameHeroCardProps {
+  onSettings?: () => void
   testID?: string
   awayName: string
   homeName: string
@@ -149,6 +151,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
   const styles = getStyles(useTheme())
   const narrow = useBreakpoint() === 'phone'
   const hasMeta =
+    props.onSettings != null ||
     dateLines != null ||
     (date != null && date !== '') ||
     (venue != null && venue !== '')
@@ -203,13 +206,21 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
                 </Text>
               )}
             </View>
-            {live ? (
-              <LivePill inline />
-            ) : status !== '' ? (
-              <View style={styles.statusChip}>
-                <Text style={styles.statusChipText}>{status}</Text>
-              </View>
-            ) : null}
+            <View style={styles.actions}>
+              {live ? (
+                <LivePill inline />
+              ) : status !== '' ? (
+                <View style={styles.statusChip}>
+                  <Text style={styles.statusChipText}>{status}</Text>
+                </View>
+              ) : null}
+              {props.onSettings != null && (
+                <SettingsGear
+                  label="Event settings"
+                  onPress={props.onSettings}
+                />
+              )}
+            </View>
           </View>
         )}
         <View style={[styles.plain, narrow && styles.plainStacked]}>
@@ -465,9 +476,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
     letterSpacing: theme.rem(0.04),
     opacity: 0.85
   },
+  actions: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flexShrink: 0,
+    gap: theme.rem(0.5)
+  },
   meta: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: theme.rem(theme.spaceSmRem),
     paddingHorizontal: theme.rem(theme.cardContentInsetRem),

@@ -259,15 +259,9 @@ describe('a player’s tabs', function () {
         roles={roles({ t1: ['coach', 'songkeeper'] })}
       />
     )
-    expect(tabNames()).deep.equals([
-      'Videos',
-      'Stats',
-      'Walk-up',
-      'Teams',
-      'Settings'
-    ])
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Walk-up', 'Teams'])
     // Dense strips keep the same clearance and scroll when necessary.
-    expect(tabSides()).deep.equals(Array(5).fill(px(1.125)))
+    expect(tabSides()).deep.equals(Array(4).fill(px(1.125)))
   })
 
   it('offers Teams to anybody, and Settings and Walk-up to nobody else', async function () {
@@ -301,8 +295,8 @@ describe('a player’s tabs', function () {
         roles={roles({ tem_other: ['assistant'] })}
       />
     )
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
-    expect(tabSides()).deep.equals(Array(4).fill(px(1.125)))
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
+    expect(tabSides()).deep.equals(Array(3).fill(px(1.125)))
     await act(async () => {
       root?.unmount()
     })
@@ -340,14 +334,8 @@ describe('a player’s tabs', function () {
         roles={roles({}, [7])}
       />
     )
-    expect(tabNames()).deep.equals([
-      'Videos',
-      'Stats',
-      'Walk-up',
-      'Teams',
-      'Settings'
-    ])
-    await press('Settings')
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Walk-up', 'Teams'])
+    await press('Player settings')
     expect(document.querySelector('[aria-label="Jersey number"]')).not.equals(
       null
     )
@@ -358,7 +346,7 @@ describe('a player’s tabs', function () {
     await render(
       <PlayerScreen client={playerClient()} userId="7" roles={roles({}, [7])} />
     )
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
   })
 
   it('knows a guardian by the row the player is now, from an address made before a merge', async function () {
@@ -372,13 +360,7 @@ describe('a player’s tabs', function () {
         roles={roles({}, [7])}
       />
     )
-    expect(tabNames()).deep.equals([
-      'Videos',
-      'Stats',
-      'Walk-up',
-      'Teams',
-      'Settings'
-    ])
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Walk-up', 'Teams'])
   })
 })
 
@@ -821,8 +803,8 @@ describe('a player’s Settings tab', function () {
         }}
       />
     )
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
-    await press('Settings')
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
+    await press('Player settings')
     expect(tabs).deep.equals(['settings'])
     expect(selectedTab()).equals('Settings')
     expect(document.querySelector('[aria-label="Bats Right"]')).equals(null)
@@ -892,7 +874,7 @@ describe('a player’s Settings tab', function () {
     )
     expect(selectedTab()).equals(undefined)
     expect(document.querySelector('[aria-label="Jersey number"]')).equals(null)
-    expect(tabNames()).includes('Settings')
+    expect(tabNames()).not.includes('Settings')
     expect(tabs).deep.equals([])
   })
 
@@ -915,11 +897,11 @@ describe('a player’s Settings tab', function () {
     await press('Filter stats')
     await press('Owls')
     await press('Show these')
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
     await press('Show every game')
     expect(filters).deep.equals([{ teamId: 'tem_other' }, {}])
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
-    await press('Settings')
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
+    await press('Player settings')
     // The roster of the team the page was opened for, and no other: for the
     // form, and for the whole name a roster manager reads in the header.
     expect(rosters.length).greaterThan(0)
@@ -1386,7 +1368,7 @@ describe('a player’s Walk-up address, through the app', function () {
     fixtureFetch({ t1: ['coach'] })
     await open('/players/7', 'tab=walkup&onTeam=t1')
     expect(selectedTab()).equals('Videos')
-    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams', 'Settings'])
+    expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
     expect(routePath(currentRoute())).equals('/players/7?onTeam=t1')
   })
 })

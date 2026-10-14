@@ -337,12 +337,20 @@ describe('the team card’s right-hand column', function () {
           : 'empty gear'
         : (child.textContent ?? '')
     )
+    const hero = end!.parentElement!
+    const placeLabels = [...hero.querySelectorAll('*')].filter(
+      node => node.children.length === 0 && node.textContent === '1st Place'
+    )
+    expect(
+      placeLabels,
+      `${viewer} has exactly one place badge across the hero`
+    ).length(1)
     return { end: end!, parts }
   }
 
-  it('stacks the place over the gear for an administrator, as tall as the row, never on top of each other', async function () {
+  it('keeps the administrator gear in its top-right column beside the place', async function () {
     const { end, parts } = await card('admin')
-    expect(parts).deep.equals(['1st Place', 'gear'])
+    expect(parts).deep.equals(['gear'])
     const style = getComputedStyle(end)
     expect(style.alignSelf).equals('stretch')
     expect(style.justifyContent).equals('space-between')
@@ -351,7 +359,7 @@ describe('the team card’s right-hand column', function () {
       '[data-testid="team-card-gear"]'
     )!
     expect(getComputedStyle(gear).position).not.equals('absolute')
-    expect(getComputedStyle(gear).marginTop).equals('auto')
+    expect(getComputedStyle(gear).alignSelf).equals('flex-start')
     // The team's name keeps the rest of the row.
     const name = [...document.querySelectorAll<HTMLElement>('div')].find(
       node => node.textContent === 'Demo Hawks'

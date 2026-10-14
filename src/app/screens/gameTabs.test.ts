@@ -35,30 +35,16 @@ function ids(pills: ReturnType<typeof gameTabs>): string[] {
 }
 
 describe('the pills across a game', function () {
-  it('puts the separate Settings action last only when team administration and a destination are available', () => {
-    const game = gameWith({ canScore: true, canDj: true })
-    const onSettings = (): void => undefined
-    const input = { game, music, onDjGame, onSettings, canManage: true }
-    const pills = gameTabs(input)
-    expect(ids(pills)).deep.equals([
-      'info',
-      'boxScore',
-      'watch',
-      'score',
-      'dj',
-      'settings'
-    ])
-    expect(pills.at(-1)).deep.equals({
-      id: 'settings',
-      label: 'Settings',
-      role: 'button'
-    })
-    expect(ids(gameTabs({ ...input, canManage: false }))).not.includes(
-      'settings'
-    )
-    expect(ids(gameTabs({ ...input, onSettings: undefined }))).not.includes(
-      'settings'
-    )
+  it('leaves Settings out of navigation pills', () => {
+    expect(
+      ids(
+        gameTabs({
+          game: gameWith({ canScore: true, canDj: true }),
+          music,
+          onDjGame
+        })
+      )
+    ).deep.equals(['info', 'boxScore', 'watch', 'score', 'dj'])
   })
   it('offers Score Game to a scorer of an unscored game', function () {
     const pills = gameTabs({ game: gameWith({ canScore: true }) })
@@ -144,14 +130,13 @@ describe('the pills across a game', function () {
     ).not.includes('dj')
     expect(ids(gameTabs({ game, music }))).not.includes('dj')
   })
-  it('offers authorized titled-event Settings while keeping Info its only content tab', () => {
-    const game = gameWith({ eventKind: 'event', canScore: true, canDj: true })
+  it('keeps Info as the only titled-event content tab', () => {
     expect(
-      ids(gameTabs({ game, canManage: true, onSettings: () => undefined }))
-    ).deep.equals(['info', 'settings'])
-    expect(
-      ids(gameTabs({ game, canManage: false, onSettings: () => undefined }))
+      ids(
+        gameTabs({
+          game: gameWith({ eventKind: 'event', canScore: true, canDj: true })
+        })
+      )
     ).deep.equals(['info'])
-    expect(ids(gameTabs({ game, canManage: true }))).deep.equals(['info'])
   })
 })

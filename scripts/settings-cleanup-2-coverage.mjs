@@ -38,6 +38,8 @@ if (!reportOnly) rmSync(temp, { recursive: true, force: true })
 mkdirSync(temp, { recursive: true })
 mkdirSync('lib', { recursive: true })
 const uiPatterns = [
+  'src/app/components/GameHeroCard.test.tsx',
+  'src/app/screens/TeamScreen.pending.test.tsx',
   'src/app/screens/SeasonParticipations.test.tsx',
   'src/app/screens/GroupRelationshipRow.test.tsx',
   'src/app/screens/NodeAdministrationScreen.test.tsx',

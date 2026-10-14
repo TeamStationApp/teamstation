@@ -1103,7 +1103,7 @@ async function main(): Promise<void> {
         .toUpperCase()
         .includes('ARRIVAL')
     )
-    await tap({ css: '[aria-label="Settings"][role="button"]' }, 'UP')
+    await tap({ css: '[aria-label="Event settings"][role="button"]' }, 'UP')
     await m.assertVisible({ text: 'Event Settings' })
     await wait(
       `document.querySelector('[aria-label="Arrival minutes (optional)"]')!=null`
@@ -1230,7 +1230,7 @@ async function main(): Promise<void> {
       'Shared titled creation/settings, leap date, optional end, cancellation, venue map and lookup/absent-location recovery passed'
     )
     await open(`/games/${gameId}`)
-    await tap({ css: '[aria-label="Settings"][role="button"]' }, 'UP')
+    await tap({ css: '[aria-label="Event settings"][role="button"]' }, 'UP')
     await m.assertVisible({ text: 'Game Settings', timeout: 20000 })
     await wait(
       `document.querySelector('[aria-label="Arrival minutes (optional)"]')!=null`
@@ -1493,7 +1493,7 @@ async function main(): Promise<void> {
       .where('id', '=', dstEvent.id)
       .execute()
     await open(`/games/${dstEvent.id}`)
-    await tap({ css: '[aria-label="Settings"][role="button"]' }, 'UP')
+    await tap({ css: '[aria-label="Event settings"][role="button"]' }, 'UP')
     await m.assertVisible({ text: 'Event Settings', timeout: 20000 })
     await tap({ id: 'event-schedule-endTime' })
     await tap({ text: 'Use time' })
@@ -1518,7 +1518,7 @@ async function main(): Promise<void> {
       .where('id', '=', dstEvent.id)
       .execute()
     await open(`/games/${dstEvent.id}`)
-    await tap({ css: '[aria-label="Settings"][role="button"]' }, 'UP')
+    await tap({ css: '[aria-label="Event settings"][role="button"]' }, 'UP')
     await m.assertVisible({ text: 'Event Settings', timeout: 20000 })
     await tap({ id: 'event-schedule-time' })
     await tap({ text: 'Use time' })
@@ -1559,7 +1559,7 @@ async function main(): Promise<void> {
       .where('id', '=', dstEvent.id)
       .execute()
     await open(`/games/${dstEvent.id}`)
-    await tap({ css: '[aria-label="Settings"][role="button"]' }, 'UP')
+    await tap({ css: '[aria-label="Event settings"][role="button"]' }, 'UP')
     await m.assertVisible({ text: 'Event Settings', timeout: 20000 })
     await tap({ id: 'event-schedule-time' })
     await m.assertVisible({ text: '.*Next day.*' })
