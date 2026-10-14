@@ -4,7 +4,8 @@ import { Text } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import type { GroupRef } from '../../common/groupCreation'
 import type { GroupDetail } from '../../common/publicGroups'
-import { Button, DangerText, Screen } from '../components'
+import { Button, Screen } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { AddPeopleScreen } from './AddPeopleScreen'
 import { InviteSpectatorsScreen } from './InviteSpectatorsScreen'
@@ -52,14 +53,14 @@ export function GroupPeoplePage({
             }}
           />
         )}
-        <DangerText label="Cancel" onPress={onDone} />
+        <CancelAction label="Cancel" onPress={onDone} />
       </Screen>
     )
   if (!detail.canManage)
     return (
       <Screen>
         <Text>Only a current administrator can change these settings.</Text>
-        <DangerText label="Cancel" onPress={onDone} />
+        <CancelAction label="Cancel" onPress={onDone} />
       </Screen>
     )
   const ref = { kind: detail.group.kind, id: detail.group.id }

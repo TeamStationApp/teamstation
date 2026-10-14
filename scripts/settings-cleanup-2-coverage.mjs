@@ -38,8 +38,18 @@ if (!reportOnly) rmSync(temp, { recursive: true, force: true })
 mkdirSync(temp, { recursive: true })
 mkdirSync('lib', { recursive: true })
 const uiPatterns = [
+  'src/app/screens/AccountScreen.test.tsx',
+  'src/app/screens/PersonProfileScreen.test.tsx',
+  'src/app/screens/fullName.test.tsx',
+  'src/app/screens/teamRoster.test.tsx',
+  'src/app/screens/PlayerSettingsTab.test.tsx',
+  'src/app/screens/EventInfoTab.test.tsx',
+  'src/app/screens/EventRsvpModal.test.tsx',
+  'src/app/components/RolesModal.test.tsx',
+  'src/app/walkup/DjLineupRow.test.tsx',
   'src/app/components/ManageGear.test.tsx',
   'src/app/components/nativeInitialsMeasurement.test.tsx',
+  'src/app/components/settingsCleanup3Pieces.test.tsx',
   'src/app/screens/TeamPage.test.tsx',
   'src/app/App.teamRoutes.test.tsx',
   'src/app/screens/SeasonStandings.test.tsx',

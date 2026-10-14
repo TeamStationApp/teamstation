@@ -19,6 +19,7 @@ import timezones from '../../common/eventTimezones.json'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { CancelAction } from './CancelAction'
 import { Icon } from './Icon'
 import { RadioMark } from './RadioMark'
 import { TextField } from './TextField'
@@ -370,11 +371,9 @@ export function CalendarPicker({
           onChoose(selected)
         }}
       />
-      <Button
+      <CancelAction
         label="Cancel"
         accessibilityLabel="Cancel date picker"
-        kind="text"
-        textColor={theme.dangerColor}
         onPress={onCancel}
       />
     </View>
@@ -573,11 +572,9 @@ export function TimePicker({
           onChoose(chosen, dayOffset)
         }}
       />
-      <Button
+      <CancelAction
         label="Cancel"
         accessibilityLabel="Cancel time picker"
-        kind="text"
-        textColor={theme.dangerColor}
         onPress={onCancel}
       />
     </View>

@@ -6,6 +6,7 @@ import type { CreateGroup, GroupPicture } from '../../common/groupCreation'
 import type { Locality } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
 import { Button, Card, TextField } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { GroupPictureChooser } from '../components/GroupPictureChooser'
 import { LocationRow } from '../components/LocationRow'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -224,12 +225,7 @@ export function PlaceholderTeamForm({
         </>
       )}
       {step === 'name' ? (
-        <Button
-          label="Cancel"
-          kind="text"
-          textColor={theme.dangerColor}
-          onPress={back}
-        />
+        <CancelAction onPress={back} />
       ) : (
         <Button label="Previous step" kind="secondary" onPress={back} />
       )}

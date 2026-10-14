@@ -12,6 +12,7 @@ import {
   SectionHeader,
   TextField
 } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -265,13 +266,11 @@ export function NodeAdministrationScreen({
                   change(confirmation, false).catch(() => undefined)
                 }}
               />
-              <Button
+              <CancelAction
+                destructivePrimary
                 label="Cancel"
-                kind="text"
-                textColor={theme.dangerColor}
                 disabled={busy}
                 onPress={close}
-                style={styles.cancel}
               />
             </View>
           </View>

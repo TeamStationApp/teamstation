@@ -3,6 +3,7 @@ import { Text } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { Button, Card, Screen, TextField } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export function PromoteExternalScreen({
@@ -78,12 +79,7 @@ export function PromoteExternalScreen({
             send().catch(() => undefined)
           }}
         />
-        <Button
-          label="Cancel"
-          kind="secondary"
-          disabled={busy}
-          onPress={onCancel}
-        />
+        <CancelAction label="Cancel" disabled={busy} onPress={onCancel} />
       </Card>
     </Screen>
   )

@@ -7,6 +7,7 @@ import { localityLabel } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
 import { formatDateRange } from '../../common/seasonTimeFrames'
 import { Button, Card, Screen, TextField } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { GroupLinkChoice } from './GroupScreen'
 
@@ -500,12 +501,7 @@ export function GroupLinkScreen({
             {error}
           </Text>
         )}
-        <Button
-          label="Cancel"
-          kind="secondary"
-          disabled={busy}
-          onPress={onCancel}
-        />
+        <CancelAction label="Cancel" disabled={busy} onPress={onCancel} />
       </View>
     </Screen>
   )

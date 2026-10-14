@@ -4,6 +4,7 @@ import { Pressable, Text, View } from 'react-native'
 import { formatDateRange } from '../../common/seasonTimeFrames'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { CancelAction } from './CancelAction'
 
 export interface DateRangePickerProps {
   initial?: { startsOn: string; endsOn: string }
@@ -118,7 +119,7 @@ export function DateRangePicker({
             onChoose({ startsOn: start, endsOn: end })
         }}
       />
-      <Button label="Cancel" kind="secondary" onPress={onCancel} />
+      <CancelAction label="Cancel" onPress={onCancel} />
     </View>
   )
 }

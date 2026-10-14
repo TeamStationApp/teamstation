@@ -6,7 +6,7 @@ import type { GroupPicture } from '../../common/groupCreation'
 import type { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
-import { DangerText } from './DangerText'
+import { CancelAction } from './CancelAction'
 import { GroupPictureChooser } from './GroupPictureChooser'
 
 export function PictureSheet({
@@ -100,7 +100,7 @@ export function PictureSheet({
               save().catch(() => undefined)
             }}
           />
-          <DangerText label="Cancel" disabled={busy} onPress={close} />
+          <CancelAction label="Cancel" disabled={busy} onPress={close} />
         </View>
       </View>
     </Modal>
