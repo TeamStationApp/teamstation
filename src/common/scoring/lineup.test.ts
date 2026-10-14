@@ -4,6 +4,7 @@ import { describe, it } from 'mocha'
 import { after, game, TEAMS, walk } from '../../test/scoringGames'
 import { applyAction } from './apply'
 import {
+  addPlayer,
   allocatePlayer,
   applyOverride,
   applyRoster,
@@ -13,6 +14,7 @@ import {
   overrideOf,
   validateRoster
 } from './lineup'
+import { applyRosterCommands, rosterSituation } from './rosterCommands'
 import { setupOf } from './state'
 
 describe('player identities', function () {
@@ -169,6 +171,93 @@ describe('roster checks', function () {
     expect(applied.state!.liveData.plays.currentPlay!.matchup.batter.id).equals(
       2
     )
+  })
+
+  it('bats each side from the top of its new order before the game has begun', function () {
+    const state = game()
+    const setup = setupOf(state)
+    setup.sides.away.battingOrder = [2, 3, 1, 4, 5, 6, 7, 8, 9]
+    setup.sides.home.battingOrder = [12, 10, 11, 13, 14, 15, 16, 17, 18]
+    const applied = applyAction(state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup
+    })
+    expect(applied.problems).deep.equals([])
+    const teams = applied.state.liveData.boxscore.teams
+    expect(teams.away.battingIndex).equals(0)
+    expect(teams.home.battingIndex).equals(0)
+    expect(applied.state.liveData.linescore.offense.batter!.id).equals(2)
+    expect(applied.state.liveData.plays.currentPlay!.matchup.batter.id).equals(
+      2
+    )
+  })
+
+  it('bats whoever leads off once the old leadoff is replaced before the game', function () {
+    const state = game()
+    const draft = structuredClone(state)
+    const bench = addPlayer(draft, 'away', 'Lindor')
+    const order = draft.liveData.boxscore.teams.away.battingOrder
+    order[0] = bench
+    const due = (): number =>
+      applyRoster(state, setupOf(draft)).state!.liveData.linescore.offense
+        .batter!.id
+    expect(due()).equals(bench)
+    // The man who took the leadoff's place bats fifth: the new leadoff is due.
+    order.splice(0, 1)
+    order.splice(4, 0, bench)
+    expect(order.slice(0, 5)).deep.equals([2, 3, 4, 5, bench])
+    expect(due()).equals(2)
+  })
+
+  it('keeps the batter due through a reorder once the first pitch is thrown', function () {
+    const state = after(game(), { type: 'pitch', call: 'B' })
+    const setup = setupOf(state)
+    setup.sides.away.battingOrder = [2, 3, 1, 4, 5, 6, 7, 8, 9]
+    const applied = applyAction(state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup
+    })
+    expect(applied.problems).deep.equals([])
+    expect(applied.state.liveData.linescore.offense.batter!.id).equals(1)
+    expect(applied.state.liveData.boxscore.teams.away.battingIndex).equals(2)
+  })
+
+  it('bats the leadoff of a lineup dictated and saved before the game (R1, R3, R6)', function () {
+    const state = game()
+    const situation = rosterSituation(state)
+    const fourth = applyRosterCommands(
+      state,
+      [
+        {
+          type: 'placeInLineup',
+          side: 'away',
+          places: [{ player: 1, slot: 4 }]
+        }
+      ],
+      situation
+    )
+    if ('problem' in fourth) throw new Error(fourth.problem)
+    expect(fourth.draft.liveData.boxscore.teams.away.battingOrder).deep.equals([
+      2, 3, 4, 1, 5, 6, 7, 8, 9
+    ])
+    const nine = applyRosterCommands(
+      fourth.draft,
+      [{ type: 'setLineup', side: 'away', order: [3, 2, 1, 4, 5, 6, 7, 8, 9] }],
+      situation
+    )
+    if ('problem' in nine) throw new Error(nine.problem)
+    const saved = applyAction(state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup: setupOf(nine.draft)
+    })
+    expect(saved.problems).deep.equals([])
+    expect(saved.state.liveData.linescore.offense.batter!.id).equals(3)
+    expect(saved.state.liveData.plays.currentPlay!.matchup.batter.id).equals(3)
+    const pitched = after(saved.state, { type: 'pitch', call: 'B' })
+    expect(pitched.liveData.plays.currentPlay!.matchup.batter.id).equals(3)
   })
 
   it('refuses a next batter who is already on base', function () {

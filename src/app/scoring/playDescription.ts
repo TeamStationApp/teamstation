@@ -1,5 +1,6 @@
 import {
   type BallInPlayAction,
+  BASES,
   type Destination,
   type Direction,
   type ScoringAction,
@@ -8,6 +9,7 @@ import {
 import { overrideOf, trajectoryOf } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import {
+  BASE_KEYS,
   type GameState,
   type Position,
   POSITIONS
@@ -319,7 +321,11 @@ export function describePlay(
   if (primary == null) {
     const running = actions.find(action => action.type === 'baseRunning')
     const battery = actions.find(action => action.type === 'batteryEvent')
-    const lineup = actions.find(action => action.type === 'lineup')
+    // A saved roster with a pinch runner on it is told by the runner.
+    const lineup =
+      actions.find(
+        action => action.type === 'lineup' && action.kind === 'runner'
+      ) ?? actions.find(action => action.type === 'lineup')
     const flow = actions.find(action => action.type === 'gameFlow')
     // A walk or strikeout the pitches came to leads, with the running after.
     const count =
@@ -391,20 +397,29 @@ export function describePlay(
         lineup.player == null ? undefined : words.name(lineup.player)
       const replaced =
         lineup.replaces == null ? undefined : words.name(lineup.replaces)
+      // A pinch runner who leaves the order runs for the man on his base.
+      const ranFor =
+        lineup.base == null
+          ? undefined
+          : before.liveData.linescore.offense[
+              BASE_KEYS[BASES.indexOf(lineup.base)]
+            ]?.id
       primary =
         lineup.kind === 'substitute' && player != null
           ? `${player} in${replaced == null ? '' : ` for ${replaced}`}${lineup.position == null ? '' : ` at ${lineup.position}`}`
           : lineup.kind === 'pinchRunner' && player != null
             ? `${player} runs${replaced == null ? '' : ` for ${replaced}`}`
-            : lineup.kind === 'batterSide'
-              ? `${batter == null ? 'The batter' : words.name(batter)} bats ${lineup.batSide === 'L' ? 'left' : 'right'}`
-              : lineup.kind === 'position' &&
-                  player != null &&
-                  lineup.position != null
-                ? `${player} to ${lineup.position}`
-                : lineup.kind === 'battingOrder'
-                  ? 'Batting order changed'
-                  : 'Roster changed'
+            : lineup.kind === 'runner' && player != null
+              ? `${player} runs${ranFor == null ? '' : ` for ${words.name(ranFor)}`}`
+              : lineup.kind === 'batterSide'
+                ? `${batter == null ? 'The batter' : words.name(batter)} bats ${lineup.batSide === 'L' ? 'left' : 'right'}`
+                : lineup.kind === 'position' &&
+                    player != null &&
+                    lineup.position != null
+                  ? `${player} to ${lineup.position}`
+                  : lineup.kind === 'battingOrder'
+                    ? 'Batting order changed'
+                    : 'Roster changed'
     } else if (flow?.type === 'gameFlow') {
       const { outs: previousOuts, ...previousSetup } = overrideOf(before)
       const { outs, ...setup } = overrideOf(after)

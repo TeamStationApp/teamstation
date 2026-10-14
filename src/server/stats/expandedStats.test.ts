@@ -308,6 +308,54 @@ describe('expanded game statistics', function () {
       expect(result.get(201)!.extra.lob).equals(outcome === 'stranded' ? 1 : 0)
     })
   }
+  describe('a pinch runner who keeps the batting order (U4c)', function () {
+    const hit = (eventType: 'single' | 'home_run'): ScoringAction[] => [
+      { type: 'ballInPlay', contact: 'swing', fielder: 18 },
+      { type: 'result', eventType },
+      close
+    ]
+    // Away 1 singles off the starter, who leaves for a made-up reliever
+    // (session 20, who has no user); Away 10 runs for him and keeps the order.
+    const ran: ScoringAction[] = [
+      ...hit('single'),
+      { type: 'lineup', kind: 'addPlayer', side: 'home', name: 'Reliever' },
+      {
+        type: 'lineup',
+        kind: 'substitute',
+        side: 'home',
+        player: 20,
+        replaces: 11
+      },
+      { type: 'lineup', kind: 'runner', side: 'away', base: '1B', player: 10 }
+    ]
+    it('credits him with his run, and the starter keeps the charge', function () {
+      const result = recorded(true, [
+        ...ran,
+        ...hit('home_run'),
+        ...strikeout,
+        ...strikeout,
+        ...strikeout
+      ])
+      expect(result.get(110)!.r).equals(1)
+      expect(result.get(101)!.r).equals(0)
+      expect(result.get(102)!.r).equals(1)
+      // The reliever, who has no user, is charged only the batter's run.
+      expect(result.get(201)!.pitch_r).equals(1)
+      expect(result.get(201)!.extra.lob).equals(0)
+    })
+    it('gives him a steal after the swap, and the starter his runner left on', function () {
+      const result = recorded(true, [
+        ...ran,
+        { type: 'baseRunning', kind: 'steal', runner: 10, to: '2B' },
+        ...strikeout,
+        ...strikeout,
+        ...strikeout
+      ])
+      expect(result.get(110)!.sb).equals(1)
+      expect(result.get(101)!.sb).equals(0)
+      expect(result.get(201)!.extra.lob).equals(1)
+    })
+  })
   it('preserves base validation and empty games', function () {
     expect(
       expandedGameStatLines([play('single', { runners: [] })], teams, known)

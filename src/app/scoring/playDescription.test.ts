@@ -8,6 +8,7 @@ import type {
 } from '../../common/scoring/actions'
 import { overrideOf } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
+import { setupOf } from '../../common/scoring/state'
 import { completeMotions } from '../../test/scoringHelpers'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
@@ -469,6 +470,41 @@ describe('a play in two lines', function () {
         state.session
       )?.primary
     ).equals('Eve F. runs for Ann B.')
+    // A pinch runner who keeps the order runs for the man on his base.
+    expect(
+      told(game({ second: 2 }), {
+        type: 'lineup',
+        kind: 'runner',
+        side: 'away',
+        base: '2B',
+        player: 4
+      })
+    ).deep.equals({ primary: 'Eve F. runs for Ann B.' })
+    // Saved with the rosters, in one step, the runner tells it.
+    const onSecond = game({ second: 2 }).session
+    expect(
+      describePlay(
+        onSecond,
+        [
+          { type: 'lineup', kind: 'roster', setup: setupOf(onSecond) },
+          {
+            type: 'lineup',
+            kind: 'runner',
+            side: 'away',
+            base: '2B',
+            player: 4
+          }
+        ],
+        onSecond
+      )?.primary
+    ).equals('Eve F. runs for Ann B.')
+    expect(
+      describePlay(
+        state.session,
+        [{ type: 'lineup', kind: 'runner', player: 4 }],
+        state.session
+      )?.primary
+    ).equals('Eve F. runs')
     expect(
       describePlay(
         state.session,

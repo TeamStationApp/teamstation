@@ -47,7 +47,8 @@ const EXTENSION_NAMES: Record<string, string> = {
   score_correction: 'Score Correction',
   ts_manual_placement: 'Batter Placed On Base',
   ts_batter_out: 'Batter Out',
-  ts_batting_order: 'Batting Order Change'
+  ts_batting_order: 'Batting Order Change',
+  ts_courtesy_runner: 'Pinch runner (order unchanged)'
 }
 
 /**

@@ -26,16 +26,20 @@ import {
   RUNNER_REASONS,
   type ScoringAction,
   shortName,
+  taggedAction,
   toolSchema,
-  TRAJECTORIES
+  TRAJECTORIES,
+  untaggedAction
 } from './actions'
 import { storedEventType } from './document'
 import { PITCH_HEIGHTS, PITCH_SIDES } from './pitchLocation'
+import { fieldingIds, taggedIds, tagOf } from './playerTags'
 import {
   asGameSetup,
   asGameState,
   copyState,
   type GameState,
+  type Position,
   POSITIONS,
   setupOf
 } from './state'
@@ -206,6 +210,11 @@ describe('scoring actions', function () {
     expect(result).deep.equals({
       action: { type: 'lineup', kind: 'roster', setup }
     })
+    expect(
+      cleanAction({ type: 'lineup', kind: 'roster', setup, shown: true })
+    ).deep.equals({
+      action: { type: 'lineup', kind: 'roster', setup, shown: true }
+    })
   })
 
   it('answers an unknown or malformed action with a problem, never a throw', function () {
@@ -289,6 +298,39 @@ describe('scoring actions', function () {
     expect(props('lineup').position.enum).deep.equals(POSITIONS)
     expect(props('lineup').base.enum).deep.equals(BASES)
     expect(props('gameFlow').kind.enum).deep.equals(GAME_FLOW_KINDS)
+    // A player is his tag, never a number: not the jersey said, which is
+    // how the roster tools beside these take him, and not a base.
+    expect(props('ballInPlay').fielder).deep.equals({
+      type: 'string',
+      description:
+        "The fielder who first handled the ball: the player's tag from GAME, like KT4; never a jersey or base number"
+    })
+    const player = { type: 'string' }
+    const players = { type: 'array', items: { type: 'string' } }
+    for (const [name, field, shape] of [
+      ['ballInPlay', 'fielder', player],
+      ['fieldingPlay', 'fielders', players],
+      ['fieldingPlay', 'error', player],
+      ['runnerMovement', 'runner', player],
+      ['runnerMovement', 'fielders', players],
+      ['baseRunning', 'runner', player],
+      ['baseRunning', 'fielders', players],
+      ['lineup', 'order', players],
+      ['lineup', 'player', player],
+      ['lineup', 'replaces', player],
+      ['gameFlow', 'runner', player]
+    ] as const) {
+      expect(props(name)[field], `${name}.${field}`).deep.include(shape)
+      expect(
+        (props(name)[field] as { description?: string }).description
+      ).match(
+        /the player's tag from GAME, like KT4; never a jersey or base number$/
+      )
+    }
+    const battery = tools.find(tool => tool.name === 'batteryEvent')!
+    expect(
+      battery.input_schema.properties?.advances.items?.properties?.runner
+    ).deep.include(player)
     for (const tool of tools) {
       expect(tool.description).not.equals('')
       expect(tool.input_schema.additionalProperties).equals(false)
@@ -339,11 +381,19 @@ describe('scoring actions', function () {
     const text = promptContext(sampleGame())
     expect(text).includes('Top of the 3rd, 1 out, count 1-2.')
     expect(text).includes('Visitors batting, Hosts in the field.')
+    // Every player by his tag, and no id.
     expect(text).includes(
-      'Batter: Player 4. #4 (id 4). Pitcher: Player 1. #10 (id 10).'
+      `Batter: Player 4. #4 (tag ${tagOf(4)}). Pitcher: Player 1. #10 (tag ${tagOf(10)}).`
     )
-    expect(text).includes('On first: nobody. On second: Player 3. #3 (id 3).')
-    expect(text).includes('SS Player 1. #14 (id 14)')
+    expect(text).includes(
+      `On first: nobody. On second: Player 3. #3 (tag ${tagOf(3)}).`
+    )
+    expect(text).includes(`Next batter: Player 5. #5 (tag ${tagOf(5)}).`)
+    expect(text).includes(`SS Player 1. #14 (tag ${tagOf(14)})`)
+    expect([...taggedIds(text)].sort((a, b) => a - b)).deep.equals([
+      3, 4, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18
+    ])
+    expect(text).not.match(/\bid\b/)
     expect(text).not.match(/runs?\b|score|atBatIndex|at-bat/i)
 
     const bottom = sampleGame()
@@ -358,10 +408,396 @@ describe('scoring actions', function () {
     expect(promptContext(bottom)).includes(
       'Hosts batting, Visitors in the field.'
     )
-    expect(promptContext(bottom)).includes('Batter: Unlisted (id 99).')
+    expect(promptContext(bottom)).includes(
+      `Batter: Unlisted (tag ${tagOf(99)}).`
+    )
     // A player with no number on the roster is named without one.
     bottom.gameData.players[14].jersey = '  '
-    expect(promptContext(bottom)).includes('SS Player 1. (id 14)')
+    expect(promptContext(bottom)).includes(`SS Player 1. (tag ${tagOf(14)})`)
+  })
+
+  it('reads a dictated action’s players back from their tags, and tags them again for the model', function () {
+    const game = new Set([1, 2, 3, 5, 11, 12, 13, 14, 18])
+    // Each example as a model would call for it: the screen alone drags.
+    const said = examples.map(example => {
+      const { launchAngleDragged, ...rest } = example as Record<string, unknown>
+      return rest as ScoringAction
+    })
+    const tagged = said.map(taggedAction)
+    // Every player field, a battery event's runners and a base's runner too.
+    expect(tagged[1]).deep.include({ fielder: tagOf(11) })
+    expect(tagged[3]).deep.include({
+      fielders: [tagOf(14), tagOf(13)],
+      error: tagOf(13)
+    })
+    expect(tagged[4]).deep.include({
+      runner: tagOf(3),
+      fielders: [tagOf(17), tagOf(11)]
+    })
+    expect(tagged[6]).deep.include({
+      advances: [{ runner: tagOf(3), to: '3B' }]
+    })
+    expect(tagged[7]).deep.include({
+      player: tagOf(18),
+      replaces: tagOf(14),
+      order: [tagOf(1), tagOf(2)],
+      nextBatter: tagOf(2)
+    })
+    expect(tagged[8]).deep.include({
+      runner: tagOf(3),
+      batter: tagOf(12),
+      pitcher: tagOf(5),
+      bases: [null, tagOf(13), null]
+    })
+    // Read back, each is the action it was.
+    const all = new Set([...game, 17])
+    for (const [index, raw] of tagged.entries())
+      expect(
+        untaggedAction(raw as Record<string, unknown> & { type: string }, all),
+        String(index)
+      ).deep.equals({ raw: said[index] })
+    expect(
+      untaggedAction(
+        {
+          type: 'baseRunning',
+          kind: 'steal',
+          runner: ` ${tagOf(3).toLowerCase()} `,
+          to: '3B'
+        },
+        game
+      )
+    ).deep.equals({
+      raw: { type: 'baseRunning', kind: 'steal', runner: 3, to: '3B' }
+    })
+    // As the game writes him, copied whole.
+    expect(
+      untaggedAction(
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          fielder: `SS Ian K. #5 (tag ${tagOf(14)})`
+        },
+        game
+      )
+    ).deep.equals({
+      raw: { type: 'ballInPlay', contact: 'swing', fielder: 14 }
+    })
+  })
+
+  it('refuses a dictated player the game gives no tag: a number, a base, a stranger', function () {
+    const game = new Set([3, 14])
+    const refused = (raw: Record<string, unknown>): string | undefined => {
+      const untagged = untaggedAction(
+        raw as Record<string, unknown> & { type: string },
+        game
+      )
+      return 'problem' in untagged
+        ? `${untagged.problem.code}: ${untagged.problem.message}`
+        : undefined
+    }
+    const steal = { type: 'baseRunning', kind: 'steal', to: '3B' }
+    expect(refused({ ...steal, runner: 3 })).equals(
+      'unknownPlayer: the steal — the runner 3 is no player in the game'
+    )
+    for (const runner of ['3', '#3', '3B', 'SS', 'KT', '', tagOf(4)])
+      expect(refused({ ...steal, runner }), runner).match(/^unknownPlayer: /)
+    expect(
+      refused({
+        type: 'fieldingPlay',
+        fielders: [tagOf(14), 5],
+        error: tagOf(14)
+      })
+    ).equals('unknownPlayer: the error — a fielder 5 is no player in the game')
+    expect(
+      refused({
+        type: 'batteryEvent',
+        kind: 'wild_pitch',
+        advances: [{ runner: tagOf(5), to: '3B' }]
+      })
+    ).equals(
+      'unknownPlayer: the wild pitch — the runner is no player in the game'
+    )
+    // A setup names its players by id, which a model never has.
+    expect(
+      refused({ type: 'lineup', kind: 'roster', setup: { sides: {} } })
+    ).equals(
+      'malformed: the lineup change — a whole game setup is never dictated'
+    )
+    // No player at all is nothing to read; an unknown action is the cleaner's.
+    expect(refused({ type: 'pitch', call: 'B' })).equals(undefined)
+    expect(refused({ type: 'dance', runner: 3 })).equals(undefined)
+  })
+
+  it('reads a fielder said by his position as the player the game lists there', function () {
+    const game = sampleGame()
+    const defense = game.liveData.linescore.defense
+    const context = promptContext(game)
+    const fielding = fieldingIds(context)
+    const ids = taggedIds(context)
+    for (const position of POSITIONS) {
+      const id = defense[position]?.id
+      expect(fielding.get(position), position).equals(id)
+      expect(
+        untaggedAction(
+          { type: 'ballInPlay', contact: 'swing', fielder: position },
+          ids,
+          fielding
+        ),
+        position
+      ).deep.equals({
+        raw: { type: 'ballInPlay', contact: 'swing', fielder: id }
+      })
+    }
+    // In the words a scorer uses, in every field that names a fielder.
+    const at = (position: Position): number | undefined => defense[position]?.id
+    expect(
+      untaggedAction(
+        {
+          type: 'fieldingPlay',
+          fielders: ['the shortstop', 'First Baseman'],
+          error: '1b'
+        },
+        ids,
+        fielding
+      )
+    ).deep.equals({
+      raw: {
+        type: 'fieldingPlay',
+        fielders: [at('SS'), at('1B')],
+        error: at('1B')
+      }
+    })
+    expect(
+      untaggedAction(
+        {
+          type: 'runnerMovement',
+          runner: tagOf(3),
+          to: 'home',
+          out: true,
+          fielders: ['left fielder', 'C']
+        },
+        ids,
+        fielding
+      )
+    ).deep.equals({
+      raw: {
+        type: 'runnerMovement',
+        runner: 3,
+        to: 'home',
+        out: true,
+        fielders: [at('LF'), at('C')]
+      }
+    })
+    expect(
+      untaggedAction(
+        {
+          type: 'baseRunning',
+          kind: 'caught_stealing',
+          runner: tagOf(3),
+          to: '2B',
+          fielders: ['catcher', 'the second-baseman']
+        },
+        ids,
+        fielding
+      )
+    ).deep.equals({
+      raw: {
+        type: 'baseRunning',
+        kind: 'caught_stealing',
+        runner: 3,
+        to: '2B',
+        fielders: [at('C'), at('2B')]
+      }
+    })
+
+    const refused = (raw: Record<string, unknown>): string | undefined => {
+      const untagged = untaggedAction(
+        raw as Record<string, unknown> & { type: string },
+        ids,
+        new Map([...fielding].filter(([position]) => position !== 'RF'))
+      )
+      return 'problem' in untagged
+        ? `${untagged.problem.code}: ${untagged.problem.message}`
+        : undefined
+    }
+    // A position nobody plays, and no position at all.
+    expect(
+      refused({ type: 'ballInPlay', contact: 'swing', fielder: 'RF' })
+    ).equals(
+      'unknownPlayer: the ball in play — the fielder "RF" is no player in the game'
+    )
+    for (const [fielder, position] of [
+      ['left', 'LF'],
+      ['center', 'CF'],
+      ['right', 'RF'],
+      ['RF.', 'RF'],
+      ['the right fielder.', 'RF'],
+      ['leftfielder', 'LF'],
+      ['3rd', '3B'],
+      ['3rd baseman', '3B']
+    ] as const)
+      expect(
+        untaggedAction(
+          { type: 'ballInPlay', contact: 'swing', fielder },
+          ids,
+          fielding
+        ),
+        fielder
+      ).deep.equals({
+        raw: { type: 'ballInPlay', contact: 'swing', fielder: at(position) }
+      })
+    for (const fielder of ['DH', 'the outfield', '9'])
+      expect(
+        refused({ type: 'ballInPlay', contact: 'swing', fielder }),
+        fielder
+      ).equals(
+        `unknownPlayer: the ball in play — the fielder ${JSON.stringify(fielder)} is no player in the game`
+      )
+    // A position names only a fielder: never a runner, a batter or a player.
+    expect(
+      refused({ type: 'baseRunning', kind: 'steal', runner: 'SS', to: '3B' })
+    ).equals(
+      'unknownPlayer: the steal — the runner "SS" is no player in the game'
+    )
+    expect(
+      refused({
+        type: 'batteryEvent',
+        kind: 'passed_ball',
+        advances: [{ runner: 'the shortstop', to: '3B' }]
+      })
+    ).equals(
+      'unknownPlayer: the passed ball — the runner "the shortstop" is no player in the game'
+    )
+    expect(
+      refused({
+        type: 'lineup',
+        kind: 'substitute',
+        side: 'home',
+        position: 'LF',
+        player: tagOf(at('LF') ?? 0),
+        replaces: 'LF'
+      })
+    ).equals(
+      'unknownPlayer: the lineup change — the player leaving "LF" is no player in the game'
+    )
+    expect(
+      refused({
+        type: 'gameFlow',
+        kind: 'placeRunner',
+        runner: 'C',
+        base: '2B'
+      })
+    ).equals(
+      'unknownPlayer: the game change — the runner "C" is no player in the game'
+    )
+  })
+
+  it('tells the scorer what a dropped call left out, in his words, never a tag', function () {
+    const game = new Set([3])
+    const message = (raw: Record<string, unknown>): string | undefined => {
+      const untagged = untaggedAction(
+        raw as Record<string, unknown> & { type: string },
+        game
+      )
+      return 'problem' in untagged ? untagged.problem.message : undefined
+    }
+    const nobody = tagOf(4)
+    const said: Array<[Record<string, unknown>, string]> = [
+      [{ type: 'pitch', call: 'B', batter: nobody }, 'the pitch — the batter'],
+      [
+        { type: 'ballInPlay', contact: 'swing', fielder: nobody },
+        'the ball in play — the fielder'
+      ],
+      [
+        { type: 'fieldingPlay', fielders: [nobody], error: tagOf(3) },
+        'the error — a fielder'
+      ],
+      [
+        { type: 'fieldingPlay', fielders: [tagOf(3)], error: nobody },
+        'the error — the fielder charged with the error'
+      ],
+      [
+        { type: 'runnerMovement', runner: nobody, to: 'home' },
+        "the runner's move — the runner"
+      ],
+      [
+        { type: 'baseRunning', kind: 'pickoff', runner: nobody },
+        'the pickoff — the runner'
+      ],
+      [
+        { type: 'baseRunning', kind: 'pickoff_safe', runner: nobody },
+        'the pickoff throw — the runner'
+      ],
+      [
+        { type: 'baseRunning', kind: 'defensive_indifference', runner: nobody },
+        "the runner's advance — the runner"
+      ],
+      [
+        { type: 'baseRunning', kind: 'caught_stealing', runner: nobody },
+        'the caught stealing — the runner'
+      ],
+      [
+        { type: 'baseRunning', kind: 'sneak', runner: nobody },
+        "the runner's play — the runner"
+      ],
+      [
+        {
+          type: 'batteryEvent',
+          kind: 'balk',
+          advances: [{ runner: nobody, to: '2B' }]
+        },
+        'the balk — the runner'
+      ],
+      [
+        {
+          type: 'batteryEvent',
+          advances: [{ runner: nobody, to: '2B' }]
+        },
+        'the wild pitch, passed ball or balk — the runner'
+      ],
+      [
+        { type: 'lineup', kind: 'battingOrder', order: [tagOf(3), nobody] },
+        'the lineup change — a batter in the order'
+      ],
+      [
+        { type: 'lineup', kind: 'position', player: nobody },
+        'the lineup change — the player'
+      ],
+      [
+        { type: 'gameFlow', kind: 'override', pitcher: nobody },
+        'the game change — the pitcher'
+      ],
+      [
+        { type: 'gameFlow', kind: 'override', bases: [null, nobody] },
+        'the game change — a runner on base'
+      ],
+      [
+        { type: 'gameFlow', kind: 'override', nextBatter: nobody },
+        'the game change — the next batter'
+      ],
+      [
+        { type: 'result', eventType: 'single', runner: nobody },
+        'the result — the runner'
+      ]
+    ]
+    for (const [raw, what] of said)
+      expect(message(raw), what).equals(`${what} is no player in the game`)
+    // A tag of nobody, copied as the game writes it, and a blank, unshown.
+    expect(
+      message({
+        type: 'ballInPlay',
+        contact: 'swing',
+        fielder: `Ian K. #5 (tag ${nobody})`
+      })
+    ).equals('the ball in play — the fielder is no player in the game')
+    expect(message({ type: 'baseRunning', kind: 'steal', runner: ' ' })).equals(
+      'the steal — the runner is no player in the game'
+    )
+    expect(
+      message({ type: 'baseRunning', kind: 'steal', runner: { id: 3 } })
+    ).equals('the steal — the runner is no player in the game')
+    for (const text of said.map(([raw]) => message(raw) ?? ''))
+      expect(text).not.match(/[A-Z]{2}[0-9]|tag|ballInPlay|baseRunning/)
   })
 
   it('names a player by first name and last initial, and never by surname', function () {
@@ -383,7 +819,7 @@ describe('scoring actions', function () {
       player.fullName = `Chase Kaczmarek${player.id}`
     }
     const text = promptContext(game)
-    expect(text).includes('Batter: Chase K. #4 (id 4).')
+    expect(text).includes(`Batter: Chase K. #4 (tag ${tagOf(4)}).`)
     expect(text).not.match(/Kaczmarek/)
     expect(keyterms(game).join(' ')).not.match(/Kaczmarek/)
   })
@@ -414,6 +850,32 @@ describe('scoring actions', function () {
       expect(term.length).within(1, 50)
     }
     expect(keyterms(game)).deep.equals(terms)
+  })
+
+  it('sends a coach only the players on his side', function () {
+    const game = sampleGame()
+    for (const player of Object.values(game.gameData.players)) {
+      player.firstName = `First${player.id}`
+      player.lastName = `Last${player.id}`
+    }
+    const home = keyterms(game, 'home')
+    expect(home.filter(term => /^First\d+ L\.$/.test(term))).deep.equals(
+      [10, 11, 12, 13, 14, 15, 16, 17, 18].map(id => `First${id} L.`)
+    )
+    expect(home.slice(9)).deep.equals(['Hosts', ...DICTATION_TERMS])
+    const away = keyterms(game, 'away')
+    expect(away.filter(term => /^First\d+ L\.$/.test(term))).deep.equals([
+      'First4 L.',
+      'First3 L.',
+      'First1 L.',
+      'First2 L.',
+      'First5 L.',
+      'First6 L.',
+      'First7 L.',
+      'First8 L.',
+      'First9 L.'
+    ])
+    expect(away.slice(9)).deep.equals(['Visitors', ...DICTATION_TERMS])
   })
 
   it('keeps the same terms when a runner only moves', function () {

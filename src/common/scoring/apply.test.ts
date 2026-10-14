@@ -417,12 +417,17 @@ describe('applying lineup changes', function () {
   })
 
   it('sets a batting order and brings up whoever is due in it', function () {
-    const state = after(game(), {
+    const reverse: ScoringAction = {
       type: 'lineup',
       kind: 'battingOrder',
       side: 'away',
       order: [9, 8, 7, 6, 5, 4, 3, 2, 1]
-    })
+    }
+    // Before the game nobody is due: the new order bats from its top.
+    expect(after(game(), reverse).liveData.linescore.offense.batter!.id).equals(
+      9
+    )
+    const state = after(after(game(), ball), reverse)
     expect(state.liveData.linescore.offense.batter!.id).equals(1)
     const next = strikeout(state)
     expect(next.liveData.linescore.offense.batter!.id).equals(9)
@@ -494,6 +499,119 @@ describe('applying lineup changes', function () {
     })
     expect(state.awaitingBatter).equals(null)
     expect(state.liveData.linescore.offense.batter!.id).equals(5)
+  })
+})
+
+describe('a pinch runner who keeps the batting order (U3)', function () {
+  const runner = (
+    player: number,
+    base: '1B' | '2B' | '3B' = '1B',
+    side: 'away' | 'home' = 'away'
+  ): ScoringAction => ({ type: 'lineup', kind: 'runner', side, base, player })
+  /** Player 1 walked by the starter, who then left; Freeman (19) on the bench. */
+  const walked = (): ReturnType<typeof game> =>
+    after(
+      walk(game()),
+      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Freeman' },
+      { type: 'lineup', kind: 'addPlayer', side: 'home', name: 'Cole' },
+      {
+        type: 'lineup',
+        kind: 'substitute',
+        side: 'home',
+        player: 20,
+        replaces: F.P
+      }
+    )
+
+  it("puts him on the base and gives him the runner's charges, and nothing else changes", function () {
+    const state = walked()
+    const before = state.liveData.boxscore.teams
+    // He is on the side's roster for the game, whether or not he was before.
+    state.liveData.boxscore.teams.away.players =
+      state.liveData.boxscore.teams.away.players.filter(id => id !== 19)
+    const applied = play(state, runner(19))
+    const ran = applied.state
+    expect(bases(ran)).deep.equals([19, null, null])
+    expect(ran.liveData.boxscore.teams.away.players).includes(19)
+    expect(ran.liveData.boxscore.teams.away.battingOrder).deep.equals(
+      before.away.battingOrder
+    )
+    expect(ran.liveData.boxscore.teams.away.defense).deep.equals(
+      before.away.defense
+    )
+    expect(ran.liveData.boxscore.teams.home).deep.equals(before.home)
+    expect(ran.liveData.linescore.offense.batter!.id).equals(2)
+    expect(
+      ran.liveData.linescore.offense.responsiblePitcher?.first
+    ).deep.equals({ id: F.P, fullName: 'Player 1' })
+    expect(applied.transitions).deep.equals([
+      { type: 'batterChanged', batter: 2 }
+    ])
+    const events = ran.liveData.plays.currentPlay!.playEvents.filter(
+      event => event.details.code === 'ts_courtesy_runner'
+    )
+    expect(events).deep.equals([
+      {
+        index: ran.liveData.plays.currentPlay!.playEvents.length - 1,
+        isPitch: false,
+        type: 'action',
+        details: {
+          description:
+            'Pinch-runner Freeman runs for Player 1; the batting order is unchanged',
+          code: 'ts_courtesy_runner'
+        },
+        isSubstitution: false,
+        replacedPlayer: { id: 1, fullName: 'Player 1' },
+        count: { balls: 0, strikes: 0, outs: 0 },
+        player: { id: 19, fullName: 'Freeman' }
+      }
+    ])
+    // His run is charged to the starter who put the man on base.
+    const homer = after(
+      ran,
+      { type: 'ballInPlay', contact: 'swing', fielder: F.CF },
+      { type: 'result', eventType: 'home_run' },
+      close
+    )
+    const scored = homer.liveData.plays.allPlays
+      .at(-1)!
+      .runners.find(entry => entry.details.runner.id === 19)!
+    expect(scored.movement.runScored).equals(true)
+    expect(scored.details.responsiblePitcher!.id).equals(F.P)
+    expect(runs(homer)).equals(2)
+  })
+
+  it('waits for the play being decided, and refuses the side in the field or an empty base', function () {
+    const state = walked()
+    const pending = after(state, { type: 'result', eventType: 'field_out' })
+    expect(applyAction(pending, runner(19)).problems[0]).deep.equals({
+      code: 'notNow',
+      message: 'Finish the current play first'
+    })
+    expect(
+      applyAction(state, runner(20, '1B', 'home')).problems[0]
+    ).deep.equals({
+      code: 'illegal',
+      message: 'A pinch runner runs for the side at bat'
+    })
+    const empty = applyAction(state, runner(19, '2B'))
+    expect(empty.problems[0]).deep.equals({
+      code: 'illegal',
+      message: 'Nobody is on 2B'
+    })
+    expect(empty.state).equals(state)
+    expect(
+      applyAction(state, { type: 'lineup', kind: 'runner', side: 'away' })
+        .problems[0].code
+    ).equals('malformed')
+    expect(applyAction(state, runner(F.SS)).problems[0]).deep.equals({
+      code: 'unknownPlayer',
+      message: `Player ${F.SS} is not on the side at bat`
+    })
+    expect(applyAction(state, runner(2)).problems[0]).deep.equals({
+      code: 'illegal',
+      message: 'Player 2 is already batting or on base'
+    })
   })
 })
 

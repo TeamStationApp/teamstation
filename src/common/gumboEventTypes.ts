@@ -8,8 +8,9 @@
  * The extensions are `final_score` and `score_correction`, which an import
  * posts, `ts_manual_placement`, a batter the scorer put on
  * base by hand, `ts_batter_out`, a batter out on a play MLB has no code
- * for ("Batter Out — Other"), and `ts_batting_order`, the action a scorer's
- * change of batting order writes.
+ * for ("Batter Out — Other"), `ts_batting_order`, the action a scorer's
+ * change of batting order writes, and `ts_courtesy_runner`, a pinch runner
+ * who takes a runner's base and leaves the batting order as it is.
  */
 export const GUMBO_EVENT_TYPES = [
   'pickoff_1b',
@@ -91,7 +92,8 @@ export const GUMBO_EVENT_TYPES = [
   'score_correction',
   'ts_manual_placement',
   'ts_batter_out',
-  'ts_batting_order'
+  'ts_batting_order',
+  'ts_courtesy_runner'
 ] as const
 
 export type GumboEventType = (typeof GUMBO_EVENT_TYPES)[number]
@@ -102,7 +104,8 @@ export const GUMBO_EXTENSION_EVENT_TYPES: readonly GumboEventType[] = [
   'score_correction',
   'ts_manual_placement',
   'ts_batter_out',
-  'ts_batting_order'
+  'ts_batting_order',
+  'ts_courtesy_runner'
 ]
 
 /**
@@ -235,7 +238,8 @@ const EVENT_TYPE_NAMES: Record<GumboEventType, string> = {
   score_correction: 'Score correction',
   ts_manual_placement: 'Batter placed on base',
   ts_batter_out: 'Out',
-  ts_batting_order: 'Batting order change'
+  ts_batting_order: 'Batting order change',
+  ts_courtesy_runner: 'Pinch runner (order unchanged)'
 }
 
 export function eventTypeName(eventType: string | null): string {

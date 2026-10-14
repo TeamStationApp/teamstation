@@ -248,7 +248,8 @@ export const VOCABULARY_ENTRIES: readonly VocabularyEntry[] = [
   {
     phrases: ['wild pitch', 'got away from the pitcher', 'to the backstop'],
     means: 'a wild pitch',
-    action: { type: 'batteryEvent', kind: 'wild_pitch' }
+    action: { type: 'batteryEvent', kind: 'wild_pitch' },
+    note: 'when the count is 0-0, send the pitch first — pitch B unless he called a strike — then this, with where each runner went'
   },
   {
     phrases: ['passed ball', 'got by the catcher'],
@@ -261,9 +262,24 @@ export const VOCABULARY_ENTRIES: readonly VocabularyEntry[] = [
     action: { type: 'batteryEvent', kind: 'balk' }
   },
   {
-    phrases: ["catcher's interference", 'glove hit the bat'],
+    phrases: [
+      'third disengagement',
+      'disengaged a third time',
+      'stepped off a third time'
+    ],
+    means: 'a balk — the third disengagement, not third base',
+    action: { type: 'batteryEvent', kind: 'balk' },
+    note: 'moves every runner up one base by itself; not defensive indifference, and no advances'
+  },
+  {
+    phrases: [
+      "catcher's interference",
+      'glove hit the bat',
+      "the bat hits the catcher's mitt"
+    ],
     means: "catcher's interference",
-    action: { type: 'result', eventType: 'catcher_interference' }
+    action: { type: 'result', eventType: 'catcher_interference' },
+    note: 'puts the batter on first and moves a forced runner; do not also call placeRunner, and do not ask'
   },
   {
     phrases: [
@@ -294,7 +310,7 @@ function actionText(action: VocabularyAction): string {
 const RULES = [
   'Words that name the same event are ONE action. "Whiffed, K", "struck him out swinging, strike three" and "ball four, walked him" each describe one pitch. A summary word — K, strikeout, strike three, walk — restates the pitch before it and never adds another. A second pitch would record the strikeout and then put a strike on the next batter.',
   'An ordinary strikeout is a pitch, never result strikeout. In this system result strikeout means a dropped third strike only, and it is refused unless there are two strikes and first base is empty or there are two outs. A called strike three is pitch C, a swinging one is pitch S, a foul tip with two strikes is pitch T. Likewise there is no walk result: a walk is the fourth pitch B.',
-  'A strikeout or a walk the count cannot reach is a question. Pitches are usually tapped, so the count in the context is normally current; "struck out" on a one-strike count means pitches went unrecorded. Call askScorer rather than inventing the missing pitches.',
+  'A strikeout or a walk the count cannot reach is a question. Pitches are usually tapped, so the count in the context is normally current; "struck out" on a one-strike count means pitches went unrecorded. Call askScorer rather than inventing the missing pitches. "Four pitches, a strike" is not that question and not a walk: he named one pitch, the called strike, so it is one pitch C. Do not fill in balls to make four, and do not ask.',
   '"High and tight", "chin music" and "brushback" are balls unless the batter is hit. They describe a pitch near the batter, not one that hit him.'
 ]
 

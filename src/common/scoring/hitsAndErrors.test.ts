@@ -173,7 +173,8 @@ describe('event classes', function () {
       score_correction: [false, undefined],
       ts_manual_placement: [true, undefined],
       ts_batter_out: [true, undefined],
-      ts_batting_order: [false, undefined]
+      ts_batting_order: [false, undefined],
+      ts_courtesy_runner: [false, undefined]
     }
     expect(Object.keys(expected).sort()).deep.equals(
       [...GUMBO_EVENT_TYPES].sort()

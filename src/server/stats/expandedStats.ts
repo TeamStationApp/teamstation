@@ -241,11 +241,13 @@ export function expandedGameStatLines(
       )
     const runnerChanges = events.filter(
       event =>
-        doc(event.details).eventType === 'offensive_substitution' &&
-        doc(event.position).abbreviation === 'PR'
+        (doc(event.details).eventType === 'offensive_substitution' &&
+          doc(event.position).abbreviation === 'PR') ||
+        typeOf(doc(event.details).eventType) === 'ts_courtesy_runner'
     )
     let nextRunnerChange = 0
-    // A pinch runner inherits the occupied base and its responsible pitcher.
+    // A pinch runner inherits the occupied base and its responsible pitcher,
+    // whether he takes the man's place in the order or leaves it as it is.
     // Apply substitutions between movements, before the new runner can leave.
     const replaceRunnersBefore = (index: number): void => {
       while (nextRunnerChange < runnerChanges.length) {

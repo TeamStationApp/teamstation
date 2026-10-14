@@ -22,6 +22,7 @@ import {
   POSITION_CODES,
   STORED_EVENT_TYPES
 } from '../gumbo/reference'
+import { gumboViolations } from '../gumbo/validate'
 import type { GumboPlay } from '../gumboPlay'
 import { type ScoringAction, TRAJECTORIES } from './actions'
 import { applyAction } from './apply'
@@ -2233,6 +2234,117 @@ describe('substitutions (U19)', function () {
     })
     expect(play.pitchIndex).deep.equals([])
     expect(play.actionIndex).deep.equals([0])
+  })
+})
+
+describe('a pinch runner who keeps the batting order (U4)', function () {
+  /** Away 1, the visitors' pitcher, on first after a walk; Away Bench (19) and Away Two (20) on the bench. */
+  const walked = (): GameState =>
+    after(
+      walk(rostered()),
+      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Away Bench' },
+      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Away Two' }
+    )
+  const courtesy: ScoringAction = {
+    type: 'lineup',
+    kind: 'runner',
+    side: 'away',
+    base: '1B',
+    player: 19
+  }
+  const announced = (play: GumboPlay): string[] =>
+    eventsOf(play)
+      .filter(
+        event => (event as { isSubstitution?: boolean }).isSubstitution === true
+      )
+      .map(event => String(event.details.description))
+  const toTheField = (state: GameState): GameState => {
+    let next = state
+    while (next.liveData.linescore.isTopInning) next = strikeout(next)
+    return next
+  }
+
+  it('is stored as ts_courtesy_runner, naming the runner he runs for, with no runner entry', function () {
+    const play = stored(after(walked(), courtesy))
+    expect(eventsOf(play)).length(1)
+    const [event] = eventsOf(play) as Array<
+      StoredEvent & {
+        type: string
+        isSubstitution?: boolean
+        replacedPlayer?: { id?: number; fullName: string }
+      }
+    >
+    expect(event).deep.include({
+      index: 0,
+      isPitch: false,
+      type: 'action',
+      count: { balls: 0, strikes: 0, outs: 0 },
+      replacedPlayer: { id: 101, fullName: 'Away 1' },
+      startTime: null,
+      endTime: null
+    })
+    expect(event.details).deep.equals({
+      description:
+        'Pinch-runner Away Bench runs for Away 1; the batting order is unchanged',
+      event: 'Pinch runner (order unchanged)',
+      eventType: 'ts_courtesy_runner',
+      awayScore: 0,
+      homeScore: 0,
+      isScoringPlay: false,
+      isOut: false,
+      hasReview: false
+    })
+    expect(event.player?.fullName).equals('Away Bench')
+    expect(event).not.have.property('isSubstitution')
+    expect(event).not.have.property('position')
+    expect(runnersOf(play)).deep.equals([])
+    expect(play.actionIndex).deep.equals([0])
+    expect(gumboViolations(play)).deep.equals([])
+    expect(STORED_EVENT_TYPES.has('ts_courtesy_runner')).equals(true)
+  })
+
+  it('leaves the cast alone: a change at the break names the batter, and nobody is announced as a pinch runner', function () {
+    const ran = after(walked(), courtesy)
+    // The runner scores, and his run is his.
+    const scored = after(
+      ran,
+      { type: 'ballInPlay', contact: 'swing', fielder: F.CF },
+      { type: 'result', eventType: 'home_run' },
+      close
+    )
+    const homer = stored(scored, true)
+    expect(
+      runnersOf(homer)
+        .filter(runner => runner.movement.end === 'score')
+        .map(runner => runner.details.runner.fullName)
+    ).deep.equals(['Away Bench', 'Away 2'])
+    // At the break the visitors bring Away Two in to pitch for Away 1.
+    const fielding = after(toTheField(scored), {
+      type: 'lineup',
+      kind: 'substitute',
+      side: 'away',
+      player: 20,
+      replaces: 1
+    })
+    const plays = [
+      ...fielding.liveData.plays.allPlays.map(play =>
+        documentOf(fielding, play, {
+          setupBefore: setupOf(fielding),
+          actions: []
+        })
+      ),
+      stored(fielding)
+    ]
+    expect(plays.flatMap(announced)).deep.equals([
+      'Pitching Change: Away Two replaces Away 1.'
+    ])
+    // A pinch runner who takes the man's place is announced as one, as before.
+    const replaced = after(walked(), { ...courtesy, kind: 'pinchRunner' })
+    expect(announced(stored(replaced))).deep.equals([
+      'Offensive Substitution: Pinch-runner Away Bench replaces Away 1.'
+    ])
+    expect(replaced.liveData.boxscore.teams.away.battingOrder[0]).equals(19)
+    expect(ran.liveData.boxscore.teams.away.battingOrder[0]).equals(1)
   })
 })
 

@@ -221,6 +221,7 @@ describe("MLB's event types", function () {
       'score_correction',
       'ts_batter_out',
       'ts_batting_order',
+      'ts_courtesy_runner',
       'ts_manual_placement'
     ])
   })
