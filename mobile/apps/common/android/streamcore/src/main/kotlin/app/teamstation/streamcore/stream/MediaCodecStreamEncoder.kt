@@ -32,6 +32,9 @@ class MediaCodecStreamEncoder(
     private val lock = ReentrantLock()
     private var thread: HandlerThread? = null
     private var codec: MediaCodec? = null
+
+    /** The session's input surface, released with it. */
+    private var inputSurface: Surface? = null
     private var activeCodec = StreamCodec.HEVC
     private var parameterSets: List<ByteArray> = emptyList()
     private var output: StreamVideoEncoding.Output? = null
@@ -42,10 +45,14 @@ class MediaCodecStreamEncoder(
     /** Counted down when the session's end of stream comes out, after [finishInput]. */
     private var ended: java.util.concurrent.CountDownLatch? = null
 
+    /**
+     * Opens a session. One that fails part way is closed again before the error goes on, so its
+     * codec, its thread and its surface are not left behind.
+     */
     override fun open(config: StreamEncoderConfig, output: StreamVideoEncoding.Output): Surface? {
         close()
+        val created = createCodec(config.codec.mimeType)
         val handlerThread = HandlerThread("stream-encode").apply { start() }
-        val created = MediaCodec.createEncoderByType(config.codec.mimeType)
         lock.withLock {
             thread = handlerThread
             codec = created
@@ -53,12 +60,24 @@ class MediaCodecStreamEncoder(
             parameterSets = emptyList()
             this.output = output
         }
-        created.setCallback(Callback(created), Handler(handlerThread.looper))
-        created.configure(format(config, surfaceInput), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        val surface = if (surfaceInput) created.createInputSurface() else null
-        created.start()
-        return surface
+        try {
+            created.setCallback(Callback(created), Handler(handlerThread.looper))
+            created.configure(format(config, surfaceInput), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            val surface = if (surfaceInput) created.createInputSurface() else null
+            lock.withLock { inputSurface = surface }
+            created.start()
+            return surface
+        } catch (error: Exception) {
+            close()
+            throw error
+        }
     }
+
+    /** Makes the session's codec. Replaced in tests, to make one that refuses its format. */
+    internal var createCodec: (String) -> MediaCodec = { MediaCodec.createEncoderByType(it) }
+
+    /** Reads an output buffer. Replaced in tests, to make one the codec has already let go of. */
+    internal var outputBuffer: (MediaCodec, Int) -> java.nio.ByteBuffer? = { running, index -> running.getOutputBuffer(index) }
 
     override fun requestSyncFrame() {
         val running = lock.withLock { codec } ?: return
@@ -81,10 +100,11 @@ class MediaCodecStreamEncoder(
     }
 
     override fun close() {
-        val (running, handlerThread) = lock.withLock {
-            val current = codec to thread
+        val (running, handlerThread, surface) = lock.withLock {
+            val current = Triple(codec, thread, inputSurface)
             codec = null
             thread = null
+            inputSurface = null
             output = null
             current
         }
@@ -92,7 +112,17 @@ class MediaCodecStreamEncoder(
             runCatching { it.stop() }
             runCatching { it.release() }
         }
+        surface?.release()
         handlerThread?.quitSafely()
+    }
+
+    /** Whether a session is open, for tests. */
+    internal val isOpenForTesting: Boolean get() = lock.withLock { codec != null || thread != null }
+
+    /** Hands the open session's callback an output buffer, as the codec's thread would. */
+    internal fun deliverOutputForTesting(index: Int, info: MediaCodec.BufferInfo) {
+        val running = lock.withLock { codec } ?: return
+        Callback(running).onOutputBufferAvailable(running, index, info)
     }
 
     /** Queues one access unit into a buffer-input session, as a test's stand-in for a camera. */
@@ -116,10 +146,16 @@ class MediaCodecStreamEncoder(
             val (current, sink) = lock.withLock { this@MediaCodecStreamEncoder.codec to output }
             try {
                 if (current === owner) {
-                    val bytes = codec.getOutputBuffer(index)?.let { buffer ->
-                        buffer.position(info.offset)
-                        buffer.limit(info.offset + info.size)
-                        ByteArray(info.size).also { buffer.get(it) }
+                    val bytes = try {
+                        outputBuffer(codec, index)?.let { buffer ->
+                            buffer.position(info.offset)
+                            buffer.limit(info.offset + info.size)
+                            ByteArray(info.size).also { buffer.get(it) }
+                        }
+                    } catch (closed: IllegalStateException) {
+                        // A close on another thread stopped or released the codec after the owner
+                        // check: the buffer is gone with it, which is no reason to end the process.
+                        null
                     }
                     if (bytes != null) emit(bytes, info.flags, info.presentationTimeUs)?.let { sink?.onFrame(it) }
                 }
