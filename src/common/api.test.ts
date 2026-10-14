@@ -2,7 +2,12 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { testPasswordParameters } from '../test/passwordFixtures'
-import { asStandingsRow, TeamStationClient } from './api'
+import {
+  asSaveLineupsBody,
+  asStandingsRow,
+  type SaveLineupsBody,
+  TeamStationClient
+} from './api'
 import { HttpError } from './errors'
 import { asGumboPlay } from './gumboPlay'
 import { halfOutcomes, lineScore } from './scoring/linescore'
@@ -345,6 +350,34 @@ describe('api client', function () {
     expect(lineups.away.teamName).equals('A')
     expect(lineups.home.changes[0].eventType).equals('pitching_substitution')
     expect(lineups.home.current?.batters).deep.equals([person])
+    // An older server sends no digest.
+    expect(lineups.digest).equals('')
+
+    const saved = stubFetch(200, {
+      away: side('a'),
+      home: side('h'),
+      digest: 'd2'
+    })
+    const body: SaveLineupsBody = {
+      side: 'home',
+      base: 'd1',
+      players: [
+        { userId: 7, fullName: 'Jordan P', jersey: '12' },
+        { userId: null, fullName: 'Guest', jersey: '' }
+      ],
+      battingOrder: [1, 0],
+      defense: { P: 0, CF: 1 }
+    }
+    const answer = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: saved.fetch
+    }).saveLineups('gam 1', body)
+    expect(answer.digest).equals('d2')
+    expect(saved.calls[0]).deep.include({
+      url: 'http://x/api/v1/games/gam%201/lineups',
+      method: 'POST'
+    })
+    expect(JSON.parse(saved.calls[0].body ?? '')).deep.equals(body)
 
     const bad = stubFetch(200, { away: side('a'), home: { teamId: 'h' } })
     let refused = false
@@ -357,6 +390,59 @@ describe('api client', function () {
       refused = true
     }
     expect(refused).equals(true)
+  })
+
+  it('cleans a lineup save, refusing an index past its players', function () {
+    const players = [
+      { userId: 7, fullName: 'Judge', jersey: '99' },
+      { userId: null, fullName: 'Soto', jersey: '22' }
+    ]
+    expect(
+      asSaveLineupsBody({
+        side: 'away',
+        base: '',
+        players,
+        battingOrder: [0, 1],
+        defense: { P: 1, SS: undefined, XX: 0 },
+        nextBatter: 1,
+        runners: [{ base: '2B', player: 0 }]
+      })
+    ).deep.equals({
+      side: 'away',
+      base: '',
+      players,
+      battingOrder: [0, 1],
+      defense: { P: 1 },
+      nextBatter: 1,
+      runners: [{ base: '2B', player: 0 }]
+    })
+    const refused = (raw: Record<string, unknown>): string => {
+      try {
+        asSaveLineupsBody({
+          side: 'home',
+          base: '',
+          players,
+          battingOrder: [],
+          defense: {},
+          ...raw
+        })
+      } catch (error) {
+        return (error as Error).message
+      }
+      return 'cleaned'
+    }
+    expect(refused({ battingOrder: [2] })).match(
+      /Player 2 is not one of the 2 players/
+    )
+    expect(refused({ defense: { C: 5 } })).match(/Player 5/)
+    expect(refused({ nextBatter: 2 })).match(/Player 2/)
+    expect(refused({ runners: [{ base: '1B', player: 3 }] })).match(/Player 3/)
+    expect(refused({ battingOrder: [-1] })).match(/an index into players/)
+    expect(refused({ battingOrder: [0.5] })).match(/an index into players/)
+    expect(refused({ runners: [{ base: 'home', player: 0 }] })).not.equals(
+      'cleaned'
+    )
+    expect(refused({})).equals('cleaned')
   })
 
   it("reads DJ Game's batters and songs, and refuses a bad source (U27)", async function () {
@@ -680,6 +766,40 @@ describe('api client', function () {
       fenceDistanceFt: 225
     })
     expect(JSON.parse(calls[2].body!)).to.have.property('fenceDistanceFt', 225)
+  })
+
+  it('names the lineups base a live save was built on, and reads the digests back', async function () {
+    const { fetch, calls } = stubFetch(200, {
+      plays: [],
+      currentPlay: null,
+      playsDigest: 'plays',
+      priorPlaysDigest: 'found',
+      lineupsDigest: 'after'
+    })
+    const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
+    const saved = await client.saveGameEvents('gam_1', {
+      plays: [],
+      remove: [],
+      lineupsBase: 'before'
+    })
+    expect(JSON.parse(calls[0].body!)).to.have.property('lineupsBase', 'before')
+    expect(saved).deep.include({
+      playsDigest: 'plays',
+      priorPlaysDigest: 'found',
+      lineupsDigest: 'after'
+    })
+    expect((await client.gameEvents('gam_1')).lineupsDigest).equals('after')
+    // A store that keeps none, and an older server, send none.
+    await client.saveGameEvents('gam_1', { plays: [], remove: [] })
+    expect(JSON.parse(calls[2].body!)).not.to.have.property('lineupsBase')
+    const old = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { plays: [], lineupsDigest: null }).fetch
+    })
+    expect(await old.gameEvents('g')).deep.equals({
+      plays: [],
+      currentPlay: null
+    })
   })
 
   it('reads sacrifice bunts on a batting line, and none from an older server', async function () {

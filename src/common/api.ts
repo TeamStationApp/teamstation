@@ -95,7 +95,12 @@ import {
   type LineupPerson,
   type SideLineups
 } from './scoring/lineupHistory'
+import {
+  asSaidRosterCommand,
+  type SaidRosterCommand
+} from './scoring/rosterCommands'
 import type { SaveChange, StoredGame } from './scoring/session'
+import { type Position, POSITIONS, type Side } from './scoring/state'
 import { asUserId } from './userIdNumber'
 import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
 
@@ -303,6 +308,12 @@ export const asGameDetail = withEventMetadata(
      */
     canDj: asOptional(asBoolean, false),
     /**
+     * The sides whose team this viewer head-coaches, which every administrator
+     * of it does, and so whose lineup they may save. An assistant has none.
+     * Absent from an older server, and none.
+     */
+    coachSides: asOptional(asArray(asLiteral('away', 'home')), []),
+    /**
      * The game's scoreboard: whether it is open, and whether this caller runs
      * the game and so may override it. Null when the server cannot tell, which
      * leaves the Score Game screen's Scoreboard option unavailable, and from a
@@ -321,7 +332,6 @@ export const asGameDetail = withEventMetadata(
     videos: asArray(asVideoSummary)
   })
 )
-
 export type GameDetail = ReturnType<typeof asGameDetail>
 
 export const asHighlight = asObject({
@@ -602,8 +612,26 @@ const asStoredGame = asObject({
   plays: asArray(
     asObject({ id: asString, gameId: asString, gumbo: asGumboPlay })
   ),
-  currentPlay: asOptional(asNullable(asCurrentPlay), null)
+  currentPlay: asOptional(asNullable(asCurrentPlay), null),
+  playsDigest: asOptional(asNullable(asString), null),
+  priorPlaysDigest: asOptional(asNullable(asString), null),
+  lineupsDigest: asOptional(asNullable(asString), null)
 })
+
+/** A game's plays as a session reads them, with the digests that were sent. */
+function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
+  return {
+    plays: stored.plays.map(row => row.gumbo),
+    currentPlay: stored.currentPlay,
+    ...(stored.playsDigest == null ? {} : { playsDigest: stored.playsDigest }),
+    ...(stored.priorPlaysDigest == null
+      ? {}
+      : { priorPlaysDigest: stored.priorPlaysDigest }),
+    ...(stored.lineupsDigest == null
+      ? {}
+      : { lineupsDigest: stored.lineupsDigest })
+  }
+}
 
 /**
  * A team this player has played for, in which season, and their number and
@@ -1256,15 +1284,30 @@ export const DICTATION_MODELS = [
   'grok-4.3',
   'gpt-6-luna',
   'gpt-6-sol',
-  'claude-haiku-4-5-20251001'
+  'claude-haiku-5-5'
 ] as const
 export type DictationModel = (typeof DICTATION_MODELS)[number]
 /**
  * The model a scorer who never picked one gets, when the server has it:
  * the fastest of them, and as accurate as any on everyday sentences.
  */
-export const DEFAULT_DICTATION_MODEL: DictationModel =
-  'claude-haiku-4-5-20251001'
+export const DEFAULT_DICTATION_MODEL: DictationModel = 'claude-haiku-5-5'
+
+/**
+ * Models a scorer could once pick, and the one that answers for each now. An
+ * app installed before Claude Haiku 5.5 still asks for Haiku 4.5, which costs
+ * more and is no longer offered: it gets Haiku 5.5.
+ */
+export const RETIRED_DICTATION_MODELS: Readonly<
+  Record<string, DictationModel>
+> = { 'claude-haiku-4-5-20251001': 'claude-haiku-5-5' }
+
+const asOfferedModel = asLiteral(...DICTATION_MODELS)
+/** A model a scorer asked for, with a retired one read as its replacement. */
+export const asDictationModel: Cleaner<DictationModel> = raw =>
+  asOfferedModel(
+    typeof raw === 'string' ? (RETIRED_DICTATION_MODELS[raw] ?? raw) : raw
+  )
 
 /**
  * The model dictation uses: the scorer's pick when the server offers it, or
@@ -1284,7 +1327,7 @@ export const DICTATION_MODEL_NAMES: Record<DictationModel, string> = {
   'grok-4.3': 'Grok 4.3',
   'gpt-6-luna': 'GPT-6 Luna',
   'gpt-6-sol': 'GPT-6 Sol',
-  'claude-haiku-4-5-20251001': 'Claude Haiku 4.5'
+  'claude-haiku-5-5': 'Claude Haiku 5.5'
 }
 
 /**
@@ -1319,6 +1362,12 @@ export type TeamLineups = SideLineups & { teamId: string; teamName: string }
 export interface GameLineupsResponse {
   away: TeamLineups
   home: TeamLineups
+  /**
+   * The digest the game keeps of both sides' lineups, which changes exactly
+   * when what they show does. A screen keeps the one it last read or saved,
+   * to tell its own save from somebody else's. Empty from an older server.
+   */
+  digest: string
 }
 const asTeamLineups: Cleaner<TeamLineups> = raw => {
   const team = asObject({ teamId: asString, teamName: asString })(raw)
@@ -1326,8 +1375,96 @@ const asTeamLineups: Cleaner<TeamLineups> = raw => {
 }
 export const asGameLineupsResponse: Cleaner<GameLineupsResponse> = asObject({
   away: asTeamLineups,
-  home: asTeamLineups
+  home: asTeamLineups,
+  digest: asOptional(asString, '')
 })
+
+/** A player in a saved lineup, named by who he is, never by a session id. */
+export interface LineupPlayer {
+  /** Null for a player made up at the field. */
+  userId: number | null
+  fullName: string
+  jersey: string
+}
+
+/**
+ * `POST /games/:gameId/lineups`: one side's players, batting order and
+ * defence, as its head coach or a scorekeeper saves them. Every number but a
+ * `userId` is an index into `players`, so the server never depends on the
+ * client numbering players as it does. `base` is the lineups digest the
+ * client last read; the last save wins, and the client uses it only to tell
+ * its own save from somebody else's.
+ */
+export interface SaveLineupsBody {
+  side: Side
+  base: string
+  players: LineupPlayer[]
+  battingOrder: number[]
+  defense: Partial<Record<Position, number>>
+  /** Who bats next, when it is not the batter due. */
+  nextBatter?: number
+  /** Pinch runners who keep the batting order, each on the base he takes. */
+  runners?: Array<{ base: '1B' | '2B' | '3B'; player: number }>
+}
+
+const asIndex: Cleaner<number> = raw => {
+  const index = asNumber(raw)
+  if (!Number.isInteger(index) || index < 0)
+    throw new TypeError(`Expected an index into players, got ${index}`)
+  return index
+}
+
+const asSaveLineupsShape = asObject({
+  side: asLiteral('away', 'home'),
+  base: asString,
+  players: asArray(
+    asObject({
+      userId: asNullable(asUserId),
+      fullName: asString,
+      jersey: asString
+    })
+  ),
+  battingOrder: asArray(asIndex),
+  defense: asObject(
+    Object.fromEntries(
+      POSITIONS.map(position => [position, asOptional(asIndex)])
+    ) as Record<Position, Cleaner<number | undefined>>
+  ),
+  nextBatter: asOptional(asIndex),
+  runners: asOptional(
+    asArray(asObject({ base: asLiteral('1B', '2B', '3B'), player: asIndex }))
+  )
+})
+
+/** Cleans a lineup save, and refuses an index past the players it names. */
+export const asSaveLineupsBody: Cleaner<SaveLineupsBody> = raw => {
+  const body = asSaveLineupsShape(raw)
+  const indexes = [
+    ...body.battingOrder,
+    ...Object.values(body.defense),
+    body.nextBatter,
+    ...(body.runners ?? []).map(runner => runner.player)
+  ]
+  for (const index of indexes)
+    if (index != null && index >= body.players.length)
+      throw new TypeError(
+        `Player ${index} is not one of the ${body.players.length} players`
+      )
+  const defense: Partial<Record<Position, number>> = {}
+  for (const position of POSITIONS) {
+    const index = body.defense[position]
+    if (index != null) defense[position] = index
+  }
+  return {
+    side: body.side,
+    base: body.base,
+    players: body.players,
+    battingOrder: body.battingOrder,
+    defense,
+    ...(body.nextBatter == null ? {} : { nextBatter: body.nextBatter }),
+    ...(body.runners == null ? {} : { runners: body.runners })
+  }
+}
 
 /** One batter in DJ Game's list: a placeholder has no user id and no song. */
 export const asDjBatter = asObject({
@@ -2436,6 +2573,22 @@ export class TeamStationClient {
     )
   }
 
+  /**
+   * Saves one side's lineup in a game, as its head coach or a scorekeeper
+   * sets it, and answers both sides' lineups as they now stand.
+   */
+  async saveLineups(
+    gameId: string,
+    body: SaveLineupsBody
+  ): Promise<GameLineupsResponse> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/lineups`,
+      asGameLineupsResponse,
+      body
+    )
+  }
+
   /** Both sides' batters and their walk-up songs, for DJ Game. */
   async djGame(gameId: string): Promise<DjGame> {
     return await this.request(
@@ -2477,22 +2630,25 @@ export class TeamStationClient {
     )
   }
 
-  /** A game's stored plays and the at-bat in progress. */
+  /**
+   * A game's stored plays and the at-bat in progress, with the digest of its
+   * lineups.
+   */
   async gameEvents(gameId: string): Promise<StoredGame> {
-    const stored = await this.request(
-      'GET',
-      `/games/${encodeURIComponent(gameId)}/events`,
-      asStoredGame
+    return storedGameOf(
+      await this.request(
+        'GET',
+        `/games/${encodeURIComponent(gameId)}/events`,
+        asStoredGame
+      )
     )
-    return {
-      plays: stored.plays.map(row => row.gumbo),
-      currentPlay: stored.currentPlay
-    }
   }
 
   /**
    * Scores into a game as it is played: the plays that changed, the indexes
-   * an undo took away, and the at-bat in progress when it changed.
+   * an undo took away, and the at-bat in progress when it changed. Naming
+   * the lineups digest it was built on, it is refused as stale (409,
+   * `details.stale`) once somebody else has saved the lineups since.
    */
   async saveGameEvents(
     gameId: string,
@@ -2512,13 +2668,13 @@ export class TeamStationClient {
           : { currentPlay: change.currentPlay }),
         ...(change.fenceDistanceFt === undefined
           ? {}
-          : { fenceDistanceFt: change.fenceDistanceFt })
+          : { fenceDistanceFt: change.fenceDistanceFt }),
+        ...(change.lineupsBase === undefined
+          ? {}
+          : { lineupsBase: change.lineupsBase })
       }
     )
-    return {
-      plays: stored.plays.map(row => row.gumbo),
-      currentPlay: stored.currentPlay
-    }
+    return storedGameOf(stored)
   }
 
   async roster(
@@ -3067,6 +3223,20 @@ export const asWireAction: Cleaner<ScoringAction> = raw => {
   if ('problem' in cleaned) throw new TypeError(cleaned.problem.message)
   return cleaned.action
 }
+/**
+ * Roster commands as said, each checked by the scoring library's own
+ * cleaner. One that does not clean is dropped, and the rest are kept.
+ */
+const asWireRoster: Cleaner<SaidRosterCommand[]> = raw => {
+  if (!Array.isArray(raw)) throw new TypeError('Expected a list of commands')
+  return raw.flatMap(item => {
+    try {
+      return [asSaidRosterCommand(item)]
+    } catch {
+      return []
+    }
+  })
+}
 const asProblem: Cleaner<Problem> = asObject({
   code: asLiteral(
     'unknownAction',
@@ -3086,7 +3256,7 @@ const asStartBody = asObject({
   target: asTarget,
   context: asNonEmpty,
   /** Absent means the model the server is configured with. */
-  model: asOptional(asLiteral(...DICTATION_MODELS))
+  model: asOptional(asDictationModel)
 })
 export type DictationStart = { kind: 'start' } & ReturnType<typeof asStartBody>
 export const asDictationStart: Cleaner<DictationStart> = raw => {
@@ -3178,6 +3348,11 @@ export type DictationReply =
       id: string
       transcript: string
       actions: ScoringAction[]
+      /**
+       * Roster commands as said, for the client to find the players of and
+       * stage on its roster screen.
+       */
+      roster?: SaidRosterCommand[]
       dropped: Problem[]
       /** Take back the last thing scored, as Undo does, before the actions. */
       undo?: boolean
@@ -3196,14 +3371,20 @@ export const asDictationReply: Cleaner<DictationReply> = raw => {
     case 'transcript':
       return { kind, ...asObject({ id: asNonEmpty, text: asString })(raw) }
     case 'actions': {
-      const { undo, ...rest } = asObject({
+      const { roster, undo, ...rest } = asObject({
         id: asNonEmpty,
         transcript: asString,
         actions: asArray(asWireAction),
+        roster: asOptional(asWireRoster),
         dropped: asOptional(asArray(asProblem), () => []),
         undo: asOptional(asBoolean)
       })(raw)
-      return { kind, ...rest, ...(undo === true ? { undo } : {}) }
+      return {
+        kind,
+        ...rest,
+        ...(roster == null ? {} : { roster }),
+        ...(undo === true ? { undo } : {})
+      }
     }
     case 'ask':
       return {

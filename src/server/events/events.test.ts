@@ -3,6 +3,7 @@ import { Kysely, PostgresDialect } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { asPostEventsBody } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
 import { migrations } from '../../migrate/migrations'
@@ -17,6 +18,7 @@ import {
   teamIdsOnCredits
 } from './eventWrite'
 import { bothPlayedTogether } from './playedTogether'
+import { postGamePlays } from './postPlays'
 import { whyEmpty } from './whyEmpty'
 
 const adminUrl = testDatabaseUrl
@@ -334,5 +336,53 @@ describe('scoring events', function () {
       .execute()
     const together = await bothPlayedTogether(db, [player.userId, other.userId])
     expect(together.has(`${player.userId}|${other.userId}`)).equals(false)
+  })
+
+  // U8b: a head coach's lineup saved before the first pitch is an at-bat in
+  // progress that starts nothing.
+  it('starts a game with an at-bat in progress, unless the post says it starts nothing', async function () {
+    for (const [options, status] of [
+      [{ startsGame: false }, 'scheduled'],
+      [undefined, 'inProgress']
+    ] as const) {
+      const id = makeId('game')
+      await db
+        .insertInto('games')
+        .values({
+          id,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date()
+        })
+        .execute()
+      await postGamePlays(
+        db,
+        id,
+        asPostEventsBody({
+          mode: 'live',
+          source: { system: 'teamstation' },
+          plays: [],
+          currentPlay: {
+            about: {
+              atBatIndex: 0,
+              inning: 1,
+              halfInning: 'top',
+              isComplete: false
+            },
+            matchup: { batter: { id: player.userId, fullName: 'Ada' } },
+            playEvents: []
+          }
+        }),
+        undefined,
+        options
+      )
+      const row = await db
+        .selectFrom('games')
+        .select(['status', 'currentPlay'])
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+      expect(row.status, JSON.stringify(options)).equals(status)
+      expect(row.currentPlay).not.equals(null)
+    }
   })
 })

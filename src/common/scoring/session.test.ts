@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { lineupsDigest } from '../../server/events/teamLineups'
 import { F, game, TEAMS } from '../../test/scoringGames'
 import { HttpError } from '../errors'
 import { completedPlayTag, historyTargets, withTargetTags } from '../eventTags'
@@ -9,6 +10,8 @@ import type { ScoringAction } from './actions'
 import { comparablePlay } from './comparable'
 import { PlayFolder } from './document'
 import { recordOf } from './gumbo'
+import { addPlayer } from './lineup'
+import { readLineups } from './lineupHistory'
 import { baseIds, overrideOf, tiebreakerSetupError } from './rules'
 import {
   type EventStore,
@@ -50,6 +53,82 @@ class FakeStore implements EventStore {
 
   idOf(index: number): string | undefined {
     return this.plays.get(index)?.id
+  }
+}
+
+/**
+ * A server that keeps a digest of the game's lineups, as the real one does,
+ * and refuses a save built on lineups somebody else has saved over since.
+ * The test moves the digest as another device's save would.
+ */
+class LineupStore extends FakeStore {
+  lineups = 'd0'
+  /** The digest the next save accepted leaves, as a lineup change would. */
+  moveTo: string | null = null
+  refused = 0
+
+  override async load(): Promise<StoredGame> {
+    const read = await super.load()
+    return {
+      ...read,
+      playsDigest: JSON.stringify([read.plays, read.currentPlay]),
+      lineupsDigest: this.lineups
+    }
+  }
+
+  override async save(gameId: string, change: SaveChange): Promise<StoredGame> {
+    if (
+      change.lineupsBase !== undefined &&
+      change.lineupsBase !== this.lineups
+    ) {
+      this.posts.push(JSON.parse(JSON.stringify(change)) as SaveChange)
+      this.refused++
+      throw new HttpError(
+        'conflict',
+        'Somebody else changed the lineups since this game was read',
+        { stale: true }
+      )
+    }
+    if (this.moveTo != null) this.lineups = this.moveTo
+    this.moveTo = null
+    const prior = (await this.load()).playsDigest
+    return { ...(await super.save(gameId, change)), priorPlaysDigest: prior }
+  }
+}
+
+/**
+ * The digest `lineupsDigest` computes from the stored game. A save moves it
+ * when the lineup changes, when someone off the card is added, removed, or
+ * edited, when a pinch runner who keeps the order is recorded, and when the
+ * batter due changes without any of those.
+ */
+class HashedLineupStore extends LineupStore {
+  constructor() {
+    super()
+    this.rehash()
+  }
+
+  rehash(): string {
+    const read = readLineups(
+      {
+        plays: [...this.plays.values()].map(row => row.play),
+        currentPlay: this.current
+      },
+      context
+    )
+    this.lineups = lineupsDigest(
+      read.sides,
+      read.bench,
+      read.courtesy,
+      read.due
+    )
+    return this.lineups
+  }
+
+  override async save(gameId: string, change: SaveChange): Promise<StoredGame> {
+    const saved = await super.save(gameId, change)
+    this.rehash()
+    return { ...saved, lineupsDigest: this.lineups }
   }
 }
 
@@ -413,10 +492,11 @@ describe('a scoring session', function () {
     expect(clock.waiting).length(1)
     await clock.tick()
     expect(store.posts).length(1)
-    expect(heard).equals(2)
+    // Told of the acknowledgment, and again once the save has stopped.
+    expect(heard).equals(3)
     stop()
     session.apply(ball)
-    expect(heard).equals(2)
+    expect(heard).equals(3)
   })
 
   it('folds two changes made during one post into one follow-up post', async function () {
@@ -439,6 +519,91 @@ describe('a scoring session', function () {
       playEvents: unknown[]
     }
     expect(followUp.playEvents).length(3)
+  })
+
+  it('tells its listeners once more when a save stops, and is idle then', async function () {
+    const { session, store } = await open()
+    const heard: Array<{ saving: boolean; pending: number }> = []
+    session.subscribe(() => {
+      heard.push({ saving: session.saving, pending: session.pending })
+    })
+    session.apply(ball)
+    heard.length = 0
+    expect(session.saving).equals(false)
+    const saved = session.flush()
+    expect(session.saving).equals(true)
+    await saved
+    // The save's own notice comes while it still runs; the last is idle.
+    expect(heard).deep.equals([
+      { saving: true, pending: 0 },
+      { saving: false, pending: 0 }
+    ])
+    expect(store.posts).length(1)
+    // Another scorer's post lands just after this one. A reload asked for in
+    // the save's own notice declines; in the last it takes that post up.
+    const other = await open(store)
+    const save = store.save.bind(store)
+    let landed = false
+    store.save = async (gameId, change) => {
+      const answer = await save(gameId, change)
+      if (!landed) {
+        landed = true
+        other.session.apply(strike)
+        await other.session.flush()
+      }
+      return answer
+    }
+    const reloads: Array<Promise<boolean>> = []
+    session.subscribe(() => {
+      reloads.push(session.reload())
+    })
+    session.apply(ball)
+    reloads.length = 0
+    await session.flush()
+    // The reload that took it up tells too, and finds nothing more.
+    expect(await Promise.all(reloads)).deep.equals([false, true, false])
+    expect(session.actions).deep.equals([ball, strike])
+  })
+
+  it('takes a log read back with its keys in another order as the same, keeping its plays and their tag ids', async function () {
+    const { session, store } = await open()
+    const roster: ScoringAction = {
+      type: 'lineup',
+      kind: 'roster',
+      setup: setupOf(game())
+    }
+    const actions = [roster, strike, strike, strike, ball]
+    for (const action of actions) session.apply(action)
+    await session.flush()
+    const targets = session.eventTargets.map(target => target.id)
+    const posts = store.posts.length
+    // The same actions with every object's keys reversed, as a copy read
+    // back from the server can list them.
+    const reversed = (value: unknown): unknown =>
+      Array.isArray(value)
+        ? value.map(reversed)
+        : value != null && typeof value === 'object'
+          ? Object.fromEntries(
+              Object.entries(value)
+                .reverse()
+                .map(([key, item]) => [key, reversed(item)])
+            )
+          : value
+    const readBack = actions.map(reversed) as ScoringAction[]
+    expect(JSON.stringify(readBack)).not.equals(JSON.stringify(actions))
+    expect(session.sync(readBack)).deep.equals([])
+    expect(session.pending).equals(0)
+    expect(session.eventTargets.map(target => target.id)).deep.equals(targets)
+    // Taken as the screen's own objects, they compare at once next time.
+    expect(
+      session.actions.every((action, index) => action === readBack[index])
+    ).equals(true)
+    session.apply(ball)
+    await session.flush()
+    expect(
+      session.eventTargets.map(target => target.id).slice(0, targets.length)
+    ).deep.equals(targets)
+    expect(store.posts.length).equals(posts + 1)
   })
 
   it('keeps the changes while offline, says so, and saves them once the signal is back', async function () {
@@ -1138,6 +1303,718 @@ describe('a scoring session', function () {
     await session.flush()
     expect(store.posts.at(-1)!.remove).deep.equals([])
     expect(store.plays.has(9999)).equals(true)
+  })
+
+  describe('saved over by another device’s lineups', function () {
+    /** Another device saves the lineups, as a coach saves his side. */
+    async function coachSaves(
+      store: LineupStore,
+      change: (setup: ReturnType<typeof setupOf>) => void
+    ): Promise<ScoringAction> {
+      const coach = (await open(store)).session
+      const setup = setupOf(coach.state)
+      change(setup)
+      const roster: ScoringAction = { type: 'lineup', kind: 'roster', setup }
+      expect(coach.apply(roster).problems).deep.equals([])
+      store.moveTo = 'coach'
+      await coach.flush()
+      expect(store.lineups).equals('coach')
+      return roster
+    }
+    const swapLeadoff = (setup: ReturnType<typeof setupOf>): void => {
+      const [first, second, ...rest] = setup.sides.home.battingOrder
+      setup.sides.home.battingOrder = [second, first, ...rest]
+    }
+    const swapAwayLeadoff = (setup: ReturnType<typeof setupOf>): void => {
+      const [first, second, ...rest] = setup.sides.away.battingOrder
+      setup.sides.away.battingOrder = [second, first, ...rest]
+    }
+    const reverseAway = (setup: ReturnType<typeof setupOf>): void => {
+      setup.sides.away.battingOrder = [
+        ...setup.sides.away.battingOrder
+      ].reverse()
+    }
+    const addHomeBench = (setup: ReturnType<typeof setupOf>): void => {
+      const sample = setup.players[setup.sides.home.battingOrder[0]]
+      const id =
+        Math.max(
+          ...Object.keys(setup.players).map(Number),
+          setup.identities.nextId - 1
+        ) + 1
+      setup.players[id] = {
+        id,
+        userId: null,
+        teamId: sample.teamId,
+        fullName: 'Home Bench',
+        jersey: '99',
+        bats: 'right',
+        throws: null,
+        positions: [],
+        local: true
+      }
+      setup.sides.home.players.push(id)
+      setup.identities.sessionToSource[id] = null
+      setup.identities.nextId = id + 1
+    }
+    const addAwayBench = (setup: ReturnType<typeof setupOf>): void => {
+      const sample = setup.players[setup.sides.away.battingOrder[0]]
+      const id =
+        Math.max(
+          ...Object.keys(setup.players).map(Number),
+          setup.identities.nextId - 1
+        ) + 1
+      setup.players[id] = {
+        id,
+        userId: null,
+        teamId: sample.teamId,
+        fullName: 'Away Bench',
+        jersey: '98',
+        bats: 'right',
+        throws: null,
+        positions: [],
+        local: true
+      }
+      setup.sides.away.players.push(id)
+      setup.identities.sessionToSource[id] = null
+      setup.identities.nextId = id + 1
+    }
+
+    it('names the digest each answer and each read leaves as the next base', async function () {
+      const store = new LineupStore()
+      const { session } = await open(store)
+      session.apply(ball)
+      // Its own lineup change moves the digest; the answer says so.
+      store.moveTo = 'mine'
+      await session.flush()
+      session.apply(strike)
+      await session.flush()
+      expect(store.posts.map(post => post.lineupsBase)).deep.equals([
+        'd0',
+        'mine'
+      ])
+      // Read again, it takes the server's digest up, changed game or not.
+      store.lineups = 'read'
+      expect(await session.reload()).equals(false)
+      session.apply(ball)
+      await session.flush()
+      expect(store.posts.at(-1)!.lineupsBase).equals('read')
+      expect(store.refused).equals(0)
+    })
+
+    it('holds the digests it reads and saves, and none of the plays once a save finds another’s', async function () {
+      const store = new LineupStore()
+      const { session } = await open(store)
+      const opened = (await store.load()).playsDigest!
+      expect(session.holdsPlays(opened)).equals(true)
+      expect(session.holdsLineups('d0')).equals(true)
+      session.apply(ball)
+      store.moveTo = 'mine'
+      await session.flush()
+      const mine = (await store.load()).playsDigest!
+      expect(session.holdsPlays(mine)).equals(true)
+      expect(session.holdsPlays(opened)).equals(true)
+      expect(session.holdsLineups('mine')).equals(true)
+      // Another scorer's pitch lands before this one's.
+      const theirs = (await open(store)).session
+      theirs.apply(strike)
+      await theirs.flush()
+      session.apply(ball)
+      await session.flush()
+      expect(session.holdsPlays((await store.load()).playsDigest!)).equals(
+        false
+      )
+      expect(session.holdsPlays(mine)).equals(false)
+      // Read again, it holds what it read, the same game or not.
+      await session.reload()
+      expect(session.holdsPlays((await store.load()).playsDigest!)).equals(true)
+    })
+
+    it('reads the lineups again under its unsaved pitch, and saves the pitch on top', async function () {
+      const store = new LineupStore()
+      const { session } = await open(store)
+      session.apply(ball)
+      await session.flush()
+      const roster = await coachSaves(store, swapLeadoff)
+      const order = setupOf((await open(store)).session.state).sides.home
+        .battingOrder
+      // The scorer, mid-entry, pitches on the game he read before it.
+      const heard: number[] = []
+      session.subscribe(() => heard.push(session.rebases))
+      session.apply(strike)
+      await session.flush()
+      expect(store.refused).equals(1)
+      expect(session.rebases).equals(1)
+      expect(heard).includes(1)
+      expect(session.readOnly).equals(false)
+      expect(session.problem).equals(null)
+      expect(session.pending).equals(0)
+      expect(session.actions).deep.equals([ball, roster, strike])
+      expect(store.posts.at(-1)!.lineupsBase).equals('coach')
+      const stored = (await open(store)).session
+      expect(stored.actions).deep.equals([ball, roster, strike])
+      expect(setupOf(stored.state).sides.home.battingOrder).deep.equals(order)
+      expect(stored.state.liveData.plays.currentPlay?.count).includes({
+        balls: 1,
+        strikes: 1
+      })
+    })
+
+    it('drops a change the game no longer takes, and says so', async function () {
+      const store = new LineupStore()
+      // As the scoring screen opens it: a pitch needs a whole defence.
+      const session = await ScoringSession.open(store, 'g1', context, {
+        ...new Clock().options,
+        requireCurrentSetup: true
+      })
+      session.apply(ball)
+      await session.flush()
+      // The coach leaves short empty: no pitch can follow until it is filled.
+      const roster = await coachSaves(store, setup => {
+        setup.sides.home.defense.SS = null
+      })
+      session.apply(strike)
+      await session.flush()
+      expect(session.readOnly).equals(false)
+      expect(session.actions).deep.equals([ball, roster])
+      expect(session.problem).equals(
+        "A change could not follow another device's lineup change: Missing defensive positions: SS"
+      )
+      expect(session.pending).equals(0)
+      // The scorer's next change clears it.
+      const shortstop = setupOf(session.state).sides.home.battingOrder[0]
+      expect(
+        session.apply({
+          type: 'lineup',
+          kind: 'position',
+          side: 'home',
+          position: 'SS',
+          player: shortstop
+        }).problems
+      ).deep.equals([])
+      expect(session.problem).equals(null)
+    })
+
+    it('leaves the visitors coach order when the first pitch was built on the shown default', async function () {
+      const store = new LineupStore()
+      const session = await ScoringSession.open(store, 'g1', context, {
+        ...new Clock().options,
+        requireCurrentSetup: true
+      })
+      const blind = setupOf(session.state)
+      const placeholder: ScoringAction = {
+        type: 'lineup',
+        kind: 'roster',
+        setup: blind,
+        unseen: ['away'],
+        confirmed: ['home']
+      }
+      expect(session.apply(placeholder).problems).deep.equals([])
+      await session.flush()
+      expect(store.lineups).equals('d0')
+      const coachRoster = await coachSaves(store, swapAwayLeadoff)
+      const coachOrder = setupOf((await open(store)).session.state).sides.away
+        .battingOrder
+      const shown = setupOf(session.state)
+      reverseAway(shown)
+      const snapshot: ScoringAction = {
+        type: 'lineup',
+        kind: 'roster',
+        setup: shown,
+        confirmed: ['away'],
+        shown: true
+      }
+      expect(session.apply(snapshot).problems).deep.equals([])
+      expect(session.apply(ball).problems).deep.equals([])
+      await session.flush()
+      expect(store.refused).equals(1)
+      expect(session.rebases).equals(1)
+      expect(session.problem).equals(null)
+      expect(session.actions).deep.equals([placeholder, coachRoster, ball])
+      expect(setupOf(session.state).sides.away.battingOrder).deep.equals(
+        coachOrder
+      )
+      expect(
+        session.state.liveData.plays.currentPlay?.matchup.batter.id
+      ).equals(coachOrder[0])
+      expect(session.state.liveData.plays.currentPlay?.count).includes({
+        balls: 1,
+        strikes: 0
+      })
+      const stored = (await open(store)).session
+      expect(stored.actions).deep.equals([placeholder, coachRoster, ball])
+      expect(setupOf(stored.state).sides.away.battingOrder).deep.equals(
+        coachOrder
+      )
+    })
+
+    it('keeps the home coach order and scores the visitors default', async function () {
+      const store = new LineupStore()
+      const session = await ScoringSession.open(store, 'g1', context, {
+        ...new Clock().options,
+        requireCurrentSetup: true
+      })
+      const blind = setupOf(session.state)
+      expect(
+        session.apply({
+          type: 'lineup',
+          kind: 'roster',
+          setup: blind,
+          unseen: ['away'],
+          confirmed: ['home']
+        }).problems
+      ).deep.equals([])
+      await session.flush()
+      await coachSaves(store, swapLeadoff)
+      const homeOrder = setupOf((await open(store)).session.state).sides.home
+        .battingOrder
+      const shown = setupOf(session.state)
+      reverseAway(shown)
+      expect(
+        session.apply({
+          type: 'lineup',
+          kind: 'roster',
+          setup: shown,
+          confirmed: ['away'],
+          shown: true
+        }).problems
+      ).deep.equals([])
+      expect(session.apply(ball).problems).deep.equals([])
+      await session.flush()
+      expect(store.refused).equals(1)
+      expect(session.rebases).equals(1)
+      expect(session.problem).equals(null)
+      expect(setupOf(session.state).sides.home.battingOrder).deep.equals(
+        homeOrder
+      )
+      expect(setupOf(session.state).sides.away.battingOrder).deep.equals(
+        shown.sides.away.battingOrder
+      )
+      expect(
+        session.state.liveData.plays.currentPlay?.matchup.batter.id
+      ).equals(shown.sides.away.battingOrder[0])
+      const stored = (await open(store)).session
+      expect(setupOf(stored.state).sides.home.battingOrder).deep.equals(
+        homeOrder
+      )
+      expect(setupOf(stored.state).sides.away.battingOrder).deep.equals(
+        shown.sides.away.battingOrder
+      )
+    })
+
+    async function coachPosts(
+      store: HashedLineupStore,
+      change: (setup: ReturnType<typeof setupOf>) => void
+    ): Promise<ScoringAction> {
+      const coach = (await open(store)).session
+      const setup = setupOf(coach.state)
+      change(setup)
+      const roster: ScoringAction = { type: 'lineup', kind: 'roster', setup }
+      expect(coach.apply(roster).problems).deep.equals([])
+      await coach.flush()
+      return roster
+    }
+
+    it('keeps a bench player the home coach added and scores the visitors default', async function () {
+      const store = new HashedLineupStore()
+      const session = await ScoringSession.open(store, 'g1', context, {
+        ...new Clock().options,
+        requireCurrentSetup: true
+      })
+      const blind = setupOf(session.state)
+      expect(
+        session.apply({
+          type: 'lineup',
+          kind: 'roster',
+          setup: blind,
+          unseen: ['away'],
+          confirmed: ['home']
+        }).problems
+      ).deep.equals([])
+      await session.flush()
+      const before = store.lineups
+      await coachPosts(store, addHomeBench)
+      const read = readLineups(
+        {
+          plays: [...store.plays.values()].map(row => row.play),
+          currentPlay: store.current
+        },
+        context
+      )
+      expect(store.lineups).equals(lineupsDigest(read.sides, read.bench))
+      expect(lineupsDigest(read.sides)).equals(before)
+      expect(store.lineups).not.equals(before)
+      const server = setupOf((await open(store)).session.state)
+      const bench = server.sides.home.players.find(
+        id => !blind.sides.home.players.includes(id)
+      )
+      expect(bench).a('number')
+      const shown = setupOf(session.state)
+      reverseAway(shown)
+      expect(
+        session.apply({
+          type: 'lineup',
+          kind: 'roster',
+          setup: shown,
+          confirmed: ['away'],
+          shown: true
+        }).problems
+      ).deep.equals([])
+      expect(session.apply(ball).problems).deep.equals([])
+      await session.flush()
+      expect(store.refused).equals(1)
+      expect(session.rebases).equals(1)
+      expect(session.problem).equals(null)
+      expect(session.state.gameData.players[bench!].fullName).equals(
+        'Home Bench'
+      )
+      expect(session.state.liveData.boxscore.teams.home.players).includes(bench)
+      expect(setupOf(session.state).sides.home.battingOrder).deep.equals(
+        server.sides.home.battingOrder
+      )
+      expect(setupOf(session.state).sides.away.battingOrder).deep.equals(
+        shown.sides.away.battingOrder
+      )
+      expect(
+        session.state.liveData.plays.currentPlay?.matchup.batter.id
+      ).equals(shown.sides.away.battingOrder[0])
+      const stored = (await open(store)).session
+      expect(stored.state.gameData.players[bench!].fullName).equals(
+        'Home Bench'
+      )
+      expect(stored.state.liveData.boxscore.teams.home.players).includes(bench)
+      expect(setupOf(stored.state).sides.away.battingOrder).deep.equals(
+        shown.sides.away.battingOrder
+      )
+    })
+
+    it('keeps the home bench player when the visitors default leads off with a placeholder', async function () {
+      const store = new HashedLineupStore()
+      const session = await ScoringSession.open(store, 'g1', context, {
+        ...new Clock().options,
+        requireCurrentSetup: true
+      })
+      const blind = setupOf(session.state)
+      expect(
+        session.apply({
+          type: 'lineup',
+          kind: 'roster',
+          setup: blind,
+          unseen: ['away'],
+          confirmed: ['home']
+        }).problems
+      ).deep.equals([])
+      await session.flush()
+      await coachPosts(store, addHomeBench)
+      const server = setupOf((await open(store)).session.state)
+      const bench = server.sides.home.players.find(
+        id => !blind.sides.home.players.includes(id)
+      )
+      expect(bench).a('number')
+      const shown = setupOf(session.state)
+      const draft = {
+        gameData: { teams: TEAMS, players: shown.players },
+        liveData: { boxscore: { teams: shown.sides } },
+        meta: { identities: shown.identities }
+      }
+      const guest = addPlayer(draft, 'away', 'Guest', '0')
+      expect(guest).equals(bench)
+      const order = [...shown.sides.away.battingOrder]
+      order[0] = guest
+      shown.sides.away.battingOrder = order
+      expect(
+        session.apply({
+          type: 'lineup',
+          kind: 'roster',
+          setup: shown,
+          confirmed: ['away'],
+          shown: true
+        }).problems
+      ).deep.equals([])
+      expect(session.apply(ball).problems).deep.equals([])
+      await session.flush()
+      expect(store.refused).equals(1)
+      expect(session.rebases).equals(1)
+      expect(session.problem).equals(null)
+      const lead = setupOf(session.state).sides.away.battingOrder[0]
+      expect(lead).not.equals(bench)
+      expect(session.state.gameData.players[lead].fullName).equals('Guest')
+      expect(session.state.gameData.players[bench!].fullName).equals(
+        'Home Bench'
+      )
+      expect(session.state.liveData.boxscore.teams.home.players).includes(bench)
+      expect(
+        session.state.liveData.boxscore.teams.away.battingOrder
+      ).not.includes(bench)
+      expect(
+        session.state.liveData.plays.currentPlay?.matchup.batter.id
+      ).equals(lead)
+      const stored = (await open(store)).session
+      expect(stored.state.gameData.players[bench!].fullName).equals(
+        'Home Bench'
+      )
+      expect(stored.state.liveData.plays.currentPlay?.matchup.batter.id).equals(
+        lead
+      )
+      expect(stored.state.gameData.players[lead].fullName).equals('Guest')
+    })
+
+    it('keeps a courtesy runner on base when the in-flight pitch was built before him', async function () {
+      const store = new HashedLineupStore()
+      const scored = await ScoringSession.open(store, 'g1', context, {
+        ...new Clock().options
+      })
+      expect(
+        scored.apply({ type: 'result', eventType: 'single' }).problems
+      ).deep.equals([])
+      await scored.flush()
+      await coachPosts(store, addAwayBench)
+      const session = await ScoringSession.open(store, 'g1', context, {
+        ...new Clock().options
+      })
+      const onFirst = baseIds(session.state)[0]
+      const bench = session.state.liveData.boxscore.teams.away.players.find(
+        id => session.state.gameData.players[id]?.fullName === 'Away Bench'
+      )
+      expect(onFirst).a('number')
+      expect(bench).a('number')
+      expect(bench).not.equals(onFirst)
+      const order = [...setupOf(session.state).sides.away.battingOrder]
+      const defense = setupOf(session.state).sides.away.defense
+      const before = store.lineups
+      expect(session.apply(ball).problems).deep.equals([])
+      const coach = (await open(store)).session
+      const runner: ScoringAction = {
+        type: 'lineup',
+        kind: 'runner',
+        side: 'away',
+        base: '1B',
+        player: bench!
+      }
+      expect(coach.apply(runner).problems).deep.equals([])
+      await coach.flush()
+      const read = readLineups(
+        {
+          plays: [...store.plays.values()].map(row => row.play),
+          currentPlay: store.current
+        },
+        context
+      )
+      expect(lineupsDigest(read.sides, read.bench)).equals(before)
+      expect(store.lineups).equals(
+        lineupsDigest(read.sides, read.bench, read.courtesy)
+      )
+      expect(store.lineups).not.equals(before)
+      expect(read.courtesy).length(1)
+      expect([
+        ...read.sides.away.changes,
+        ...read.sides.home.changes
+      ]).deep.equals([])
+      expect(setupOf(session.state).sides.away.battingOrder).deep.equals(order)
+      await session.flush()
+      expect(store.refused).equals(1)
+      expect(session.rebases).equals(1)
+      expect(session.problem).equals(null)
+      expect(baseIds(session.state)[0]).equals(bench)
+      expect(session.state.gameData.players[bench!].fullName).equals(
+        'Away Bench'
+      )
+      expect(setupOf(session.state).sides.away.battingOrder).deep.equals(order)
+      expect(setupOf(session.state).sides.away.defense).deep.equals(defense)
+      expect(session.state.liveData.plays.currentPlay?.count).includes({
+        balls: 1,
+        strikes: 0
+      })
+      const stored = (await open(store)).session
+      expect(baseIds(stored.state)[0]).equals(bench)
+      expect(stored.state.gameData.players[bench!].fullName).equals(
+        'Away Bench'
+      )
+      expect(stored.state.liveData.plays.currentPlay?.count).includes({
+        balls: 1,
+        strikes: 0
+      })
+    })
+
+    it('keeps the chosen next batter at the plate when the in-flight pitch was built before that save', async function () {
+      const store = new HashedLineupStore()
+      const session = await ScoringSession.open(store, 'g1', context, {
+        ...new Clock().options
+      })
+      const closePlay: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+      for (let walks = 0; walks < 3; walks++) {
+        for (let thrown = 0; thrown < 4; thrown++)
+          expect(session.apply(ball).problems).deep.equals([])
+        expect(session.apply(closePlay).problems).deep.equals([])
+      }
+      expect(
+        session.apply({
+          type: 'lineup',
+          kind: 'battingOrder',
+          side: 'away',
+          order: [4, 1, 2, 3, 5, 6, 7, 8, 9]
+        }).problems
+      ).deep.equals([])
+      await session.flush()
+      expect(session.state.liveData.linescore.offense.batter?.id).equals(4)
+      expect(session.apply(ball).problems).deep.equals([])
+      const other = (await open(store)).session
+      for (let thrown = 0; thrown < 3; thrown++)
+        expect(other.apply(strike).problems).deep.equals([])
+      expect(other.apply(closePlay).problems).deep.equals([])
+      await other.flush()
+      expect(other.state.awaitingBatter?.duePlayerId).equals(1)
+      const before = store.lineups
+      const storedGame = (): {
+        plays: GumboPlay[]
+        currentPlay: CurrentPlay | null
+      } => ({
+        plays: [...store.plays.values()].map(row => row.play),
+        currentPlay: store.current
+      })
+      const readBefore = readLineups(storedGame(), context)
+      const server = setupOf(other.state)
+      const coach = (await open(store)).session
+      const chosen = 5
+      expect(
+        coach.apply({
+          type: 'lineup',
+          kind: 'roster',
+          setup: setupOf(coach.state),
+          nextBatter: chosen
+        }).problems
+      ).deep.equals([])
+      await coach.flush()
+      const read = readLineups(storedGame(), context)
+      expect(readBefore.due?.awaiting).equals(true)
+      expect(read.due).deep.equals({
+        awaiting: false,
+        player: {
+          userId: null,
+          name: session.state.gameData.players[chosen].fullName,
+          jersey: session.state.gameData.players[chosen].jersey
+        }
+      })
+      expect(lineupsDigest(read.sides, read.bench, read.courtesy)).equals(
+        lineupsDigest(readBefore.sides, readBefore.bench, readBefore.courtesy)
+      )
+      expect(store.lineups).equals(
+        lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
+      )
+      expect(store.lineups).not.equals(before)
+      const after = setupOf((await open(store)).session.state)
+      expect(after.sides.away.battingOrder).deep.equals(
+        server.sides.away.battingOrder
+      )
+      expect(after.sides.away.defense).deep.equals(server.sides.away.defense)
+      await session.flush()
+      expect(store.refused).equals(1)
+      expect(session.rebases).equals(1)
+      expect(session.problem).equals(null)
+      expect(session.state.liveData.linescore.offense.batter?.id).equals(chosen)
+      expect(session.state.liveData.plays.currentPlay?.count).includes({
+        balls: 1,
+        strikes: 0
+      })
+      const stored = (await open(store)).session
+      expect(stored.state.liveData.linescore.offense.batter?.id).equals(chosen)
+      expect(stored.state.liveData.plays.currentPlay?.count).includes({
+        balls: 1,
+        strikes: 0
+      })
+    })
+
+    it('replays a roster saved from the sheet over the coach order', async function () {
+      const store = new LineupStore()
+      const { session } = await open(store)
+      const blind = setupOf(session.state)
+      const placeholder: ScoringAction = {
+        type: 'lineup',
+        kind: 'roster',
+        setup: blind,
+        unseen: ['away'],
+        confirmed: ['home']
+      }
+      expect(session.apply(placeholder).problems).deep.equals([])
+      await session.flush()
+      const coachRoster = await coachSaves(store, swapAwayLeadoff)
+      const sheet = setupOf(session.state)
+      reverseAway(sheet)
+      const roster: ScoringAction = {
+        type: 'lineup',
+        kind: 'roster',
+        setup: sheet,
+        confirmed: ['away', 'home']
+      }
+      expect(session.apply(roster).problems).deep.equals([])
+      await session.flush()
+      expect(store.refused).equals(1)
+      expect(session.rebases).equals(1)
+      expect(session.problem).equals(null)
+      expect(session.actions).deep.equals([placeholder, coachRoster, roster])
+      expect(setupOf(session.state).sides.away.battingOrder).deep.equals(
+        sheet.sides.away.battingOrder
+      )
+    })
+
+    it('puts an undo of its own saved pitch under the coach’s change', async function () {
+      const store = new LineupStore()
+      const { session } = await open(store)
+      session.apply(ball)
+      session.apply(strike)
+      await session.flush()
+      const roster = await coachSaves(store, swapLeadoff)
+      session.undo()
+      session.apply(ball)
+      await session.flush()
+      expect(session.actions).deep.equals([ball, roster, ball])
+      expect((await open(store)).session.actions).deep.equals([
+        ball,
+        roster,
+        ball
+      ])
+    })
+
+    it('keeps trying, never read-only, while the lineups keep moving', async function () {
+      const store = new LineupStore()
+      const { session, clock } = await open(store)
+      const load = store.load.bind(store)
+      store.load = async () => {
+        const read = await load()
+        store.lineups = `${store.lineups}+`
+        return read
+      }
+      store.lineups = 'moved'
+      session.apply(ball)
+      await session.flush()
+      expect(store.refused).equals(4)
+      expect(session.readOnly).equals(false)
+      expect(session.problem).equals(
+        'Somebody else changed the lineups since this game was read'
+      )
+      expect(session.actions).deep.equals([ball])
+      expect(clock.waiting.map(entry => entry.ms)).deep.equals([1000])
+      store.load = load
+      await clock.tick()
+      expect(session.problem).equals(null)
+      expect(session.pending).equals(0)
+    })
+
+    it('goes read-only when the read it takes up cannot be read back', async function () {
+      const store = new LineupStore()
+      const { session } = await open(store)
+      session.apply(ball)
+      await session.flush()
+      store.lineups = 'moved'
+      const load = store.load.bind(store)
+      store.load = async () => {
+        throw new HttpError('forbidden', 'Not yours')
+      }
+      session.apply(strike)
+      await session.flush()
+      expect(session.readOnly).equals(true)
+      expect(session.problem).equals('Not yours')
+      store.load = load
+    })
   })
 
   it('syncs to the log a screen keeps, undoing back to where they agree', async function () {

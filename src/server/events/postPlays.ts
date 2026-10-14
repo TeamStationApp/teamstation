@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import type { Kysely, Selectable } from 'kysely'
 
 import { badRequest, conflict, notFound } from '../../common/errors'
@@ -19,7 +21,11 @@ import {
   teamIdsOnCredits,
   upsertGameEvents
 } from './eventWrite'
-import { keepLineups, storedLineupGame } from './teamLineups'
+import {
+  keepLineups,
+  storedLineupGame,
+  storedLineupsDigest
+} from './teamLineups'
 
 type Trx = Kysely<Database>
 
@@ -32,6 +38,33 @@ export interface PostedGame {
 export interface PostedPlays {
   plays: Array<{ id: string; gameId: string; gumbo: unknown }>
   currentPlay: unknown
+  /**
+   * The digest the game keeps of its lineups once this post is written, read
+   * in its transaction: the base a sender's next live post names. Null only
+   * for a replace post to a game no live post has written.
+   */
+  lineupsDigest: string | null
+  /**
+   * A digest of the stored plays and the at-bat in progress once this post
+   * is written, as `GET /events` and the game socket's `plays` give it.
+   */
+  playsDigest: string
+  /**
+   * On a live post, the same digest of the game as this post found it: when
+   * it is the one its sender last had, everything stored now is the
+   * sender's own, and a notice carrying `playsDigest` is its own echo.
+   */
+  priorPlaysDigest: string | null
+}
+
+export interface PostOptions {
+  /**
+   * Whether an at-bat in progress puts a live game under way, as it does by
+   * default. A head coach's lineup saved before the game begins is held in
+   * the at-bat in progress, and passes false, so a scheduled game stays
+   * scheduled until something is played.
+   */
+  startsGame?: boolean
 }
 
 /**
@@ -46,8 +79,10 @@ export async function postGamePlays(
   db: Kysely<Database>,
   gameId: string,
   body: PostEventsBody,
-  authorize?: (trx: Trx, game: PostedGame) => Promise<void>
+  authorize?: (trx: Trx, game: PostedGame) => Promise<void>,
+  options: PostOptions = {}
 ): Promise<PostedPlays> {
+  const startsGame = options.startsGame ?? true
   // TeamStation and a person typing name themselves. Every other sender, and
   // a post that names none, is an outside scorer: the least trusted one.
   const sent = body.source?.system
@@ -110,6 +145,24 @@ export async function postGamePlays(
       if (system === 'external' && game.scoringOwner === 'teamstation') {
         throw conflict('This game is scored in TeamStation')
       }
+      // A live post built on lineups somebody has saved over since would
+      // write the old ones back: the sender reads the game again and posts
+      // its own changes on top.
+      // The game as this post finds it, which tells its sender whether
+      // anybody else wrote to it since.
+      const prior = live
+        ? playsDigest(await readPlays(trx, gameId), game.currentPlay)
+        : null
+      if (
+        live &&
+        body.lineupsBase !== undefined &&
+        body.lineupsBase !==
+          (await storedLineupsDigest(trx, { id: gameId, ...game }))
+      )
+        throw conflict(
+          'Somebody else changed the lineups since this game was read',
+          { stale: true }
+        )
 
       const teams = {
         homeTeamId: game.home_team_id,
@@ -188,7 +241,10 @@ export async function postGamePlays(
           )
       // A live post keeps the lineups' digest, and a TeamStation one the
       // teams' default lineups, from what it leaves stored.
-      const lineups = live
+      const lineups: {
+        lineups_digest?: string
+        lineup_started_at?: Date | null
+      } = live
         ? await keepLineups(
             trx,
             {
@@ -204,7 +260,11 @@ export async function postGamePlays(
         : {}
       const halves = halfOutcomes(documents)
       const status = live
-        ? statusAfterLivePost(game.status, stored, currentPlay != null)
+        ? statusAfterLivePost(
+            game.status,
+            stored,
+            startsGame && currentPlay != null
+          )
         : statusAfterPost(game.status, posted, stored.length)
       await trx
         .updateTable('games')
@@ -250,7 +310,10 @@ export async function postGamePlays(
         await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
       return {
         plays: taggedStored.map(playJson),
-        currentPlay: taggedGame.currentPlay ?? null
+        currentPlay: taggedGame.currentPlay ?? null,
+        lineupsDigest: lineups.lineups_digest ?? game.lineups_digest,
+        playsDigest: playsDigest(taggedStored, taggedGame.currentPlay),
+        priorPlaysDigest: prior
       }
     })
     .catch((error: unknown) => {
@@ -370,6 +433,19 @@ export function playJson(row: StoredPlay): {
   gumbo: unknown
 } {
   return { id: row.id, gameId: row.gameId, gumbo: row.gumbo }
+}
+
+/**
+ * A sha256 of a game's stored plays, in index order, and its at-bat in
+ * progress: the same for the same stored game, wherever it is read.
+ */
+export function playsDigest(
+  rows: Array<{ gumbo: unknown }>,
+  currentPlay: unknown
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify([rows.map(row => row.gumbo), currentPlay ?? null]))
+    .digest('hex')
 }
 
 /**

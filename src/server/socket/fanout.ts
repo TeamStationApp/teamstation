@@ -6,8 +6,8 @@ import type { WalkUpSong } from '../../common/walkUpSong'
 import type { GameScope } from '../access'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
-import { playJson, readPlays } from '../events/postPlays'
-import { gameLineups } from '../events/teamLineups'
+import { playJson, playsDigest, readPlays } from '../events/postPlays'
+import { lineupsAnswer } from '../events/teamLineups'
 import { readWalkUpSong } from '../routes/walkUpSongs'
 import {
   asGameChangePayload,
@@ -207,6 +207,8 @@ export class GameFanout {
           scope.awayTeamId !== change.team
         )
           return
+        const plays =
+          change.kind === 'plays' ? await readPlays(trx, gameId) : []
         const head = {
           type: 'change' as const,
           gameId,
@@ -229,19 +231,21 @@ export class GameFanout {
                 ? {
                     ...head,
                     kind: 'lineups',
-                    data: await gameLineups(trx, {
+                    data: await lineupsAnswer(trx, {
                       id: gameId,
                       home_team_id: game.home_team_id,
                       away_team_id: game.away_team_id,
-                      currentPlay: game.currentPlay
+                      currentPlay: game.currentPlay,
+                      lineups_digest: game.lineups_digest
                     })
                   }
                 : {
                     ...head,
                     kind: 'plays',
                     data: {
-                      plays: (await readPlays(trx, gameId)).map(playJson),
-                      currentPlay: game.currentPlay ?? null
+                      plays: plays.map(playJson),
+                      currentPlay: game.currentPlay ?? null,
+                      digest: playsDigest(plays, game.currentPlay)
                     }
                   }
         await Promise.all(

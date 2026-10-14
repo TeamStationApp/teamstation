@@ -3,6 +3,7 @@ import { type Kysely, type Selectable, sql } from 'kysely'
 import { after, before, beforeEach, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { asPostEventsBody } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import type {
   ScheduleGameResult,
@@ -13,6 +14,7 @@ import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import type { Database, GamesTable } from '../db/database'
 import { makeDatabase } from '../db/database'
+import { postGamePlays } from '../events/postPlays'
 import {
   mayScheduleIn,
   scheduleGames,
@@ -635,6 +637,55 @@ describe('scheduling a team’s games', function () {
       })
       expect(await game(gameId)).deep.equals(before)
     }
+  })
+
+  // U8b: a head coach's lineup saved before the game begins is the at-bat
+  // in progress, and the game stays scheduled.
+  it('still moves a game whose lineup was saved before it began', async function () {
+    const externalId = { system: 'otherLeague', id: 'ol-lineup' }
+    const created = await post([
+      {
+        opponent: { name: 'Lineups' },
+        side: 'home',
+        startAt: nextStart(),
+        externalId
+      }
+    ])
+    const gameId = idOf(created.results[0])
+    await postGamePlays(
+      db!,
+      gameId,
+      asPostEventsBody({
+        mode: 'live',
+        source: { system: 'teamstation' },
+        plays: [],
+        currentPlay: {
+          about: {
+            atBatIndex: 0,
+            inning: 1,
+            halfInning: 'top',
+            isComplete: false
+          },
+          matchup: { batter: { fullName: 'Judge' } },
+          playEvents: []
+        }
+      }),
+      undefined,
+      { startsGame: false }
+    )
+    const before = await game(gameId)
+    expect(before.status).equals('scheduled')
+    expect(before.currentPlay).not.equals(null)
+    const later = nextStart()
+    const moved = await post([{ startAt: later, venue: 'Field 4', externalId }])
+    expect(moved.results[0]).deep.include({
+      result: 'updated',
+      status: 'scheduled'
+    })
+    const now = await game(gameId)
+    expect(new Date(now.start_at).toISOString()).equals(later)
+    expect(now.venue).equals('Field 4')
+    expect(now.currentPlay).deep.equals(before.currentPlay)
   })
 
   it('refuses an id on a game the team does not play in', async function () {

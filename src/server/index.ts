@@ -538,7 +538,10 @@ function runWorker(): void {
     '/api/v1',
     eventRoutes(db, { onGameWritten: scoreboard.onGameWritten })
   )
-  app.use('/api/v1', lineupRoutes(db))
+  app.use(
+    '/api/v1',
+    lineupRoutes(db, { onGameWritten: scoreboard.onGameWritten })
+  )
   app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
   app.use('/api/v1', adminRoutes())
   app.use('/api/v1', statsRoutes(db, mediaContext))

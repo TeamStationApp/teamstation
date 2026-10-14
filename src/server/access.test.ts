@@ -25,6 +25,7 @@ import {
   guardsPerson,
   guardsPlayer,
   hasRole,
+  isHeadCoach,
   mayEditName,
   mayManagePlayer,
   type RoleScopes,
@@ -433,6 +434,34 @@ describe('role flags', function () {
     const assistant = await scopesOf('assistant@tem_a2')
     expect(canScore(assistant, 'tem_a2')).equals(false)
     expect(canKeepSongs(assistant, 'tem_a2')).equals(false)
+  })
+
+  // U9: the head coach saves the team's lineup in a game; an assistant does not.
+  it('makes a coach, an admin of the team and a site admin its head coach, and never an assistant', async function () {
+    for (const height of HEIGHTS) {
+      const coach = await scopesOf(`coach@${height.id}`)
+      expect(
+        TEAMS.filter(teamId => isHeadCoach(coach, teamId)),
+        height.id
+      ).deep.equals([...height.teams])
+      const assistant = await scopesOf(`assistant@${height.id}`)
+      expect(
+        TEAMS.filter(teamId => isHeadCoach(assistant, teamId)),
+        height.id
+      ).deep.equals([])
+      const admin = await scopesOf(`admin@${height.id}`)
+      expect(
+        TEAMS.filter(teamId => isHeadCoach(admin, teamId)),
+        height.id
+      ).deep.equals([...height.teams])
+    }
+    expect(isHeadCoach(await scopesOf('manager'), 'tem_a1')).equals(true)
+    expect(isHeadCoach(await scopesOf('manager'), 'tem_a2')).equals(false)
+    const site = await scopesOf('siteAdmin')
+    expect(TEAMS.every(teamId => isHeadCoach(site, teamId))).equals(true)
+    expect(isHeadCoach(await scopesOf('scorekeeper@tem_a2'), 'tem_a2')).equals(
+      false
+    )
   })
 
   it('lists the roles each person was given on a team, implying nothing', async function () {

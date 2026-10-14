@@ -48,6 +48,7 @@
     "import-video": "node -r sucrase/register src/server/dev/importVideoFile.ts",
     "ios": "react-native run-ios",
     "lint": "eslint .",
+    "lineup-fixture": "node -r sucrase/register src/server/dev/lineupFixture.ts",
     "make-season": "node -r sucrase/register src/server/dev/makeSeasonFromVideos.ts",
     "merge-team": "node -r sucrase/register src/server/dev/mergeTeam.ts",
     "metro": "react-native start",

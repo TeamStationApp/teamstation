@@ -163,6 +163,7 @@ describe('posting and reading plays', function () {
   const liveRefusedId = makeId('game')
   const ownerlessFinalId = makeId('game')
   const flagsId = makeId('game')
+  const staleId = makeId('game')
 
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
@@ -359,7 +360,8 @@ describe('posting and reading plays', function () {
           liveAtBatId,
           liveFinalId,
           liveRefusedId,
-          flagsId
+          flagsId,
+          staleId
         ].map(id => ({
           id,
           home_team_id: home,
@@ -1572,10 +1574,13 @@ describe('posting and reading plays', function () {
     expect(players).deep.equals([])
     expect(await gameRow(liveAtBatId)).deep.include({ status: 'inProgress' })
     const read = await ask(`/games/${liveAtBatId}/events`)
-    expect(withoutTagTargets(read.body)).deep.equals({
+    const { lineupsDigest, playsDigest, ...events } = read.body
+    expect(withoutTagTargets(events)).deep.equals({
       plays: [],
       currentPlay: current(0)
     })
+    expect(lineupsDigest).equals(posted.body.lineupsDigest)
+    expect(playsDigest).equals(posted.body.playsDigest)
     await live(liveAtBatId, { plays: [] })
     expect(
       withoutTagTargets((await gameRow(liveAtBatId)).currentPlay)
@@ -1588,6 +1593,88 @@ describe('posting and reading plays', function () {
     expect((await gameRow(liveAtBatId)).currentPlay).equals(null)
     // An at-bat in progress changes no stats, so none are asked for.
     expect(await statsAsked(liveAtBatId)).equals(0)
+  })
+
+  it('answers a digest of the plays, and of the game as each live post found it', async function () {
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const read = await ask(`/games/${id}/events`)
+    const opened = read.body.playsDigest as string
+    expect(opened).match(/^[0-9a-f]{64}$/)
+    const first = await live(id, { currentPlay: current(0) })
+    expect(first.body.priorPlaysDigest).equals(opened)
+    const mine = first.body.playsDigest as string
+    expect(mine).not.equals(opened)
+    expect((await ask(`/games/${id}/events`)).body.playsDigest).equals(mine)
+    // Another post in between: the next one finds a game it did not leave.
+    const theirs = await live(id, { currentPlay: current(0, 2) })
+    expect(theirs.body.priorPlaysDigest).equals(mine)
+    const next = await live(id, { currentPlay: current(0, 3) })
+    expect(next.body.priorPlaysDigest).equals(theirs.body.playsDigest)
+    expect(next.body.priorPlaysDigest).not.equals(mine)
+    // A replace post answers the digest, and found nothing it compares.
+    const replaced = await ask(`/games/${id}/events`, 'POST', {
+      source: { system: 'teamstation' },
+      plays: []
+    })
+    expect(replaced.body.priorPlaysDigest).equals(null)
+    expect(replaced.body.playsDigest).equals(
+      (await ask(`/games/${id}/events`)).body.playsDigest
+    )
+  })
+
+  it('refuses a live post built on lineups that have changed since, and writes nothing (stale)', async function () {
+    // A game no live post has written yet keeps no digest: it is worked out.
+    const read = await ask(`/games/${staleId}/events`)
+    expect(read.status).equals(200)
+    const base = read.body.lineupsDigest as string
+    expect(base).match(/^[0-9a-f]{64}$/)
+    const stale = await live(staleId, {
+      currentPlay: current(0),
+      lineupsBase: 'not-the-lineups'
+    })
+    expect(stale.status).equals(409)
+    expect(stale.body).deep.equals({
+      code: 'conflict',
+      message: 'Somebody else changed the lineups since this game was read',
+      details: { stale: true }
+    })
+    expect((await gameRow(staleId)).currentPlay).equals(null)
+    // Built on the lineups as they stand, it is written, and its answer
+    // carries the digest the next post names.
+    const matching = await live(staleId, {
+      currentPlay: current(0),
+      lineupsBase: base
+    })
+    expect(matching.status).equals(200)
+    const kept = await db!
+      .selectFrom('games')
+      .select('lineups_digest')
+      .where('id', '=', staleId)
+      .executeTakeFirstOrThrow()
+    expect(matching.body.lineupsDigest).equals(kept.lineups_digest)
+    expect((await ask(`/games/${staleId}/events`)).body.lineupsDigest).equals(
+      kept.lineups_digest
+    )
+    // A post that names none is written as before.
+    expect((await live(staleId, { currentPlay: current(0, 2) })).status).equals(
+      200
+    )
+    // A replace post is never checked.
+    const replaced = await ask(`/games/${staleId}/events`, 'POST', {
+      source: { system: 'teamstation' },
+      plays: [],
+      lineupsBase: 'not-the-lineups'
+    })
+    expect(replaced.status).equals(200)
   })
 
   it('leaves a cancelled game cancelled and refuses a teammate who cannot score', async function () {

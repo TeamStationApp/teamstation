@@ -813,7 +813,8 @@ describe('the game socket (U14)', function () {
         .find(frame => frame.type === 'change' && frame.kind === 'plays')
       expect(plays?.type === 'change' && plays.data).to.have.keys(
         'plays',
-        'currentPlay'
+        'currentPlay',
+        'digest'
       )
 
       // Another pitch leaves the lineups alone.

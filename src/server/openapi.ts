@@ -708,7 +708,9 @@ const gumboEventType = {
     "TeamStation's extensions: `final_score` and `score_correction` (an " +
     'import), `ts_manual_placement` (a batter the scorer put ' +
     'on base by hand), `ts_batter_out` (a batter out on a play MLB has no ' +
-    'code for) and `ts_batting_order` (a change of batting order). A post ' +
+    'code for), `ts_batting_order` (a change of batting order) and ' +
+    '`ts_courtesy_runner` (a pinch runner who takes a runner’s base and ' +
+    'leaves the batting order as it is). A post ' +
     'may still send `catcher_interference`, `placed_runner` or ' +
     '`manual_placement`; they are stored as `catcher_interf`, ' +
     '`runner_placed` and `ts_manual_placement`. It may also send the ' +
@@ -1532,6 +1534,22 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'yet, such as a pinch hitter waiting to bat. Null for a game ' +
                 'TeamStation did not score, or whose record no longer replays.',
               oneOf: [{ $ref: '#/components/schemas/Lineup' }, { type: 'null' }]
+            }
+          }
+        },
+        GameLineups: {
+          type: 'object',
+          required: ['away', 'home', 'digest'],
+          properties: {
+            away: { $ref: '#/components/schemas/SideLineups' },
+            home: { $ref: '#/components/schemas/SideLineups' },
+            digest: {
+              type: 'string',
+              description:
+                "The digest the game keeps of both sides' lineups, which " +
+                'changes exactly when what they show does. The game socket ' +
+                'sends the same with each `lineups` change, so a screen ' +
+                'tells its own save from somebody else’s.'
             }
           }
         },
@@ -3530,6 +3548,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'plays: a scorekeeper of either team, which every admin of it ' +
             'is. `canDj` is whether the caller may DJ it: a songkeeper or ' +
             'scorekeeper of either team, which every admin of it is. ' +
+            '`coachSides` is the sides whose team the caller head-coaches ' +
+            '(the coach flag, which every admin of the team holds; not an ' +
+            'assistant), and so whose lineup they may save. ' +
             '`scoreboard` is `{ open, mayOverride }`: ' +
             "whether the game's scoreboard is open, and whether the caller " +
             'runs the game and so may override it; null when the ' +
@@ -3538,7 +3559,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'that caller reads the game, its records, logos and videos with ' +
             'their posters, but each `linescore` side carries `runs` and `r` ' +
             'alone (`h`, `e`, `bb`, `k`, `hr` and `hbp` are null), and ' +
-            '`canScore` and `canDj` are false. False for members.',
+            '`canScore` and `canDj` are false and `coachSides` empty. ' +
+            'False for members.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -3774,7 +3796,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             'league, which every admin of them is, and a site admin. Anybody ' +
             'else who can see the game gets 403. Tagged activity edits that ' +
             'cannot be disambiguated without structured event identities return ' +
-            '409 without changing the stored events or assignments.',
+            '409 without changing the stored events or assignments. A live ' +
+            'post naming a `lineupsBase` that is no longer the game’s lineups ' +
+            'digest, because somebody else saved the lineups since the sender ' +
+            'read them, is refused with 409 and `details: { stale: true }`, ' +
+            'and writes nothing: the sender reads the game again and posts ' +
+            'its changes on top of it.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {
@@ -3830,6 +3857,13 @@ export function openApiDocument(version: string): OpenApiDocument {
                         "a game's first plays fixes its fence at this one. " +
                         'Anything but whole feet from 1 to 600 is ignored, ' +
                         "and the game's resolved fence is fixed instead."
+                    },
+                    lineupsBase: {
+                      type: 'string',
+                      description:
+                        'On a live post: the `lineupsDigest` the sender last ' +
+                        'read or was answered with. Left out, the post is ' +
+                        'not checked against the lineups.'
                     }
                   }
                 }
@@ -3843,7 +3877,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'application/json': {
                   schema: {
                     type: 'object',
-                    required: ['plays'],
+                    required: [
+                      'plays',
+                      'currentPlay',
+                      'playsDigest',
+                      'lineupsDigest'
+                    ],
                     properties: {
                       plays: {
                         type: 'array',
@@ -3856,6 +3895,37 @@ export function openApiDocument(version: string): OpenApiDocument {
                             gumbo: { $ref: '#/components/schemas/GumboPlay' }
                           }
                         }
+                      },
+                      currentPlay: {
+                        oneOf: [
+                          { $ref: '#/components/schemas/GumboCurrentPlay' },
+                          { type: 'null' }
+                        ]
+                      },
+                      playsDigest: {
+                        type: 'string',
+                        description:
+                          'A digest of the stored plays and the at-bat in ' +
+                          'progress once this post is written, as `GET` and ' +
+                          "the game socket's `plays` notices give it."
+                      },
+                      priorPlaysDigest: {
+                        type: ['string', 'null'],
+                        description:
+                          'On a live post, the same digest of the game as ' +
+                          'the post found it, before writing: when it is the ' +
+                          'one the sender last had, everything stored is its ' +
+                          'own, and the notice carrying `playsDigest` is its ' +
+                          'own echo. Null on a replace post.'
+                      },
+                      lineupsDigest: {
+                        type: ['string', 'null'],
+                        description:
+                          "The digest the game keeps of both sides' lineups " +
+                          'once this post is written, as `GET ' +
+                          '/games/{gameId}/lineups` gives it: the ' +
+                          '`lineupsBase` of the next live post. Null only ' +
+                          'after a replace post to a game never scored live.'
                       }
                     }
                   }
@@ -3877,13 +3947,23 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description:
-                '{ plays: [{ id, gameId, gumbo }], currentPlay }: `gumbo` is ' +
-                'a `GumboPlay`, `currentPlay` a `GumboCurrentPlay` or null',
+                '{ plays: [{ id, gameId, gumbo }], currentPlay, ' +
+                'playsDigest, lineupsDigest }: `gumbo` is a `GumboPlay`, ' +
+                '`currentPlay` a `GumboCurrentPlay` or null, `playsDigest` a ' +
+                'digest of both, as a live post answers it and the game ' +
+                "socket's `plays` notices carry it, and `lineupsDigest` the " +
+                "digest the game keeps of both sides' lineups, which a live " +
+                'post names as its `lineupsBase`',
               content: {
                 'application/json': {
                   schema: {
                     type: 'object',
-                    required: ['plays', 'currentPlay'],
+                    required: [
+                      'plays',
+                      'currentPlay',
+                      'playsDigest',
+                      'lineupsDigest'
+                    ],
                     properties: {
                       plays: {
                         type: 'array',
@@ -3902,7 +3982,9 @@ export function openApiDocument(version: string): OpenApiDocument {
                           { $ref: '#/components/schemas/GumboCurrentPlay' },
                           { type: 'null' }
                         ]
-                      }
+                      },
+                      playsDigest: { type: 'string' },
+                      lineupsDigest: { type: 'string' }
                     }
                   }
                 }
@@ -3949,30 +4031,143 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'Read from the stored plays and the at-bat in progress: the ' +
             'lineup each side began with, every substitution the stored ' +
-            'Gumbo announces, in game order, and the lineup as it stands. A ' +
-            'game TeamStation did not score has only the substitutions its ' +
-            'plays carry. Needs somebody who can see the game; 404 for ' +
-            'anybody else.',
+            'Gumbo announces, in game order, and the lineup as it stands, ' +
+            'with the `digest` the game keeps of them. A game TeamStation ' +
+            'did not score has only the substitutions its plays carry. ' +
+            'Needs somebody who can see the game; 404 for anybody else.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           responses: {
             200: {
-              description: '{ away, home }',
+              description: '{ away, home, digest }',
               content: {
                 'application/json': {
-                  schema: {
-                    type: 'object',
-                    required: ['away', 'home'],
-                    properties: {
-                      away: { $ref: '#/components/schemas/SideLineups' },
-                      home: { $ref: '#/components/schemas/SideLineups' }
-                    }
-                  }
+                  schema: { $ref: '#/components/schemas/GameLineups' }
                 }
               }
             },
             401: errorResponse,
             404: errorResponse
+          }
+        },
+        post: {
+          summary: "Save one side's lineup in a game",
+          description:
+            "One side's players, batting order and defence, as its head " +
+            'coach sets them between plays. The players are named by who ' +
+            'they are: `userId`, or for a player made up at the field ' +
+            '`fullName` and `jersey`, matched against the side’s made-up ' +
+            'players and added when none matches. Every other number is an ' +
+            'index into `players`. The game is replayed as the scoring ' +
+            'screen replays it, the lineup is applied as a scorer’s roster ' +
+            'change, followed by a pinch runner who keeps the batting order ' +
+            'for each of `runners`, and what that changes is saved as a ' +
+            'scorer’s live post is. The other side cannot change. A save ' +
+            'with nothing to change writes nothing. A save before the game ' +
+            'begins leaves a scheduled game scheduled. A game with no record ' +
+            'yet opens as the caller’s own scoring screen would open it: ' +
+            "each team's default lineup arranges its side only when the " +
+            'caller may see that team, and its roster order does otherwise. ' +
+            'The answer’s `digest` is the one this save left, read as it was ' +
+            'written, or the one it found when it changed nothing. `base` is the ' +
+            '`digest` the caller last read; it is not compared, and the ' +
+            'last save wins. **Who may call:** a head coach of the side’s ' +
+            'team (the coach flag, or an admin of the team; not an ' +
+            'assistant) or a scorekeeper of either team, and a site admin. ' +
+            'Anybody else who can see the game gets 403; a game the caller ' +
+            'cannot see, 404. A change the game cannot take now (a play to ' +
+            'finish first, a game over) is 409 with its reason, and one it ' +
+            'cannot take at all, or an index past `players`, 400. A game ' +
+            'that keeps changing while the save replays it answers 409 ' +
+            'after three tries.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: [
+                    'side',
+                    'base',
+                    'players',
+                    'battingOrder',
+                    'defense'
+                  ],
+                  properties: {
+                    side: { type: 'string', enum: ['away', 'home'] },
+                    base: {
+                      type: 'string',
+                      description: 'The lineups `digest` the caller last read'
+                    },
+                    players: {
+                      type: 'array',
+                      description: "Every player on the side's roster",
+                      items: {
+                        type: 'object',
+                        required: ['userId', 'fullName', 'jersey'],
+                        properties: {
+                          userId: {
+                            oneOf: [{ type: 'integer' }, { type: 'null' }]
+                          },
+                          fullName: { type: 'string' },
+                          jersey: { type: 'string' }
+                        }
+                      }
+                    },
+                    battingOrder: {
+                      type: 'array',
+                      items: { type: 'integer', minimum: 0 },
+                      description: 'Indexes into `players`, leadoff first'
+                    },
+                    defense: {
+                      type: 'object',
+                      description:
+                        'Each position held, P, C, 1B, 2B, SS, 3B, LF, CF ' +
+                        'or RF, and the index into `players` of who plays it',
+                      additionalProperties: { type: 'integer', minimum: 0 }
+                    },
+                    nextBatter: {
+                      type: 'integer',
+                      minimum: 0,
+                      description:
+                        'Who bats next, when it is not the batter due: a ' +
+                        'pinch hitter'
+                    },
+                    runners: {
+                      type: 'array',
+                      description:
+                        'Pinch runners who keep the batting order, each on ' +
+                        'the base of the runner he runs for',
+                      items: {
+                        type: 'object',
+                        required: ['base', 'player'],
+                        properties: {
+                          base: { type: 'string', enum: ['1B', '2B', '3B'] },
+                          player: { type: 'integer', minimum: 0 }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: "Both sides' lineups as they now stand",
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/GameLineups' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
           }
         }
       },
