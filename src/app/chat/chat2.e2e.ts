@@ -7,6 +7,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
@@ -154,6 +155,167 @@ export async function observeMentionHeader(
             titleScope: 'chat-picker-header',
             searchScope: 'chat-picker-content'
           }
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+  } catch (error) {
+    observation.error = error instanceof Error ? error.message : String(error)
+    throw error
+  }
+}
+
+function captureRaster(bytes: Buffer): { width: number; height: number } {
+  if (
+    bytes.length >= 24 &&
+    bytes
+      .subarray(0, 8)
+      .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) &&
+    bytes.toString('ascii', 12, 16) === 'IHDR'
+  )
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+  // The native RPC screenshot may be JPEG; inspect its actual frame header.
+  if (bytes[0] === 255 && bytes[1] === 216)
+    for (let offset = 2; offset + 4 <= bytes.length;) {
+      assert(bytes[offset] === 255, 'Native screenshot JPEG marker required')
+      const marker = bytes[offset + 1]
+      if (marker === 255) {
+        offset += 1
+        continue
+      }
+      if (marker === 217 || marker === 218) break
+      const length = bytes.readUInt16BE(offset + 2)
+      assert(
+        length >= 2 && offset + 2 + length <= bytes.length,
+        'Native screenshot JPEG segment required'
+      )
+      if (
+        [
+          192, 193, 194, 195, 197, 198, 199, 201, 202, 203, 205, 206, 207
+        ].includes(marker)
+      ) {
+        assert(length >= 8, 'Native screenshot JPEG frame required')
+        return {
+          width: bytes.readUInt16BE(offset + 7),
+          height: bytes.readUInt16BE(offset + 5)
+        }
+      }
+      offset += 2 + length
+    }
+  throw new Error('Observed native PNG or JPEG screenshot dimensions required')
+}
+
+/** Static capture readiness never changes the functional hold or animation timing. */
+export async function observeSpotlightCaptureReady(
+  ui: Chat2UI,
+  timeout = 8000
+): Promise<Json> {
+  type Box = NonNullable<PublicNode['bounds']>
+  const samples: Json[] = []
+  const observation: Json = {
+    name: 'Settled spotlight capture readiness',
+    outcome: 'failed',
+    method: ui.native
+      ? 'Public bounds and unchanged raw Maestro screenshot hashes'
+      : 'Atomic public DOM geometry, computed opacity and transform',
+    stableForMs: 200,
+    timeoutMs: timeout,
+    samples
+  }
+  ui.steps.push(observation)
+  try {
+    await ui.present('chat-message-spotlight')
+    const deadline = Date.now() + timeout
+    let reference: string | undefined
+    let stableSince = Date.now()
+    for (;;) {
+      const sample: Json = { startedAt: new Date().toISOString() }
+      samples.push(sample)
+      if (samples.length > 24) samples.splice(1, 1)
+      let geometry: Record<string, Box>
+      let opaque = true
+      if (ui.native) {
+        geometry = {
+          controls: await ui.publicBounds('chat-message-spotlight-controls'),
+          panel: await ui.publicBounds('chat-message-spotlight-panel')
+        }
+        sample.bounds = geometry
+        // These temporary bytes are never written or included in evidence logs.
+        const bytes = Buffer.from(await ui.device.screenshot())
+        sample.image = {
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          bytes: bytes.length
+        }
+        const raster = captureRaster(bytes)
+        sample.image = { ...(sample.image as Json), ...raster }
+        assert(
+          raster.width > 0 && raster.height > 0,
+          'Positive native screenshot dimensions required'
+        )
+      } else {
+        const actual = await ui.dom(`
+          const root=document.querySelector('[data-testid="chat-message-spotlight"]');
+          const controls=root&&root.querySelector('[data-testid="chat-message-spotlight-controls"]');
+          const panel=root&&root.querySelector('[data-testid="chat-message-spotlight-panel"]');
+          const preview=root&&root.querySelector('[data-testid="chat-message-spotlight-preview"]');
+          const backdrop=root&&root.firstElementChild;
+          const geometry={},styles={};
+          for(const [name,node] of [['controls',controls],['panel',panel],['backdrop',backdrop],['preview',preview]]){
+            if(node===null){if(name!=='preview')return {missing:name};continue;}
+            const box=node.getBoundingClientRect(),style=getComputedStyle(node);
+            geometry[name]={x:box.x,y:box.y,width:box.width,height:box.height};
+            styles[name]={opacity:Number(style.opacity),transform:style.transform,display:style.display,visibility:style.visibility};
+          }
+          return {geometry,styles};
+        `)
+        sample.publicDOM = actual
+        geometry = (actual.geometry ?? {}) as Record<string, Box>
+        const styles = Object.values(
+          (actual.styles ?? {}) as Record<
+            string,
+            { opacity: number; display: string; visibility: string }
+          >
+        )
+        opaque =
+          actual.missing == null &&
+          styles.length >= 3 &&
+          styles.every(
+            style =>
+              style.opacity === 1 &&
+              style.display !== 'none' &&
+              style.visibility !== 'hidden'
+          )
+      }
+      const finite =
+        Object.keys(geometry).length >= 2 &&
+        Object.values(geometry).every(
+          box =>
+            [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+            box.width > 0 &&
+            box.height > 0
+        )
+      sample.completedAt = new Date().toISOString()
+      sample.ready = finite && opaque
+      const signature = JSON.stringify({
+        geometry,
+        publicDOM: sample.publicDOM,
+        image: sample.image
+      })
+      const stable = finite && opaque && signature === reference
+      if (!stable) {
+        reference = finite && opaque ? signature : undefined
+        stableSince = Date.now()
+      }
+      assert(
+        Date.now() < deadline,
+        'Timed out waiting for settled spotlight presentation'
+      )
+      if (stable && Date.now() - stableSince >= 200) {
+        observation.outcome = 'passed'
+        return {
+          spotlightCaptureReady: true,
+          method: observation.method,
+          stableForMs: Date.now() - stableSince
         }
       }
       await new Promise(resolve => setTimeout(resolve, 50))
@@ -2867,6 +3029,8 @@ export class Scenarios {
             ? ['Reply', this.copyLabel]
             : [this.copyLabel])
             await ui.device.assertVisible({ text: exactText(label) })
+          if (this.touchActions)
+            this.observations.push(await observeSpotlightCaptureReady(ui))
           await ui.shot(
             variant + '-spotlight',
             'Actual ' +
@@ -2954,6 +3118,8 @@ export class Scenarios {
       'Actual final floating personal pin summary at same anchor'
     )
     await this.action(this.f.messages.target)
+    if (this.touchActions)
+      this.observations.push(await observeSpotlightCaptureReady(ui))
     await ui.shot(
       'message-actions',
       this.touchActions
