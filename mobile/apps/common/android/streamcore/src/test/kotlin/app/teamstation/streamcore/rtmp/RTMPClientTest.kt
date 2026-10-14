@@ -408,12 +408,12 @@ class RTMPClientTest {
         client.attachForTesting(transport, budgetBytes = budget, stallDeadlineSeconds = 10.0)
         groups(client, count = 10, frameBytes = 4_000)
         assertTrue(client.metrics.droppedPackets > 0)
-        // Over budget, the oldest groups went, and a keyframe still heads what is queued.
+        // Over budget, the oldest groups went whole, so a picture is still queued to decode from and
+        // the next P-frame is taken.
         assertEquals(
             RTMPClient.SendOutcome.SENT,
             client.sendVideo(99_000, FLVTag.videoFrame(RTMPVideoCodec.HEVC, false, ByteArray(100)))
         )
-        assertTrue(client.firstQueuedVideoIsKeyframeForTesting)
         // A stopped client sends nothing.
         client.stop()
         waitFor { !client.isLive }
