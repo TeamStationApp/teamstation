@@ -10,7 +10,7 @@ import org.junit.Assert.fail
 import org.junit.Test
 import java.util.Collections
 
-/** Zoom, pinch and rotation calls reach the engine in the order JavaScript made them. */
+/** Every call that sets the engine's state reaches it in the order JavaScript made it. */
 class OrderedCallsTest {
     @Test
     fun callsRunOneAtATimeInTheOrderTheyCame() {
@@ -35,6 +35,25 @@ class OrderedCallsTest {
             while (seen.size < 299 && System.nanoTime() < deadline) Thread.sleep(5)
             assertEquals((0 until 300).filter { it != 5 }, seen.toList())
             assertEquals("refused", errors.single().message)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun callsThatAnswerSettleInTheOrderTheyCame() {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val calls = OrderedCalls(scope) { fail("an answered call reached onError: $it") }
+            val settled = Collections.synchronizedList(mutableListOf<String>())
+            // A mute, an unmute, a lens change and another: each settles in turn, the slow first ones too.
+            calls.call({ delay(20); "audio off" }) { settled += it.getOrThrow() }
+            calls.call({ delay(5); "audio on" }) { settled += it.getOrThrow() }
+            calls.call({ throw IllegalStateException("refused") }) { settled += "failed ${it.exceptionOrNull()?.message}" }
+            calls.call({ "lenses" }) { settled += it.getOrThrow() }
+            val deadline = System.nanoTime() + 10_000_000_000L
+            while (settled.size < 4 && System.nanoTime() < deadline) Thread.sleep(5)
+            assertEquals(listOf("audio off", "audio on", "failed refused", "lenses"), settled.toList())
         } finally {
             scope.cancel()
         }

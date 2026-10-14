@@ -37,7 +37,13 @@ import kotlinx.coroutines.launch
 class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStreamSpec(reactContext) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    /** Zoom, pinch and rotation, which must reach the engine in the order they were made. */
+    /**
+     * Every call that sets the engine's state (open and close, record and stop, zoom, lenses, sound,
+     * radar, a take's upload state), which must reach the engine in the order JavaScript made them:
+     * launched each on its own, `setAudioEnabled(false)` then `(true)` could land the other way round.
+     * Questions run beside them, and so does `uploadRecording`, which answers only once the upload
+     * has landed.
+     */
     private val ordered = OrderedCalls(scope) { Log.w(TAG, "zoom or rotation", it) }
     private val main = Handler(Looper.getMainLooper())
     private var stopObserving: (() -> Unit)? = null
@@ -96,6 +102,11 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
         }
     }
 
+    /** As [settle], queued behind every state-setting call made before it ([ordered]). */
+    private fun settleInOrder(promise: Promise, work: suspend () -> Any?) {
+        ordered.call(work) { answer -> reply(promise, answer) }
+    }
+
     private fun reply(promise: Promise, answer: Result<Any?>) {
         answer
             .mapCatching { native(it) }
@@ -134,7 +145,7 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
 
     override fun open(angleName: String, audioEnabled: Boolean, disabledLenses: ReadableArray, promise: Promise) {
         val lenses = strings(disabledLenses)
-        settle(promise) {
+        settleInOrder(promise) {
             engine.open(angleName, audioEnabled, lenses)
             preview?.let { (surface, width, height) -> engine.attachPreview(surface, width, height) }
             main.post { followRotation() }
@@ -143,13 +154,13 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
     }
 
     override fun close(promise: Promise) =
-        settle(promise) {
+        settleInOrder(promise) {
             main.post { unfollowRotation() }
             engine.close()
             null
         }
 
-    override fun setAngleName(name: String, promise: Promise) = settle(promise) { engine.setAngleName(name) }
+    override fun setAngleName(name: String, promise: Promise) = settleInOrder(promise) { engine.setAngleName(name) }
 
     override fun startRecording(
         rtmpUrl: String,
@@ -165,10 +176,10 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
             promise.reject("badRequest", error.message, error)
             return
         }
-        settle(promise) { engine.startRecording(rtmpUrl, liveStreamId, gameId, angleName, held) }
+        settleInOrder(promise) { engine.startRecording(rtmpUrl, liveStreamId, gameId, angleName, held) }
     }
 
-    override fun stopRecording(promise: Promise) = settle(promise) { engine.stopRecording() }
+    override fun stopRecording(promise: Promise) = settleInOrder(promise) { engine.stopRecording() }
 
     override fun interruptedSession(promise: Promise) =
         settle(promise) { engine.interruptedSession()?.let(PhoneStreamMaps::interrupted) }
@@ -180,7 +191,7 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
             promise.reject("badRequest", error.message, error)
             return
         }
-        settle(promise) { engine.resumeInterrupted(held) }
+        settleInOrder(promise) { engine.resumeInterrupted(held) }
     }
 
     override fun setZoom(displayed: Double) {
@@ -197,22 +208,22 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
 
     override fun setDisabledLenses(ids: ReadableArray, promise: Promise) {
         val lenses = strings(ids)
-        settle(promise) { engine.setDisabledLenses(lenses) }
+        settleInOrder(promise) { engine.setDisabledLenses(lenses) }
     }
 
-    override fun flip(promise: Promise) = settle(promise) { engine.flip() }
+    override fun flip(promise: Promise) = settleInOrder(promise) { engine.flip() }
 
-    override fun setAudioEnabled(enabled: Boolean, promise: Promise) = settle(promise) { engine.setAudioEnabled(enabled) }
+    override fun setAudioEnabled(enabled: Boolean, promise: Promise) = settleInOrder(promise) { engine.setAudioEnabled(enabled) }
 
-    override fun radarSetEnabled(enabled: Boolean, promise: Promise) = settle(promise) { engine.radarSetEnabled(enabled) }
+    override fun radarSetEnabled(enabled: Boolean, promise: Promise) = settleInOrder(promise) { engine.radarSetEnabled(enabled) }
 
-    override fun radarScan(promise: Promise) = settle(promise) { engine.radarScan() }
+    override fun radarScan(promise: Promise) = settleInOrder(promise) { engine.radarScan() }
 
-    override fun radarStopScan(promise: Promise) = settle(promise) { engine.radarStopScan() }
+    override fun radarStopScan(promise: Promise) = settleInOrder(promise) { engine.radarStopScan() }
 
-    override fun radarPair(serial: String, promise: Promise) = settle(promise) { engine.radarPair(serial) }
+    override fun radarPair(serial: String, promise: Promise) = settleInOrder(promise) { engine.radarPair(serial) }
 
-    override fun radarUnpair(serial: String, promise: Promise) = settle(promise) { engine.radarUnpair(serial) }
+    override fun radarUnpair(serial: String, promise: Promise) = settleInOrder(promise) { engine.radarUnpair(serial) }
 
     override fun radarState(promise: Promise) = settle(promise) { PhoneStreamMaps.radar(engine.radarState()) }
 
@@ -227,11 +238,11 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
         settle(promise) { engine.uploadRecording(liveStreamId, apiBase, token, title) }
 
     override fun resumePendingUploads(apiBase: String, token: String, promise: Promise) =
-        settle(promise) { engine.resumePendingUploads(apiBase, token) }
+        settleInOrder(promise) { engine.resumePendingUploads(apiBase, token) }
 
-    override fun cancelUpload(liveStreamId: String, promise: Promise) = settle(promise) { engine.cancelUpload(liveStreamId) }
+    override fun cancelUpload(liveStreamId: String, promise: Promise) = settleInOrder(promise) { engine.cancelUpload(liveStreamId) }
 
-    override fun deleteRecording(liveStreamId: String, promise: Promise) = settle(promise) { engine.deleteRecording(liveStreamId) }
+    override fun deleteRecording(liveStreamId: String, promise: Promise) = settleInOrder(promise) { engine.deleteRecording(liveStreamId) }
 
     // MARK: - Display rotation
 
