@@ -4,26 +4,69 @@ import DirectorMedia
 import Foundation
 import UIKit
 
-/// Work that must not be cut off when the app goes to the background: an upload. The system's
-/// `beginBackgroundTask`, or nothing in a test.
+/// Work that must not be cut off when the app goes to the background: an upload, or the part the
+/// background finishes. The system's `beginBackgroundTask`, or nothing in a test.
+///
+/// `begin` takes what to do when the system's background time runs out first: the work winds down
+/// (an upload stops where it is and keeps its id, to resume in the foreground), and the task is
+/// ended for it. A task left running past its time gets the app killed.
 public struct PhoneBackgroundWork: Sendable {
-  public var begin: @MainActor @Sendable (String) -> Int
+  public var begin: @MainActor @Sendable (_ name: String, _ expired: @escaping @MainActor @Sendable () -> Void) -> Int
   public var end: @MainActor @Sendable (Int) -> Void
 
   public init(
-    begin: @escaping @MainActor @Sendable (String) -> Int,
+    begin: @escaping @MainActor @Sendable (_ name: String, _ expired: @escaping @MainActor @Sendable () -> Void) -> Int,
     end: @escaping @MainActor @Sendable (Int) -> Void
   ) {
     self.begin = begin
     self.end = end
   }
 
-  public static let system = PhoneBackgroundWork(
-    begin: { name in UIApplication.shared.beginBackgroundTask(withName: name).rawValue },
+  public static let system = PhoneBackgroundWork.tasks(
+    begin: { name, expired in
+      UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expired).rawValue
+    },
     end: { UIApplication.shared.endBackgroundTask(UIBackgroundTaskIdentifier(rawValue: $0)) }
   )
 
-  public static let none = PhoneBackgroundWork(begin: { _ in 0 }, end: { _ in })
+  public static let none = PhoneBackgroundWork(begin: { _, _ in 0 }, end: { _ in })
+
+  /// Background tasks from the system's two calls: `begin(name, handler)` answers the task's id and
+  /// calls `handler` on the main thread when its time runs out. On expiry the work's own handler
+  /// runs, then the task ends; its owner's later `end` finds it ended and does nothing, so every
+  /// task is ended exactly once.
+  static func tasks(
+    begin: @escaping @MainActor @Sendable (String, @escaping @Sendable () -> Void) -> Int,
+    end: @escaping @MainActor @Sendable (Int) -> Void
+  ) -> PhoneBackgroundWork {
+    let open = OpenTasks()
+    return PhoneBackgroundWork(
+      begin: { name, expired in
+        let slot = OpenTasks.Slot()
+        let id = begin(name) {
+          MainActor.assumeIsolated {
+            expired()
+            if let id = slot.id, open.close(id) { end(id) }
+          }
+        }
+        slot.id = id
+        open.add(id)
+        return id
+      },
+      end: { id in
+        if open.close(id) { end(id) }
+      }
+    )
+  }
+
+  /// The tasks begun and not yet ended. Touched only on the main thread.
+  private final class OpenTasks: @unchecked Sendable {
+    final class Slot: @unchecked Sendable { var id: Int? }
+    private var ids: Set<Int> = []
+    func add(_ id: Int) { ids.insert(id) }
+    /// Whether `id` was open; it is not any more.
+    func close(_ id: Int) -> Bool { ids.remove(id) != nil }
+  }
 }
 
 /// Everything the engine reaches outside itself, so a test can stand in for each: where it keeps

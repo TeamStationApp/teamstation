@@ -376,6 +376,39 @@ final class QuickRetryScheduler: StreamRetryScheduling {
   }
 }
 
+// MARK: - Background time
+
+/// Background tasks a test can run out: every task begun and ended, and each one's expiry.
+@MainActor
+final class WorkLog {
+  private(set) var begun: [String] = []
+  private(set) var ended: [Int] = []
+  private var expiries: [Int: @MainActor @Sendable () -> Void] = [:]
+
+  var work: PhoneBackgroundWork {
+    PhoneBackgroundWork(
+      begin: { [weak self] name, expired in
+        guard let self else { return 0 }
+        self.begun.append(name)
+        let id = self.begun.count
+        self.expiries[id] = expired
+        return id
+      },
+      end: { [weak self] id in self?.ended.append(id) }
+    )
+  }
+
+  /// The system's time runs out for the task named `name`, the latest of that name.
+  func expire(_ name: String) {
+    guard let index = begun.lastIndex(of: name), let expired = expiries[index + 1] else { return }
+    expired()
+  }
+
+  func id(of name: String) -> Int? {
+    begun.lastIndex(of: name).map { $0 + 1 }
+  }
+}
+
 // MARK: - Free space
 
 final class FreeSpace: @unchecked Sendable {
@@ -412,7 +445,8 @@ struct EngineRig {
   /// pictures as well would leave the two encoders even less of the processor.
   func engine(
     source: (@MainActor () -> PhoneCameraSource)? = nil,
-    stopTail: Double = 1
+    stopTail: Double = 1,
+    backgroundWork: PhoneBackgroundWork = .none
   ) throws -> PhoneStreamEngine {
     let free = self.free
     let scheduler = self.scheduler
@@ -439,7 +473,7 @@ struct EngineRig {
           pause: { _ in }
         )
       },
-      backgroundWork: .none,
+      backgroundWork: backgroundWork,
       observesApplication: false
     ))
   }
