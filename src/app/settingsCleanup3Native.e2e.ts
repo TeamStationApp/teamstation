@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
+import { nativePlaybackSeconds } from '../test/nativePlaybackClock'
 import { maestro, type MaestroHandle } from '../test/refinementsMaestro.e2e'
 
 interface NativeNode {
@@ -37,7 +38,11 @@ type Step =
     }
   | { signIn: string }
   | { fontScale: 'large' | 'default' }
-  | { clock: { save: string } | { after: string; min: number; max: number } }
+  | {
+      clock: (
+        { save: string } | { after: string; min: number; max: number }
+      ) & { native?: boolean }
+    }
   | {
       position:
         | { save: string; target: Selector }
@@ -291,6 +296,10 @@ async function main(): Promise<void> {
       assert(found[0].bounds != null, 'Bounds required')
       return found[0]
     }
+    const rawHierarchy = async (): Promise<Buffer> =>
+      await (
+        m as MaestroHandle & { hierarchyRaw: () => Promise<Buffer> }
+      ).hierarchyRaw()
     for (const test of flow.cases) {
       assert(test.steps.length > 0, 'Acceptance case cannot be empty')
       let assertions = 0
@@ -332,6 +341,10 @@ async function main(): Promise<void> {
           await writeFile(
             file.replace(/\.png$/, '.hierarchy.json'),
             JSON.stringify(await m.hierarchy(), null, 2)
+          )
+          await writeFile(
+            file.replace(/\.png$/, '.hierarchy.raw'),
+            await rawHierarchy()
           )
           captures++
         } else if ('saveState' in step)
@@ -397,25 +410,33 @@ async function main(): Promise<void> {
                 : '1.3'
           )
         } else if ('clock' in step) {
-          const nodes = flatten((await m.hierarchy()) as NativeNode)
-          const track = selectNode(nodes, {
-            text: 'Position in the game'
-          }).bounds!
-          const times = nodes
-            .filter(
-              node =>
-                node.bounds != null &&
-                /^\d+:\d{2}$/.test(node.text ?? '') &&
-                Math.abs(node.bounds.y - track.y) < 80
+          let value: number
+          if (step.clock.native === true)
+            value = nativePlaybackSeconds(
+              (await rawHierarchy()).toString('utf8'),
+              platform
             )
-            .sort((a, b) => a.bounds!.x - b.bounds!.x)
-          assert.equal(
-            times.length,
-            2,
-            'Visible current and duration clocks required'
-          )
-          const [minutes, seconds] = times[0].text!.split(':').map(Number)
-          const value = minutes * 60 + seconds
+          else {
+            const nodes = flatten((await m.hierarchy()) as NativeNode)
+            const track = selectNode(nodes, {
+              text: 'Position in the game'
+            }).bounds!
+            const times = nodes
+              .filter(
+                node =>
+                  node.bounds != null &&
+                  /^\d+:\d{2}$/.test(node.text ?? '') &&
+                  Math.abs(node.bounds.y - track.y) < Math.max(80, track.height)
+              )
+              .sort((a, b) => a.bounds!.x - b.bounds!.x)
+            assert.equal(
+              times.length,
+              2,
+              'Visible current and duration clocks required'
+            )
+            const [minutes, seconds] = times[0].text!.split(':').map(Number)
+            value = minutes * 60 + seconds
+          }
           if ('save' in step.clock) clocks.set(step.clock.save, value)
           else {
             const before = clocks.get(step.clock.after)
