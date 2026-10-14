@@ -114,6 +114,7 @@ export function NodeAdministrationScreen({
         subtitle={account.email ?? undefined}
         subtitleNumberOfLines={2}
         emblem={initialsOf(account.displayName)}
+        emblemUri={account.avatarUrl}
         emblemShape="circle"
         end={
           <Button

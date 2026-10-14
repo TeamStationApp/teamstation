@@ -12,12 +12,16 @@ import {
 import type { Database } from '../db/database'
 import { accountMailEnabled, setAccountMailEnabled } from '../email/accountMail'
 import { cleanBody } from '../jsonBody'
+import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
 const asAccountMail = asObject({ accountMessages: asBoolean })
 
-export function nodeAdministrationRoutes(db: Kysely<Database>): Router {
+export function nodeAdministrationRoutes(
+  db: Kysely<Database>,
+  space?: SpaceSettings
+): Router {
   const router = Router()
   router.get(
     '/users',
@@ -40,7 +44,8 @@ export function nodeAdministrationRoutes(db: Kysely<Database>): Router {
           db,
           req.actor,
           req.query.query ?? '',
-          req.query.nodeAdmin === 'true'
+          req.query.nodeAdmin === 'true',
+          space
         )
       )
     })

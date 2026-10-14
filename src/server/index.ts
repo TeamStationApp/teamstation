@@ -524,7 +524,7 @@ function runWorker(): void {
       publicUrl
     })
   )
-  app.use('/api/v1', nodeAdministrationRoutes(db))
+  app.use('/api/v1', nodeAdministrationRoutes(db, mediaContext.space))
   app.use('/api/v1', gameApprovalRoutes(db))
   app.use('/api/v1', notificationRoutes(db))
   app.use('/api/v1', seasonRoutes(db, mediaContext))

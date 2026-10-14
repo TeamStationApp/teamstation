@@ -142,6 +142,14 @@ describe('compact node access', () => {
     await press('Retry accounts')
     expect(text()).includes('Hank Aaron').and.not.includes('Lookup offline')
   })
+  it('uses the account picture in the same leading person tile', async () => {
+    const f = fixture()
+    f.users[0].avatarUrl = 'https://images.example.test/avatar.png'
+    await open(f)
+    expect(document.querySelector('img')?.getAttribute('src')).equals(
+      f.users[0].avatarUrl
+    )
+  })
   it('keeps confirmation through write errors and permits one write at a time', async () => {
     const f = fixture()
     f.users[1].isNodeAdmin = true

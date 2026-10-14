@@ -10,10 +10,15 @@ export const asNodeAccount = asObject({
   isNodeAdmin: asBoolean,
   suspended: asBoolean,
   loginEnabled: asBoolean,
-  canRemoveNodeRole: asBoolean
+  canRemoveNodeRole: asBoolean,
+  avatarUrl: (value: unknown): string | null =>
+    value == null ? null : asString(value)
 })
 export const asNodeAccounts = asArray(asNodeAccount)
-export type NodeAccount = ReturnType<typeof asNodeAccount>
+export type NodeAccount = Omit<
+  ReturnType<typeof asNodeAccount>,
+  'avatarUrl'
+> & { avatarUrl?: string | null }
 export interface NodeAccountChange {
   isNodeAdmin?: boolean
   suspended?: boolean

@@ -130,6 +130,21 @@ if (!reportOnly) {
     ],
     { NODE_V8_COVERAGE: temp }
   )
+  if (git(['diff', '--name-only', base, '--', 'src/server/index.ts']) !== '') {
+    const artifacts = process.env.TS_CREATION_ARTIFACTS
+    if (artifacts == null)
+      throw new Error(
+        'Set TS_CREATION_ARTIFACTS for the production entry smoke'
+      )
+    run(
+      'node',
+      ['-r', 'sucrase/register', 'src/test/refinementsStartup.e2e.ts'],
+      {
+        TS_REFINEMENTS_ARTIFACTS: artifacts,
+        TS_REFINEMENTS_STARTUP_V8: temp
+      }
+    )
+  }
 }
 for (const file of readdirSync(temp)) {
   const path = resolve(temp, file)

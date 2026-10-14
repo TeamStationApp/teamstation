@@ -13,6 +13,8 @@ import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { requireDirectAdmin } from '../groups/adminGuard'
 import { currentActor } from '../groups/rights'
+import { imageUrl } from '../media/imageUrls'
+import type { SpaceSettings } from '../media/spacesHls'
 
 export async function requireNodeAdmin(
   db: Kysely<Database>,
@@ -39,7 +41,8 @@ export async function nodeAccounts(
   db: Kysely<Database>,
   actor: Actor,
   query = '',
-  nodeAdmin = false
+  nodeAdmin = false,
+  space?: SpaceSettings
 ): Promise<NodeAccount[]> {
   await requireNodeAdmin(db, actor)
   if (query.length > 120)
@@ -47,7 +50,14 @@ export async function nodeAccounts(
   const nodes = await activeNodeIds(db)
   let rows = db
     .selectFrom('users')
-    .select(['id', 'display_name', 'is_admin', 'disabled_at', 'login_enabled'])
+    .select([
+      'id',
+      'display_name',
+      'is_admin',
+      'disabled_at',
+      'login_enabled',
+      'avatar_path'
+    ])
     .select(eb =>
       eb
         .selectFrom('user_emails')
@@ -90,6 +100,7 @@ export async function nodeAccounts(
       userId: user.id,
       displayName: user.display_name,
       email: user.email ?? null,
+      avatarUrl: space == null ? null : imageUrl(space, user.avatar_path),
       isNodeAdmin: user.is_admin,
       suspended: user.disabled_at != null,
       loginEnabled: user.login_enabled,

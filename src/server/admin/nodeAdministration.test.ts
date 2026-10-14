@@ -49,6 +49,24 @@ describe('protected node account administration', function () {
     const rows = (await all.json()) as Array<{ isNodeAdmin: boolean }>
     expect(rows.length).greaterThan(0)
     expect(rows.every(row => row.isNodeAdmin)).equals(true)
+    await f.h.db
+      .updateTable('users')
+      .set({ avatar_path: 'fixture/avatar' })
+      .where('id', '=', 105)
+      .execute()
+    const pictured = await f.h.request(
+      'GET',
+      '/users?view=administration&nodeAdmin=true',
+      undefined,
+      105
+    )
+    const pictures = (await pictured.json()) as Array<{
+      userId: number
+      avatarUrl: string | null
+    }>
+    expect(pictures.find(row => row.userId === 105)!.avatarUrl).includes(
+      'fixture/avatar'
+    )
     const byEmail = await nodeAccounts(f.h.db, actor(105), 'fixture106@')
     expect(byEmail.map(row => row.userId)).deep.equals([106])
     expect(await nodeAccounts(f.h.db, actor(105), '%')).length(0)
