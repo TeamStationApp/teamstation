@@ -12,7 +12,7 @@ final class TSDictationMicrophone: NSObject {
   @objc var onPcm: ((String) -> Void)?
   @objc var onEnded: ((String) -> Void)?
 
-  private let engine = AVAudioEngine()
+  private var engine = AVAudioEngine()
   private let queue = DispatchQueue(label: "app.teamstation.dictation-microphone")
   private var converter: AVAudioConverter?
   private var outputFormat: AVAudioFormat?
@@ -93,32 +93,51 @@ final class TSDictationMicrophone: NSObject {
     )
     try session.setActive(true)
 
-    let input = engine.inputNode
-    let inputFormat = input.outputFormat(forBus: 0)
-    if inputFormat.sampleRate == 0 || inputFormat.channelCount == 0 {
-      throw MicError.noInput
-    }
     guard
       let output = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: 16_000,
         channels: 1,
         interleaved: true
-      ),
-      let made = AVAudioConverter(from: inputFormat, to: output)
+      )
     else {
       throw MicError.unreadable
     }
-    converter = made
     outputFormat = output
-    input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) {
-      [weak self] buffer, _ in
-      self?.copyAndConvert(buffer)
+    // The first buffer names the hardware format. `prepare` before the
+    // input node exists asserts (inputNode != nullptr || outputNode !=
+    // nullptr) and terminates the app, so the tap attaches the input and
+    // `start` prepares. A format read before the route has settled is
+    // tried once more on a new engine.
+    converter = nil
+    renewEngine()
+    if let reason = installTap() {
+      renewEngine()
+      try session.setActive(true)
+      if let again = installTap() { throw MicError.failed(again) }
     }
     tapped = true
-    engine.prepare()
     try engine.start()
     running = true
+  }
+
+  /// The tap, or why it could not be installed. A failure leaves no tap.
+  /// Reading the input node here would be an NSException Swift cannot catch.
+  private func installTap() -> String? {
+    TSInstallDictationTap(engine) { [weak self] buffer, _ in
+      self?.copyAndConvert(buffer)
+    }
+  }
+
+  /// A new engine, after the session can record. One left from a failed
+  /// start has no input node, and preparing it terminates the app.
+  private func renewEngine() {
+    if tapped {
+      engine.inputNode.removeTap(onBus: 0)
+      tapped = false
+    }
+    engine.stop()
+    engine = AVAudioEngine()
   }
 
   /// One failure is enough. The scoring screen turns dictation off from it.
@@ -128,6 +147,15 @@ final class TSDictationMicrophone: NSObject {
     DispatchQueue.main.async { [weak self] in
       self?.onEnded?("the microphone stopped")
     }
+  }
+
+  /// Whether the converter already accepts this hardware format.
+  private func sameInput(_ format: AVAudioFormat) -> Bool {
+    guard let current = converter?.inputFormat else { return false }
+    return current.sampleRate == format.sampleRate
+      && current.channelCount == format.channelCount
+      && current.commonFormat == format.commonFormat
+      && current.isInterleaved == format.isInterleaved
   }
 
   /// Copies the tap's buffer before the audio thread reuses it, then converts
@@ -141,14 +169,13 @@ final class TSDictationMicrophone: NSObject {
       )
     else { return }
     copy.frameLength = buffer.frameLength
-    let channels = Int(buffer.format.channelCount)
-    let bytes = Int(buffer.frameLength) * MemoryLayout<Float>.size
-    for channel in 0..<channels {
-      guard
-        let source = buffer.floatChannelData?[channel],
-        let destination = copy.floatChannelData?[channel]
-      else { return }
-      memcpy(destination, source, bytes)
+    let source = UnsafeMutableAudioBufferListPointer(buffer.mutableAudioBufferList)
+    let destination = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
+    guard source.count == destination.count else { return }
+    for index in 0..<source.count {
+      guard let from = source[index].mData, let to = destination[index].mData else { return }
+      memcpy(to, from, Int(source[index].mDataByteSize))
+      destination[index].mDataByteSize = source[index].mDataByteSize
     }
     queue.async { [weak self] in
       self?.convert(copy)
@@ -156,10 +183,12 @@ final class TSDictationMicrophone: NSObject {
   }
 
   private func convert(_ buffer: AVAudioPCMBuffer) {
+    guard running, let outputFormat else { return }
+    if !sameInput(buffer.format) {
+      converter = AVAudioConverter(from: buffer.format, to: outputFormat)
+    }
     guard
-      running,
       let converter,
-      let outputFormat,
       let output = AVAudioPCMBuffer(
         pcmFormat: outputFormat,
         frameCapacity: AVAudioFrameCount(
@@ -199,15 +228,15 @@ final class TSDictationMicrophone: NSObject {
 }
 
 private enum MicError: LocalizedError {
-  case noInput
   case unreadable
+  case failed(String)
 
   var errorDescription: String? {
     switch self {
-    case .noInput:
-      return "This phone has no microphone"
     case .unreadable:
       return "The microphone could not be read"
+    case .failed(let reason):
+      return reason
     }
   }
 }
