@@ -5,8 +5,8 @@ import type { ChatPin } from '../../common/api'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { ChatActionOverlay } from './ChatActionOverlay'
+import { orderedPins, pinPreview } from './chatPinsModel'
 import type { MessageView } from './engine/apply'
-import { replyExcerpt } from './engine/reply'
 
 export function PinnedMessages(props: {
   pins: ChatPin[]
@@ -34,34 +34,32 @@ export function PinnedMessages(props: {
         keyboardShouldPersistTaps="handled"
         style={{ maxHeight: theme.rem(24) }}
       >
-        {props.pins.map(pin => {
-          const message = props.messages.find(
-            message => message.id === pin.messageId
-          )
+        {orderedPins(props.pins).map(pin => {
+          const preview = pinPreview(pin, props.messages)
           return (
             <Pressable
               key={pin.messageId}
+              testID={`chat-pin-${pin.messageId}`}
               accessibilityRole="button"
-              accessibilityLabel={replyExcerpt(message)}
+              accessibilityLabel={preview.excerpt}
               onPress={() => {
                 props.onJump(pin.messageId)
               }}
               style={{
+                minHeight: 48,
                 padding: theme.rem(0.75),
                 borderBottomWidth: 1,
                 borderColor: theme.defaultBorderColor
               }}
             >
-              {message != null && (
+              {preview.sender != null && (
                 <Text
                   style={{
                     fontFamily: theme.semiBoldTextFont,
                     color: theme.activeColor
                   }}
                 >
-                  {message.mine
-                    ? lstrings.chat_you
-                    : (message.senderName ?? lstrings.chat_former_member)}
+                  {preview.sender}
                 </Text>
               )}
               <Text
@@ -71,7 +69,7 @@ export function PinnedMessages(props: {
                   color: theme.primaryTextColor
                 }}
               >
-                {replyExcerpt(message)}
+                {preview.excerpt}
               </Text>
             </Pressable>
           )
