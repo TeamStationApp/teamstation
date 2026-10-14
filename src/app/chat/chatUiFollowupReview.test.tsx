@@ -3956,6 +3956,11 @@ describe('review4 no-event clamps and reachable jumps', function () {
       if (route === 'quote')
         await press('Jump to message from Shohei Ohtani: Practice notes')
       else await press('Pinned messages: 1')
+      const jumpDeadline = Date.now() + 2000
+      while (reading.moves.length === 0 && Date.now() < jumpDeadline)
+        await act(async () => {
+          await wait(10)
+        })
       expect(reading.moves.at(-1)).equals(800)
       await act(async () => {
         reading.node.scrollTop = 800
