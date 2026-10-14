@@ -610,6 +610,11 @@ extension PhoneStreamTests {
       #expect(await waitUntil { !engine.isRecording })
       #expect(engine.status.phase == "live")
       #expect(engine.isStreaming)
+      // On the air with no part recording, ten statuses a second here: the take is marked as
+      // published outside its parts once, not at every status.
+      try await Task.sleep(for: .seconds(1))
+      #expect(engine.outsidePartsWrites == 1)
+      #expect(try engine.recordings().first?.publishedOutsideParts == true)
       await #expect(throws: PhoneStreamError.stillRecording) { try await engine.deleteRecording(liveStreamId: Self.stream) }
       await #expect(throws: PhoneStreamError.stillRecording) {
         try await engine.uploadRecording(liveStreamId: Self.stream, apiBase: rig.request.apiBase,
@@ -794,6 +799,10 @@ extension PhoneStreamTests {
       #expect(third.isStreaming)
       #expect(third.status.error == .recordingStoppedLowStorage)
       #expect(await waitUntil { third.status.phase == "live" })
+      // On the air with no part recording: the take no longer covers the whole stream.
+      #expect(await waitUntil {
+        (try? third.recordings().first { $0.liveStreamId == "lst_0002" })?.publishedOutsideParts == true
+      })
       let short = try #require(try third.recordings().first { $0.liveStreamId == "lst_0002" })
       #expect(short.stoppedForLowStorage)
       #expect(short.endedAt != nil)
