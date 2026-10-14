@@ -363,6 +363,63 @@ class RTMPClientTest {
     }
 
     @Test
+    fun aShedThatTakesEveryPictureWaitsForTheNextKeyframe() {
+        val peer = StalledPeer().also { closers += it }
+        val transport = ChannelRTMPTransport.wrap(peer.sender, sendTimeoutSeconds = 0.05)
+        val client = RTMPClient()
+        closers += AutoCloseable { client.stop() }
+        client.attachForTesting(transport, budgetBytes = 64 * 1024 * 1024, bufferSeconds = 0.2, stallDeadlineSeconds = 10.0)
+        groups(client, count = 6, frameBytes = 4_000)
+        Thread.sleep(400)
+        fun picture(keyframe: Boolean) = FLVTag.videoFrame(RTMPVideoCodec.HEVC, keyframe, ByteArray(100))
+
+        // The oldest has waited past the buffer, so everything but headers goes, the newest keyframe
+        // and this picture with it: a P-frame now would reference pictures the ingest never got.
+        assertEquals(RTMPClient.SendOutcome.DROPPED_AWAITING_KEYFRAME, client.sendVideo(5_000, picture(false)))
+        // The link comes back; pictures still wait for the keyframe.
+        peer.drain()
+        waitFor { client.metrics.queuedBytes == 0 }
+        val dropped = client.metrics.droppedPackets
+        assertEquals(RTMPClient.SendOutcome.DROPPED_AWAITING_KEYFRAME, client.sendVideo(5_033, picture(false)))
+        assertEquals(dropped + 1, client.metrics.droppedPackets)
+        // Sound and sequence headers are not held back for the keyframe.
+        assertEquals(RTMPClient.SendOutcome.SENT, client.sendAudio(5_033, FLVTag.audio(1, ByteArray(10))))
+        assertEquals(
+            RTMPClient.SendOutcome.SENT,
+            client.sendVideo(5_066, FLVTag.videoSequenceHeader(RTMPVideoCodec.HEVC, ByteArray(40)))
+        )
+        // The keyframe ends the wait, and the pictures after it go again.
+        assertEquals(RTMPClient.SendOutcome.SENT, client.sendVideo(5_066, picture(true)))
+        assertEquals(RTMPClient.SendOutcome.SENT, client.sendVideo(5_100, picture(false)))
+        assertTrue(client.firstQueuedVideoIsKeyframeForTesting)
+    }
+
+    @Test
+    fun aShedThatLeavesAKeyframeQueuedDoesNotWait() {
+        val peer = StalledPeer().also { closers += it }
+        val transport = ChannelRTMPTransport.wrap(peer.sender, sendTimeoutSeconds = 0.05)
+        val client = RTMPClient()
+        closers += AutoCloseable { client.stop() }
+        val budget = RTMPClient.minimumSendBudgetBytes
+        client.attachForTesting(transport, budgetBytes = budget, stallDeadlineSeconds = 10.0)
+        groups(client, count = 10, frameBytes = 4_000)
+        assertTrue(client.metrics.droppedPackets > 0)
+        // Over budget, the oldest groups went, and a keyframe still heads what is queued.
+        assertEquals(
+            RTMPClient.SendOutcome.SENT,
+            client.sendVideo(99_000, FLVTag.videoFrame(RTMPVideoCodec.HEVC, false, ByteArray(100)))
+        )
+        assertTrue(client.firstQueuedVideoIsKeyframeForTesting)
+        // A stopped client sends nothing.
+        client.stop()
+        waitFor { !client.isLive }
+        assertEquals(
+            RTMPClient.SendOutcome.NOT_LIVE,
+            client.sendVideo(99_033, FLVTag.videoFrame(RTMPVideoCodec.HEVC, false, ByteArray(100)))
+        )
+    }
+
+    @Test
     fun theOperatorsMessagesNameTheLikelyCause() {
         val hint = "the server may not accept H.265 over Enhanced RTMP; choose H.264 in Settings"
         assertEquals(

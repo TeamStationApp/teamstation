@@ -129,6 +129,13 @@ class RTMPClient(
     private var videoCodec = RTMPVideoCodec.H264
     private var liveSince = 0.0
 
+    /**
+     * Set when a shed leaves no picture queued, so the next P-frame would reference one the ingest
+     * never got; cleared by the next keyframe. Until then pictures are dropped as
+     * [SendOutcome.DROPPED_AWAITING_KEYFRAME], which asks the encoder for an IDR.
+     */
+    private var awaitingKeyframe = false
+
     /** True from [stop] onward, so the error a teardown provokes reports as cancellation. */
     private var isStopping = false
     private var connectWait: CancellableContinuation<Unit>? = null
@@ -260,6 +267,7 @@ class RTMPClient(
             handshakeSent = 0
             handshakeRecv = 0
             handshakeTrace = StringBuilder()
+            awaitingKeyframe = false
             true
         }
         if (!started) {
@@ -507,21 +515,21 @@ class RTMPClient(
         val isSequenceHeader =
             if (isVideo) FLVTag.isVideoSequenceHeader(payload) else FLVTag.isAudioSequenceHeader(payload)
         val isKeyframe = isVideo && FLVTag.isVideoKeyframe(payload)
-        write(
+        return write(
             RTMPChunk.encode(RTMPMessage(stream, type, timestamp, payload), chunkStreamID, chunkSize),
             isVideo = isVideo,
             isKeyframe = isKeyframe,
             isSequenceHeader = isSequenceHeader
         )
-        return SendOutcome.SENT
     }
 
     /**
      * Throws the oldest waiting messages away until the queue fits the budget again: the oldest, so
      * the viewer jumps forward and stays near live. Whole groups go, so what is left starts on a
-     * keyframe. Called with the lock held.
+     * keyframe. When no picture is left at all, video waits for the next keyframe
+     * ([awaitingKeyframe]). Called with the lock held; answers whether the newest message went too.
      */
-    private fun shedOldestLocked() {
+    private fun shedOldestLocked(): Boolean {
         val now = monotonicNow()
         val dropped = shedIndices(
             sendQueue.map { ShedItem(it.data.size, it.isVideo, it.isKeyframe, it.isSequenceHeader) },
@@ -529,14 +537,18 @@ class RTMPClient(
             budget = sendBudgetBytes,
             delayExceeded = ledger.queueDelay(now) > bufferSeconds
         )
-        if (dropped.isEmpty()) return
+        if (dropped.isEmpty()) return false
         for (index in dropped) queuedBytes = maxOf(0, queuedBytes - sendQueue[index].data.size)
         val gone = dropped.toHashSet()
+        val shedPicture = dropped.any { sendQueue[it].isVideo && !sendQueue[it].isSequenceHeader }
+        val newestGone = sendQueue.lastIndex in gone
         val kept = sendQueue.filterIndexed { index, _ -> index !in gone }
         sendQueue.clear()
         sendQueue.addAll(kept)
         droppedPackets += dropped.size
+        if (shedPicture && sendQueue.none { it.isVideo && !it.isSequenceHeader }) awaitingKeyframe = true
         ledger.resetWaiting(sendQueue.map { it.data.size }, sendQueue.map { it.submittedAt })
+        return newestGone
     }
 
     /** Whether the first picture still queued is one the ingest can decode on its own. */
@@ -546,29 +558,52 @@ class RTMPClient(
         }
 
     /** Control writes (handshake, acknowledgements, the publish itself) are never shed. */
-    private fun write(data: ByteArray) = write(data, isVideo = false, isKeyframe = false, isSequenceHeader = true)
+    private fun write(data: ByteArray) {
+        write(data, isVideo = false, isKeyframe = false, isSequenceHeader = true)
+    }
 
-    private fun write(data: ByteArray, isVideo: Boolean, isKeyframe: Boolean, isSequenceHeader: Boolean) {
-        if (data.isEmpty()) return
+    /**
+     * Queues one message and sheds what no longer fits. A picture that arrives while video waits for
+     * a keyframe is dropped here, before it is queued; a keyframe ends the wait.
+     */
+    private fun write(data: ByteArray, isVideo: Boolean, isKeyframe: Boolean, isSequenceHeader: Boolean): SendOutcome {
+        if (data.isEmpty()) return SendOutcome.SENT
         // Counted here, at submission: a write that only reached a queue behind a blocked sender
         // could not otherwise be seen, or shed.
         val now = monotonicNow()
+        val isPicture = isVideo && !isSequenceHeader
+        var outcome = SendOutcome.SENT
         val sending = lock.withLock {
             if (phase == Phase.FAILED) {
                 queuedBytes = 0
                 ledger.clear()
-                return
+                return SendOutcome.SENT
+            }
+            if (isPicture && awaitingKeyframe) {
+                if (!isKeyframe) {
+                    droppedPackets += 1
+                    return SendOutcome.DROPPED_AWAITING_KEYFRAME
+                }
+                awaitingKeyframe = false
             }
             queuedBytes += data.size
             ledger.submitted(data.size, now)
             sendQueue.addLast(Queued(data, now, isVideo, isKeyframe, isSequenceHeader))
-            shedOldestLocked()
+            if (shedOldestLocked()) {
+                outcome = if (isPicture && awaitingKeyframe) {
+                    SendOutcome.DROPPED_AWAITING_KEYFRAME
+                } else {
+                    SendOutcome.DROPPED_OVER_BUDGET
+                }
+            }
             val already = isSending
             if (!already) isSending = true
             already
         }
-        if (sending) return
-        if (Thread.currentThread() === queueThread) flush() else post { flush() }
+        if (!sending) {
+            if (Thread.currentThread() === queueThread) flush() else post { flush() }
+        }
+        return outcome
     }
 
     private fun flush() {
@@ -673,6 +708,7 @@ class RTMPClient(
             isSending = false
             queuedBytes = 0
             ledger.clear()
+            awaitingKeyframe = false
         }
         current?.close()
         waiter?.resumeWithException(reported)
@@ -715,6 +751,7 @@ class RTMPClient(
             queuedBytes = 0
             ledger = RTMPSendLedger()
             droppedPackets = 0
+            awaitingKeyframe = false
         }
     }
 
