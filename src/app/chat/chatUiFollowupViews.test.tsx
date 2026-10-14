@@ -277,7 +277,6 @@ function list(
       narrow
       onOpen={() => {}}
       onNewMessage={() => {}}
-      onFollowTeam={() => {}}
       {...extra}
     />
   )
@@ -333,7 +332,7 @@ describe('chat UI follow-up list views', function () {
       .and.not.contains('Do not reveal this note')
     expect(text).contains(lstrings.chat_locked_message)
     expect(text).contains(lstrings.chat_latest_loading)
-    expect(text).contains(lstrings.chat_no_messages)
+    expect(text).not.contains(lstrings.chat_no_messages)
     expect(text).contains('Muted').and.contains('Closed')
     expect(document.querySelector('[aria-label="2 unread"]')).not.equals(null)
     expect(
@@ -376,7 +375,6 @@ describe('chat UI follow-up list views', function () {
     engine.list = [item('Aurora')]
     const opened: string[] = []
     let newMessage = 0
-    let follows = 0
     await render(
       list(engine, {
         selectedId: 'Aurora',
@@ -385,18 +383,14 @@ describe('chat UI follow-up list views', function () {
         },
         onNewMessage: () => {
           newMessage += 1
-        },
-        onFollowTeam: () => {
-          follows += 1
         }
       })
     )
     await press('Aurora Members')
     await press('New message')
-    await press('Follow a team')
+    expect(document.body.textContent).not.contains('Follow a team')
     expect(opened).deep.equals(['Aurora'])
     expect(newMessage).equals(1)
-    expect(follows).equals(1)
     await press('Conversation actions: Aurora Members')
     expect(
       document.querySelector('[aria-label="Conversation actions"]')
@@ -450,7 +444,6 @@ describe('chat UI follow-up workspace', function () {
         onOpen={() => {}}
         onMembers={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
         onTitle={() => {}}
       />
     )
@@ -535,7 +528,6 @@ describe('chat UI follow-up workspace', function () {
         }}
         onMembers={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
         onTitle={(_id, title) => {
           titles.push(title)
         }}
@@ -601,7 +593,6 @@ describe('chat UI follow-up workspace', function () {
         }}
         onMembers={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
         onTitle={() => {}}
       />
     )
@@ -714,7 +705,6 @@ describe('chat UI follow-up mounted reading session', function () {
         onOpen={() => {}}
         onMembers={() => {}}
         onNewMessage={() => {}}
-        onFollowTeam={() => {}}
         onTitle={() => {}}
       />
     )

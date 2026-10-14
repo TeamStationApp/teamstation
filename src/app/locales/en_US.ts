@@ -549,7 +549,7 @@ export const enUs = {
   chat_core_rest_works: 'Everything else in TeamStation works as usual.',
   chat_empty: 'You are in no chats yet.',
   chat_empty_detail:
-    'Team, season and league chats appear here once you are on a team. Follow a team to join its fans.',
+    'Your team, season, league and direct conversations appear here.',
   chat_direct: 'Direct messages',
   chat_unread_label: '%s unread',
   chat_locked_badge: 'Locked',

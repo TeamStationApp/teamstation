@@ -76,7 +76,7 @@ import {
 export function dmTitle(
   userId: number,
   members: ChatMember[] | undefined,
-  people: ChatDmPerson[]
+  people: Array<Pick<ChatDmPerson, 'userId' | 'shortName' | 'left'>>
 ): string {
   const current =
     members == null
@@ -113,6 +113,8 @@ export interface ConversationListItem {
   previewFailed?: boolean
   previewRetrying?: boolean
   avatarUrl?: string | null
+  avatarName?: string | null
+  people?: ChatConversation['people']
   unread: number
   canPost: boolean
   canModerate: boolean
@@ -469,27 +471,50 @@ export class ChatEngine {
       lastPostId: lastPost.id,
       lastPostSeq: lastPost.seq,
       preferences: summary.preferences,
-      avatarUrl:
-        summary.kind === 'dm'
-          ? state.members?.find(member => member.userId !== this.options.userId)
-              ?.avatarUrl
-          : undefined,
-      preview: state.synced
-        ? messagePreview(
-            foldMessages({
-              envelopes: state.envelopes.values(),
-              opened: state.opened,
-              me: this.options.userId,
-              names: new Map(
-                (state.members ?? []).map(member => [
-                  member.userId,
-                  member.shortName
-                ])
-              ),
-              reads: state.reads
-            }).find(message => message.id === lastPost.id)
-          )
-        : undefined,
+      avatarUrl: summary.avatarUrl,
+      avatarName: summary.avatarName,
+      people:
+        summary.kind !== 'dm'
+          ? []
+          : state.members == null
+            ? summary.people
+            : [
+                ...state.members
+                  .filter(member => member.userId !== this.options.userId)
+                  .map(member => ({
+                    userId: member.userId,
+                    shortName: member.shortName,
+                    avatarUrl: member.avatarUrl,
+                    left: false
+                  })),
+                ...summary.people
+                  .filter(
+                    person =>
+                      state.members?.some(
+                        member => member.userId === person.userId
+                      ) !== true
+                  )
+                  .map(person => ({ ...person, left: true, avatarUrl: null }))
+              ],
+      preview:
+        lastPost.seq === 0
+          ? ''
+          : state.synced
+            ? messagePreview(
+                foldMessages({
+                  envelopes: state.envelopes.values(),
+                  opened: state.opened,
+                  me: this.options.userId,
+                  names: new Map(
+                    (state.members ?? []).map(member => [
+                      member.userId,
+                      member.shortName
+                    ])
+                  ),
+                  reads: state.reads
+                }).find(message => message.id === lastPost.id)
+              )
+            : undefined,
       previewFailed:
         this.previewVersions.get(summary.id)?.state === state &&
         this.previewVersions.get(summary.id)?.failed === true,

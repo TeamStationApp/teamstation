@@ -236,6 +236,8 @@ export interface ChatSeedOptions {
   now?: Date
   /** Everybody's password; made up per person when not given. */
   password?: string
+  /** Historical migration fixtures can write the follow table of that era. */
+  writeFollow?: typeof setFollow
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -348,7 +350,12 @@ export async function chatSeed(
           .execute()
       }
       for (const team of person.follows ?? []) {
-        await setFollow(trx, userId, { kind: 'team', id: teams[team] }, true)
+        await (options.writeFollow ?? setFollow)(
+          trx,
+          userId,
+          { kind: 'team', id: teams[team] },
+          true
+        )
       }
       people[person.key] = {
         key: person.key,

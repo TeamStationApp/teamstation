@@ -1953,9 +1953,6 @@ function Shell(props: AppProps): React.ReactElement {
           onNewMessage={() => {
             push({ name: 'chatNew' })
           }}
-          onFollowTeam={() => {
-            push({ name: 'discover', kind: 'team', follow: true })
-          }}
           onMembers={conversationId => {
             push({ name: 'chatMembers', conversationId })
           }}
@@ -3577,7 +3574,7 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
     return undefined
   }
   if (tab === 'home') return 'Your Home'
-  if (tab === 'chat') return lstrings.chat_title
+  if (tab === 'chat') return lstrings.chat_chats
   return undefined
 }
 

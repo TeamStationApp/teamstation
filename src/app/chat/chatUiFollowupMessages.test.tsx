@@ -807,7 +807,6 @@ describe('chat follow-up message hold', function () {
           narrow
           onOpen={conversation => opened.push(conversation.id)}
           onNewMessage={() => {}}
-          onFollowTeam={() => {}}
         />
       </ChatOverlayHost>
     )

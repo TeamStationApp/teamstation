@@ -29,7 +29,6 @@ export interface ChatWorkspaceProps {
   onOpen: (conversation: ConversationListItem) => void
   onMembers: (conversationId: string) => void
   onNewMessage: () => void
-  onFollowTeam: () => void
   onTitle: (conversationId: string, title: string) => void
 }
 
@@ -169,7 +168,6 @@ function WorkspaceContent(
                 props.onOpen(conversation)
             }}
             onNewMessage={props.onNewMessage}
-            onFollowTeam={props.onFollowTeam}
           />
         </View>
         <View

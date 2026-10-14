@@ -25,7 +25,7 @@ describe('a DM’s name', function () {
     userId: number,
     shortName: string,
     left = false
-  ): ChatDmPerson => ({ userId, shortName, left })
+  ): ChatDmPerson => ({ userId, shortName, left, avatarUrl: null })
 
   it('names the others who are in it now', function () {
     const people = [person(2, 'Eli C'), person(3, 'Blair B')]
