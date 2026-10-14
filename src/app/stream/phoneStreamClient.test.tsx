@@ -425,6 +425,26 @@ describe('the phone stream bridge', function () {
       'radarSetEnabled',
       'uploadRecording'
     ])
+
+    // Resumed at launch, nobody pressed anything: nothing is asked.
+    expect(
+      await stream.resumeUpload({
+        liveStreamId: 'lst_00000000000000000001',
+        apiBase: REQUEST.apiBase,
+        token: REQUEST.token,
+        title: 'Home Plate'
+      })
+    ).equals('vid_1')
+    expect(refused.asked).length(2)
+    expect(native.calls.at(-1)).deep.equals({
+      name: 'uploadRecording',
+      args: [
+        'lst_00000000000000000001',
+        REQUEST.apiBase,
+        REQUEST.token,
+        'Home Plate'
+      ]
+    })
   })
 
   it('names the permissions each Android level needs', function () {
