@@ -112,6 +112,12 @@ class RTMPChunkReader {
         var streamID = 0L
         var remaining = 0
         var payload = ByteArrayOutputStream()
+
+        /**
+         * Whether the last full header's timestamp field was 0xFFFFFF, which is what puts an extended
+         * timestamp after every fmt 3 header that follows it, whatever the timestamp has grown to.
+         */
+        var extended = false
     }
 
     var chunkSize = RTMPChunk.defaultSize
@@ -161,6 +167,7 @@ class RTMPChunkReader {
             var length = state.length
             var type = state.type
             var streamID = state.streamID
+            var extended = state.extended
             var restart = state.remaining == 0
             when (fmt) {
                 0 -> {
@@ -171,7 +178,8 @@ class RTMPChunkReader {
                     streamID = uint32LE(cursor + 7)
                     cursor += 11
                     timestamp = short
-                    if (short == 0xFFFFFFL) {
+                    extended = short == 0xFFFFFFL
+                    if (extended) {
                         if (!need(4)) return null
                         timestamp = uint32BE(cursor)
                         cursor += 4
@@ -184,7 +192,8 @@ class RTMPChunkReader {
                     length = uint24(cursor + 3).toInt()
                     type = byte(cursor + 6)
                     cursor += 7
-                    if (delta == 0xFFFFFFL) {
+                    extended = delta == 0xFFFFFFL
+                    if (extended) {
                         if (!need(4)) return null
                         delta = uint32BE(cursor)
                         cursor += 4
@@ -195,7 +204,8 @@ class RTMPChunkReader {
                     if (!need(3)) return null
                     var delta = uint24(cursor)
                     cursor += 3
-                    if (delta == 0xFFFFFFL) {
+                    extended = delta == 0xFFFFFFL
+                    if (extended) {
                         if (!need(4)) return null
                         delta = uint32BE(cursor)
                         cursor += 4
@@ -203,9 +213,9 @@ class RTMPChunkReader {
                     timestamp = (timestamp + delta) and 0xFFFFFFFFL
                 }
                 else -> {
-                    if (timestamp >= 0xFFFFFF) {
+                    // The field repeats the last header's; the message keeps its timestamp.
+                    if (extended) {
                         if (!need(4)) return null
-                        timestamp = uint32BE(cursor)
                         cursor += 4
                     }
                 }
@@ -218,6 +228,7 @@ class RTMPChunkReader {
             state.length = length
             state.type = type
             state.streamID = streamID
+            state.extended = extended
             if (restart) state.payload.reset()
             if (take > 0) state.payload.write(buffer, cursor, take)
             state.remaining = remaining - take

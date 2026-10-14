@@ -117,6 +117,14 @@ class RTMPClient(
     private var isSending = false
 
     /**
+     * The message [flush] has taken off [sendQueue] and is writing: when it was submitted and how
+     * much of it the socket has not taken. A shed rebuilds the ledger from the queue, and this keeps
+     * that message at its head rather than crediting its last bytes to the queue behind it.
+     */
+    private var inFlightSubmittedAt = 0.0
+    private var inFlightUnsent = 0
+
+    /**
      * Bytes written but not yet on the wire, wherever they are parked: incremented where the work is
      * submitted and decremented where it completes.
      */
@@ -356,9 +364,9 @@ class RTMPClient(
             handshakeBuffer = ByteArray(0)
             sendConnect()
             if (leftover.isNotEmpty()) {
-                lock.withLock { handshakeTrace.append(" leftover=${leftover.size}") }
+                trace(" leftover=${leftover.size}")
                 val messages = reader.push(leftover)
-                lock.withLock { handshakeTrace.append(" parsed=${messages.size}") }
+                trace(" parsed=${messages.size}")
                 messages.forEach { handle(it) }
             }
             return
@@ -367,7 +375,7 @@ class RTMPClient(
     }
 
     private fun handle(message: RTMPMessage) {
-        lock.withLock { handshakeTrace.append(" t${message.type.rawValue}/${message.payload.size}") }
+        trace(" t${message.type.rawValue}/${message.payload.size}")
         when (message.type) {
             RTMPMessageType.SET_CHUNK_SIZE -> if (message.payload.size >= 4) {
                 val size = readUInt32BE(message.payload)
@@ -391,15 +399,27 @@ class RTMPClient(
         }
     }
 
+    /**
+     * Notes [text] in the handshake trace, which explains a publish that fails while connecting.
+     * Once live the trace is never shown, so nothing more is kept, and it is capped meanwhile.
+     */
+    private fun trace(text: String) {
+        lock.withLock {
+            if (phase != Phase.LIVE && handshakeTrace.length < maximumHandshakeTraceChars) handshakeTrace.append(text)
+        }
+    }
+
+    internal val handshakeTraceForTesting: String get() = lock.withLock { handshakeTrace.toString() }
+
     private fun handleCommand(payload: ByteArray) {
         val values = AMF0.decodeList(payload)
         val tx = values.getOrNull(1)?.numberValue?.toInt() ?: 0
         val name = values.firstOrNull()?.stringValue
         if (name == null) {
-            lock.withLock { handshakeTrace.append(" amf0empty") }
+            trace(" amf0empty")
             return
         }
-        lock.withLock { handshakeTrace.append(" $name#$tx") }
+        trace(" $name#$tx")
         when (name) {
             "_result" -> {
                 val current = lock.withLock { phase }
@@ -417,7 +437,7 @@ class RTMPClient(
             }
             "onStatus" -> {
                 val code = values.firstNotNullOfOrNull { it.objectValue }?.get("code")?.stringValue ?: ""
-                lock.withLock { handshakeTrace.append(" $code") }
+                trace(" $code")
                 if (code.contains("Publish.Start")) {
                     markLive()
                 } else if (code.contains("Publish.BadName") || code.contains("Failed") || code.contains("Rejected")) {
@@ -547,7 +567,11 @@ class RTMPClient(
         sendQueue.addAll(kept)
         droppedPackets += dropped.size
         if (shedPicture && sendQueue.none { it.isVideo && !it.isSequenceHeader }) awaitingKeyframe = true
-        ledger.resetWaiting(sendQueue.map { it.data.size }, sendQueue.map { it.submittedAt })
+        val inFlight = inFlightUnsent > 0
+        ledger.resetWaiting(
+            (if (inFlight) listOf(inFlightUnsent) else emptyList()) + sendQueue.map { it.data.size },
+            (if (inFlight) listOf(inFlightSubmittedAt) else emptyList()) + sendQueue.map { it.submittedAt }
+        )
         return newestGone
     }
 
@@ -613,7 +637,10 @@ class RTMPClient(
                     isSending = false
                     return
                 }
-                sendQueue.removeFirst().data to transport
+                val next = sendQueue.removeFirst()
+                inFlightSubmittedAt = next.submittedAt
+                inFlightUnsent = next.data.size
+                next.data to transport
             }
             if (current == null) {
                 release(data.size)
@@ -664,13 +691,17 @@ class RTMPClient(
         lock.withLock {
             bytesSent += sent
             bytesThisWindow += sent
+            inFlightUnsent = maxOf(0, inFlightUnsent - sent)
             ledger.delivered(sent)
             refreshMegabitsLocked()
         }
     }
 
     private fun release(count: Int) {
-        lock.withLock { queuedBytes = maxOf(0, queuedBytes - count) }
+        lock.withLock {
+            queuedBytes = maxOf(0, queuedBytes - count)
+            inFlightUnsent = 0
+        }
     }
 
     private fun refreshMegabitsLocked() {
@@ -707,6 +738,7 @@ class RTMPClient(
             sendQueue.clear()
             isSending = false
             queuedBytes = 0
+            inFlightUnsent = 0
             ledger.clear()
             awaitingKeyframe = false
         }
@@ -777,6 +809,9 @@ class RTMPClient(
          * later than that it is the network.
          */
         internal const val codecRefusalWindowSeconds = 10.0
+
+        /** The most the handshake trace keeps: far more than a handshake writes. */
+        internal const val maximumHandshakeTraceChars = 4_096
 
         private const val controlChunk = 2
         private const val commandChunk = 3
