@@ -407,6 +407,24 @@ struct ChooseTests {
     #expect(TeamStationAccount.refusal(of: row(), now: now) == nil)
   }
 
+  @Test func aPhoneSaysItRecordsLocallyWhenItAsksForItsStream() async throws {
+    StreamServer.reset()
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ StreamServer.self ]
+    let client = TeamStationClient(
+      baseURL: URL(string: "https://teamstation.example")!,
+      token: "tok",
+      session: URLSession(configuration: configuration)
+    )
+    _ = try await client.requestLiveStream(
+      gameId: "g1", label: "Home Plate", deviceId: installId, deviceModel: "iPhone 13 Pro",
+      heldStreamId: "lst_1", recordsLocally: true
+    )
+    #expect(StreamServer.bodies.last?["recordsLocally"] == "1")
+    _ = try await client.requestLiveStream(gameId: "g1", label: "Home Plate", deviceId: installId, deviceModel: "iPad Pro")
+    #expect(StreamServer.bodies.last?["recordsLocally"] == nil)
+  }
+
   @Test func picksTheShortestRoundTripForTheServersClock() {
     #expect(ServerClock.offset(from: []) == nil)
     // A clock that went backwards mid-request says nothing.

@@ -18,6 +18,7 @@ extension PhoneStreamTests {
     static let stream = "lst_0001"
     static let game = "gam_0001"
     static let angle = "Home Plate"
+    static let renamed = "Behind the Plate"
     /// How long a test waits for an upload's export: a loaded simulator's software HEVC rebuild.
     static let exportWait = 300.0
 
@@ -98,6 +99,12 @@ extension PhoneStreamTests {
       #expect(StubServer.read { $0.streamRequests }.isEmpty)
 
       try await Task.sleep(for: .seconds(6))
+      // Renamed on the air: the stream, the take and the stream kept for a relaunch take the name,
+      // so the redial asks for the stream it holds by the name TeamStation now has for it.
+      engine.setAngleName(Self.renamed)
+      #expect(try engine.catalog.live()?.angleName == Self.renamed)
+      #expect(try engine.recordings().first?.angleName == Self.renamed)
+      #expect(try engine.index.recordings().first?.gameTitle == Self.renamed)
       // Every tick of the programme from the drop to the stream's return, with when it ran.
       let ticks = TickLog()
       engine.programme.observeTicks { output, at in ticks.add(output, at: at) }
@@ -137,7 +144,9 @@ extension PhoneStreamTests {
       let asked = StubServer.read { $0.streamRequests }
       #expect(!asked.isEmpty)
       #expect(asked.allSatisfy { $0["heldStreamId"] as? String == Self.stream })
-      #expect(asked.first?["label"] as? String == Self.angle)
+      #expect(asked.allSatisfy { $0["label"] as? String == Self.renamed })
+      // The phone records the stream itself, which the server keeps on any stream it hands back.
+      #expect(asked.allSatisfy { $0["recordsLocally"] as? Bool == true })
       #expect(asked.first?["deviceId"] as? String == rig.request.deviceId)
       #expect(asked.first?["deviceModel"] as? String == "iPhone 13 Pro")
       // The first redial waited the controller's first 3 s; the 1 s waits are its stall checks.
@@ -436,6 +445,8 @@ extension PhoneStreamTests {
       let rig = EngineRig(root: try scratchDirectory())
       let (first, _) = try await recording(rig, sink: sink)
       try await Task.sleep(for: .seconds(5))
+      // Renamed just before the kill: the relaunch resumes under the new name.
+      first.setAngleName(Self.renamed)
       await first.abandonForTesting()
       try await Task.sleep(for: .seconds(2))
 
@@ -445,7 +456,7 @@ extension PhoneStreamTests {
       let interrupted = try #require(engine.interruptedSession())
       #expect(interrupted.liveStreamId == Self.stream)
       #expect(interrupted.gameId == Self.game)
-      #expect(interrupted.angleName == Self.angle)
+      #expect(interrupted.angleName == Self.renamed)
       #expect(interrupted.streaming)
       #expect(interrupted.downtime > 1 && interrupted.downtime < 10)
       let resumedAt = engine.environment.clock.now
@@ -453,6 +464,8 @@ extension PhoneStreamTests {
       #expect(engine.isRecording)
       #expect(await waitUntil { engine.status.phase == "live" })
       #expect(StubServer.read { $0.streamRequests }.first?["heldStreamId"] as? String == Self.stream)
+      #expect(StubServer.read { $0.streamRequests }.first?["label"] as? String == Self.renamed)
+      #expect(engine.angleName == Self.renamed)
       try await Task.sleep(for: .seconds(5))
       await engine.stopRecording()
 

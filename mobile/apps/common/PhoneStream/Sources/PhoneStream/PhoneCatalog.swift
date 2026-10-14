@@ -207,6 +207,19 @@ public final class PhoneCatalog: @unchecked Sendable {
     try recordings().first { $0.liveStreamId == liveStreamId && !$0.isUploaded }
   }
 
+  /// The take's angle was renamed while it was on the air: both rows carry the new name.
+  public func rename(_ recordingID: Int64, angleName: String) throws {
+    guard let row = try store.query(
+      "SELECT game_id FROM phone_recordings WHERE recording_id = ?;",
+      [ .integer(recordingID) ]
+    ).first else { return }
+    try index.setGame(recordingID, gameId: row.string(0), title: angleName, replacing: row.string(0))
+    try store.execute(
+      "UPDATE phone_recordings SET angle_name = ? WHERE recording_id = ?;",
+      [ .text(angleName), .integer(recordingID) ]
+    )
+  }
+
   public func setUpload(id uploadId: String?, title: String?, for recordingID: Int64) throws {
     try store.execute(
       "UPDATE phone_recordings SET upload_id = ?, upload_title = ? WHERE recording_id = ?;",
