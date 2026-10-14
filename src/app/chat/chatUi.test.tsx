@@ -612,10 +612,15 @@ describe('a conversation', function () {
         onMembers={over.onMembers ?? (() => {})}
         onTitle={title => titles.push(title)}
         files={fakeFiles(log)}
+        paneHeader
         swipe={over.swipe ?? false}
       />
     )
-    await until('the chat', () => text().includes('member'))
+    await until(
+      'the chat',
+      () =>
+        document.querySelector('[data-testid="chat-message-history"]') != null
+    )
     return { engine, log, titles }
   }
 
@@ -927,7 +932,7 @@ describe('a conversation', function () {
       engine.calls.includes('react cnv_1 msg_2 👍 true')
     )
     await press('Review')
-    await press('Members')
+    await press('Hawks, Team Members')
     expect(onMembers).deep.equals(['members', 'members'])
     await press('Load earlier messages')
     await until('earlier', () => engine.calls.includes('loadEarlier cnv_1'))
@@ -1014,21 +1019,23 @@ describe('a conversation', function () {
           memberCount: 1,
           title: dmTitle(
             1,
-            [member(1, 'Dana D')],
-            [{ userId: 2, shortName: 'Eli C', left: true }]
+            [member(1, 'Trea Turner')],
+            [{ userId: 2, shortName: 'Aaron Judge', left: true }]
           )
         }),
-        members: [member(1, 'Dana D')]
+        members: [member(1, 'Trea Turner')]
       })
     )
-    expect(titles.at(-1)).equals('Eli C (left)')
-    expect(text()).contains('1 member')
+    expect(titles.at(-1)).equals('Aaron Judge (left)')
+    expect(text()).not.contains('1 member')
+    expect(labelled('Aaron Judge (left), Direct message')).not.equals(null)
   })
 
-  it('counts one member as one', async function () {
+  it('keeps the member count out of the compact conversation identity', async function () {
     await open(view({ conversation: chat({ memberCount: 1 }) }))
-    expect(text()).contains('1 member')
+    expect(text()).not.contains('1 member')
     expect(text()).not.contains('1 members')
+    expect(labelled('Hawks, Team Members')).not.equals(null)
   })
 
   it('draws pictures from their bytes, opens a video, and saves a file', async function () {

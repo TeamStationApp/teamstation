@@ -28,6 +28,7 @@ import {
   timeLabel
 } from './chatModel'
 import { getChatStyles } from './chatStyles'
+import { ChatViewport, useChatViewport } from './ChatViewport'
 import {
   bindUserScroll,
   cancelUserScroll,
@@ -69,6 +70,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const shared = getChatStyles(theme)
+  const viewport = useChatViewport()
   const insets = useInsets()
   const breakpoint = useBreakpoint()
   const margin = theme.rem(edgeMarginRem(theme, breakpoint))
@@ -424,7 +426,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         (tail != null &&
           tail.data === dataKey &&
           tail.version === layoutVersion.current &&
-          Math.abs(tail.end - geometry.content) <= 1))
+          Math.abs(tail.end + viewport.contentBottom - geometry.content) <= 1))
     )
   }
   const verifyZeroDistance = (offset: number, final: boolean): boolean => {
@@ -886,7 +888,7 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
     menu == null ? undefined : chats?.find(chat => chat.id === menu.id)
   const now = props.now?.() ?? new Date()
   const content = (
-    <View style={styles.fill}>
+    <ChatViewport viewport={viewport}>
       {props.embedded !== true && (
         <ChatArrivalHost
           engine={engine}
@@ -898,6 +900,10 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
         ref={list}
         testID="chat-conversation-list"
         data={rows}
+        contentContainerStyle={{
+          paddingTop: viewport.contentTop,
+          paddingBottom: viewport.contentBottom
+        }}
         keyExtractor={row => row.key}
         viewabilityConfig={viewability}
         onViewableItemsChanged={onVisible}
@@ -1098,12 +1104,13 @@ export function ChatListScreen(props: ChatListScreenProps): React.ReactElement {
           }}
         />
       )}
-    </View>
+    </ChatViewport>
   )
   return props.embedded === true ? (
     content
   ) : (
     <Screen
+      overlayContent
       wide
       scroll={false}
       contentStyle={[styles.fill, { paddingHorizontal: 0, paddingVertical: 0 }]}

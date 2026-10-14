@@ -23,7 +23,9 @@ import React, {
  */
 export interface HeaderSlot {
   headerHeight: number
+  navigationHeight?: number
   setHandoff: (node: React.ReactNode) => void
+  setHandoffHeight: (height: number) => void
   /** A screen that wants the header's back, instead of leaving the screen. */
   setBackOverride: (handler: (() => void) | null) => void
 }
@@ -31,6 +33,7 @@ export interface HeaderSlot {
 const HeaderSlotContext = createContext<HeaderSlot>({
   headerHeight: 48,
   setHandoff: () => undefined,
+  setHandoffHeight: () => undefined,
   setBackOverride: () => undefined
 })
 
@@ -40,7 +43,9 @@ export function useHeaderSlot(): HeaderSlot {
 
 export interface HeaderSlotProviderProps {
   headerHeight: number
+  navigationHeight?: number
   onHandoff: (node: React.ReactNode) => void
+  onHandoffHeight?: (height: number) => void
   onBackOverride?: (handler: (() => void) | null) => void
   children: React.ReactNode
 }
@@ -52,10 +57,18 @@ export function HeaderSlotProvider(
   const value = useMemo(
     () => ({
       headerHeight,
+      navigationHeight: props.navigationHeight,
       setHandoff: onHandoff,
+      setHandoffHeight: props.onHandoffHeight ?? (() => undefined),
       setBackOverride: onBackOverride ?? (() => undefined)
     }),
-    [headerHeight, onHandoff, onBackOverride]
+    [
+      headerHeight,
+      props.navigationHeight,
+      onHandoff,
+      props.onHandoffHeight,
+      onBackOverride
+    ]
   )
   return (
     <HeaderSlotContext.Provider value={value}>
@@ -92,24 +105,32 @@ export function useBackOverride(active: boolean, handler: () => void): void {
   }, [active, setBackOverride])
 }
 
-export function useHeaderHandoff(node: React.ReactNode): void {
-  const { setHandoff } = useHeaderSlot()
+export function useHeaderHandoff(
+  node: React.ReactNode,
+  contentHeight = 0
+): void {
+  const { setHandoff, setHandoffHeight } = useHeaderSlot()
   useEffect(() => {
     setHandoff(node)
+    setHandoffHeight(contentHeight)
     return () => {
       setHandoff(null)
+      setHandoffHeight(0)
     }
-  }, [node, setHandoff])
+  }, [node, contentHeight, setHandoff, setHandoffHeight])
 }
 
 /** The shell's side of it: what to draw, and a stable setter to hand down. */
 export function useHandoffSlot(): {
   handoff: React.ReactNode
+  handoffHeight: number
+  setHandoffHeight: (height: number) => void
   setHandoff: (node: React.ReactNode) => void
 } {
   const [handoff, setHandoffState] = useState<React.ReactNode>(null)
+  const [handoffHeight, setHandoffHeight] = useState(0)
   const setHandoff = useCallback((node: React.ReactNode) => {
     setHandoffState(node)
   }, [])
-  return { handoff, setHandoff }
+  return { handoff, setHandoff, handoffHeight, setHandoffHeight }
 }
