@@ -17,6 +17,7 @@ export function GroupPictureChooser({
   client,
   name,
   team = false,
+  fitInitials = false,
   allowCatalog = false,
   value,
   onChange,
@@ -25,6 +26,7 @@ export function GroupPictureChooser({
   client: TeamStationClient
   name: string
   team?: boolean
+  fitInitials?: boolean
   allowCatalog?: boolean
   value?: GroupPicture
   onChange: (picture: GroupPicture) => void
@@ -127,9 +129,13 @@ export function GroupPictureChooser({
           accessibilityLabel={`Initials preview: ${letters}`}
         >
           {team ? (
-            <TeamEmblem name={name} size={6} />
+            <TeamEmblem name={name} size={6} fitInitials={fitInitials} />
           ) : (
-            <Emblem fallback={initialsOf(name)} size={6} />
+            <Emblem
+              fallback={initialsOf(name)}
+              size={6}
+              fitInitials={fitInitials}
+            />
           )}
           <Text style={styles.hint}>Initials selected.</Text>
         </View>

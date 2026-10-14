@@ -293,6 +293,7 @@ export function CreateGroupScreen({
         )}
         {step === 'photo' && (
           <GroupPictureChooser
+            fitInitials
             team={kind === 'team'}
             client={client}
             name={name}

@@ -39,6 +39,7 @@ mkdirSync(temp, { recursive: true })
 mkdirSync('lib', { recursive: true })
 const uiPatterns = [
   'src/app/components/ManageGear.test.tsx',
+  'src/app/components/nativeInitialsMeasurement.test.tsx',
   'src/app/screens/TeamPage.test.tsx',
   'src/app/App.teamRoutes.test.tsx',
   'src/app/screens/SeasonStandings.test.tsx',
@@ -81,6 +82,21 @@ const uiPatterns = [
 if (!reportOnly) {
   await build({
     ...webSettings,
+    plugins: [
+      ...webSettings.plugins,
+      {
+        name: 'native-initials-measurement-unit',
+        setup(build) {
+          build.onLoad({ filter: /FittedInitials\.native\.tsx$/ }, args => ({
+            contents: readFileSync(args.path, 'utf8').replace(
+              "from 'react-native'",
+              "from '../../test/nativeInitialsTextStub'"
+            ),
+            loader: 'tsx'
+          }))
+        }
+      }
+    ],
     alias: {
       ...webSettings.alias,
       'react-native-webview': './src/test/eventWebViewStub.tsx',
