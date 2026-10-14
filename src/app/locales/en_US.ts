@@ -517,6 +517,8 @@ export const enUs = {
   // The chat screens
   chat_title: 'Chat',
   chat_chats: 'Chats',
+  chat_information: 'Conversation information',
+  chat_direct_conversation: 'Direct message',
   chat_pinned: 'Pinned',
   chat_choose_conversation: 'Choose a conversation',
   chat_conversation_actions: 'Conversation actions',
