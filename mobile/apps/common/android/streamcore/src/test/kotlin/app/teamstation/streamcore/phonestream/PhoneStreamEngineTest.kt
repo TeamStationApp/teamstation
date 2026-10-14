@@ -113,6 +113,10 @@ class PhoneStreamEngineTest {
     private lateinit var foreground: Foreground
     private val videos = mutableListOf<FakeVideo>()
     private var failVideo = false
+
+    /** When set, a part's encoder holds its finish until it is opened: a stop that takes a while. */
+    @Volatile
+    private var finishGate: CountDownLatch? = null
     private val events = ConcurrentLinkedQueue<PhoneStreamEvent>()
 
     init {
@@ -253,11 +257,18 @@ class PhoneStreamEngineTest {
     }
 
     /** The recording's encoder: every picture drawn comes straight out, a keyframe every 2 s. */
-    private class FakeVideo : StreamVideoEncoding {
+    private class FakeVideo(private val gate: () -> CountDownLatch?) : StreamVideoEncoding {
         var output: StreamVideoEncoding.Output? = null
         var config: StreamEncoderConfig? = null
         var drawn = 0
+
+        @Volatile
+        var finishing = false
+
+        @Volatile
         var finished = false
+
+        @Volatile
         var closed = false
 
         override fun open(config: StreamEncoderConfig, output: StreamVideoEncoding.Output): Surface {
@@ -276,6 +287,9 @@ class PhoneStreamEngineTest {
         override fun requestSyncFrame() = Unit
         override fun setBitrate(bitrate: Int) = Unit
         override fun finishInput(timeoutMillis: Long) {
+            finishing = true
+            // A stop's encoder can take its time handing over its last pictures.
+            gate()?.await(10, TimeUnit.SECONDS)
             finished = true
         }
 
@@ -372,6 +386,8 @@ class PhoneStreamEngineTest {
 
     private lateinit var engineDispatcher: CoroutineDispatcher
 
+    private var storageCheckSeconds = 3_600.0
+
     private fun engine(): PhoneStreamEngine {
         device = FakeDevice()
         microphone = FakeMicrophone()
@@ -389,7 +405,7 @@ class PhoneStreamEngineTest {
             makeSource = { PhoneCameraSource(device, microphone, mapping, { wall }, runsSoundThread = false) },
             makeRecordingVideoEncoder = {
                 if (failVideo) error("no encoder")
-                FakeVideo().also { videos += it }
+                FakeVideo { finishGate }.also { videos += it }
             },
             makeRecordingAudioEncoder = { CountingAac() },
             makeStream = { _: MediaTelemetry, _: () -> Double, _: (Double) -> Double -> streamOutput },
@@ -399,7 +415,7 @@ class PhoneStreamEngineTest {
             makePathMonitor = { monitor },
             heartbeatSeconds = 3_600.0,
             statusIntervalSeconds = 3_600.0,
-            storageCheckSeconds = 3_600.0,
+            storageCheckSeconds = storageCheckSeconds,
             stopTailSeconds = 0.0,
             deviceStatus = FakeStatus(),
             makeRadar = {
@@ -908,6 +924,75 @@ class PhoneStreamEngineTest {
         runBlocking { engine.uploadRecording("s1", server.url("/").toString(), "token-0000", "Home Plate") }
         val body = JSONObject(requests.first { it.method == "POST" && it.path!!.endsWith("/director/uploads") }.body.readUtf8())
         assertFalse(body.has("wholeStream"))
+    }
+
+    /** Runs [work] on its own thread, as the bridge's calls arrive. */
+    private fun concurrently(work: suspend () -> Unit): Thread = Thread { runBlocking { work() } }.apply { start() }
+
+    @Test
+    fun aCloseOrRecordDuringAStopWaitsForThePartToFinish() {
+        val engine = opened()
+        start(engine)
+        capture(3.0)
+        finishGate = CountDownLatch(1)
+        val gate = finishGate!!
+        val stopping = concurrently { engine.stopRecording() }
+        waitFor { videos.last().finishing }
+        // Record on the same stream, and Close, while the part is still finishing: both wait.
+        val recording = concurrently { engine.startRecording("rtmp://ingest.example.test/live/key-0001", "s1", "g1", "Home Plate", request) }
+        val closing = concurrently { engine.close() }
+        Thread.sleep(200)
+        assertTrue(stopping.isAlive)
+        assertTrue(recording.isAlive)
+        assertTrue(closing.isAlive)
+        // The stop's sound tail has not been cut by a close: the mix is still running.
+        assertTrue(engine.isOpen)
+        finishGate = null
+        gate.countDown()
+        stopping.join(10_000)
+        recording.join(10_000)
+        closing.join(10_000)
+        assertFalse(stopping.isAlive || recording.isAlive || closing.isAlive)
+        // The stop closed its part before Record continued the take as its next part; Close then
+        // stopped that one too.
+        val take = runBlocking { engine.recordings() }.single()
+        assertEquals(2, take.parts)
+        assertNotNull(take.endedAt)
+        assertFalse(engine.isOpen)
+        assertTrue(videos.all { it.closed })
+        // The first part kept its sound out to its picture.
+        val first = File(engine.environment.storage.program, engine.index.recording(take.recordingID)!!.programFilenames.first())
+        val reading = FragmentedMp4Reader.read(first)!!
+        val sound = reading.audio!!
+        assertTrue(sound.endSeconds!! - sound.mediaTime.toDouble() / sound.timescale >= reading.video!!.endSeconds!! - 0.03)
+    }
+
+    @Test
+    fun aStopDuringALowStorageFinishWaitsForItAndTheTakeIsClosed() {
+        storageCheckSeconds = 0.05
+        val engine = opened()
+        start(engine)
+        capture(2.0)
+        finishGate = CountDownLatch(1)
+        val gate = finishGate!!
+        free = 400_000_000
+        // The storage loop starts the part's finish, and Stop lands half-way through it.
+        waitFor { videos.last().finishing }
+        val stopping = concurrently { engine.stopRecording() }
+        Thread.sleep(200)
+        assertTrue(stopping.isAlive)
+        finishGate = null
+        gate.countDown()
+        stopping.join(10_000)
+        assertFalse(stopping.isAlive)
+        assertFalse(engine.isRecording)
+        assertFalse(engine.isStreaming)
+        assertTrue(videos.single().closed)
+        val take = runBlocking { engine.recordings() }.single()
+        assertTrue(take.stoppedForLowStorage)
+        assertNotNull(take.endedAt)
+        assertNull(on { engine.catalog.live() })
+        assertEquals("stopped", foreground.calls.last())
     }
 
     @Test
