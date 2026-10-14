@@ -139,5 +139,6 @@
   "src/app/player/stillLive.ts",
   "src/app/player/MultiCamView.tsx",
   "src/app/player/multiCam/align.ts",
-  "src/app/player/useVideoListRefresh.ts"
+  "src/app/player/useVideoListRefresh.ts",
+  "src/app/player/playIntent.ts"
 ]

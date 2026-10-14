@@ -38,13 +38,12 @@ export function backoffDelay(
   maxMs: number,
   giveUpMs: number
 ): number | undefined {
+  const delayOf = (index: number): number =>
+    Math.min(firstMs * 2 ** index, maxMs)
   let waited = 0
-  for (let index = 0; ; index++) {
-    const delay = Math.min(firstMs * 2 ** index, maxMs)
-    if (waited + delay > giveUpMs) return undefined
-    if (index === attempt) return delay
-    waited += delay
-  }
+  for (let index = 0; index < attempt; index++) waited += delayOf(index)
+  const delay = delayOf(attempt)
+  return waited + delay > giveUpMs ? undefined : delay
 }
 
 /** The timer the wait runs on, replaceable in a test. */
