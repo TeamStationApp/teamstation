@@ -101,8 +101,11 @@ describe('DJ Game in the shell', function () {
   })
 
   it('is not immersive: the header and the tabs stay', function () {
-    expect(source).match(
-      /const immersiveField =\s*props\.fieldPreview === true \|\| top\?\.name === 'scoreGame'\n/
+    const immersive = source.slice(
+      source.indexOf('const immersiveField ='),
+      source.indexOf('return (', source.indexOf('const immersiveField ='))
     )
+    expect(immersive).match(/top\?\.name === 'scoreGame'/)
+    expect(immersive).not.includes('djGame')
   })
 })

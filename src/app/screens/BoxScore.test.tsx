@@ -15,6 +15,7 @@ import {
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
+import { battingOrder, BoxScore } from './BoxScore'
 import { GameScreen } from './GameScreen'
 
 let root: Root | undefined
@@ -284,5 +285,233 @@ describe('the box score', function () {
     const text = container.textContent ?? ''
     expect(text.indexOf('Away Lead')).lessThan(text.indexOf('Away Power'))
     expect(text.indexOf('Home Lead')).lessThan(text.indexOf('Home Power'))
+  })
+})
+
+/** A batting line: `pa` 0 is a player who has not come to the plate. */
+function batter(
+  userId: number,
+  shortName: string,
+  teamId: string,
+  pa: number
+): BattingRow {
+  return asBattingRow({
+    userId,
+    shortName,
+    teamId,
+    pa,
+    ab: pa,
+    h: 0,
+    singles: 0,
+    doubles: 0,
+    triples: 0,
+    hr: 0,
+    bb: 0,
+    k: 0,
+    hbp: 0,
+    rbi: 0,
+    rates: {}
+  })
+}
+
+/** The box score module on its own, as a coach's screen draws it. */
+async function moduleBoxScore(
+  props: Partial<React.ComponentProps<typeof BoxScore>>
+): Promise<string> {
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+  await act(async () => {
+    root?.render(
+      <ThemeProvider>
+        <BoxScore
+          game={{
+            ...gameFixture,
+            linescore: {
+              away: {
+                runs: [1, 0],
+                r: 1,
+                h: 2,
+                e: 0,
+                bb: 0,
+                k: 2,
+                hr: 0,
+                hbp: 0
+              },
+              home: { runs: [0], r: 0, h: 1, e: 0, bb: 0, k: 1, hr: 0, hbp: 0 }
+            }
+          }}
+          box={undefined}
+          theme={tsBallpark}
+          sideBySide={false}
+          {...props}
+        />
+      </ThemeProvider>
+    )
+  })
+  return host.textContent ?? ''
+}
+
+describe('the box score module (U24)', function () {
+  const rows = [
+    batter(1, 'Alex', 'away', 2),
+    batter(2, 'Blake', 'away', 1),
+    batter(3, 'Casey', 'home', 1)
+  ]
+  const pitching = [
+    BLAIR,
+    asPitchingRow({ ...BLAIR, userId: 4, shortName: 'Drew', teamId: 'home' })
+  ]
+
+  it('puts a coach’s side first: his batters, his pitchers, then the opponent’s', async function () {
+    const text = await moduleBoxScore({
+      box: { batting: rows, pitching, stats: undefined },
+      first: 'away',
+      sideBySide: true
+    })
+    const at = (words: string): number => {
+      const index = text.indexOf(words)
+      expect(index, words).greaterThan(-1)
+      return index
+    }
+    // The line score, whatever the width.
+    expect(at('Owls')).lessThan(at('Batting — Owls'))
+    expect(at('Batting — Owls')).lessThan(at('Pitching — Owls'))
+    expect(at('Pitching — Owls')).lessThan(at('Batting — Hawks'))
+    expect(at('Batting — Hawks')).lessThan(at('Pitching — Hawks'))
+    // In the order they came to the plate.
+    expect(at('Alex')).lessThan(at('Blake'))
+  })
+
+  it('keeps the game screen’s order, home first in one column, without a side', async function () {
+    const text = await moduleBoxScore({
+      box: { batting: rows, pitching, stats: undefined }
+    })
+    expect(text.indexOf('Batting — Hawks')).lessThan(
+      text.indexOf('Batting — Owls')
+    )
+  })
+
+  it('shows a spinner while the lines load', async function () {
+    await moduleBoxScore({ box: undefined, first: 'home' })
+    expect(host!.querySelector('[role="progressbar"]')).not.equals(null)
+  })
+
+  it('follows those who batted with the rest of the order as it stands, on empty lines', function () {
+    const runner = { ...batter(15, 'Runner', 'away', 0), r: 1 }
+    const lines = [
+      batter(10, 'Late', 'away', 0),
+      batter(11, 'First', 'away', 3),
+      batter(13, 'Gone', 'away', 0),
+      batter(14, 'Second', 'away', 1),
+      runner
+    ]
+    const order = [
+      { userId: 12, shortName: 'Early' },
+      { userId: 11, shortName: 'First' },
+      { userId: null, shortName: 'Made Up' },
+      { userId: 15, shortName: 'Runner' },
+      { userId: 10, shortName: 'Late' }
+    ]
+    const ordered = battingOrder(lines, order, 'away')
+    expect(ordered.map(line => line.shortName)).deep.equals([
+      'First',
+      'Second',
+      'Early',
+      'Made Up',
+      'Runner',
+      'Late',
+      'Gone'
+    ])
+    // Those yet to bat have empty lines; a runner who scored keeps his.
+    expect(ordered[2]).deep.include({
+      userId: 12,
+      teamId: 'away',
+      pa: 0,
+      ab: 0,
+      h: 0,
+      seasonAvg: null
+    })
+    expect(ordered[3].userId).equals(null)
+    expect(ordered[4]).equals(runner)
+    // Without an order, the server's.
+    expect(battingOrder(lines).map(line => line.shortName)).deep.equals([
+      'Late',
+      'First',
+      'Gone',
+      'Second',
+      'Runner'
+    ])
+  })
+
+  it('lists a coach’s whole order and the opponent’s, before anyone has batted', async function () {
+    const opened: number[] = []
+    const text = await moduleBoxScore({
+      box: {
+        batting: [batter(3, 'Casey', 'home', 1)],
+        pitching: [],
+        stats: undefined
+      },
+      first: 'home',
+      lineups: {
+        home: [
+          { userId: 5, shortName: 'Dana' },
+          { userId: 3, shortName: 'Casey' },
+          { userId: null, shortName: 'Emery' }
+        ],
+        away: [
+          { userId: 1, shortName: 'Alex' },
+          { userId: 2, shortName: 'Blake' }
+        ]
+      },
+      onOpenPlayer: userId => {
+        opened.push(userId)
+      }
+    })
+    const at = (words: string): number => {
+      const index = text.indexOf(words)
+      expect(index, words).greaterThan(-1)
+      return index
+    }
+    expect(at('Batting — Hawks')).lessThan(at('Casey'))
+    expect(at('Casey')).lessThan(at('Dana'))
+    expect(at('Dana')).lessThan(at('Emery'))
+    expect(at('Emery')).lessThan(at('Batting — Owls'))
+    expect(at('Batting — Owls')).lessThan(at('Alex'))
+    expect(at('Alex')).lessThan(at('Blake'))
+    // Pitchers only once they have pitched.
+    expect(text).not.includes('Pitching')
+    // A made-up player has no page to open; the others do.
+    expect(host!.querySelector('[aria-label="Emery"]')).equals(null)
+    await act(async () => {
+      host!.querySelector<HTMLElement>('[aria-label="Dana"]')!.click()
+    })
+    expect(opened).deep.equals([5])
+  })
+
+  it('draws a coach an empty line score before the game, over a word that it has not started', async function () {
+    const text = await moduleBoxScore({
+      game: { ...gameFixture, linescore: null },
+      box: { batting: [], pitching: [], stats: undefined },
+      first: 'away',
+      lineups: { away: [{ userId: 1, shortName: 'Alex' }], home: [] }
+    })
+    expect(text).includes('Owls')
+    expect(text).includes('Hawks')
+    expect(text.indexOf('Hawks')).lessThan(
+      text.indexOf('The game has not started')
+    )
+    expect(text.indexOf('The game has not started')).lessThan(
+      text.indexOf('Batting — Owls')
+    )
+    expect(text).includes('–')
+  })
+
+  it('leaves the game screen’s box score blank before the game, as it was', async function () {
+    const text = await moduleBoxScore({
+      game: { ...gameFixture, linescore: null },
+      box: { batting: [], pitching: [], stats: undefined }
+    })
+    expect(text).equals('')
   })
 })

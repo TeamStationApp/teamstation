@@ -4,7 +4,7 @@ import { scoringEntry } from '../scoring/isUnscoredGame'
 import { eventEnded, type EventTabState } from './eventTabPolicy'
 
 export type GameTab =
-  'info' | 'boxScore' | 'watch' | 'score' | 'dj' | 'settings'
+  'info' | 'boxScore' | 'watch' | 'score' | 'coach' | 'dj' | 'settings'
 
 export interface GameTabPill {
   id: GameTab
@@ -17,6 +17,7 @@ export interface GameTabsInput {
     GameDetail,
     | 'canScore'
     | 'canDj'
+    | 'coachSides'
     | 'scoreboard'
     | 'linescore'
     | 'homeScore'
@@ -29,6 +30,8 @@ export interface GameTabsInput {
   music?: { djSupported: boolean }
   /** Present where the app can open DJ Game. */
   onDjGame?: () => void
+  /** Present where the app can open Coach Game. */
+  onCoachGame?: () => void
   onSettings?: () => void
   canManage?: boolean
   now?: number
@@ -38,8 +41,8 @@ export interface GameTabsInput {
  * The pills across a game, left to right.
  *
  * The same on every platform: Score Game belongs to whoever may score, on a
- * phone as much as in a browser, and sits immediately before DJ Game where a
- * songkeeper has that too.
+ * phone as much as in a browser, and Coach Game to a team's head coach, right
+ * after it; both sit before DJ Game where a songkeeper has that too.
  */
 export function gameTabs(input: GameTabsInput): GameTabPill[] {
   const { game, music, onDjGame } = input
@@ -60,6 +63,15 @@ export function gameTabs(input: GameTabsInput): GameTabPill[] {
     (scoringEntry(game) != null || game.scoreboard?.open === true)
   ) {
     pills.push({ id: 'score', label: lstrings.game_score_game })
+  }
+  // For a head coach (not an assistant) of either team, for his own team's
+  // box score, roster, lineup and defence, until the game is called off.
+  if (
+    game.coachSides.length > 0 &&
+    game.status !== 'cancelled' &&
+    input.onCoachGame != null
+  ) {
+    pills.push({ id: 'coach', label: lstrings.game_coach_game, role: 'button' })
   }
   // For a songkeeper of either team, on an iPhone, whatever the game's
   // status: songs are set and played before, during and after.

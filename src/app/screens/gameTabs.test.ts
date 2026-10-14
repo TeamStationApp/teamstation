@@ -154,4 +154,67 @@ describe('the pills across a game', function () {
     ).deep.equals(['info'])
     expect(ids(gameTabs({ game, canManage: true }))).deep.equals(['info'])
   })
+
+
+  const onCoachGame = (): void => undefined
+
+  it('puts Coach Game right after Score Game, for a head coach (U23)', function () {
+    const pills = gameTabs({
+      game: gameWith({ canScore: true, canDj: true, coachSides: ['home'] }),
+      music,
+      onDjGame,
+      onCoachGame,
+      onSettings: () => undefined,
+      canManage: true
+    })
+    expect(ids(pills)).deep.equals([
+      'info',
+      'boxScore',
+      'watch',
+      'score',
+      'coach',
+      'dj',
+      'settings'
+    ])
+    expect(pills[4]).deep.equals({
+      id: 'coach',
+      label: 'Coach Game',
+      role: 'button'
+    })
+  })
+
+  it('puts Coach Game after Videos for a head coach who does not score (U23)', function () {
+    const pills = gameTabs({
+      game: gameWith({ coachSides: ['away', 'home'] }),
+      onCoachGame
+    })
+    expect(ids(pills)).deep.equals(['info', 'boxScore', 'watch', 'coach'])
+  })
+
+  it('leaves Coach Game out for an assistant, a scorekeeper, a member, a cancelled game, or no way to open it (U23)', function () {
+    // An assistant, like a member, coaches no side.
+    expect(
+      ids(gameTabs({ game: gameWith({ coachSides: [] }), onCoachGame }))
+    ).deep.equals(['info', 'boxScore', 'watch'])
+    // A scorekeeper only scores.
+    expect(
+      ids(
+        gameTabs({
+          game: gameWith({ canScore: true, coachSides: [] }),
+          onCoachGame
+        })
+      )
+    ).deep.equals(['info', 'boxScore', 'watch', 'score'])
+    expect(
+      ids(
+        gameTabs({
+          game: gameWith({ coachSides: ['home'], status: 'cancelled' }),
+          onCoachGame
+        })
+      )
+    ).not.includes('coach')
+    expect(
+      ids(gameTabs({ game: gameWith({ coachSides: ['home'] }) }))
+    ).not.includes('coach')
+  })
 })
