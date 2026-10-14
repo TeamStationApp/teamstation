@@ -1,4 +1,5 @@
-// E13: the streaming screen's settings sheet turns with the phone, has only
+// E13: the streaming screen's settings sheet may stand upright or lie
+// sideways, has only
 // the phone's own settings, turns the microphone off on the live stream and
 // renames the angle. Through maestro-d's JavaScript client, on an iOS
 // simulator or an iPhone, or on an Android phone with TS_STREAM_ANDROID_SERIAL
@@ -19,7 +20,8 @@
 //     node -r sucrase/register src/app/stream/streamSettings.e2e.ts
 //
 // WebDriverAgent's orientation stands in for a real phone's own while it
-// runs, and the settings sheet turns with it: on a phone, TS_STREAM_HOLD says
+// runs. The camera stays landscape either way the phone is turned. Settings
+// follows the phone, upright or sideways. On a phone, TS_STREAM_HOLD says
 // which way up the phone is held, and is set once the streaming screen is up.
 //
 // The local server runs without mail, so it logs each sign-in link; the app
@@ -27,17 +29,20 @@
 // streams on the game named either angle are removed first, so the rename is
 // not refused by an earlier run's camera.
 //
-//   1. Record video → the angle's name → Start; Record → "Broadcasting", and
-//      the live HLS carries the microphone (volumedetect).
-//   2. The gear: a screenshot in landscape (two columns), then turned upright
-//      (one column), then back.
+//   1. Record video → the angle's name → Start; turned upright, the camera
+//      stays landscape. Record → "Broadcasting", and the live HLS carries the
+//      microphone (volumedetect).
+//   2. The gear: a screenshot in landscape (two columns). Turned upright, the
+//      sheet stands upright (one column), then lies sideways again.
 //   3. assertNotVisible Bitrate, Codec, Resolution, Clean HDMI, Identifier and
 //      Log in.
 //   4. Toggle a lens (a camera with one lens, such as the simulator's, has
 //      none to toggle).
-//   5. Turn the microphone off, rename the angle, Done: the badge reads the
-//      new name, and the live HLS goes silent (max_volume ≤ −80 dB).
-//   6. Slide to Stop, Close: the game's angle pill reads the new name.
+//   5. Turn the microphone off, rename the angle, stand the phone upright,
+//      Done: the camera is landscape again, the badge reads the new name, and
+//      the live HLS goes silent (max_volume ≤ −80 dB).
+//   6. Slide to Stop sideways, Close upright: the app stands upright, and the
+//      game's angle pill reads the new name.
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { mkdir, readFile } from 'node:fs/promises'
@@ -336,6 +341,45 @@ async function main(): Promise<void> {
     say(`$ takeScreenshot ${name}`)
     await m.takeScreenshot({ path: path.join(artifacts, name) })
   }
+  // The window's bounds. iOS reports a few views in pixels and the rest in
+  // points; the points fit a phone. Android is pixels throughout.
+  const screen = async (): Promise<Bounds> => {
+    for (const until = Date.now() + 20000; ;) {
+      const measured = (await nodes()).filter(
+        node =>
+          node.bounds != null && node.bounds.width > 0 && node.bounds.height > 0
+      )
+      const fits = android
+        ? measured
+        : measured.filter(
+            node => node.bounds!.width < 900 && node.bounds!.height < 900
+          )
+      const pool = fits.length > 0 ? fits : measured
+      pool.sort(
+        (a, b) =>
+          (b.bounds?.width ?? 0) * (b.bounds?.height ?? 0) -
+          (a.bounds?.width ?? 0) * (a.bounds?.height ?? 0)
+      )
+      const bounds = pool[0]?.bounds
+      if (bounds != null && bounds.width > 200 && bounds.height > 200)
+        return bounds
+      if (Date.now() > until) break
+      await sleep(400)
+    }
+    throw new Error('the screen has bounds')
+  }
+  /** The window's shape once a turn has settled, waiting up to five seconds for `want`. */
+  const shape = async (
+    want: 'landscape' | 'portrait'
+  ): Promise<{ shape: 'landscape' | 'portrait'; bounds: Bounds }> => {
+    for (const until = Date.now() + 5000; ;) {
+      const bounds = await screen()
+      const now = bounds.width > bounds.height ? 'landscape' : 'portrait'
+      if (now === want || Date.now() > until) return { shape: now, bounds }
+      await sleep(400)
+    }
+  }
+  const sideways = hold ?? 'LANDSCAPE_LEFT'
   const layout = async (): Promise<string | undefined> =>
     (
       await find(
@@ -434,6 +478,23 @@ async function main(): Promise<void> {
       })
     }
     await sleep(1500)
+    // Turned upright, the camera stays landscape.
+    say('$ setOrientation PORTRAIT')
+    await m.setOrientation('PORTRAIT').catch((error: unknown) => {
+      say(`setOrientation PORTRAIT: ${String(error).split('\n')[0]}`)
+    })
+    await sleep(1500)
+    const cameraUpright = await shape('portrait')
+    assert.equal(
+      cameraUpright.shape,
+      'landscape',
+      `the camera stays landscape held upright (${cameraUpright.bounds.width}×${cameraUpright.bounds.height})`
+    )
+    say(`$ setOrientation ${sideways}`)
+    await m.setOrientation(sideways).catch((error: unknown) => {
+      say(`setOrientation ${sideways}: ${String(error).split('\n')[0]}`)
+    })
+    await sleep(1500)
     say('$ tapOn broadcast-button')
     await m.tapOn({ id: 'broadcast-button' })
     const toLive = await waitForPill('Broadcasting', 45000)
@@ -453,10 +514,10 @@ async function main(): Promise<void> {
     say(`$ ffmpeg volumedetect (microphone on): max_volume ${before} dB`)
     assert(before > SILENT_DB, 'the live HLS carries sound before')
     results.push(
-      `1 Broadcasting after ${toLive.toFixed(1)} s; live HLS max_volume ${before} dB with the microphone on`
+      `1 the camera stayed landscape held upright (${cameraUpright.bounds.width}×${cameraUpright.bounds.height}); Broadcasting after ${toLive.toFixed(1)} s; live HLS max_volume ${before} dB with the microphone on`
     )
 
-    // 2. The gear, sideways and then upright.
+    // 2. The gear follows the phone: two columns sideways, one column upright.
     say('$ tapOn settings-button')
     await m.tapOn({ id: 'settings-button' })
     assert(
@@ -464,21 +525,25 @@ async function main(): Promise<void> {
       'the gear opened the settings sheet'
     )
     await sleep(1000)
-    const sideways = await layout()
-    assert.equal(sideways, 'settings-layout-landscape', 'two columns sideways')
+    const lying = await layout()
+    assert.equal(lying, 'settings-layout-landscape', 'two columns sideways')
     await shot('stream-settings-landscape.png')
     say('$ setOrientation PORTRAIT')
     await m.setOrientation('PORTRAIT')
     await sleep(2500)
     const upright = await layout()
-    assert.equal(upright, 'settings-layout-portrait', 'one column upright')
+    assert.equal(
+      upright,
+      'settings-layout-portrait',
+      'the sheet stands upright when portrait is requested'
+    )
     await shot('stream-settings-portrait.png')
-    say(`$ setOrientation ${hold ?? 'LANDSCAPE_LEFT'}`)
-    await m.setOrientation(hold ?? 'LANDSCAPE_LEFT')
+    say(`$ setOrientation ${sideways}`)
+    await m.setOrientation(sideways)
     await sleep(2500)
     assert.equal(await layout(), 'settings-layout-landscape')
     results.push(
-      '2 the gear opened the sheet: two columns sideways, one upright, two again'
+      '2 the gear opened the sheet, stood it upright, then laid it sideways again'
     )
 
     // 3. None of Cameraman's other settings.
@@ -545,6 +610,16 @@ async function main(): Promise<void> {
       await m.inputText({ text: renamed })
       await m.hideKeyboard().catch(() => {})
     }
+    // Done while the phone is held upright: the sheet stands up, and the
+    // camera under it takes its landscape hold back.
+    say('$ setOrientation PORTRAIT')
+    await m.setOrientation('PORTRAIT')
+    await sleep(2500)
+    assert.equal(
+      await layout(),
+      'settings-layout-portrait',
+      'the sheet stands upright again before Done'
+    )
     say('$ tapOn settings-done')
     await m.tapOn({ id: 'settings-done' })
     const doneAt = Date.now()
@@ -556,6 +631,13 @@ async function main(): Promise<void> {
       (await find(byId('settings-done'), 0)) == null,
       'Done closed the sheet'
     )
+    const doneUpright = await shape('landscape')
+    assert.equal(
+      doneUpright.shape,
+      'landscape',
+      `Done held upright leaves the camera landscape (${doneUpright.bounds.width}×${doneUpright.bounds.height})`
+    )
+    await shot('stream-settings-done-upright-camera.png')
     const badge = await textOf('camera-name')
     assert.equal(badge, renamed, 'the badge reads the new name')
     const server = (await myStreams(token)).find(one => one.id === row.id)
@@ -571,10 +653,14 @@ async function main(): Promise<void> {
     say(`$ ffmpeg volumedetect (microphone off): max_volume ${after} dB`)
     assert(after <= SILENT_DB, 'the live HLS is silent with the microphone off')
     results.push(
-      `5 Done after ${((Date.now() - doneAt) / 1000).toFixed(0)} s wait: badge “${badge}”, server label “${server?.label ?? '?'}”; live HLS max_volume ${after} dB with the microphone off`
+      `5 Done held upright left the camera landscape (${doneUpright.bounds.width}×${doneUpright.bounds.height}); after ${((Date.now() - doneAt) / 1000).toFixed(0)} s wait: badge “${badge}”, server label “${server?.label ?? '?'}”; live HLS max_volume ${after} dB with the microphone off`
     )
 
-    // 6. Stop, Close, and the game's angle pill.
+    // 6. Stop, Close, and the game's angle pill. Slide to Stop is swiped
+    // sideways, as the phone is held to film; Close is pressed upright.
+    say(`$ setOrientation ${sideways}`)
+    await m.setOrientation(sideways)
+    await sleep(1500)
     say('$ tapOn broadcast-button (shows Slide to Stop)')
     await m.tapOn({ id: 'broadcast-button' })
     const knob = await find(byId('slide-to-stop-knob'), 5000)
@@ -591,6 +677,11 @@ async function main(): Promise<void> {
       duration: 800
     })
     await waitForPill('Press record to start stream', 20000)
+    say('$ setOrientation PORTRAIT')
+    await m.setOrientation('PORTRAIT').catch((error: unknown) => {
+      say(`setOrientation PORTRAIT: ${String(error).split('\n')[0]}`)
+    })
+    await sleep(1500)
     say('$ tapOn camera-close')
     await m.tapOn({ id: 'camera-close' })
     assert(
@@ -603,6 +694,13 @@ async function main(): Promise<void> {
       )) != null,
       'Close goes back to the game'
     )
+    const closed = await shape('portrait')
+    assert.equal(
+      closed.shape,
+      'portrait',
+      `leaving the camera stands the app upright (${closed.bounds.width}×${closed.bounds.height})`
+    )
+    await shot('stream-settings-closed-upright.png')
     // The game's videos are read when its screen mounts: start the app again
     // and open the game afresh. On a phone, launchApp's stopApp only brings a
     // running app forward, so stop it first.
@@ -638,7 +736,7 @@ async function main(): Promise<void> {
       (await gameAnswer.json()) as { videos?: Array<{ title: string }> }
     ).videos?.map(video => video.title)
     results.push(
-      `6 stopped and closed; the game shows an angle pill “${angleTab.text ?? ''}”; the game’s video titles include ${JSON.stringify(titles?.filter(title => title.endsWith(renamed)))}`
+      `6 stopped, and closed upright to a ${closed.bounds.width}×${closed.bounds.height} app; the game shows an angle pill “${angleTab.text ?? ''}”; the game’s video titles include ${JSON.stringify(titles?.filter(title => title.endsWith(renamed)))}`
     )
   } finally {
     await m.detach()

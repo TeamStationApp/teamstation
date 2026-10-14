@@ -150,6 +150,7 @@ interface Harness {
   renamed: string[]
   cancels: number
   rotations: string[]
+  ios: string[]
   /** What the next PATCH throws. */
   refuse?: Error
 }
@@ -173,7 +174,8 @@ async function mountSheet(
     done: [],
     renamed: [],
     cancels: 0,
-    rotations: []
+    rotations: [],
+    ios: []
   }
   const client = {
     updateLiveStream: async (
@@ -221,6 +223,10 @@ async function mountSheet(
           rotation={{
             allow: () => h.rotations.push('any'),
             lockLandscape: () => h.rotations.push('landscape')
+          }}
+          cameraOrientation={{
+            any: () => h.ios.push('any'),
+            landscape: () => h.ios.push('landscape')
           }}
           onRenamed={name => h.renamed.push(name)}
           onDone={applied => h.done.push(applied)}
@@ -318,7 +324,8 @@ describe('the stream settings sheet', function () {
     ])
       expect(text, absent).not.contains(absent)
     expect(h.rotations).deep.equals(['any'])
-    // Turned upright, one column; landscape narrower than 600, one column.
+    expect(h.ios).deep.equals(['any'])
+    // A tall window is one column; landscape narrower than 600, one column.
     await setWindow(390, 844)
     expect(byTestId('settings-layout-portrait')).not.equals(null)
     expect(columnsShown()).equals(1)
@@ -331,6 +338,7 @@ describe('the stream settings sheet', function () {
     })
     root = undefined
     expect(h.rotations).deep.equals(['any', 'landscape'])
+    expect(h.ios).deep.equals(['any', 'landscape'])
   })
 
   it('renames the angle on the server and in the engine with Done', async function () {

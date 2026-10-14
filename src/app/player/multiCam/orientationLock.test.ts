@@ -10,6 +10,7 @@ describe('turning the multi-camera view with the phone', function () {
       allowRotation: () => void
       lockPortrait: () => void
       lockLandscape: () => void
+      followSensor: () => void
     }
   } => {
     const calls: string[] = []
@@ -18,7 +19,8 @@ describe('turning the multi-camera view with the phone', function () {
       native: {
         allowRotation: () => calls.push('allow'),
         lockPortrait: () => calls.push('portrait'),
-        lockLandscape: () => calls.push('landscape')
+        lockLandscape: () => calls.push('landscape'),
+        followSensor: () => calls.push('sensor')
       }
     }
   }
@@ -39,11 +41,28 @@ describe('turning the multi-camera view with the phone', function () {
     expect(calls).deep.equals(['landscape', 'portrait'])
   })
 
+  it('lets the streaming settings follow the sensor, then holds sideways again', function () {
+    const { calls, native } = recorder()
+    const lock = orientationLock('android', native)
+    lock.lockLandscape()
+    lock.followSensor()
+    lock.lockLandscape()
+    lock.restore()
+    expect(calls).deep.equals(['landscape', 'sensor', 'landscape', 'portrait'])
+  })
+
+  it('keeps the multi-camera view on the rotation lock, not the sensor', function () {
+    const { calls, native } = recorder()
+    orientationLock('android', native).allow()
+    expect(calls).deep.equals(['allow'])
+  })
+
   it('leaves iOS to the modal', function () {
     const { calls, native } = recorder()
     const lock = orientationLock('ios', native)
     lock.allow()
     lock.lockLandscape()
+    lock.followSensor()
     lock.restore()
     expect(calls).deep.equals([])
   })
@@ -52,6 +71,7 @@ describe('turning the multi-camera view with the phone', function () {
     const lock = orientationLock('android', undefined)
     lock.allow()
     lock.lockLandscape()
+    lock.followSensor()
     lock.restore()
     const calls: string[] = []
     const older = orientationLock('android', {
@@ -60,5 +80,8 @@ describe('turning the multi-camera view with the phone', function () {
     })
     older.lockLandscape()
     expect(calls).deep.equals([])
+    // Without `followSensor`, settings still turns, on the rotation lock.
+    older.followSensor()
+    expect(calls).deep.equals(['allow'])
   })
 })
