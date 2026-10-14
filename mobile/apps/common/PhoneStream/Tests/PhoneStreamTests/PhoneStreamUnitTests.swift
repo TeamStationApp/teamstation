@@ -99,7 +99,9 @@ extension PhoneStreamTests {
       source.stop()
       #expect(!source.isRunning)
       #expect(device.stopped == 1)
-      #expect(device.onVideoFrame == nil)
+      // The callbacks stay, for the capture queue that reads them; they deliver nothing now.
+      device.onVideoFrame?(SampleBuffer(videoSample(at: 100)))
+      #expect(got.pictures.count == 1)
     }
 
     @Test("The synthetic stand-in's pictures are converted for the encoders and captured as made")
