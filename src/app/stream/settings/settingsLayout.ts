@@ -4,7 +4,7 @@ export const TWO_COLUMN_MIN_WIDTH = 600
 /**
  * How many columns of cards the settings sheet lays out: two in landscape
  * when the window is at least 600 wide, as TS Cameraman's sheet does, and one
- * otherwise, so a phone held upright reads one card after another.
+ * otherwise. A window taller than it is wide is one column.
  */
 export function settingsColumns(width: number, height: number): 1 | 2 {
   return width > height && width >= TWO_COLUMN_MIN_WIDTH ? 2 : 1

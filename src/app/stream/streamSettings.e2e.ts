@@ -1,4 +1,5 @@
-// E13: the streaming screen's settings sheet turns with the phone, has only
+// E13: the streaming screen's settings sheet may stand upright or lie
+// sideways, has only
 // the phone's own settings, turns the microphone off on the live stream and
 // renames the angle. Through maestro-d's JavaScript client, on an iOS
 // simulator or an iPhone, or on an Android phone with TS_STREAM_ANDROID_SERIAL
@@ -19,7 +20,8 @@
 //     node -r sucrase/register src/app/stream/streamSettings.e2e.ts
 //
 // WebDriverAgent's orientation stands in for a real phone's own while it
-// runs, and the settings sheet turns with it: on a phone, TS_STREAM_HOLD says
+// runs. The camera stays landscape either way the phone is turned. Settings
+// follows the phone, upright or sideways. On a phone, TS_STREAM_HOLD says
 // which way up the phone is held, and is set once the streaming screen is up.
 //
 // The local server runs without mail, so it logs each sign-in link; the app
@@ -29,8 +31,8 @@
 //
 //   1. Record video → the angle's name → Start; Record → "Broadcasting", and
 //      the live HLS carries the microphone (volumedetect).
-//   2. The gear: a screenshot in landscape (two columns), then turned upright
-//      (one column), then back.
+//   2. The gear: a screenshot in landscape (two columns). Turned upright, the
+//      sheet stands upright (one column), then lies sideways again.
 //   3. assertNotVisible Bitrate, Codec, Resolution, Clean HDMI, Identifier and
 //      Log in.
 //   4. Toggle a lens (a camera with one lens, such as the simulator's, has
@@ -456,7 +458,7 @@ async function main(): Promise<void> {
       `1 Broadcasting after ${toLive.toFixed(1)} s; live HLS max_volume ${before} dB with the microphone on`
     )
 
-    // 2. The gear, sideways and then upright.
+    // 2. The gear follows the phone: two columns sideways, one column upright.
     say('$ tapOn settings-button')
     await m.tapOn({ id: 'settings-button' })
     assert(
@@ -471,14 +473,18 @@ async function main(): Promise<void> {
     await m.setOrientation('PORTRAIT')
     await sleep(2500)
     const upright = await layout()
-    assert.equal(upright, 'settings-layout-portrait', 'one column upright')
+    assert.equal(
+      upright,
+      'settings-layout-portrait',
+      'the sheet stands upright when portrait is requested'
+    )
     await shot('stream-settings-portrait.png')
     say(`$ setOrientation ${hold ?? 'LANDSCAPE_LEFT'}`)
     await m.setOrientation(hold ?? 'LANDSCAPE_LEFT')
     await sleep(2500)
     assert.equal(await layout(), 'settings-layout-landscape')
     results.push(
-      '2 the gear opened the sheet: two columns sideways, one upright, two again'
+      '2 the gear opened the sheet, stood it upright, then laid it sideways again'
     )
 
     // 3. None of Cameraman's other settings.

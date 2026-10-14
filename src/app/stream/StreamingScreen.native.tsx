@@ -19,6 +19,7 @@ import {
   type NativeOrientation,
   orientationLock
 } from '../player/multiCam/orientationLock'
+import { applyCameraOrientation } from './cameraOrientation'
 import { BatteryBadge } from './overlay/BatteryBadge'
 import { NameBadge } from './overlay/NameBadge'
 import { OverlayButton } from './overlay/OverlayButton'
@@ -58,6 +59,10 @@ import {
   type OpenPublisherSocket,
   useScoreboardRadarPublisher
 } from './scoreboardRadarPublisher'
+import {
+  CAMERA_ORIENTATIONS,
+  SETTINGS_ORIENTATIONS
+} from './settings/PairDeviceModal'
 import { StreamSettingsSheet } from './settings/StreamSettingsSheet'
 
 /** The stream this phone holds for one angle, as `POST …/live-streams` gave it. */
@@ -81,13 +86,23 @@ export interface StreamingScreenProps {
   /** The engine; a test hands in one over a stand-in module. */
   phone?: PhoneStream
   /**
-   * Android's rotation: held sideways while the screen is up, let turn while
-   * the settings sheet is; a test hands in its own.
+   * Android's rotation: held sideways while the camera is up, turned by the
+   * sensor while settings is open, and stood upright again when the camera
+   * closes. A test hands in its own.
    */
   rotation?: {
     allow?: () => void
     lockLandscape: () => void
     restore: () => void
+  }
+  /**
+   * iOS geometry for the camera view. A test hands in its own; the default
+   * asks the root controller, which is what overrides a portrait lock.
+   */
+  cameraOrientation?: {
+    landscape: () => void
+    any: () => void
+    portrait: () => void
   }
   /** The scoreboard's socket; a test hands in its own. */
   openScoreboardSocket?: OpenPublisherSocket
@@ -96,11 +111,45 @@ export interface StreamingScreenProps {
 /** How many times a one-pill rail is read again while the camera starts. */
 const SCALE_READS = 10
 
-/** Android's `TSOrientation`; iOS turns the modal by `supportedOrientations`. */
-const androidRotation = orientationLock(
+/** Android's `TSOrientation`. iOS uses `applyCameraOrientation`. */
+const androidLock = orientationLock(
   Platform.OS,
   NativeModules.TSOrientation as NativeOrientation | undefined
 )
+
+/**
+ * Sideways for the camera, by the sensor for settings (whatever the phone's
+ * rotation lock says), and upright again when the camera closes.
+ */
+const androidRotation = {
+  allow: androidLock.followSensor,
+  lockLandscape: androidLock.lockLandscape,
+  restore: androidLock.restore
+}
+
+const defaultCameraOrientation = {
+  landscape: () => {
+    applyCameraOrientation(
+      Platform.OS,
+      NativeModules.TSOrientation as NativeOrientation | undefined,
+      'landscape'
+    )
+  },
+  any: () => {
+    applyCameraOrientation(
+      Platform.OS,
+      NativeModules.TSOrientation as NativeOrientation | undefined,
+      'any'
+    )
+  },
+  portrait: () => {
+    applyCameraOrientation(
+      Platform.OS,
+      NativeModules.TSOrientation as NativeOrientation | undefined,
+      'portrait'
+    )
+  }
+}
 
 /**
  * The engine's last close, which the next open waits for: a screen closed and
@@ -129,8 +178,11 @@ export function describeRefusal(error: unknown, angleName: string): string {
  * The camera, full screen and sideways, with TS Cameraman's chrome over it:
  * what Record video opens.
  *
- * A landscape-only `Modal` (iOS turns it by `supportedOrientations`, Android
- * holds the activity sideways), with the phone kept awake while it is up: the
+ * A landscape-only `Modal`. iOS also reports landscape from the app delegate
+ * while this screen is up, and Android holds the activity sideways, so the
+ * camera can flip upside down and cannot stand upright. Settings widens that
+ * hold and may stand upright or lie sideways; closing it locks landscape again.
+ * The phone is kept awake while the camera is up: the
  * engine is opened when it appears and closed when it goes. The picture is the
  * camera itself, without the stream's delay. Pinch zooms, and so does a
  * vertical drag that starts level with the zoom rail.
@@ -151,12 +203,15 @@ export function StreamingScreen(
   const { onClose } = props
   /** Whether the overlay is recording or streaming, which holds Close. */
   const holding = useRef(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   return (
     <Modal
       visible
       animationType="fade"
       presentationStyle="fullScreen"
-      supportedOrientations={['landscape-left', 'landscape-right']}
+      supportedOrientations={
+        settingsOpen ? SETTINGS_ORIENTATIONS : CAMERA_ORIENTATIONS
+      }
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={() => {
@@ -168,14 +223,23 @@ export function StreamingScreen(
       <StatusBar hidden />
       {/* The modal's own safe area: the app's is the upright root's. */}
       <SafeAreaProvider>
-        <StreamingOverlay {...props} holding={holding} />
+        <StreamingOverlay
+          {...props}
+          holding={holding}
+          settingsOpen={settingsOpen}
+          setSettingsOpen={setSettingsOpen}
+        />
       </SafeAreaProvider>
     </Modal>
   )
 }
 
 function StreamingOverlay(
-  props: StreamingScreenProps & { holding: React.RefObject<boolean> }
+  props: StreamingScreenProps & {
+    holding: React.RefObject<boolean>
+    settingsOpen: boolean
+    setSettingsOpen: (open: boolean) => void
+  }
 ): React.ReactElement {
   const {
     client,
@@ -185,7 +249,10 @@ function StreamingOverlay(
     onClose,
     phone = phoneStream,
     rotation = androidRotation,
-    openScoreboardSocket
+    cameraOrientation = defaultCameraOrientation,
+    openScoreboardSocket,
+    settingsOpen,
+    setSettingsOpen
   } = props
   const insets = useInsets()
   const window = useWindowDimensions()
@@ -201,7 +268,6 @@ function StreamingOverlay(
   const [angleName, setAngleName] = useState(session.angleName)
   /** The microphone, which the settings sheet turns off and on. */
   const [audioEnabled, setAudioEnabled] = useState(true)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const recording = status?.isRecording ?? recordingHere
   // The stream can outlive its recording's part — the part stops when the
   // phone runs low on space and the stream goes on — and Record cannot start
@@ -280,13 +346,19 @@ function StreamingOverlay(
     }
   }, [readScale, scale, scaleReads])
 
+  // True while this screen's cleanup has not run. The settings sheet asks
+  // this before it locks landscape again, so a sheet that unmounts after the
+  // screen cannot turn the phone back sideways.
+  const cameraHeld = useRef(false)
   // The engine is open while the screen is up, and the phone held sideways.
   // Opened again after a kill or a crash, within the hour, on the stream
   // whose take was rolling, the take continues as its next part and the
   // stream redials.
   useEffect(() => {
     let live = true
+    cameraHeld.current = true
     rotation.lockLandscape()
+    cameraOrientation.landscape()
     const opened = closing.then(async () => {
       await phone.open(session.angleName)
     })
@@ -303,6 +375,7 @@ function StreamingOverlay(
       })
     return () => {
       live = false
+      cameraHeld.current = false
       // After the open, never before it: a screen gone before the engine
       // finished opening must not leave the camera running behind it.
       closing = opened
@@ -312,6 +385,7 @@ function StreamingOverlay(
         })
         .catch(() => {})
       rotation.restore()
+      cameraOrientation.portrait()
     }
     // One engine session per screen: the settings sheet renames the angle through it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -566,6 +640,12 @@ function StreamingOverlay(
               rotation.allow?.()
             },
             lockLandscape: rotation.lockLandscape
+          }}
+          cameraOrientation={cameraOrientation}
+          releaseLandscape={() => {
+            if (!cameraHeld.current) return
+            rotation.lockLandscape()
+            cameraOrientation.landscape()
           }}
           onRenamed={setAngleName}
           onDone={applied => {

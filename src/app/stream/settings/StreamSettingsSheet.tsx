@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useState } from 'react'
 import {
   Modal,
   NativeModules,
@@ -23,8 +23,9 @@ import {
   orientationLock
 } from '../../player/multiCam/orientationLock'
 import { angleNameProblem, angleNameToSend } from '../AngleNamePrompt'
+import { applyCameraOrientation } from '../cameraOrientation'
 import type { PhoneLens, PhoneStream, RadarState } from '../phoneStreamClient'
-import { ALL_ORIENTATIONS, PairDeviceModal } from './PairDeviceModal'
+import { PairDeviceModal, SETTINGS_ORIENTATIONS } from './PairDeviceModal'
 import { RadarCard } from './RadarCard'
 import { SettingsCard } from './SettingsCard'
 import { cardColumns, settingsColumns } from './settingsLayout'
@@ -54,13 +55,44 @@ export interface StreamSettingsSheetProps {
   onCancel: () => void
   /** Android's rotation; a test hands in its own. */
   rotation?: { allow: () => void; lockLandscape: () => void }
+  /** iOS geometry; a test hands in its own. */
+  cameraOrientation?: { any: () => void; landscape: () => void }
+  /**
+   * The camera screen taking the landscape hold back. While that screen is
+   * still up this locks landscape; once the screen has gone it does nothing,
+   * so this sheet's cleanup cannot be the last word.
+   */
+  releaseLandscape?: () => void
 }
 
-/** Android's `TSOrientation`; iOS turns the modal by `supportedOrientations`. */
-const androidRotation = orientationLock(
+/** Android's `TSOrientation`. iOS uses `applyCameraOrientation`. */
+const androidLock = orientationLock(
   Platform.OS,
   NativeModules.TSOrientation as NativeOrientation | undefined
 )
+
+/** By the sensor while the sheet is up, whatever the phone's rotation lock. */
+const androidRotation = {
+  allow: androidLock.followSensor,
+  lockLandscape: androidLock.lockLandscape
+}
+
+const defaultCameraOrientation = {
+  any: () => {
+    applyCameraOrientation(
+      Platform.OS,
+      NativeModules.TSOrientation as NativeOrientation | undefined,
+      'any'
+    )
+  },
+  landscape: () => {
+    applyCameraOrientation(
+      Platform.OS,
+      NativeModules.TSOrientation as NativeOrientation | undefined,
+      'landscape'
+    )
+  }
+}
 
 /** A lens as its row names it: millimetres, then which side of the phone. */
 export function lensLabel(lens: PhoneLens): string {
@@ -88,9 +120,8 @@ const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>): boolean =>
  * The gear's sheet: the camera's settings, in TS Cameraman's cards.
  *
  * Audio, Lenses, Name and Radar, in that order: two columns in landscape on a
- * window at least 600 wide, one otherwise. The sheet turns with the phone
- * (every orientation on iOS; on Android the activity is let turn while it is
- * up and held sideways again when it goes).
+ * window at least 600 wide, one otherwise. The sheet may stand upright or
+ * lie sideways. The camera underneath stays landscape either way up.
  *
  * The microphone, the lenses and the name are drafts until Done: Done turns
  * the microphone and the lenses as set, renames the angle on the server and
@@ -107,13 +138,25 @@ const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>): boolean =>
 export function StreamSettingsSheet(
   props: StreamSettingsSheetProps
 ): React.ReactElement {
-  const { onCancel, rotation = androidRotation } = props
-  useEffect(() => {
+  const {
+    onCancel,
+    rotation = androidRotation,
+    cameraOrientation = defaultCameraOrientation,
+    releaseLandscape
+  } = props
+  useLayoutEffect(() => {
     rotation.allow()
+    cameraOrientation.any()
     return () => {
+      if (releaseLandscape != null) {
+        releaseLandscape()
+        return
+      }
       rotation.lockLandscape()
+      cameraOrientation.landscape()
     }
-    // Once a sheet: the lock the streaming screen holds comes back after it.
+    // Before the modal presents: the mask has to be wide, or iOS keeps this
+    // sheet in the camera's landscape hold. Closing gives that hold back.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   return (
@@ -121,7 +164,7 @@ export function StreamSettingsSheet(
       visible
       animationType="slide"
       presentationStyle="fullScreen"
-      supportedOrientations={ALL_ORIENTATIONS}
+      supportedOrientations={SETTINGS_ORIENTATIONS}
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={onCancel}

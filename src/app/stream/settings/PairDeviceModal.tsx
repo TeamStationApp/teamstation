@@ -13,10 +13,14 @@ import { lstrings, sprintf } from '../../locales/strings'
 import type { PhoneStream, RadarState } from '../phoneStreamClient'
 import { SETTINGS, SETTINGS_MONOSPACE } from './settingsTheme'
 
-/** Every orientation: the sheet under it turns with the phone. */
-export const ALL_ORIENTATIONS: Array<
-  'portrait' | 'portrait-upside-down' | 'landscape-left' | 'landscape-right'
-> = ['portrait', 'portrait-upside-down', 'landscape-left', 'landscape-right']
+/** Landscape either way. The camera view never stands upright. */
+export const CAMERA_ORIENTATIONS: Array<'landscape-left' | 'landscape-right'> =
+  ['landscape-left', 'landscape-right']
+
+/** Portrait, or landscape either way. Settings and this picker use it. */
+export const SETTINGS_ORIENTATIONS: Array<
+  'portrait' | 'landscape-left' | 'landscape-right'
+> = ['portrait', 'landscape-left', 'landscape-right']
 
 export interface PairDeviceModalProps {
   phone: PhoneStream
@@ -70,7 +74,7 @@ export function PairDeviceModal(
       visible
       transparent
       animationType="fade"
-      supportedOrientations={ALL_ORIENTATIONS}
+      supportedOrientations={SETTINGS_ORIENTATIONS}
       onRequestClose={onClose}
     >
       <View style={styles.scrim}>
