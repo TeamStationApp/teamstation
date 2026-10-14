@@ -873,6 +873,75 @@ extension PhoneStreamTests {
       sink.drop()
     }
 
+    @Test("""
+      Background time that runs out while the upload is still exporting leaves it wanted: Record on \
+      its stream refuses, and it resumes; one that fails by itself before opening is not wanted
+      """)
+    func uploadCutOffWhileExporting() async throws {
+      StubServer.reset()
+      let sink = TestRTMPSink()
+      try sink.start()
+      let rig = EngineRig(root: try scratchDirectory())
+      let work = WorkLog()
+      let engine = try rig.engine(backgroundWork: work.work)
+      try engine.open(angleName: Self.angle)
+      try engine.startRecording(rtmpUrl: sink.url, liveStreamId: Self.stream, gameId: Self.game,
+                                angleName: Self.angle, request: rig.request)
+      #expect(await waitUntil { engine.status.phase == "live" })
+      try await Task.sleep(for: .seconds(3))
+      await engine.stopRecording()
+
+      // The time runs out as the export begins: a one-part export is quick, and the upload would
+      // otherwise open before a test could catch it exporting.
+      var openedWhenExpired: [String?] = []
+      let expiry = engine.observe { event in
+        guard case let .upload(progress) = event, progress.state == .exporting, openedWhenExpired.isEmpty
+        else { return }
+        openedWhenExpired.append((try? engine.recordings().first)?.uploadId)
+        work.expire("Upload Home Plate")
+      }
+      let upload = Task { @MainActor in
+        try await engine.uploadRecording(liveStreamId: Self.stream, apiBase: rig.request.apiBase,
+                                         token: rig.request.token, title: "Top of the 1st")
+      }
+      _ = await upload.result
+      expiry.cancel()
+      #expect(openedWhenExpired == [ nil ])
+      #expect(engine.runningUploads.isEmpty)
+      let cut = try #require(try engine.recordings().first)
+      #expect(cut.uploadId == nil)
+      #expect(cut.uploadTitle == "Top of the 1st")
+      #expect(cut.hasPendingUpload)
+      #expect(StubServer.read { $0.opens }.isEmpty)
+      #expect(throws: PhoneStreamError.uploadInProgress) {
+        try engine.startRecording(rtmpUrl: sink.url, liveStreamId: Self.stream, gameId: Self.game,
+                                  angleName: Self.angle, request: rig.request)
+      }
+      // The app is active again: the upload resumes under its title and lands.
+      #expect(engine.resumePendingUploads(apiBase: rig.request.apiBase, token: rig.request.token) == 1)
+      #expect(await waitUntil(Self.exportWait) { (try? engine.recordings().first?.isUploaded) == true })
+      let opened = try #require(StubServer.read { $0.opens }.first)
+      #expect(opened["title"] as? String == "Top of the 1st")
+      #expect(StubServer.read { $0.opens }.count == 1)
+
+      // A take whose export fails by itself is not left wanted.
+      try engine.startRecording(rtmpUrl: sink.url, liveStreamId: "lst_0002", gameId: Self.game,
+                                angleName: "First Base", request: rig.request)
+      try await Task.sleep(for: .seconds(2))
+      await engine.stopRecording()
+      let broken = try #require(try engine.recordings().first { $0.liveStreamId == "lst_0002" })
+      for file in try partFiles(engine, broken) { try FileManager.default.removeItem(at: file) }
+      await #expect(throws: (any Error).self) {
+        try await engine.uploadRecording(liveStreamId: "lst_0002", apiBase: rig.request.apiBase,
+                                         token: rig.request.token, title: "First Base")
+      }
+      let failed = try #require(try engine.recordings().first { $0.liveStreamId == "lst_0002" })
+      #expect(!failed.hasPendingUpload)
+      #expect(failed.uploadTitle == nil)
+      await engine.close()
+      sink.drop()
+    }
+
     @Test("A foreground resume that cannot run says so in the status instead of going quiet")
     func foregroundResumeThatFails() async throws {
       StubServer.reset()

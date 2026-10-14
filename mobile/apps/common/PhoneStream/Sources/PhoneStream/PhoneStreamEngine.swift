@@ -875,8 +875,8 @@ public final class PhoneStreamEngine {
     return try await startUpload(recording, server: server, token: token, title: title).value
   }
 
-  /// Restarts every upload that was opened and has not landed, except one already running here.
-  /// Answers how many it started.
+  /// Restarts every upload that was started and has not landed, except one already running here,
+  /// including one cut off before the server opened it. Answers how many it started.
   @discardableResult
   public func resumePendingUploads(apiBase: URL, token: String) -> Int {
     let server = PhoneStreamRequest(apiBase: apiBase, token: token, deviceId: "").serverURL
@@ -938,13 +938,15 @@ public final class PhoneStreamEngine {
   ) -> Task<String, Error> {
     let id = recording.recordingID
     uploadServers[id] = (server, token)
+    // Wanted from now, before the export: cut off before the server has opened it, it still resumes.
+    try? catalog.setUpload(id: recording.uploadId, title: recording.uploadTitle ?? title, for: id)
     let task = Task { @MainActor [self] () throws -> String in
       defer {
         uploads[id] = nil
         uploadProgress[id] = nil
       }
-      // Out of background time, the upload stops where it is and keeps its id, as a killed one
-      // would, and resumes when the app is next active.
+      // Out of background time, the upload stops where it is and stays wanted, with its id once it
+      // has one, as a killed one would, and resumes when the app is next active.
       let work = environment.backgroundWork.begin("Upload \(recording.angleName)") { [weak self] in
         self?.uploads[id]?.cancel()
       }
@@ -954,6 +956,11 @@ public final class PhoneStreamEngine {
         uploadServers[id] = nil
         return videoId
       } catch {
+        // One that failed by itself before the server opened it is not waiting to resume: the take
+        // can be recorded on, or uploaded afresh. One cut off is.
+        if !Task.isCancelled, (try? catalog.recording(id))?.uploadId == nil {
+          try? catalog.setUpload(id: nil, title: nil, for: id)
+        }
         report(PhoneUploadProgress(
           liveStreamId: recording.liveStreamId,
           state: .failed,
