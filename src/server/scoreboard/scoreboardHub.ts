@@ -6,6 +6,7 @@ import { asObject, asString } from 'cleaners'
 import type { Kysely } from 'kysely'
 import { type RawData, WebSocket, WebSocketServer } from 'ws'
 
+import { defaultScoreboardSettings } from '../../common/nodeSettings'
 import {
   asDashboardCommand,
   asScoreboardUpdate,
@@ -19,6 +20,7 @@ import { actorForToken } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { mayRunGame } from '../director/runGames'
+import { speedHoldMs as nodeSpeedHoldMs } from '../nodeSettings'
 import { type GameRecord, gameRecord, mayBeGameId } from './gameRecord'
 import { logScoreboard, type ScoreboardLogCause } from './scoreboardLog'
 import {
@@ -102,7 +104,8 @@ export interface ScoreboardHubOptions {
   /**
    * How long a pitch speed stays on the board. A newer speed starts this
    * over. When it ends, the hub writes `pitchSpeed: 0` so every listener
-   * drops the number.
+   * drops the number. Without it, the node's `scoreboard.speedHoldSec`
+   * setting, read again every `SETTINGS_MS`.
    */
   speedHoldMs?: number
 }
@@ -125,13 +128,31 @@ const UNAVAILABLE = 1011
 const GOING_AWAY = 1001
 const BAD_REQUEST = 'HTTP/1.1 400 Bad Request\r\n\r\n'
 const CHANGED = JSON.stringify({ type: 'changed' })
+/** How often the node's pitch-speed hold setting is read again. */
+const SETTINGS_MS = 30000
 
 export function makeScoreboardHub(
   options: ScoreboardHubOptions
 ): ScoreboardHub {
   const { db, store, subscriber, log } = options
   const now = options.now ?? store.now
-  const speedHoldMs = options.speedHoldMs ?? 5000
+  // The node's setting unless a test fixes it, kept current here because a
+  // hold is armed in the middle of a message, with nothing to await.
+  let speedHoldMs =
+    options.speedHoldMs ?? defaultScoreboardSettings.speedHoldSec * 1000
+  const readHold = (): void => {
+    if (options.speedHoldMs != null) return
+    nodeSpeedHoldMs(db)
+      .then(ms => {
+        speedHoldMs = ms
+      })
+      .catch((error: unknown) => {
+        log(`scoreboard: the pitch-speed hold setting: ${describe(error)}`)
+      })
+  }
+  readHold()
+  const holdReader = setInterval(readHold, SETTINGS_MS)
+  holdReader.unref?.()
   const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 })
   const rooms = new Map<string, Room>()
   const everyone = new Set<Member>()
@@ -736,6 +757,7 @@ export function makeScoreboardHub(
       closing = true
       clearInterval(checker)
       clearInterval(pinger)
+      clearInterval(holdReader)
       for (const timer of speedHolds.values()) clearTimeout(timer)
       speedHolds.clear()
       for (const member of everyone) {

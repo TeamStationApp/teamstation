@@ -20,6 +20,7 @@ import type { Database } from '../db/database'
 import { mayRunGame } from '../director/runGames'
 import { requireActor } from '../middleware/withAuth'
 import { sendError, withAsync } from '../middleware/withErrors'
+import { scoreboardOverlayFor } from '../nodeSettings'
 import { boardTimeline, stepsInWindow } from '../scoreboard/boardTimeline'
 import { type GameRecord, gameRecord } from '../scoreboard/gameRecord'
 import {
@@ -76,10 +77,48 @@ export function scoreboardRoutes(
   )
 
   /**
+   * A game the caller may read the board of, by the same rule as
+   * `/videos/:videoId/playback`: a game that is not there is 404, and
+   * somebody signed in who cannot see it is told it is for members.
+   */
+  const visibleGame = async (
+    actor: { userId: number; isAdmin: boolean },
+    gameId: string
+  ): Promise<{ startAt: Date }> => {
+    const game = await db
+      .selectFrom('games')
+      .select([
+        'home_team_id as homeTeamId',
+        'away_team_id as awayTeamId',
+        'season_id as seasonId',
+        'start_at as startAt'
+      ])
+      .where('id', '=', gameId)
+      .executeTakeFirst()
+    if (game == null) throw notFound()
+    const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+    if (!canSeeGame(scopes, game)) throw membersOnly()
+    return { startAt: new Date(game.startAt) }
+  }
+
+  /**
+   * Whether a game's board shows over its videos, and where, as the node's
+   * settings say (`scoreboardOverlayFor`). It is the game's to read.
+   */
+  router.get(
+    '/games/:gameId/scoreboard-overlay',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const game = await visibleGame(actor, pathParam(req.params.gameId))
+      res.json(await scoreboardOverlayFor(db, game.startAt))
+    })
+  )
+
+  /**
    * The board at every moment of a game, for a player that draws it over a
-   * video at the wall time of the frame on screen. It is the game's to read:
-   * a game that is not there is 404, and somebody signed in who cannot see
-   * it is told it is for members, as `/videos/:videoId/playback` tells them.
+   * video at the wall time of the frame on screen. It is the game's to read.
    */
   router.get(
     '/games/:gameId/scoreboard-timeline',
@@ -92,18 +131,7 @@ export function scoreboardRoutes(
       const to = msParam(req.query.to, 'to')
       if (from != null && to != null && to < from)
         throw badRequest('to must not be before from')
-      const game = await db
-        .selectFrom('games')
-        .select([
-          'home_team_id as homeTeamId',
-          'away_team_id as awayTeamId',
-          'season_id as seasonId'
-        ])
-        .where('id', '=', gameId)
-        .executeTakeFirst()
-      if (game == null) throw notFound()
-      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-      if (!canSeeGame(scopes, game)) throw membersOnly()
+      await visibleGame(actor, gameId)
       const timeline = await boardTimeline(db, gameId, message => {
         console.error(message)
       })

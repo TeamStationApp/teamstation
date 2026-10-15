@@ -1,0 +1,186 @@
+import { expect } from 'chai'
+import { afterEach, beforeEach, describe, it } from 'mocha'
+
+import { defaultNodeSettings, type NodeSettings } from '../common/nodeSettings'
+import { type GroupFixture, groupFixture } from '../test/groupFixtures'
+import {
+  forgetScoreboardSettings,
+  scoreboardSettings,
+  speedHoldMs
+} from './nodeSettings'
+import { forgetSettings, highlightSettings } from './settings'
+
+describe('node settings', function () {
+  this.timeout(60000)
+  let f: GroupFixture
+  beforeEach(async () => {
+    f = await groupFixture()
+    forgetScoreboardSettings()
+    forgetSettings()
+  })
+  afterEach(async () => {
+    forgetScoreboardSettings()
+    forgetSettings()
+    await f?.h.close()
+  })
+
+  const changed: NodeSettings = {
+    scoreboard: {
+      overlayStartDate: '2026-11-15',
+      single: { x: 0.1, y: 0.2, height: 0.25 },
+      landscape: { x: 0.02, y: 0.03, height: 0.2 },
+      portraitHeight: 0.3,
+      speedHoldSec: 3
+    },
+    highlights: {
+      lagSec: 6,
+      leadSec: 20,
+      leadSecByEventType: { strikeout: 8, walk: 4 },
+      mergeWithinSec: 2
+    }
+  }
+
+  it('lets only a node administrator read and set them, all at once, and records who', async () => {
+    expect(
+      (await f.h.request('GET', '/node/settings', undefined, null)).status
+    ).equals(401)
+    expect(
+      (await f.h.request('GET', '/node/settings', undefined, 101)).status
+    ).equals(403)
+    expect(
+      (await f.h.request('PUT', '/node/settings', changed, 101)).status
+    ).equals(403)
+
+    const first = await f.h.request('GET', '/node/settings', undefined, 105)
+    expect(first.status).equals(200)
+    expect(await first.json()).deep.equals(defaultNodeSettings)
+
+    const bad = await f.h.request(
+      'PUT',
+      '/node/settings',
+      {
+        ...changed,
+        scoreboard: { ...changed.scoreboard, single: { x: 2, y: 0, height: 1 } }
+      },
+      105
+    )
+    expect(bad.status).equals(400)
+    expect(JSON.stringify(await bad.json())).contains(
+      'scoreboard.single.x must be a number from 0 to under 1'
+    )
+
+    const set = await f.h.request('PUT', '/node/settings', changed, 105)
+    expect(set.status).equals(200)
+    expect(await set.json()).deep.equals(changed)
+    const read = await f.h.request('GET', '/node/settings', undefined, 105)
+    expect(await read.json()).deep.equals(changed)
+
+    // What the rest of the server reads moves with it at once.
+    expect(await highlightSettings(f.h.db)).deep.equals(changed.highlights)
+    expect(await speedHoldMs(f.h.db)).equals(3000)
+
+    const rows = await f.h.db
+      .selectFrom('system_settings')
+      .select(['key', 'updated_by'])
+      .where('key', 'in', [
+        'scoreboard.overlayStartDate',
+        'scoreboard.single',
+        'scoreboard.landscape',
+        'scoreboard.portraitHeight',
+        'scoreboard.speedHoldSec',
+        'highlights.lagSec',
+        'highlights.leadSec',
+        'highlights.leadSecByEventType',
+        'highlights.mergeWithinSec'
+      ])
+      .execute()
+    expect(rows).has.length(9)
+    expect(new Set(rows.map(row => Number(row.updated_by)))).deep.equals(
+      new Set([105])
+    )
+  })
+
+  it('falls back to the default for each value a row holds badly, and caches', async () => {
+    await f.h.db
+      .insertInto('system_settings')
+      .values([
+        { key: 'scoreboard.overlayStartDate', value: JSON.stringify('soon') },
+        {
+          key: 'scoreboard.single',
+          value: JSON.stringify({ x: 0.3, y: 0.4, height: 0.5 })
+        },
+        { key: 'scoreboard.landscape', value: JSON.stringify({ x: 9 }) },
+        { key: 'scoreboard.portraitHeight', value: JSON.stringify(0.4) },
+        { key: 'scoreboard.speedHoldSec', value: JSON.stringify(-1) }
+      ])
+      .execute()
+    const now = Date.now()
+    expect(await scoreboardSettings(f.h.db, now)).deep.equals({
+      ...defaultNodeSettings.scoreboard,
+      single: { x: 0.3, y: 0.4, height: 0.5 },
+      portraitHeight: 0.4
+    })
+    await f.h.db
+      .updateTable('system_settings')
+      .set({ value: JSON.stringify(0.6) })
+      .where('key', '=', 'scoreboard.portraitHeight')
+      .execute()
+    expect(
+      (await scoreboardSettings(f.h.db, now + 1000)).portraitHeight
+    ).equals(0.4)
+    expect(
+      (await scoreboardSettings(f.h.db, now + 31000)).portraitHeight
+    ).equals(0.6)
+  })
+
+  it('reads highlight values the screen would refuse as their defaults, so the screen still opens', async () => {
+    // Migrations seed these rows: each is set to what the screen refuses.
+    const rows: Array<[string, unknown]> = [
+      ['highlights.lagSec', -3],
+      ['highlights.leadSec', 900],
+      ['highlights.mergeWithinSec', 4],
+      ['highlights.leadSecByEventType', { Strikeout: 10 }]
+    ]
+    for (const [key, value] of rows)
+      await f.h.db
+        .insertInto('system_settings')
+        .values({ key, value: JSON.stringify(value) })
+        .onConflict(oc =>
+          oc.column('key').doUpdateSet({ value: JSON.stringify(value) })
+        )
+        .execute()
+    const read = await f.h.request('GET', '/node/settings', undefined, 105)
+    expect(read.status).equals(200)
+    expect(await read.json()).deep.include({
+      highlights: {
+        ...defaultNodeSettings.highlights,
+        mergeWithinSec: 4
+      }
+    })
+  })
+
+  it('reads past this worker’s cache for the administration screen and the hub', async () => {
+    const first = await f.h.request('GET', '/node/settings', undefined, 105)
+    expect(first.status).equals(200)
+    expect(await speedHoldMs(f.h.db)).equals(5000)
+    // Another worker took a save: this one's caches were not told.
+    const rows: Array<[string, unknown]> = [
+      ['scoreboard.speedHoldSec', 7],
+      ['highlights.lagSec', 9]
+    ]
+    for (const [key, value] of rows)
+      await f.h.db
+        .insertInto('system_settings')
+        .values({ key, value: JSON.stringify(value) })
+        .onConflict(oc =>
+          oc.column('key').doUpdateSet({ value: JSON.stringify(value) })
+        )
+        .execute()
+    const read = (await (
+      await f.h.request('GET', '/node/settings', undefined, 105)
+    ).json()) as NodeSettings
+    expect(read.scoreboard.speedHoldSec).equals(7)
+    expect(read.highlights.lagSec).equals(9)
+    expect(await speedHoldMs(f.h.db)).equals(7000)
+  })
+})

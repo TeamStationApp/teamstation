@@ -26,6 +26,7 @@ import {
   until
 } from '../../test/scoreboardKit'
 import type { Database } from '../db/database'
+import { forgetScoreboardSettings } from '../nodeSettings'
 import { attachScoreboard } from './attachScoreboard'
 import { makeScoreboardHub, type ScoreboardHub } from './scoreboardHub'
 import {
@@ -363,6 +364,39 @@ describe('the scoreboard hub', function () {
     await new Promise(resolve => setTimeout(resolve, 120))
     expect(last(watching).pitchSpeed).equals(0)
     expect(watching.messages).has.length(cleared)
+  })
+
+  it("holds a pitch speed for the node's setting when no hold is given", async function () {
+    await db
+      .insertInto('system_settings')
+      .values({ key: 'scoreboard.speedHoldSec', value: JSON.stringify(0.2) })
+      .onConflict(oc =>
+        oc.column('key').doUpdateSet({ value: JSON.stringify(0.2) })
+      )
+      .execute()
+    forgetScoreboardSettings()
+    try {
+      const worker = await startWorker()
+      const gameId = await newGame()
+      const watching = viewer(worker, gameId)
+      await heard(watching, 1)
+      const phone = publisher(worker, gameId, runner)
+      await phone.opened
+      // The hub reads the setting as it starts; give that a moment.
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const sent = Date.now()
+      send(phone, { pitchSpeed: 77 })
+      await until('77 mph', () => last(watching)?.pitchSpeed === 77)
+      await until('cleared', () => last(watching)?.pitchSpeed === 0)
+      // Well short of the 5 s default.
+      expect(Date.now() - sent).lessThan(2000)
+    } finally {
+      await db
+        .deleteFrom('system_settings')
+        .where('key', '=', 'scoreboard.speedHoldSec')
+        .execute()
+      forgetScoreboardSettings()
+    }
   })
 
   it('a publisher zero cancels the pitch-speed hold', async function () {
@@ -780,7 +814,9 @@ describe('the scoreboard hub', function () {
         return Reflect.get(target, name)
       }
     })
-    const worker = await startWorker({ db: broken })
+    // The hold is fixed so the hub reads no setting from the broken store:
+    // only the sockets' own lookups are counted.
+    const worker = await startWorker({ db: broken, speedHoldMs: 5000 })
     const loggedBefore = logged.length
     for (const id of ['%00', 'gam_%01x', 'g'.repeat(65), 'gam_%2Fx']) {
       expect(await closedWith(viewer(worker, id)), id).equals(

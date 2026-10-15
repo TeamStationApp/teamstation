@@ -58,6 +58,12 @@ import {
   type NodeAccountChange
 } from './nodeAdministration'
 import {
+  asNodeSettings,
+  asScoreboardOverlay,
+  type NodeSettings,
+  type ScoreboardOverlay
+} from './nodeSettings'
+import {
   asNotification,
   asNotificationPage,
   type Notification,
@@ -1546,6 +1552,25 @@ export class TeamStationClient {
 
   async setAccountMail(accountMessages: boolean): Promise<void> {
     await this.request('PUT', '/node/mail', asUnknownOk, { accountMessages })
+  }
+
+  /** Every node setting, for a node administrator. */
+  async nodeSettings(): Promise<NodeSettings> {
+    return await this.request('GET', '/node/settings', asNodeSettings)
+  }
+
+  /** A node administrator sets every node setting at once. */
+  async setNodeSettings(settings: NodeSettings): Promise<NodeSettings> {
+    return await this.request('PUT', '/node/settings', asNodeSettings, settings)
+  }
+
+  /** Whether a game's board shows over its videos, and where. */
+  async scoreboardOverlay(gameId: string): Promise<ScoreboardOverlay> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/scoreboard-overlay`,
+      asScoreboardOverlay
+    )
   }
 
   /** Where the API is, which is also where its sockets are. */

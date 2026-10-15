@@ -1116,6 +1116,51 @@ describe('the board timeline', function () {
       }
     })
 
+    it("answers whether a game's board shows, by its start in UTC and never its time zone", async function () {
+      const worker = await startWorker()
+      const overlayOf = async (
+        gameId: string,
+        who: Person | null = runner
+      ): Promise<Response> =>
+        await fetch(`${worker.base}/games/${gameId}/scoreboard-overlay`, {
+          headers: who == null ? {} : { authorization: `Bearer ${who.token}` }
+        })
+      const shows = async (gameId: string): Promise<boolean> =>
+        ((await (await overlayOf(gameId)).json()) as { show: boolean }).show
+      // 7:30 PM on September 30 in Los Angeles: 02:30 on October 1, UTC.
+      const gameId = await newGame(new Date('2026-10-01T02:30:00Z'))
+      const zone = async (id: string, timezone: string): Promise<void> => {
+        await db
+          .updateTable('games')
+          .set({ timezone })
+          .where('id', '=', id)
+          .execute()
+      }
+      await zone(gameId, 'America/Los_Angeles')
+      const after = await overlayOf(gameId)
+      expect(after.status).equals(200)
+      expect(await after.json()).deep.equals({
+        show: true,
+        single: { x: 0.01, y: 0.01, height: 0.15 },
+        landscape: { x: 0.01, y: 0.01, height: 0.15 },
+        portraitHeight: 0.15
+      })
+      // A minute before 00:00 UTC on October 1, in any zone, is before it.
+      const before = await newGame(new Date('2026-09-30T23:59:00Z'))
+      for (const timezone of ['UTC', 'Pacific/Kiritimati']) {
+        await zone(before, timezone)
+        expect(await shows(before), timezone).equals(false)
+      }
+
+      expect((await overlayOf(gameId, null)).status).equals(401)
+      expect((await overlayOf('gam_nothere')).status).equals(404)
+      const unseen = await overlayOf(gameId, stranger)
+      expect(unseen.status).equals(403)
+      expect(((await unseen.json()) as { code: string }).code).equals(
+        'membersOnly'
+      )
+    })
+
     it('is described in the API document, with the socket parameter', function () {
       const paths = openApiDocument('test').paths as Record<string, any>
       const route = paths['/games/{gameId}/scoreboard-timeline'].get

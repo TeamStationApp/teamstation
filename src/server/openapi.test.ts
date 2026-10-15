@@ -589,4 +589,27 @@ describe('the API document', function () {
     for (const ref of refs ?? [])
       expect(schemas, ref).to.have.property(ref.split('/').at(-1)!)
   })
+
+  it('describes the node settings once, a speed hold above 0, for reading and replacing them', function () {
+    const path = (
+      openApiDocument('0.0.0').paths as Record<string, Record<string, any>>
+    )['/node/settings']
+    const read = path.get.responses[200].content['application/json'].schema
+    const sent = path.put.requestBody.content['application/json'].schema
+    const answered = path.put.responses[200].content['application/json'].schema
+    expect(sent).equals(read)
+    expect(answered).equals(read)
+    expect(read.properties.scoreboard.properties.speedHoldSec).deep.include({
+      exclusiveMinimum: 0,
+      maximum: 600
+    })
+    expect(
+      read.properties.scoreboard.properties.speedHoldSec
+    ).not.have.property('minimum')
+    // A play type's key as the server takes it (`asLeadMap`).
+    const leads = read.properties.highlights.properties.leadSecByEventType
+    const pattern = new RegExp(leads.propertyNames.pattern)
+    expect(pattern.test('home_run')).equals(true)
+    expect(pattern.test('Home-Run')).equals(false)
+  })
 })

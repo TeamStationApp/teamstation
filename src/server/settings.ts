@@ -1,48 +1,25 @@
-import { asNumber, asObject } from 'cleaners'
 import type { Kysely } from 'kysely'
 
+import {
+  asLeadMap,
+  asSeconds,
+  defaultHighlightTimings,
+  type HighlightTimings
+} from '../common/nodeSettings'
 import type { Database } from './db/database'
 
 /**
  * System-wide settings, which only an administrator changes. Highlights are
  * computed when they are read, so moving `lagSec` or `leadSec` moves every
  * highlight in every game at once; there is deliberately no per-team or
- * per-highlight value to drift out of step.
+ * per-highlight value to drift out of step. The node administration screen
+ * edits them with the scoreboard's (`common/nodeSettings.ts`).
  */
-export interface HighlightSettings {
-  /** How long after the play the scorekeeper's tap lands, in seconds. */
-  lagSec: number
-  /** How long before the play a highlight starts, in seconds. */
-  leadSec: number
-  /** Exceptions by GUMBO event type, e.g. a shorter lead for a strikeout. */
-  leadSecByEventType: Record<string, number>
-  /**
-   * How close two outcomes of a play have to be logged to count as one moment.
-   *
-   * Often a hit and the run it drove in are genuinely one thing — a walk that
-   * forces a runner home, a single scoring from third — and the scorekeeper
-   * taps once, or twice within a second. Two rows there is two thumbnails of
-   * the same piece of video. Further apart, they are separate moments and get
-   * a row each.
-   */
-  mergeWithinSec: number
-}
+export type HighlightSettings = HighlightTimings
 
-export const defaultHighlightSettings: HighlightSettings = {
-  lagSec: 8,
-  leadSec: 30,
-  leadSecByEventType: { strikeout: 10 },
-  mergeWithinSec: 5
-}
-
-const asLeadMap = asObject(asNumber)
-
-export const asHighlightSettings = asObject({
-  lagSec: asNumber,
-  leadSec: asNumber,
-  leadSecByEventType: asLeadMap,
-  mergeWithinSec: asNumber
-})
+/** The node's defaults, shared with the node administration screen. */
+export const defaultHighlightSettings: HighlightSettings =
+  defaultHighlightTimings
 
 const CACHE_MS = 30000
 
@@ -59,15 +36,19 @@ export function forgetSettings(): void {
 }
 
 /**
- * Reads the settings, falling back to the defaults for anything missing or
+ * Reads the settings, falling back to the default for each value missing or
  * malformed rather than failing a page. A bad value in the database should
- * make highlights slightly wrong, not take the site down.
+ * make highlights slightly wrong, not take the site down. A value is good by
+ * the rules the node administration screen holds it to (`asSeconds`,
+ * `asLeadMap`), so the screen can always show what this reads.
  */
 export async function highlightSettings(
-  db: Kysely<Database>
+  db: Kysely<Database>,
+  /** Read the rows even when the cache is current, and cache what they say. */
+  fresh = false
 ): Promise<HighlightSettings> {
   const now = Date.now()
-  if (cache != null && now - cache.at < CACHE_MS) return cache.value
+  if (!fresh && cache != null && now - cache.at < CACHE_MS) return cache.value
 
   const rows = await db
     .selectFrom('system_settings')
@@ -100,7 +81,11 @@ export async function highlightSettings(
 }
 
 function numberOr(raw: unknown, fallback: number): number {
-  return typeof raw === 'number' && Number.isFinite(raw) ? raw : fallback
+  try {
+    return asSeconds(raw, 'seconds')
+  } catch {
+    return fallback
+  }
 }
 
 function leadMapOr(
@@ -108,7 +93,7 @@ function leadMapOr(
   fallback: Record<string, number>
 ): Record<string, number> {
   try {
-    return asLeadMap(raw)
+    return asLeadMap(raw, 'leads')
   } catch {
     return fallback
   }

@@ -755,6 +755,116 @@ const gumboCount = {
  * The stored play: a standard MLB Gumbo play, in the shape of the live feed
  * (`statsapi.mlb.com/api/v1.1/game/{gamePk}/feed/live`, `liveData.plays`).
  */
+/**
+ * The node settings as `GET /node/settings` answers them and `PUT` takes and
+ * answers them: one copy, so the three cannot drift apart (`asNodeSettings`).
+ */
+const nodeSettingsSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['scoreboard', 'highlights'],
+  properties: {
+    scoreboard: {
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'overlayStartDate',
+        'single',
+        'landscape',
+        'portraitHeight',
+        'speedHoldSec'
+      ],
+      properties: {
+        overlayStartDate: {
+          type: 'string',
+          format: 'date',
+          description:
+            'The first date, in UTC, whose games show the board: a game starting at or after its 00:00 UTC'
+        },
+        single: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['x', 'y', 'height'],
+          properties: {
+            x: {
+              type: 'number',
+              minimum: 0,
+              exclusiveMaximum: 1
+            },
+            y: {
+              type: 'number',
+              minimum: 0,
+              exclusiveMaximum: 1
+            },
+            height: {
+              type: 'number',
+              exclusiveMinimum: 0,
+              maximum: 1
+            }
+          }
+        },
+        landscape: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['x', 'y', 'height'],
+          properties: {
+            x: {
+              type: 'number',
+              minimum: 0,
+              exclusiveMaximum: 1
+            },
+            y: {
+              type: 'number',
+              minimum: 0,
+              exclusiveMaximum: 1
+            },
+            height: {
+              type: 'number',
+              exclusiveMinimum: 0,
+              maximum: 1
+            }
+          }
+        },
+        portraitHeight: {
+          type: 'number',
+          exclusiveMinimum: 0,
+          maximum: 1
+        },
+        speedHoldSec: {
+          type: 'number',
+          exclusiveMinimum: 0,
+          maximum: 600
+        }
+      }
+    },
+    highlights: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['lagSec', 'leadSec', 'leadSecByEventType', 'mergeWithinSec'],
+      properties: {
+        lagSec: { type: 'number', minimum: 0, maximum: 600 },
+        leadSec: { type: 'number', minimum: 0, maximum: 600 },
+        leadSecByEventType: {
+          type: 'object',
+          // A play type as `asLeadMap` takes one: lower case, digits and
+          // underscores, starting with a letter.
+          propertyNames: { pattern: '^[a-z][a-z0-9_]*$' },
+          additionalProperties: {
+            type: 'number',
+            minimum: 0,
+            maximum: 600
+          }
+        },
+        mergeWithinSec: {
+          type: 'number',
+          minimum: 0,
+          maximum: 600
+        }
+      }
+    }
+  }
+}
+
 const gumboSchemas = {
   GumboPlay: {
     type: 'object',
@@ -4324,6 +4434,91 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games/{gameId}/scoreboard-overlay': {
+        get: {
+          summary: "Whether a game's board shows over its videos, and where",
+          description:
+            "Shown for a game starting at or after the node's overlay start date, 00:00 UTC; times are compared in UTC. The placements are the node's settings, as fractions of the video from its top-left.",
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'gameId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: {
+              description: "The game's overlay",
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['show', 'single', 'landscape', 'portraitHeight'],
+                    properties: {
+                      show: { type: 'boolean' },
+                      single: {
+                        type: 'object',
+                        additionalProperties: false,
+                        required: ['x', 'y', 'height'],
+                        properties: {
+                          x: {
+                            type: 'number',
+                            minimum: 0,
+                            exclusiveMaximum: 1
+                          },
+                          y: {
+                            type: 'number',
+                            minimum: 0,
+                            exclusiveMaximum: 1
+                          },
+                          height: {
+                            type: 'number',
+                            exclusiveMinimum: 0,
+                            maximum: 1
+                          }
+                        }
+                      },
+                      landscape: {
+                        type: 'object',
+                        additionalProperties: false,
+                        required: ['x', 'y', 'height'],
+                        properties: {
+                          x: {
+                            type: 'number',
+                            minimum: 0,
+                            exclusiveMaximum: 1
+                          },
+                          y: {
+                            type: 'number',
+                            minimum: 0,
+                            exclusiveMaximum: 1
+                          },
+                          height: {
+                            type: 'number',
+                            exclusiveMinimum: 0,
+                            maximum: 1
+                          }
+                        }
+                      },
+                      portraitHeight: {
+                        type: 'number',
+                        exclusiveMinimum: 0,
+                        maximum: 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/games/{gameId}/scoreboard-timeline': {
         get: {
           summary: "A game's scoreboard at every moment",
@@ -4713,6 +4908,53 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'Season-owned child teams, active competition members and canonical committed game participants, including placeholders and canceled historical participants. TeamSummary adds seasonCategory inSeason/exhibition/unscheduled and canViewPrivate matching private team endpoint visibility; parent-only teams without games and canceled-only participants are unscheduled. Membership/management links are never created by this read.'
             },
             404: errorResponse
+          }
+        }
+      },
+      '/node/settings': {
+        get: {
+          summary: 'Every node setting, for a node administrator',
+          description:
+            "Where the scoreboard sits over video (fractions of the video, from its top-left: x right, y down; a height is the full board's), the overlay's start date, the pitch-speed hold and the highlight timings.",
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description: 'The node settings',
+              content: {
+                'application/json': {
+                  schema: nodeSettingsSchema
+                }
+              }
+            },
+            401: errorResponse,
+            403: errorResponse
+          }
+        },
+        put: {
+          summary: 'A node administrator sets every node setting at once',
+          description:
+            'Every field is required and checked: positions from 0 to under 1, heights above 0 up to 1, the speed hold above 0 up to 600 seconds, the highlight timings from 0 to 600 seconds, a real date.',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: nodeSettingsSchema
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The settings as stored',
+              content: {
+                'application/json': {
+                  schema: nodeSettingsSchema
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse
           }
         }
       },

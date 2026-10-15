@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
 import { asNodeAccountChange } from '../../common/nodeAdministration'
+import { asNodeSettings } from '../../common/nodeSettings'
 import {
   changeNodeAccount,
   nodeAccounts,
@@ -15,6 +16,7 @@ import { cleanBody } from '../jsonBody'
 import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { nodeSettings, setNodeSettings } from '../nodeSettings'
 
 const asAccountMail = asObject({ accountMessages: asBoolean })
 
@@ -90,6 +92,24 @@ export function nodeAdministrationRoutes(
       const body = cleanBody(asAccountMail, req.body)
       await setAccountMailEnabled(db, req.actor, body.accountMessages)
       res.json({ accountMessages: body.accountMessages })
+    })
+  )
+  router.get(
+    '/node/settings',
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      res.json(await nodeSettings(db, req.actor))
+    })
+  )
+  router.put(
+    '/node/settings',
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      const settings = cleanBody(asNodeSettings, req.body)
+      await setNodeSettings(db, req.actor, settings)
+      res.json(settings)
     })
   )
   return router
