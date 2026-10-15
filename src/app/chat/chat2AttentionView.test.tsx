@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
-import React, { act } from 'react'
+import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Platform } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
@@ -23,6 +23,7 @@ import {
   message,
   view
 } from './chatViews.test.helpers'
+import { ChatWorkspace } from './ChatWorkspace'
 import { ChatDraftOwner, newChatWorkspaceState } from './chatWorkspaceModel'
 import { ConversationScreen } from './ConversationScreen'
 import type { ConversationView } from './engine/engine'
@@ -1247,6 +1248,162 @@ describe('attention cancellation preserves the current follow intent', function 
     expect(history.scrollTop).equals(2656)
     expect(owner.draft('cnv_1').text).equals('Unsent words')
   })
+})
+
+describe('conversation information navigation reader ownership', function () {
+  for (const { deferred, offset, following, label } of [
+    {
+      deferred: false,
+      offset: 550,
+      following: false,
+      label: 'immediate reader'
+    },
+    { deferred: true, offset: 550, following: false, label: 'deferred reader' },
+    { deferred: true, offset: 0, following: false, label: 'explicit zero' },
+    { deferred: true, offset: 2156, following: true, label: 'follow-end' }
+  ])
+    it(`captures ${label} before information navigation without a physical scroll gesture`, async function () {
+      restore = measureChatTestViewport({ width: 1200, height: 844 })
+      const current = message({ id: 'msg_info_reader', seq: 300 })
+      const state = fixture(view({ messages: [current] }))
+      const workspace = newChatWorkspaceState()
+      const picked = {
+        fileName: 'notes.pdf',
+        contentType: 'application/pdf',
+        bytes: new Uint8Array([1])
+      }
+      workspace.drafts.set('cnv_1', {
+        text: 'Unsent information draft',
+        replyTo: current,
+        picked: [picked],
+        hasScrollPosition: true,
+        followNewest: following,
+        scrollOffset: 0
+      })
+      let leave: (() => void) | undefined
+      let captured: ReturnType<ChatDraftOwner['draft']> | undefined
+      function Routes(): React.ReactElement {
+        const [information, setInformation] = useState(false)
+        return information ? (
+          <>
+            <button
+              data-testid="reading-test-back"
+              onClick={() => {
+                setInformation(false)
+              }}
+            >
+              Back
+            </button>
+            <ChatInfoScreen
+              engine={state.engine}
+              client={{ leaveDm: async () => ({ closed: false }) }}
+              conversationId="cnv_1"
+              userId={1}
+              onLeft={() => {}}
+            />
+          </>
+        ) : (
+          <ChatWorkspace
+            engine={state.engine}
+            userId={1}
+            state={workspace}
+            conversationId="cnv_1"
+            onOpen={() => {}}
+            onMembers={() => {
+              captured = workspace.drafts.get('cnv_1')
+              const change = (): void => {
+                setInformation(true)
+              }
+              if (deferred) leave = change
+              else change()
+            }}
+            onNewMessage={() => {}}
+            onTitle={() => {}}
+          />
+        )
+      }
+      const node = await render(<Routes />)
+      async function measuredReader(): Promise<{
+        history: HTMLElement
+        row: HTMLElement
+      }> {
+        const history = node.querySelector<HTMLElement>(
+          '[data-testid="chat-message-history"]'
+        )!
+        const row = node.querySelector<HTMLElement>(
+          '[data-testid="chat-message-row-msg_info_reader"]'
+        )!
+        history.getBoundingClientRect = () => rect(0, 844)
+        row.getBoundingClientRect = () => rect(1000 - history.scrollTop, 100)
+        Object.defineProperties(history, {
+          clientHeight: { configurable: true, value: 844 },
+          scrollHeight: { configurable: true, value: 3000 }
+        })
+        history.scroll = options => {
+          history.scrollTop = Math.min(
+            (options as ScrollToOptions).top ?? 0,
+            2156
+          )
+          readingCallbacks(history).onScroll(nativeEvent(history.scrollTop))
+        }
+        Object.defineProperty(row, 'measureLayout', {
+          configurable: true,
+          value: (
+            _parent: unknown,
+            done: (x: number, y: number, width: number, height: number) => void
+          ) => {
+            done(0, 1000, 900, 100)
+          }
+        })
+        await layout(row, 1000, 100, 900)
+        await layout(history, 0, 844, 900)
+        await act(async () => {
+          readingCallbacks(history).onContentSizeChange(900, 3000)
+          await wait()
+        })
+        return { history, row }
+      }
+      const before = await measuredReader()
+      await act(async () => {
+        // Public anchoring can move the DOM without a wheel/touch/key owner.
+        before.history.scrollTop = offset
+        readingCallbacks(before.history).onScroll(nativeEvent(offset))
+        await wait()
+      })
+      const top = before.row.getBoundingClientRect().top
+      expect(top).equals(1000 - offset)
+      expect(workspace.drafts.get('cnv_1')?.scrollOffset).equals(
+        following ? 2156 : 0
+      )
+      await click('chat-conversation-identity')
+      if (deferred)
+        await act(async () => {
+          // The list may finish its navigation capture after another layout.
+          readingCallbacks(before.history).onContentSizeChange(900, 3000)
+          await wait()
+          leave!()
+          await wait()
+        })
+      expect(node.querySelector('[data-testid="chat-info-hero"]')).not.equals(
+        null
+      )
+      await click('reading-test-back')
+      const returned = await measuredReader()
+      expect(
+        Math.abs(returned.row.getBoundingClientRect().top - top),
+        'Row-relative reader anchor must survive information navigation'
+      ).at.most(3)
+      expect(captured?.scrollOffset).equals(offset)
+      expect(captured?.scrollAnchor).deep.equals(
+        offset === 0 ? undefined : { id: current.id, relativeY: 1000 - offset }
+      )
+      expect(captured?.followNewest).equals(following)
+      expect(workspace.drafts.get('cnv_1')?.text).equals(
+        'Unsent information draft'
+      )
+      expect(workspace.drafts.get('cnv_1')?.replyTo?.id).equals(current.id)
+      expect(workspace.drafts.get('cnv_1')?.picked).deep.equals([picked])
+    })
 })
 
 describe('conversation width reflow reader ownership', function () {

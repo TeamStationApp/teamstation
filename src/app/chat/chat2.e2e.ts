@@ -1795,9 +1795,13 @@ export class Scenarios {
       )
     }
     if (await ui.visible({ text: 'Link this device' }, 500)) {
-      const provider = await fixturePeer(this.f, key)
+      const signal = ui.native
+        ? undefined
+        : AbortSignal.any([ui.deadline, AbortSignal.timeout(30000)])
+      const provider = await fixturePeer(this.f, key, signal)
       try {
-        await provider.approvePending()
+        if (signal == null) await provider.approvePending()
+        else await this.approveBrowserLink(provider, signal)
       } finally {
         provider.close()
       }
@@ -1811,6 +1815,67 @@ export class Scenarios {
       (await (await fixtureClient(this.f, key)).whoAmI())?.id,
       actor.userId
     )
+  }
+
+  async approveBrowserLink(provider: Peer, signal: AbortSignal): Promise<void> {
+    const proof: Json = {
+      browserLinkApproval: [],
+      startedAt: new Date().toISOString(),
+      outcome: 'failed',
+      providerApiAbortBound: true
+    }
+    this.observations.push(proof)
+    const visible = async (selector: Json): Promise<boolean> => {
+      signal.throwIfAborted()
+      try {
+        await this.ui.device.assertVisible(
+          { ...selector, timeout: 500 },
+          { signal }
+        )
+        return true
+      } catch (error) {
+        signal.throwIfAborted()
+        if (
+          error == null ||
+          typeof error !== 'object' ||
+          !('code' in error) ||
+          error.code !== 'COMMAND_FAILED'
+        )
+          throw error
+        return false
+      }
+    }
+    try {
+      await until(
+        async () => {
+          signal.throwIfAborted()
+          const list = await visible({ id: 'chat-conversation-list' })
+          const link = await visible({ text: exactText('Link this device') })
+          signal.throwIfAborted()
+          const sample: Json = { at: new Date().toISOString(), list, link }
+          ;(proof.browserLinkApproval as unknown[]).push(sample)
+          assert(!(list && link), 'Ambiguous browser Link/list readiness')
+          if (list) return true
+          if (link) {
+            sample.pendingCount = (await provider.client.chatLinks()).length
+            signal.throwIfAborted()
+            if (Number(sample.pendingCount) > 0) {
+              await provider.approvePending()
+              signal.throwIfAborted()
+              // The helper enumerates its own fresh snapshot; this is a call result.
+              sample.approvalCompletedAt = new Date().toISOString()
+              sample.pendingAfter = (await provider.client.chatLinks()).length
+            }
+          }
+          return undefined
+        },
+        'existing-provider approval and actual browser conversation list',
+        30000
+      )
+      proof.outcome = 'passed'
+    } finally {
+      proof.finishedAt = new Date().toISOString()
+    }
   }
 
   async openGroup(id = this.group): Promise<void> {
@@ -2015,10 +2080,12 @@ export class Scenarios {
 
   async action(
     target: Chat2Message,
-    method: 'hold' | 'hover' | 'swipe' = 'hold'
+    method: 'hold' | 'hover' | 'swipe' = 'hold',
+    preparation: 'anchor' | 'visible' = 'anchor'
   ): Promise<void> {
     const ui = this.ui
-    await this.anchor(target)
+    if (preparation === 'anchor') await this.anchor(target)
+    else await ui.present('chat-bubble-' + target.id)
     if (!ui.native && (!this.touchActions || method === 'hover')) {
       await ui.dom(
         `const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')});if(!n)throw Error('Visible target required');n.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));n.dispatchEvent(new MouseEvent('mousemove',{bubbles:true}));return {method:'public DOM hover event through Maestro'}`
@@ -3521,10 +3588,38 @@ export class Scenarios {
         await this.anchor()
         await ui.id('chat-composer')
         await ui.assertKeyboard()
+        const draft = ui.native ? undefined : await ui.draft()
+        const focusProof: Json = {
+          messageActionFocus: [],
+          desktopTrigger: !this.touchActions
+        }
+        this.observations.push(focusProof)
+        const readFocus = async (phase: string): Promise<Json> => {
+          const current = await ui.dom(`
+            const id=${JSON.stringify('chat-message-' + this.f.messages.target.id)};
+            const rows=Array.from(document.querySelectorAll('[data-testid='+JSON.stringify(id)+']'));if(rows.length!==1)throw Error('Unique message row required for action focus');
+            const triggers=Array.from(rows[0].querySelectorAll('[aria-label="More message actions"]'));if(triggers.length!==1||triggers[0].getAttribute('role')!=='button')throw Error('Unique actual More trigger required');
+            const a=document.activeElement,b=triggers[0].getBoundingClientRect();if(![b.x,b.y,b.width,b.height].every(Number.isFinite)||b.width<=0||b.height<=0)throw Error('Actual positive More trigger geometry required');
+            return {composerFocused:a===document.querySelector('[data-testid="chat-composer"]'),triggerFocused:a===triggers[0],menus:document.querySelectorAll('[aria-label^="Message from "]').length,spotlights:document.querySelectorAll('[data-testid="chat-message-spotlight"]').length,active:{tag:a?.tagName,id:a?.getAttribute('data-testid'),label:a?.getAttribute('aria-label')},trigger:{x:b.x,y:b.y,width:b.width,height:b.height}};
+          `)
+          ;(focusProof.messageActionFocus as unknown[]).push({
+            phase,
+            at: new Date().toISOString(),
+            ...current
+          })
+          return current
+        }
+        if (!this.touchActions) {
+          const focused = await readFocus('before-opener')
+          assert(
+            focused.composerFocused === true,
+            'Composer must own focus immediately before the action opener'
+          )
+        }
         const before = await this.targetBounds(
           'chat-bubble-' + this.f.messages.target.id
         )
-        await this.action(this.f.messages.target)
+        await this.action(this.f.messages.target, 'hold', 'visible')
         const spotlight = await this.menuState()
         for (const label of this.touchActions
           ? ['Reply', this.copyLabel]
@@ -3540,10 +3635,25 @@ export class Scenarios {
             ? 'Actual keyboard-open bounded controls and optional compact preview; no automatic keyboard dismiss or motion claim'
             : this.touchActions
               ? 'Actual focused web composer and touch spotlight controls; no software keyboard claim'
-              : 'Actual focused web composer and desktop More menu; no software keyboard or touch spotlight claim'
+              : 'Actual composer-focused entry and desktop More menu with conventional trigger restoration; no software keyboard or touch spotlight claim'
         )
         await this.dismiss()
-        await ui.assertKeyboard()
+        if (this.touchActions) await ui.assertKeyboard()
+        else {
+          const focused = await readFocus('after-dismissal')
+          assert(
+            focused.triggerFocused === true &&
+              focused.menus === 0 &&
+              focused.spotlights === 0,
+            'Desktop Escape must close the menu and restore its actual More trigger'
+          )
+        }
+        if (!ui.native)
+          assert.equal(
+            await ui.draft(),
+            draft,
+            'Message actions must preserve the actual draft'
+          )
         const after = await this.targetBounds(
           'chat-bubble-' + this.f.messages.target.id
         )

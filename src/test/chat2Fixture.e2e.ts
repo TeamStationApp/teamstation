@@ -570,7 +570,8 @@ export function privateJson(path: string, data: unknown): void {
 
 export async function fixtureClient(
   fixture: Chat2Fixture,
-  key: string
+  key: string,
+  signal?: AbortSignal
 ): Promise<TeamStationClient> {
   const actor = need(fixture.actors[key], 'Synthetic API actor missing')
   let token: string | undefined
@@ -584,6 +585,23 @@ export async function fixtureClient(
   const client = new TeamStationClient({
     baseUrl: fixture.apiUrl,
     token,
+    ...(signal == null
+      ? {}
+      : {
+          fetch: async (
+            input: Parameters<typeof fetch>[0] | URL,
+            init?: Parameters<typeof fetch>[1]
+          ) => {
+            signal.throwIfAborted()
+            return await fetch(input, {
+              ...init,
+              signal:
+                init?.signal == null
+                  ? signal
+                  : AbortSignal.any([signal, init.signal])
+            })
+          }
+        }),
     passwordKdf: async (password, costs) =>
       (
         await hash(password, {
@@ -609,7 +627,8 @@ export async function fixtureClient(
 /** Existing provider only. Wipe/identity replacement is always refused. */
 export async function fixturePeer(
   fixture: Chat2Fixture,
-  key: string
+  key: string,
+  signal?: AbortSignal
 ): Promise<{
   client: TeamStationClient
   engine: ChatEngine
@@ -638,7 +657,7 @@ export async function fixturePeer(
       throw new Error('Fixture provider/key resets are prohibited')
     }
   }
-  const client = await fixtureClient(fixture, key)
+  const client = await fixtureClient(fixture, key, signal)
   const setup = {
     client,
     store,
@@ -646,6 +665,7 @@ export async function fixturePeer(
     device: { name: 'Synthetic protocol peer', platform: 'web' as const }
   }
   const enrolled = await ensureEnrolled(setup)
+  signal?.throwIfAborted()
   if (enrolled.state !== 'ready')
     throw new Chat2Blocked(
       'Existing synthetic peer is not ready; preserve its keys'
@@ -659,8 +679,10 @@ export async function fixturePeer(
     client,
     engine,
     approvePending: async () => {
-      for (const link of await client.chatLinks())
+      for (const link of await client.chatLinks()) {
+        signal?.throwIfAborted()
         await approveLink(setup, enrolled.record, link)
+      }
     },
     close: () => {
       engine.stop()

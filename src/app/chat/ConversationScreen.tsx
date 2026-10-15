@@ -179,7 +179,6 @@ export function ConversationScreen(
     []
   )
   const identityPress = useRef(onMembers)
-  identityPress.current = onMembers
 
   const [localDraftOwner] = useState(() => {
     const state = newChatWorkspaceState()
@@ -452,6 +451,42 @@ export function ConversationScreen(
       }
     | undefined
   >(undefined)
+  identityPress.current = () => {
+    if (!mounted.current || !paneActive.current) return
+    const physical =
+      widthLayoutReady() &&
+      !restoringAnchor.current &&
+      measuringJump.current == null &&
+      menuReading.current == null
+        ? readMessageScrollPosition(scroller.current, messageRefs.current)
+        : undefined
+    if (physical != null) {
+      scrolled.current.offset = physical.offset
+      scrolled.current.hasPosition = true
+      scrolled.current.anchor = physical.anchor
+      if (!scrolled.current.followNewest && !atBottom.current) {
+        // A deferred navigation can receive another layout before unmounting.
+        restoreTarget.current = physical.offset
+        restoreAnchor.current = physical.anchor
+      }
+    }
+    const next = {
+      text: textNow.current,
+      replyTo: replyNow.current,
+      editing: editingNow.current,
+      picked: pickedNow.current,
+      ...(mentionTokensNow.current == null
+        ? {}
+        : { mentionTokens: mentionTokensNow.current }),
+      scrollOffset: scrolled.current.offset,
+      hasScrollPosition: scrolled.current.hasPosition,
+      followNewest: scrolled.current.followNewest || atBottom.current,
+      scrollAnchor: scrolled.current.anchor
+    }
+    draftOwner.write(conversationId, next)
+    onDraftChange(next)
+    onMembers()
+  }
   const readingAnchor = useCallback(
     (
       positions: Map<string, number>
@@ -2130,7 +2165,9 @@ export function ConversationScreen(
           >
             <ChatConversationIdentity
               conversation={view.conversation}
-              onPress={onMembers}
+              onPress={() => {
+                identityPress.current()
+              }}
             />
           </GlassView>
         )}
@@ -2374,7 +2411,9 @@ export function ConversationScreen(
                 label={lstrings.chat_review}
                 kind="secondary"
                 compact
-                onPress={onMembers}
+                onPress={() => {
+                  identityPress.current()
+                }}
               />
             </View>
           ))}

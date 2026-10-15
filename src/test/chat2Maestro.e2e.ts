@@ -65,7 +65,10 @@ export interface Chat2Device {
     options?: { signal: AbortSignal }
   ) => Promise<unknown>
   back: () => Promise<unknown>
-  assertVisible: (args: Args) => Promise<unknown>
+  assertVisible: (
+    args: Args,
+    options?: { signal: AbortSignal }
+  ) => Promise<unknown>
   assertNotVisible: (args: Args) => Promise<unknown>
   scrollUntilVisible: (args: Args) => Promise<unknown>
   uploadFile: (args: Args) => Promise<unknown>

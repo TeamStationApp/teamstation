@@ -12,7 +12,11 @@ import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 import { transform } from 'sucrase'
 
-import { CHAT2_SCENARIOS } from '../../test/chat2Fixture.e2e'
+import {
+  CHAT2_SCENARIOS,
+  type Chat2Fixture,
+  fixtureClient
+} from '../../test/chat2Fixture.e2e'
 import {
   androidCaptureImeState,
   androidClosedCaptureGeometry,
@@ -4122,6 +4126,246 @@ describe('chat native adapter compatibility', function () {
             ]
       )
     }
+  })
+  it('waits for a fresh pending link and actual list after same-provider approval', async () => {
+    const actual = ui([], 'web-wide')
+    let pendingReads = 0
+    let approved = 0
+    actual.device.assertVisible = async args => {
+      const present =
+        args.id === 'chat-conversation-list' ? approved > 0 : approved === 0
+      if (!present)
+        throw Object.assign(Error('Not yet visible'), {
+          code: 'COMMAND_FAILED'
+        })
+      return {}
+    }
+    const provider = {
+      client: {
+        chatLinks: async () =>
+          ++pendingReads === 1 || approved > 0 ? [] : [{}]
+      },
+      approvePending: async () => {
+        approved++
+      }
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      observations: []
+    }) as Scenarios
+    await scenario.approveBrowserLink(
+      provider as unknown as Awaited<ReturnType<Scenarios['protocolPeer']>>,
+      AbortSignal.timeout(2000)
+    )
+    expect(approved).equals(1)
+    const samples = scenario.observations[0].browserLinkApproval as Array<
+      Record<string, unknown>
+    >
+    expect(samples.map(s => s.pendingCount)).deep.equals([0, 1, undefined])
+    expect(samples[1].approvalCompletedAt).a('string')
+    expect(samples[1].pendingAfter).equals(0)
+    expect(samples.at(-1)?.list).equals(true)
+  })
+  for (const mode of ['empty', 'rejected', 'transport', 'ambiguous', 'no-list'])
+    it('does not accept unresolved browser linking: ' + mode, async () => {
+      const actual = ui([], 'web-wide')
+      let approved = 0
+      actual.device.assertVisible = async args => {
+        if (mode === 'transport') throw Error('Read transport failed')
+        if (args.id != null && mode !== 'ambiguous')
+          throw Object.assign(Error('No list'), { code: 'COMMAND_FAILED' })
+        return {}
+      }
+      const provider = {
+        client: { chatLinks: async () => (mode === 'empty' ? [] : [{}]) },
+        approvePending: async () => {
+          approved++
+          if (mode === 'rejected') throw Error('Approval rejected')
+        }
+      }
+      const scenario = Object.assign(Object.create(Scenarios.prototype), {
+        ui: actual,
+        observations: []
+      }) as Scenarios
+      await captureFailure(
+        scenario.approveBrowserLink(
+          provider as unknown as Awaited<ReturnType<Scenarios['protocolPeer']>>,
+          AbortSignal.timeout(50)
+        )
+      )
+      expect(scenario.observations[0].outcome).equals('failed')
+      if (mode === 'empty' || mode === 'transport' || mode === 'ambiguous')
+        expect(approved).equals(0)
+    })
+  it('aborts an in-flight existing-provider API read with the supplied approval deadline', async () => {
+    const path = mkdtempSync(join(tmpdir(), 'chat-link-deadline-'))
+    directories.push(path)
+    const sessionFile = join(path, 'session.json')
+    writeFileSync(sessionFile, JSON.stringify({ token: 'TEST_TOKEN' }))
+    const fixture = {
+      apiUrl: 'https://fixture.example.test/api/v1',
+      actors: { viewer: { userId: 1, provider: { sessionFile } } }
+    }
+    const original = globalThis.fetch
+    let observed: AbortSignal | null | undefined
+    globalThis.fetch = async (_input, init) => {
+      observed = init?.signal
+      if (observed == null) throw Error('Missing real API abort signal')
+      const signal = observed
+      return await new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            reject(signal.reason)
+          },
+          { once: true }
+        )
+      })
+    }
+    const signal = AbortSignal.timeout(20)
+    try {
+      await captureFailure(
+        fixtureClient(fixture as unknown as Chat2Fixture, 'viewer', signal)
+      )
+      expect(observed).equals(signal)
+      expect(signal.aborted).equals(true)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+  function keyboardMenu(mode = 'valid'): {
+    scenario: Scenarios
+    calls: string[]
+  } {
+    const { actual, page } = browserModel()
+    actual.metrics = () => ({ width: 300, height: 600, dpr: 1, coarse: false })
+    page.window.document.body.innerHTML =
+      '<button id="pins">Pins</button><div data-testid="chat-message-target"><div data-testid="chat-bubble-target">Synthetic body</div><button role="button" aria-label="More message actions">More</button></div><textarea data-testid="chat-composer">Unsent draft</textarea>'
+    const editor = page.window.document.querySelector('textarea')!
+    const trigger = page.window.document.querySelector<HTMLButtonElement>(
+      '[aria-label="More message actions"]'
+    )!
+    trigger.getBoundingClientRect = () =>
+      new page.window.DOMRect(20, 100, 48, 48)
+    const calls: string[] = []
+    let panel: HTMLElement | undefined
+    actual.id = async id => {
+      expect(id).equals('chat-composer')
+      calls.push('focus')
+      editor.focus()
+    }
+    actual.device.assertVisible = async args => {
+      if (args.focused === true) {
+        calls.push('focused-proof')
+        if (page.window.document.activeElement !== editor)
+          throw Error('Composer not focused')
+      }
+      return {}
+    }
+    actual.device.tapOn = async args => {
+      expect(String(args.css)).contains('More message actions')
+      calls.push('open-more')
+      trigger.focus()
+      panel = page.window.document.createElement('div')
+      panel.setAttribute('aria-label', 'Message from Synthetic member')
+      const control = page.window.document.createElement('button')
+      control.textContent = 'Copy text'
+      panel.append(control)
+      page.window.document.body.append(panel)
+      control.focus()
+    }
+    actual.device.scrollUntilVisible = async () => {}
+    actual.device.pressKey = async args => {
+      expect(args.key).equals('ESC')
+      calls.push('dismiss')
+      if (mode !== 'retained-menu') panel?.remove()
+      if (mode === 'wrong-focus') editor.focus()
+      else trigger.focus()
+      if (mode === 'changed-draft') editor.value = 'Changed'
+    }
+    actual.shot = async () => {}
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: { messages: { target: { id: 'target' } } },
+      observations: []
+    }) as Scenarios
+    scenario.check = async (name, work) => {
+      if (name.startsWith('E5 keyboard-open')) await work()
+    }
+    scenario.openGroup = async () => {}
+    scenario.anchor = async () => {
+      calls.push('anchor')
+      if (calls.filter(c => c === 'anchor').length > 1)
+        throw Error('Pinned navigation repeated after focus certificate')
+      page.window.document.querySelector<HTMLButtonElement>('#pins')!.focus()
+    }
+    scenario.targetBounds = async () => box
+    scenario.menuState = async () => ({})
+    return { scenario, calls }
+  }
+  it('prepares the E5 reader before focus and verifies the actual desktop More trigger after Escape', async () => {
+    const { scenario, calls } = keyboardMenu()
+    await scenario.E5()
+    expect(calls).deep.equals([
+      'anchor',
+      'focus',
+      'focused-proof',
+      'open-more',
+      'dismiss'
+    ])
+    const proof = scenario.observations[0].messageActionFocus as Array<
+      Record<string, unknown>
+    >
+    expect(proof[0].composerFocused).equals(true)
+    expect(proof[1].triggerFocused).equals(true)
+    expect(proof[1].menus).equals(0)
+  })
+  for (const mode of ['wrong-focus', 'retained-menu', 'changed-draft'])
+    it(
+      'retains strict desktop dismissal and draft evidence: ' + mode,
+      async () => {
+        const { scenario } = keyboardMenu(mode)
+        await captureFailure(scenario.E5())
+      }
+    )
+  it('keeps two positive native keyboard proofs and never infers an empty native draft', async () => {
+    const actual = ui([])
+    let focus = 0
+    let anchored = 0
+    actual.id = async () => {}
+    actual.assertKeyboard = async () => {
+      focus++
+    }
+    actual.draft = async () => {
+      throw Error('No empty native value assumption')
+    }
+    actual.present = async () => {}
+    actual.device.longPressOn = async () => {}
+    actual.device.assertVisible = async () => ({})
+    actual.device.tapOn = async args => {
+      expect(args.text).equals('^Cancel$')
+    }
+    actual.device.scrollUntilVisible = async () => {}
+    actual.back = async () => {}
+    actual.shot = async () => {}
+    actual.hideKeyboard = async () => {}
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: { messages: { target: { id: 'target' } } },
+      observations: []
+    }) as Scenarios
+    scenario.check = async (name, work) => {
+      if (name.startsWith('E5 keyboard-open')) await work()
+    }
+    scenario.openGroup = async () => {}
+    scenario.anchor = async () => {
+      anchored++
+    }
+    scenario.targetBounds = async () => box
+    scenario.menuState = async () => ({})
+    await scenario.E5()
+    expect(focus).equals(2)
+    expect(anchored).equals(1)
   })
   it('binds a clipped long hold to the actual bubble with an element-relative visible point', async () => {
     const actual = ui([])
