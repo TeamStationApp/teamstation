@@ -281,6 +281,12 @@ async function main(): Promise<void> {
     await m.launchApp({ appId: 'app.teamstation.app', clearState: false })
     const focusField = async (label: string): Promise<void> => {
       assert(m != null, 'Attached native application required')
+      if (platform === 'android') {
+        const text = '^' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'
+        await m.tapOn({ text, timeout: 15000 })
+        await m.assertVisible({ text, focused: true, timeout: 15000 })
+        return
+      }
       const tree = (await m.hierarchy()) as NativeNode
       const nodes = flatten(tree)
       const fields = nodes.filter(
@@ -313,7 +319,10 @@ async function main(): Promise<void> {
       // Let each controlled-field render settle before the next native key.
       // A single WDA key sequence can move the cursor during search refreshes.
       for (const character of value) {
-        await m.inputText({ text: character })
+        await m.inputText({
+          text: character,
+          ...(platform === 'android' ? { keyPress: true } : {})
+        })
         await new Promise(resolve => setTimeout(resolve, 100))
       }
     }
