@@ -1251,7 +1251,7 @@ describe('attention cancellation preserves the current follow intent', function 
 })
 
 describe('conversation information navigation reader ownership', function () {
-  for (const { deferred, offset, following, label } of [
+  for (const { deferred, offset, following, label, gutter = false } of [
     {
       deferred: false,
       offset: 550,
@@ -1260,7 +1260,21 @@ describe('conversation information navigation reader ownership', function () {
     },
     { deferred: true, offset: 550, following: false, label: 'deferred reader' },
     { deferred: true, offset: 0, following: false, label: 'explicit zero' },
-    { deferred: true, offset: 2156, following: true, label: 'follow-end' }
+    { deferred: true, offset: 2156, following: true, label: 'follow-end' },
+    {
+      deferred: false,
+      offset: 550,
+      following: false,
+      label: 'scrollbar gutter immediate',
+      gutter: true
+    },
+    {
+      deferred: true,
+      offset: 550,
+      following: false,
+      label: 'scrollbar gutter deferred',
+      gutter: true
+    }
   ])
     it(`captures ${label} before information navigation without a physical scroll gesture`, async function () {
       restore = measureChatTestViewport({ width: 1200, height: 844 })
@@ -1323,6 +1337,15 @@ describe('conversation information navigation reader ownership', function () {
         )
       }
       const node = await render(<Routes />)
+      const contentWidth = gutter ? 885 : 900
+      const rowWidth = contentWidth - 48
+      const scrollEvent = (top: number): unknown => ({
+        nativeEvent: {
+          contentOffset: { x: 0, y: top },
+          contentSize: { width: contentWidth, height: 3000 },
+          layoutMeasurement: { width: contentWidth, height: 844 }
+        }
+      })
       async function measuredReader(): Promise<{
         history: HTMLElement
         row: HTMLElement
@@ -1333,10 +1356,14 @@ describe('conversation information navigation reader ownership', function () {
         const row = node.querySelector<HTMLElement>(
           '[data-testid="chat-message-row-msg_info_reader"]'
         )!
-        history.getBoundingClientRect = () => rect(0, 844)
-        row.getBoundingClientRect = () => rect(1000 - history.scrollTop, 100)
+        history.getBoundingClientRect = () => new window.DOMRect(0, 0, 900, 844)
+        ;(history.firstElementChild as HTMLElement).getBoundingClientRect =
+          () => new window.DOMRect(0, -history.scrollTop, contentWidth, 3000)
+        row.getBoundingClientRect = () =>
+          new window.DOMRect(24, 1000 - history.scrollTop, rowWidth, 100)
         Object.defineProperties(history, {
           clientHeight: { configurable: true, value: 844 },
+          clientWidth: { configurable: true, value: contentWidth },
           scrollHeight: { configurable: true, value: 3000 }
         })
         history.scroll = options => {
@@ -1344,7 +1371,7 @@ describe('conversation information navigation reader ownership', function () {
             (options as ScrollToOptions).top ?? 0,
             2156
           )
-          readingCallbacks(history).onScroll(nativeEvent(history.scrollTop))
+          readingCallbacks(history).onScroll(scrollEvent(history.scrollTop))
         }
         Object.defineProperty(row, 'measureLayout', {
           configurable: true,
@@ -1352,13 +1379,13 @@ describe('conversation information navigation reader ownership', function () {
             _parent: unknown,
             done: (x: number, y: number, width: number, height: number) => void
           ) => {
-            done(0, 1000, 900, 100)
+            done(24, 1000, rowWidth, 100)
           }
         })
-        await layout(row, 1000, 100, 900)
+        await layout(row, 1000, 100, rowWidth)
         await layout(history, 0, 844, 900)
         await act(async () => {
-          readingCallbacks(history).onContentSizeChange(900, 3000)
+          readingCallbacks(history).onContentSizeChange(contentWidth, 3000)
           await wait()
         })
         return { history, row }
@@ -1367,7 +1394,7 @@ describe('conversation information navigation reader ownership', function () {
       await act(async () => {
         // Public anchoring can move the DOM without a wheel/touch/key owner.
         before.history.scrollTop = offset
-        readingCallbacks(before.history).onScroll(nativeEvent(offset))
+        readingCallbacks(before.history).onScroll(scrollEvent(offset))
         await wait()
       })
       const top = before.row.getBoundingClientRect().top
@@ -1379,7 +1406,10 @@ describe('conversation information navigation reader ownership', function () {
       if (deferred)
         await act(async () => {
           // The list may finish its navigation capture after another layout.
-          readingCallbacks(before.history).onContentSizeChange(900, 3000)
+          readingCallbacks(before.history).onContentSizeChange(
+            contentWidth,
+            3000
+          )
           await wait()
           leave!()
           await wait()
@@ -1449,6 +1479,7 @@ describe('conversation width reflow reader ownership', function () {
     row.getBoundingClientRect = () => box(rowY - history.scrollTop, 100)
     Object.defineProperties(history, {
       clientHeight: { configurable: true, value: 844 },
+      clientWidth: { configurable: true, get: () => paneWidth },
       scrollHeight: { configurable: true, get: () => extent }
     })
     history.scroll = options => {

@@ -516,10 +516,12 @@ export function bindPopupKeys(
   close: () => void,
   trap = true,
   initialField = false,
-  rowSelector?: string
+  rowSelector?: string,
+  returnFocus?: unknown
 ): () => void {
   if (!(view instanceof HTMLElement)) return () => {}
-  const previous = document.activeElement
+  const previous =
+    returnFocus instanceof HTMLElement ? returnFocus : document.activeElement
   const buttons = (): HTMLElement[] =>
     Array.from(
       view.querySelectorAll<HTMLElement>(

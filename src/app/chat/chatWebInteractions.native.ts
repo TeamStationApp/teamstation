@@ -21,7 +21,8 @@ export function bindPopupKeys(
   _close: () => void,
   _trap = true,
   _initialField = false,
-  _rowSelector?: string
+  _rowSelector?: string,
+  _returnFocus?: unknown
 ): () => void {
   return () => {}
 }

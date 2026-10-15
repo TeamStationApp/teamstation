@@ -378,12 +378,24 @@ export function ConversationScreen(
   const awaitingWidthLayout = useRef(false)
   const widthRevision = useRef(0)
   // A reflowed row must not be clamped against the previous width's content.
-  const widthLayoutReady = (): boolean =>
-    Platform.OS !== 'web' ||
-    (!awaitingWidthLayout.current &&
-      (scrolled.current.width <= 0 ||
+  const widthLayoutReady = (): boolean => {
+    if (Platform.OS !== 'web') return true
+    const viewport = scroller.current?.getNativeScrollRef()
+    const width =
+      viewport != null &&
+      'clientWidth' in viewport &&
+      typeof viewport.clientWidth === 'number' &&
+      Number.isFinite(viewport.clientWidth) &&
+      viewport.clientWidth > 0
+        ? viewport.clientWidth
+        : scrolled.current.width
+    return (
+      !awaitingWidthLayout.current &&
+      (width <= 0 ||
         scrolled.current.contentWidth <= 0 ||
-        Math.abs(scrolled.current.width - scrolled.current.contentWidth) <= 1))
+        Math.abs(width - scrolled.current.contentWidth) <= 1)
+    )
+  }
   useEffect(
     () =>
       draftOwner.attach(
