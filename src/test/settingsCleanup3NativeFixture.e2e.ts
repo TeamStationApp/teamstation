@@ -96,6 +96,44 @@ async function main(): Promise<void> {
     )
     fixture = f
     await seedSettingsCleanup3(f)
+    // Long enough to exercise sticky navigation on a tablet, not just a
+    // short page whose section row never has an opportunity to move.
+    for (let index = 0; index < 8; index++)
+      await f.h.db
+        .insertInto('games')
+        .values({
+          id: `gam_settings3_scroll_${index}`,
+          home_team_id: f.teamA,
+          away_team_id: f.teamB,
+          season_id: f.seasonA,
+          start_at: new Date(Date.UTC(2027, 3, 11 + index, 19)),
+          end_at: new Date(Date.UTC(2027, 3, 11 + index, 21)),
+          timezone: 'UTC',
+          venue: 'Demo Field',
+          status: 'scheduled'
+        })
+        .execute()
+    await f.h.db
+      .insertInto('users')
+      .values({
+        id: 109,
+        legacyId: 'usr_settings3_native_no_email',
+        display_name: 'Rickey Henderson',
+        first_name: 'Rickey',
+        last_name: 'Henderson',
+        login_enabled: false,
+        is_admin: false
+      })
+      .execute()
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: 'mem_settings3_native_no_email',
+        team_id: f.teamA,
+        user_id: 109,
+        is_player: true
+      })
+      .execute()
     if (mediaRoot != null) {
       const media = JSON.parse(
         await readFile(join(mediaRoot, 'media-manifest.json'), 'utf8')
@@ -299,6 +337,7 @@ async function main(): Promise<void> {
           playoffs: f.playoffs,
           league: f.leagueA,
           player: 104,
+          withoutEmailPlayer: 109,
           adminCandidate: 106,
           game: 'gam_settings3_scheduled',
           live: 'gam_settings3_live',

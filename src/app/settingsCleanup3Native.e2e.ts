@@ -30,6 +30,7 @@ const viewportOf = (node: NativeNode): NonNullable<NativeNode['bounds']> => {
 interface Selector {
   text?: string
   id?: string
+  type?: string
 }
 type Step =
   | { open: string; visible: string }
@@ -324,10 +325,13 @@ async function main(): Promise<void> {
         selector.id != null || selector.text != null,
         'Nonempty geometry selector'
       )
-      const found = nodes.filter(node =>
-        selector.id != null
-          ? node.id?.endsWith(selector.id) === true
-          : node.text === selector.text
+      const found = nodes.filter(
+        node =>
+          (selector.type == null ||
+            new RegExp(selector.type).test(node.type ?? '')) &&
+          (selector.id != null
+            ? node.id?.endsWith(selector.id) === true
+            : node.text === selector.text)
       )
       assert.equal(
         found.length,
