@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Modal, Pressable, Switch, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
@@ -17,6 +17,10 @@ import { CancelAction } from '../components/CancelAction'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { NodeSettingsCard } from './NodeSettingsCard'
+
+/** How long the accounts wait for the node settings above them, at most. */
+export const nodeAdministrationTiming = { settingsWaitMs: 3000 }
 
 export function NodeAdministrationScreen({
   client,
@@ -36,6 +40,23 @@ export function NodeAdministrationScreen({
   const [confirmation, setConfirmation] = useState<NodeAccount>()
   const [accountMessages, setAccountMessages] = useState<boolean | null>(null)
   const [mailBusy, setMailBusy] = useState(false)
+  // The accounts wait for the node settings above them, so the settings'
+  // rows never arrive over a search or a list somebody is already using.
+  const [settingsSettled, setSettingsSettled] = useState(false)
+  const settingsReady = useCallback(() => {
+    setSettingsSettled(true)
+  }, [])
+  // A read that stalls must not keep the accounts out of reach: they come
+  // after a moment whatever the settings do.
+  useEffect(() => {
+    const timer = setTimeout(
+      settingsReady,
+      nodeAdministrationTiming.settingsWaitMs
+    )
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [settingsReady])
   const begin = useLatestRequest()
   const beginWrite = useLatestRequest()
   const writing = useRef(false)
@@ -149,6 +170,20 @@ export function NodeAdministrationScreen({
       )}
     </View>
   )
+  const problem = error !== '' && (
+    <View>
+      <Text accessibilityRole="alert" style={styles.error}>
+        {error}
+      </Text>
+      <Button
+        label="Retry accounts"
+        kind="text"
+        onPress={() => {
+          load().catch(() => undefined)
+        }}
+      />
+    </View>
+  )
   const shown = new Set(matches.map(account => account.userId))
   const currentAdmins = admins.filter(account => !shown.has(account.userId))
   return (
@@ -192,50 +227,44 @@ export function NodeAdministrationScreen({
           />
         </ListCard>
       )}
-      <TextField
-        label="Find an account"
-        value={query}
-        disabled={busy}
-        placeholder="Name or email"
-        onChangeText={value => {
-          begin()
-          setMatches([])
-          setLoaded(false)
-          setQuery(value)
-        }}
-      />
-      {error !== '' && (
-        <View>
-          <Text accessibilityRole="alert" style={styles.error}>
-            {error}
-          </Text>
-          <Button
-            label="Retry accounts"
-            kind="text"
-            onPress={() => {
-              load().catch(() => undefined)
+      <NodeSettingsCard client={client} onSettled={settingsReady} />
+      {/* A failure is said at once, while the accounts still wait. */}
+      {!settingsSettled && problem}
+      {settingsSettled && (
+        <>
+          <TextField
+            label="Find an account"
+            value={query}
+            disabled={busy}
+            placeholder="Name or email"
+            onChangeText={value => {
+              begin()
+              setMatches([])
+              setLoaded(false)
+              setQuery(value)
             }}
           />
-        </View>
-      )}
-      {query.trim() !== '' && (
-        <View style={styles.section}>
-          <SectionHeader title="Search results" />
-          {loaded && matches.length === 0 ? (
-            <Text style={styles.hint}>No accounts match.</Text>
-          ) : matches.length > 0 ? (
-            <ActionList>{matches.map(row)}</ActionList>
-          ) : (
-            <Text style={styles.hint}>Looking for accounts…</Text>
+          {problem}
+          {query.trim() !== '' && (
+            <View style={styles.section}>
+              <SectionHeader title="Search results" />
+              {loaded && matches.length === 0 ? (
+                <Text style={styles.hint}>No accounts match.</Text>
+              ) : matches.length > 0 ? (
+                <ActionList>{matches.map(row)}</ActionList>
+              ) : (
+                <Text style={styles.hint}>Looking for accounts…</Text>
+              )}
+            </View>
           )}
-        </View>
+          <View style={styles.section}>
+            <SectionHeader title="Node access" />
+            {currentAdmins.length > 0 && (
+              <ActionList>{currentAdmins.map(row)}</ActionList>
+            )}
+          </View>
+        </>
       )}
-      <View style={styles.section}>
-        <SectionHeader title="Node access" />
-        {currentAdmins.length > 0 && (
-          <ActionList>{currentAdmins.map(row)}</ActionList>
-        )}
-      </View>
       {confirmation != null && (
         <Modal transparent animationType="slide" visible onRequestClose={close}>
           <View style={styles.scrim}>

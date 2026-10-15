@@ -35,7 +35,16 @@ import { webSettings } from './web-build-settings.mjs'
 /** The app suites, each bundled alone. Later milestones append theirs. */
 const appSuites = [
   // The scoring screen keeps the server's clock while it is open.
-  'src/app/scoring/scoringSession.test.tsx'
+  'src/app/scoring/scoringSession.test.tsx',
+  // The node settings a node administrator edits, on the wheel the time
+  // picker shares.
+  'src/app/screens/NodeSettingsCard.test.tsx',
+  // The node administration screen around it, which holds its accounts
+  // until the settings have come.
+  'src/app/screens/NodeAdministrationScreen.test.tsx',
+  'src/app/components/Wheel.test.tsx',
+  // The dialog both date pickers open in, clear of the keyboard.
+  'src/app/components/PickerDialog.test.tsx'
 ]
 
 /**
