@@ -17,6 +17,16 @@ const flatten = (node: NativeNode): NativeNode[] => [
   node,
   ...(node.children ?? []).flatMap(flatten)
 ]
+const viewportOf = (node: NativeNode): NonNullable<NativeNode['bounds']> => {
+  if (node.bounds != null) return node.bounds
+  const windows = (node.children ?? []).flatMap(child =>
+    child.bounds == null ? [] : [child.bounds]
+  )
+  const width = Math.max(0, ...windows.map(rect => rect.x + rect.width))
+  const height = Math.max(0, ...windows.map(rect => rect.y + rect.height))
+  assert(width > 0 && height > 0, 'Native window bounds required')
+  return { x: 0, y: 0, width, height }
+}
 interface Selector {
   text?: string
   id?: string
@@ -234,11 +244,39 @@ async function main(): Promise<void> {
       extra: platform === 'android' ? { androidTcpForward: true } : {}
     })
     await m.launchApp({ appId: 'app.teamstation.app', clearState: false })
+    const focusField = async (label: string): Promise<void> => {
+      assert(m != null, 'Attached native application required')
+      const tree = (await m.hierarchy()) as NativeNode
+      const nodes = flatten(tree)
+      const fields = nodes.filter(
+        node =>
+          /(?:TextField|TextView|EditText)$/.test(node.type ?? '') &&
+          node.bounds != null
+      )
+      const named = fields.filter(node => node.text === label)
+      const heading = nodes.find(
+        node => node.text === label.toUpperCase() && node.bounds != null
+      )
+      const field =
+        named.length === 1
+          ? named[0]
+          : fields
+              .filter(
+                node =>
+                  heading?.bounds != null && node.bounds!.y >= heading.bounds.y
+              )
+              .sort((a, b) => a.bounds!.y - b.bounds!.y)[0]
+      assert(field?.bounds != null, 'Native editable field required: ' + label)
+      const viewport = viewportOf(tree)
+      assert(viewport != null && viewport.width > 0 && viewport.height > 0)
+      await m.tapOn({
+        point: `${(100 * (field.bounds.x + field.bounds.width / 2)) / viewport.width}%,${(100 * (field.bounds.y + field.bounds.height / 2)) / viewport.height}%`
+      })
+    }
     const signIn = async (email: string): Promise<void> => {
       assert(m != null, 'Attached native application required')
-      await m.tapOn({ text: 'E-mail address', timeout: 15000 })
+      await focusField('E-mail address')
       await m.inputText({ text: email })
-      await m.hideKeyboard()
       await m.tapOn({ text: 'Send me a sign-in code', timeout: 15000 })
       let code: unknown
       for (
@@ -259,10 +297,13 @@ async function main(): Promise<void> {
         'string',
         'Ordinary sign-in must receive fixture mail'
       )
-      await m.tapOn({ text: 'Sign-in code', timeout: 15000 })
+      await focusField('Sign-in code')
       await m.inputText({ text: code })
-      await m.hideKeyboard()
-      await m.tapOn({ text: 'Sign in', timeout: 15000 })
+      await m.tapOn({
+        text: '^Sign in$',
+        id: 'settings-pill-button',
+        timeout: 15000
+      })
       await m.assertVisible({ text: 'Search', timeout: 15000 })
     }
     if (process.env.TS_SETTINGS3_SIGN_IN === '1') await signIn(manifest.email)
@@ -324,7 +365,7 @@ async function main(): Promise<void> {
           if (step.command === 'stopRecording') recording = false
           if (step.command.startsWith('assert')) assertions++
         } else if ('input' in step) {
-          await m.tapOn({ text: step.input, timeout: 15000 })
+          await focusField(step.input)
           await m.eraseText({ characters: 250 })
           await m.inputText({ text: step.value })
           await m.hideKeyboard()
@@ -465,11 +506,12 @@ async function main(): Promise<void> {
           }
           assertions++
         } else if ('geometry' in step) {
-          const nodes = flatten((await m.hierarchy()) as NativeNode)
+          const tree = (await m.hierarchy()) as NativeNode
+          const nodes = flatten(tree)
           const target = selectNode(nodes, step.geometry.target).bounds!
           const reference =
             step.geometry.reference == null
-              ? nodes[0].bounds!
+              ? viewportOf(tree)
               : selectNode(nodes, step.geometry.reference).bounds!
           assert(reference != null, 'Viewport or reference bounds required')
           const tolerance = step.geometry.tolerance ?? 3
@@ -515,11 +557,35 @@ async function main(): Promise<void> {
     await note(`${flow.scenario} PASS`)
     passed = true
   } catch (error) {
-    if (m != null)
-      await writeFile(
-        join(artifacts, `${flow.scenario}-failure.png`),
-        await m.screenshot()
-      ).catch(() => undefined)
+    if (m != null) {
+      await m
+        .screenshot()
+        .then(async bytes => {
+          await writeFile(
+            join(artifacts, `${flow.scenario}-failure.png`),
+            bytes
+          )
+        })
+        .catch(() => undefined)
+      await m
+        .hierarchy()
+        .then(async tree => {
+          await writeFile(
+            join(artifacts, `${flow.scenario}-failure.hierarchy.json`),
+            JSON.stringify(tree, null, 2)
+          )
+        })
+        .catch(() => undefined)
+      await (m as MaestroHandle & { hierarchyRaw: () => Promise<Buffer> })
+        .hierarchyRaw()
+        .then(async bytes => {
+          await writeFile(
+            join(artifacts, `${flow.scenario}-failure.hierarchy.raw`),
+            bytes
+          )
+        })
+        .catch(() => undefined)
+    }
     await note(
       `${flow.scenario} FAIL: ${error instanceof Error ? error.message : String(error)}`
     )
