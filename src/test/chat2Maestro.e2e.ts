@@ -169,7 +169,7 @@ export function iosKeyboardDismissPoint(input: {
 
 /** Dismiss through one observed gutter, with one observed OS-menu transition. */
 export async function dismissIosChatKeyboard(
-  ui: Pick<Chat2UI, 'device' | 'steps'>,
+  ui: Pick<Chat2UI, 'device' | 'steps' | 'runDir'>,
   timeout = 90000
 ): Promise<void> {
   const end = Date.now() + timeout
@@ -187,6 +187,8 @@ export async function dismissIosChatKeyboard(
       args: Args,
       options: { signal: AbortSignal }
     ) => Promise<unknown>
+    tapOn: (args: Args, options: { signal: AbortSignal }) => Promise<unknown>
+    screenshot: (options: { signal: AbortSignal }) => Promise<Uint8Array>
     tapOnPoint: (
       args: Args,
       options: { signal: AbortSignal }
@@ -194,6 +196,8 @@ export async function dismissIosChatKeyboard(
   }
   const row: Args = {
     name: 'Measured iOS keyboard dismissal',
+    method:
+      'Positive keyboard and moved composer, accessibility and stable raw native pixels; actual image review required',
     startedAt: new Date().toISOString(),
     samples: []
   }
@@ -205,84 +209,173 @@ export async function dismissIosChatKeyboard(
     assert(matches.length <= 1, 'Unique observed iOS keyboard required')
     return matches[0]
   }
-  const absent = async (selector: Args): Promise<boolean> => {
-    assert(
-      typeof selector.text === 'string' &&
-        selector.text !== '' &&
-        !/[.*+?^${}()|[\]\\]/.test(selector.text),
-      'Literal native deep-query selector required for absence proof'
-    )
-    try {
-      await api.assertVisible(
-        { ...selector, timeout: Math.min(120, remaining()) },
-        options()
-      )
-      return false
-    } catch (error) {
-      if (code(error) !== 'COMMAND_FAILED') throw error
-      return true
-    }
-  }
-  const keysAbsent = async (): Promise<boolean> => {
-    for (const key of ['q', 'w', 'e'])
-      if (!(await absent({ text: key }))) return false
-    return true
-  }
-  const measured = async (
-    nodes: PublicNode[],
-    id: string,
-    optional = false
-  ): Promise<Bounds | undefined> => {
+  const measured = async (nodes: PublicNode[], id: string): Promise<Bounds> => {
     const matches = nodes.filter(n => n.id === id)
     assert(
       matches.length <= 1,
-      'Unique public keyboard-dismissal element required: ' + id
+      'Unique public keyboard element required: ' + id
     )
     if (matches[0]?.bounds != null) return matches[0].bounds
-    try {
-      const found = object(
+    const found = object(
+      object(
         await api.assertVisible(
           { id, timeout: Math.min(120, remaining()) },
           options()
         )
+      ).element
+    )
+    assert(found.id === id, 'Exact positive public element required: ' + id)
+    return need(bounds(found.bounds), 'Measured public bounds required: ' + id)
+  }
+  const geometry = async (
+    nodes: PublicNode[]
+  ): Promise<{ history: Bounds; composer: Bounds }> => {
+    const history = await measured(nodes, 'chat-message-history')
+    const composer = await measured(nodes, 'chat-composer-band')
+    assert(
+      [history, composer].every(
+        b =>
+          [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+          b.width > 0 &&
+          b.height > 0
+      ) &&
+        composer.x >= history.x &&
+        composer.x + composer.width <= history.x + history.width &&
+        composer.y >= history.y &&
+        composer.y + composer.height <= history.y + history.height,
+      'Positive contained history and whole composer geometry required'
+    )
+    return { history, composer }
+  }
+  const same = (a: unknown, b: unknown): boolean =>
+    JSON.stringify(a) === JSON.stringify(b)
+  let captures = 0
+  let raster: string | undefined
+  const image = async (): Promise<Args> => {
+    assert(
+      ++captures <= 8,
+      'Bounded native keyboard evidence captures exhausted'
+    )
+    remaining()
+    const proof = saveCapture(
+      await api.screenshot(options()),
+      join(
+        ui.runDir,
+        'keyboard-dismissal-' + Date.now() + '-' + captures + '.png'
       )
-      return need(
-        bounds(object(found.element).bounds),
-        'Read-only measured public bounds required: ' + id
+    )
+    remaining()
+    assert(
+      typeof proof.rawPath === 'string' &&
+        typeof proof.rawSha256 === 'string' &&
+        digest(proof.rawPath) === proof.rawSha256 &&
+        Number.isFinite(proof.width) &&
+        Number(proof.width) > 0 &&
+        Number.isFinite(proof.height) &&
+        Number(proof.height) > 0,
+      'Retained actual native screenshot bytes and dimensions required'
+    )
+    const bytes = readFileSync(proof.rawPath)
+    assert(
+      bytes.subarray(0, 8).equals(PNG) &&
+        bytes.toString('ascii', 12, 16) === 'IHDR',
+      'Actual native PNG required'
+    )
+    assert(
+      bytes.readUInt32BE(16) === proof.width &&
+        bytes.readUInt32BE(20) === proof.height,
+      'Native raw raster dimensions differ from receipt'
+    )
+    const size = JSON.stringify([proof.width, proof.height])
+    assert(
+      raster == null || size === raster,
+      'Native screenshot dimensions changed during dismissal'
+    )
+    raster = size
+    return {
+      rawPath: proof.rawPath,
+      rawSha256: proof.rawSha256,
+      width: proof.width,
+      height: proof.height
+    }
+  }
+  const stable = async (
+    nodes: PublicNode[],
+    expected: { history: Bounds; composer: Bounds },
+    kind: 'closed' | 'menu'
+  ): Promise<Args> => {
+    let reference: string | undefined
+    let since = Date.now()
+    const expectedKeyboard = keyboardOf(nodes)?.bounds
+    const eligible = (sample: PublicNode[]): boolean =>
+      kind === 'closed'
+        ? keyboardOf(sample) == null
+        : same(keyboardOf(sample)?.bounds, expectedKeyboard) &&
+          expectedKeyboard != null &&
+          !sample.some(n => /MenuItem$/i.test(n.type ?? ''))
+    for (;;) {
+      assert(
+        eligible(nodes),
+        'Public keyboard/menu state changed during pixel observation'
       )
-    } catch (error) {
-      if (optional && code(error) === 'COMMAND_FAILED') return undefined
-      throw error
+      const before = await geometry(nodes)
+      assert(
+        same(before, expected),
+        'Native keyboard geometry changed during pixel observation'
+      )
+      const frame = await image()
+      nodes = await read()
+      assert(
+        eligible(nodes),
+        'Public keyboard/menu state changed across screenshot'
+      )
+      const after = await geometry(nodes)
+      assert(
+        same(before, after),
+        'Native keyboard geometry moved across screenshot'
+      )
+      const signature = JSON.stringify({
+        geometry: after,
+        rawSha256: frame.rawSha256
+      })
+      if (reference !== signature) {
+        reference = signature
+        since = Date.now()
+      }
+      const sample = { ...after, image: frame, stableForMs: Date.now() - since }
+      row.samples = [...(row.samples as Args[]).slice(-15), sample]
+      if (Date.now() - since >= 200) return { nodes, image: frame }
+      // The measured window schedules another observation; waiting alone never passes.
+      await new Promise(resolve =>
+        setTimeout(
+          resolve,
+          Math.min(Math.max(1, 200 - (Date.now() - since)), remaining())
+        )
+      )
     }
   }
   const tap = async (
     nodes: PublicNode[],
     keyboard: PublicNode
-  ): Promise<void> => {
-    const history = need(
-      await measured(nodes, 'chat-message-history'),
-      'Observed chat history required'
-    )
-    const identity = need(
-      await measured(nodes, 'chat-conversation-identity'),
-      'Observed conversation header required'
-    )
-    const composer = need(
-      await measured(nodes, 'chat-composer-band'),
-      'Observed whole composer band required'
-    )
-    const pins = await measured(nodes, 'chat-pinned-band', true)
+  ): Promise<{ history: Bounds; composer: Bounds; keyboard: Bounds }> => {
+    const current = await geometry(nodes)
+    const identity = await measured(nodes, 'chat-conversation-identity')
+    const pinNodes = nodes.filter(n => n.id === 'chat-pinned-band')
+    assert(pinNodes.length <= 1, 'Unique observed pinned band required')
+    const pins =
+      pinNodes.length === 1
+        ? await measured(nodes, 'chat-pinned-band')
+        : undefined
     const excluded = nodes
       .filter(n => /Button$|MenuItem$/i.test(n.type ?? '') && n.bounds != null)
       .map(n => n.bounds!)
+    // Only observed optional controls are used; a failed query is never an absence proof.
     for (const id of [
       'chat-jump-latest',
       'chat-attention-count',
       'chat-attention-retry'
-    ]) {
-      const b = await measured(nodes, id, true)
-      if (b != null) excluded.push(b)
-    }
+    ])
+      if (nodes.some(n => n.id === id)) excluded.push(await measured(nodes, id))
     let ime = need(keyboard.bounds, 'Observed iOS keyboard bounds required')
     for (const n of nodes) {
       const b = n.bounds
@@ -297,57 +390,90 @@ export async function dismissIosChatKeyboard(
         ime = { ...ime, height: ime.y + ime.height - b.y, y: b.y }
     }
     const point = iosKeyboardDismissPoint({
-      history,
+      ...current,
       identity,
-      composer,
       keyboard: ime,
       pins,
       excluded
     })
     row.samples = [
-      ...(row.samples as Args[]),
-      { history, identity, composer, keyboard: ime, pins, point }
+      ...(row.samples as Args[]).slice(-15),
+      { ...current, keyboard: ime, pins, point }
     ]
     await api.tapOnPoint({ point: `${point.x},${point.y}` }, options())
+    return { ...current, keyboard: ime }
   }
   try {
     let nodes = await read()
-    const keyboard = keyboardOf(nodes)
+    let keyboard = keyboardOf(nodes)
     if (keyboard == null) {
-      assert(
-        await keysAbsent(),
-        'Keyboard keys remain without measurable keyboard bounds'
-      )
-      row.outcome = 'passed'
-      row.alreadyAbsent = true
-      return
+      await measured(nodes, 'chat-composer')
+      await api.tapOn({ id: 'chat-composer' }, options())
+      row.initialSetup =
+        'Ordinary composer focus only; no text or clipboard operation'
+      do {
+        nodes = await read()
+        keyboard = keyboardOf(nodes)
+        if (keyboard == null)
+          await new Promise(resolve =>
+            setTimeout(resolve, Math.min(50, remaining()))
+          )
+      } while (keyboard == null)
     }
     const menus = nodes.filter(
-      n => /MenuItem$/i.test(n.type ?? '') && n.text != null && n.bounds != null
+      n => /MenuItem$/i.test(n.type ?? '') && n.bounds != null
     )
-    await tap(nodes, keyboard)
+    const beforeImage = menus.length > 0 ? await image() : undefined
+    let opened = await tap(nodes, keyboard)
     let menuTransitionUsed = false
-    while (true) {
+    for (;;) {
       nodes = await read()
       const current = keyboardOf(nodes)
-      if (current == null && (await keysAbsent())) {
+      const actual = await geometry(nodes)
+      const bottom = actual.composer.y + actual.composer.height
+      const openBottom = opened.composer.y + opened.composer.height
+      const penetration =
+        Math.min(opened.composer.height, opened.keyboard.height) / 2
+      const movedIntoFormerKeyboard =
+        same(actual.history, opened.history) &&
+        bottom > openBottom &&
+        bottom > opened.keyboard.y + penetration &&
+        bottom <=
+          Math.min(
+            opened.keyboard.y + opened.keyboard.height,
+            actual.history.y + actual.history.height
+          )
+      if (current == null && movedIntoFormerKeyboard) {
+        const settled = await stable(nodes, actual, 'closed')
+        assert(
+          keyboardOf(settled.nodes as PublicNode[]) == null,
+          'Keyboard reappeared during closure proof'
+        )
         row.outcome = 'passed'
+        row.closure =
+          'Positive moved-composer layout certificate with AX and stable actual pixels; ROOT image review required'
         return
       }
       if (
         current != null &&
         menus.length > 0 &&
         !menuTransitionUsed &&
-        !nodes.some(n => /MenuItem$/i.test(n.type ?? ''))
+        !nodes.some(n => /MenuItem$/i.test(n.type ?? '')) &&
+        same(actual, { history: opened.history, composer: opened.composer })
       ) {
-        let menuGone = true
-        for (const item of menus)
-          menuGone = (await absent({ text: item.text! })) && menuGone
-        if (menuGone) {
-          menuTransitionUsed = true
-          row.observedMenuDismissed = true
-          await tap(nodes, current)
-        }
+        const settled = await stable(nodes, actual, 'menu')
+        const settledNodes = settled.nodes as PublicNode[]
+        const stillKeyboard = keyboardOf(settledNodes)
+        assert(
+          stillKeyboard != null &&
+            !settledNodes.some(n => /MenuItem$/i.test(n.type ?? '')) &&
+            object(settled.image).rawSha256 !== beforeImage?.rawSha256,
+          'Actual changed stable menu-transition pixels and positive keyboard required'
+        )
+        menuTransitionUsed = true
+        row.observedMenuDismissed =
+          'AX omission plus changed stable raw pixels; conservative evidence, ROOT review required'
+        opened = await tap(settledNodes, stillKeyboard)
       }
       await new Promise(resolve =>
         setTimeout(resolve, Math.min(50, remaining()))
