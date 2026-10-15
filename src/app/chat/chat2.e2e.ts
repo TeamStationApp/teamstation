@@ -36,6 +36,7 @@ import {
   exactText,
   flattenPublicHierarchy,
   type PublicNode,
+  readIosComposerKeyboard,
   until
 } from '../../test/chat2Maestro.e2e'
 import type { MessageView } from './engine/apply'
@@ -331,16 +332,19 @@ export async function observeSpotlightCaptureReady(
 export async function observeComposerCaptureReady(
   ui: Chat2UI,
   expected: { focused?: boolean; reply?: boolean } = {},
-  timeout = 8000
+  timeout = ui.native ? 90000 : 8000
 ): Promise<Json> {
   type Box = NonNullable<PublicNode['bounds']>
   const samples: Json[] = []
   const observation: Json = {
     name: 'Settled composer capture readiness',
     outcome: 'failed',
-    method: ui.native
-      ? 'Public accessibility absence, visible controls and stable raw Maestro frames; physical unmount is not inferred'
-      : 'Atomic public DOM physical overlay absence, visibility, focus and geometry',
+    method:
+      ui.surface === 'ios'
+        ? 'Positive iOS composer/Keyboard geometry, public overlay checks and stable raw Maestro frames; no AX focus signal; actual image and text delivery review required'
+        : ui.native
+          ? 'Public accessibility absence, visible controls and stable raw Maestro frames; physical unmount is not inferred'
+          : 'Atomic public DOM physical overlay absence, visibility, focus and geometry',
     expected,
     stableForMs: 200,
     timeoutMs: timeout,
@@ -359,7 +363,9 @@ export async function observeComposerCaptureReady(
     assertVisible: (
       args: Json,
       options: { signal: AbortSignal }
-    ) => Promise<{ element?: { bounds?: Box } }>
+    ) => Promise<{
+      element?: { id?: string; text?: string; class?: string; bounds?: Box }
+    }>
     evalBrowserScript: (
       args: Json,
       options: { signal: AbortSignal }
@@ -369,7 +375,20 @@ export async function observeComposerCaptureReady(
     try {
       const args = { ...selector, timeout: Math.min(120, remaining()) }
       const options = { signal: AbortSignal.timeout(remaining()) }
-      return (await device.assertVisible(args, options)).element?.bounds
+      const found = (await device.assertVisible(args, options)).element
+      if (ui.surface === 'ios' && found != null) {
+        if (typeof selector.id === 'string')
+          assert(
+            found.id === selector.id,
+            'Exact positive iOS composer identity required'
+          )
+        if (typeof selector.text === 'string')
+          assert(
+            found.text === selector.text && found.class === 'Button',
+            'Exact observed iOS composer Button required'
+          )
+      }
+      return found?.bounds
     } catch (error) {
       remaining()
       if (
@@ -393,40 +412,53 @@ export async function observeComposerCaptureReady(
       let geometry: Record<string, Box>
       let eligible: boolean
       if (ui.native) {
-        const nodes = flattenPublicHierarchy(
-          await device.hierarchy({ signal: AbortSignal.timeout(remaining()) })
-        )
+        const ios = ui.surface === 'ios'
+        const positive =
+          ios && expected.focused === true
+            ? await readIosComposerKeyboard(
+                ui,
+                AbortSignal.timeout(remaining())
+              )
+            : undefined
+        const nodes =
+          positive?.nodes ??
+          flattenPublicHierarchy(
+            await device.hierarchy({ signal: AbortSignal.timeout(remaining()) })
+          )
         const overlays = nodes
           .filter(n =>
             ['chat-message-spotlight', 'chat-picker-scene'].includes(n.id ?? '')
           )
           .map(n => n.id)
-        geometry = {}
+        geometry = { ...positive?.geometry }
         let visible = true
         for (const [name, selector] of [
           ['composer', { id: 'chat-composer' }],
           ['band', { id: 'chat-composer-band' }],
-          ['attach', { text: exactText('Attach') }],
-          ['send', { text: exactText('Send') }]
+          ['attach', { text: ios ? 'Attach' : exactText('Attach') }],
+          ['send', { text: ios ? 'Send' : exactText('Send') }]
         ] as const) {
+          if (geometry[name] != null) continue
           const found = await nativeProbe(selector)
           if (found == null) visible = false
           else geometry[name] = found
         }
         let focused = expected.focused !== true
-        if (expected.focused === true)
+        if (expected.focused === true && !ios)
           focused =
             (await nativeProbe({ id: 'chat-composer', focused: true })) != null
         const cancel = nodes.find(n => n.text === 'Cancel reply')
         let reply =
           expected.reply == null || (!expected.reply && cancel == null)
         if (expected.reply === true) {
-          const found = await nativeProbe({ text: exactText('Cancel reply') })
+          const found = await nativeProbe({
+            text: ios ? 'Cancel reply' : exactText('Cancel reply')
+          })
           reply = found != null
           if (found != null) geometry.reply = found
         }
-        let keyboard = expected.focused !== true
-        if (expected.focused === true) {
+        let keyboard = expected.focused !== true || positive != null
+        if (expected.focused === true && !ios) {
           const container = nodes.find(
             n => /keyboard/i.test(n.type ?? '') && n.bounds != null
           )
@@ -444,10 +476,35 @@ export async function observeComposerCaptureReady(
             }
           }
         }
+        if (ios && visible) {
+          const band = geometry.band
+          visible =
+            band != null &&
+            [
+              'composer',
+              'attach',
+              'send',
+              ...(expected.reply === true ? ['reply'] : [])
+            ].every(name => {
+              const child = geometry[name]
+              return (
+                child != null &&
+                child.x >= band.x - 1 &&
+                child.y >= band.y - 1 &&
+                child.x + child.width <= band.x + band.width + 1 &&
+                child.y + child.height <= band.y + band.height + 1
+              )
+            })
+        }
         sample.publicAccessibility = {
           overlays,
           visible,
-          focused,
+          ...(ios
+            ? {
+                focusSignal: 'unavailable-on-ios',
+                positiveComposerKeyboard: positive != null
+              }
+            : { focused }),
           reply,
           keyboard
         }
@@ -465,7 +522,11 @@ export async function observeComposerCaptureReady(
           ...raster
         }
         eligible =
-          overlays.length === 0 && visible && focused && reply && keyboard
+          overlays.length === 0 &&
+          visible &&
+          (ios ? expected.focused !== true || positive != null : focused) &&
+          reply &&
+          keyboard
       } else {
         const script = `
           const overlays=['chat-message-spotlight','chat-picker-scene'].filter(id=>document.querySelector('[data-testid="'+id+'"]')!==null);

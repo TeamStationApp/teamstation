@@ -103,6 +103,99 @@ export interface PublicNode {
   enabled?: boolean
 }
 
+/** iOS exposes no focus flag: require the actual composer above an observed IME. */
+export async function readIosComposerKeyboard(
+  ui: Pick<Chat2UI, 'device'>,
+  signal: AbortSignal
+): Promise<{
+  nodes: PublicNode[]
+  geometry: Record<'composer' | 'band' | 'history' | 'keyboard', Bounds>
+  focusSignal: 'unavailable-on-ios'
+}> {
+  const api = ui.device as unknown as {
+    hierarchy: (options: { signal: AbortSignal }) => Promise<unknown>
+    assertVisible: (
+      args: Args,
+      options: { signal: AbortSignal }
+    ) => Promise<unknown>
+  }
+  const positive = (b: Bounds): boolean =>
+    [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+    b.width > 0 &&
+    b.height > 0
+  const inside = (child: Bounds, parent: Bounds): boolean =>
+    child.x >= parent.x - 1 &&
+    child.y >= parent.y - 1 &&
+    child.x + child.width <= parent.x + parent.width + 1 &&
+    child.y + child.height <= parent.y + parent.height + 1
+  for (;;) {
+    signal.throwIfAborted()
+    const nodes = flattenPublicHierarchy(await api.hierarchy({ signal }))
+    const keyboards = nodes.filter(n => /^Keyboard$/i.test(n.type ?? ''))
+    assert(keyboards.length <= 1, 'Unique observed iOS Keyboard required')
+    if (keyboards.length === 0) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      continue
+    }
+    const keyboard = need(
+      keyboards[0].bounds,
+      'Observed iOS Keyboard bounds required'
+    )
+    assert(positive(keyboard), 'Positive finite iOS Keyboard bounds required')
+    const measure = async (id: string): Promise<Bounds> => {
+      const observed = nodes.filter(n => n.id === id)
+      assert(
+        observed.length <= 1,
+        'Unique exact public element required: ' + id
+      )
+      if (observed[0]?.bounds != null) {
+        if (id === 'chat-composer')
+          assert(observed[0].enabled === true, 'Enabled iOS composer required')
+        assert(
+          positive(observed[0].bounds),
+          'Finite positive public bounds required: ' + id
+        )
+        return observed[0].bounds
+      }
+      const element = object(
+        object(await api.assertVisible({ id, timeout: 120 }, { signal }))
+          .element
+      )
+      assert(element.id === id, 'Exact positive public element required: ' + id)
+      if (id === 'chat-composer')
+        assert(element.enabled === true, 'Enabled iOS composer required')
+      const measured = need(
+        bounds(element.bounds),
+        'Positive public bounds required: ' + id
+      )
+      assert(
+        positive(measured),
+        'Finite positive public bounds required: ' + id
+      )
+      return measured
+    }
+    const history = await measure('chat-message-history')
+    const band = await measure('chat-composer-band')
+    const composer = await measure('chat-composer')
+    assert(
+      inside(band, history) &&
+        inside(composer, band) &&
+        inside(keyboard, history),
+      'Contained iOS composer and Keyboard geometry required'
+    )
+    assert(
+      band.y + band.height <= keyboard.y + 1,
+      'iOS composer must be above the observed software keyboard'
+    )
+    signal.throwIfAborted()
+    return {
+      nodes,
+      geometry: { history, band, composer, keyboard },
+      focusSignal: 'unavailable-on-ios'
+    }
+  }
+}
+
 /** A history gutter stays outside measured chrome and composer controls. */
 export function iosKeyboardDismissPoint(input: {
   history: Bounds
@@ -643,7 +736,7 @@ export function flattenPublicHierarchy(raw: unknown): PublicNode[] {
       text: typeof text === 'string' ? text : undefined,
       bounds: bounds(n.bounds ?? n.rect),
       focused: n.focused === true,
-      enabled: n.enabled !== false
+      enabled: typeof n.enabled === 'boolean' ? n.enabled : undefined
     },
     ...(Array.isArray(n.children)
       ? n.children.flatMap(flattenPublicHierarchy)
@@ -1907,6 +2000,49 @@ export class Chat2UI {
   }
 
   async assertKeyboard(): Promise<void> {
+    if (this.surface === 'ios') {
+      const signal = AbortSignal.timeout(90000)
+      const evidence: Args = {
+        name: 'Positive iOS composer above software keyboard',
+        focusSignal: 'unavailable-on-ios',
+        method:
+          'Exact enabled composer and observed Keyboard geometry; raw image and ordinary text delivery require review',
+        startedAt: new Date().toISOString()
+      }
+      this.steps.push(evidence)
+      try {
+        const before = await readIosComposerKeyboard(this, signal)
+        evidence.before = before.geometry
+        const api = this.device as unknown as {
+          screenshot: (options: { signal: AbortSignal }) => Promise<Uint8Array>
+        }
+        evidence.image = saveCapture(
+          await api.screenshot({ signal }),
+          join(this.runDir, 'ios-composer-keyboard-' + Date.now() + '.png')
+        )
+        const after = await readIosComposerKeyboard(this, signal)
+        evidence.after = after.geometry
+        assert(
+          Object.keys(before.geometry).every(key => {
+            const a = before.geometry[key as keyof typeof before.geometry]
+            const b = after.geometry[key as keyof typeof after.geometry]
+            return (['x', 'y', 'width', 'height'] as const).every(
+              axis => Math.abs(a[axis] - b[axis]) <= 1
+            )
+          }),
+          'iOS composer/Keyboard geometry changed during its raw screenshot'
+        )
+        signal.throwIfAborted()
+        evidence.outcome = 'passed'
+      } catch (error) {
+        evidence.outcome = 'failed'
+        evidence.error = error instanceof Error ? error.message : String(error)
+        throw error
+      } finally {
+        evidence.completedAt = new Date().toISOString()
+      }
+      return
+    }
     await this.device.assertVisible({
       id: 'chat-composer',
       focused: true,
@@ -1924,6 +2060,10 @@ export class Chat2UI {
 
   async keyboardVisible(): Promise<void> {
     assert(this.native, 'Software keyboard proof is native only')
+    if (this.surface === 'ios') {
+      await this.assertKeyboard()
+      return
+    }
     const nodes = await this.nodes()
     if (!nodes.some(n => /keyboard/i.test(n.type ?? ''))) {
       // Direct public key queries avoid the native snapshot's node cap.
