@@ -319,6 +319,10 @@ async function main(): Promise<void> {
     }
     const signIn = async (email: string): Promise<void> => {
       assert(m != null, 'Attached native application required')
+      await m.assertVisible({
+        text: '^Sign in to TeamStation$',
+        timeout: 60000
+      })
       await focusField('E-mail address')
       await inputControlledText(email)
       await m.tapOn({ text: 'Send me a sign-in code', timeout: 15000 })
