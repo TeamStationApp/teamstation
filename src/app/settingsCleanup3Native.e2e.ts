@@ -274,10 +274,19 @@ async function main(): Promise<void> {
         point: `${(100 * (field.bounds.x + field.bounds.width / 2)) / viewport.width}%,${(100 * (field.bounds.y + field.bounds.height / 2)) / viewport.height}%`
       })
     }
+    const inputControlledText = async (value: string): Promise<void> => {
+      assert(m != null, 'Attached native application required')
+      // Let each controlled-field render settle before the next native key.
+      // A single WDA key sequence can move the cursor during search refreshes.
+      for (const character of value) {
+        await m.inputText({ text: character })
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+    }
     const signIn = async (email: string): Promise<void> => {
       assert(m != null, 'Attached native application required')
       await focusField('E-mail address')
-      await m.inputText({ text: email })
+      await inputControlledText(email)
       await m.tapOn({ text: 'Send me a sign-in code', timeout: 15000 })
       let code: unknown
       for (
@@ -299,22 +308,17 @@ async function main(): Promise<void> {
         'Ordinary sign-in must receive fixture mail'
       )
       await focusField('Sign-in code')
-      await m.inputText({ text: code })
+      await inputControlledText(code as string)
       await m.tapOn({
         text: '^Sign in$',
         id: 'settings-pill-button',
         timeout: 15000
       })
+      await m.assertNotVisible({
+        text: '^Sign in to TeamStation$',
+        timeout: 15000
+      })
       await m.assertVisible({ text: 'Search', timeout: 15000 })
-    }
-    const inputControlledText = async (value: string): Promise<void> => {
-      assert(m != null, 'Attached native application required')
-      // Let each controlled-field render settle before the next native key.
-      // A single WDA key sequence can move the cursor during search refreshes.
-      for (const character of value) {
-        await m.inputText({ text: character })
-        await new Promise(resolve => setTimeout(resolve, 100))
-      }
     }
     if (process.env.TS_SETTINGS3_SIGN_IN === '1') await signIn(manifest.email)
     await m.openLink({ link: 'teamstation://' })
