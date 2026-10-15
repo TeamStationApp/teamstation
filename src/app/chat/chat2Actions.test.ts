@@ -1332,6 +1332,211 @@ describe('chat native adapter compatibility', function () {
       }
     }) as Chat2UI
   }
+  function replyCancellation(mode = 'valid'): {
+    scenario: Scenarios
+    actual: Chat2UI
+    calls: unknown[]
+  } {
+    const actual = ui([])
+    const calls: unknown[] = []
+    let tapped = false
+    let photographed = false
+    const tree = (): Array<Record<string, unknown>> => {
+      const cleared =
+        tapped &&
+        mode !== 'no-progress' &&
+        !(photographed && mode === 'resurrected')
+      const band = {
+        x: 16,
+        y: cleared ? 480 : 400,
+        width: 268,
+        height: cleared ? 70 : 150
+      }
+      const editor = { x: 65, y: 500, width: 160, height: 44 }
+      if (tapped && mode === 'moved-editor') editor.y += 10
+      if (cleared && mode === 'wrong-band') band.width -= 10
+      const result = [
+        node(0, 'Other', { identifier: 'chat-composer-band', rect: band }),
+        node(1, 'TextView', {
+          identifier: 'chat-composer',
+          label: 'Message',
+          value:
+            tapped && mode === 'changed-text'
+              ? 'Changed'
+              : 'Draft with attachment',
+          rect: editor
+        }),
+        node(2, 'Other', {
+          identifier: 'chat-attachment-chip',
+          rect: { x: 20, y: 450, width: 200, height: 24 }
+        })
+      ]
+      if (!cleared)
+        result.push(
+          node(3, 'Button', {
+            label: 'Cancel reply',
+            enabled:
+              mode === 'disabled'
+                ? false
+                : mode === 'unknown'
+                  ? undefined
+                  : true,
+            rect: {
+              x: 250,
+              y: mode === 'outside' ? 350 : 410,
+              width: 24,
+              height: 24
+            }
+          })
+        )
+      if (mode === 'ambiguous') result.push({ ...result[3], index: 4 })
+      return result
+    }
+    actual.device = {
+      hierarchyRaw: async () => {
+        calls.push('raw')
+        return raw(
+          mode === 'capped'
+            ? Array.from({ length: 300 }, (_, index) =>
+                node(index, 'StaticText', { label: 'Ordinary history' })
+              )
+            : tree()
+        )
+      },
+      assertVisible: async (selected: Record<string, unknown>) => {
+        calls.push(selected)
+        if (mode === 'missing' || mode === 'transport') throw Error(mode)
+        const item = tree().find(n =>
+          selected.id != null
+            ? n.identifier === selected.id
+            : n.label === selected.text
+        )
+        if (item == null) throw Error('No actual element')
+        return {
+          element: {
+            id: item.identifier,
+            class: item.type,
+            accessibilityLabel: item.label,
+            text: item.value ?? item.label,
+            enabled: item.enabled,
+            bounds: item.rect
+          }
+        }
+      },
+      tapOnPoint: async (point: unknown) => {
+        calls.push(point)
+        tapped = true
+      },
+      screenshot: async () => {
+        photographed = true
+        calls.push('image')
+        return captureImages[0]
+      }
+    } as unknown as Chat2UI['device']
+    actual.visible = async () => {
+      throw Error('Optional visibility cannot certify required cancellation')
+    }
+    actual.text = async () => {
+      throw Error('Use the actual measured control')
+    }
+    return {
+      actual,
+      calls,
+      scenario: Object.assign(Object.create(Scenarios.prototype), {
+        ui: actual,
+        observations: []
+      }) as Scenarios
+    }
+  }
+  for (const mode of ['valid', 'capped'])
+    it(
+      'requires observed native reply cancellation and preserves editor through ' +
+        mode +
+        ' metadata',
+      async () => {
+        const model = replyCancellation(mode)
+        await model.scenario.cancelReply(1000)
+        expect(model.calls).includes('image')
+        expect(model.calls).deep.includes({ x: 262, y: 422 })
+        if (mode === 'capped')
+          expect(model.calls).deep.includes({
+            text: 'Cancel reply',
+            timeout: 120
+          })
+        const proof = model.scenario.observations[0] as Record<string, unknown>
+        expect(proof.outcome).equals('passed')
+        expect(
+          (proof.before as { editor: { text: string } }).editor.text
+        ).equals('Draft with attachment')
+        expect(
+          (proof.verified as { editor: { text: string } }).editor.text
+        ).equals('Draft with attachment')
+        expect((proof.image as { rawPath: string }).rawPath).a('string')
+      }
+    )
+  for (const mode of [
+    'disabled',
+    'unknown',
+    'ambiguous',
+    'outside',
+    'missing',
+    'transport',
+    'no-progress',
+    'moved-editor',
+    'changed-text',
+    'wrong-band',
+    'resurrected'
+  ])
+    it(
+      'fails required native cancellation instead of silently navigating after ' +
+        mode,
+      async () => {
+        const model = replyCancellation(mode)
+        if (mode === 'missing' || mode === 'transport')
+          Object.assign(model.actual.device, {
+            hierarchyRaw: async () => raw([])
+          })
+        await captureFailure(model.scenario.cancelReply(60))
+        expect(
+          (model.scenario.observations[0] as { outcome: string }).outcome
+        ).equals('failed')
+        if (
+          [
+            'disabled',
+            'unknown',
+            'ambiguous',
+            'outside',
+            'missing',
+            'transport'
+          ].includes(mode)
+        )
+          expect(model.calls).not.deep.includes({ x: 262, y: 422 })
+      }
+    )
+  it('requires positive cancellation and absence on web and Android without optional skips', async () => {
+    for (const surface of ['web-wide', 'android']) {
+      const actual = ui([], surface)
+      const calls: unknown[] = []
+      actual.device.assertVisible = async args => {
+        calls.push(['present', args])
+      }
+      actual.device.assertNotVisible = async args => {
+        calls.push(['absent', args])
+      }
+      actual.text = async label => {
+        calls.push(['tap', label])
+      }
+      const scenario = Object.assign(Object.create(Scenarios.prototype), {
+        ui: actual
+      }) as Scenarios
+      await scenario.cancelReply()
+      expect(calls).deep.equals([
+        ['present', { text: '^Cancel reply$' }],
+        ['tap', 'Cancel reply'],
+        ['absent', { text: '^Cancel reply$' }]
+      ])
+    }
+  })
   function picker(scale = 1): Array<Record<string, unknown>> {
     const rect = (
       x: number,

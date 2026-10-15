@@ -38,6 +38,7 @@ import {
   iosPublicRead,
   type PublicNode,
   readIosComposerKeyboard,
+  saveCapture,
   until
 } from '../../test/chat2Maestro.e2e'
 import type { MessageView } from './engine/apply'
@@ -1692,9 +1693,154 @@ export class Scenarios {
     await this.ui.assertKeyboard()
   }
 
-  async cancelReply(): Promise<void> {
-    if (await this.ui.visible({ text: exactText('Cancel reply') }, 500))
-      await this.ui.text('Cancel reply')
+  async cancelReply(timeoutMs = 90000): Promise<void> {
+    const ui = this.ui
+    if (ui.surface !== 'ios') {
+      await ui.device.assertVisible({ text: exactText('Cancel reply') })
+      await ui.text('Cancel reply')
+      await ui.device.assertNotVisible({ text: exactText('Cancel reply') })
+      return
+    }
+    const deadline = Date.now() + timeoutMs
+    const signal = AbortSignal.timeout(timeoutMs)
+    const proof: Json = {
+      requiredReplyCancellation: true,
+      startedAt: new Date().toISOString()
+    }
+    this.observations.push(proof)
+    type Node = Awaited<ReturnType<Chat2UI['iosRead']>>
+    type Box = NonNullable<Node['bounds']>
+    const box = (node: Node): Box => {
+      const value = need(node.bounds, 'Measured reply context bounds required')
+      assert(
+        [value.x, value.y, value.width, value.height].every(Number.isFinite) &&
+          value.width > 0 &&
+          value.height > 0,
+        'Positive finite reply context geometry required'
+      )
+      return value
+    }
+    const contains = (outer: Box, inner: Box): boolean =>
+      inner.x >= outer.x - 1 &&
+      inner.y >= outer.y - 1 &&
+      inner.x + inner.width <= outer.x + outer.width + 1 &&
+      inner.y + inner.height <= outer.y + outer.height + 1
+    const measure = async (): Promise<{ band: Node; editor: Node }> => {
+      const band = await ui.iosRead(
+        { id: 'chat-composer-band' },
+        undefined,
+        signal
+      )
+      const editor = await ui.iosRead(
+        { id: 'chat-composer' },
+        'TextView',
+        signal
+      )
+      assert(
+        band.id === 'chat-composer-band' &&
+          editor.id === 'chat-composer' &&
+          editor.type === 'TextView' &&
+          editor.enabled === true &&
+          typeof editor.text === 'string',
+        'Exact enabled reply composer identity required'
+      )
+      assert(
+        contains(box(band), box(editor)),
+        'Actual editable composer must remain inside its band'
+      )
+      return { band, editor }
+    }
+    try {
+      const cancel = await ui.iosRead(
+        { text: exactText('Cancel reply') },
+        'Button',
+        signal
+      )
+      proof.cancel = cancel
+      assert(
+        cancel.type === 'Button' &&
+          cancel.label === 'Cancel reply' &&
+          cancel.enabled === true,
+        'Required exact enabled Cancel reply Button must be observed'
+      )
+      const before = await measure()
+      proof.before = before
+      const control = box(cancel)
+      const band = box(before.band)
+      const editor = box(before.editor)
+      assert(
+        contains(band, control) && control.y + control.height <= editor.y + 1,
+        'Cancel reply must occupy the measured context row above the editor'
+      )
+      const api = ui.device as unknown as {
+        tapOnPoint: (
+          args: { x: number; y: number },
+          options: { signal: AbortSignal }
+        ) => Promise<unknown>
+        screenshot: (options: { signal: AbortSignal }) => Promise<Uint8Array>
+      }
+      const tap = {
+        x: control.x + control.width / 2,
+        y: control.y + control.height / 2
+      }
+      proof.tap = tap
+      await api.tapOnPoint(tap, { signal })
+      const same = (a: number, b: number): boolean => Math.abs(a - b) <= 1
+      const cleared = (after: Awaited<ReturnType<typeof measure>>): boolean => {
+        const next = box(after.band)
+        const field = box(after.editor)
+        assert(
+          after.editor.text === before.editor.text,
+          'Reply cancellation must preserve actual editor text'
+        )
+        assert(
+          same(next.x, band.x) &&
+            same(next.width, band.width) &&
+            same(next.y + next.height, band.y + band.height) &&
+            (['x', 'y', 'width', 'height'] as const).every(key =>
+              same(field[key], editor[key])
+            ),
+          'Reply cancellation must preserve the editor row and composer band edges'
+        )
+        return (
+          next.height < band.height - 1 &&
+          next.y >= control.y + control.height - 1
+        )
+      }
+      while (Date.now() < deadline) {
+        const after = await measure()
+        proof.after = after
+        if (cleared(after)) {
+          proof.image = saveCapture(
+            await api.screenshot({ signal }),
+            join(
+              ui.runDir,
+              'required-reply-cancellation-' + Date.now() + '.png'
+            )
+          )
+          const verified = await measure()
+          proof.verified = verified
+          assert(
+            cleared(verified),
+            'Cleared reply context must remain cleared around the actual screenshot'
+          )
+          proof.outcome = 'passed'
+          proof.evidence =
+            'Positive measured context-row removal with unchanged editor; raw image requires visual review'
+          return
+        }
+        await new Promise(resolve =>
+          setTimeout(resolve, Math.min(100, Math.max(1, deadline - Date.now())))
+        )
+      }
+      throw new Error(
+        'Required Cancel reply did not remove its measured context row'
+      )
+    } catch (error) {
+      proof.outcome = 'failed'
+      proof.error = error instanceof Error ? error.message : String(error)
+      throw error
+    }
   }
 
   async peerMessage(
