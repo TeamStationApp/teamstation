@@ -405,6 +405,48 @@ async function main(): Promise<void> {
       await (
         m as MaestroHandle & { hierarchyRaw: () => Promise<Buffer> }
       ).hierarchyRaw()
+    const scrollToVisible = async (
+      params: Record<string, unknown>
+    ): Promise<void> => {
+      assert(m != null, 'Attached native application required')
+      if (platform === 'ios') {
+        await m.scrollUntilVisible(params)
+        return
+      }
+      const target = params.element as Selector
+      assert(
+        target?.text != null || target?.id != null,
+        'Scroll target required'
+      )
+      // Android element lookups can omit bounds; the full native tree has them.
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const tree = (await m.hierarchy()) as NativeNode
+        const viewport = viewportOf(tree)
+        const found = flatten(tree).some(node => {
+          const rect = node.bounds
+          return (
+            (target.id != null
+              ? node.id?.endsWith(target.id) === true
+              : new RegExp(target.text!).test(node.text ?? '')) &&
+            rect != null &&
+            rect.width > 0 &&
+            rect.height > 0 &&
+            rect.y >= viewport.height * 0.15 &&
+            rect.y + rect.height <= viewport.height * 0.8
+          )
+        })
+        if (found) return
+        await m.swipe({
+          start: `${viewport.width / 2},${viewport.height * 0.75}`,
+          end: `${viewport.width / 2},${viewport.height * 0.35}`,
+          duration: 600
+        })
+        await new Promise(resolve => setTimeout(resolve, 300))
+      }
+      assert.fail(
+        'Native scroll target did not enter the unobstructed viewport'
+      )
+    }
     for (const test of flow.cases) {
       assert(test.steps.length > 0, 'Acceptance case cannot be empty')
       let assertions = 0
@@ -471,7 +513,9 @@ async function main(): Promise<void> {
             } finally {
               clearTimeout(timer)
             }
-          } else if (step.command === 'stopRecording') await stopRecording()
+          } else if (step.command === 'scrollUntilVisible')
+            await scrollToVisible(params)
+          else if (step.command === 'stopRecording') await stopRecording()
           else await m.command(step.command, params)
           if (step.command.startsWith('assert')) assertions++
         } else if ('input' in step) {
@@ -525,7 +569,7 @@ async function main(): Promise<void> {
           assertions++
         } else if ('signIn' in step) {
           await m.openLink({ link: 'teamstation://account' })
-          await m.scrollUntilVisible({
+          await scrollToVisible({
             element: { text: 'Sign out' },
             timeout: 15000
           })
