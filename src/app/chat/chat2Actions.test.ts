@@ -549,6 +549,10 @@ const captureImages = [
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgZGD4DwABCAEBfBRbtQAAAABJRU5ErkJggg==',
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYmD4DwABDAECkQ7bWQAAAABJRU5ErkJggg=='
 ].map(encoded => Buffer.from(encoded, 'base64'))
+const captureJpegs = [
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAwT/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCegFAH/9k=',
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAwT/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCDgKAP/9k='
+].map(encoded => Buffer.from(encoded, 'base64'))
 function composerPng(
   rectangles: Array<{ box: number[]; color: number[] }> = [],
   scale = 1
@@ -655,11 +659,16 @@ function selectedVariant(mode: string): { nodes: CaptureNode[] } {
 }
 const rawBytes = (value: unknown): Buffer => Buffer.from(JSON.stringify(value))
 interface CaptureSample {
+  ready?: boolean
   rawPairStable?: boolean
   rawPairStableForMs?: number
   rawFrames?: Array<{
     sha256: string
     path: string
+    at?: string
+    width?: number
+    height?: number
+    comparedWith?: string
     comparison?: {
       accepted: boolean
       reason: string
@@ -670,6 +679,9 @@ interface CaptureSample {
   publicAccessibility?: {
     positiveComposerKeyboard?: boolean
     focusSignal?: string
+    focused?: boolean
+    keyboard?: boolean
+    reply?: boolean
   }
   selected?: { compact: boolean }
 }
@@ -3533,5 +3545,193 @@ describe('positive Android IME observations', function () {
           step => step.name === 'Settled composer capture readiness'
         )?.outcome
       ).equals('failed')
+    })
+
+  async function adjacentFrames(
+    mode: string,
+    work: (actual: {
+      ui: Chat2UI
+      probes: () => number
+      shots: () => number
+      frames: Buffer[]
+    }) => Promise<void>
+  ): Promise<void> {
+    const frames =
+      mode === 'clock-change'
+        ? [
+            composerPng(),
+            composerPng([{ box: [12, 8, 8, 4], color: [0, 0, 0, 255] }])
+          ]
+        : mode === 'png'
+          ? captureImages
+          : captureJpegs
+    const actualNow = Date.now
+    let offset = 0
+    let shots = 0
+    Date.now = () => actualNow() + offset
+    const actual = model()
+    const hierarchy = actual.ui.device.hierarchy
+    actual.ui.device.hierarchy = async () => {
+      offset +=
+        mode === 'overall-abort'
+          ? 0
+          : ['motion', 'clock-change'].includes(mode)
+            ? 31000
+            : 4500
+      const tree = (await hierarchy()) as { nodes: PublicNode[] }
+      if (mode === 'invalid-middle' && actual.probes() === 2)
+        tree.nodes.push({ id: 'chat-picker-scene' })
+      return tree
+    }
+    Object.assign(actual.ui.device, {
+      screenshot: async ({ signal }: { signal: AbortSignal }) => {
+        expect(signal.aborted).equals(false)
+        shots += 1
+        offset += ['motion', 'clock-change'].includes(mode) ? 1100 : 100
+        if (mode === 'image-transport')
+          throw new Error('Raw image transport disconnected')
+        if (mode === 'slow-first' && shots === 1)
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, 2100)
+            signal.addEventListener(
+              'abort',
+              () => {
+                clearTimeout(timer)
+                reject(signal.reason)
+              },
+              { once: true }
+            )
+          })
+        if (mode === 'overall-abort')
+          await new Promise<void>((_resolve, reject) => {
+            signal.addEventListener(
+              'abort',
+              () => {
+                reject(signal.reason)
+              },
+              {
+                once: true
+              }
+            )
+          })
+        if (mode === 'invalid-format') return Buffer.from('No image')
+        if (mode === 'truncated-jpeg') return captureJpegs[0].subarray(0, -2)
+        if (mode === 'truncated-png') return captureImages[0].subarray(0, -12)
+        return frames[
+          ['motion', 'clock-change'].includes(mode)
+            ? shots % 2
+            : actual.probes() % 2
+        ]
+      }
+    })
+    try {
+      await work({ ...actual, shots: () => shots, frames })
+    } finally {
+      Date.now = actualNow
+    }
+  }
+  for (const mode of ['jpeg', 'png'])
+    it(
+      'pairs exact adjacent raw ' +
+        mode +
+        ' frames across expensive fresh guards',
+      async () => {
+        await adjacentFrames(mode, async actual => {
+          const start = Date.now()
+          const proof = await observeComposerCaptureReady(actual.ui, {
+            focused: true,
+            reply: true
+          })
+          expect(proof.composerCaptureReady).equals(true)
+          expect(Date.now() - start)
+            .greaterThan(9000)
+            .and.lessThan(90000)
+          expect(actual.probes()).equals(2)
+          expect(actual.shots()).equals(4)
+          const observation = captureObservation(actual.ui)
+          expect(observation.samples).length(2)
+          expect(observation.samples[0].image?.sha256).not.equals(
+            observation.samples[1].image?.sha256
+          )
+          for (const sample of observation.samples) {
+            expect(sample.rawPairStable).equals(true)
+            expect(sample.rawPairStableForMs).at.least(200)
+            expect(sample.rawFrames).length(2)
+            const [before, after] = sample.rawFrames!
+            expect(before.sha256).equals(after.sha256)
+            expect(after.comparedWith).equals(before.path)
+            for (const frame of sample.rawFrames!) {
+              expect(frame.path).matches(
+                mode === 'jpeg' ? /\.raw\.jpg$/ : /\.raw\.png$/
+              )
+              expect(frame.at).a('string')
+              expect(frame.width).equals(1)
+              expect(frame.height).equals(1)
+              expect(
+                actual.frames.some(bytes =>
+                  bytes.equals(readFileSync(frame.path))
+                )
+              ).equals(true)
+            }
+            expect(sample.publicAccessibility?.focused).equals(true)
+            expect(sample.publicAccessibility?.keyboard).equals(true)
+            expect(sample.publicAccessibility?.reply).equals(true)
+          }
+        })
+      }
+    )
+  it('resets the reference after a real invalid middle probe despite stable frame pairs', async () => {
+    await adjacentFrames('invalid-middle', async actual => {
+      await observeComposerCaptureReady(actual.ui, {
+        focused: true,
+        reply: true
+      })
+      expect(actual.probes()).equals(4)
+      const observation = captureObservation(actual.ui)
+      expect(observation.samples.map(sample => sample.ready)).deep.equals([
+        true,
+        false,
+        true,
+        true
+      ])
+    })
+  })
+  it('finishes an in-flight Android capture after burst expiry using the overall deadline', async () => {
+    await adjacentFrames('slow-first', async actual => {
+      await observeComposerCaptureReady(actual.ui, {
+        focused: true,
+        reply: true
+      })
+      expect(actual.probes()).equals(3)
+      const observation = captureObservation(actual.ui)
+      expect(
+        observation.samples.map(sample => sample.rawPairStable)
+      ).deep.equals([false, true, true])
+    })
+  })
+  for (const mode of [
+    'motion',
+    'clock-change',
+    'image-transport',
+    'overall-abort',
+    'invalid-format',
+    'truncated-jpeg',
+    'truncated-png'
+  ])
+    it('rejects adjacent Android raw proof with ' + mode, async () => {
+      await adjacentFrames(mode, async actual => {
+        await captureFailure(
+          observeComposerCaptureReady(
+            actual.ui,
+            { focused: true, reply: true },
+            mode === 'overall-abort' ? 150 : 90000
+          )
+        )
+        expect(
+          actual.ui.steps.find(
+            step => step.name === 'Settled composer capture readiness'
+          )?.outcome
+        ).equals('failed')
+      })
     })
 })

@@ -802,7 +802,7 @@ export async function observeComposerCaptureReady(
       ui.surface === 'ios'
         ? 'Two fresh positive iOS composer/Keyboard and control probes with matching geometry/public guards, each followed by an adjacent whole-frame comparison allowing only a blue caret-sized editable stripe; raw originals retained; no AX focus signal; actual image and text delivery review required'
         : ui.native
-          ? 'Public accessibility absence, visible controls and stable raw Maestro frames; physical unmount is not inferred'
+          ? 'Two fresh positive Android IME/focus/control and public overlay probes with matching geometry, each followed by an exact adjacent raw Maestro frame pair; original JPEG/PNG bytes retained; physical unmount is not inferred'
           : 'Atomic public DOM physical overlay absence, visibility, focus and geometry',
     expected,
     stableForMs: 200,
@@ -1082,20 +1082,73 @@ export async function observeComposerCaptureReady(
               await new Promise(resolve => setTimeout(resolve, pause))
           }
         } else {
-          const bytes = Buffer.from(
-            await device.screenshot({
-              signal: AbortSignal.timeout(remaining())
-            })
-          )
-          const raster = captureRaster(bytes)
-          assert(
-            raster.width > 0 && raster.height > 0,
-            'Positive native screenshot dimensions required'
-          )
-          sample.image = {
-            sha256: createHash('sha256').update(bytes).digest('hex'),
-            bytes: bytes.length,
-            ...raster
+          const burstDeadline = Math.min(deadline, Date.now() + 2000)
+          const frames: Json[] = []
+          sample.rawFrames = frames
+          let previous: (Json & { path: string }) | undefined
+          let previousAt = 0
+          sample.rawPairStable = false
+          while (Date.now() < burstDeadline) {
+            remaining()
+            const bytes = Buffer.from(
+              await device.screenshot({
+                // Burst expiry stops new captures; only the overall deadline aborts one.
+                signal: AbortSignal.timeout(remaining())
+              })
+            )
+            const png = bytes
+              .subarray(0, 8)
+              .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+            const jpeg = bytes[0] === 255 && bytes[1] === 216
+            assert(
+              (png &&
+                bytes.length >= 36 &&
+                bytes.readUInt32BE(bytes.length - 12) === 0 &&
+                bytes.toString('ascii', bytes.length - 8, bytes.length - 4) ===
+                  'IEND') ||
+                (jpeg && bytes.at(-2) === 255 && bytes.at(-1) === 217),
+              'Complete original native PNG or JPEG required'
+            )
+            const raster = captureRaster(bytes)
+            assert(
+              raster.width > 0 && raster.height > 0,
+              'Positive native screenshot dimensions required'
+            )
+            rawDirectory ??= mkdtempSync(join(ui.runDir, 'composer-frames-'))
+            const path = join(
+              rawDirectory,
+              String(++rawSequence) + (png ? '.raw.png' : '.raw.jpg')
+            )
+            writeFileSync(path, bytes, { mode: 0o600, flag: 'wx' })
+            const at = Date.now()
+            const frame = {
+              path,
+              sha256: createHash('sha256').update(bytes).digest('hex'),
+              bytes: bytes.length,
+              ...raster
+            }
+            const recorded: Json = { ...frame, at: new Date().toISOString() }
+            frames.push(recorded)
+            if (frames.length > 12) frames.splice(1, 1)
+            sample.image = frame
+            sample.raster = raster
+            if (previous != null && at - previousAt >= 200) {
+              recorded.comparedWith = previous.path
+              if (
+                previous.sha256 === frame.sha256 &&
+                previous.width === frame.width &&
+                previous.height === frame.height
+              ) {
+                sample.rawPairStable = true
+                sample.rawPairStableForMs = at - previousAt
+                break
+              }
+            }
+            previous = frame
+            previousAt = at
+            const pause = Math.min(200, burstDeadline - Date.now(), remaining())
+            if (pause > 0)
+              await new Promise(resolve => setTimeout(resolve, pause))
           }
         }
         eligible =
@@ -1104,7 +1157,7 @@ export async function observeComposerCaptureReady(
           (ios ? expected.focused !== true || positive != null : focused) &&
           reply &&
           keyboard &&
-          (!ios || sample.rawPairStable === true)
+          sample.rawPairStable === true
       } else {
         const script = `
           const overlays=['chat-message-spotlight','chat-picker-scene'].filter(id=>document.querySelector('[data-testid="'+id+'"]')!==null);
@@ -1167,7 +1220,7 @@ export async function observeComposerCaptureReady(
         geometry,
         publicDOM: sample.publicDOM,
         publicAccessibility: sample.publicAccessibility,
-        image: ui.surface === 'ios' ? sample.raster : sample.image
+        image: ui.native ? sample.raster : sample.image
       })
       const stable = eligible && finite && signature === reference
       if (!stable) {
