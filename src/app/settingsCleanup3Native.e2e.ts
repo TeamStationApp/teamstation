@@ -307,6 +307,15 @@ async function main(): Promise<void> {
       })
       await m.assertVisible({ text: 'Search', timeout: 15000 })
     }
+    const inputControlledText = async (value: string): Promise<void> => {
+      assert(m != null, 'Attached native application required')
+      // Let each controlled-field render settle before the next native key.
+      // A single WDA key sequence can move the cursor during search refreshes.
+      for (const character of value) {
+        await m.inputText({ text: character })
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+    }
     if (process.env.TS_SETTINGS3_SIGN_IN === '1') await signIn(manifest.email)
     await m.openLink({ link: 'teamstation://' })
     await m.tapOn({ text: 'About TeamStation', timeout: 15000 })
@@ -371,7 +380,7 @@ async function main(): Promise<void> {
         } else if ('input' in step) {
           await focusField(step.input)
           await m.eraseText({ characters: 250 })
-          await m.inputText({ text: step.value })
+          await inputControlledText(step.value)
           await m.hideKeyboard()
         } else if ('screenshot' in step) {
           assert(/^[a-z0-9-]+\.png$/.test(step.screenshot))
