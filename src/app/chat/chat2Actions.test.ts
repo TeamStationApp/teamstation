@@ -1,4 +1,4 @@
-import type { ChildProcess } from 'node:child_process'
+import { type ChildProcess, spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire, Module } from 'node:module'
@@ -21,6 +21,7 @@ import type { GlassViewProps } from '../components/glassViewProps'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
 import {
+  compareIosComposerFrames,
   iosSpotlightCaptureGeometry,
   observeComposerCaptureReady,
   observeInfoCaptureReady,
@@ -544,6 +545,28 @@ const captureImages = [
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgZGD4DwABCAEBfBRbtQAAAABJRU5ErkJggg==',
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYmD4DwABDAECkQ7bWQAAAABJRU5ErkJggg=='
 ].map(encoded => Buffer.from(encoded, 'base64'))
+function composerPng(
+  rectangles: Array<{ box: number[]; color: number[] }> = [],
+  scale = 1
+): Buffer {
+  const result = spawnSync(
+    process.env.CHAT2_PYTHON ?? 'python3',
+    [
+      '-c',
+      `import sys,json
+from PIL import Image,ImageDraw
+p=json.loads(sys.argv[1]); s=p['scale']
+im=Image.new('RGBA',(400*s,800*s),(250,250,250,255)); draw=ImageDraw.Draw(im)
+for shape in p['rectangles']:
+ x,y,w,h=shape['box']; draw.rectangle((x*s,y*s,(x+w)*s-1,(y+h)*s-1),fill=tuple(shape['color']))
+im.save(sys.stdout.buffer,format='PNG')`,
+      JSON.stringify({ rectangles, scale })
+    ],
+    { timeout: 10000 }
+  )
+  expect(result.status, String(result.stderr)).equals(0)
+  return result.stdout
+}
 function selectedHierarchy(): { nodes: CaptureNode[] } {
   const preview = { x: 20, y: 180, width: 240, height: 80 }
   const text = { x: 32, y: 206, width: 216, height: 24 }
@@ -630,7 +653,15 @@ const rawBytes = (value: unknown): Buffer => Buffer.from(JSON.stringify(value))
 interface CaptureSample {
   rawPairStable?: boolean
   rawPairStableForMs?: number
-  rawFrames?: Array<{ sha256: string }>
+  rawFrames?: Array<{
+    sha256: string
+    path: string
+    comparison?: {
+      accepted: boolean
+      reason: string
+      diffBounds: number[]
+    }
+  }>
   image?: { sha256: string }
   publicAccessibility?: {
     positiveComposerKeyboard?: boolean
@@ -734,6 +765,94 @@ describe('chat native capture readiness transport', function () {
     temporary.push(path)
     return path
   }
+  const caret = (
+    box = [110, 455, 2, 26],
+    color = [66, 107, 242, 255]
+  ): { box: number[]; color: number[] } => ({
+    box,
+    color
+  })
+  function compareFrames(
+    before: Buffer,
+    after: Buffer,
+    composer = { x: 100, y: 450, width: 220, height: 40 },
+    viewport = { width: 400, height: 800 }
+  ): Record<string, unknown> {
+    const dir = directory()
+    const previous = join(dir, 'before.raw.png')
+    const current = join(dir, 'after.raw.png')
+    writeFileSync(previous, before)
+    writeFileSync(current, after)
+    const result = compareIosComposerFrames({
+      previous,
+      current,
+      composer,
+      viewport,
+      timeout: 10000
+    })
+    expect(readFileSync(previous).equals(before)).equals(true)
+    expect(readFileSync(current).equals(after)).equals(true)
+    return result
+  }
+  for (const scale of [1, 2, 3])
+    it(
+      'accepts only the blue caret stripe at actual raster scale' + scale,
+      function () {
+        const actual = compareFrames(
+          composerPng([caret(undefined, [110, 142, 242, 255])], scale),
+          composerPng([caret()], scale)
+        )
+        expect(actual.accepted).equals(true)
+        expect(actual.scale).equals(scale)
+        expect(actual.changedPixels).equals(2 * 26 * scale * scale)
+        expect(actual.diffBounds).deep.equals([
+          110 * scale,
+          455 * scale,
+          112 * scale,
+          481 * scale
+        ])
+      }
+    )
+  it('binds a larger-text caret height to the measured editable field', function () {
+    const actual = compareFrames(
+      composerPng(),
+      composerPng([caret([110, 455, 2, 60])]),
+      { x: 100, y: 450, width: 220, height: 80 }
+    )
+    expect(actual.accepted).equals(true)
+  })
+  for (const [name, shapes] of [
+    ['status clock', [caret(), caret([10, 10, 8, 12], [0, 0, 0, 255])]],
+    ['outside field', [caret([98, 455, 2, 26])]],
+    ['too wide', [caret([110, 455, 6, 26])]],
+    ['letter fade', [caret([110, 455, 2, 26], [20, 20, 20, 255])]],
+    ['control fade', [caret([330, 455, 40, 40])]],
+    ['field fade', [caret([100, 450, 220, 40], [230, 230, 230, 255])]],
+    ['clipped caret', [caret([110, 480, 2, 26])]],
+    ['alpha change', [caret([110, 455, 2, 26], [66, 107, 242, 100])]],
+    ['disconnected stripes', [caret([110, 455, 2, 8]), caret([110, 470, 2, 8])]]
+  ] as const)
+    it('rejects whole-frame ' + name + ' changes', function () {
+      const actual = compareFrames(composerPng(), composerPng([...shapes]))
+      expect(actual.accepted).equals(false)
+    })
+  it('rejects moved carets, changed rasters and unproved coordinate scales', function () {
+    expect(
+      compareFrames(
+        composerPng([caret()]),
+        composerPng([caret([116, 455, 2, 26])])
+      ).accepted
+    ).equals(false)
+    expect(() => compareFrames(composerPng(), composerPng([], 2))).throws(
+      'Unchanged native raster'
+    )
+    expect(() =>
+      compareFrames(composerPng(), composerPng([caret()]), undefined, {
+        width: 500,
+        height: 800
+      })
+    ).throws('Actual uniform native raster scale')
+  })
   function spotlight(mode: string): { ui: Chat2UI; shots: () => number } {
     let reads = 0
     let shots = 0
@@ -867,6 +986,13 @@ describe('chat native capture readiness transport', function () {
     const calls: string[] = []
     let probes = 0
     let shots = 0
+    const blinkFrames = ['caret', 'retry-motion'].includes(mode)
+      ? [composerPng(), composerPng([caret()])]
+      : undefined
+    const motionFrame =
+      mode === 'retry-motion'
+        ? composerPng([caret([10, 10, 8, 12], [0, 0, 0, 255])])
+        : undefined
     const history = { x: 0, y: 0, width: 400, height: 800 }
     const band = { x: 20, y: 400, width: 360, height: 100 }
     const input = { x: 100, y: 450, width: 220, height: 40 }
@@ -885,7 +1011,9 @@ describe('chat native capture readiness transport', function () {
         hierarchy: async ({ signal }: { signal: AbortSignal }) => {
           expect(signal).instanceOf(AbortSignal)
           probes += 1
-          modeledAdvance(31000)
+          modeledAdvance(
+            ['retry-motion', 'slow-screenshot'].includes(mode) ? 1000 : 31000
+          )
           calls.push('metadata')
           if (mode === 'lost-keyboard' && probes > 1)
             throw new Error('Positive Keyboard lost')
@@ -921,6 +1049,14 @@ describe('chat native capture readiness transport', function () {
             args.text === 'Cancel reply'
           )
             throw Object.assign(new Error('Absent'), { code: 'COMMAND_FAILED' })
+          if (typeof args.id === 'string')
+            return {
+              element: {
+                id: args.id,
+                enabled: true,
+                bounds: args.id === 'chat-composer' ? input : band
+              }
+            }
           const text = String(args.text)
           if (!(text in buttons))
             throw new Error('Unexpected public control query')
@@ -938,13 +1074,34 @@ describe('chat native capture readiness transport', function () {
           expect(signal).instanceOf(AbortSignal)
           expect(signal.aborted).equals(false)
           shots += 1
-          modeledAdvance(100)
+          modeledAdvance(mode === 'retry-motion' && probes === 1 ? 1100 : 100)
           calls.push('image')
           if (mode === 'image-transport')
             throw new Error('Image transport disconnected')
+          if (mode === 'slow-screenshot' && shots === 1)
+            await new Promise<void>((resolve, reject) => {
+              const timer = setTimeout(resolve, 2100)
+              signal.addEventListener(
+                'abort',
+                () => {
+                  clearTimeout(timer)
+                  reject(signal.reason)
+                },
+                { once: true }
+              )
+            })
+          if (blinkFrames != null) {
+            if (mode === 'retry-motion' && probes === 1)
+              return shots % 2 === 0 ? blinkFrames[0] : motionFrame!
+            return blinkFrames[shots % 2]
+          }
           return captureImages[
             mode === 'moving-pixels' ? shots % 2 : probes % 2
           ]
+        },
+        platformInfo: async ({ signal }: { signal: AbortSignal }) => {
+          expect(signal.aborted).equals(false)
+          return { screenWidth: 400, screenHeight: 800 }
         },
         tapOn: async () => {
           throw new Error('No input mutation')
@@ -1008,6 +1165,71 @@ describe('chat native capture readiness transport', function () {
       expect(JSON.stringify(ui.steps))
         .not.contains('base64')
         .and.not.contains('data:image')
+    })
+  })
+  it('retains unmodified blinking-caret frame pairs after two fresh positive probes', async function () {
+    await withSlowMetadata(async () => {
+      const { ui, probes } = composer('caret')
+      expect(
+        (await observeComposerCaptureReady(ui, { focused: true, reply: true }))
+          .composerCaptureReady
+      ).equals(true)
+      expect(probes()).equals(2)
+      for (const sample of captureObservation(ui).samples) {
+        expect(sample.rawPairStable).equals(true)
+        expect(sample.rawFrames).length(2)
+        const frames = sample.rawFrames!
+        expect(frames[0].sha256).not.equals(frames[1].sha256)
+        expect(frames[1].comparison?.accepted).equals(true)
+        for (const frame of frames) {
+          const bytes = readFileSync(frame.path)
+          expect(
+            [composerPng(), composerPng([caret()])].some(png =>
+              png.equals(bytes)
+            )
+          ).equals(true)
+        }
+      }
+    })
+  })
+  it('allows an in-flight raw capture to finish beyond its normal2-second burst without aborting90-second readiness', async function () {
+    await withSlowMetadata(async () => {
+      const { ui, probes } = composer('slow-screenshot')
+      expect(
+        (await observeComposerCaptureReady(ui, { focused: true, reply: true }))
+          .composerCaptureReady
+      ).equals(true)
+      expect(probes()).equals(3)
+      expect(captureObservation(ui).samples[0].rawPairStable).equals(false)
+    })
+  })
+  it('retries an unstable burst and still requires two matching fresh positive probes', async function () {
+    await withSlowMetadata(async () => {
+      const { ui, probes } = composer('retry-motion')
+      expect(
+        (await observeComposerCaptureReady(ui, { focused: true, reply: true }))
+          .composerCaptureReady
+      ).equals(true)
+      expect(probes()).equals(3)
+      const samples = captureObservation(ui).samples
+      expect(samples[0].rawPairStable).equals(false)
+      expect(samples.slice(1).map(sample => sample.rawPairStable)).deep.equals([
+        true,
+        true
+      ])
+    })
+  })
+  it('requires exact frames when focused positive keyboard proof was not requested', async function () {
+    await withSlowMetadata(async () => {
+      const { ui } = composer('caret')
+      await captureFailure(
+        observeComposerCaptureReady(ui, { focused: false, reply: true })
+      )
+      for (const sample of captureObservation(ui).samples) {
+        expect(sample.rawPairStable).not.equals(true)
+        for (const frame of sample.rawFrames ?? [])
+          expect(frame.comparison).equals(undefined)
+      }
     })
   })
   for (const mode of [

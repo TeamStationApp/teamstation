@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import type { TeamStationClient } from '../../common/api'
@@ -548,6 +548,71 @@ export async function observeSpotlightCaptureReady(
 }
 
 /** Static stills require outgoing overlays to finish without changing UI timing. */
+/** Compare whole, unmodified frames; only a blue caret-sized editable stripe may vary. */
+export function compareIosComposerFrames(input: {
+  previous: string
+  current: string
+  composer: NonNullable<PublicNode['bounds']>
+  viewport: { width: number; height: number }
+  timeout: number
+}): Json {
+  const result = spawnSync(
+    process.env.CHAT2_PYTHON ?? 'python3',
+    [
+      '-c',
+      `import sys,json,math
+from PIL import Image,ImageChops
+p=json.loads(sys.argv[1])
+a=Image.open(p['previous']); a.load()
+b=Image.open(p['current']); b.load()
+assert a.format==b.format=='PNG', 'Actual raw PNG frames required'
+assert a.size==b.size, 'Unchanged native raster required'
+v=p['viewport']; c=p['composer']
+assert all(math.isfinite(n) for n in [v['width'],v['height'],*c.values()])
+assert v['width']>0 and v['height']>0 and c['width']>0 and c['height']>0
+assert c['x']>=0 and c['y']>=0 and c['x']+c['width']<=v['width'] and c['y']+c['height']<=v['height']
+sx=a.width/v['width']; sy=a.height/v['height']
+assert sx>=1 and abs(sx-sy)<0.000001 and abs(sx-round(sx))<0.000001, 'Actual uniform native raster scale required'
+aa=a.convert('RGBA'); bb=b.convert('RGBA')
+diff=ImageChops.difference(aa,bb)
+boxes=[band.getbbox() for band in diff.split()]
+boxes=[box for box in boxes if box is not None]
+box=None if not boxes else [min(x[0] for x in boxes),min(x[1] for x in boxes),max(x[2] for x in boxes),max(x[3] for x in boxes)]
+editable=[math.ceil(c['x']*sx),math.ceil(c['y']*sy),math.floor((c['x']+c['width'])*sx),math.floor((c['y']+c['height'])*sy)]
+# Two native units plus one raster pixel allow only caret edge rounding/antialiasing.
+limit=math.ceil(2*sx)+1
+mask=diff.split()[0]
+for band in diff.split()[1:]: mask=ImageChops.lighter(mask,band)
+changed=mask.point(lambda value:255 if value else 0).histogram()[255]
+out={'accepted':box is None,'reason':'identical decoded pixels' if box is None else 'non-caret whole-frame change','width':a.width,'height':a.height,'scale':sx,'editableRasterBounds':editable,'maximumStripeWidthPixels':limit,'diffBounds':box,'changedPixels':changed,'invalidCaretPixels':0,'strongBluePixels':0}
+if box is not None and editable[0]<=box[0]<box[2]<=editable[2] and editable[1]<=box[1]<box[3]<=editable[3] and box[2]-box[0]<=limit:
+ rows=set()
+ for y in range(box[1],box[3]):
+  for x in range(box[0],box[2]):
+   p0=aa.getpixel((x,y)); p1=bb.getpixel((x,y))
+   if p0==p1: continue
+   rows.add(y)
+   blue=any(q[2]>q[0] and q[2]>q[1] for q in [p0,p1])
+   strong=any(q[2]>=200 and q[2]-q[0]>=80 and q[2]-q[1]>=60 for q in [p0,p1])
+   dr=p0[0]-p1[0]; dg=p0[1]-p1[1]; db=p0[2]-p1[2]
+   opacity=(dr*dg>=0 or max(abs(dr),abs(dg))<=2) and abs(db)<=min(abs(dr),abs(dg))+2
+   if not (p0[3]==p1[3] and blue and opacity): out['invalidCaretPixels']+=1
+   if strong: out['strongBluePixels']+=1
+ out['accepted']=out['invalidCaretPixels']==0 and out['strongBluePixels']>0 and len(rows)==box[3]-box[1]
+ if out['accepted']: out['reason']='blue editable caret-sized stripe only'
+print(json.dumps(out))`,
+      JSON.stringify(input)
+    ],
+    { encoding: 'utf8', timeout: Math.max(1, Math.min(10000, input.timeout)) }
+  )
+  assert(
+    result.status === 0,
+    'Read-only whole-frame comparison failed: ' +
+      (result.error?.message ?? result.stderr)
+  )
+  return JSON.parse(result.stdout) as Json
+}
+
 export async function observeComposerCaptureReady(
   ui: Chat2UI,
   expected: { focused?: boolean; reply?: boolean } = {},
@@ -560,7 +625,7 @@ export async function observeComposerCaptureReady(
     outcome: 'failed',
     method:
       ui.surface === 'ios'
-        ? 'Two fresh positive iOS composer/Keyboard and control probes with matching geometry/public guards, each followed by an identical adjacent raw Maestro frame pair; no AX focus signal; actual image and text delivery review required'
+        ? 'Two fresh positive iOS composer/Keyboard and control probes with matching geometry/public guards, each followed by an adjacent whole-frame comparison allowing only a blue caret-sized editable stripe; raw originals retained; no AX focus signal; actual image and text delivery review required'
         : ui.native
           ? 'Public accessibility absence, visible controls and stable raw Maestro frames; physical unmount is not inferred'
           : 'Atomic public DOM physical overlay absence, visibility, focus and geometry',
@@ -589,6 +654,7 @@ export async function observeComposerCaptureReady(
       args: Json,
       options: { signal: AbortSignal }
     ) => Promise<{ data?: unknown }>
+    platformInfo: (options: { signal: AbortSignal }) => Promise<Json>
   }
   const nativeProbe = async (selector: Json): Promise<Box | undefined> => {
     try {
@@ -621,6 +687,9 @@ export async function observeComposerCaptureReady(
     }
   }
   try {
+    let rawDirectory: string | undefined
+    let rawSequence = 0
+    let viewport: { width: number; height: number } | undefined
     let reference: string | undefined
     let stableSince = Date.now()
     for (;;) {
@@ -732,16 +801,15 @@ export async function observeComposerCaptureReady(
           const burstDeadline = Math.min(deadline, Date.now() + 2000)
           const frames: Json[] = []
           sample.rawFrames = frames
-          let previous: Json | undefined
+          let previous: (Json & { path: string }) | undefined
           let previousAt = 0
           sample.rawPairStable = false
           while (Date.now() < burstDeadline) {
             remaining()
             const bytes = Buffer.from(
               await device.screenshot({
-                signal: AbortSignal.timeout(
-                  Math.min(remaining(), Math.max(1, burstDeadline - Date.now()))
-                )
+                // A normal burst ending must not abort a valid in-flight capture.
+                signal: AbortSignal.timeout(remaining())
               })
             )
             const raster = captureRaster(bytes)
@@ -749,25 +817,57 @@ export async function observeComposerCaptureReady(
               raster.width > 0 && raster.height > 0,
               'Positive native screenshot dimensions required'
             )
+            assert(
+              bytes
+                .subarray(0, 8)
+                .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+              'Actual raw native PNG required for composer comparison'
+            )
+            rawDirectory ??= mkdtempSync(join(ui.runDir, 'composer-frames-'))
+            const path = join(rawDirectory, String(++rawSequence) + '.raw.png')
+            writeFileSync(path, bytes, { mode: 0o600, flag: 'wx' })
             const frame = {
+              path,
               sha256: createHash('sha256').update(bytes).digest('hex'),
               bytes: bytes.length,
               ...raster
             }
             const at = Date.now()
-            frames.push({ ...frame, at: new Date().toISOString() })
+            const recorded: Json = { ...frame, at: new Date().toISOString() }
+            frames.push(recorded)
             if (frames.length > 12) frames.splice(1, 1)
             sample.image = frame
             sample.raster = raster
-            if (
-              previous?.sha256 === frame.sha256 &&
-              frame.width === previous.width &&
-              frame.height === previous.height &&
-              at - previousAt >= 200
-            ) {
-              sample.rawPairStable = true
-              sample.rawPairStableForMs = at - previousAt
-              break
+            if (previous != null && at - previousAt >= 200) {
+              let accepted =
+                previous.sha256 === frame.sha256 &&
+                frame.width === previous.width &&
+                frame.height === previous.height
+              if (!accepted && expected.focused === true && positive != null) {
+                if (viewport == null) {
+                  const screen = await device.platformInfo({
+                    signal: AbortSignal.timeout(remaining())
+                  })
+                  viewport = {
+                    width: Number(screen.screenWidth),
+                    height: Number(screen.screenHeight)
+                  }
+                }
+                recorded.comparison = compareIosComposerFrames({
+                  previous: previous.path,
+                  current: path,
+                  composer: geometry.composer,
+                  viewport,
+                  timeout: remaining()
+                })
+                accepted = (recorded.comparison as Json).accepted === true
+              }
+              recorded.comparedWith = previous.path
+              if (accepted) {
+                sample.rawPairStable = true
+                sample.rawPairStableForMs = at - previousAt
+                break
+              }
             }
             previous = frame
             previousAt = at
