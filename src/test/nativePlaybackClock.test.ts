@@ -25,6 +25,14 @@ describe('native playback acceptance clock', () => {
       )
     ).equals(9)
   })
+  it('reads the native AVPlayer elapsed suffix from its named clock', () => {
+    expect(
+      nativePlaybackSeconds(
+        '<XCUIElementTypeStaticText name="Elapsed Time" label="0:02 elapsed" value="0:02 elapsed" visible="true"/>',
+        'ios'
+      )
+    ).equals(2)
+  })
   it('rejects absent, hidden, ambiguous and non-clock values', () => {
     for (const nodes of [
       [{ label: 'Duration', value: '01:30' }],

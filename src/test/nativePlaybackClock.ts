@@ -43,8 +43,9 @@ export function nativePlaybackSeconds(
   const node = elapsed[0]
   const text = platform === 'android' ? node.text : node.value
   assert(typeof text === 'string', 'Native elapsed clock text required')
-  assert(/^\d+:\d{2}(?::\d{2})?$/.test(text), 'Native elapsed time format')
-  return text
+  const clock = /^(\d+:\d{2}(?::\d{2})?)(?: elapsed)?$/.exec(text)
+  assert(clock != null, 'Native elapsed time format')
+  return clock[1]
     .split(':')
     .reduce((seconds, part) => seconds * 60 + Number(part), 0)
 }

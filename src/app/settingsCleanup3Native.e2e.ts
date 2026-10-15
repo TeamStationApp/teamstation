@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
@@ -209,6 +209,40 @@ async function main(): Promise<void> {
   const daemon = await maestro(daemonName)
   let m: MaestroHandle | undefined
   let recording = false
+  let iosRecording: ChildProcess | undefined
+  let recordingExit: Promise<number> | undefined
+  const stopRecording = async (): Promise<void> => {
+    if (iosRecording != null) {
+      const process = iosRecording
+      if (process.exitCode == null && process.signalCode == null)
+        process.kill('SIGINT')
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        const code = await Promise.race([
+          recordingExit!,
+          new Promise<never>((resolve, reject) => {
+            timer = setTimeout(() => {
+              process.kill('SIGKILL')
+              reject(new Error('Owned simulator recording did not finalize'))
+            }, 15000)
+          })
+        ])
+        assert.equal(code, 0, 'Owned simulator recording finalized')
+      } catch (error) {
+        process.kill('SIGKILL')
+        await recordingExit
+        throw error
+      } finally {
+        clearTimeout(timer)
+        iosRecording = undefined
+        recordingExit = undefined
+        recording = false
+      }
+    } else {
+      await m?.command('stopRecording')
+      recording = false
+    }
+  }
   let passed = false
   const snapshots = new Map<string, Record<string, unknown>>()
   const clocks = new Map<string, number>()
@@ -378,8 +412,54 @@ async function main(): Promise<void> {
             params.path = join(artifacts, `${test.id}.mp4`)
             recording = true
           }
-          await m.command(step.command, params)
-          if (step.command === 'stopRecording') recording = false
+          if (step.command === 'startRecording' && platform === 'ios') {
+            // The native command driver does not implement recording on iOS.
+            // Record only this explicit owned target and await its first frame.
+            const process = spawn(
+              'xcrun',
+              [
+                'simctl',
+                'io',
+                device,
+                'recordVideo',
+                '--codec=h264',
+                String(params.path)
+              ],
+              { stdio: ['ignore', 'ignore', 'pipe'] }
+            )
+            iosRecording = process
+            recordingExit = new Promise(resolve => {
+              process.once('error', () => {
+                resolve(-1)
+              })
+              process.once('exit', code => {
+                resolve(code ?? -1)
+              })
+            })
+            let timer: ReturnType<typeof setTimeout> | undefined
+            try {
+              await Promise.race([
+                new Promise<void>((resolve, reject) => {
+                  let output = ''
+                  process.stderr.on('data', bytes => {
+                    output += String(bytes)
+                    if (output.includes('Recording started')) resolve()
+                  })
+                  timer = setTimeout(() => {
+                    reject(new Error('Owned simulator recording did not start'))
+                  }, 15000)
+                }),
+                recordingExit.then(() => {
+                  throw new Error(
+                    'Owned simulator recorder exited before its first frame'
+                  )
+                })
+              ])
+            } finally {
+              clearTimeout(timer)
+            }
+          } else if (step.command === 'stopRecording') await stopRecording()
+          else await m.command(step.command, params)
           if (step.command.startsWith('assert')) assertions++
         } else if ('input' in step) {
           await focusField(step.input)
@@ -611,7 +691,7 @@ async function main(): Promise<void> {
     try {
       if (originalFont != null) font(originalFont)
     } finally {
-      if (recording) await m?.command('stopRecording').catch(() => undefined)
+      if (recording) await stopRecording().catch(() => undefined)
       try {
         await m?.detach()
       } finally {
