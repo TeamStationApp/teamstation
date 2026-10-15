@@ -34,6 +34,7 @@ export function ChatAttentionControl(props: {
     >
       <GlassView
         testID="chat-latest-surface"
+        radius={24}
         style={{ position: 'absolute', right: 0, bottom: 0, borderRadius: 24 }}
       >
         <Pressable

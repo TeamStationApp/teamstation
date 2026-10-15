@@ -207,10 +207,153 @@ function captureRaster(bytes: Buffer): { width: number; height: number } {
   throw new Error('Observed native PNG or JPEG screenshot dimensions required')
 }
 
+/** Read the selected clone from public native ancestry, independently of actions. */
+export function iosSpotlightCaptureGeometry(
+  raw: Uint8Array,
+  expected: Pick<Chat2Message, 'id' | 'body'>
+): {
+  geometry: Record<string, NonNullable<PublicNode['bounds']>>
+  compact: boolean
+  bodyApplicable: boolean
+  rawNodeCount: number
+} {
+  type Box = NonNullable<PublicNode['bounds']>
+  const tree = JSON.parse(Buffer.from(raw).toString('utf8')) as Json
+  assert(Array.isArray(tree.nodes), 'Actual public native node array required')
+  const nodes = tree.nodes as Json[]
+  assert(
+    nodes.every(node => node != null && typeof node === 'object'),
+    'Actual public native nodes required'
+  )
+  const byIndex = new Map<number, Json>()
+  for (const node of nodes) {
+    assert(Number.isInteger(node.index), 'Actual native node index required')
+    const index = node.index as number
+    assert(!byIndex.has(index), 'Unique native node indices required')
+    byIndex.set(index, node)
+  }
+  const under = (node: Json, ancestor: Json): boolean => {
+    const visited = new Set<number>()
+    let parent = node.parentIndex
+    while (typeof parent === 'number') {
+      assert(!visited.has(parent), 'Acyclic public native ancestry required')
+      visited.add(parent)
+      if (parent === ancestor.index) return true
+      const owner = byIndex.get(parent)
+      if (owner == null) return false
+      parent = owner.parentIndex
+    }
+    return false
+  }
+  const unique = (matches: Json[], name: string): Json => {
+    assert(matches.length === 1, 'Unique selected ' + name + ' required')
+    return matches[0]
+  }
+  const rect = (node: Json): Box => {
+    const value = node.rect as Box | undefined
+    assert(
+      value != null &&
+        [value.x, value.y, value.width, value.height].every(Number.isFinite) &&
+        value.width > 0 &&
+        value.height > 0,
+      'Positive finite selected native bounds required'
+    )
+    return value
+  }
+  const root = unique(
+    nodes.filter(node => node.identifier === 'chat-message-spotlight'),
+    'spotlight root'
+  )
+  const named = (id: string): Json =>
+    unique(
+      nodes.filter(node => node.identifier === id && under(node, root)),
+      id
+    )
+  const controls = rect(named('chat-message-spotlight-controls'))
+  const panel = rect(named('chat-message-spotlight-panel'))
+  const geometry: Record<string, Box> = { controls, panel }
+  const previews = nodes.filter(
+    node =>
+      node.identifier === 'chat-message-spotlight-preview' && under(node, root)
+  )
+  const same = (a: Box, b: Box): boolean =>
+    (['x', 'y', 'width', 'height'] as const).every(
+      key => Math.abs(a[key] - b[key]) <= 1
+    )
+  // Compact presentation gives the whole controls band to its actions panel.
+  if (previews.length === 0 && same(panel, controls))
+    return {
+      geometry,
+      compact: true,
+      bodyApplicable: false,
+      rawNodeCount: nodes.length
+    }
+  const preview = unique(previews, 'preview')
+  geometry.preview = rect(preview)
+  const inside = (child: Box, parent: Box): boolean =>
+    child.x >= parent.x - 1 &&
+    child.y >= parent.y - 1 &&
+    child.x + child.width <= parent.x + parent.width + 1 &&
+    child.y + child.height <= parent.y + parent.height + 1
+  const intersects = (a: Box, b: Box): boolean =>
+    Math.min(a.x + a.width, b.x + b.width) > Math.max(a.x, b.x) &&
+    Math.min(a.y + a.height, b.y + b.height) > Math.max(a.y, b.y)
+  assert(
+    inside(geometry.preview, controls),
+    'Selected preview must occupy its controls band'
+  )
+  const scroll = unique(
+    nodes.filter(node => node.type === 'ScrollView' && under(node, preview)),
+    'preview ScrollView'
+  )
+  geometry.scroll = rect(scroll)
+  assert(
+    inside(geometry.scroll, geometry.preview),
+    'Selected ScrollView must occupy its preview'
+  )
+  const bubble = unique(
+    nodes.filter(
+      node =>
+        node.identifier === 'chat-bubble-' + expected.id && under(node, preview)
+    ),
+    'bubble inside preview'
+  )
+  geometry.bubble = rect(bubble)
+  assert(
+    intersects(geometry.bubble, geometry.preview),
+    'Selected bubble must intersect its visible preview'
+  )
+  const bodyApplicable = expected.body.trim() !== ''
+  if (bodyApplicable) {
+    // The wrapper can repeat its label; only the actual StaticText is body proof.
+    const body = unique(
+      nodes.filter(
+        node =>
+          node.type === 'StaticText' &&
+          node.label === expected.body &&
+          under(node, bubble)
+      ),
+      'body StaticText inside bubble'
+    )
+    geometry.body = rect(body)
+    assert(
+      intersects(geometry.body, geometry.preview),
+      'Selected text must intersect its visible preview'
+    )
+  }
+  return {
+    geometry,
+    compact: false,
+    bodyApplicable,
+    rawNodeCount: nodes.length
+  }
+}
+
 /** Static capture readiness never changes the functional hold or animation timing. */
 export async function observeSpotlightCaptureReady(
   ui: Chat2UI,
-  timeout = 8000
+  timeout = 8000,
+  expected?: Pick<Chat2Message, 'id' | 'body'>
 ): Promise<Json> {
   type Box = NonNullable<PublicNode['bounds']>
   const samples: Json[] = []
@@ -225,6 +368,8 @@ export async function observeSpotlightCaptureReady(
     samples
   }
   ui.steps.push(observation)
+  let lastRaw: Buffer | undefined
+  let lastImage: Buffer | undefined
   try {
     await ui.present('chat-message-spotlight')
     const deadline = Date.now() + timeout
@@ -237,13 +382,51 @@ export async function observeSpotlightCaptureReady(
       let geometry: Record<string, Box>
       let opaque = true
       if (ui.native) {
-        geometry = {
-          controls: await ui.publicBounds('chat-message-spotlight-controls'),
-          panel: await ui.publicBounds('chat-message-spotlight-panel')
+        if (ui.surface === 'ios' && expected != null) {
+          const api = ui.device as unknown as {
+            hierarchyRaw: (options: {
+              signal: AbortSignal
+            }) => Promise<Uint8Array>
+          }
+          const remaining = Math.max(1, deadline - Date.now())
+          lastRaw = Buffer.from(
+            await api.hierarchyRaw({
+              signal: AbortSignal.timeout(remaining)
+            })
+          )
+          try {
+            const actual = iosSpotlightCaptureGeometry(lastRaw, expected)
+            geometry = actual.geometry
+            sample.selected = {
+              compact: actual.compact,
+              bodyApplicable: actual.bodyApplicable,
+              rawNodeCount: actual.rawNodeCount
+            }
+          } catch (error) {
+            geometry = {}
+            opaque = false
+            sample.selectedError =
+              error instanceof Error ? error.message : String(error)
+          }
+        } else {
+          geometry = {
+            controls: await ui.publicBounds('chat-message-spotlight-controls'),
+            panel: await ui.publicBounds('chat-message-spotlight-panel')
+          }
         }
         sample.bounds = geometry
-        // These temporary bytes are never written or included in evidence logs.
-        const bytes = Buffer.from(await ui.device.screenshot())
+        // Only the last raw bytes are retained temporarily for failed diagnostics.
+        const api = ui.device as unknown as {
+          screenshot: (options: { signal: AbortSignal }) => Promise<Uint8Array>
+        }
+        const bytes = Buffer.from(
+          ui.surface === 'ios' && expected != null
+            ? await api.screenshot({
+                signal: AbortSignal.timeout(Math.max(1, deadline - Date.now()))
+              })
+            : await ui.device.screenshot()
+        )
+        lastImage = bytes
         sample.image = {
           sha256: createHash('sha256').update(bytes).digest('hex'),
           bytes: bytes.length
@@ -324,6 +507,36 @@ export async function observeSpotlightCaptureReady(
     }
   } catch (error) {
     observation.error = error instanceof Error ? error.message : String(error)
+    if (ui.surface === 'ios' && expected != null) {
+      const prefix = join(
+        ui.runDir,
+        'spotlight-readiness-failure-' + Date.now()
+      )
+      const artifacts: Json[] = []
+      for (const [suffix, bytes] of [
+        ['hierarchy.raw.json', lastRaw],
+        [
+          lastImage
+            ?.subarray(0, 8)
+            .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) === true
+            ? 'image.raw.png'
+            : lastImage?.[0] === 255 && lastImage?.[1] === 216
+              ? 'image.raw.jpg'
+              : 'image.raw.bin',
+          lastImage
+        ]
+      ] as const) {
+        if (bytes == null) continue
+        const path = prefix + '-' + suffix
+        writeFileSync(path, bytes, { mode: 0o600, flag: 'wx' })
+        artifacts.push({
+          path,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          bytes: bytes.length
+        })
+      }
+      observation.failureArtifacts = artifacts
+    }
     throw error
   }
 }
@@ -341,7 +554,7 @@ export async function observeComposerCaptureReady(
     outcome: 'failed',
     method:
       ui.surface === 'ios'
-        ? 'Positive iOS composer/Keyboard geometry, public overlay checks and stable raw Maestro frames; no AX focus signal; actual image and text delivery review required'
+        ? 'Two fresh positive iOS composer/Keyboard and control probes with matching geometry/public guards, each followed by an identical adjacent raw Maestro frame pair; no AX focus signal; actual image and text delivery review required'
         : ui.native
           ? 'Public accessibility absence, visible controls and stable raw Maestro frames; physical unmount is not inferred'
           : 'Atomic public DOM physical overlay absence, visibility, focus and geometry',
@@ -508,25 +721,78 @@ export async function observeComposerCaptureReady(
           reply,
           keyboard
         }
-        const bytes = Buffer.from(
-          await device.screenshot({ signal: AbortSignal.timeout(remaining()) })
-        )
-        const raster = captureRaster(bytes)
-        assert(
-          raster.width > 0 && raster.height > 0,
-          'Positive native screenshot dimensions required'
-        )
-        sample.image = {
-          sha256: createHash('sha256').update(bytes).digest('hex'),
-          bytes: bytes.length,
-          ...raster
+        if (ios) {
+          // Pair adjacent frames between expensive public metadata probes.
+          const burstDeadline = Math.min(deadline, Date.now() + 2000)
+          const frames: Json[] = []
+          sample.rawFrames = frames
+          let previous: Json | undefined
+          let previousAt = 0
+          sample.rawPairStable = false
+          while (Date.now() < burstDeadline) {
+            remaining()
+            const bytes = Buffer.from(
+              await device.screenshot({
+                signal: AbortSignal.timeout(
+                  Math.min(remaining(), Math.max(1, burstDeadline - Date.now()))
+                )
+              })
+            )
+            const raster = captureRaster(bytes)
+            assert(
+              raster.width > 0 && raster.height > 0,
+              'Positive native screenshot dimensions required'
+            )
+            const frame = {
+              sha256: createHash('sha256').update(bytes).digest('hex'),
+              bytes: bytes.length,
+              ...raster
+            }
+            const at = Date.now()
+            frames.push({ ...frame, at: new Date().toISOString() })
+            if (frames.length > 12) frames.splice(1, 1)
+            sample.image = frame
+            sample.raster = raster
+            if (
+              previous?.sha256 === frame.sha256 &&
+              frame.width === previous.width &&
+              frame.height === previous.height &&
+              at - previousAt >= 200
+            ) {
+              sample.rawPairStable = true
+              sample.rawPairStableForMs = at - previousAt
+              break
+            }
+            previous = frame
+            previousAt = at
+            const pause = Math.min(200, burstDeadline - Date.now(), remaining())
+            if (pause > 0)
+              await new Promise(resolve => setTimeout(resolve, pause))
+          }
+        } else {
+          const bytes = Buffer.from(
+            await device.screenshot({
+              signal: AbortSignal.timeout(remaining())
+            })
+          )
+          const raster = captureRaster(bytes)
+          assert(
+            raster.width > 0 && raster.height > 0,
+            'Positive native screenshot dimensions required'
+          )
+          sample.image = {
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+            bytes: bytes.length,
+            ...raster
+          }
         }
         eligible =
           overlays.length === 0 &&
           visible &&
           (ios ? expected.focused !== true || positive != null : focused) &&
           reply &&
-          keyboard
+          keyboard &&
+          (!ios || sample.rawPairStable === true)
       } else {
         const script = `
           const overlays=['chat-message-spotlight','chat-picker-scene'].filter(id=>document.querySelector('[data-testid="'+id+'"]')!==null);
@@ -589,7 +855,7 @@ export async function observeComposerCaptureReady(
         geometry,
         publicDOM: sample.publicDOM,
         publicAccessibility: sample.publicAccessibility,
-        image: sample.image
+        image: ui.surface === 'ios' ? sample.raster : sample.image
       })
       const stable = eligible && finite && signature === reference
       if (!stable) {
@@ -3320,7 +3586,13 @@ export class Scenarios {
             : [this.copyLabel])
             await ui.device.assertVisible({ text: exactText(label) })
           if (this.touchActions)
-            this.observations.push(await observeSpotlightCaptureReady(ui))
+            this.observations.push(
+              await observeSpotlightCaptureReady(
+                ui,
+                8000,
+                this.f.messages.target
+              )
+            )
           await ui.shot(
             variant + '-spotlight',
             'Actual ' +
@@ -3416,7 +3688,9 @@ export class Scenarios {
     )
     await this.action(this.f.messages.target)
     if (this.touchActions)
-      this.observations.push(await observeSpotlightCaptureReady(ui))
+      this.observations.push(
+        await observeSpotlightCaptureReady(ui, 8000, this.f.messages.target)
+      )
     await ui.shot(
       'message-actions',
       this.touchActions
