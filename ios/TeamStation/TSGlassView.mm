@@ -28,6 +28,7 @@
 @property (nonatomic, assign) BOOL glassClear;
 @property (nonatomic, assign) CGFloat glassRadius;
 @property (nonatomic, assign) BOOL glassDark;
+@property (nonatomic, assign) BOOL glassBackdropBlur;
 @end
 
 @implementation TSGlassView {
@@ -109,6 +110,10 @@
   [self applyShape];
   _effectView.backgroundColor = UIColor.clearColor;
 
+  if (_glassBackdropBlur) {
+    _effectView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+    return;
+  }
   if (@available(iOS 26.0, *)) {
     // `clear` is the more transparent of the two styles and refracts far more
     // obviously — which is the point of asking for glass at all. `regular` is
@@ -140,6 +145,12 @@
 {
   _glassRadius = value;
   [self applyShape];
+}
+
+- (void)setGlassBackdropBlur:(BOOL)value
+{
+  _glassBackdropBlur = value;
+  [self applyEffect];
 }
 
 /**
@@ -175,5 +186,6 @@ RCT_EXPORT_VIEW_PROPERTY(glassInteractive, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(glassClear, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(glassRadius, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(glassDark, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(glassBackdropBlur, BOOL)
 
 @end

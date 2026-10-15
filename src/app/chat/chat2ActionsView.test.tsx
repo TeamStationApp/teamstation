@@ -7,7 +7,8 @@ import {
   Animated,
   BackHandler,
   Keyboard,
-  type KeyboardEvent as NativeKeyboardEvent
+  type KeyboardEvent as NativeKeyboardEvent,
+  Platform
 } from 'react-native'
 
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -36,6 +37,7 @@ const replaced = [
   [Keyboard, 'addListener'],
   [Keyboard, 'metrics'],
   [Keyboard, 'dismiss'],
+  [Platform, 'OS'],
   [window, 'matchMedia'],
   [window, 'Image'],
   [globalThis, 'matchMedia'],
@@ -887,6 +889,163 @@ describe('chat message presentation', function () {
   })
 
   describe('chat message action ownership', function () {
+    it('releases the native host modal before replying once after exit', async function () {
+      Object.defineProperty(Platform, 'OS', {
+        configurable: true,
+        value: 'ios'
+      })
+      const calls: Array<{ hidden: boolean }> = []
+      let closed = 0
+      function Scene(): React.ReactElement {
+        const [open, setOpen] = useState(true)
+        return (
+          <ChatOverlayHost>
+            <input aria-label="Native composer" />
+            {open && (
+              <MessageMenu
+                {...menu({
+                  onReply: () => {
+                    const composer = host!.querySelector<HTMLInputElement>(
+                      '[aria-label="Native composer"]'
+                    )!
+                    const hidden =
+                      composer.closest('[aria-hidden="true"]') != null
+                    calls.push({ hidden })
+                    if (!hidden) composer.focus()
+                  },
+                  onClose: () => {
+                    closed += 1
+                    setOpen(false)
+                  }
+                })}
+              />
+            )}
+          </ChatOverlayHost>
+        )
+      }
+      const node = await render(<Scene />)
+      const composer = node.querySelector<HTMLInputElement>(
+        '[aria-label="Native composer"]'
+      )!
+      expect(composer.closest('[aria-hidden="true"]')).not.equals(null)
+      const reply = button('Reply')
+      await act(async () => {
+        reply.click()
+        reply.click()
+      })
+      expect(calls, 'Native focus must wait for the host handoff').deep.equals(
+        []
+      )
+      expect(composer.closest('[aria-hidden="true"]')).equals(null)
+      expect(closed).equals(0)
+      await finish()
+      expect(calls).deep.equals([{ hidden: false }])
+      expect(closed).equals(1)
+      expect(document.activeElement).equals(composer)
+      expect(
+        node.querySelector('[data-testid="chat-message-spotlight"]')
+      ).equals(null)
+    })
+
+    for (const platform of ['ios', 'android'] as const) {
+      for (const change of [
+        'permission',
+        'target',
+        'status',
+        'unmount'
+      ] as const)
+        it(`cancels deferred ${platform} Reply after ${change}`, async function () {
+          Object.defineProperty(Platform, 'OS', {
+            configurable: true,
+            value: platform
+          })
+          let replies = 0
+          function Scene({
+            changed = false
+          }: {
+            changed?: boolean
+          }): React.ReactElement {
+            const [open, setOpen] = useState(true)
+            return (
+              <ChatOverlayHost>
+                <input aria-label="Native composer" />
+                {open && !(changed && change === 'unmount') && (
+                  <MessageMenu
+                    {...menu({
+                      message: message({
+                        id:
+                          changed && change === 'target'
+                            ? 'msg_replaced'
+                            : 'msg_1',
+                        status:
+                          changed && change === 'status' ? 'removed' : 'ok'
+                      }),
+                      actions:
+                        changed && change === 'permission'
+                          ? ['copy']
+                          : ['reply', 'copy'],
+                      onReply: () => {
+                        replies += 1
+                      },
+                      onClose: () => {
+                        setOpen(false)
+                      }
+                    })}
+                  />
+                )}
+              </ChatOverlayHost>
+            )
+          }
+          await render(<Scene />)
+          await press('Reply')
+          expect(replies).equals(0)
+          await render(<Scene changed />)
+          await finish()
+          expect(replies).equals(0)
+          expect(
+            host!.querySelector('[data-testid="chat-message-spotlight"]')
+          ).equals(null)
+        })
+
+      it(`uses the latest ${platform} Reply callback once after a successful handoff`, async function () {
+        Object.defineProperty(Platform, 'OS', {
+          configurable: true,
+          value: platform
+        })
+        const calls: string[] = []
+        function Scene({ revision }: { revision: string }): React.ReactElement {
+          const [open, setOpen] = useState(true)
+          return (
+            <ChatOverlayHost>
+              <input aria-label="Native composer" />
+              {open && (
+                <MessageMenu
+                  {...menu({
+                    onReply: () => {
+                      calls.push(revision)
+                    },
+                    onClose: () => {
+                      setOpen(false)
+                    }
+                  })}
+                />
+              )}
+            </ChatOverlayHost>
+          )
+        }
+        await render(<Scene revision="before" />)
+        const reply = button('Reply')
+        await press('Reply')
+        await render(<Scene revision="current" />)
+        await act(async () => {
+          reply.click()
+        })
+        expect(calls).deep.equals([])
+        await finish()
+        expect(calls).deep.equals(['current'])
+      })
+    }
+
     it('keeps the exact filtered mobile set and focuses Reply synchronously through exit without restoring the trigger', async function () {
       let closed = 0
       function Scene(): React.ReactElement {

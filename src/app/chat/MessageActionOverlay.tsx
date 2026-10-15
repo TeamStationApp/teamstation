@@ -233,6 +233,7 @@ function SpotlightFrame(props: MessageActionOverlayProps): React.ReactElement {
       <Animated.View style={[StyleSheet.absoluteFill, { opacity: progress }]}>
         <GlassView
           androidBlur
+          backdropBlur
           opaque={opaque}
           style={StyleSheet.absoluteFill}
         />

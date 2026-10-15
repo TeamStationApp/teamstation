@@ -1,10 +1,168 @@
+import { readFileSync } from 'node:fs'
+import { createRequire, Module } from 'node:module'
+import { resolve } from 'node:path'
+
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
+import React from 'react'
+import { transform } from 'sucrase'
 
+import { backdropOf } from '../components/glassBackdrop'
+import type { GlassViewProps } from '../components/glassViewProps'
+import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { endsIncomingRun } from './chatMessageRuns'
 import { captureMessageBounds } from './chatMessageSource'
 import { spotlightLayout } from './chatSpotlightModel'
 import { message } from './chatViews.test.helpers'
+
+/** Execute the native component at its native bridge boundary, with its own source map. */
+function nativeGlass(
+  platform: 'ios' | 'android'
+): (props: GlassViewProps) => React.ReactElement {
+  const source = resolve('src/app/components/GlassView.native.tsx')
+  const compiled = `${source}.js`
+  const transformed = transform(readFileSync(source, 'utf8'), {
+    transforms: ['typescript', 'jsx', 'imports'],
+    filePath: source,
+    sourceMapOptions: { compiledFilename: compiled }
+  })
+  const loaded = new Module(compiled)
+  const dependencies: Record<string, unknown> = {
+    react: React,
+    'react-native': {
+      Platform: { OS: platform },
+      View: 'native-view',
+      StyleSheet: {
+        absoluteFill: {
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: 0,
+          right: 0
+        }
+      },
+      requireNativeComponent: (name: string) => name,
+      processColor: () => 123
+    },
+    '../theme/ThemeContext': { useTheme: () => tsBallpark },
+    '../theme/tsDark': { tsDark },
+    './glassBackdrop': { backdropOf }
+  }
+  const map = Buffer.from(JSON.stringify(transformed.sourceMap)).toString(
+    'base64'
+  )
+  loaded.require = (name: string) => {
+    if (!(name in dependencies))
+      throw new Error(`Unexpected native dependency: ${name}`)
+    return dependencies[name]
+  }
+  ;(
+    loaded as unknown as {
+      _compile: (code: string, filename: string) => void
+    }
+  )._compile(
+    `${transformed.code}\n//# sourceMappingURL=data:application/json;base64,${map}`,
+    compiled
+  )
+  const exported = loaded.exports as {
+    GlassView?: (props: GlassViewProps) => React.ReactElement
+  }
+  if (exported.GlassView == null)
+    throw new Error('Native GlassView export required')
+  createRequire(source).cache[compiled] = loaded
+  return exported.GlassView
+}
+
+describe('chat native backdrop material boundary', function () {
+  it('opts into iOS backdrop blur without changing ordinary glass, child identity or theme', function () {
+    const GlassView = nativeGlass('ios')
+    const child = React.createElement('span', null, 'Selected message')
+    const ordinary = GlassView({ children: child })
+    const selected = GlassView({
+      children: child,
+      backdropBlur: true,
+      radius: 24,
+      interactive: true,
+      dark: true
+    })
+    const [ordinaryMaterial] = React.Children.toArray(
+      (ordinary.props as { children: React.ReactNode }).children
+    )
+    const [selectedMaterial, selectedChild] = React.Children.toArray(
+      (selected.props as { children: React.ReactNode }).children
+    )
+    expect(React.isValidElement(ordinaryMaterial)).equals(true)
+    expect(React.isValidElement(selectedMaterial)).equals(true)
+    if (
+      !React.isValidElement<{
+        glassBackdropBlur: boolean
+        glassRadius: number
+        glassInteractive: boolean
+        glassDark: boolean
+      }>(ordinaryMaterial) ||
+      !React.isValidElement<{
+        glassBackdropBlur: boolean
+        glassRadius: number
+        glassInteractive: boolean
+        glassDark: boolean
+      }>(selectedMaterial)
+    )
+      throw new Error('Actual native material required')
+    expect(ordinaryMaterial.type).equals('TSGlassView')
+    expect(ordinaryMaterial.props.glassBackdropBlur).equals(false)
+    expect(selectedMaterial.props.glassBackdropBlur).equals(true)
+    expect(selectedMaterial.props.glassRadius).equals(24)
+    expect(selectedMaterial.props.glassInteractive).equals(true)
+    expect(selectedMaterial.props.glassDark).equals(true)
+    expect(
+      React.isValidElement(selectedChild) && selectedChild.props
+    ).deep.equals(child.props)
+    const opaque = GlassView({
+      children: child,
+      backdropBlur: true,
+      opaque: true
+    })
+    expect((opaque.props as { children: React.ReactNode }).children).equals(
+      child
+    )
+    expect((opaque.props as { style: unknown[] }).style).deep.contains({
+      backgroundColor: tsBallpark.glassFallbackColor,
+      elevation: 0
+    })
+  })
+
+  it('preserves Android blur and filled fallback when the iOS opt-in is supplied', function () {
+    const GlassView = nativeGlass('android')
+    const fallback = GlassView({ backdropBlur: true })
+    expect((fallback.props as { style: unknown[] }).style).deep.contains({
+      backgroundColor: tsBallpark.glassFallbackColor,
+      elevation: 3
+    })
+    const blurred = GlassView({
+      backdropBlur: true,
+      androidBlur: true,
+      radius: 18
+    })
+    const [material] = React.Children.toArray(
+      (blurred.props as { children: React.ReactNode }).children
+    )
+    if (
+      !React.isValidElement<{
+        blurRadius: number
+        blurCornerRadius: number
+        glassBackdropBlur?: boolean
+      }>(material)
+    )
+      throw new Error('Actual Android material required')
+    expect(material.type).equals('TSBlurView')
+    expect(material.props.blurRadius).equals(
+      backdropOf(tsBallpark.glassBlur).radius
+    )
+    expect(material.props.blurCornerRadius).equals(18)
+    expect(material.props.glassBackdropBlur).equals(undefined)
+  })
+})
 
 const base = {
   frame: { x: 0, y: 0, width: 390, height: 844 },

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Platform, Pressable, Text, View } from 'react-native'
 
 import { Button } from '../components'
 import { lstrings, sprintf } from '../locales/strings'
@@ -54,6 +54,8 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
   const afterClose = useRef<(() => void) | undefined>(undefined)
   const permissionKey = `${props.message.id}:${props.message.status}:${props.actions.join('|')}`
   const initialPermissions = useRef(permissionKey)
+  const currentPermissions = useRef(permissionKey)
+  currentPermissions.current = permissionKey
   useEffect(() => {
     live.current = true
     return () => {
@@ -84,8 +86,21 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
     focus = false
   ): void => {
     if (closingNow.current || !latest.current.actions.includes(action)) return
-    // Reply's focus and clipboard calls stay inside the trusted activation.
-    if (focus) setFocusHandoff(true)
+    if (focus) {
+      setFocusHandoff(true)
+      if (Platform.OS !== 'web') {
+        // Native focus follows the host's modal release; web needs this gesture.
+        dismiss(() => {
+          if (
+            live.current &&
+            currentPermissions.current === initialPermissions.current &&
+            latest.current.actions.includes(action)
+          )
+            work()
+        })
+        return
+      }
+    }
     work()
     dismiss()
   }
