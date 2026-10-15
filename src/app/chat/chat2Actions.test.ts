@@ -1347,6 +1347,7 @@ describe('chat native adapter compatibility', function () {
     let menu = false
     let selected = false
     let sentinelTyped = false
+    let choosing = false
     const emptyName = (): string =>
       mode === 'dynamic-empty-name' || mode === 'raw-empty-name'
         ? 'Message Message'
@@ -1372,6 +1373,22 @@ describe('chat native adapter compatibility', function () {
       }
     ).hierarchyRaw = async () => {
       calls.push('raw')
+      if (choosing)
+        return raw([
+          node(0, 'Other', { identifier: 'chat-picker-scene' }),
+          node(1, 'Other', { identifier: 'chat-picker-header' }),
+          ...(mode === 'mention-missing-search'
+            ? []
+            : [
+                node(2, 'TextField', {
+                  label: 'Search members',
+                  enabled: mode !== 'mention-disabled-search'
+                })
+              ]),
+          ...(mode === 'mention-ambiguous-search'
+            ? [node(3, 'TextField', { label: 'Search members' })]
+            : [])
+        ])
       const nodes = [
         node(0, 'Keyboard', {
           rect: { x: 0, y: 400, width: 300, height: 200 }
@@ -1435,7 +1452,18 @@ describe('chat native adapter compatibility', function () {
     }
     actual.device.assertVisible = async args => {
       calls.push('read:' + String(args.id ?? args.text))
-      if (args.id === 'chat-composer') return { element: field() }
+      if (args.id === 'chat-composer' && !choosing) return { element: field() }
+      if (
+        choosing &&
+        ['chat-picker-scene', 'chat-picker-header'].includes(String(args.id))
+      ) {
+        if (
+          mode === 'mention-missing-header' &&
+          args.id === 'chat-picker-header'
+        )
+          throw new Error('Actual picker header missing')
+        return { element: { id: args.id, bounds: box } }
+      }
       if (args.text === 'Send')
         return {
           element: {
@@ -1461,6 +1489,17 @@ describe('chat native adapter compatibility', function () {
       throw new Error('Positive actual control missing')
     }
     actual.device.tapOn = async args => {
+      if (choosing && args.text === '^Cancel$') {
+        calls.push('cancel')
+        choosing = false
+        return
+      }
+      if (choosing && args.id === 'chat-mention-member-2') {
+        calls.push('choose')
+        value = '@Aaron Judge '
+        choosing = false
+        return
+      }
       expect(args).deep.equals({ id: 'chat-composer' })
       calls.push('focus')
     }
@@ -1486,9 +1525,12 @@ describe('chat native adapter compatibility', function () {
       } else throw new Error('Unobserved editor point')
     }
     actual.device.inputText = async args => {
-      expect(args.id).equals('chat-composer')
+      if (mode.startsWith('mention-') && args.text === '@')
+        expect([undefined, 'chat-composer']).includes(args.id)
+      else expect(args.id).equals('chat-composer')
       calls.push('type:' + String(args.text))
       value += String(args.text)
+      if (mode.startsWith('mention-') && value === '@') choosing = true
       if (args.text === '7777') sentinelTyped = true
     }
     actual.device.screenshot = async () => captureImages[0]
@@ -1571,6 +1613,80 @@ describe('chat native adapter compatibility', function () {
     expect(model.value()).equals('Fresh\nsecond line')
     expect(model.context).deep.equals({ reply: true, attached: true })
     expect(model.calls).not.includes('type:7777')
+  })
+  it('observes an explicit at-sign transition without reading a composer hidden by its picker, then verifies Cancel exactly', async () => {
+    const model = editable('mention-modal', '', true)
+    await model.actual.replaceDraft('')
+    const start = model.calls.length
+    await model.actual.typeMentionTrigger()
+    expect(model.value()).equals('@')
+    expect(model.context).deep.equals({ reply: true, attached: true })
+    expect(model.calls.slice(start)).deep.equals([
+      'type:@',
+      'read:chat-picker-scene',
+      'read:chat-picker-header',
+      'raw'
+    ])
+    expect(
+      model.actual.steps.find(
+        step => step.name === 'Typed mention trigger opens member chooser'
+      )?.outcome
+    ).equals('passed')
+    await model.actual.text('Cancel')
+    expect(await model.actual.draft()).equals('@')
+  })
+  it('retains visible selected mention verification after the explicit transition', async () => {
+    const model = editable('mention-modal', '')
+    await model.actual.typeMentionTrigger()
+    await model.actual.id('chat-mention-member-2')
+    expect(await model.actual.draft()).equals('@Aaron Judge')
+  })
+  it('keeps generic replacement strict when an arbitrary at-sign body opens a modal', async () => {
+    const model = editable('mention-modal', '')
+    await captureFailure(model.actual.replaceDraft('@'))
+    expect(model.value()).equals('@')
+    expect(
+      model.actual.steps.find(
+        step => step.name === 'Observed iOS editor replacement'
+      )?.outcome
+    ).equals('failed')
+  })
+  for (const mode of [
+    'mention-missing-header',
+    'mention-missing-search',
+    'mention-disabled-search',
+    'mention-ambiguous-search'
+  ])
+    it('rejects an unproved picker transition: ' + mode, async () => {
+      const model = editable(mode, '')
+      await captureFailure(model.actual.typeMentionTrigger())
+      expect(
+        model.actual.steps.find(
+          step => step.name === 'Typed mention trigger opens member chooser'
+        )?.outcome
+      ).equals('failed')
+    })
+  it('uses ordinary supported at-sign input and positive chooser checks on web and Android', async () => {
+    for (const surface of ['android', 'web-wide']) {
+      const actual = ui([], surface)
+      const calls: unknown[] = []
+      actual.device.inputText = async args => {
+        calls.push(['type', args])
+      }
+      actual.device.assertVisible = async args => {
+        calls.push(['visible', args])
+      }
+      await actual.typeMentionTrigger()
+      expect(calls).deep.equals([
+        [
+          'type',
+          { text: '@', ...(surface === 'android' ? { keyPress: true } : {}) }
+        ],
+        ['visible', { id: 'chat-picker-scene', timeout: 15000 }],
+        ['visible', { id: 'chat-picker-header', timeout: 15000 }],
+        ['visible', { text: '^Search members$', enabled: true, timeout: 15000 }]
+      ])
+    }
   })
   it('allows an observed already-selected word without pretending missing Select All guarantees selection', async () => {
     const model = editable('no-select-all')

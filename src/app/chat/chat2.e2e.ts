@@ -2812,7 +2812,7 @@ export class Scenarios {
         await this.openGroup()
         await ui.replaceDraft('')
         await this.reply()
-        await ui.append('@')
+        await ui.typeMentionTrigger()
         await ui.device.assertVisible({ text: exactText('Mention a member') })
         this.observations.push(await observeMentionHeader(ui))
         const members = this.f.members.filter(m => m.userId !== this.viewerId)
@@ -2855,10 +2855,12 @@ export class Scenarios {
     await this.check(
       'E7 chooser cancel, token edit and failed send ownership',
       async () => {
-        await ui.replaceDraft('@')
+        await ui.replaceDraft('')
+        await ui.typeMentionTrigger()
         await ui.text('Cancel')
         assert.equal(await ui.draft(), '@')
-        await ui.replaceDraft('@')
+        await ui.replaceDraft('')
+        await ui.typeMentionTrigger()
         await ui.id('chat-mention-member-' + this.f.members[0].userId)
         await ui.deleteBackward()
         await ui.deleteBackward()
@@ -3871,7 +3873,8 @@ export class Scenarios {
               ' current other-member safety row fully clear of header and bottom overlay'
           )
           await ui.back()
-          await ui.replaceDraft('@')
+          await ui.replaceDraft('')
+          await ui.typeMentionTrigger()
           await ui.device.assertVisible({ text: exactText('Mention a member') })
           this.observations.push(await observeMentionHeader(ui))
           const member = need(
@@ -3974,7 +3977,8 @@ export class Scenarios {
       'Actual current other-member safety row fully clear of header and bottom overlay; role/security composition for review'
     )
     await ui.back()
-    await ui.replaceDraft('@')
+    await ui.replaceDraft('')
+    await ui.typeMentionTrigger()
     await ui.device.assertVisible({ text: exactText('Mention a member') })
     this.observations.push(await observeMentionHeader(ui))
     await ui.shot('mentions', 'Actual mention chooser before selection')

@@ -2631,6 +2631,37 @@ export class Chat2UI {
     await this.tapObserved(need(back, 'Observed public Back control required'))
   }
 
+  /** Typing a standalone at-sign transfers editing to the public member chooser. */
+  async typeMentionTrigger(): Promise<void> {
+    const proof: Args = {
+      name: 'Typed mention trigger opens member chooser',
+      outcome: 'failed'
+    }
+    this.steps.push(proof)
+    try {
+      await this.append('@')
+      await this.present('chat-picker-scene')
+      await this.present('chat-picker-header')
+      if (this.surface === 'ios') {
+        const search = await this.iosRead(
+          { text: exactText('Search members') },
+          'TextField'
+        )
+        proof.search = search
+        assert(search.enabled === true, 'Actual enabled member Search required')
+      } else
+        await this.device.assertVisible({
+          text: exactText('Search members'),
+          enabled: true,
+          timeout: 15000
+        })
+      proof.outcome = 'passed'
+    } catch (error) {
+      proof.error = error instanceof Error ? error.message : String(error)
+      throw error
+    }
+  }
+
   async replaceDraft(text: string): Promise<void> {
     if (this.surface === 'ios') {
       const signal = AbortSignal.timeout(90000)
