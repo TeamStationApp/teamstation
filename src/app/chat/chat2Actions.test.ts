@@ -1,14 +1,21 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import type { ChildProcess } from 'node:child_process'
+import { EventEmitter } from 'node:events'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire, Module } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { PassThrough } from 'node:stream'
 
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 import { transform } from 'sucrase'
 
-import type { Chat2UI, PublicNode } from '../../test/chat2Maestro.e2e'
+import {
+  Chat2UI,
+  iosPublicRead,
+  type PublicNode
+} from '../../test/chat2Maestro.e2e'
 import { backdropOf } from '../components/glassBackdrop'
 import type { GlassViewProps } from '../components/glassViewProps'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -16,7 +23,9 @@ import { tsDark } from '../theme/tsDark'
 import {
   iosSpotlightCaptureGeometry,
   observeComposerCaptureReady,
-  observeSpotlightCaptureReady
+  observeInfoCaptureReady,
+  observeSpotlightCaptureReady,
+  Scenarios
 } from './chat2.e2e'
 import { endsIncomingRun } from './chatMessageRuns'
 import { captureMessageBounds } from './chatMessageSource'
@@ -1029,4 +1038,702 @@ describe('chat native capture readiness transport', function () {
         })
       }
     )
+})
+
+describe('chat native adapter compatibility', function () {
+  this.timeout(10000)
+  const box = { x: 10, y: 20, width: 200, height: 40 }
+  const node = (
+    index: number,
+    type: string,
+    extra: Record<string, unknown> = {}
+  ): Record<string, unknown> => ({
+    index,
+    type,
+    enabled: true,
+    rect: box,
+    ...extra
+  })
+  const raw = (nodes: unknown[]): Buffer =>
+    Buffer.from(JSON.stringify({ nodes }))
+  const directories: string[] = []
+  afterEach(() => {
+    for (const path of directories.splice(0))
+      rmSync(path, { recursive: true, force: true })
+  })
+  function ui(nodes: unknown[], surface = 'ios'): Chat2UI {
+    const path = mkdtempSync(join(tmpdir(), 'chat-adapter-'))
+    directories.push(path)
+    return Object.assign(Object.create(Chat2UI.prototype), {
+      surface,
+      native: surface !== 'web-wide',
+      runDir: path,
+      steps: [],
+      device: { hierarchyRaw: async () => raw(nodes) }
+    }) as Chat2UI
+  }
+  it('reads the actual unique Button instead of a large identically labelled wrapper', () => {
+    const result = iosPublicRead(
+      raw([
+        node(0, 'ScrollView', {
+          rect: { x: 0, y: 0, width: 300, height: 600 }
+        }),
+        node(1, 'Other', {
+          parentIndex: 0,
+          identifier: 'members',
+          rect: { x: 0, y: 10, width: 300, height: 500 }
+        }),
+        node(2, 'Other', {
+          parentIndex: 0,
+          label: 'Safety number with Member Z',
+          rect: { x: 0, y: 20, width: 300, height: 450 }
+        }),
+        node(3, 'Button', {
+          parentIndex: 2,
+          label: 'Safety number with Member Z'
+        })
+      ]),
+      { text: '^Safety number with Member Z$', childOf: { id: 'members' } },
+      'Button'
+    )
+    expect(result.element?.index).equals(3)
+  })
+  it('rejects ambiguous Buttons rather than choosing the first duplicate name', () => {
+    expect(() =>
+      iosPublicRead(
+        raw([
+          node(0, 'Button', { label: 'Same' }),
+          node(1, 'Button', { label: 'Same' })
+        ]),
+        { text: '^Same$' },
+        'Button'
+      )
+    ).throws('Unique exact')
+  })
+  for (const invalid of [0, -1, Infinity, NaN])
+    it('rejects invalid measured native geometry ' + String(invalid), () => {
+      expect(() =>
+        iosPublicRead(
+          raw([
+            node(0, 'Button', {
+              identifier: 'item',
+              rect: { ...box, width: invalid }
+            })
+          ]),
+          { id: 'item' }
+        )
+      ).throws()
+    })
+  it('rejects a matching row outside its observed scope', () => {
+    expect(
+      iosPublicRead(
+        raw([
+          node(0, 'Other', { identifier: 'scope' }),
+          node(1, 'Button', { label: 'Row', rect: { ...box, y: 300 } })
+        ]),
+        { text: '^Row$', childOf: { id: 'scope' } },
+        'Button'
+      ).element
+    ).equals(undefined)
+  })
+  it('rejects a cyclic actual ancestry', () => {
+    expect(() =>
+      iosPublicRead(
+        raw([
+          node(0, 'Other', { identifier: 'scope', parentIndex: 1 }),
+          node(1, 'Button', { label: 'Row', parentIndex: 0 })
+        ]),
+        { text: '^Row$', childOf: { id: 'scope' } },
+        'Button'
+      )
+    ).throws()
+  })
+  it('uses a supported positive exact-ID deep response when the raw tree is capped', async () => {
+    const actual = ui([])
+    let called = 0
+    actual.device.assertVisible = async args => {
+      called++
+      expect(args.id).equals('item')
+      return {
+        element: {
+          id: 'item',
+          class: 'Button',
+          text: 'Actual',
+          bounds: box,
+          enabled: true
+        }
+      }
+    }
+    expect(await actual.publicBounds('item')).deep.equals(box)
+    expect(called).equals(1)
+    expect(await actual.publicText('item')).equals('Actual')
+  })
+  it('rejects wrong-ID deep responses and propagates read errors', async () => {
+    const actual = ui([])
+    actual.device.assertVisible = async () => ({
+      element: { id: 'other', bounds: box }
+    })
+    try {
+      await actual.publicBounds('item')
+      throw Error('Unexpected success')
+    } catch (error) {
+      expect(String(error)).contains('Exact returned')
+    }
+    actual.device.assertVisible = async () => {
+      throw Error('Transport failure')
+    }
+    try {
+      await actual.publicBounds('item')
+      throw Error('Unexpected success')
+    } catch (error) {
+      expect(String(error)).contains('Transport failure')
+    }
+  })
+  it('never substitutes a label for an empty or ambiguous editable draft', async () => {
+    const actual = ui([
+      node(0, 'TextView', {
+        identifier: 'chat-composer',
+        label: 'Message',
+        placeholderValue: 'Message'
+      })
+    ])
+    try {
+      await actual.draft()
+      throw Error('Unexpected success')
+    } catch (error) {
+      expect(String(error)).contains('ambiguous')
+    }
+    actual.device.hierarchy = async () => {
+      throw Error('Unsupported read')
+    }
+    const nonempty = ui([
+      node(0, 'TextView', {
+        identifier: 'chat-composer',
+        label: 'Message',
+        value: 'Actual\nsecond line'
+      })
+    ])
+    expect(await nonempty.draft()).equals('Actual\nsecond line')
+  })
+  it('keeps the Android copyTextFrom path unchanged', async () => {
+    const actual = ui([], 'android')
+    actual.device.copyTextFrom = async () => ({
+      data: 'Android draft',
+      element: { bounds: box }
+    })
+    expect(await actual.draft()).equals('Android draft')
+    expect(await actual.publicText('item')).equals('Android draft')
+  })
+  it('requires the actual observed OS menu item before tapping Copy', async () => {
+    const actual = ui([
+      node(0, 'Button', { label: 'Copy' }),
+      node(1, 'MenuItem', { label: 'Copy' })
+    ])
+    const tapped: unknown[] = []
+    actual.device.tapOnPoint = async args => {
+      tapped.push(args)
+    }
+    await actual.iosMenuAction('Copy')
+    expect(tapped).deep.equals([{ point: '110,40' }])
+    try {
+      await actual.iosMenuAction('Paste')
+      throw Error('Unexpected success')
+    } catch (error) {
+      expect(String(error)).contains('Observed exact OS')
+    }
+    expect(tapped.length).equals(1)
+  })
+  it('observes Delete inside the actual Keyboard and uses an ordinary point tap', async () => {
+    const actual = ui([
+      node(0, 'Keyboard', { rect: { x: 0, y: 400, width: 300, height: 200 } }),
+      node(1, 'Key', {
+        label: 'delete',
+        rect: { x: 250, y: 450, width: 40, height: 40 }
+      })
+    ])
+    const tapped: unknown[] = []
+    actual.device.tapOnPoint = async args => {
+      tapped.push(args)
+    }
+    await actual.deleteBackward()
+    expect(tapped).deep.equals([{ point: '270,470' }])
+  })
+  it('rejects an absent or disabled Delete key without issuing BACKSPACE', async () => {
+    for (const nodes of [
+      [],
+      [node(0, 'Key', { label: 'delete', enabled: false })]
+    ]) {
+      const actual = ui(nodes)
+      try {
+        await actual.deleteBackward()
+        throw Error('Unexpected success')
+      } catch (error) {
+        expect(String(error)).not.contains('Unexpected success')
+      }
+    }
+  })
+  it('keeps non-iOS clipboard, backspace and recording calls unchanged', async () => {
+    const actual = ui([], 'android')
+    const calls: unknown[] = []
+    actual.device.setClipboard = async args => {
+      calls.push(['set', args])
+    }
+    actual.device.pasteText = async () => {
+      calls.push('paste')
+    }
+    actual.device.pressKey = async args => {
+      calls.push(['key', args])
+    }
+    actual.device.startRecording = async args => {
+      calls.push(['start', args])
+    }
+    actual.device.stopRecording = async () => {
+      calls.push('stop')
+    }
+    await actual.clipboardSentinel('sentinel')
+    await actual.pasteClipboard()
+    await actual.deleteBackward()
+    await actual.recordTransition('movie.mp4', async () => {
+      calls.push('work')
+    })
+    expect(calls).deep.equals([
+      ['set', { text: 'sentinel' }],
+      'paste',
+      ['key', { key: 'BACKSPACE' }],
+      ['start', { path: 'movie.mp4' }],
+      'work',
+      'stop'
+    ])
+  })
+  it('uses exact positive deep text metadata without unsupported copy operations', async () => {
+    const actual = ui([])
+    actual.device.assertVisible = async args => {
+      expect(args.text).equals('Send')
+      return {
+        element: {
+          text: 'Send',
+          accessibilityLabel: 'Send',
+          class: 'Button',
+          bounds: box,
+          enabled: false
+        }
+      }
+    }
+    expect(
+      await actual.observedBounds({ text: '^Send$' }, 'Button')
+    ).deep.equals(box)
+    actual.device.assertVisible = async () => ({
+      element: {
+        accessibilityLabel: 'Other Send',
+        class: 'Button',
+        bounds: box
+      }
+    })
+    try {
+      await actual.observedBounds({ text: '^Send$' }, 'Button')
+      throw Error('Unexpected success')
+    } catch (error) {
+      expect(String(error)).contains('Exact returned')
+    }
+  })
+  it('proves empty UI from actual placeholder, disabled Send and unchanged frame', async () => {
+    const nodes = [
+      node(0, 'TextView', {
+        identifier: 'chat-composer',
+        label: 'Message',
+        placeholderValue: 'Message'
+      }),
+      node(1, 'Other', {
+        identifier: 'chat-composer-band',
+        rect: { x: 0, y: 0, width: 300, height: 100 }
+      }),
+      node(2, 'Button', { label: 'Send', enabled: false })
+    ]
+    const actual = ui(nodes)
+    actual.device.screenshot = async () => captureImages[0]
+    await actual.assertEmptyDraft()
+    expect(actual.steps.at(-1)?.name).equals('Actual native empty composer UI')
+    for (const extra of [
+      { value: 'Old account draft' },
+      { placeholderValue: undefined },
+      { enabled: false }
+    ]) {
+      actual.device = {
+        hierarchyRaw: async () =>
+          raw([{ ...nodes[0], ...extra }, ...nodes.slice(1)])
+      } as unknown as Chat2UI['device']
+      try {
+        await actual.assertEmptyDraft()
+        throw Error('Unexpected success')
+      } catch (error) {
+        expect(String(error)).not.contains('Unexpected success')
+      }
+    }
+  })
+  it('rejects enabled Send, retained reply and capped empty-state snapshots', async () => {
+    const base = [
+      node(0, 'TextView', {
+        identifier: 'chat-composer',
+        placeholderValue: 'Message'
+      }),
+      node(1, 'Other', {
+        identifier: 'chat-composer-band',
+        rect: { x: 0, y: 0, width: 300, height: 100 }
+      }),
+      node(2, 'Button', { label: 'Send', enabled: false })
+    ]
+    for (const nodes of [
+      [...base.slice(0, 2), { ...base[2], enabled: true }],
+      [...base, node(3, 'Button', { label: 'Cancel reply' })],
+      [...base, ...Array.from({ length: 297 }, (_, i) => node(i + 3, 'Other'))]
+    ]) {
+      const actual = ui(nodes)
+      try {
+        await actual.assertEmptyDraft()
+        throw Error('Unexpected success')
+      } catch (error) {
+        expect(String(error)).not.contains('Unexpected success')
+      }
+    }
+  })
+  it('runs the real E5 movement callback with documented endpoints and a sub-hold delay', async () => {
+    const actual = ui([])
+    const calls: unknown[] = []
+    actual.absent = async id => {
+      calls.push(id)
+    }
+    actual.text = async () => {}
+    actual.device.dragAndDrop = async args => {
+      calls.push(args)
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: { messages: { target: { id: 'synthetic-target' } } },
+      group: 'synthetic'
+    }) as Scenarios
+    scenario.check = async (name, work) => {
+      if (name.startsWith('E5 movement before hold')) await work()
+    }
+    scenario.anchor = async () => {}
+    scenario.targetBounds = async () => box
+    scenario.action = async () => {}
+    scenario.protocolPeer = async () =>
+      ({
+        engine: {
+          open: async () => ({
+            messages: [{ id: 'synthetic-target', reactions: [{ emoji: '👍' }] }]
+          })
+        }
+      }) as unknown as Awaited<ReturnType<Scenarios['protocolPeer']>>
+    await scenario.E5()
+    expect(calls[0]).deep.equals({
+      from: { point: '20,30' },
+      to: { point: '20,90' },
+      holdDuration: 50,
+      duration: 200
+    })
+    expect(calls[1]).equals('chat-message-spotlight')
+  })
+  function recorder(
+    actual: Chat2UI,
+    mode: string,
+    calls: unknown[]
+  ): (command: string, args: string[]) => ChildProcess {
+    return (command, args) => {
+      expect(command).equals('/usr/bin/xcrun')
+      expect(args.slice(0, 3)).deep.equals(['simctl', 'io', 'owned-simulator'])
+      const child = new EventEmitter() as EventEmitter & {
+        pid: number
+        stderr: PassThrough
+        kill: (signal: string) => boolean
+      }
+      child.pid = 123
+      child.stderr = new PassThrough()
+      child.kill = signal => {
+        calls.push(signal)
+        if (mode !== 'missing-file')
+          writeFileSync(args.at(-1)!, Buffer.alloc(64))
+        queueMicrotask(() =>
+          child.emit('close', mode === 'bad-exit' ? 1 : 0, null)
+        )
+        return true
+      }
+      queueMicrotask(() =>
+        mode === 'no-ack'
+          ? child.emit('close', 1, null)
+          : child.stderr.emit('data', Buffer.from('Recording started'))
+      )
+      if (mode === 'early-exit')
+        queueMicrotask(() => child.emit('close', 0, null))
+      return child as unknown as ChildProcess
+    }
+  }
+  it('records only after the actual first-frame marker and finalizes before probing', async () => {
+    const actual = ui([])
+    const calls: unknown[] = []
+    Object.assign(actual, {
+      deviceId: 'owned-simulator',
+      fixture: { devices: { ios: { id: 'owned-simulator' } } }
+    })
+    const path = join(actual.runDir, 'movie.mp4')
+    await actual.recordTransition(
+      path,
+      async () => {
+        calls.push('work')
+      },
+      recorder(actual, 'valid', calls),
+      file => {
+        expect(file).equals(path)
+        calls.push('probe')
+        return { duration: 1 }
+      }
+    )
+    expect(calls).deep.equals(['work', 'SIGINT', 'probe'])
+    expect(actual.steps.at(-1)?.exitCode).equals(0)
+  })
+  for (const mode of ['no-ack', 'bad-exit', 'missing-file', 'early-exit'])
+    it(
+      'rejects recorder ' + mode + ' without a successful video claim',
+      async () => {
+        const actual = ui([])
+        const calls: unknown[] = []
+        Object.assign(actual, {
+          deviceId: 'owned-simulator',
+          fixture: { devices: { ios: { id: 'owned-simulator' } } }
+        })
+        try {
+          await actual.recordTransition(
+            join(actual.runDir, 'movie.mp4'),
+            async () => {
+              calls.push('work')
+            },
+            recorder(actual, mode, calls),
+            () => {
+              throw Error('No invalid recording may be probed')
+            }
+          )
+          throw Error('Unexpected success')
+        } catch (error) {
+          expect(String(error)).not.contains('Unexpected success')
+        }
+        expect(actual.steps.at(-1)?.outcome).equals('failed')
+        if (mode === 'no-ack') expect(calls).not.includes('work')
+      }
+    )
+  it('preserves action failures while stopping the owned recording in finally', async () => {
+    const actual = ui([])
+    const calls: unknown[] = []
+    Object.assign(actual, {
+      deviceId: 'owned-simulator',
+      fixture: { devices: { ios: { id: 'owned-simulator' } } }
+    })
+    try {
+      await actual.recordTransition(
+        join(actual.runDir, 'movie.mp4'),
+        async () => {
+          throw Error('Action failed')
+        },
+        recorder(actual, 'valid', calls),
+        () => ({ duration: 1 })
+      )
+      throw Error('Unexpected success')
+    } catch (error) {
+      expect(String(error)).contains('Action failed')
+    }
+    expect(calls).deep.equals(['SIGINT'])
+  })
+  it('waits for actual complete native header geometry before an info still', async () => {
+    let calls = 0
+    const actual = ui([])
+    actual.present = async () => {}
+    actual.device.platformInfo = async () => ({
+      screenWidth: 300,
+      screenHeight: 600
+    })
+    actual.nodes = async () => {
+      calls++
+      return calls === 1
+        ? []
+        : [
+            {
+              type: 'Button',
+              text: 'Back',
+              bounds: { x: 0, y: 0, width: 40, height: 40 }
+            },
+            {
+              type: 'Button',
+              text: 'Account, synthetic',
+              bounds: { x: 250, y: 0, width: 40, height: 40 }
+            }
+          ]
+    }
+    await observeInfoCaptureReady(actual, 1000)
+    expect(calls).greaterThan(2)
+  })
+  it('uses observed OS Copy/Paste to establish and verify the disposable sentinel', async () => {
+    const actual = ui([])
+    const commands: string[] = []
+    let value = ''
+    let clipboard = ''
+    let menu = ''
+    actual.replaceDraft = async text => {
+      value = text
+    }
+    actual.device.longPressOn = async () => {
+      commands.push('hold')
+      menu = value === '' ? 'Paste' : 'Select All'
+    }
+    Object.assign(actual.device, {
+      hierarchyRaw: async () =>
+        raw([
+          node(0, 'TextView', {
+            identifier: 'chat-composer',
+            label: 'Message',
+            value
+          }),
+          ...(menu === '' ? [] : [node(1, 'MenuItem', { label: menu })])
+        ])
+    })
+    actual.device.tapOnPoint = async () => {
+      commands.push(menu)
+      if (menu === 'Select All') menu = 'Copy'
+      else if (menu === 'Copy') {
+        clipboard = value
+        menu = ''
+      } else if (menu === 'Paste') {
+        value = clipboard
+        menu = ''
+      }
+    }
+    await actual.clipboardSentinel('Disposable sentinel')
+    expect(commands).deep.equals([
+      'hold',
+      'Select All',
+      'Copy',
+      'hold',
+      'Paste'
+    ])
+    expect(value).equals('')
+    expect(clipboard).equals('Disposable sentinel')
+  })
+  it('chooses an actually unique other-member label for native information framing', async () => {
+    const actual = ui([])
+    const selectors: unknown[] = []
+    actual.device.platformInfo = async () => ({ screenHeight: 600 })
+    actual.device.scrollUntilVisible = async args => {
+      selectors.push(args.element)
+    }
+    actual.device.assertVisible = async () => ({})
+    actual.nodes = async () => [
+      { text: 'Back', bounds: { x: 0, y: 0, width: 40, height: 40 } }
+    ]
+    actual.observedBounds = async (selected, type) => {
+      selectors.push([selected, type])
+      return { ...box, y: 100 }
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      viewerId: 9,
+      f: {
+        members: [
+          { userId: 1, name: 'Same', role: '' },
+          { userId: 2, name: 'Same', role: '' },
+          { userId: 3, name: 'Unique', role: 'Member' }
+        ]
+      },
+      observations: []
+    }) as Scenarios
+    const selected = await scenario.showInfoMember()
+    expect(selected.userId).equals(3)
+    expect(selectors[0]).deep.equals({ text: '^Safety number with Unique$' })
+    expect(selectors[1]).deep.equals([
+      {
+        text: '^Safety number with Unique$',
+        childOf: { id: 'chat-info-members' }
+      },
+      'Button'
+    ])
+  })
+  it('routes measured browser gestures through supported endpoints and native gestures through swipe', async () => {
+    for (const surface of ['ios', 'android', 'web-wide']) {
+      const actual = ui([], surface)
+      const calls: unknown[] = []
+      actual.device.swipe = async args => {
+        calls.push(['swipe', args])
+      }
+      actual.device.dragAndDrop = async args => {
+        calls.push(['drag', args])
+      }
+      await actual.measuredSwipe({
+        startX: 10,
+        startY: 20,
+        endX: 40,
+        endY: 50,
+        duration: 200
+      })
+      expect(calls).deep.equals(
+        surface === 'web-wide'
+          ? [
+              [
+                'drag',
+                {
+                  from: { point: '10,20' },
+                  to: { point: '40,50' },
+                  holdDuration: 1,
+                  duration: 200
+                }
+              ]
+            ]
+          : [
+              [
+                'swipe',
+                { startX: 10, startY: 20, endX: 40, endY: 50, duration: 200 }
+              ]
+            ]
+      )
+    }
+  })
+  it('binds a clipped long hold to the actual bubble with an element-relative visible point', async () => {
+    const actual = ui([])
+    const calls: unknown[] = []
+    actual.hideKeyboard = async () => {}
+    actual.absent = async () => {}
+    actual.shot = async () => {}
+    actual.publicBounds = async () => ({
+      x: 0,
+      y: 100,
+      width: 250,
+      height: 100
+    })
+    actual.device.platformInfo = async () => ({
+      screenWidth: 300,
+      screenHeight: 600
+    })
+    actual.device.longPressOn = async args => {
+      calls.push(args)
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: { messages: { long: { id: 'long' } } },
+      observations: []
+    }) as Scenarios
+    scenario.check = async (name, work) => {
+      if (name.startsWith('E5 partially scrolled')) await work()
+    }
+    scenario.openGroup = async () => {}
+    scenario.anchor = async () => {}
+    scenario.readingBand = async () => ({ top: 100, bottom: 500 })
+    scenario.targetBounds = async () => ({
+      x: 10,
+      y: -200,
+      width: 200,
+      height: 1000
+    })
+    scenario.menuState = async () => ({})
+    scenario.dismiss = async () => {}
+    await scenario.E5()
+    expect(calls).deep.equals([
+      { id: 'chat-bubble-long', point: '50%,50%', duration: 550 }
+    ])
+  })
 })

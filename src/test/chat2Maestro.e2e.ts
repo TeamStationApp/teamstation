@@ -1,6 +1,11 @@
 /** Public-UI actions, private evidence and one explicitly owned Maestro lease. */
 import assert from 'node:assert/strict'
-import { execFileSync, spawnSync } from 'node:child_process'
+import {
+  type ChildProcess,
+  execFileSync,
+  spawn,
+  spawnSync
+} from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   chmodSync,
@@ -101,6 +106,133 @@ export interface PublicNode {
   bounds?: Bounds
   focused?: boolean
   enabled?: boolean
+}
+
+interface IosReadNode extends PublicNode {
+  index: number
+  parentIndex?: number
+  value?: string
+  placeholderValue?: string
+  label?: string
+}
+
+/** Read native metadata without copying text or changing the clipboard. */
+export function iosPublicRead(
+  raw: Uint8Array,
+  selected: Args,
+  expectedType?: string
+): { nodes: IosReadNode[]; element?: IosReadNode } {
+  const tree = object(JSON.parse(Buffer.from(raw).toString('utf8')))
+  assert(Array.isArray(tree.nodes), 'Actual raw native node array required')
+  const nodes = tree.nodes.map((entry: unknown): IosReadNode => {
+    const n = object(entry)
+    assert(Number.isInteger(n.index), 'Native public node index required')
+    return {
+      index: n.index as number,
+      parentIndex:
+        typeof n.parentIndex === 'number' ? n.parentIndex : undefined,
+      id: typeof n.identifier === 'string' ? n.identifier : undefined,
+      type: typeof n.type === 'string' ? n.type : undefined,
+      label: typeof n.label === 'string' ? n.label : undefined,
+      value: typeof n.value === 'string' ? n.value : undefined,
+      placeholderValue:
+        typeof n.placeholderValue === 'string' ? n.placeholderValue : undefined,
+      text:
+        typeof n.value === 'string'
+          ? n.value
+          : typeof n.label === 'string'
+            ? n.label
+            : undefined,
+      bounds: bounds(n.rect),
+      enabled: typeof n.enabled === 'boolean' ? n.enabled : undefined
+    }
+  })
+  const byIndex = new Map<number, IosReadNode>()
+  for (const node of nodes) {
+    assert(!byIndex.has(node.index), 'Unique native public indices required')
+    byIndex.set(node.index, node)
+  }
+  const chain = (node: IosReadNode): IosReadNode[] => {
+    const parents: IosReadNode[] = []
+    const seen = new Set<number>([node.index])
+    let index = node.parentIndex
+    while (index != null) {
+      assert(!seen.has(index), 'Acyclic actual native ancestry required')
+      seen.add(index)
+      const parent = need(
+        byIndex.get(index),
+        'Complete actual native ancestry required'
+      )
+      parents.push(parent)
+      index = parent.parentIndex
+    }
+    return parents
+  }
+  const valid = (node: IosReadNode): Bounds => {
+    const b = need(node.bounds, 'Observed native public bounds required')
+    assert(
+      [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+        b.width > 0 &&
+        b.height > 0,
+      'Positive finite native public bounds required'
+    )
+    return b
+  }
+  const inside = (child: Bounds, parent: Bounds): boolean =>
+    child.x >= parent.x - 1 &&
+    child.y >= parent.y - 1 &&
+    child.x + child.width <= parent.x + parent.width + 1 &&
+    child.y + child.height <= parent.y + parent.height + 1
+  const scopeId = object(selected.childOf).id
+  assert(
+    selected.childOf == null || typeof scopeId === 'string',
+    'Exact public scope identifier required'
+  )
+  let scope: IosReadNode | undefined
+  if (typeof scopeId === 'string') {
+    const scopes = nodes.filter(node => node.id === scopeId)
+    assert(scopes.length === 1, 'Unique observed native scope required')
+    scope = scopes[0]
+    valid(scope)
+  }
+  const id = typeof selected.id === 'string' ? selected.id : undefined
+  const pattern =
+    typeof selected.text === 'string'
+      ? new RegExp(selected.text, 'i')
+      : undefined
+  assert(
+    id != null || pattern != null || expectedType != null,
+    'Exact public identifier, text or native type required'
+  )
+  const matches = nodes.filter(node => {
+    if (id != null && node.id !== id) return false
+    if (
+      pattern != null &&
+      ![node.label, node.value, node.placeholderValue].some(
+        value => value != null && pattern.test(value)
+      )
+    )
+      return false
+    if (expectedType != null && node.type !== expectedType) return false
+    if (scope != null) {
+      if (!inside(valid(node), valid(scope))) return false
+      const owners = chain(node)
+      const ancestor = owners.some(parent => parent.index === scope.index)
+      // Native accessibility can flatten a section and its visible Card to siblings.
+      const sameParent =
+        node.parentIndex != null && node.parentIndex === scope.parentIndex
+      const scroll = owners.find(parent => parent.type === 'ScrollView')
+      const scopeScroll = chain(scope).find(
+        parent => parent.type === 'ScrollView'
+      )
+      const sameScroll = scroll != null && scopeScroll?.index === scroll.index
+      if (!ancestor && !sameParent && !sameScroll) return false
+    }
+    return true
+  })
+  assert(matches.length <= 1, 'Unique exact native public element required')
+  if (matches[0] != null) valid(matches[0])
+  return { nodes, element: matches[0] }
 }
 
 /** iOS exposes no focus flag: require the actual composer above an observed IME. */
@@ -1476,7 +1608,506 @@ export class Chat2UI {
     return { box, capture, path, ...proof }
   }
 
-  async observedBounds(selected: Args): Promise<Bounds> {
+  async iosRaw(signal = AbortSignal.timeout(30000)): Promise<Uint8Array> {
+    const api = this.device as unknown as {
+      hierarchyRaw: (options: { signal: AbortSignal }) => Promise<Uint8Array>
+    }
+    return await api.hierarchyRaw({ signal })
+  }
+
+  /** These are fresh observed OS elements, never fabricated clipboard contents. */
+  async iosMenuAction(label: string): Promise<void> {
+    const read = iosPublicRead(
+      await this.iosRaw(),
+      { text: exactText(label) },
+      'MenuItem'
+    )
+    const node = need(
+      read.element,
+      'Observed exact OS menu item required: ' + label
+    )
+    assert(node.enabled === true, 'Enabled observed OS menu item required')
+    await this.tapObserved(node)
+  }
+
+  async clipboardSentinel(text: string): Promise<void> {
+    if (this.surface !== 'ios') {
+      await this.device.setClipboard({ text })
+      return
+    }
+    await this.replaceDraft(text)
+    await this.device.longPressOn({ id: 'chat-composer', duration: 600 })
+    await this.iosMenuAction('Select All')
+    await this.iosMenuAction('Copy')
+    await this.replaceDraft('')
+    // Paste once to prove that the ordinary OS Copy actually installed the sentinel.
+    await this.pasteClipboard()
+    assert.equal(
+      await this.draft(),
+      text,
+      'Observed OS sentinel Copy/Paste required'
+    )
+    await this.replaceDraft('')
+  }
+
+  async pasteClipboard(): Promise<void> {
+    if (this.surface !== 'ios') {
+      await this.device.pasteText()
+      return
+    }
+    await this.device.longPressOn({ id: 'chat-composer', duration: 600 })
+    await this.iosMenuAction('Paste')
+  }
+
+  /** Browser CDP swipe ignores absolute endpoints; its drag supports real mouse movement. */
+  async measuredSwipe(input: {
+    startX: number
+    startY: number
+    endX: number
+    endY: number
+    duration: number
+  }): Promise<void> {
+    assert(
+      Object.values(input).every(Number.isFinite) &&
+        input.duration > 0 &&
+        [input.startX, input.startY, input.endX, input.endY].every(
+          value => value >= 0
+        ),
+      'Actual finite measured gesture coordinates required'
+    )
+    if (this.native) await this.device.swipe(input)
+    else
+      await this.device.dragAndDrop({
+        from: { point: `${input.startX},${input.startY}` },
+        to: { point: `${input.endX},${input.endY}` },
+        holdDuration: 1,
+        duration: input.duration
+      })
+  }
+
+  async deleteBackward(): Promise<void> {
+    if (this.surface !== 'ios') {
+      await this.device.pressKey({ key: 'BACKSPACE' })
+      return
+    }
+    const raw = await this.iosRaw()
+    const read = iosPublicRead(raw, { text: '^delete$' }, 'Key')
+    const key =
+      read.element ?? (await this.iosRead({ text: exactText('delete') }, 'Key'))
+    const keyboard = iosPublicRead(raw, {}, 'Keyboard')
+    assert(
+      keyboard.element != null && key.enabled === true,
+      'Observed enabled Delete key and Keyboard required'
+    )
+    const k = need(key.bounds, 'Delete key bounds required')
+    const b = need(keyboard.element.bounds, 'Keyboard bounds required')
+    assert(
+      k.x >= b.x &&
+        k.y >= b.y &&
+        k.x + k.width <= b.x + b.width &&
+        k.y + k.height <= b.y + b.height,
+      'Delete key must belong to the actual Keyboard band'
+    )
+    await this.tapObserved(key)
+  }
+
+  async assertEmptyDraft(): Promise<void> {
+    if (this.surface !== 'ios') {
+      assert.equal(await this.draft(), '')
+      return
+    }
+    const signal = AbortSignal.timeout(90000)
+    const inspect = async (): Promise<Args> => {
+      const raw = await this.iosRaw(signal)
+      const rawPath = join(
+        this.runDir,
+        'ios-empty-raw-' + Date.now() + '-' + randomUUID() + '.json'
+      )
+      writeFileSync(rawPath, raw, { mode: 0o600, flag: 'wx' })
+      const input = iosPublicRead(raw, { id: 'chat-composer' }, 'TextView')
+      assert(
+        input.nodes.length < 300,
+        'Empty-state tree reached the pinned native snapshot cap; completeness is unavailable'
+      )
+      const node = need(
+        input.element,
+        'Fresh raw iOS editable composer required for empty UI'
+      )
+      assert(
+        node.enabled === true &&
+          typeof node.placeholderValue === 'string' &&
+          node.placeholderValue !== '',
+        'Actual enabled composer and observed placeholder required'
+      )
+      assert(
+        node.value == null || node.value === node.placeholderValue,
+        'Composer still exposes a nonempty value'
+      )
+      const send = need(
+        iosPublicRead(raw, { text: exactText('Send') }, 'Button').element,
+        'Fresh actual Send Button required'
+      )
+      assert(
+        send.enabled === false,
+        'Actual Send Button must be positively disabled'
+      )
+      assert(
+        !input.nodes.some(
+          n => n.id === 'chat-attachment-chip' || n.label === 'Cancel reply'
+        ),
+        'Empty UI cannot retain reply or attachment chips'
+      )
+      const band = need(
+        iosPublicRead(raw, { id: 'chat-composer-band' }).element?.bounds,
+        'Fresh whole composer band required'
+      )
+      const box = need(node.bounds, 'Fresh editable bounds required')
+      assert(
+        box.x >= band.x &&
+          box.y >= band.y &&
+          box.x + box.width <= band.x + band.width &&
+          box.y + box.height <= band.y + band.height,
+        'Actual empty composer must fit its whole band'
+      )
+      return {
+        composer: box,
+        band,
+        send: send.bounds,
+        placeholder: node.placeholderValue,
+        rawPath,
+        rawSha256: createHash('sha256').update(raw).digest('hex')
+      }
+    }
+    const before = await inspect()
+    const path = join(this.runDir, 'ios-empty-composer-' + Date.now() + '.png')
+    const api = this.device as unknown as {
+      screenshot: (options: { signal: AbortSignal }) => Promise<Uint8Array>
+    }
+    const image = saveCapture(await api.screenshot({ signal }), path)
+    const after = await inspect()
+    for (const key of ['composer', 'band', 'send'])
+      assert.deepEqual(
+        before[key],
+        after[key],
+        'Empty UI geometry changed during capture'
+      )
+    this.steps.push({
+      name: 'Actual native empty composer UI',
+      before,
+      after,
+      image,
+      whitespaceFidelity:
+        'Native AX trims values; no exact whitespace-string claim',
+      actualImageReviewRequired: true
+    })
+  }
+
+  async recordTransition(
+    path: string,
+    work: () => Promise<void>,
+    recorder: (command: string, args: string[]) => ChildProcess = (
+      command,
+      args
+    ) => spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'] }),
+    inspect: (path: string) => Args = path => {
+      const result = spawnSync(
+        process.env.CHAT2_FFPROBE ?? 'ffprobe',
+        [
+          '-v',
+          'error',
+          '-threads',
+          '2',
+          '-read_intervals',
+          '%+1',
+          '-count_frames',
+          '-show_entries',
+          'stream=codec_type,width,height,nb_read_frames:format=duration',
+          '-of',
+          'json',
+          path
+        ],
+        { encoding: 'utf8', timeout: 15000 }
+      )
+      assert(
+        result.status === 0,
+        'Actual native movie must be readable by ffprobe'
+      )
+      const actual = object(JSON.parse(result.stdout))
+      const streams = Array.isArray(actual.streams)
+        ? actual.streams.map(object)
+        : []
+      assert(
+        streams.some(
+          stream =>
+            stream.codec_type === 'video' &&
+            Number(stream.width) > 0 &&
+            Number(stream.height) > 0 &&
+            Number(stream.nb_read_frames) > 0
+        ),
+        'Actual decoded video frames required'
+      )
+      assert(
+        Number(object(actual.format).duration) > 0,
+        'Actual positive video duration required'
+      )
+      return {
+        ...actual,
+        validation:
+          'At most the first second decoded with two threads; complete original retained for transition review'
+      }
+    }
+  ): Promise<void> {
+    if (this.surface !== 'ios') {
+      await this.device.startRecording({ path })
+      try {
+        await work()
+      } finally {
+        await this.device.stopRecording()
+      }
+      return
+    }
+    assert(
+      resolve(dirname(path)) === resolve(this.runDir) &&
+        !existsSync(path) &&
+        path.endsWith('.mp4'),
+      'New owned recording artifact required'
+    )
+    assert(
+      this.deviceId === this.fixture.devices?.ios?.id,
+      'Exact owned simulator binding required'
+    )
+    const args = [
+      'simctl',
+      'io',
+      this.deviceId,
+      'recordVideo',
+      '--codec',
+      'h264',
+      path
+    ]
+    const child = recorder('/usr/bin/xcrun', args)
+    const observation: Args = {
+      name: 'Read-only owned iOS simulator recording observer',
+      path,
+      pid: child.pid,
+      argv: ['/usr/bin/xcrun', ...args],
+      startedAt: new Date().toISOString(),
+      uiActions: 'Maestro TypeScript only',
+      outcome: 'failed'
+    }
+    this.steps.push(observation)
+    let workCompleted = false
+    let stopRequested = false
+    let exited = false
+    let started = false
+    let failure: Error | undefined
+    let exitCode: number | null = null
+    let exitSignal: NodeJS.Signals | null = null
+    let startResolve: () => void, startReject: (error: Error) => void
+    const ready = new Promise<void>((resolve, reject) => {
+      startResolve = resolve
+      startReject = reject
+    })
+    let stderr = ''
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString()).slice(-4096)
+      if (!started && stderr.includes('Recording started')) {
+        started = true
+        startResolve()
+      }
+    })
+    child.once('error', error => {
+      failure = error
+      startReject(error)
+    })
+    const closed = new Promise<void>(resolve =>
+      child.once('close', (code, signal) => {
+        exited = true
+        exitCode = code
+        exitSignal = signal
+        if (started && !stopRequested)
+          failure = new Error(
+            'Recorder exited before the requested transition completed'
+          )
+        if (!started)
+          startReject(
+            new Error('Recorder exited before its first-frame acknowledgment')
+          )
+        resolve()
+      })
+    )
+    const startLimit = setTimeout(() => {
+      startReject(
+        new Error('No first-frame recording acknowledgment within 10 seconds')
+      )
+    }, 10000)
+    const limit = setTimeout(() => {
+      failure = new Error('Owned recording exceeded 120 seconds')
+      child.kill('SIGINT')
+    }, 120000)
+    try {
+      await ready
+      clearTimeout(startLimit)
+      assert(
+        !exited && failure == null,
+        'Acknowledged recorder must still be running'
+      )
+      await work()
+      workCompleted = true
+    } catch (error) {
+      observation.error = error instanceof Error ? error.message : String(error)
+      throw error
+    } finally {
+      clearTimeout(startLimit)
+      clearTimeout(limit)
+      stopRequested = true
+      if (!exited) child.kill('SIGINT')
+      const wait = async (milliseconds: number): Promise<boolean> => {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const result = await Promise.race([
+          closed.then(() => true),
+          new Promise<boolean>(resolve => {
+            timer = setTimeout(() => {
+              resolve(false)
+            }, milliseconds)
+          })
+        ])
+        clearTimeout(timer)
+        return result
+      }
+      if (!(await wait(15000))) {
+        failure = new Error(
+          'Owned recording did not finalize within 15 seconds'
+        )
+        child.kill('SIGKILL')
+        assert(
+          await wait(2000),
+          'Owned recorder did not exit after bounded forced cleanup'
+        )
+      }
+      observation.completedAt = new Date().toISOString()
+      observation.exitCode = exitCode
+      observation.exitSignal = exitSignal
+      observation.stderrSha256 = createHash('sha256')
+        .update(stderr)
+        .digest('hex')
+      assert(failure == null, failure?.message)
+      assert(
+        exited && exitCode === 0 && exitSignal == null,
+        'Native recorder must finalize with a successful exit'
+      )
+      assert(
+        existsSync(path) && statSync(path).size > 32,
+        'Actual finalized native recording required'
+      )
+      observation.stream = inspect(path)
+      observation.sha256 = digest(path)
+      observation.outcome = workCompleted ? 'passed' : 'failed'
+    }
+  }
+
+  async iosRead(selected: Args, expectedType?: string): Promise<IosReadNode> {
+    assert(
+      this.surface === 'ios',
+      'iOS read adapter requires its owned iOS session'
+    )
+    const signal = AbortSignal.timeout(30000)
+    const api = this.device as unknown as {
+      hierarchyRaw: (options: { signal: AbortSignal }) => Promise<Uint8Array>
+      assertVisible: (
+        args: Args,
+        options: { signal: AbortSignal }
+      ) => Promise<unknown>
+    }
+    const raw = await api.hierarchyRaw({ signal })
+    const path = join(
+      this.runDir,
+      'ios-public-read-' + Date.now() + '-' + randomUUID() + '.json'
+    )
+    writeFileSync(path, raw, { mode: 0o600, flag: 'wx' })
+    const read = iosPublicRead(raw, selected, expectedType)
+    this.steps.push({
+      name: 'Passive iOS public element read',
+      rawHierarchy: path,
+      sha256: createHash('sha256').update(raw).digest('hex'),
+      selector: selected,
+      expectedType,
+      foundInSnapshot: read.element != null
+    })
+    if (read.element != null) return read.element
+    let query: Args
+    let literal: string | undefined
+    if (typeof selected.id === 'string' && selected.text == null)
+      query = { id: selected.id }
+    else {
+      assert(
+        typeof selected.text === 'string' &&
+          selected.text.startsWith('^') &&
+          selected.text.endsWith('$'),
+        'Exact literal native text required for positive fallback'
+      )
+      literal = selected.text.slice(1, -1)
+      assert(
+        exactText(literal) === selected.text &&
+          /^[\p{L}\p{N} ,_-]+$/u.test(literal),
+        'Only actual plain exact text can use the supported deep query'
+      )
+      query = { text: literal }
+    }
+    assert(
+      selected.childOf == null,
+      'Missing scoped native element cannot use an unscoped fallback'
+    )
+    const element = object(
+      object(await api.assertVisible({ ...query, timeout: 120 }, { signal }))
+        .element
+    )
+    if (typeof selected.id === 'string')
+      assert(
+        element.id === selected.id,
+        'Exact returned native public identifier required'
+      )
+    else
+      assert(
+        element.accessibilityLabel === literal,
+        'Exact returned native public label required'
+      )
+    if (expectedType != null)
+      assert(
+        element.class === expectedType,
+        'Expected actual native element type required'
+      )
+    const b = need(
+      bounds(element.bounds),
+      'Actual returned native public bounds required'
+    )
+    assert(
+      [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+        b.width > 0 &&
+        b.height > 0,
+      'Positive finite returned public bounds required'
+    )
+    return {
+      index: -1,
+      id: element.id as string,
+      type: typeof element.class === 'string' ? element.class : undefined,
+      text: typeof element.text === 'string' ? element.text : undefined,
+      label:
+        typeof element.accessibilityLabel === 'string'
+          ? element.accessibilityLabel
+          : undefined,
+      bounds: b,
+      enabled:
+        typeof element.enabled === 'boolean' ? element.enabled : undefined
+    }
+  }
+
+  async observedBounds(selected: Args, expectedType?: string): Promise<Bounds> {
+    if (this.surface === 'ios')
+      return need(
+        (await this.iosRead(selected, expectedType)).bounds,
+        'Observed iOS public bounds required'
+      )
     const id = typeof selected.id === 'string' ? selected.id : undefined
     const child = object(selected.childOf)
     if (!this.native) {
@@ -1528,6 +2159,14 @@ export class Chat2UI {
       )
       assert(typeof result.text === 'string', 'Public text required: ' + id)
       return result.text
+    }
+    if (this.surface === 'ios') {
+      const text = (await this.iosRead({ id })).text
+      assert(
+        typeof text === 'string' && text !== '',
+        'Positive observed iOS public text required'
+      )
+      return text
     }
     const result = await this.device.copyTextFrom({ id })
     assert(
@@ -1993,6 +2632,24 @@ export class Chat2UI {
       ).value
       assert(typeof value === 'string', 'Public composer value required')
       return value
+    }
+    if (this.surface === 'ios') {
+      const node = await this.iosRead({ id: 'chat-composer' }, 'TextView')
+      assert(
+        node.enabled === true,
+        'Actual enabled iOS editable composer required'
+      )
+      if (
+        node.value != null &&
+        node.value !== node.placeholderValue &&
+        node.value !== node.label
+      )
+        return node.value
+      if (node.index < 0 && node.text != null && node.text !== node.label)
+        return node.text
+      throw new Chat2Blocked(
+        'Native composer value is empty, placeholder, or ambiguous; an explicit empty-UI proof is required'
+      )
     }
     const value = await this.device.copyTextFrom({ id: 'chat-composer' })
     if (typeof value.data === 'string') return value.data

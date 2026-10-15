@@ -90,16 +90,22 @@ export async function observeMentionHeader(
         }))
       }
       sample.bounds.title = {
-        ...(await ui.observedBounds({
-          text: exactText('Mention a member'),
-          childOf: { id: 'chat-picker-header' }
-        }))
+        ...(await ui.observedBounds(
+          {
+            text: exactText('Mention a member'),
+            childOf: { id: 'chat-picker-header' }
+          },
+          ui.surface === 'ios' ? 'StaticText' : undefined
+        ))
       }
       sample.bounds.cancel = {
-        ...(await ui.observedBounds({
-          text: exactText('Cancel'),
-          childOf: { id: 'chat-picker-header' }
-        }))
+        ...(await ui.observedBounds(
+          {
+            text: exactText('Cancel'),
+            childOf: { id: 'chat-picker-header' }
+          },
+          ui.surface === 'ios' ? 'Button' : undefined
+        ))
       }
       sample.bounds.search = {
         ...(await ui.observedBounds({
@@ -956,6 +962,10 @@ export async function observeInfoCaptureReady(
     await ui.present('chat-info-hero')
     await ui.present('chat-info-members')
     const deadline = Date.now() + timeout
+    const nativeScreen =
+      ui.surface === 'ios' ? await ui.device.platformInfo() : undefined
+    let reference: string | undefined
+    let stableSince = Date.now()
     for (;;) {
       const nodes = await ui.nodes()
       const loading = nodes
@@ -967,16 +977,66 @@ export async function observeInfoCaptureReady(
           node.text === 'Chat could not be opened.'
       )
       const retry = nodes.some(node => node.text === 'Retry')
-      samples.push({ at: new Date().toISOString(), loading, failed, retry })
+      const chrome =
+        ui.surface === 'ios'
+          ? nodes.filter(
+              node =>
+                node.type === 'Button' &&
+                (node.text === 'Back' ||
+                  node.text?.startsWith('Account, ') === true)
+            )
+          : []
+      const headerReady =
+        ui.surface !== 'ios' ||
+        (chrome.filter(node => node.text === 'Back').length === 1 &&
+          chrome.filter(node => node.text?.startsWith('Account, ') === true)
+            .length === 1 &&
+          chrome.every(
+            node =>
+              node.bounds != null &&
+              [
+                node.bounds.x,
+                node.bounds.y,
+                node.bounds.width,
+                node.bounds.height
+              ].every(Number.isFinite) &&
+              node.bounds.width > 0 &&
+              node.bounds.height > 0 &&
+              node.bounds.x >= 0 &&
+              node.bounds.y >= 0 &&
+              node.bounds.x + node.bounds.width <=
+                Number(nativeScreen?.screenWidth) &&
+              node.bounds.y + node.bounds.height <=
+                Number(nativeScreen?.screenHeight)
+          ))
+      const signature = JSON.stringify(
+        chrome.map(node => ({ text: node.text, bounds: node.bounds }))
+      )
+      const stable = headerReady && signature === reference
+      if (!stable) {
+        reference = headerReady ? signature : undefined
+        stableSince = Date.now()
+      }
+      samples.push({
+        at: new Date().toISOString(),
+        loading,
+        failed,
+        retry,
+        headerReady,
+        chrome
+      })
       if (samples.length > 24) samples.splice(1, 1)
       assert(!failed && !retry, 'Information capture has a load error or Retry')
-      if (loading.length === 0) {
+      if (
+        loading.length === 0 &&
+        (ui.surface !== 'ios' || (stable && Date.now() - stableSince >= 200))
+      ) {
         observation.outcome = 'passed'
         return { informationCaptureReady: true, observedLoadingAbsent: true }
       }
       assert(
         Date.now() < deadline,
-        'Timed out waiting for information Loading to finish'
+        'Timed out waiting for information loading and actual header geometry to settle'
       )
       await new Promise(resolve => setTimeout(resolve, 100))
     }
@@ -1330,7 +1390,7 @@ export class Scenarios {
       })
     } else if (method === 'swipe') {
       const b = await this.targetBounds('chat-bubble-' + target.id)
-      await ui.device.swipe({
+      await ui.measuredSwipe({
         startX: Math.round(b.x + b.width * 0.2),
         startY: Math.round(b.y + b.height / 2),
         endX: Math.round(b.x + b.width * 0.7),
@@ -1449,8 +1509,12 @@ export class Scenarios {
   async showInfoMember(): Promise<Chat2Fixture['members'][number]> {
     const ui = this.ui
     const member = need(
-      this.f.members.find(m => m.userId !== this.viewerId),
-      'Current other-member safety row required'
+      this.f.members.find(
+        m =>
+          m.userId !== this.viewerId &&
+          this.f.members.filter(other => other.name === m.name).length === 1
+      ),
+      'Current other-member with a unique public safety label required'
     )
     const selector = { text: exactText('Safety number with ' + member.name) }
     await ui.device.scrollUntilVisible({
@@ -1487,20 +1551,27 @@ export class Scenarios {
         ['Home', 'Videos', 'Schedule', 'Chat'].includes(n.text ?? '')
     )
     const bottom = Math.min(height - 8, ...footer.map(n => n.bounds!.y - 8))
-    let bounds = await ui.observedBounds(selector)
+    const measure = async (): Promise<NonNullable<PublicNode['bounds']>> =>
+      await ui.observedBounds(
+        ui.surface === 'ios'
+          ? { ...selector, childOf: { id: 'chat-info-members' } }
+          : selector,
+        ui.surface === 'ios' ? 'Button' : undefined
+      )
+    let bounds = await measure()
     for (
       let step = 0;
       step < 8 && (bounds.y < top || bounds.y + bounds.height > bottom);
       step++
     ) {
-      await ui.device.swipe({
+      await ui.measuredSwipe({
         startX: Math.round(bounds.x + bounds.width / 2),
         endX: Math.round(bounds.x + bounds.width / 2),
         startY: Math.round(bounds.y < top ? top + 16 : bottom - 16),
         endY: Math.round(bounds.y < top ? bottom - 16 : top + 16),
         duration: 350
       })
-      bounds = await ui.observedBounds(selector)
+      bounds = await measure()
     }
     assert(
       bounds.height > 0 &&
@@ -1545,8 +1616,10 @@ export class Scenarios {
     }
     for (const name of ['Attach', 'Send'])
       controls[name] = need(
-        (await ui.device.copyTextFrom({ text: exactText(name) })).element
-          ?.bounds,
+        ui.surface === 'ios'
+          ? await ui.observedBounds({ text: exactText(name) }, 'Button')
+          : (await ui.device.copyTextFrom({ text: exactText(name) })).element
+              ?.bounds,
         'Actual native control bounds required: ' + name
       )
     const composerBand = await ui.publicBounds('chat-composer-band')
@@ -1556,8 +1629,10 @@ export class Scenarios {
         tabs.push({
           label,
           bounds: need(
-            (await ui.device.copyTextFrom({ text: exactText(label) })).element
-              ?.bounds,
+            ui.surface === 'ios'
+              ? await ui.observedBounds({ text: exactText(label) }, 'Button')
+              : (await ui.device.copyTextFrom({ text: exactText(label) }))
+                  .element?.bounds,
             'Visible public navigation tab bounds required'
           )
         })
@@ -1618,6 +1693,11 @@ export class Scenarios {
       }
     }
     const keys: Box[] = []
+    if (ui.surface === 'ios')
+      assert(
+        keyboard != null,
+        'Actual positive iOS Keyboard container required'
+      )
     if (keyboard == null)
       for (const key of ['q', 'w', 'e'])
         keys.push(
@@ -2000,9 +2080,19 @@ export class Scenarios {
           'info-members',
           'Actual current other-member safety row fully exposed between header and bottom overlay; role/security composition for review'
         )
-        await ui.device.tapOn({
-          text: exactText('Safety number with ' + member.name)
-        })
+        if (ui.surface === 'ios') {
+          const row = await ui.iosRead(
+            {
+              text: exactText('Safety number with ' + member.name),
+              childOf: { id: 'chat-info-members' }
+            },
+            'Button'
+          )
+          await ui.tapObserved(row)
+        } else
+          await ui.device.tapOn({
+            text: exactText('Safety number with ' + member.name)
+          })
         await ui.device.assertVisible({
           text: 'Safety number.*',
           timeout: 10000
@@ -2158,7 +2248,7 @@ export class Scenarios {
           for (let step = 0; step < 8; step++) {
             const b = await this.targetBounds('chat-bubble-' + target.id)
             if (b.y < top - 12 && b.y + b.height > top + 40) break
-            await ui.device.swipe({
+            await ui.measuredSwipe({
               startX: Math.round(b.x + b.width / 2),
               startY: Math.round(bottom - 12),
               endX: Math.round(b.x + b.width / 2),
@@ -2186,7 +2276,8 @@ export class Scenarios {
         )
         if (this.touchActions)
           await ui.device.longPressOn({
-            point: `${(x / width) * 100}%,${(y / height) * 100}%`,
+            id: 'chat-bubble-' + target.id,
+            point: `${((x - source.x) / source.width) * 100}%,${((y - source.y) / source.height) * 100}%`,
             duration: 550
           })
         else {
@@ -2238,11 +2329,21 @@ export class Scenarios {
         const b = await this.targetBounds(
           'chat-bubble-' + this.f.messages.target.id
         )
-        await ui.device.dragAndDrop({
-          start: `${b.x + 10},${b.y + 10}`,
-          end: `${b.x + 10},${b.y + 70}`,
-          duration: 200
-        })
+        if (ui.surface === 'android')
+          await ui.measuredSwipe({
+            startX: b.x + 10,
+            startY: b.y + 10,
+            endX: b.x + 10,
+            endY: b.y + 70,
+            duration: 200
+          })
+        else
+          await ui.device.dragAndDrop({
+            from: { point: `${b.x + 10},${b.y + 10}` },
+            to: { point: `${b.x + 10},${b.y + 70}` },
+            holdDuration: 50,
+            duration: 200
+          })
         await ui.absent('chat-message-spotlight')
         if (this.touchActions) {
           await this.action(this.f.messages.target)
@@ -2274,13 +2375,11 @@ export class Scenarios {
       async () => {
         const client = await this.client()
         const target = this.f.messages.target
-        await ui.device.setClipboard({
-          text: 'A disposable clipboard sentinel'
-        })
+        await ui.clipboardSentinel('A disposable clipboard sentinel')
         await this.action(target)
         await ui.text(this.copyLabel)
         await ui.replaceDraft('')
-        await ui.device.pasteText()
+        await ui.pasteClipboard()
         assert.equal(
           await ui.draft(),
           target.body,
@@ -2614,8 +2713,8 @@ export class Scenarios {
         assert.equal(await ui.draft(), '@')
         await ui.replaceDraft('@')
         await ui.id('chat-mention-member-' + this.f.members[0].userId)
-        await ui.device.pressKey({ key: 'BACKSPACE' })
-        await ui.device.pressKey({ key: 'BACKSPACE' })
+        await ui.deleteBackward()
+        await ui.deleteBackward()
         const body = (await ui.draft()) + ' edited token ' + Date.now()
         await ui.append(' edited token ' + body.split(' edited token ')[1])
         await this.withFault('send', async () => {
@@ -3512,10 +3611,18 @@ export class Scenarios {
           need(this.f.conversations.switch, 'Switch actor readable DM required')
             .id
         )
+        await ui.assertEmptyDraft()
+        const probe = 'A fresh account-specific synthetic note ' + Date.now()
+        await ui.append(probe)
+        await ui.text('Send')
+        const received = await this.delivered(
+          probe,
+          this.f.conversations.switch!.id
+        )
         assert.equal(
-          await ui.draft(),
-          '',
-          'Actual new-user composer must not inherit previous draft'
+          received.body,
+          probe,
+          'Ordinary new-account typing must exclude the previous draft'
         )
         await ui.device.assertNotVisible({
           text: exactText(fixture.neutralTail.body),
@@ -3562,47 +3669,46 @@ export class Scenarios {
             variant === 'light' || variant === 'reduced-motion'
               ? join(ui.runDir, variant + '-spotlight.mp4')
               : undefined
-          if (recording != null)
-            await ui.device.startRecording({ path: recording })
-          try {
+          const transition = async (): Promise<void> => {
             await this.action(this.f.messages.target)
-          } finally {
-            if (recording != null) {
-              await ui.device.stopRecording()
-              this.observations.push({
-                variant,
-                transitionCapture: recording,
-                sha256: digest(recording),
-                claim:
-                  'Composition and reduced-motion transition comparison only; no pacing, smoothness or physical-haptic claim'
-              })
-            }
-          }
-          await this.menuState()
-          const effects = await ui.renderedEffects()
-          this.observations.push({ variant, actualRenderedEffects: effects })
-          for (const label of this.touchActions
-            ? ['Reply', this.copyLabel]
-            : [this.copyLabel])
-            await ui.device.assertVisible({ text: exactText(label) })
-          if (this.touchActions)
-            this.observations.push(
-              await observeSpotlightCaptureReady(
-                ui,
-                8000,
-                this.f.messages.target
+            await this.menuState()
+            const effects = await ui.renderedEffects()
+            this.observations.push({ variant, actualRenderedEffects: effects })
+            for (const label of this.touchActions
+              ? ['Reply', this.copyLabel]
+              : [this.copyLabel])
+              await ui.device.assertVisible({ text: exactText(label) })
+            if (this.touchActions)
+              this.observations.push(
+                await observeSpotlightCaptureReady(
+                  ui,
+                  8000,
+                  this.f.messages.target
+                )
               )
+            await ui.shot(
+              variant + '-spotlight',
+              'Actual ' +
+                variant +
+                (this.touchActions
+                  ? ' sharp preview and accessible actions; static composition only'
+                  : ' desktop More menu and accessible controls; touch spotlight not applicable')
             )
-          await ui.shot(
-            variant + '-spotlight',
-            'Actual ' +
-              variant +
-              (this.touchActions
-                ? ' sharp preview and accessible actions; static composition only'
-                : ' desktop More menu and accessible controls; touch spotlight not applicable')
-          )
-          await this.dismiss()
-          this.observations.push(await observeComposerCaptureReady(ui))
+            await this.dismiss()
+            this.observations.push(await observeComposerCaptureReady(ui))
+          }
+          if (recording == null) await transition()
+          else {
+            await ui.recordTransition(recording, transition)
+            this.observations.push({
+              variant,
+              transitionCapture: recording,
+              sha256: digest(recording),
+              entranceAndDismissalObserved: true,
+              claim:
+                'Composition and reduced-motion transition comparison only; no pacing, smoothness or physical-haptic claim'
+            })
+          }
           await this.openInfo()
           await ui.present('chat-info-hero')
           this.observations.push(await observeInfoCaptureReady(ui))
