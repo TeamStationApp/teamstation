@@ -13,6 +13,7 @@ import { transform } from 'sucrase'
 
 import {
   androidImeFrame,
+  androidScopedBounds,
   Chat2UI,
   iosPublicRead,
   type PublicNode,
@@ -2293,7 +2294,7 @@ describe('chat native adapter compatibility', function () {
     await captureFailure(model.actual.replaceDraft(' Keep whitespace '))
     expect(model.value()).equals(' Keep whitespace ')
   })
-  it('preserves ordinary non-iOS erase/type behavior', async () => {
+  it('preserves ordinary native erase/type and uses the browser multiline selector', async () => {
     for (const surface of ['android', 'web-wide']) {
       const actual = ui([], surface)
       const calls: unknown[] = []
@@ -2305,7 +2306,10 @@ describe('chat native adapter compatibility', function () {
       }
       actual.device.inputText = async args => {
         calls.push(['type', args])
+        value = String(args.text)
       }
+      let value = ''
+      actual.draft = async () => value
       await actual.replaceDraft('Exact\ntext')
       expect(calls).deep.equals([
         ['focus', { id: 'chat-composer' }],
@@ -2314,11 +2318,717 @@ describe('chat native adapter compatibility', function () {
           'type',
           {
             text: 'Exact\ntext',
-            ...(surface === 'android' ? { keyPress: true } : {})
+            ...(surface === 'android'
+              ? { keyPress: true }
+              : { id: 'chat-composer' })
           }
         ]
       ])
     }
+  })
+  it('uses an exact composer selector for complete multiline browser input', async () => {
+    const actual = ui([], 'web-wide')
+    let value = ''
+    let reads = 0
+    const calls: unknown[] = []
+    actual.draft = async () => {
+      reads++
+      return value
+    }
+    actual.device.inputText = async args => {
+      if (args.id !== 'chat-composer')
+        throw Error('Key not defined for literal newline')
+      calls.push(args)
+      value = String(args.text)
+    }
+    await actual.append('First synthetic line\nSecond synthetic line')
+    expect(calls).deep.equals([{ id: 'chat-composer', text: value }])
+    expect(reads).equals(2)
+    expect(actual.steps[0].outcome).equals('passed')
+  })
+  it('rejects a nonempty composer before multiline input without replacing existing text', async () => {
+    const actual = ui([], 'web-wide')
+    actual.draft = async () => 'Retained draft'
+    actual.device.inputText = async () => {
+      throw Error('Unexpected mutation')
+    }
+    expect(String(await captureFailure(actual.append('New\nlines')))).contains(
+      'actually empty'
+    )
+    expect(actual.steps[0].outcome).equals('failed')
+  })
+  it('rejects truncated multiline input and propagates transport failure', async () => {
+    for (const fail of [false, true]) {
+      const actual = ui([], 'web-wide')
+      let value = ''
+      actual.draft = async () => value
+      actual.device.inputText = async () => {
+        if (fail) throw Error('Input transport failed')
+        value = 'First line'
+      }
+      expect(
+        String(await captureFailure(actual.append('First line\nSecond line')))
+      ).contains(fail ? 'Input transport failed' : 'complete multiline')
+      expect(actual.steps[0].outcome).equals('failed')
+    }
+  })
+  it('keeps native multiline and ordinary single-line field input unchanged', async () => {
+    for (const [surface, text] of [
+      ['web-wide', 'Ordinary search'],
+      ['android', 'Native\nlines'],
+      ['ios', 'Native\nlines']
+    ]) {
+      const actual = ui([], surface)
+      const calls: unknown[] = []
+      actual.draft = async () => {
+        throw Error('No composer-specific read for this field')
+      }
+      actual.device.inputText = async args => {
+        calls.push(args)
+      }
+      await actual.append(text)
+      expect(calls).deep.equals([
+        { text, ...(surface === 'android' ? { keyPress: true } : {}) }
+      ])
+    }
+  })
+  interface AvatarNode {
+    type: string
+    id?: string
+    bounds?: CaptureBox
+    children: AvatarNode[]
+  }
+  function avatarTree(
+    box = { x: 10, y: 120, width: 30, height: 30 }
+  ): AvatarNode {
+    return {
+      type: 'FrameLayout',
+      children: [
+        {
+          type: 'ViewGroup',
+          id: 'other-row',
+          bounds: { x: 10, y: 20, width: 170, height: 70 },
+          children: [
+            {
+              id: 'chat-avatar',
+              type: 'ViewGroup',
+              bounds: { ...box, y: 30 },
+              children: []
+            }
+          ]
+        },
+        {
+          type: 'ViewGroup',
+          id: 'expected-row',
+          bounds: { x: 10, y: 110, width: 170, height: 70 },
+          children: [
+            {
+              type: 'ViewGroup',
+              children: [
+                {
+                  id: 'chat-avatar',
+                  type: 'ViewGroup',
+                  bounds: box,
+                  children: []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+  const avatarSelector = { id: 'chat-avatar', childOf: { id: 'expected-row' } }
+  it('measures the fresh nested Android avatar without copying text or accepting an opaque box', async () => {
+    const actual = ui([], 'android')
+    let reads = 0
+    let copies = 0
+    actual.nodes = async () => {
+      throw Error('Do not reuse an unscoped flattened observation')
+    }
+    actual.device.hierarchy = async () => {
+      reads++
+      return avatarTree()
+    }
+    actual.device.copyTextFrom = async () => {
+      copies++
+      return { element: { bounds: { x: 0, y: 0, width: 0, height: 0 } } }
+    }
+    expect(
+      await actual.observedBounds(avatarSelector, 'ViewGroup')
+    ).deep.equals({ x: 10, y: 120, width: 30, height: 30 })
+    expect(reads).equals(1)
+    expect(copies).equals(0)
+    const proof = actual.steps[0]
+    expect(proof.outcome).equals('passed')
+    expect(
+      JSON.parse(readFileSync(String(proof.hierarchy), 'utf8'))
+    ).deep.equals(avatarTree())
+  })
+  for (const mode of [
+    'missing-parent',
+    'duplicate-parent',
+    'missing-target',
+    'duplicate-target',
+    'outside',
+    'wrong-type',
+    'cycle'
+  ])
+    it('rejects unproved scoped Android geometry: ' + mode, () => {
+      const tree = avatarTree()
+      const parent = tree.children[1]
+      const target = parent.children[0].children[0]
+      if (mode === 'missing-parent') parent.id = 'different'
+      if (mode === 'duplicate-parent') tree.children[0].id = 'expected-row'
+      if (mode === 'missing-target') parent.children = []
+      if (mode === 'duplicate-target') parent.children.push({ ...target })
+      if (mode === 'outside')
+        target.bounds = { x: 10, y: 300, width: 30, height: 30 }
+      if (mode === 'wrong-type') target.type = 'TextView'
+      if (mode === 'cycle') target.children = [parent]
+      expect(() =>
+        androidScopedBounds(tree, avatarSelector, 'ViewGroup')
+      ).throws()
+    })
+  for (const invalid of [undefined, 0, -1, Infinity, NaN])
+    it(
+      'rejects missing or invalid scoped Android bounds ' + String(invalid),
+      () => {
+        const tree = avatarTree()
+        const target = tree.children[1].children[0].children[0]
+        target.bounds =
+          invalid == null
+            ? undefined
+            : { x: 10, y: 120, width: invalid, height: 30 }
+        expect(() => androidScopedBounds(tree, avatarSelector)).throws()
+      }
+    )
+  it('retains failed scoped metadata and propagates hierarchy transport errors without clipboard fallback', async () => {
+    const actual = ui([], 'android')
+    actual.device.copyTextFrom = async () => {
+      throw Error('No clipboard fallback')
+    }
+    actual.device.hierarchy = async () =>
+      avatarTree({ x: 10, y: 120, width: 0, height: 30 })
+    await captureFailure(actual.observedBounds(avatarSelector))
+    expect(actual.steps[0].hierarchy).a('string')
+    expect(actual.steps[0].outcome).equals('failed')
+    const error = Error('Hierarchy transport failed')
+    actual.device.hierarchy = async () => {
+      throw error
+    }
+    expect(await captureFailure(actual.observedBounds(avatarSelector))).equals(
+      error
+    )
+  })
+  function photoModel(mode = 'valid'): Chat2UI {
+    const actual = ui([], 'android')
+    actual.device.hierarchy = async () => avatarTree()
+    actual.device.platformInfo = async () => ({
+      screenWidth: 200,
+      screenHeight: 400
+    })
+    actual.captureImage = async path => {
+      const made = spawnSync(
+        process.env.CHAT2_PYTHON ?? 'python3',
+        [
+          '-c',
+          'from PIL import Image,ImageDraw; import sys; im=Image.new("RGB",(100,200)); d=ImageDraw.Draw(im); ' +
+            (mode === 'valid'
+              ? 'd.rectangle((5,60,11,74),fill=(20,220,30)); d.rectangle((12,60,19,74),fill=(220,20,210)); '
+              : '') +
+            'im.save(sys.argv[1])',
+          path
+        ],
+        { encoding: 'utf8', timeout: 10000 }
+      )
+      expect(made.status, made.stderr).equals(0)
+      return { rawPath: path, width: 100, height: 200 }
+    }
+    return actual
+  }
+  it('observes photo colors in the scoped box using actual platform-to-raster scaling', async () => {
+    const actual = photoModel()
+    const proof = await actual.renderedPhoto(avatarSelector)
+    expect(proof.crop).deep.equals({ x: 5, y: 60, width: 15, height: 15 })
+    expect(proof.raster).deep.equals({ width: 100, height: 200 })
+    expect(proof.actualRenderedSyntheticMarker).equals(true)
+    expect(actual.steps[0].outcome).equals('passed')
+  })
+  it('retains the box, platform, raw capture and pixel result before rejecting missing marker colors', async () => {
+    const actual = photoModel('missing-colors')
+    expect(
+      String(await captureFailure(actual.renderedPhoto(avatarSelector)))
+    ).contains('both synthetic')
+    const step = actual.steps[0]
+    expect(step.box).deep.equals({ x: 10, y: 120, width: 30, height: 30 })
+    expect(step.platform).deep.equals({ screenWidth: 200, screenHeight: 400 })
+    const saved = JSON.parse(readFileSync(String(step.evidencePath), 'utf8'))
+    expect(saved.capture.rawPath).a('string')
+    expect(saved.pixelResult.actualRenderedSyntheticMarker).equals(false)
+    expect(saved.pixelResult.crop).deep.equals({
+      x: 5,
+      y: 60,
+      width: 15,
+      height: 15
+    })
+    expect(saved.outcome).equals('failed')
+  })
+  it('opens the real web Attach action before targeting the temporary upload input', async () => {
+    const actual = ui([], 'web-wide')
+    const calls: unknown[] = []
+    let opened = false
+    actual.text = async label => {
+      calls.push(label)
+      opened = label === 'Attach'
+    }
+    actual.device.uploadFile = async args => {
+      if (!opened) throw Error('No temporary file input before Attach')
+      calls.push(args)
+    }
+    actual.present = async id => {
+      calls.push(id)
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: { files: { photo: '/tmp/synthetic-photo.png' } }
+    }) as Scenarios
+    await scenario.attachPhoto()
+    expect(calls).deep.equals([
+      'Attach',
+      { css: 'input[type="file"]', path: '/tmp/synthetic-photo.png' },
+      'chat-attachment-chip'
+    ])
+  })
+  it('preserves native attachment order and does not upload after a failed web Attach action', async () => {
+    const actual = ui([], 'android')
+    const calls: unknown[] = []
+    actual.device.addMedia = async args => {
+      calls.push(['media', args])
+    }
+    actual.text = async label => {
+      calls.push(label)
+    }
+    actual.device.tapOn = async selector => {
+      calls.push(selector)
+    }
+    actual.present = async id => {
+      calls.push(id)
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: {
+        files: {
+          photo: '/tmp/synthetic-photo.png',
+          nativePicker: { android: [{ text: 'Observed synthetic photo' }] }
+        }
+      }
+    }) as Scenarios
+    await scenario.attachPhoto()
+    expect(calls).deep.equals([
+      ['media', { files: ['/tmp/synthetic-photo.png'] }],
+      'Attach',
+      'Photo library',
+      { text: 'Observed synthetic photo' },
+      'chat-attachment-chip'
+    ])
+    Object.assign(actual, { native: false })
+    actual.text = async () => {
+      throw Error('Attach action failed')
+    }
+    actual.device.uploadFile = async () => {
+      throw Error('Unexpected upload')
+    }
+    expect(String(await captureFailure(scenario.attachPhoto()))).contains(
+      'Attach action failed'
+    )
+  })
+  function incomingModel(mode = 'valid'): {
+    scenario: Scenarios
+    actual: Chat2UI
+    calls: string[]
+  } {
+    const actual = ui([], 'web-wide')
+    const calls: string[] = []
+    const current = message({
+      id: 'run-first',
+      seq: 1,
+      senderUserId: 2,
+      mine: true,
+      body: 'First incoming row'
+    })
+    const end = message({
+      id: 'run-last',
+      seq: 2,
+      senderUserId: 2,
+      mine: true,
+      body: 'Final incoming row'
+    })
+    const boundary = message({
+      id: 'own-boundary',
+      seq: 3,
+      senderUserId: 1,
+      mine: false,
+      body: 'Different sender boundary'
+    })
+    const observed =
+      mode === 'no-incoming'
+        ? [boundary]
+        : mode === 'tail'
+          ? [current, end]
+          : [current, end, boundary]
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      group: 'conversation',
+      viewerId: 1,
+      observations: []
+    }) as Scenarios
+    scenario.protocolPeer = async () =>
+      ({
+        engine: {
+          open: async () => {
+            calls.push('fresh-peer-view')
+            if (mode === 'transport') throw Error('Verified peer unavailable')
+            return { messages: observed }
+          }
+        }
+      }) as unknown as Awaited<ReturnType<Scenarios['protocolPeer']>>
+    scenario.anchor = async target => {
+      if (target == null) throw Error('Actual anchor target required')
+      calls.push('anchor:' + target.id)
+    }
+    scenario.targetBounds = async id => {
+      calls.push(id)
+      if (id === 'chat-avatar-lane-run-first')
+        throw Error('Empty nonterminal lane has zero height')
+      if (id.startsWith('chat-avatar-lane-'))
+        return { x: 10, y: 252, width: 28, height: 28 }
+      const first = id.endsWith('run-first')
+      return {
+        x: id.startsWith('chat-bubble-')
+          ? mode === 'missing-space'
+            ? 10
+            : 42
+          : 10,
+        y: first ? 100 : 200,
+        width: id.startsWith('chat-bubble-') ? 180 : 250,
+        height: first ? 60 : 80
+      }
+    }
+    scenario.readingBand = async () => ({
+      top: 60,
+      bottom: mode === 'occluded' ? 270 : 600
+    })
+    actual.observedBounds = async selector => {
+      expect(selector).deep.equals({
+        id: 'chat-avatar',
+        childOf: { id: 'chat-avatar-lane-run-last' }
+      })
+      if (mode === 'ambiguous') throw Error('Duplicate actual scoped avatar')
+      return {
+        x: mode === 'right' ? 60 : 10,
+        y: mode === 'not-bottom' ? 240 : 252,
+        width: mode === 'missing-avatar' ? 0 : 28,
+        height: 28
+      }
+    }
+    actual.shot = async kind => {
+      calls.push('shot:' + kind)
+    }
+    return { scenario, actual, calls }
+  }
+  it('measures incoming horizontal reservation without demanding a repeated avatar or positive empty-lane height', async () => {
+    const { scenario, calls } = incomingModel()
+    const reservation = await scenario.incomingReservation({
+      id: 'run-first',
+      seq: 1,
+      body: 'First incoming row',
+      authorId: 2
+    })
+    expect(reservation.width).equals(32)
+    expect(calls).not.includes('chat-avatar-lane-run-first')
+    await scenario.incomingRunEndAvatar([reservation])
+    expect(calls).includes('chat-avatar-lane-run-last')
+    expect(calls).includes('shot:incoming-run-avatar')
+  })
+  it('uses a fresh verified current run ending and sender identity independent of the peer mine flag', async () => {
+    for (const mode of ['valid', 'tail']) {
+      const { scenario, actual, calls } = incomingModel(mode)
+      await scenario.incomingRunEndAvatar([])
+      expect(calls[0]).equals('fresh-peer-view')
+      expect(actual.steps[0].outcome).equals('passed')
+      const boundary = actual.steps[0].boundary as {
+        current: { id: string }
+        next: unknown
+      }
+      expect(boundary.current.id).equals('run-last')
+      expect(boundary.next == null).equals(mode === 'tail')
+    }
+  })
+  for (const mode of [
+    'no-incoming',
+    'transport',
+    'missing-avatar',
+    'ambiguous',
+    'right',
+    'not-bottom',
+    'occluded'
+  ])
+    it('rejects an unproved actual run-ending avatar: ' + mode, async () => {
+      const { scenario, actual, calls } = incomingModel(mode)
+      await captureFailure(scenario.incomingRunEndAvatar([]))
+      expect(actual.steps[0].outcome).equals('failed')
+      expect(calls).not.includes('shot:incoming-run-avatar')
+    })
+  it('rejects a missing incoming reservation or a lane width lost in another row', async () => {
+    const missing = incomingModel('missing-space')
+    await captureFailure(
+      missing.scenario.incomingReservation({
+        id: 'run-first',
+        seq: 1,
+        body: 'First row',
+        authorId: 2
+      })
+    )
+    const model = incomingModel()
+    const reserved = await model.scenario.incomingReservation({
+      id: 'run-first',
+      seq: 1,
+      body: 'First row',
+      authorId: 2
+    })
+    await captureFailure(
+      model.scenario.incomingRunEndAvatar([{ ...reserved, width: 4 }])
+    )
+    expect(model.actual.steps[0].outcome).equals('failed')
+  })
+  it('selects the exact actionable pin row instead of duplicate inert background text', async () => {
+    const actual = ui([], 'web-wide')
+    const calls: string[] = []
+    const pins = [{ messageId: 'target' }, { messageId: 'other' }]
+    actual.id = async id => {
+      calls.push(id)
+    }
+    actual.text = async () => {
+      throw Error('Matching background text has pointer-events none')
+    }
+    actual.present = async () => {}
+    actual.shot = async () => {}
+    actual.device.swipe = async () => {}
+    actual.device.assertVisible = async () => {}
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      group: 'conversation',
+      f: {
+        messages: { target: { id: 'target', body: 'Duplicate pinned body' } }
+      }
+    }) as Scenarios
+    scenario.openGroup = async () => {}
+    scenario.anchor = async () => {}
+    scenario.readable = async () => {}
+    const client = { chatPins: async () => pins }
+    scenario.client = async () =>
+      client as unknown as Awaited<ReturnType<Scenarios['client']>>
+    scenario.check = async (name, run) => {
+      if (
+        name ===
+        'E6 personal floating pins, verified clear target and same-user state'
+      )
+        await run()
+    }
+    await scenario.E6()
+    expect(calls).deep.equals(['chat-pinned-summary', 'chat-pin-target'])
+  })
+  function olderReader(mode = 'valid'): {
+    scenario: Scenarios
+    actual: Chat2UI
+    calls: unknown[]
+  } {
+    const actual = ui([], 'web-wide')
+    const calls: unknown[] = []
+    let offset = 900
+    let scrolled = false
+    actual.dom = async script => {
+      expect(script).not.contains('scrollTop=')
+      expect(script).contains('document.elementFromPoint')
+      return {
+        offset: mode === 'invalid' ? NaN : offset,
+        maximum: mode === 'resize' && scrolled ? 1100 : 1000,
+        height: 200,
+        wheelPointInside: mode !== 'wrong-hit'
+      }
+    }
+    actual.device.scroll = async args => {
+      calls.push(args)
+      if (mode === 'transport') throw Error('Wheel transport failed')
+      scrolled = true
+      if (mode !== 'no-motion') offset -= mode === 'short' ? 10 : 300
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      observations: []
+    }) as Scenarios
+    return { scenario, actual, calls }
+  }
+  it('establishes older-reader intent with an ordinary Maestro wheel and positive public movement', async () => {
+    const { scenario, actual, calls } = olderReader()
+    await scenario.olderWebReader()
+    expect(calls).deep.equals([{ direction: 'UP' }])
+    expect(actual.steps[0].outcome).equals('passed')
+    expect(actual.steps[0].samples).deep.equals([
+      {
+        before: { offset: 900, maximum: 1000, height: 200 },
+        after: { offset: 600, maximum: 1000, height: 200 },
+        command: { direction: 'UP' }
+      }
+    ])
+  })
+  for (const mode of [
+    'wrong-hit',
+    'invalid',
+    'resize',
+    'transport',
+    'no-motion',
+    'short'
+  ])
+    it(
+      'does not postulate older-reader intent from invalid or unchanged geometry: ' +
+        mode,
+      async () => {
+        const { scenario, actual, calls } = olderReader(mode)
+        await captureFailure(scenario.olderWebReader())
+        expect(actual.steps[0].outcome).equals('failed')
+        expect(calls.length).at.most(4)
+        if (mode === 'wrong-hit' || mode === 'invalid')
+          expect(calls).deep.equals([])
+      }
+    )
+  function visibleReader(mode = 'valid'): {
+    scenario: Scenarios
+    actual: Chat2UI
+    advance: () => void
+    reads: () => number
+  } {
+    const actual = ui([], 'web-wide')
+    let phase = 0
+    let reads = 0
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      observations: []
+    }) as Scenarios
+    scenario.readingBand = async () => ({ top: 60, bottom: 500 })
+    actual.nodes = async scope => {
+      expect(scope).equals('chat-message-history')
+      reads++
+      const body: PublicNode = {
+        id:
+          phase > 0 && mode === 'missing'
+            ? 'chat-message-body-other'
+            : 'chat-message-body-visible',
+        bounds: {
+          x: mode === 'horizontal' ? 500 : 40,
+          y:
+            mode === 'offscreen'
+              ? 1100
+              : mode === 'occluded'
+                ? 59
+                : 120 + (phase > 0 && mode === 'moved' ? 4 : 0),
+          width: 160,
+          height: mode === 'zero' ? 0 : 40
+        }
+      }
+      return [
+        {
+          id: 'chat-message-history',
+          bounds: { x: 20, y: 0, width: 280, height: 600 }
+        },
+        {
+          id: 'chat-pin-visible',
+          bounds: { x: 40, y: 70, width: 160, height: 40 }
+        },
+        {
+          id: 'chat-message-body-offscreen',
+          bounds: { x: 40, y: 1200 + phase * 17, width: 160, height: 900 }
+        },
+        body,
+        ...(mode === 'ambiguous' ? [{ ...body }] : [])
+      ]
+    }
+    scenario.targetBounds = async () => {
+      throw Error('No offscreen-target geometry fallback')
+    }
+    actual.device.tapOn = async () => {
+      throw Error('No scrolling or UI action during reader observation')
+    }
+    return {
+      scenario,
+      actual,
+      advance: () => {
+        phase++
+      },
+      reads: () => reads
+    }
+  }
+  it('compares a genuine visible body and ignores layout changes of an offscreen tail', async () => {
+    const model = visibleReader()
+    const before = await model.scenario.visibleReaderAnchor()
+    expect(before.id).equals('chat-message-body-visible')
+    model.advance()
+    const after = await model.scenario.visibleReaderAnchor(
+      before,
+      'Background discovery must not move visible reader'
+    )
+    expect(after.bounds).deep.equals(before.bounds)
+    expect(model.reads()).equals(2)
+    expect(model.actual.steps.every(step => step.outcome === 'passed')).equals(
+      true
+    )
+    expect(model.scenario.observations.length).equals(2)
+  })
+  for (const mode of [
+    'offscreen',
+    'occluded',
+    'zero',
+    'ambiguous',
+    'horizontal'
+  ])
+    it(
+      'rejects an unproved visible message-body reader anchor: ' + mode,
+      async () => {
+        const { scenario, actual } = visibleReader(mode)
+        await captureFailure(scenario.visibleReaderAnchor())
+        expect(actual.steps[0].outcome).equals('failed')
+      }
+    )
+  it('retains exact before and after boxes before rejecting a four-pixel visible-reader movement', async () => {
+    const model = visibleReader('moved')
+    const before = await model.scenario.visibleReaderAnchor()
+    model.advance()
+    expect(
+      String(
+        await captureFailure(
+          model.scenario.visibleReaderAnchor(
+            before,
+            'Background discovery must not move visible reader'
+          )
+        )
+      )
+    ).contains('Background discovery must not move visible reader')
+    const proof = model.actual.steps[1]
+    expect(proof.outcome).equals('failed')
+    expect(proof.before).deep.equals(before)
+    expect(proof.anchor).deep.equals({
+      ...before,
+      bounds: { ...before.bounds, y: 124 }
+    })
+    expect(model.scenario.observations[1].visibleReaderAnchor).equals(proof)
+  })
+  it('never replaces a lost original visible reader with a different current body', async () => {
+    const model = visibleReader('missing')
+    const before = await model.scenario.visibleReaderAnchor()
+    model.advance()
+    await captureFailure(model.scenario.visibleReaderAnchor(before))
+    expect(model.actual.steps[1].outcome).equals('failed')
   })
   it('reads the actual unique Button instead of a large identically labelled wrapper', () => {
     const result = iosPublicRead(

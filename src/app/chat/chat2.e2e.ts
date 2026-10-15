@@ -50,6 +50,11 @@ type MentionHeaderGeometry = Record<
   'header' | 'title' | 'cancel' | 'search',
   NonNullable<PublicNode['bounds']>
 >
+interface VisibleReaderAnchor {
+  id: string
+  bounds: NonNullable<PublicNode['bounds']>
+  band: { top: number; bottom: number }
+}
 
 /** Native header content can be an AX sibling of its marker; prove the picker tree. */
 export function iosMentionHeaderGeometry(raw: Uint8Array): {
@@ -1970,6 +1975,7 @@ export class Scenarios {
     const ui = this.ui
     const files = need(this.f.files, 'Synthetic attachment fixture required')
     if (!ui.native) {
+      await ui.text('Attach')
       await ui.device.uploadFile({
         css: 'input[type="file"]',
         path: files.photo
@@ -2667,6 +2673,9 @@ export class Scenarios {
       async () => {
         await this.openGroup()
         if (ui.native) await ui.hideKeyboard()
+        const incomingReservations: Array<
+          Awaited<ReturnType<Scenarios['incomingReservation']>>
+        > = []
         for (const message of [
           need(this.f.messages.incoming, 'Incoming fixture required'),
           need(this.f.messages.outgoing, 'Outgoing fixture required'),
@@ -2675,10 +2684,9 @@ export class Scenarios {
         ]) {
           let incomingLane: unknown
           if (message.authorId !== this.viewerId) {
-            await this.anchor(message)
-            incomingLane = await this.targetBounds(
-              'chat-avatar-lane-' + message.id
-            )
+            const reservation = await this.incomingReservation(message)
+            incomingReservations.push(reservation)
+            incomingLane = reservation
           }
           if (message.id === this.f.messages.file?.id) {
             await this.anchor(message)
@@ -2755,6 +2763,7 @@ export class Scenarios {
           await this.dismiss()
           await ui.absent('chat-message-spotlight')
         }
+        await this.incomingRunEndAvatar(incomingReservations)
       }
     )
     await this.check(
@@ -3008,6 +3017,130 @@ export class Scenarios {
     )
   }
 
+  /** A nonterminal lane can be empty and zero-height; measure its actual horizontal reservation. */
+  async incomingReservation(message: Chat2Message): Promise<{
+    message: string
+    row: NonNullable<PublicNode['bounds']>
+    bubble: NonNullable<PublicNode['bounds']>
+    width: number
+  }> {
+    assert(message.authorId !== this.viewerId, 'Actual incoming post required')
+    await this.anchor(message)
+    const row = await this.targetBounds('chat-message-' + message.id)
+    const bubble = await this.targetBounds('chat-bubble-' + message.id)
+    for (const box of [row, bubble])
+      assert(
+        [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+          box.width > 0 &&
+          box.height > 0,
+        'Positive actual incoming row and bubble required'
+      )
+    assert(
+      bubble.x > row.x &&
+        bubble.y >= row.y - 2 &&
+        bubble.x + bubble.width <= row.x + row.width + 2 &&
+        bubble.y + bubble.height <= row.y + row.height + 2,
+      'Incoming bubble must retain measured horizontal space inside its row'
+    )
+    return { message: message.id, row, bubble, width: bubble.x - row.x }
+  }
+
+  /** Prove a current sender-run ending with its real visible avatar, not a repeated avatar. */
+  async incomingRunEndAvatar(
+    reservations: Array<Awaited<ReturnType<Scenarios['incomingReservation']>>>
+  ): Promise<void> {
+    const proof: Json = {
+      name: 'Actual incoming run-ending avatar',
+      outcome: 'failed'
+    }
+    this.ui.steps.push(proof)
+    try {
+      const view = await (await this.protocolPeer()).engine.open(this.group)
+      const choices = view.messages.flatMap((current, index) => {
+        const next = view.messages[index + 1]
+        return current.status === 'ok' &&
+          current.senderUserId !== this.viewerId &&
+          current.body.length <= 300 &&
+          next?.senderUserId !== current.senderUserId
+          ? [{ current, next }]
+          : []
+      })
+      const { current, next } = need(
+        choices.at(-1),
+        'Current verified short incoming run-ending post required'
+      )
+      proof.boundary = {
+        current: {
+          id: current.id,
+          seq: current.seq,
+          senderUserId: current.senderUserId
+        },
+        next:
+          next == null
+            ? null
+            : { id: next.id, seq: next.seq, senderUserId: next.senderUserId }
+      }
+      const reserved = await this.incomingReservation({
+        id: current.id,
+        seq: current.seq,
+        body: current.body,
+        authorId: current.senderUserId
+      })
+      const lane = await this.targetBounds('chat-avatar-lane-' + current.id)
+      const avatar = await this.ui.observedBounds({
+        id: 'chat-avatar',
+        childOf: { id: 'chat-avatar-lane-' + current.id }
+      })
+      const band = await this.readingBand()
+      proof.geometry = {
+        reserved,
+        lane,
+        avatar,
+        band,
+        earlierReservations: reservations
+      }
+      for (const box of [lane, avatar])
+        assert(
+          [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+            box.width > 0 &&
+            box.height > 0,
+          'Positive actual run-ending lane and avatar required'
+        )
+      assert(
+        lane.x >= reserved.row.x - 2 &&
+          lane.x + lane.width <= reserved.bubble.x + 2 &&
+          avatar.x >= lane.x - 2 &&
+          avatar.x + avatar.width <= lane.x + lane.width + 2 &&
+          avatar.y >= lane.y - 2 &&
+          avatar.y + avatar.height <= lane.y + lane.height + 2 &&
+          Math.abs(
+            avatar.y +
+              avatar.height -
+              reserved.bubble.y -
+              reserved.bubble.height
+          ) <= 2 &&
+          avatar.y >= band.top - 2 &&
+          avatar.y + avatar.height <= band.bottom + 2,
+        'Actual incoming sender avatar must be fully exposed at the bottom-left of its bubble'
+      )
+      for (const earlier of [...reservations, reserved])
+        assert(
+          earlier.width >= lane.width - 2 &&
+            Math.abs(earlier.width - reserved.width) <= 2,
+          'Every incoming row must preserve the actual run-ending lane width and gap'
+        )
+      await this.ui.shot(
+        'incoming-run-avatar',
+        'Actual current incoming run-ending avatar at bottom-left; earlier incoming rows preserve its lane width without requiring repeated avatars'
+      )
+      proof.outcome = 'passed'
+      this.observations.push({ incomingRunEndingAvatar: proof })
+    } catch (error) {
+      proof.error = error instanceof Error ? error.message : String(error)
+      throw error
+    }
+  }
+
   async E6(): Promise<void> {
     const ui = this.ui
     await this.check(
@@ -3029,7 +3162,7 @@ export class Scenarios {
         await ui.present('chat-pinned-band')
         await ui.id('chat-pinned-summary')
         await ui.device.assertVisible({ text: exactText('Pinned messages') })
-        await ui.text(this.f.messages.target.body)
+        await ui.id('chat-pin-' + this.f.messages.target.id)
         await ui.present('chat-bubble-' + this.f.messages.target.id)
         assert.deepEqual(
           (await client.chatPins(this.group)).map(p => p.messageId),
@@ -3725,6 +3858,7 @@ export class Scenarios {
         await ui.present('chat-bubble-' + posted.targets[2].id)
         await ui.present('chat-jump-latest')
         await this.anchor(loop.readerAnchor)
+        if (!ui.native) await this.olderWebReader()
         const next = await this.peerMessage(
           'A later distinct synthetic target ' + Date.now(),
           { mentions: [this.viewerId] },
@@ -3738,6 +3872,162 @@ export class Scenarios {
         await ui.present('chat-jump-latest')
       }
     )
+  }
+
+  /** Establish actual wheel-driven older-reader intent before starting another attention cycle. */
+  async olderWebReader(): Promise<void> {
+    const ui = this.ui
+    assert(!ui.native, 'Browser user-scroll setup required')
+    const proof: Json = {
+      name: 'Measured older browser reader after Maestro wheel',
+      outcome: 'failed',
+      samples: []
+    }
+    ui.steps.push(proof)
+    const read = async (): Promise<{
+      offset: number
+      maximum: number
+      height: number
+    }> => {
+      const actual = await ui.dom(
+        'const h=document.querySelector("[data-testid=chat-message-history]");if(!h)throw Error("Actual history required");const hit=document.elementFromPoint(innerWidth/2,innerHeight/2);return {offset:h.scrollTop,maximum:h.scrollHeight-h.clientHeight,height:h.clientHeight,wheelPointInside:hit!=null&&h.contains(hit)}'
+      )
+      assert(
+        actual.wheelPointInside === true,
+        'Maestro wheel point must hit the actual chat history'
+      )
+      const value = {
+        offset: Number(actual.offset),
+        maximum: Number(actual.maximum),
+        height: Number(actual.height)
+      }
+      assert(
+        Object.values(value).every(Number.isFinite) &&
+          value.height > 0 &&
+          value.maximum > value.height &&
+          value.offset > 0 &&
+          value.offset <= value.maximum,
+        'Positive current browser history scroll geometry required'
+      )
+      return value
+    }
+    try {
+      let before = await read()
+      for (let gesture = 0; gesture < 4; gesture++) {
+        await ui.device.scroll({ direction: 'UP' })
+        const after = await until(
+          async () => {
+            const value = await read()
+            assert(
+              value.maximum === before.maximum &&
+                value.height === before.height,
+              'History dimensions changed during explicit user scroll'
+            )
+            return value.offset < before.offset - 1 ? value : undefined
+          },
+          'actual older-reader wheel movement',
+          2000
+        )
+        ;(proof.samples as unknown[]).push({
+          before,
+          after,
+          command: { direction: 'UP' }
+        })
+        if (after.maximum - after.offset >= after.height) {
+          proof.outcome = 'passed'
+          this.observations.push({ actualOlderReaderBeforeSecondCycle: proof })
+          return
+        }
+        before = after
+      }
+      throw new Error(
+        'Explicit user scrolling did not establish a full-viewport older-reader gap'
+      )
+    } catch (error) {
+      proof.error = error instanceof Error ? error.message : String(error)
+      throw error
+    }
+  }
+
+  /** Observe one current unobscured body without scrolling or revealing history. */
+  async visibleReaderAnchor(
+    before?: VisibleReaderAnchor,
+    failure = 'Actual visible reader must not move'
+  ): Promise<VisibleReaderAnchor> {
+    const proof: Json = {
+      name: 'Visible public message-body anchor',
+      before,
+      outcome: 'failed'
+    }
+    this.ui.steps.push(proof)
+    this.observations.push({ visibleReaderAnchor: proof })
+    try {
+      const band = await this.readingBand()
+      proof.band = band
+      assert(
+        Number.isFinite(band.top) &&
+          Number.isFinite(band.bottom) &&
+          band.bottom > band.top,
+        'Positive measured unobscured reader band required'
+      )
+      const nodes = await this.ui.nodes('chat-message-history')
+      const histories = nodes.filter(node => node.id === 'chat-message-history')
+      assert(histories.length === 1, 'Unique current public history required')
+      const history = need(
+        histories[0].bounds,
+        'Actual public history bounds required'
+      )
+      proof.history = history
+      assert(
+        [history.x, history.y, history.width, history.height].every(
+          Number.isFinite
+        ) &&
+          history.width > 0 &&
+          history.height > 0,
+        'Positive finite current history bounds required'
+      )
+      const bodies = nodes.filter(
+        node => node.id?.startsWith('chat-message-body-') === true
+      )
+      const eligible = bodies
+        .filter(node => {
+          const box = node.bounds
+          return (
+            box != null &&
+            [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+            box.width > 0 &&
+            box.height > 0 &&
+            box.x >= history.x &&
+            box.x + box.width <= history.x + history.width &&
+            box.y >= band.top &&
+            box.y + Math.min(box.height, 40) < band.bottom
+          )
+        })
+        .sort((a, b) => a.bounds!.y - b.bounds!.y)
+      proof.visibleBodies = eligible.slice(0, 24)
+      const id = before?.id ?? eligible[0]?.id
+      const matches = bodies.filter(node => node.id === id)
+      proof.matches = matches
+      assert(
+        typeof id === 'string' && matches.length === 1,
+        'Unique current visible message-body identity required'
+      )
+      const node = matches[0]
+      assert(
+        eligible.includes(node),
+        'Actual message-body leading edge must be unobscured'
+      )
+      const actual = { id, bounds: { ...node.bounds! }, band }
+      // Retain the original ID and both actual boxes before the strict movement assertion.
+      proof.anchor = actual
+      if (before != null)
+        assert(Math.abs(before.bounds.y - actual.bounds.y) <= 3, failure)
+      proof.outcome = 'passed'
+      return actual
+    } catch (error) {
+      proof.error = error instanceof Error ? error.message : String(error)
+      throw error
+    }
   }
 
   async E11(): Promise<void> {
@@ -3805,17 +4095,12 @@ export class Scenarios {
           await ui.present(this.controlId('attentionLoading'))
           await ui.replaceDraft('Keep a cold synthetic draft')
           if (ui.native) await ui.hideKeyboard()
-          const before = await this.targetBounds(
-            'chat-bubble-' + fixture.neutralTail.id
-          )
+          const before = await this.visibleReaderAnchor()
           const reads = await this.stableReads(conversation)
           fixtureControl(this.f, 'clear-fault')
           await this.classification()
-          const after = await this.targetBounds(
-            'chat-bubble-' + fixture.neutralTail.id
-          )
-          assert(
-            Math.abs(before.y - after.y) <= 3,
+          await this.visibleReaderAnchor(
+            before,
             'Background discovery must not move visible reader'
           )
           assert.equal(await ui.draft(), 'Keep a cold synthetic draft')
@@ -3959,18 +4244,13 @@ export class Scenarios {
           await ui.present(this.controlId('attentionRetry'))
           await ui.replaceDraft('Keep retry state')
           if (ui.native) await ui.hideKeyboard()
-          const body = await this.targetBounds(
-            'chat-bubble-' + fixture.neutralTail.id
-          )
+          const body = await this.visibleReaderAnchor()
           fixtureControl(this.f, 'clear-fault')
           await ui.id(this.controlId('attentionRetry'))
           await this.classification()
           assert.equal(await ui.draft(), 'Keep retry state')
-          const again = await this.targetBounds(
-            'chat-bubble-' + fixture.neutralTail.id
-          )
-          assert(
-            Math.abs(again.y - body.y) <= 3,
+          await this.visibleReaderAnchor(
+            body,
             'Discovery Retry must preserve reader'
           )
           await this.anchor(fixture.readerAnchor)
@@ -4064,9 +4344,7 @@ export class Scenarios {
           await ui.present('chat-bubble-' + fixture.neutralTail.id)
           await ui.replaceDraft('Keep terminal empty draft')
           if (ui.native) await ui.hideKeyboard()
-          const body = await this.targetBounds(
-            'chat-bubble-' + fixture.neutralTail.id
-          )
+          const body = await this.visibleReaderAnchor()
           const start = Number(this.snapshot(conversation).lastEvent)
           fixtureControl(this.f, 'fault', {
             phase: 'history-jump',
@@ -4089,11 +4367,8 @@ export class Scenarios {
             timeout: 10000
           })
           assert.equal(await ui.draft(), 'Keep terminal empty draft')
-          const after = await this.targetBounds(
-            'chat-bubble-' + fixture.neutralTail.id
-          )
-          assert(
-            Math.abs(after.y - body.y) <= 3,
+          const after = await this.visibleReaderAnchor(
+            body,
             'Injected terminal empty prepend must not displace current reader'
           )
           this.observations.push({

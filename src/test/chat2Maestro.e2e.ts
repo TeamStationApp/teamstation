@@ -48,6 +48,7 @@ export interface Chat2Device {
   tapOnPoint: (args: Args) => Promise<unknown>
   longPressOn: (args: Args) => Promise<unknown>
   swipe: (args: Args) => Promise<unknown>
+  scroll: (args: Args) => Promise<unknown>
   dragAndDrop: (args: Args) => Promise<unknown>
   inputText: (args: Args) => Promise<unknown>
   copyTextFrom: (
@@ -1041,6 +1042,85 @@ export function flattenPublicHierarchy(raw: unknown): PublicNode[] {
   ]
 }
 
+/** Measure one scoped Android node from fresh public ancestry without copying text. */
+export function androidScopedBounds(
+  raw: unknown,
+  selected: Args,
+  expectedType?: string
+): Bounds {
+  const scope = object(selected.childOf)
+  assert(
+    typeof scope.id === 'string' &&
+      scope.id !== '' &&
+      Object.keys(scope).every(key => key === 'id'),
+    'Exact public Android parent identifier required'
+  )
+  assert(
+    Object.keys(selected).every(key =>
+      ['id', 'text', 'childOf'].includes(key)
+    ) &&
+      (typeof selected.id === 'string' || typeof selected.text === 'string'),
+    'Supported public Android target selector required'
+  )
+  const seen = new Set<object>()
+  const nodes: Array<{ node: Args; parents: Args[] }> = []
+  const visit = (value: unknown, parents: Args[]): void => {
+    assert(
+      value != null && typeof value === 'object' && !Array.isArray(value),
+      'Actual normalized Android hierarchy required'
+    )
+    assert(!seen.has(value), 'Android public ancestry must not cycle or repeat')
+    seen.add(value)
+    const node = object(value)
+    nodes.push({ node, parents })
+    if (node.children != null) {
+      assert(Array.isArray(node.children), 'Actual public child array required')
+      for (const child of node.children) visit(child, [...parents, node])
+    }
+  }
+  visit(raw, [])
+  const parents = nodes.filter(entry => entry.node.id === scope.id)
+  assert(parents.length === 1, 'Unique exact public Android parent required')
+  const parent = parents[0].node
+  const pattern =
+    typeof selected.text === 'string' ? new RegExp(selected.text) : undefined
+  const matches = nodes.filter(
+    entry =>
+      entry.parents.includes(parent) &&
+      (selected.id == null || entry.node.id === selected.id) &&
+      (pattern == null ||
+        (typeof entry.node.text === 'string' &&
+          pattern.test(entry.node.text))) &&
+      (expectedType == null || entry.node.type === expectedType)
+  )
+  assert(matches.length === 1, 'Unique scoped public Android target required')
+  const measured = (node: Args): Bounds => {
+    const b = need(
+      bounds(node.bounds),
+      'Actual scoped public Android bounds required'
+    )
+    assert(
+      [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+        b.x >= 0 &&
+        b.y >= 0 &&
+        b.width > 0 &&
+        b.height > 0,
+      'Positive finite scoped public Android bounds required'
+    )
+    return b
+  }
+  const outer = measured(parent)
+  const box = measured(matches[0].node)
+  assert(
+    box.x >= outer.x - 1 &&
+      box.y >= outer.y - 1 &&
+      box.x + box.width <= outer.x + outer.width + 1 &&
+      box.y + box.height <= outer.y + outer.height + 1,
+    'Scoped public Android target must fit its observed parent'
+  )
+  return box
+}
+
 /** Verify an observed native value against one exact public raw-node identity. */
 export function observedNativeValue(
   raw: Uint8Array,
@@ -1727,50 +1807,82 @@ export class Chat2UI {
   }
 
   async renderedPhoto(selected: Args): Promise<Args> {
-    const box = await this.observedBounds(selected)
+    const observation: Args = {
+      name: 'Rendered photo marker observation',
+      selector: selected,
+      observedAt: new Date().toISOString(),
+      outcome: 'failed'
+    }
+    this.steps.push(observation)
     const path = join(this.runDir, 'photo-avatar-' + Date.now() + '.png')
-    const capture = await this.captureImage(path)
-    const screen: Args = this.native
-      ? await this.device.platformInfo()
-      : object(object(capture.captureObserver).before)
-    const width = Number(screen.screenWidth ?? screen.width)
-    const height = Number(screen.screenHeight ?? screen.height)
-    assert(
-      width > 0 && height > 0,
-      'Actual screenshot coordinate space required'
-    )
-    const result = spawnSync(
-      process.env.CHAT2_PYTHON ?? 'python3',
-      [
-        '-c',
+    const evidencePath = path + '.observation.json'
+    observation.evidencePath = evidencePath
+    try {
+      const box = await this.observedBounds(selected)
+      observation.box = box
+      const capture = await this.captureImage(path)
+      observation.capture = capture
+      observation.path = path
+      const screen: Args = this.native
+        ? await this.device.platformInfo()
+        : object(object(capture.captureObserver).before)
+      observation.platform = screen
+      const width = Number(screen.screenWidth ?? screen.width)
+      const height = Number(screen.screenHeight ?? screen.height)
+      assert(
+        [width, height].every(value => Number.isFinite(value) && value > 0),
+        'Actual screenshot coordinate space required'
+      )
+      const result = spawnSync(
+        process.env.CHAT2_PYTHON ?? 'python3',
         [
-          'import sys,json',
-          'from PIL import Image',
-          'im=Image.open(sys.argv[1]).convert("RGB"); b=json.loads(sys.argv[2]); sw=float(sys.argv[3]); sh=float(sys.argv[4])',
-          'x=round(b["x"]*im.width/sw); y=round(b["y"]*im.height/sh); w=round(b["width"]*im.width/sw); h=round(b["height"]*im.height/sh)',
-          'pixels=list(im.crop((x,y,x+w,y+h)).getdata()); assert len(pixels)>20',
-          'magenta=sum(r>170 and g<110 and blue>140 for r,g,blue in pixels)/len(pixels)',
-          'green=sum(g>170 and r<110 and blue<130 for r,g,blue in pixels)/len(pixels)',
-          'print(json.dumps({"magentaFraction":magenta,"greenFraction":green,"actualRenderedSyntheticMarker":magenta>0.08 and green>0.08}))'
-        ].join('\n'),
-        path,
-        JSON.stringify(box),
-        String(width),
-        String(height)
-      ],
-      { encoding: 'utf8', timeout: 10000 }
-    )
-    assert.equal(
-      result.status,
-      0,
-      'Synthetic rendered photo pixel observation failed'
-    )
-    const proof = JSON.parse(result.stdout) as Args
-    assert(
-      proof.actualRenderedSyntheticMarker === true,
-      'Actual avatar must show both synthetic photo marker colors'
-    )
-    return { box, capture, path, ...proof }
+          '-c',
+          [
+            'import sys,json',
+            'from PIL import Image',
+            'im=Image.open(sys.argv[1]).convert("RGB"); b=json.loads(sys.argv[2]); sw=float(sys.argv[3]); sh=float(sys.argv[4])',
+            'x=round(b["x"]*im.width/sw); y=round(b["y"]*im.height/sh); w=round(b["width"]*im.width/sw); h=round(b["height"]*im.height/sh)',
+            'assert x>=0 and y>=0 and w>0 and h>0 and x+w<=im.width and y+h<=im.height, "Observed photo crop must fit actual raster"',
+            'pixels=list(im.crop((x,y,x+w,y+h)).getdata()); assert len(pixels)>20',
+            'magenta=sum(r>170 and g<110 and blue>140 for r,g,blue in pixels)/len(pixels)',
+            'green=sum(g>170 and r<110 and blue<130 for r,g,blue in pixels)/len(pixels)',
+            'print(json.dumps({"raster":{"width":im.width,"height":im.height},"crop":{"x":x,"y":y,"width":w,"height":h},"pixelCount":len(pixels),"magentaFraction":magenta,"greenFraction":green,"actualRenderedSyntheticMarker":magenta>0.08 and green>0.08}))'
+          ].join('\n'),
+          path,
+          JSON.stringify(box),
+          String(width),
+          String(height)
+        ],
+        { encoding: 'utf8', timeout: 10000 }
+      )
+      observation.pixelObserver = {
+        status: result.status,
+        signal: result.signal,
+        error: result.error?.message,
+        stdout: result.stdout,
+        stderr: result.stderr
+      }
+      privateJson(evidencePath, observation)
+      assert.equal(
+        result.status,
+        0,
+        'Synthetic rendered photo pixel observation failed'
+      )
+      const proof = JSON.parse(result.stdout) as Args
+      observation.pixelResult = proof
+      privateJson(evidencePath, observation)
+      assert(
+        proof.actualRenderedSyntheticMarker === true,
+        'Actual avatar must show both synthetic photo marker colors'
+      )
+      observation.outcome = 'passed'
+      privateJson(evidencePath, observation)
+      return { box, capture, path, ...proof }
+    } catch (error) {
+      observation.error = error instanceof Error ? error.message : String(error)
+      privateJson(evidencePath, observation)
+      throw error
+    }
   }
 
   async iosRaw(signal = AbortSignal.timeout(30000)): Promise<Uint8Array> {
@@ -2296,6 +2408,32 @@ export class Chat2UI {
       )
     const id = typeof selected.id === 'string' ? selected.id : undefined
     const child = object(selected.childOf)
+    if (this.surface === 'android' && selected.childOf != null) {
+      const proof: Args = {
+        name: 'Passive scoped Android bounds',
+        selector: selected,
+        expectedType,
+        observedAt: new Date().toISOString(),
+        outcome: 'failed'
+      }
+      this.steps.push(proof)
+      try {
+        const hierarchy = await this.device.hierarchy()
+        const path = join(
+          this.runDir,
+          'android-scoped-read-' + Date.now() + '-' + randomUUID() + '.json'
+        )
+        privateJson(path, hierarchy)
+        proof.hierarchy = path
+        proof.hierarchySha256 = digest(path)
+        proof.bounds = androidScopedBounds(hierarchy, selected, expectedType)
+        proof.outcome = 'passed'
+        return proof.bounds as Bounds
+      } catch (error) {
+        proof.error = error instanceof Error ? error.message : String(error)
+        throw error
+      }
+    }
     if (!this.native) {
       const text = typeof selected.text === 'string' ? selected.text : undefined
       assert(
@@ -3073,6 +3211,34 @@ export class Chat2UI {
   }
 
   async append(text: string): Promise<void> {
+    if (!this.native && text.includes('\n')) {
+      const proof: Args = {
+        name: 'Multiline composer selector input',
+        length: text.length,
+        sha256: createHash('sha256').update(text).digest('hex'),
+        outcome: 'failed'
+      }
+      this.steps.push(proof)
+      try {
+        assert.equal(
+          await this.draft(),
+          '',
+          'Multiline input requires an actually empty composer'
+        )
+        // The selector route uses Element.Input; the keyboard route cannot type literal newlines.
+        await this.device.inputText({ id: 'chat-composer', text })
+        assert.equal(
+          await this.draft(),
+          text,
+          'Actual composer must equal the complete multiline input'
+        )
+        proof.outcome = 'passed'
+      } catch (error) {
+        proof.error = error instanceof Error ? error.message : String(error)
+        throw error
+      }
+      return
+    }
     await this.device.inputText({
       text,
       ...(this.surface === 'android' ? { keyPress: true } : {})
