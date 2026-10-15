@@ -88,7 +88,11 @@ export function readMessageScrollPosition(
   view: unknown,
   rows: ReadonlyMap<string, unknown>
 ):
-  | { offset: number; anchor: { id: string; relativeY: number } | undefined }
+  | {
+      offset: number
+      anchor: { id: string; relativeY: number } | undefined
+      geometry?: { height: number; content: number }
+    }
   | undefined {
   const element = scrollElement(view)
   if (element == null) return undefined
@@ -106,8 +110,13 @@ export function readMessageScrollPosition(
   const chosen =
     positions.find(row => row.y >= pane.top && row.y < pane.bottom) ??
     positions.filter(row => row.y <= pane.top).at(-1)
+  const height = element.clientHeight
+  const content = element.scrollHeight
   return {
     offset: Math.max(0, element.scrollTop),
+    ...([height, content].every(Number.isFinite) && height > 0 && content > 0
+      ? { geometry: { height, content } }
+      : {}),
     anchor:
       chosen == null
         ? undefined

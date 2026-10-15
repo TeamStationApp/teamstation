@@ -43,10 +43,10 @@ export const CHAT2_SCENARIOS = [
   'E5',
   'E6',
   'E7',
-  'E8',
   'E9',
   'E10',
-  'E11'
+  'E11',
+  'E8'
 ] as const
 export type Chat2Scenario = (typeof CHAT2_SCENARIOS)[number]
 

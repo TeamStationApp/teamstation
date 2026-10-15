@@ -47,7 +47,11 @@ export function readMessageScrollPosition(
   _view: unknown,
   _rows: ReadonlyMap<string, unknown>
 ):
-  | { offset: number; anchor: { id: string; relativeY: number } | undefined }
+  | {
+      offset: number
+      anchor: { id: string; relativeY: number } | undefined
+      geometry?: { height: number; content: number }
+    }
   | undefined {
   return undefined
 }

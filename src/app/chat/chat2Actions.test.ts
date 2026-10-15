@@ -7,11 +7,17 @@ import { join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 
 import { expect } from 'chai'
+import { JSDOM } from 'jsdom'
 import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 import { transform } from 'sucrase'
 
+import { CHAT2_SCENARIOS } from '../../test/chat2Fixture.e2e'
 import {
+  androidCaptureImeState,
+  androidClosedCaptureGeometry,
+  androidComposerControl,
+  androidDismissReference,
   androidImeFrame,
   androidScopedBounds,
   Chat2UI,
@@ -24,6 +30,7 @@ import type { GlassViewProps } from '../components/glassViewProps'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
 import {
+  androidMentionHeaderGeometry,
   compareIosComposerFrames,
   iosMentionHeaderGeometry,
   iosSpotlightCaptureGeometry,
@@ -1328,7 +1335,9 @@ describe('chat native adapter compatibility', function () {
   const raw = (nodes: unknown[]): Buffer =>
     Buffer.from(JSON.stringify({ nodes }))
   const directories: string[] = []
+  const browserDocuments: JSDOM[] = []
   afterEach(() => {
+    for (const browser of browserDocuments.splice(0)) browser.window.close()
     for (const path of directories.splice(0))
       rmSync(path, { recursive: true, force: true })
   })
@@ -1347,6 +1356,60 @@ describe('chat native adapter compatibility', function () {
       }
     }) as Chat2UI
   }
+  function browserModel(): { actual: Chat2UI; page: JSDOM } {
+    const actual = ui([], 'web-wide')
+    const page = new JSDOM('<!doctype html><body></body>', {
+      url: 'https://fixture.example.test/chat',
+      runScripts: 'outside-only'
+    })
+    browserDocuments.push(page)
+    Object.defineProperties(page.window, {
+      innerWidth: { value: 300 },
+      innerHeight: { value: 600 }
+    })
+    Object.defineProperty(page.window, 'isSecureContext', { value: true })
+    page.window.document.hasFocus = () => true
+    Object.assign(actual, {
+      fixture: { webUrl: 'https://fixture.example.test' },
+      deadline: AbortSignal.timeout(10000)
+    })
+    actual.device.evalBrowserScript = async args => ({
+      data: await page.window.eval('(async()=>{' + String(args.script) + '})()')
+    })
+    return { actual, page }
+  }
+  it('runs the authorization-changing scenario last without losing or duplicating any scenario', () => {
+    expect(CHAT2_SCENARIOS.at(-1)).equals('E8')
+    expect(new Set(CHAT2_SCENARIOS).size).equals(CHAT2_SCENARIOS.length)
+    expect([...CHAT2_SCENARIOS].sort()).deep.equals(
+      [
+        'E1',
+        'E2',
+        'E3',
+        'E4',
+        'E5',
+        'E6',
+        'E7',
+        'E8',
+        'E9',
+        'E10',
+        'E11'
+      ].sort()
+    )
+  })
+  it('reports the actual resized browser frame instead of the surface default', () => {
+    const actual = ui([], 'web-wide')
+    delete (actual as Partial<Chat2UI>).metrics
+    Object.assign(actual, {
+      webFrame: { width: 1440, height: 600, dpr: 1, coarse: false }
+    })
+    expect(actual.metrics()).deep.equals({
+      width: 1440,
+      height: 600,
+      dpr: 1,
+      coarse: false
+    })
+  })
   function replyCancellation(mode = 'valid'): {
     scenario: Scenarios
     actual: Chat2UI
@@ -1851,34 +1914,32 @@ describe('chat native adapter compatibility', function () {
     await captureFailure(observeMentionHeader(actual, 500))
     expect(actual.steps[0].outcome).equals('failed')
   })
-  it('keeps the existing web and Android scoped measurement path', async () => {
-    for (const surface of ['web-wide', 'android']) {
-      const actual = ui([], surface)
-      const selectors: unknown[] = []
-      actual.present = async id => {
-        selectors.push(id)
-      }
-      const geometry = iosMentionHeaderGeometry(raw(picker())).geometry
-      actual.observedBounds = async args => {
-        selectors.push(args)
-        if (args.id === 'chat-picker-header') return geometry.header
-        if (args.text === '^Mention a member$') return geometry.title
-        if (args.text === '^Cancel$') return geometry.cancel
-        return geometry.search
-      }
-      setPickerRaw(actual, async () => {
-        throw Error('No iOS snapshot path')
-      })
-      await observeMentionHeader(actual, 1500)
-      expect(selectors.slice(0, 2)).deep.equals([
-        'chat-picker-scene',
-        'chat-picker-header'
-      ])
-      expect(selectors).deep.includes({
-        text: '^Cancel$',
-        childOf: { id: 'chat-picker-header' }
-      })
+  it('keeps the existing web scoped measurement path', async () => {
+    const actual = ui([], 'web-wide')
+    const selectors: unknown[] = []
+    actual.present = async id => {
+      selectors.push(id)
     }
+    const geometry = iosMentionHeaderGeometry(raw(picker())).geometry
+    actual.observedBounds = async args => {
+      selectors.push(args)
+      if (args.id === 'chat-picker-header') return geometry.header
+      if (args.text === '^Mention a member$') return geometry.title
+      if (args.text === '^Cancel$') return geometry.cancel
+      return geometry.search
+    }
+    setPickerRaw(actual, async () => {
+      throw Error('No iOS snapshot path')
+    })
+    await observeMentionHeader(actual, 1500)
+    expect(selectors.slice(0, 2)).deep.equals([
+      'chat-picker-scene',
+      'chat-picker-header'
+    ])
+    expect(selectors).deep.includes({
+      text: '^Cancel$',
+      childOf: { id: 'chat-picker-header' }
+    })
   })
   function editable(
     mode = 'capped',
@@ -2575,16 +2636,29 @@ describe('chat native adapter compatibility', function () {
     expect(saved.outcome).equals('failed')
   })
   it('opens the real web Attach action before targeting the temporary upload input', async () => {
-    const actual = ui([], 'web-wide')
+    const { actual, page } = browserModel()
     const calls: unknown[] = []
     let opened = false
+    const prototype = page.window.HTMLInputElement.prototype
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'click')
+    const originalClick: unknown = Reflect.get(prototype, 'click')
     actual.text = async label => {
       calls.push(label)
       opened = label === 'Attach'
+      const input = page.window.document.createElement('input')
+      input.type = 'file'
+      page.window.document.body.append(input)
+      input.click()
     }
     actual.device.uploadFile = async args => {
       if (!opened) throw Error('No temporary file input before Attach')
       calls.push(args)
+      const input = page.window.document.querySelector('input')!
+      expect(input.style.display).equals('block')
+      Object.defineProperty(input, 'files', {
+        value: [new page.window.File(['synthetic'], 'photo.png')]
+      })
+      input.remove()
     }
     actual.present = async id => {
       calls.push(id)
@@ -2599,6 +2673,11 @@ describe('chat native adapter compatibility', function () {
       { css: 'input[type="file"]', path: '/tmp/synthetic-photo.png' },
       'chat-attachment-chip'
     ])
+    expect(Reflect.get(prototype, 'click')).equals(originalClick)
+    expect(Object.getOwnPropertyDescriptor(prototype, 'click')).deep.equals(
+      descriptor
+    )
+    expect(actual.steps[0].osChooserClaimed).equals(false)
   })
   it('preserves native attachment order and does not upload after a failed web Attach action', async () => {
     const actual = ui([], 'android')
@@ -2633,6 +2712,11 @@ describe('chat native adapter compatibility', function () {
       'chat-attachment-chip'
     ])
     Object.assign(actual, { native: false })
+    const browser = browserModel()
+    actual.uploadPhoto = browser.actual.uploadPhoto.bind(browser.actual)
+    browser.actual.text = async () => {
+      throw Error('Attach action failed')
+    }
     actual.text = async () => {
       throw Error('Attach action failed')
     }
@@ -2642,6 +2726,321 @@ describe('chat native adapter compatibility', function () {
     expect(String(await captureFailure(scenario.attachPhoto()))).contains(
       'Attach action failed'
     )
+    expect(
+      (browser.actual.steps[0].restore as { restored: boolean }).restored
+    ).equals(true)
+  })
+  it('restores the exact input descriptor after upload failure and refuses a pre-existing input', async () => {
+    for (const existing of [false, true]) {
+      const { actual, page } = browserModel()
+      const prototype = page.window.HTMLInputElement.prototype
+      const before = Object.getOwnPropertyDescriptor(prototype, 'click')
+      let uploads = 0
+      if (existing) page.window.document.body.innerHTML = '<input type="file">'
+      actual.text = async () => {
+        const input = page.window.document.createElement('input')
+        input.type = 'file'
+        page.window.document.body.append(input)
+        input.click()
+      }
+      actual.device.uploadFile = async () => {
+        uploads++
+        throw Error('Upload failed')
+      }
+      const error = String(
+        await captureFailure(actual.uploadPhoto('/tmp/synthetic.png'))
+      )
+      expect(error).contains(
+        existing ? 'No existing file input' : 'Upload failed'
+      )
+      expect(uploads).equals(existing ? 0 : 1)
+      expect(Object.getOwnPropertyDescriptor(prototype, 'click')).deep.equals(
+        before
+      )
+    }
+  })
+  it('uses the actual browser clipboard, pastes only its observed synthetic value and restores prior content privately', async () => {
+    const { actual, page } = browserModel()
+    const prior = 'Unrelated clipboard content must remain private'
+    let clipboard = prior
+    const inputs: unknown[] = []
+    const grants: unknown[] = []
+    Object.defineProperty(page.window.navigator, 'clipboard', {
+      value: {
+        readText: async () => clipboard,
+        writeText: async (value: string) => {
+          clipboard = value
+        }
+      }
+    })
+    actual.device.grantPermissions = async value => {
+      grants.push(value)
+    }
+    actual.device.setClipboard = async () => {
+      throw Error('Driver clipboard is not browser clipboard')
+    }
+    actual.device.pasteText = async () => {
+      throw Error('Driver paste is not browser clipboard')
+    }
+    actual.device.inputText = async value => {
+      inputs.push(value)
+    }
+    try {
+      await actual.clipboardSentinel('Synthetic sentinel')
+      expect(clipboard).equals('Synthetic sentinel')
+      clipboard = 'Actual synthetic copied body'
+      await actual.pasteClipboard('Actual synthetic copied body')
+      expect(inputs).deep.equals([
+        { id: 'chat-composer', text: 'Actual synthetic copied body' }
+      ])
+      expect(grants).deep.equals([
+        {
+          origin: 'https://fixture.example.test',
+          permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite']
+        }
+      ])
+    } finally {
+      await actual.restoreClipboard()
+    }
+    expect(clipboard).equals(prior)
+    expect(JSON.stringify(actual.steps)).not.contains(prior)
+    expect(
+      Object.keys(page.window).some(key => key.startsWith('__chat2Clipboard_'))
+    ).equals(false)
+  })
+  it('does not expose or paste a mismatched clipboard and restores after failed Copy proof', async () => {
+    const { actual, page } = browserModel()
+    let clipboard = 'Private previous value'
+    Object.defineProperty(page.window.navigator, 'clipboard', {
+      value: {
+        readText: async () => clipboard,
+        writeText: async (value: string) => {
+          clipboard = value
+        }
+      }
+    })
+    actual.device.grantPermissions = async () => {}
+    actual.device.inputText = async () => {
+      throw Error('Unexpected paste')
+    }
+    await actual.clipboardSentinel('Synthetic sentinel')
+    clipboard = 'Different unrelated value'
+    expect(
+      String(
+        await captureFailure(actual.pasteClipboard('Expected synthetic body'))
+      )
+    ).contains('Actual app Copy')
+    expect(JSON.stringify(actual.steps)).not.contains(
+      'Different unrelated value'
+    )
+    await actual.restoreClipboard()
+    expect(clipboard).equals('Private previous value')
+  })
+  it('submits Send again only with positive error/enabled-Send and an unchanged failed draft', async () => {
+    for (const mode of [
+      'valid',
+      'missing-error',
+      'disabled-send',
+      'changed-draft'
+    ]) {
+      const actual = ui([], 'web-wide')
+      const calls: unknown[] = []
+      let reads = 0
+      actual.draft = async () =>
+        ++reads > 1 && mode === 'changed-draft'
+          ? 'Different draft'
+          : 'Failed synthetic draft'
+      actual.device.assertVisible = async selector => {
+        calls.push(selector)
+        if (
+          (mode === 'missing-error' && selector.text !== '^Send$') ||
+          (mode === 'disabled-send' && selector.enabled === true)
+        )
+          throw Error('Missing positive retry control')
+      }
+      actual.text = async label => {
+        calls.push(label)
+      }
+      const scenario = Object.assign(Object.create(Scenarios.prototype), {
+        ui: actual,
+        observations: []
+      }) as Scenarios
+      if (mode === 'valid') {
+        await scenario.sendAgain()
+        expect(calls.at(-1)).equals('Send')
+      } else {
+        await captureFailure(scenario.sendAgain())
+        expect(calls).not.includes('Send')
+      }
+      expect(calls).not.includes('Retry')
+    }
+  })
+  function browserHistory(mode = 'valid'): {
+    actual: Chat2UI
+    page: JSDOM
+    scenario: Scenarios
+    taps: unknown[]
+  } {
+    const { actual, page } = browserModel()
+    const target = {
+      id: 'synthetic-old',
+      body: 'Older synthetic post',
+      authorId: 2,
+      seq: 1
+    }
+    page.window.document.body.innerHTML =
+      '<div data-testid="chat-message-history"><button>Load earlier messages</button></div>'
+    const history = page.window.document.querySelector('div')!
+    Object.defineProperties(history, {
+      clientHeight: { value: 600 },
+      scrollHeight: { value: 1200 }
+    })
+    page.window.Element.prototype.scrollIntoView = () => {}
+    page.window.Element.prototype.getBoundingClientRect = function () {
+      const isBubble =
+        this.getAttribute('data-testid')?.startsWith('chat-bubble-') === true
+      return {
+        x: 0,
+        y: isBubble ? 100 : 0,
+        width: mode === 'zero' && isBubble ? 0 : 300,
+        height: isBubble ? 60 : 600,
+        top: 0,
+        left: 0,
+        right: 300,
+        bottom: 600,
+        toJSON: () => ({})
+      }
+    }
+    const taps: unknown[] = []
+    actual.device.tapOn = async selector => {
+      taps.push(selector)
+      expect(selector.enabled).equals(true)
+      const control = page.window.document.querySelector(String(selector.css))
+      expect(control?.textContent).equals('Load earlier messages')
+      history.innerHTML =
+        '<div data-testid="chat-message-synthetic-old"><div data-testid="chat-bubble-synthetic-old">Older synthetic post</div></div>'
+    }
+    actual.device.scrollUntilVisible = async () => {
+      throw Error('No unscoped browser scroll loop')
+    }
+    actual.visible = async selector =>
+      selector.id === 'chat-pinned-summary' ||
+      selector.text === '^Pinned messages$'
+    actual.device.pressKey = async selector => {
+      taps.push(selector)
+    }
+    actual.id = async () => {}
+    actual.text = async () => {
+      throw Error('No ambiguous Cancel backdrop tap')
+    }
+    actual.present = async id => {
+      expect(
+        page.window.document.querySelector('[data-testid="' + id + '"]')
+      ).not.equals(null)
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      f: { messages: { target } },
+      observations: []
+    }) as Scenarios
+    if (mode === 'missing') history.innerHTML = ''
+    if (mode === 'duplicate')
+      history.insertAdjacentHTML(
+        'afterend',
+        '<div data-testid="chat-message-history"></div>'
+      )
+    return { actual, page, scenario, taps }
+  }
+  it('dismisses the actual pin popup with Escape and pages through its scoped public earlier control before settling the real target', async () => {
+    const { scenario, taps } = browserHistory()
+    await scenario.anchor()
+    expect(taps[0]).deep.equals({ key: 'ESC' })
+    expect(taps).length(2)
+    expect(
+      scenario.observations.some(
+        proof => proof.stableWebAnchor === 'synthetic-old'
+      )
+    ).equals(true)
+  })
+  for (const mode of ['missing', 'duplicate', 'zero'])
+    it('rejects an unproved browser history target: ' + mode, async () => {
+      const { scenario } = browserHistory(mode)
+      await captureFailure(scenario.anchor())
+    })
+  it('establishes genuine balanced wheel movement before accepting the unchanged reader zero', async () => {
+    const { scenario, actual, page } = browserHistory()
+    await scenario.anchor()
+    const history = page.window.document.querySelector(
+      '[data-testid="chat-message-history"]'
+    )!
+    page.window.document.elementFromPoint = () => history
+    const bubble = page.window.document.querySelector(
+      '[data-testid="chat-bubble-synthetic-old"]'
+    )!
+    bubble.getBoundingClientRect = () => ({
+      x: 0,
+      y: 100 - history.scrollTop,
+      width: 300,
+      height: 60,
+      top: 100 - history.scrollTop,
+      bottom: 160 - history.scrollTop,
+      left: 0,
+      right: 300,
+      toJSON: () => ({})
+    })
+    const directions: unknown[] = []
+    actual.device.scroll = async command => {
+      directions.push(command.direction)
+      history.scrollTop += command.direction === 'DOWN' ? 300 : -300
+    }
+    await scenario.ownWebReader(scenario.f.messages.target, true)
+    expect(directions).deep.equals(['DOWN', 'UP'])
+    expect(history.scrollTop).equals(0)
+    page.window.document.elementFromPoint = () => page.window.document.body
+    await captureFailure(
+      scenario.ownWebReader(scenario.f.messages.target, true)
+    )
+    expect(directions).length(2)
+  })
+  it('uses the real semantic emoji Button raw glyph instead of matching a Search input value', async () => {
+    const { actual, page } = browserModel()
+    page.window.document.body.innerHTML =
+      '<input value="thumbs up"><div role="button" aria-label="thumbs up">👍️</div>'
+    const button = page.window.document.querySelector('[role="button"]')!
+    ;(button as HTMLElement).style.opacity = '1'
+    button.getBoundingClientRect = () => ({
+      x: 10,
+      y: 10,
+      width: 40,
+      height: 40,
+      top: 10,
+      left: 10,
+      right: 50,
+      bottom: 50,
+      toJSON: () => ({})
+    })
+    page.window.document.elementFromPoint = () => button
+    const calls: unknown[] = []
+    actual.device.tapOn = async selector => {
+      calls.push(selector)
+      return { element: { text: '👍️' } }
+    }
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      viewerId: 1,
+      observations: []
+    }) as Scenarios
+    expect(await scenario.pickThumbsUp()).equals('👍️')
+    expect(calls).deep.equals([
+      {
+        css: '[role="button"][aria-label="thumbs up"]',
+        enabled: true,
+        timeout: 5000
+      }
+    ])
+    button.insertAdjacentHTML('afterend', button.outerHTML)
+    await captureFailure(scenario.pickThumbsUp())
+    expect(calls).length(1)
   })
   function incomingModel(mode = 'valid'): {
     scenario: Scenarios
@@ -2928,13 +3327,17 @@ describe('chat native adapter compatibility', function () {
         bounds: {
           x: mode === 'horizontal' ? 500 : 40,
           y:
-            mode === 'offscreen'
-              ? 1100
-              : mode === 'occluded'
-                ? 59
-                : 120 + (phase > 0 && mode === 'moved' ? 4 : 0),
+            mode === 'tall-sliver'
+              ? 461
+              : mode === 'tall' || mode === 'tall-moved'
+                ? -700 + (phase > 0 && mode === 'tall-moved' ? 4 : 0)
+                : mode === 'offscreen'
+                  ? 1100
+                  : mode === 'occluded'
+                    ? 59
+                    : 120 + (phase > 0 && mode === 'moved' ? 4 : 0),
           width: 160,
-          height: mode === 'zero' ? 0 : 40
+          height: mode === 'zero' ? 0 : mode.startsWith('tall') ? 1200 : 40
         }
       }
       return [
@@ -2985,9 +3388,25 @@ describe('chat native adapter compatibility', function () {
     )
     expect(model.scenario.observations.length).equals(2)
   })
+  it('certifies a genuinely intersecting tall body independently of leading-edge attention consumption', async () => {
+    const model = visibleReader('tall')
+    const before = await model.scenario.visibleReaderAnchor()
+    expect(before.bounds.y).equals(-700)
+    model.advance()
+    expect(
+      (await model.scenario.visibleReaderAnchor(before)).bounds
+    ).deep.equals(before.bounds)
+    const moved = visibleReader('tall-moved')
+    const original = await moved.scenario.visibleReaderAnchor()
+    moved.advance()
+    expect(
+      String(await captureFailure(moved.scenario.visibleReaderAnchor(original)))
+    ).contains('Actual visible reader must not move')
+  })
   for (const mode of [
     'offscreen',
     'occluded',
+    'tall-sliver',
     'zero',
     'ambiguous',
     'horizontal'
@@ -3367,7 +3786,8 @@ describe('chat native adapter compatibility', function () {
     const scenario = Object.assign(Object.create(Scenarios.prototype), {
       ui: actual,
       f: { messages: { target: { id: 'synthetic-target' } } },
-      group: 'synthetic'
+      group: 'synthetic',
+      viewerId: 1
     }) as Scenarios
     scenario.check = async (name, work) => {
       if (name.startsWith('E5 movement before hold')) await work()
@@ -3379,7 +3799,12 @@ describe('chat native adapter compatibility', function () {
       ({
         engine: {
           open: async () => ({
-            messages: [{ id: 'synthetic-target', reactions: [{ emoji: '👍' }] }]
+            messages: [
+              {
+                id: 'synthetic-target',
+                reactions: [{ emoji: '👍', userIds: [1] }]
+              }
+            ]
           })
         }
       }) as unknown as Awaited<ReturnType<Scenarios['protocolPeer']>>
@@ -3391,6 +3816,41 @@ describe('chat native adapter compatibility', function () {
       duration: 200
     })
     expect(calls[1]).equals('chat-message-spotlight')
+  })
+  it('does not accept a different raw reaction glyph or another viewer reaction', async () => {
+    for (const reaction of [
+      { emoji: '👍️', userIds: [1] },
+      { emoji: '👍', userIds: [2] }
+    ]) {
+      const actual = ui([])
+      actual.absent = async () => {}
+      actual.text = async () => {}
+      actual.device.dragAndDrop = async () => {}
+      const scenario = Object.assign(Object.create(Scenarios.prototype), {
+        ui: actual,
+        f: { messages: { target: { id: 'synthetic-target' } } },
+        group: 'synthetic',
+        viewerId: 1
+      }) as Scenarios
+      scenario.check = async (name, work) => {
+        if (name.startsWith('E5 movement before hold')) await work()
+      }
+      scenario.anchor = async () => {}
+      scenario.targetBounds = async () => box
+      scenario.action = async () => {}
+      const peer = {
+        engine: {
+          open: async () => ({
+            messages: [{ id: 'synthetic-target', reactions: [reaction] }]
+          })
+        }
+      }
+      scenario.protocolPeer = async () =>
+        peer as unknown as Awaited<ReturnType<Scenarios['protocolPeer']>>
+      expect(String(await captureFailure(scenario.E5()))).contains(
+        'Actual selected raw glyph and reacting viewer'
+      )
+    }
   })
   function recorder(
     actual: Chat2UI,
@@ -3858,11 +4318,323 @@ describe('positive Android IME observations', function () {
     for (const path of paths.splice(0))
       rmSync(path, { recursive: true, force: true })
   })
+  const hiddenCaptureIme =
+    'Window #0 Window{0000 u0 InputMethod}:\n mHasSurface=false\n isOnScreen=false\n isVisible=false\n mGlobalConfiguration={synthetic}'
+  const openCaptureIme =
+    'Window #0 Window{0000 u0 InputMethod}:\n mHasSurface=true\n Surface: shown=true\n isOnScreen=true\n isVisible=true\n touchable region=SkRegion((0,560,400,800))\n mGlobalConfiguration={synthetic}'
+  interface NativeNode {
+    type: string
+    id?: string
+    text?: string
+    bounds?: CaptureBox
+    focused?: boolean
+    enabled?: boolean
+    selected?: boolean
+    children?: NativeNode[]
+  }
+  function captureTree(open = false): NativeNode {
+    const y = open ? 450 : 650
+    return {
+      type: 'ViewGroup',
+      children: [
+        {
+          id: 'chat-message-history',
+          type: 'ScrollView',
+          bounds: { x: 0, y: 0, width: 400, height: 800 }
+        },
+        {
+          id: 'chat-composer-band',
+          type: 'ViewGroup',
+          bounds: { x: 20, y: y - 50, width: 360, height: 100 },
+          children: [
+            {
+              id: 'chat-composer',
+              type: 'EditText',
+              text: 'Preserved synthetic text',
+              focused: true,
+              bounds: { x: 100, y, width: 220, height: 40 }
+            },
+            {
+              type: 'Button',
+              text: 'Attach',
+              bounds: { x: 24, y, width: 44, height: 44 }
+            },
+            {
+              type: 'Button',
+              text: 'Send',
+              enabled: false,
+              bounds: { x: 332, y, width: 44, height: 44 }
+            }
+          ]
+        },
+        {
+          type: 'View',
+          children: ['Home', 'Videos', 'Schedule', 'Search', 'Chat'].map(
+            (text, index) => ({
+              type: 'View',
+              text,
+              selected: text === 'Chat',
+              bounds: { x: 10 + index * 75, y: 730, width: 65, height: 50 }
+            })
+          )
+        }
+      ]
+    }
+  }
+  it('measures typed picker controls in the scene while retaining the leaf header marker', async () => {
+    const scene: NativeNode = {
+      id: 'chat-picker-scene',
+      type: 'ViewGroup',
+      bounds: { x: 0, y: 0, width: 400, height: 800 },
+      children: [
+        {
+          id: 'chat-picker-header',
+          type: 'View',
+          bounds: { x: 0, y: 0, width: 400, height: 110 }
+        },
+        {
+          type: 'ViewGroup',
+          children: [
+            {
+              type: 'TextView',
+              text: 'Mention a member',
+              bounds: { x: 16, y: 64, width: 170, height: 24 }
+            },
+            {
+              type: 'Button',
+              text: 'Cancel',
+              bounds: { x: 290, y: 50, width: 96, height: 48 }
+            }
+          ]
+        },
+        {
+          id: 'chat-picker-content',
+          type: 'ScrollView',
+          bounds: { x: 0, y: 110, width: 400, height: 690 },
+          children: [
+            {
+              type: 'EditText',
+              text: 'Search members',
+              bounds: { x: 16, y: 150, width: 368, height: 48 }
+            }
+          ]
+        }
+      ]
+    }
+    expect(androidMentionHeaderGeometry(scene).cancel.width).equals(96)
+    const actual = model().ui
+    actual.device.hierarchy = async () => scene
+    actual.device.assertVisible = async () => {
+      throw Error('No hybrid picker lookup')
+    }
+    await observeMentionHeader(actual)
+    expect(
+      actual.steps.find(
+        step => step.name === 'Settled mention chooser header geometry'
+      )?.outcome
+    ).equals('passed')
+    const cancel = scene.children![1].children![1]
+    cancel.bounds!.y = 120
+    expect(() => androidMentionHeaderGeometry(scene)).throws('measured marker')
+    cancel.bounds!.y = 50
+    scene.children![1].children!.push({ ...cancel })
+    expect(() => androidMentionHeaderGeometry(scene)).throws('Unique scoped')
+  })
+  it('requires explicit current closed OS state and preserves open-to-closed movement separately', () => {
+    const closed = androidCaptureImeState(hiddenCaptureIme, viewport)
+    expect(closed.state).equals('already-closed')
+    const before = androidDismissReference(captureTree(), closed, viewport)
+    expect(Object.isFrozen(before)).equals(true)
+    expect(before.keyboard).equals(undefined)
+    expect(
+      androidClosedCaptureGeometry(captureTree(), before).navigation
+    ).length(5)
+    const open = androidDismissReference(
+      captureTree(true),
+      androidCaptureImeState(openCaptureIme, viewport),
+      viewport
+    )
+    expect(() => androidClosedCaptureGeometry(captureTree(true), open)).throws(
+      'former IME region'
+    )
+    expect(androidClosedCaptureGeometry(captureTree(), open).text).equals(
+      before.text
+    )
+    for (const raw of [
+      'No InputMethod window',
+      hiddenCaptureIme.replace('isOnScreen=false', 'isOnScreen=unknown'),
+      hiddenCaptureIme.replace(
+        'isOnScreen=false',
+        'isOnScreen=false\n isOnScreen=false'
+      )
+    ])
+      expect(() => androidCaptureImeState(raw, viewport)).throws()
+    const noNavigation = captureTree()
+    noNavigation.children!.pop()
+    expect(() => androidClosedCaptureGeometry(noNavigation, before)).throws(
+      'navigation'
+    )
+  })
+  it('retains a fresh typed disabled Send without using the hybrid finder or inventing metadata', async () => {
+    const actual = model().ui
+    const tree = captureTree(true)
+    actual.device.hierarchy = async () => tree
+    actual.device.assertVisible = async () => {
+      throw Error('Hybrid control lookup must not run')
+    }
+    expect(
+      await actual.androidComposerControl('Send', new AbortController().signal)
+    ).deep.equals(tree.children![1].children![2].bounds)
+    const observed = androidComposerControl(tree, 'Send', viewport)
+    expect(observed).equals(tree.children![1].children![2])
+    expect(observed.enabled).equals(false)
+    for (const key of ['id', 'class', 'focused'])
+      expect(Object.hasOwn(observed, key)).equals(false)
+    const saved = actual.steps.find(
+      step => step.name === 'Fresh Android capture hierarchy'
+    )!
+    expect(JSON.parse(readFileSync(String(saved.path), 'utf8'))).deep.equals(
+      tree
+    )
+    const button = tree.children![1].children!.pop()!
+    tree.children!.push(button)
+    expect(() => androidComposerControl(tree, 'Send', viewport)).throws(
+      'descend'
+    )
+    tree.children!.pop()
+    button.bounds!.width = 0
+    tree.children![1].children!.push(button)
+    expect(() => androidComposerControl(tree, 'Send', viewport)).throws(
+      'Positive actual Button'
+    )
+  })
+  it('refuses an aborted control read or a closed capture without its actual per-hide witness', async () => {
+    const actual = model().ui
+    const controller = new AbortController()
+    controller.abort()
+    actual.device.hierarchy = async () => {
+      throw Error('Unexpected native read')
+    }
+    expect(
+      String(
+        await captureFailure(
+          actual.androidComposerControl('Send', controller.signal)
+        )
+      )
+    ).not.contains('Unexpected native read')
+    Object.assign(actual, { scenario: 'capture' })
+    expect(
+      String(
+        await captureFailure(
+          actual.shot('conversation', 'Missing witness model')
+        )
+      )
+    ).contains('dismissal witness required')
+  })
+  for (const mode of [
+    'already-closed',
+    'already-open',
+    'pending-open',
+    'unknown',
+    'unstable'
+  ])
+    it(
+      'settles ' +
+        mode +
+        ' before one ordinary capture hide and revalidates the closed shot',
+      async () => {
+        const actual = model().ui
+        let open = mode === 'already-open'
+        let reads = 0
+        let shots = 0
+        let hides = 0
+        let focused = 0
+        const order: string[] = []
+        processApi.spawnSync = (_command: string, args: string[]) => {
+          if (args.includes('InputMethod')) {
+            reads++
+            if (mode === 'pending-open' && reads === 3) open = true
+            order.push(open ? 'open' : 'closed')
+            return {
+              status: 0,
+              signal: null,
+              stdout:
+                mode === 'unknown' && reads === 2
+                  ? hiddenCaptureIme.replace('false', 'unknown')
+                  : open
+                    ? openCaptureIme
+                    : hiddenCaptureIme,
+              stderr: ''
+            }
+          }
+          expect(args[0]).equals('-c')
+          return {
+            status: 0,
+            signal: null,
+            stdout: '{"width":1,"height":1,"mode":"RGBA"}',
+            stderr: ''
+          }
+        }
+        Object.assign(actual, {
+          scenario: 'capture',
+          captures: [],
+          deadline: AbortSignal.timeout(mode === 'unstable' ? 600 : 10000)
+        })
+        actual.device.hierarchy = async () => captureTree(open)
+        actual.device.screenshot = async () =>
+          captureImages[mode === 'unstable' ? ++shots % 2 : 0]
+        actual.device.assertVisible = async args => {
+          expect(args).includes({
+            id: 'chat-composer',
+            focused: true,
+            enabled: true
+          })
+          expect(open).equals(true)
+          focused++
+          order.push('focus')
+        }
+        actual.device.hideKeyboard = async (value, options) => {
+          expect(value).equals(undefined)
+          expect(options?.signal.aborted).equals(false)
+          hides++
+          order.push('hide')
+          open = false
+        }
+        actual.captureImage = async () => {
+          order.push('final-image')
+          return {}
+        }
+        if (mode === 'unknown' || mode === 'unstable') {
+          await captureFailure(actual.hideKeyboardForCapture())
+          expect(hides).equals(0)
+        } else {
+          await actual.hideKeyboardForCapture()
+          expect(hides).equals(1)
+          expect(focused).equals(mode === 'already-closed' ? 0 : 1)
+          if (focused > 0)
+            expect(order.indexOf('focus')).lessThan(order.indexOf('hide'))
+          await actual.shot(
+            'conversation',
+            'Actual closed state revalidation model'
+          )
+          expect(order.at(-1)).equals('final-image')
+          expect(hides).equals(1)
+          const proof = actual.steps.find(
+            step => step.name === 'Passive Android initial capture state'
+          )!
+          expect(proof.outcome).equals('passed')
+          if (mode === 'already-closed')
+            expect(Number(proof.exactPairMs)).at.least(200)
+          else expect(proof.initialDispatch).equals('open')
+        }
+      }
+    )
   function model(mode = 'valid'): {
     ui: Chat2UI
     calls: unknown[]
     raw: string
     probes: () => number
+    focusChecks: () => number
   } {
     const calls: unknown[] = []
     const runDir = mkdtempSync(join(tmpdir(), 'android-ime-'))
@@ -3870,7 +4642,8 @@ describe('positive Android IME observations', function () {
     // A missed stub must fail locally rather than reach an installed adb.
     process.env.CHAT2_ADB = join(runDir, 'unavailable-observer-fixture')
     let probes = 0
-    const tree = (): { nodes: PublicNode[] } => {
+    let focusChecks = 0
+    const tree = (): { type: string; children: unknown[] } => {
       probes += 1
       const band = {
         x: 20,
@@ -3928,11 +4701,27 @@ describe('positive Android IME observations', function () {
       }
       if (mode === 'overlay' && probes > 1)
         nodes.push({ id: 'chat-picker-scene', bounds: band })
-      if (mode === 'geometry-change' && probes % 2 === 0) {
+      if (mode === 'geometry-change' && focusChecks % 2 === 0) {
         nodes[0].bounds = { ...band, y: band.y - 5 }
         editor.bounds = { ...editor.bounds!, y: editor.bounds!.y - 5 }
       }
-      return { nodes }
+      const container = nodes.find(node => node.id === 'chat-composer-band')
+      const overlays = nodes.filter(node => node.id === 'chat-picker-scene')
+      const children = nodes.filter(
+        node => node !== container && !overlays.includes(node)
+      )
+      return {
+        type: 'ViewGroup',
+        children: [
+          {
+            id: 'chat-message-history',
+            type: 'ScrollView',
+            bounds: { x: 0, y: 0, ...viewport }
+          },
+          ...(container == null ? children : [{ ...container, children }]),
+          ...overlays
+        ]
+      }
     }
     const actualRaw = mode === 'hidden' ? shown.replace('true', 'false') : shown
     processApi.spawnSync = (
@@ -3973,6 +4762,7 @@ describe('positive Android IME observations', function () {
       deviceId: 'emulator-0000',
       fixture: { devices: { android: { id: 'emulator-0000', owned: true } } },
       binding: { source: '0'.repeat(40) },
+      deadline: new AbortController().signal,
       steps: [],
       device: {
         platformInfo: async () => ({
@@ -3985,6 +4775,8 @@ describe('positive Android IME observations', function () {
         },
         assertVisible: async (args: Record<string, unknown>) => {
           calls.push(args)
+          if (args.id === 'chat-composer' && args.focused === true)
+            focusChecks++
           if (
             typeof args.text === 'string' &&
             /q|w|e/i.test(args.text) &&
@@ -4006,7 +4798,13 @@ describe('positive Android IME observations', function () {
         screenshot: async () => captureImages[0]
       }
     }) as Chat2UI
-    return { ui, calls, raw: actualRaw, probes: () => probes }
+    return {
+      ui,
+      calls,
+      raw: actualRaw,
+      probes: () => probes,
+      focusChecks: () => focusChecks
+    }
   }
   it('accepts positive shown legacy and current native-coordinate window formats', () => {
     expect(androidImeFrame(shown, viewport)).deep.equals({
@@ -4281,16 +5079,21 @@ describe('positive Android IME observations', function () {
     Date.now = () => actualNow() + offset
     const actual = model()
     const hierarchy = actual.ui.device.hierarchy
+    let measuredFocus = 0
     actual.ui.device.hierarchy = async () => {
-      offset +=
-        mode === 'overall-abort'
-          ? 0
-          : ['motion', 'clock-change'].includes(mode)
-            ? 31000
-            : 4500
-      const tree = (await hierarchy()) as { nodes: PublicNode[] }
-      if (mode === 'invalid-middle' && actual.probes() === 2)
-        tree.nodes.push({ id: 'chat-picker-scene' })
+      const tree = (await hierarchy()) as { children: unknown[] }
+      // Cost each full semantic focus probe; additional control reads remain genuinely fresh.
+      if (actual.focusChecks() > measuredFocus) {
+        measuredFocus = actual.focusChecks()
+        offset +=
+          mode === 'overall-abort'
+            ? 0
+            : ['motion', 'clock-change'].includes(mode)
+              ? 31000
+              : 4500
+        if (mode === 'invalid-middle' && measuredFocus === 2)
+          tree.children.push({ id: 'chat-picker-scene' })
+      }
       return tree
     }
     Object.assign(actual.ui.device, {
@@ -4330,12 +5133,17 @@ describe('positive Android IME observations', function () {
         return frames[
           ['motion', 'clock-change'].includes(mode)
             ? shots % 2
-            : actual.probes() % 2
+            : actual.focusChecks() % 2
         ]
       }
     })
     try {
-      await work({ ...actual, shots: () => shots, frames })
+      await work({
+        ...actual,
+        probes: actual.focusChecks,
+        shots: () => shots,
+        frames
+      })
     } finally {
       Date.now = actualNow
     }

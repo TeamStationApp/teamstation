@@ -200,7 +200,6 @@ export function ConversationScreen(
     | {
         anchor: { id: string; relativeY: number } | undefined
         offset: number
-        lastSeq: number
         following: boolean
       }
     | undefined
@@ -372,9 +371,20 @@ export function ConversationScreen(
       (props.draft?.scrollOffset ?? 0) > 0,
     followNewest: props.draft?.followNewest === true,
     anchor: props.draft?.scrollAnchor,
+    width: 0,
+    contentWidth: 0,
     height: 0,
     content: 0
   })
+  const awaitingWidthLayout = useRef(false)
+  const widthRevision = useRef(0)
+  // A reflowed row must not be clamped against the previous width's content.
+  const widthLayoutReady = (): boolean =>
+    Platform.OS !== 'web' ||
+    (!awaitingWidthLayout.current &&
+      (scrolled.current.width <= 0 ||
+        scrolled.current.contentWidth <= 0 ||
+        Math.abs(scrolled.current.width - scrolled.current.contentWidth) <= 1))
   useEffect(
     () =>
       draftOwner.attach(
@@ -571,7 +581,18 @@ export function ConversationScreen(
       scroller.current,
       messageRefs.current
     )
-    if (visible != null) scrolled.current.offset = visible.offset
+    let following = false
+    if (visible != null) {
+      scrolled.current.offset = visible.offset
+      if (visible.geometry != null) {
+        scrolled.current.height = visible.geometry.height
+        scrolled.current.content = visible.geometry.content
+        following =
+          visible.offset + visible.geometry.height >=
+          visible.geometry.content - 48
+        scrolled.current.followNewest = following
+      }
+    }
     // Cancel the jump, not the older page's position compensation. The
     // response still adds rows above the position the person now chose.
     const pending = prepend.current
@@ -614,7 +635,7 @@ export function ConversationScreen(
       }
     }
     setResolvingJump(false)
-    atBottom.current = false
+    atBottom.current = following
     restoreTarget.current = undefined
     restoreAnchor.current = undefined
     restoringAnchor.current = false
@@ -928,6 +949,7 @@ export function ConversationScreen(
       !scrolled.current.hasPosition ||
       menuReading.current != null ||
       backgroundReading.current != null ||
+      !widthLayoutReady() ||
       scrolled.current.followNewest ||
       restoreTarget.current != null ||
       restoreAnchor.current != null ||
@@ -962,6 +984,7 @@ export function ConversationScreen(
     if (
       anchor == null ||
       measuringJump.current != null ||
+      !widthLayoutReady() ||
       !mounted.current ||
       !paneActive.current
     )
@@ -971,12 +994,15 @@ export function ConversationScreen(
       return
     }
     const generation = jumpGeneration.current
+    const width = widthRevision.current
     restoringAnchor.current = true
     restoreAnchorDirty.current = false
     const cancelled = (): boolean =>
       !mounted.current ||
       !paneActive.current ||
       generation !== jumpGeneration.current ||
+      width !== widthRevision.current ||
+      !widthLayoutReady() ||
       restoreAnchor.current !== anchor
     measurePosition(anchor.id, cancelled)
       .then(y => {
@@ -1073,7 +1099,6 @@ export function ConversationScreen(
       const held = {
         anchor,
         offset,
-        lastSeq: before.conversation.lastSeq,
         following: scrolled.current.followNewest || atBottom.current
       }
       backgroundReading.current = held
@@ -1084,20 +1109,12 @@ export function ConversationScreen(
         const revision = committed.current
         publishView(next)
         await waitForCommit(revision)
-        // A new user position or followed arrival owns the reader after cancellation.
+        // A newer user position or follow intent owns the reader after cancellation.
         const chosen = cancelled() ? scrolled.current.anchor : held.anchor
-        const arrival =
-          (engine.view(conversationId)?.conversation.lastSeq ?? 0) >
-          held.lastSeq
-        if (
-          menuReading.current == null &&
-          !(
-            arrival &&
-            (cancelled() ? scrolled.current.followNewest : held.following)
-          ) &&
-          !(cancelled() && scrolled.current.followNewest) &&
-          chosen != null
-        ) {
+        const following = cancelled()
+          ? scrolled.current.followNewest
+          : held.following
+        if (menuReading.current == null && !following && chosen != null) {
           const y = await measurePosition(
             chosen.id,
             () => !mounted.current || !paneActive.current
@@ -1257,6 +1274,23 @@ export function ConversationScreen(
 
   const restoreForGeometry = useRef(restoreReadingAnchor)
   restoreForGeometry.current = restoreReadingAnchor
+  const previousWindowWidth = useRef(window.width)
+  useLayoutEffect(() => {
+    if (previousWindowWidth.current === window.width) return
+    previousWindowWidth.current = window.width
+    if (Platform.OS !== 'web' || !mounted.current || !paneActive.current) return
+    awaitingWidthLayout.current = true
+    widthRevision.current += 1
+    if (restoringAnchor.current) restoreAnchorDirty.current = true
+    if (
+      menuReading.current == null &&
+      measuringJump.current == null &&
+      !scrolled.current.followNewest &&
+      !atBottom.current &&
+      scrolled.current.anchor != null
+    )
+      restoreAnchor.current = { ...scrolled.current.anchor }
+  }, [window.width])
   useEffect(() => {
     if (
       menuReading.current == null ||
@@ -1995,7 +2029,13 @@ export function ConversationScreen(
   ): void => {
     if (!mounted.current || !paneActive.current) return
     const { contentOffset, layoutMeasurement } = event.nativeEvent
+    if (
+      restoreAnchor.current != null &&
+      (!widthLayoutReady() || restoringAnchor.current)
+    )
+      return
     if (restoreTarget.current != null) {
+      if (!widthLayoutReady() || restoringAnchor.current) return
       const actual = Math.max(0, contentOffset.y)
       const target = reachableOffset(restoreTarget.current)
       if (Math.abs(actual - target) <= 1) {
@@ -2186,8 +2226,18 @@ export function ConversationScreen(
           }}
           onLayout={event => {
             if (!mounted.current || !paneActive.current) return
+            if (scrolled.current.width !== event.nativeEvent.layout.width) {
+              widthRevision.current += 1
+              if (restoringAnchor.current) restoreAnchorDirty.current = true
+            }
+            scrolled.current.width = event.nativeEvent.layout.width
             scrolled.current.height = event.nativeEvent.layout.height
-            if (restoreTarget.current != null)
+            awaitingWidthLayout.current = false
+            if (
+              restoreTarget.current != null &&
+              restoreAnchor.current == null &&
+              widthLayoutReady()
+            )
               scroller.current?.scrollTo({
                 y: restoreTarget.current,
                 animated: false
@@ -2195,14 +2245,17 @@ export function ConversationScreen(
             restoreReadingAnchor()
           }}
           scrollEventThrottle={100}
-          onContentSizeChange={(_width, height) => {
+          onContentSizeChange={(width, height) => {
             if (!mounted.current || !paneActive.current) return
+            if (scrolled.current.contentWidth !== width) {
+              widthRevision.current += 1
+              if (restoringAnchor.current) restoreAnchorDirty.current = true
+            }
+            scrolled.current.contentWidth = width
             const background = backgroundReading.current
             if (background != null) {
               scrolled.current.content = height
-              const arrival = view.conversation.lastSeq > background.lastSeq
               if (
-                arrival &&
                 (scrolled.current.followNewest || atBottom.current) &&
                 menuReading.current == null
               )
@@ -2267,12 +2320,20 @@ export function ConversationScreen(
                 scroller.current?.scrollTo({ y: held.offset, animated: false })
               return
             }
-            if (restoreTarget.current != null) {
+            if (
+              restoreTarget.current != null ||
+              restoreAnchor.current != null
+            ) {
               scrolled.current.content = height
-              scroller.current?.scrollTo({
-                y: restoreTarget.current,
-                animated: false
-              })
+              if (
+                restoreTarget.current != null &&
+                restoreAnchor.current == null &&
+                widthLayoutReady()
+              )
+                scroller.current?.scrollTo({
+                  y: restoreTarget.current,
+                  animated: false
+                })
               restoreReadingAnchor()
               return
             }

@@ -11,6 +11,8 @@ import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
+import emojiData from 'emojibase-data/en/compact.json'
+
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import {
@@ -32,6 +34,7 @@ import {
   sourceBinding
 } from '../../test/chat2Fixture.e2e'
 import {
+  androidScopedBounds,
   Chat2UI,
   exactText,
   flattenPublicHierarchy,
@@ -54,6 +57,61 @@ interface VisibleReaderAnchor {
   id: string
   bounds: NonNullable<PublicNode['bounds']>
   band: { top: number; bottom: number }
+}
+
+/** Android's header marker is a background leaf; its typed controls share the scene. */
+export function androidMentionHeaderGeometry(
+  raw: unknown
+): MentionHeaderGeometry {
+  const geometry = {
+    header: androidScopedBounds(raw, {
+      id: 'chat-picker-header',
+      childOf: { id: 'chat-picker-scene' }
+    }),
+    title: androidScopedBounds(
+      raw,
+      {
+        text: exactText('Mention a member'),
+        childOf: { id: 'chat-picker-scene' }
+      },
+      'TextView'
+    ),
+    cancel: androidScopedBounds(
+      raw,
+      { text: exactText('Cancel'), childOf: { id: 'chat-picker-scene' } },
+      'Button'
+    ),
+    search: androidScopedBounds(
+      raw,
+      {
+        text: exactText('Search members'),
+        childOf: { id: 'chat-picker-content' }
+      },
+      'EditText'
+    )
+  }
+  // Also prove that Search content actually belongs to this same picker scene.
+  androidScopedBounds(raw, {
+    id: 'chat-picker-content',
+    childOf: { id: 'chat-picker-scene' }
+  })
+  const { header, title, cancel, search } = geometry
+  for (const box of [title, cancel])
+    assert(
+      box.x >= header.x - 1 &&
+        box.y >= header.y - 1 &&
+        box.x + box.width <= header.x + header.width + 1 &&
+        box.y + box.height <= header.y + header.height + 1,
+      'Actual Android typed header siblings must fit the measured marker'
+    )
+  assert(
+    cancel.width >= 47 &&
+      cancel.height >= 47 &&
+      title.x + title.width <= cancel.x &&
+      header.y + header.height <= search.y,
+    'Actual Android Cancel target/title nonoverlap and Search-below geometry required'
+  )
+  return geometry
 }
 
 /** Native header content can be an AX sibling of its marker; prove the picker tree. */
@@ -222,7 +280,7 @@ export async function observeMentionHeader(
   }
   ui.steps.push(observation)
   try {
-    if (ui.surface !== 'ios') {
+    if (!ui.native) {
       await ui.present('chat-picker-scene')
       await ui.present('chat-picker-header')
     }
@@ -255,6 +313,21 @@ export async function observeMentionHeader(
         sample.rawHierarchy.nodes = actual.rawNodeCount
         sample.bounds = actual.geometry
         sample.nativeScope = actual.scope
+      } else if (ui.surface === 'android') {
+        assert(
+          Date.now() < deadline,
+          'Timed out waiting for stable chooser geometry'
+        )
+        const actual = await ui.androidHierarchy(
+          AbortSignal.timeout(Math.max(1, deadline - Date.now()))
+        )
+        sample.rawHierarchy = actual.evidence as {
+          path: string
+          sha256: string
+        }
+        sample.bounds = androidMentionHeaderGeometry(actual.raw)
+        sample.nativeScope =
+          'typed scene descendants physically inside header marker'
       } else {
         sample.bounds.header = {
           ...(await ui.observedBounds({
@@ -840,6 +913,15 @@ export async function observeComposerCaptureReady(
     selector: Json,
     observed?: PublicNode[]
   ): Promise<Box | undefined> => {
+    if (
+      ui.surface === 'android' &&
+      typeof selector.text === 'string' &&
+      ['^Attach$', '^Send$', '^Cancel reply$'].includes(selector.text)
+    )
+      return await ui.androidComposerControl(
+        selector.text.slice(1, -1),
+        AbortSignal.timeout(remaining())
+      )
     try {
       const args = { ...selector, timeout: Math.min(120, remaining()) }
       const options = { signal: AbortSignal.timeout(remaining()) }
@@ -1688,6 +1770,30 @@ export class Scenarios {
         .sort((a, b) => (b.bounds?.y ?? 0) - (a.bounds?.y ?? 0))[0]
       if (tab != null) await ui.tapObserved(tab)
     }
+    if (!ui.native) {
+      const readiness: Json = {
+        browserIdentityReadiness: [],
+        startedAt: new Date().toISOString()
+      }
+      this.observations.push(readiness)
+      await until(
+        async () => {
+          const link = await ui.visible(
+            { text: exactText('Link this device') },
+            500
+          )
+          const list = await ui.visible({ id: 'chat-conversation-list' }, 500)
+          ;(readiness.browserIdentityReadiness as unknown[]).push({
+            at: new Date().toISOString(),
+            link,
+            list
+          })
+          return link || list ? true : undefined
+        },
+        'actual browser Link or conversation-list readiness',
+        30000
+      )
+    }
     if (await ui.visible({ text: 'Link this device' }, 500)) {
       const provider = await fixturePeer(this.f, key)
       try {
@@ -1719,9 +1825,11 @@ export class Scenarios {
       if (await ui.visible({ text: exactText('Pinned messages') }, 1000))
         if (await ui.visible({ id: 'chat-pin-' + target.id }, 500))
           await ui.id('chat-pin-' + target.id)
-        else await ui.text('Cancel')
+        else if (ui.native) await ui.text('Cancel')
+        else await this.dismiss()
     }
-    if (!(await ui.visible({ id: 'chat-bubble-' + target.id }, 1000))) {
+    if (!ui.native) await this.webHistoryTarget(target)
+    else if (!(await ui.visible({ id: 'chat-bubble-' + target.id }, 1000))) {
       await ui.device.scrollUntilVisible({
         element: { id: 'chat-bubble-' + target.id },
         direction: 'UP',
@@ -1733,10 +1841,176 @@ export class Scenarios {
       await ui.dom(
         `const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')}); if(!n)throw Error('Visible target required');n.scrollIntoView({block:'center'});return {publicDomScroll:true}`
       )
+    if (!ui.native) await this.webAnchorReady(target)
+  }
+
+  /** Page through the real public history control; browser scroll does not fetch older rows. */
+  async webHistoryTarget(target: Chat2Message): Promise<void> {
+    const ui = this.ui
+    assert(!ui.native, 'Browser history paging required')
+    const end = Date.now() + 30000
+    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(30000)])
+    const proof: Json = {
+      publicHistoryTarget: target.id,
+      samples: [],
+      actions: []
+    }
+    this.observations.push(proof)
+    const read = async (position = ''): Promise<Json> => {
+      assert(Date.now() < end, 'Public history paging exceeded 30 seconds')
+      const value = await ui.dom(
+        `
+        const id=${JSON.stringify('chat-bubble-' + target.id)},position=${JSON.stringify(position)};
+        const histories=document.querySelectorAll('[data-testid="chat-message-history"]');if(histories.length!==1)throw Error('Unique actual history required');const h=histories[0];
+        const targets=Array.from(document.querySelectorAll('[data-testid='+JSON.stringify(id)+']'));if(targets.length>1||targets.some(n=>!h.contains(n)))throw Error('Ambiguous or unscoped history target');
+        const controls=Array.from(h.querySelectorAll('button,[role="button"]')).filter(n=>n.textContent.trim()==='Load earlier messages');if(controls.length>1)throw Error('Unique public Load earlier control required');const control=controls[0];
+        if(position==='earlier'){if(!control)throw Error('No earlier control for missing target');control.scrollIntoView({block:'center',behavior:'instant'})}
+        if(position==='target'){if(targets.length!==1)throw Error('Actual target required');targets[0].scrollIntoView({block:'center',behavior:'instant'})}
+        let css;if(control){let n=control,parts=[];while(n!==h){const p=n.parentElement;if(!p)throw Error('Actual history ancestry required');parts.unshift('*:nth-child('+(Array.from(p.children).indexOf(n)+1)+')');n=p}css='[data-testid="chat-message-history"] > '+parts.join(' > ');if(document.querySelectorAll(css).length!==1||document.querySelector(css)!==control)throw Error('Unique scoped earlier control required')}
+        const box=n=>{const b=n.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height}};
+        return {position,targetCount:targets.length,target:targets[0]?box(targets[0]):null,history:box(h),earlier:control?{css,disabled:control.disabled===true,ariaDisabled:control.getAttribute('aria-disabled'),box:box(control)}:null,ids:Array.from(h.querySelectorAll('[data-testid^="chat-bubble-"]')).map(n=>n.getAttribute('data-testid'))};
+      `,
+        signal
+      )
+      ;(proof.samples as unknown[]).push({
+        at: new Date().toISOString(),
+        value
+      })
+      return value
+    }
+    for (let pages = 0; pages <= 10; pages++) {
+      const current = await read()
+      if (current.targetCount === 1) {
+        const actual = await read('target')
+        const box = actual.target as PublicNode['bounds']
+        const history = actual.history as NonNullable<PublicNode['bounds']>
+        assert(
+          box != null &&
+            [
+              box.x,
+              box.y,
+              box.width,
+              box.height,
+              history.x,
+              history.y,
+              history.width,
+              history.height
+            ].every(Number.isFinite) &&
+            box.width > 0 &&
+            box.height > 0 &&
+            history.width > 0 &&
+            history.height > 0 &&
+            box.x < history.x + history.width &&
+            box.x + box.width > history.x &&
+            box.y < history.y + history.height &&
+            box.y + box.height > history.y,
+          'Actual target must intersect public history'
+        )
+        return
+      }
+      assert(
+        pages < 10 && current.earlier != null,
+        'Missing target has no public earlier page within ten-page bound'
+      )
+      const positioned = await read('earlier')
+      const control = positioned.earlier as Json
+      assert(
+        control?.disabled === false &&
+          (control.ariaDisabled === null || control.ariaDisabled === 'false') &&
+          typeof control.css === 'string',
+        'Enabled scoped public earlier control required'
+      )
+      const response = await ui.device.tapOn(
+        {
+          css: control.css,
+          enabled: true,
+          timeout: Math.max(1, end - Date.now())
+        },
+        { signal }
+      )
+      ;(proof.actions as unknown[]).push({
+        at: new Date().toISOString(),
+        css: control.css,
+        response
+      })
+      const before = JSON.stringify(current.ids)
+      await until(
+        async () => {
+          const next = await read()
+          return next.targetCount === 1 || JSON.stringify(next.ids) !== before
+            ? true
+            : undefined
+        },
+        'actual public history page progress',
+        Math.max(1, end - Date.now())
+      )
+    }
+    throw Error('Public history target not reached')
+  }
+
+  /** Fresh observations settle real layout; later measurements are never replaced or cached. */
+  async webAnchorReady(target = this.f.messages.target): Promise<void> {
+    const ui = this.ui
+    assert(!ui.native, 'Browser anchor readiness required')
+    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(2000)])
+    const proof: Json = { stableWebAnchor: target.id, samples: [] }
+    this.observations.push(proof)
+    let previous: string | undefined
+    let since = 0
+    await until(
+      async () => {
+        const value = await ui.dom(
+          `
+        const id=${JSON.stringify(target.id)},one=id=>{const ns=document.querySelectorAll('[data-testid='+JSON.stringify(id)+']');if(ns.length!==1)throw Error('Unique actual anchor element required: '+id);return ns[0]};
+        const h=one('chat-message-history'),r=one('chat-message-'+id),b=one('chat-bubble-'+id);if(!h.contains(r)||!r.contains(b))throw Error('Actual history/row/bubble ancestry required');
+        const box=n=>{const b=n.getBoundingClientRect(),v={x:b.x,y:b.y,width:b.width,height:b.height};if(!Object.values(v).every(Number.isFinite)||b.width<=0||b.height<=0)throw Error('Positive finite actual anchor geometry required');return v};
+        if(![h.scrollTop,h.scrollHeight,h.clientHeight,innerWidth,innerHeight].every(Number.isFinite)||h.clientHeight<=0)throw Error('Finite positive actual history/viewport required');
+        return {observedMs:performance.now(),geometry:{row:box(r),bubble:box(b),history:{box:box(h),offset:h.scrollTop,content:h.scrollHeight,height:h.clientHeight},viewport:{width:innerWidth,height:innerHeight,scrollX,scrollY}}};
+      `,
+          signal
+        )
+        ;(proof.samples as unknown[]).push({
+          at: new Date().toISOString(),
+          value
+        })
+        const viewport = (
+          value.geometry as { viewport: { width: number; height: number } }
+        ).viewport
+        const expected = ui.metrics()
+        assert(
+          viewport.width === expected.width &&
+            viewport.height === expected.height,
+          'Actual anchor viewport must match the measured requested frame'
+        )
+        const signature = JSON.stringify(value.geometry)
+        const observed = Number(value.observedMs)
+        assert(
+          Number.isFinite(observed),
+          'Actual browser observation time required'
+        )
+        if (previous !== signature) {
+          previous = signature
+          since = observed
+        } else if (observed - since >= 200) return true
+        return undefined
+      },
+      'stable actual row/history geometry for 200ms',
+      2000
+    )
   }
 
   async targetBounds(id: string): Promise<NonNullable<PublicNode['bounds']>> {
-    return await this.ui.publicBounds(id)
+    const startedAt = new Date().toISOString()
+    const bounds = await this.ui.publicBounds(id)
+    this.observations.push({
+      actualPublicBounds: {
+        id,
+        startedAt,
+        returnedAt: new Date().toISOString(),
+        bounds
+      }
+    })
+    return bounds
   }
 
   async action(
@@ -1975,11 +2249,8 @@ export class Scenarios {
     const ui = this.ui
     const files = need(this.f.files, 'Synthetic attachment fixture required')
     if (!ui.native) {
-      await ui.text('Attach')
-      await ui.device.uploadFile({
-        css: 'input[type="file"]',
-        path: files.photo
-      })
+      await ui.uploadPhoto(files.photo)
+      return
     } else {
       await ui.device.addMedia({ files: [files.photo] })
       await ui.text('Attach')
@@ -1991,6 +2262,238 @@ export class Scenarios {
         await ui.device.tapOn(selector)
     }
     await ui.present('chat-attachment-chip')
+  }
+
+  async sendAgain(): Promise<void> {
+    const ui = this.ui
+    const draft = await ui.draft()
+    assert(draft.trim() !== '', 'Actual retained failed draft required')
+    const error = await ui.device.assertVisible({
+      text: exactText('That did not send. Try again.'),
+      timeout: 1000
+    })
+    const send = await ui.device.assertVisible({
+      text: exactText('Send'),
+      enabled: true,
+      timeout: 1000
+    })
+    assert.equal(
+      await ui.draft(),
+      draft,
+      'Failed draft must remain exact until retry submission'
+    )
+    this.observations.push({
+      sendAgain: {
+        error,
+        send,
+        retainedDraft: draft,
+        at: new Date().toISOString()
+      }
+    })
+    await ui.text('Send')
+  }
+
+  /** The fine-pointer picker returns its raw pinned glyph, including variation selectors. */
+  async pickThumbsUp(): Promise<string> {
+    const ui = this.ui
+    assert(
+      !ui.native && !this.touchActions,
+      'Fine-pointer browser emoji picker required'
+    )
+    const css = '[role="button"][aria-label="thumbs up"]'
+    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(5000)])
+    const observed = await ui.dom(
+      `
+      const ns=Array.from(document.querySelectorAll(${JSON.stringify(css)}));
+      const buttons=ns.map(n=>{const b=n.getBoundingClientRect(),s=getComputedStyle(n),hit=document.elementFromPoint(b.x+b.width/2,b.y+b.height/2);return {role:n.getAttribute('role'),label:n.getAttribute('aria-label'),text:n.textContent,enabled:!n.matches(':disabled')&&n.getAttribute('aria-disabled')!=='true',visible:n.isConnected&&s.display!=='none'&&!['hidden','collapse'].includes(s.visibility)&&Number(s.opacity)>0,box:{x:b.x,y:b.y,width:b.width,height:b.height},centerHits:hit===n||n.contains(hit)}});
+      return {count:ns.length,buttons,viewport:{width:innerWidth,height:innerHeight}};
+    `,
+      signal
+    )
+    this.observations.push({ actualEmojiButton: observed, css })
+    const button = (observed.buttons as Json[])[0]
+    const box = button?.box as PublicNode['bounds']
+    const viewport = observed.viewport as { width: number; height: number }
+    assert(
+      observed.count === 1 &&
+        button.role === 'button' &&
+        button.label === 'thumbs up' &&
+        button.enabled === true &&
+        button.visible === true &&
+        button.centerHits === true &&
+        box != null &&
+        Object.values(box).every(Number.isFinite) &&
+        box.width > 0 &&
+        box.height > 0 &&
+        box.x >= 0 &&
+        box.y >= 0 &&
+        box.x + box.width <= viewport.width &&
+        box.y + box.height <= viewport.height,
+      'Unique enabled visible in-viewport thumbs-up Button required'
+    )
+    const choices = (
+      emojiData as Array<{
+        label: string
+        unicode: string
+        group?: number
+        order?: number
+      }>
+    ).filter(
+      emoji =>
+        emoji.label === 'thumbs up' &&
+        emoji.group != null &&
+        emoji.group !== 2 &&
+        emoji.order != null
+    )
+    assert(
+      choices.length === 1 &&
+        typeof button.text === 'string' &&
+        button.text === choices[0].unicode,
+      'Actual selected raw glyph must equal pinned picker data'
+    )
+    const response = await ui.device.tapOn(
+      { css, enabled: true, timeout: 5000 },
+      { signal }
+    )
+    const clicked = (response as { element?: { text?: unknown } }).element?.text
+    assert(
+      clicked === button.text,
+      'Actual tapped semantic Button must return the observed raw glyph'
+    )
+    this.observations.push({
+      actualEmojiSelection: {
+        response,
+        raw: button.text,
+        viewerId: this.viewerId
+      }
+    })
+    return button.text
+  }
+
+  /** Establish actual user-owned scroll before testing saved zero or width restoration. */
+  async ownWebReader(target: Chat2Message, zero = false): Promise<void> {
+    const ui = this.ui
+    assert(!ui.native, 'Browser wheel ownership required')
+    const end = Date.now() + 30000
+    const signal = AbortSignal.any([ui.deadline, AbortSignal.timeout(30000)])
+    interface Sample {
+      observedMs: number
+      offset: number
+      maximum: number
+      height: number
+      bubble: NonNullable<PublicNode['bounds']>
+      history: NonNullable<PublicNode['bounds']>
+      viewport: { width: number; height: number }
+    }
+    const proof: Json = {
+      actualWheelReader: target.id,
+      zero,
+      samples: [],
+      actions: []
+    }
+    this.observations.push(proof)
+    const read = async (): Promise<Sample> => {
+      assert(Date.now() < end, 'Actual user-scroll setup exceeded 30 seconds')
+      const value = (await ui.dom(
+        `
+        const one=id=>{const ns=document.querySelectorAll('[data-testid='+JSON.stringify(id)+']');if(ns.length!==1)throw Error('Unique actual reader required');return ns[0]},h=one('chat-message-history'),b=one(${JSON.stringify('chat-bubble-' + target.id)}),x=innerWidth/2,y=innerHeight/2,hit=document.elementFromPoint(x,y);
+        if(!h.contains(b)||!hit||!h.contains(hit))throw Error('Actual target and wheel hitpoint must belong to history');
+        for(let n=hit;n!==h;n=n.parentElement){if(!n)throw Error('Actual wheel ancestry required');const s=getComputedStyle(n);if(n.matches('input,textarea,select,button,[contenteditable],[role="slider"],[role="combobox"],[role="listbox"]')||(n.scrollHeight>n.clientHeight&&['auto','scroll'].includes(s.overflowY)))throw Error('Interactive or inner-scroll wheel interception')}
+        const box=n=>{const b=n.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height}};
+        return {observedMs:performance.now(),offset:h.scrollTop,maximum:h.scrollHeight-h.clientHeight,height:h.clientHeight,history:box(h),bubble:box(b),viewport:{width:innerWidth,height:innerHeight},wheelPoint:{x,y}};
+      `,
+        signal
+      )) as unknown as Sample
+      ;(proof.samples as unknown[]).push({
+        at: new Date().toISOString(),
+        value
+      })
+      assert(
+        [
+          value.observedMs,
+          value.offset,
+          value.maximum,
+          value.height,
+          ...Object.values(value.history),
+          ...Object.values(value.bubble)
+        ].every(Number.isFinite) &&
+          value.height > 0 &&
+          value.maximum > 0 &&
+          value.offset >= 0 &&
+          value.offset <= value.maximum &&
+          [value.history, value.bubble].every(b => b.width > 0 && b.height > 0),
+        'Positive finite actual wheel geometry required'
+      )
+      const expected = ui.metrics()
+      assert(
+        value.viewport.width === expected.width &&
+          value.viewport.height === expected.height,
+        'Actual wheel viewport must match the measured browser frame'
+      )
+      return value
+    }
+    const before = await read()
+    assert(
+      !zero || before.offset === 0,
+      'Real oldest history zero required before user-scroll setup'
+    )
+    assert(
+      before.bubble.y < before.viewport.height &&
+        before.bubble.y + before.bubble.height > 0,
+      'Original reader target must actually intersect the viewport'
+    )
+    const settled = async (
+      qualifies: (value: Sample) => boolean
+    ): Promise<Sample> => {
+      let signature: string | undefined
+      let since = 0
+      return await until(
+        async () => {
+          const value = await read()
+          assert(
+            value.maximum === before.maximum &&
+              value.height === before.height &&
+              JSON.stringify(value.history) ===
+                JSON.stringify(before.history) &&
+              JSON.stringify(value.viewport) ===
+                JSON.stringify(before.viewport),
+            'Reader dimensions changed during wheel ownership setup'
+          )
+          const current = JSON.stringify({
+            offset: value.offset,
+            bubble: value.bubble
+          })
+          if (!qualifies(value)) signature = undefined
+          else if (signature !== current) {
+            signature = current
+            since = value.observedMs
+          } else if (value.observedMs - since >= 200) return value
+          return undefined
+        },
+        'stable actual wheel movement/return',
+        Math.max(1, end - Date.now())
+      )
+    }
+    ;(proof.actions as unknown[]).push({
+      direction: 'DOWN',
+      response: await ui.device.scroll({ direction: 'DOWN' }, { signal })
+    })
+    proof.down = await settled(value => value.offset > before.offset + 1)
+    await read()
+    ;(proof.actions as unknown[]).push({
+      direction: 'UP',
+      response: await ui.device.scroll({ direction: 'UP' }, { signal })
+    })
+    proof.restored = await settled(
+      value =>
+        (zero
+          ? value.offset === 0
+          : Math.abs(value.offset - before.offset) <= 1) &&
+        Math.abs(value.bubble.y - before.bubble.y) <= 3 &&
+        value.bubble.x === before.bubble.x &&
+        value.bubble.width === before.bubble.width &&
+        value.bubble.height === before.bubble.height
+    )
   }
 
   async readable(): Promise<void> {
@@ -2526,7 +3029,13 @@ export class Scenarios {
             timeout: 15000
           })
         })
-        await ui.text('Retry')
+        assert.equal(
+          await ui.draft(),
+          body,
+          'Failed reply must retain the exact send body'
+        )
+        await ui.present('chat-attachment-chip')
+        await this.sendAgain()
         const received = await this.delivered(body)
         assert.equal(received.quote?.id, this.f.messages.target.id)
         assert.equal(received.attachments.length, 1)
@@ -2769,97 +3278,120 @@ export class Scenarios {
     await this.check(
       'E5 partially scrolled tall source keeps selected preview bounded and reader unchanged',
       async () => {
-        const target = this.f.messages.long
-        await this.openGroup()
-        if (ui.native) await ui.hideKeyboard()
-        await this.anchor(target)
-        const { top, bottom } = await this.readingBand()
-        assert(bottom - top > 80, 'Actual unobscured reader band required')
-        if (!ui.native) {
-          await ui.dom(
-            `const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')});const h=document.querySelector('[data-testid="chat-message-history"]');if(!n||!h)throw Error('Public long bubble/history required');const b=n.getBoundingClientRect();h.scrollTop+=${this.touchActions ? `b.top-${top}+Math.min(b.height/3,120)` : `b.bottom-(${bottom}-20)`};h.dispatchEvent(new Event('scroll'));return {publicReaderScroll:true}`
+        const original = ui.metrics()
+        const shortWide = ui.surface === 'web-wide'
+        if (shortWide) {
+          assert(
+            original.width === 1440 && original.height === 1000,
+            'Original full wide viewport required'
           )
-        } else {
-          for (let step = 0; step < 8; step++) {
-            const b = await this.targetBounds('chat-bubble-' + target.id)
-            if (b.y < top - 12 && b.y + b.height > top + 40) break
-            await ui.measuredSwipe({
-              startX: Math.round(b.x + b.width / 2),
-              startY: Math.round(bottom - 12),
-              endX: Math.round(b.x + b.width / 2),
-              endY: Math.round(top + 12),
-              duration: 350
+          await ui.resize(original.width, 600)
+          this.observations.push({ tallSourceViewport: ui.metrics(), original })
+        }
+        try {
+          const target = this.f.messages.long
+          await this.openGroup()
+          if (ui.native) await ui.hideKeyboard()
+          await this.anchor(target)
+          const { top, bottom } = await this.readingBand()
+          assert(bottom - top > 80, 'Actual unobscured reader band required')
+          if (!ui.native) {
+            await ui.dom(
+              `const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')});const h=document.querySelector('[data-testid="chat-message-history"]');if(!n||!h)throw Error('Public long bubble/history required');const b=n.getBoundingClientRect();h.scrollTop+=${this.touchActions ? `b.top-${top}+Math.min(b.height/3,120)` : `b.bottom-(${bottom}-20)`};h.dispatchEvent(new Event('scroll'));return {publicReaderScroll:true}`
+            )
+          } else {
+            for (let step = 0; step < 8; step++) {
+              const b = await this.targetBounds('chat-bubble-' + target.id)
+              if (b.y < top - 12 && b.y + b.height > top + 40) break
+              await ui.measuredSwipe({
+                startX: Math.round(b.x + b.width / 2),
+                startY: Math.round(bottom - 12),
+                endX: Math.round(b.x + b.width / 2),
+                endY: Math.round(top + 12),
+                duration: 350
+              })
+            }
+          }
+          const source = await this.targetBounds('chat-bubble-' + target.id)
+          assert(
+            source.y < top - 12 &&
+              source.y + source.height > top + 40 &&
+              source.height > bottom - top,
+            'Long-message origin must actually extend above the visible reader'
+          )
+          const visibleBottom = Math.min(bottom, source.y + source.height)
+          const x = source.x + source.width / 2
+          const y = (top + visibleBottom) / 2
+          const info = ui.native ? await ui.device.platformInfo() : ui.metrics()
+          const width = Number(
+            'screenWidth' in info ? info.screenWidth : info.width
+          )
+          const height = Number(
+            'screenHeight' in info ? info.screenHeight : info.height
+          )
+          if (this.touchActions)
+            await ui.device.longPressOn({
+              id: 'chat-bubble-' + target.id,
+              point: `${((x - source.x) / source.width) * 100}%,${((y - source.y) / source.height) * 100}%`,
+              duration: 550
+            })
+          else {
+            await ui.dom(
+              `const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')});if(!n)throw Error('Public clipped bubble required');n.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));n.dispatchEvent(new MouseEvent('mousemove',{bubbles:true}));return {publicHover:true}`
+            )
+            await ui.device.tapOn({
+              css: `[data-testid="chat-message-${target.id}"] [aria-label="More message actions"]`
             })
           }
-        }
-        const source = await this.targetBounds('chat-bubble-' + target.id)
-        assert(
-          source.y < top - 12 &&
-            source.y + source.height > top + 40 &&
-            source.height > bottom - top,
-          'Long-message origin must actually extend above the visible reader'
-        )
-        const visibleBottom = Math.min(bottom, source.y + source.height)
-        const x = source.x + source.width / 2
-        const y = (top + visibleBottom) / 2
-        const info = ui.native ? await ui.device.platformInfo() : ui.metrics()
-        const width = Number(
-          'screenWidth' in info ? info.screenWidth : info.width
-        )
-        const height = Number(
-          'screenHeight' in info ? info.screenHeight : info.height
-        )
-        if (this.touchActions)
-          await ui.device.longPressOn({
-            id: 'chat-bubble-' + target.id,
-            point: `${((x - source.x) / source.width) * 100}%,${((y - source.y) / source.height) * 100}%`,
-            duration: 550
-          })
-        else {
-          await ui.dom(
-            `const n=document.querySelector(${JSON.stringify('[data-testid="chat-bubble-' + target.id + '"]')});if(!n)throw Error('Public clipped bubble required');n.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));n.dispatchEvent(new MouseEvent('mousemove',{bubbles:true}));return {publicHover:true}`
+          const actions = await this.menuState()
+          const preview = this.touchActions
+            ? await ui.publicBounds('chat-message-spotlight-preview')
+            : undefined
+          if (preview != null)
+            assert(
+              preview.x >= -2 &&
+                preview.y >= -2 &&
+                preview.x + preview.width <= width + 2 &&
+                preview.y + preview.height <= height + 2,
+              'Selected preview from clipped origin must remain inside viewport'
+            )
+          await ui.shot(
+            'partially-scrolled-spotlight',
+            this.touchActions
+              ? 'Actual tall bubble extends above reader; selected preview is bounded. Static composition only'
+              : 'Actual partially scrolled tall bubble with bounded desktop More menu; no touch spotlight'
           )
-          await ui.device.tapOn({
-            css: `[data-testid="chat-message-${target.id}"] [aria-label="More message actions"]`
-          })
-        }
-        const actions = await this.menuState()
-        const preview = this.touchActions
-          ? await ui.publicBounds('chat-message-spotlight-preview')
-          : undefined
-        if (preview != null)
+          await this.dismiss()
+          await ui.absent('chat-message-spotlight')
+          const after = await this.targetBounds('chat-bubble-' + target.id)
           assert(
-            preview.x >= -2 &&
-              preview.y >= -2 &&
-              preview.x + preview.width <= width + 2 &&
-              preview.y + preview.height <= height + 2,
-            'Selected preview from clipped origin must remain inside viewport'
+            Math.abs(after.y - source.y) <= 3,
+            'Dismissal must preserve the partially scrolled reader anchor'
           )
-        await ui.shot(
-          'partially-scrolled-spotlight',
-          this.touchActions
-            ? 'Actual tall bubble extends above reader; selected preview is bounded. Static composition only'
-            : 'Actual partially scrolled tall bubble with bounded desktop More menu; no touch spotlight'
-        )
-        await this.dismiss()
-        await ui.absent('chat-message-spotlight')
-        const after = await this.targetBounds('chat-bubble-' + target.id)
-        assert(
-          Math.abs(after.y - source.y) <= 3,
-          'Dismissal must preserve the partially scrolled reader anchor'
-        )
-        this.observations.push({
-          partiallyScrolledSource: source,
-          unobscuredReader: { top, bottom },
-          selectedPreview: preview,
-          actions,
-          afterDismissal: after
-        })
+          this.observations.push({
+            partiallyScrolledSource: source,
+            unobscuredReader: { top, bottom },
+            selectedPreview: preview,
+            actions,
+            afterDismissal: after
+          })
+        } finally {
+          if (shortWide) {
+            await ui.resize(original.width, original.height)
+            assert.deepEqual(
+              ui.metrics(),
+              original,
+              'Original full wide viewport must restore'
+            )
+            this.observations.push({ tallSourceViewportRestored: ui.metrics() })
+          }
+        }
       }
     )
     await this.check(
       'E5 movement before hold cancels; reaction and personal pin remain usable',
       async () => {
+        let expectedEmoji = '👍'
         await this.anchor()
         const b = await this.targetBounds(
           'chat-bubble-' + this.f.messages.target.id
@@ -2893,7 +3425,7 @@ export class Scenarios {
           })
           await ui.device.tapOn({ text: exactText('More emoji') })
           await ui.device.inputText({ text: 'thumbs up' })
-          await ui.device.tapOn({ text: exactText('thumbs up') })
+          expectedEmoji = await this.pickThumbsUp()
         }
         await ui.absent('chat-message-spotlight')
         const peer = await this.protocolPeer()
@@ -2901,7 +3433,11 @@ export class Scenarios {
         assert(
           view.messages
             .find(m => m.id === this.f.messages.target.id)
-            ?.reactions.some(r => r.emoji === '👍') === true
+            ?.reactions.some(
+              r =>
+                r.emoji === expectedEmoji && r.userIds.includes(this.viewerId)
+            ) === true,
+          'Actual selected raw glyph and reacting viewer must reach the peer'
         )
       }
     )
@@ -2910,17 +3446,21 @@ export class Scenarios {
       async () => {
         const client = await this.client()
         const target = this.f.messages.target
-        await ui.clipboardSentinel('A disposable clipboard sentinel')
-        await this.action(target)
-        await ui.text(this.copyLabel)
-        await ui.replaceDraft('')
-        await ui.pasteClipboard()
-        assert.equal(
-          await ui.draft(),
-          target.body,
-          'Copy must place the real message text on clipboard'
-        )
-        await ui.replaceDraft('')
+        try {
+          await ui.clipboardSentinel('A disposable clipboard sentinel')
+          await this.action(target)
+          await ui.text(this.copyLabel)
+          await ui.replaceDraft('')
+          await ui.pasteClipboard(target.body)
+          assert.equal(
+            await ui.draft(),
+            target.body,
+            'Copy must place the real message text on clipboard'
+          )
+          await ui.replaceDraft('')
+        } finally {
+          await ui.restoreClipboard()
+        }
         const pins = await client.chatPins(this.group)
         const pinned = pins.some(p => p.messageId === target.id)
         try {
@@ -3055,7 +3595,40 @@ export class Scenarios {
     }
     this.ui.steps.push(proof)
     try {
-      const view = await (await this.protocolPeer()).engine.open(this.group)
+      const peer = await this.protocolPeer()
+      let view = await peer.engine.open(this.group)
+      const end = Date.now() + 30000
+      const eligible = (messages: MessageView[]): boolean =>
+        messages.some(
+          (current, index) =>
+            current.status === 'ok' &&
+            current.senderUserId !== this.viewerId &&
+            current.body.length <= 300 &&
+            messages[index + 1]?.senderUserId !== current.senderUserId
+        )
+      proof.pages = []
+      for (
+        let pages = 0;
+        !eligible(view.messages) && view.hasEarlier && pages < 30;
+        pages++
+      ) {
+        assert(
+          Date.now() < end,
+          'Verified peer run-ending history exceeded 30 seconds'
+        )
+        ;(proof.pages as unknown[]).push({
+          at: new Date().toISOString(),
+          messages: view.messages.map(m => ({
+            id: m.id,
+            seq: m.seq,
+            status: m.status,
+            senderUserId: m.senderUserId,
+            length: m.body.length
+          })),
+          hasEarlier: view.hasEarlier
+        })
+        view = await peer.engine.loadEarlier(this.group)
+      }
       const choices = view.messages.flatMap((current, index) => {
         const next = view.messages[index + 1]
         return current.status === 'ok' &&
@@ -3385,8 +3958,56 @@ export class Scenarios {
             timeout: 15000
           })
         })
-        await ui.replaceDraft('A newer synthetic draft')
-        await ui.text('Retry')
+        assert.equal(
+          await ui.draft(),
+          body,
+          'Actual failed draft must remain current before Send again'
+        )
+        const cutoff = Number(this.snapshot(this.group).lastEvent)
+        const proof: Json = { inFlightNewerDraft: true, cutoff }
+        this.observations.push(proof)
+        try {
+          const installed = fixtureControl(this.f, 'fault', {
+            phase: 'send',
+            mode: 'defer',
+            remaining: 1,
+            viewerId: this.viewerId,
+            conversationId: this.group
+          })
+          const rule = installed.rule as Json
+          proof.installed = installed
+          assert(
+            rule.mode === 'defer' &&
+              rule.viewerId === this.viewerId &&
+              rule.conversationId === this.group &&
+              rule.remaining === 1,
+            'Exact one-request owned send defer required'
+          )
+          await this.sendAgain()
+          proof.matched = await this.waitEvent(
+            this.group,
+            cutoff,
+            event =>
+              event.type === 'fault-matched' &&
+              event.mode === 'defer' &&
+              event.ruleId === rule.id &&
+              event.actorId === this.viewerId &&
+              event.conversationId === this.group
+          )
+          await ui.replaceDraft('A newer synthetic draft')
+          assert.equal(await ui.draft(), 'A newer synthetic draft')
+          const held = this.snapshot(this.group, cutoff)
+          proof.beforeRelease = held
+          assert(
+            !(held.events as Json[]).some(
+              event =>
+                event.type === 'deferred-closed' && event.ruleId === rule.id
+            ),
+            'Actual retry must remain held until the newer draft is observed'
+          )
+        } finally {
+          proof.released = fixtureControl(this.f, 'clear-fault')
+        }
         const sent = await this.delivered(body)
         assert.deepEqual(
           sent.mentions,
@@ -3629,6 +4250,7 @@ export class Scenarios {
         )
         await this.anchor(oldest)
         if (!ui.native) {
+          await this.ownWebReader(oldest, true)
           const saved = await ui.dom(
             'const n=document.querySelector(\'[data-testid="chat-message-history"]\');if(!n)throw Error("Public history scroller required");n.scrollTop=0;n.dispatchEvent(new Event("scroll"));return {top:n.scrollTop}'
           )
@@ -3658,6 +4280,7 @@ export class Scenarios {
             'List return must retain explicit saved zero'
           )
           await this.anchor()
+          await this.ownWebReader(this.f.messages.target)
           const beforeResize = await this.targetBounds(
             'chat-bubble-' + this.f.messages.target.id
           )
@@ -3666,9 +4289,11 @@ export class Scenarios {
             metrics.width === 1440 ? 390 : 1440,
             metrics.width === 1440 ? 844 : 1000
           )
+          await this.webAnchorReady()
           await ui.present('chat-bubble-' + this.f.messages.target.id)
           assert.equal(await ui.draft(), draft)
           await ui.resize(metrics.width, metrics.height)
+          await this.webAnchorReady()
           const afterResize = await this.targetBounds(
             'chat-bubble-' + this.f.messages.target.id
           )
@@ -3949,7 +4574,7 @@ export class Scenarios {
     }
   }
 
-  /** Observe one current unobscured body without scrolling or revealing history. */
+  /** Certify the visible reader position, independently of attention's leading-body rule. */
   async visibleReaderAnchor(
     before?: VisibleReaderAnchor,
     failure = 'Actual visible reader must not move'
@@ -3999,8 +4624,12 @@ export class Scenarios {
             box.height > 0 &&
             box.x >= history.x &&
             box.x + box.width <= history.x + history.width &&
-            box.y >= band.top &&
-            box.y + Math.min(box.height, 40) < band.bottom
+            ((box.y >= band.top &&
+              box.y + Math.min(box.height, 40) < band.bottom) ||
+              (box.height > band.bottom - band.top &&
+                Math.min(box.y + box.height, band.bottom) -
+                  Math.max(box.y, band.top) >=
+                  40))
           )
         })
         .sort((a, b) => a.bounds!.y - b.bounds!.y)
@@ -4015,7 +4644,7 @@ export class Scenarios {
       const node = matches[0]
       assert(
         eligible.includes(node),
-        'Actual message-body leading edge must be unobscured'
+        'Actual short leading body or tall body intersection must be unobscured'
       )
       const actual = { id, bounds: { ...node.bounds! }, band }
       // Retain the original ID and both actual boxes before the strict movement assertion.
@@ -4590,7 +5219,7 @@ export class Scenarios {
       await ui.shot('composer', 'Actual320pixel touch composer clipping check')
       return
     }
-    if (ui.native) await ui.hideKeyboard()
+    if (ui.native) await ui.hideKeyboardForCapture()
     await ui.shot('conversation', 'Same synthetic short anchor as baseline')
     await ui.shot(
       'floating-pins',
@@ -4620,7 +5249,7 @@ export class Scenarios {
       'reply-keyboard',
       'Explicit Reply focus/keyboard checked before typing'
     )
-    if (ui.native) await ui.hideKeyboard()
+    if (ui.native) await ui.hideKeyboardForCapture()
     await this.cancelReply()
     await this.openInfo()
     this.observations.push(await observeInfoCaptureReady(ui))
@@ -4648,7 +5277,7 @@ export class Scenarios {
       'mention-composer',
       'Actual selected readable mention and focused composer'
     )
-    if (ui.native) await ui.hideKeyboard()
+    if (ui.native) await ui.hideKeyboardForCapture()
     await ui.shot(
       'attention',
       'Actual persistent chevron/current reader at same baseline anchor; E10 separately proves nonzero attention'

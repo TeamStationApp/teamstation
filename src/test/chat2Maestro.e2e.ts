@@ -40,15 +40,19 @@ type Args = Record<string, unknown>
 export interface Chat2Device {
   pasteText: () => Promise<unknown>
   setClipboard: (args: Args) => Promise<unknown>
+  grantPermissions: (
+    args: Args,
+    options?: { signal: AbortSignal }
+  ) => Promise<unknown>
   setDarkMode: (args: Args) => Promise<unknown>
   stopApp: (args: Args) => Promise<unknown>
   launchApp: (args: Args) => Promise<unknown>
   openLink: (args: Args) => Promise<unknown>
-  tapOn: (args: Args) => Promise<unknown>
+  tapOn: (args: Args, options?: { signal: AbortSignal }) => Promise<unknown>
   tapOnPoint: (args: Args) => Promise<unknown>
   longPressOn: (args: Args) => Promise<unknown>
   swipe: (args: Args) => Promise<unknown>
-  scroll: (args: Args) => Promise<unknown>
+  scroll: (args: Args, options?: { signal: AbortSignal }) => Promise<unknown>
   dragAndDrop: (args: Args) => Promise<unknown>
   inputText: (args: Args) => Promise<unknown>
   copyTextFrom: (
@@ -56,7 +60,10 @@ export interface Chat2Device {
   ) => Promise<{ data?: unknown; element?: { bounds?: Bounds } }>
   eraseText: (args?: Args) => Promise<unknown>
   pressKey: (args: Args) => Promise<unknown>
-  hideKeyboard: () => Promise<unknown>
+  hideKeyboard: (
+    value?: undefined,
+    options?: { signal: AbortSignal }
+  ) => Promise<unknown>
   back: () => Promise<unknown>
   assertVisible: (args: Args) => Promise<unknown>
   assertNotVisible: (args: Args) => Promise<unknown>
@@ -68,10 +75,13 @@ export interface Chat2Device {
   mockNetwork: (args: Args) => Promise<unknown>
   clearNetworkMocks: () => Promise<unknown>
   setNetworkConditions: (args: Args) => Promise<unknown>
-  screenshot: () => Promise<Uint8Array>
-  hierarchy: () => Promise<unknown>
-  platformInfo: () => Promise<Args>
-  evalBrowserScript: (args: Args) => Promise<{ data?: unknown }>
+  screenshot: (options?: { signal: AbortSignal }) => Promise<Uint8Array>
+  hierarchy: (options?: { signal: AbortSignal }) => Promise<unknown>
+  platformInfo: (options?: { signal: AbortSignal }) => Promise<Args>
+  evalBrowserScript: (
+    args: Args,
+    options?: { signal: AbortSignal }
+  ) => Promise<{ data?: unknown }>
 }
 interface Daemon {
   started: boolean
@@ -1121,6 +1131,320 @@ export function androidScopedBounds(
   return box
 }
 
+const positiveAndroidBox = (box: Bounds | undefined): box is Bounds =>
+  box != null &&
+  [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+  box.x >= 0 &&
+  box.y >= 0 &&
+  box.width > 0 &&
+  box.height > 0
+const insideAndroidBox = (child: Bounds, parent: Bounds): boolean =>
+  positiveAndroidBox(child) &&
+  positiveAndroidBox(parent) &&
+  child.x >= parent.x - 1 &&
+  child.y >= parent.y - 1 &&
+  child.x + child.width <= parent.x + parent.width + 1 &&
+  child.y + child.height <= parent.y + parent.height + 1
+
+/** Retain genuine normalized ancestry instead of inferring relationships from flat labels. */
+function androidTree(raw: unknown): Array<{ node: Args; parents: Args[] }> {
+  const entries: Array<{ node: Args; parents: Args[] }> = []
+  const seen = new Set<object>()
+  const visit = (value: unknown, parents: Args[]): void => {
+    assert(
+      value != null &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        !seen.has(value),
+      'Actual acyclic normalized Android ancestry required'
+    )
+    seen.add(value)
+    const node = value as Args
+    entries.push({ node, parents })
+    if (node.children != null) {
+      assert(
+        Array.isArray(node.children),
+        'Actual Android child array required'
+      )
+      for (const child of node.children) visit(child, [...parents, node])
+    }
+  }
+  visit(raw, [])
+  return entries
+}
+
+/** Visibility-only proof: a disabled Send is still an actual visible Button. */
+export function androidComposerControl(
+  raw: unknown,
+  label: string,
+  viewport: { width: number; height: number }
+): Args {
+  assert(
+    ['Attach', 'Send', 'Cancel reply'].includes(label),
+    'Exact composer control label required'
+  )
+  const frame = { x: 0, y: 0, ...viewport }
+  assert(positiveAndroidBox(frame), 'Positive actual native viewport required')
+  const entries = androidTree(raw)
+  assert(
+    !entries.some(({ node }) =>
+      ['chat-message-spotlight', 'chat-picker-scene'].includes(String(node.id))
+    ),
+    'Physical spotlight/picker must be absent'
+  )
+  const one = (id: string, type: string): Args => {
+    const matches = entries.filter(({ node }) => node.id === id)
+    assert(
+      matches.length === 1 &&
+        matches[0].node.type === type &&
+        positiveAndroidBox(bounds(matches[0].node.bounds)),
+      'Unique typed positive ' + id + ' required'
+    )
+    return matches[0].node
+  }
+  const history = one('chat-message-history', 'ScrollView')
+  const band = one('chat-composer-band', 'ViewGroup')
+  const outer = bounds(history.bounds)!
+  const container = bounds(band.bounds)!
+  assert(
+    insideAndroidBox(outer, frame) &&
+      insideAndroidBox(container, outer) &&
+      insideAndroidBox(container, frame),
+    'Actual band/history must fit native viewport'
+  )
+  const matches = entries.filter(
+    ({ node }) => node.type === 'Button' && node.text === label
+  )
+  assert(
+    matches.length === 1 && matches[0].parents.includes(band),
+    'Unique actual composer Button must descend from its band'
+  )
+  const box = bounds(matches[0].node.bounds)
+  assert(
+    positiveAndroidBox(box) &&
+      insideAndroidBox(box, container) &&
+      insideAndroidBox(box, frame),
+    'Positive actual Button must fit band/viewport'
+  )
+  return matches[0].node
+}
+
+export interface AndroidCaptureIme {
+  state: 'open' | 'already-closed'
+  flags: Args
+  keyboard?: Bounds
+}
+
+/** An omitted window/Boolean/surface is never evidence that the keyboard is closed. */
+export function androidCaptureImeState(
+  raw: string,
+  viewport: { width: number; height: number }
+): AndroidCaptureIme {
+  assert(
+    positiveAndroidBox({ x: 0, y: 0, ...viewport }),
+    'Actual positive Android viewport required'
+  )
+  const windows = [
+    ...raw.matchAll(/Window #\d+ Window\{[^\n]*\bInputMethod\}/g)
+  ]
+  assert(windows.length === 1, 'One actual InputMethod window required')
+  const rest = raw.slice(windows[0].index)
+  const next = rest.search(/\n\s*(?:Window #\d+ |mGlobalConfiguration=)/)
+  const block = next < 0 ? rest : rest.slice(0, next)
+  const flag = (name: string, required = false): boolean | undefined => {
+    const matches = [
+      ...block.matchAll(new RegExp('\\b' + name + '\\s*=\\s*(\\S+)', 'g'))
+    ]
+    assert(
+      matches.length <= 1 && (!required || matches.length === 1),
+      'Unambiguous explicit ' + name + ' required'
+    )
+    if (matches.length === 0) return undefined
+    assert(
+      ['true', 'false'].includes(matches[0][1]),
+      'Literal observed ' + name + ' required'
+    )
+    return matches[0][1] === 'true'
+  }
+  const flags: Args = {
+    isOnScreen: flag('isOnScreen', true),
+    isVisible: flag('isVisible'),
+    mInputShown: flag('mInputShown'),
+    mHasSurface: flag('mHasSurface')
+  }
+  const surfaces = [...block.matchAll(/\bSurface:\s+shown=(\S+)/g)]
+  assert(surfaces.length <= 1, 'Unambiguous IME surface visibility required')
+  if (surfaces.length === 1) {
+    assert(
+      ['true', 'false'].includes(surfaces[0][1]),
+      'Literal surface visibility required'
+    )
+    flags.surfaceShown = surfaces[0][1] === 'true'
+  }
+  assert(
+    flags.surfaceShown != null || flags.mHasSurface != null,
+    'Explicit observed IME surface state required'
+  )
+  const closed =
+    flags.isOnScreen === false &&
+    flags.isVisible !== true &&
+    flags.mInputShown !== true &&
+    flags.surfaceShown !== true &&
+    (flags.surfaceShown === false || flags.mHasSurface === false)
+  return closed
+    ? { state: 'already-closed', flags }
+    : { state: 'open', flags, keyboard: androidImeFrame(raw, viewport) }
+}
+
+export interface AndroidDismissReference {
+  initialState: AndroidCaptureIme['state']
+  history: Bounds
+  band: Bounds
+  composer: Bounds
+  text: string
+  reply: number
+  chips: number
+  keyboard?: Bounds
+  viewport: { width: number; height: number }
+}
+
+/** Immutable actual context for one capture dismissal, without a fabricated prior-open frame. */
+export function androidDismissReference(
+  raw: unknown,
+  state: AndroidCaptureIme,
+  viewport: AndroidDismissReference['viewport']
+): AndroidDismissReference {
+  const entries = androidTree(raw)
+  assert(
+    !entries.some(({ node }) =>
+      ['chat-message-spotlight', 'chat-picker-scene'].includes(String(node.id))
+    ),
+    'Physical spotlight/picker must be absent before capture dismissal'
+  )
+  const one = (id: string, type: string): Args => {
+    const matches = entries.filter(({ node }) => node.id === id)
+    assert(
+      matches.length === 1 &&
+        matches[0].node.type === type &&
+        positiveAndroidBox(bounds(matches[0].node.bounds)),
+      'Unique typed actual ' + id + ' required'
+    )
+    return matches[0].node
+  }
+  const history = bounds(one('chat-message-history', 'ScrollView').bounds)!
+  const band = bounds(one('chat-composer-band', 'ViewGroup').bounds)!
+  const editor = one('chat-composer', 'EditText')
+  const composer = androidScopedBounds(
+    raw,
+    { id: 'chat-composer', childOf: { id: 'chat-composer-band' } },
+    'EditText'
+  )
+  assert(
+    typeof editor.text === 'string' &&
+      editor.enabled !== false &&
+      insideAndroidBox(band, history) &&
+      insideAndroidBox(history, { x: 0, y: 0, ...viewport }) &&
+      insideAndroidBox(composer, band),
+    'Actual enabled editor/text and contained band/history required'
+  )
+  if (state.state === 'open')
+    assert(
+      editor.focused === true && positiveAndroidBox(state.keyboard),
+      'Actual focused open composer and IME required'
+    )
+  return Object.freeze({
+    initialState: state.state,
+    history: Object.freeze({ ...history }),
+    band: Object.freeze({ ...band }),
+    composer: Object.freeze({ ...composer }),
+    text: editor.text,
+    reply: entries.filter(
+      ({ node }) => node.type === 'Button' && node.text === 'Cancel reply'
+    ).length,
+    chips: entries.filter(({ node }) => node.id === 'chat-attachment-chip')
+      .length,
+    viewport: Object.freeze({ ...viewport }),
+    ...(state.state === 'open'
+      ? { keyboard: Object.freeze({ ...state.keyboard! }) }
+      : {})
+  })
+}
+
+export function androidClosedCaptureGeometry(
+  raw: unknown,
+  before: AndroidDismissReference
+): Args {
+  const current = androidDismissReference(
+    raw,
+    { state: 'already-closed', flags: {} },
+    before.viewport
+  )
+  for (const key of ['history', 'text', 'reply', 'chips'] as const)
+    assert(
+      JSON.stringify(current[key]) === JSON.stringify(before[key]),
+      'Actual dismissal context changed: ' + key
+    )
+  const entries = androidTree(raw)
+  const navigation = ['Home', 'Videos', 'Schedule', 'Search', 'Chat'].map(
+    text => {
+      const found = entries.filter(
+        ({ node }) => node.type === 'View' && node.text === text
+      )
+      assert(
+        found.length === 1 &&
+          positiveAndroidBox(bounds(found[0].node.bounds)) &&
+          insideAndroidBox(bounds(found[0].node.bounds)!, current.history),
+        'Unique actually visible navigation target required: ' + text
+      )
+      return found[0]
+    }
+  )
+  const parent = navigation[0].parents.at(-1)
+  assert(
+    parent != null &&
+      navigation.every(entry => entry.parents.at(-1) === parent) &&
+      navigation[4].node.selected === true,
+    'Actual navigation must share its parent with Chat selected'
+  )
+  const boxes = navigation.map(entry => bounds(entry.node.bounds)!)
+  const top = Math.min(...boxes.map(box => box.y))
+  const bottom = Math.max(...boxes.map(box => box.y + box.height))
+  assert(
+    boxes.every(
+      box =>
+        Math.abs(box.y - top) <= 1 && Math.abs(box.y + box.height - bottom) <= 1
+    ) && current.band.y + current.band.height <= top + 1,
+    'Closed composer must remain above the complete aligned navigation'
+  )
+  if (before.initialState === 'open')
+    assert(
+      positiveAndroidBox(before.keyboard) &&
+        current.band.y >= before.keyboard.y &&
+        current.composer.y >= before.keyboard.y,
+      'Actually open composer must move into its observed former IME region'
+    )
+  else
+    assert(
+      before.keyboard == null,
+      'Already-closed proof must not invent prior keyboard movement'
+    )
+  for (const label of ['Attach', 'Send'])
+    androidComposerControl(raw, label, before.viewport)
+  return {
+    history: current.history,
+    band: current.band,
+    composer: current.composer,
+    text: current.text,
+    reply: current.reply,
+    chips: current.chips,
+    navigation: navigation.map(entry => ({
+      text: entry.node.text,
+      bounds: entry.node.bounds,
+      selected: entry.node.selected
+    }))
+  }
+}
+
 /** Verify an observed native value against one exact public raw-node identity. */
 export function observedNativeValue(
   raw: Uint8Array,
@@ -1275,6 +1599,8 @@ export class Chat2UI {
   private webZoom?: CaptureViewport
   private reportsDir?: string
   private connectCleanup?: () => Promise<Daemon>
+  private webClipboardKey?: string
+  private androidClosedCapture?: AndroidDismissReference
 
   constructor(
     readonly fixture: Chat2Fixture,
@@ -1716,6 +2042,7 @@ export class Chat2UI {
   }
 
   metrics(): { width: number; height: number; coarse: boolean; dpr: number } {
+    if (!this.native && this.webFrame != null) return { ...this.webFrame }
     return {
       width:
         this.surface === 'web-wide'
@@ -1908,6 +2235,43 @@ export class Chat2UI {
   }
 
   async clipboardSentinel(text: string): Promise<void> {
+    if (!this.native) {
+      assert(
+        this.webClipboardKey == null,
+        'One browser clipboard proof at a time'
+      )
+      const origin = new URL(this.fixture.webUrl).origin
+      const permission = await this.device.grantPermissions(
+        {
+          origin,
+          permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite']
+        },
+        { signal: AbortSignal.any([this.deadline, AbortSignal.timeout(5000)]) }
+      )
+      this.steps.push({
+        browserClipboardPermission: { origin, response: permission }
+      })
+      const key = '__chat2Clipboard_' + randomUUID().replace(/-/g, '')
+      this.webClipboardKey = key
+      const result = await this.dom(
+        `
+        if(location.origin!==${JSON.stringify(origin)}||!isSecureContext||!document.hasFocus())throw Error('Owned focused secure clipboard page required');
+        const key=${JSON.stringify(key)};if(Object.hasOwn(window,key))throw Error('Clipboard proof already exists');
+        const previous=await navigator.clipboard.readText();window[key]={previous};
+        await navigator.clipboard.writeText(${JSON.stringify(text)});
+        return {sentinelInstalled:(await navigator.clipboard.readText())===${JSON.stringify(text)}};
+      `,
+        AbortSignal.any([this.deadline, AbortSignal.timeout(5000)])
+      )
+      this.steps.push({
+        browserClipboardSentinelInstalled: result.sentinelInstalled
+      })
+      assert(
+        result.sentinelInstalled === true,
+        'Actual browser clipboard sentinel required'
+      )
+      return
+    }
     if (this.surface !== 'ios') {
       await this.device.setClipboard({ text })
       return
@@ -1927,13 +2291,127 @@ export class Chat2UI {
     await this.replaceDraft('')
   }
 
-  async pasteClipboard(): Promise<void> {
+  async pasteClipboard(expected?: string): Promise<void> {
+    if (!this.native) {
+      assert(
+        this.webClipboardKey != null && typeof expected === 'string',
+        'Scoped synthetic clipboard proof required'
+      )
+      const signal = AbortSignal.any([this.deadline, AbortSignal.timeout(5000)])
+      const actual = await until(
+        async () => {
+          const result = await this.dom(
+            `
+          if(location.origin!==${JSON.stringify(new URL(this.fixture.webUrl).origin)}||!isSecureContext||!document.hasFocus()||!Object.hasOwn(window,${JSON.stringify(this.webClipboardKey)}))throw Error('Original owned clipboard page required');
+          const actual=await navigator.clipboard.readText();
+          return actual===${JSON.stringify(expected)}?{matches:true,actual}:{matches:false};
+        `,
+            signal
+          )
+          this.steps.push({ actualBrowserCopyMatched: result.matches })
+          return result.matches === true && typeof result.actual === 'string'
+            ? result.actual
+            : undefined
+        },
+        'Actual app Copy must replace the browser clipboard sentinel',
+        5000
+      )
+      await this.device.inputText({ id: 'chat-composer', text: actual })
+      return
+    }
     if (this.surface !== 'ios') {
       await this.device.pasteText()
       return
     }
     await this.device.longPressOn({ id: 'chat-composer', duration: 600 })
     await this.iosMenuAction('Paste')
+  }
+
+  async restoreClipboard(): Promise<void> {
+    const key = this.webClipboardKey
+    if (this.native || key == null) return
+    try {
+      const result = await this.dom(
+        `
+        const key=${JSON.stringify(key)};
+        if(location.origin!==${JSON.stringify(new URL(this.fixture.webUrl).origin)}||!isSecureContext||!Object.hasOwn(window,key))throw Error('Original clipboard restoration buffer required');
+        const state=window[key];try{await navigator.clipboard.writeText(state.previous);return {restored:(await navigator.clipboard.readText())===state.previous}}finally{delete window[key]}
+      `,
+        AbortSignal.timeout(5000)
+      )
+      this.steps.push({
+        priorBrowserClipboardRestored: result.restored === true
+      })
+      assert(result.restored === true, 'Prior browser clipboard must restore')
+    } catch (error) {
+      this.steps.push({ priorBrowserClipboardRestored: false })
+      throw error
+    } finally {
+      this.webClipboardKey = undefined
+    }
+  }
+
+  /** Keep only the app-created temporary file input available for Maestro upload. */
+  async uploadPhoto(path: string): Promise<void> {
+    assert(!this.native, 'Controlled file-input upload is a browser operation')
+    const key = '__chat2FileInput_' + randomUUID().replace(/-/g, '')
+    const proof: Args = { controlledFileInput: true, osChooserClaimed: false }
+    this.steps.push(proof)
+    let completed = false
+    try {
+      proof.install = await this.dom(`
+        const key=${JSON.stringify(key)},proto=HTMLInputElement.prototype;
+        if(Object.hasOwn(window,key)||document.querySelectorAll('input[type="file"]').length!==0)throw Error('No existing file input or interception allowed');
+        const own=Object.getOwnPropertyDescriptor(proto,'click'),original=proto.click,state={own,original,inputs:[]};
+        state.replacement=function(...args){if(this instanceof HTMLInputElement&&this.type==='file'){
+          if(!this.isConnected||state.inputs.length!==0||document.querySelectorAll('input[type="file"]').length!==1)throw Error('One newly connected temporary file input required');
+          state.inputs.push(this);this.style.display='block';this.style.width='200px';this.style.height='30px';return;
+        }return Reflect.apply(original,this,args)};
+        window[key]=state;Object.defineProperty(proto,'click',{configurable:true,enumerable:own?.enumerable??false,writable:true,value:state.replacement});
+        return {installed:proto.click===state.replacement};
+      `)
+      assert(
+        (proof.install as Args).installed === true,
+        'Exact temporary file-input interception must install'
+      )
+      await this.text('Attach')
+      await this.device.uploadFile({ css: 'input[type="file"]', path })
+      await this.present('chat-attachment-chip')
+      completed = true
+    } finally {
+      const result = await this.dom(
+        `
+        const key=${JSON.stringify(key)},state=window[key],proto=HTMLInputElement.prototype;
+        if(!state)return {restored:true,installed:false};
+        const wasReplacement=proto.click===state.replacement;
+        const inputs=state.inputs.map(n=>({connected:n.isConnected,fileCount:n.files?.length??0}));
+        if(state.own)Object.defineProperty(proto,'click',state.own);else delete proto.click;
+        const actual=Object.getOwnPropertyDescriptor(proto,'click');
+        const restored=proto.click===state.original&&(state.own?actual?.value===state.own.value&&actual?.writable===state.own.writable&&actual?.enumerable===state.own.enumerable&&actual?.configurable===state.own.configurable:actual===undefined);
+        delete window[key];return {restored,installed:true,wasReplacement,inputs};
+      `,
+        AbortSignal.timeout(5000)
+      )
+      proof.restore = result
+      assert(
+        result.restored === true,
+        'Exact original input click descriptor must restore'
+      )
+      if (completed) {
+        const inputs = result.inputs as Array<{
+          connected: boolean
+          fileCount: number
+        }>
+        assert(
+          result.installed === true &&
+            result.wasReplacement === true &&
+            inputs.length === 1 &&
+            !inputs[0].connected &&
+            inputs[0].fileCount === 1,
+          'One actual uploaded temporary input must be consumed'
+        )
+      }
+    }
   }
 
   /** Browser CDP swipe ignores absolute endpoints; its drag supports real mouse movement. */
@@ -2561,7 +3039,16 @@ export class Chat2UI {
           ].includes(String(action.args.appId)),
           'Settings recipe may launch only own app or OS Settings'
         )
-      const command = this.device[action.command as keyof Chat2Device]
+      const command =
+        this.device[
+          action.command as
+            | 'launchApp'
+            | 'tapOn'
+            | 'scrollUntilVisible'
+            | 'back'
+            | 'pressKey'
+            | 'setDarkMode'
+        ]
       await command.call(this.device, action.args)
     }
   }
@@ -2834,14 +3321,17 @@ export class Chat2UI {
     return result.nodes as PublicNode[]
   }
 
-  async dom(script: string): Promise<Args> {
+  async dom(script: string, signal = this.deadline): Promise<Args> {
     assert(
       !this.native,
       'Browser DOM inspection cannot inspect native/private app state'
     )
-    const result = await this.device.evalBrowserScript({
-      script: 'return JSON.stringify((()=>{' + script + '})())'
-    })
+    const result = await this.device.evalBrowserScript(
+      {
+        script: 'return JSON.stringify(await(async()=>{' + script + '})())'
+      },
+      { signal }
+    )
     return typeof result.data === 'string'
       ? object(JSON.parse(result.data))
       : object(result.data)
@@ -2918,6 +3408,289 @@ export class Chat2UI {
       return
     }
     await dismissIosChatKeyboard(this)
+  }
+
+  /** Save the actual native snapshot before validating any Android capture metadata. */
+  async androidHierarchy(
+    signal: AbortSignal
+  ): Promise<{ raw: unknown; evidence: Args }> {
+    signal = AbortSignal.any([this.deadline, signal])
+    signal.throwIfAborted()
+    assert(
+      this.surface === 'android' &&
+        this.native &&
+        this.deviceId !== '' &&
+        this.fixture.devices.android.owned &&
+        this.deviceId === this.fixture.devices.android.id,
+      'Exact owned Android required for capture observation'
+    )
+    const raw = await this.device.hierarchy({ signal })
+    const path = join(
+      this.runDir,
+      'android-capture-hierarchy-' + randomUUID() + '.json'
+    )
+    writeFileSync(path, JSON.stringify(raw), { mode: 0o600, flag: 'wx' })
+    const evidence = {
+      path,
+      sha256: digest(path),
+      observedAt: new Date().toISOString(),
+      source: this.binding.source
+    }
+    this.steps.push({ name: 'Fresh Android capture hierarchy', ...evidence })
+    signal.throwIfAborted()
+    return { raw, evidence }
+  }
+
+  async androidComposerControl(
+    label: string,
+    signal: AbortSignal
+  ): Promise<Bounds> {
+    signal = AbortSignal.any([this.deadline, signal])
+    const proof: Args = {
+      name: 'Actual Android composer control visibility',
+      label,
+      outcome: 'failed'
+    }
+    this.steps.push(proof)
+    try {
+      const { raw, evidence } = await this.androidHierarchy(signal)
+      proof.rawHierarchy = evidence
+      const screen = await this.device.platformInfo({ signal })
+      signal.throwIfAborted()
+      const viewport = {
+        width: Number(screen.screenWidth),
+        height: Number(screen.screenHeight)
+      }
+      proof.viewport = viewport
+      const node = androidComposerControl(raw, label, viewport)
+      proof.node = node
+      proof.outcome = 'passed'
+      return bounds(node.bounds)!
+    } catch (error) {
+      proof.error = error instanceof Error ? error.message : String(error)
+      throw error
+    }
+  }
+
+  /** Passive state settlement precedes exactly one ordinary hide; functional hides are unchanged. */
+  async hideKeyboardForCapture(): Promise<void> {
+    if (this.surface !== 'android') {
+      await this.hideKeyboard()
+      return
+    }
+    assert(
+      this.scenario === 'capture',
+      'Capture-only Android dismissal required'
+    )
+    this.androidClosedCapture = undefined
+    const end = Date.now() + 90000
+    const signal = AbortSignal.any([this.deadline, AbortSignal.timeout(90000)])
+    const initial = await this.observeAndroidIme(
+      { signal, timeoutMs: Math.min(5000, end - Date.now()) },
+      'state'
+    )
+    const first = await this.androidHierarchy(signal)
+    const original = androidDismissReference(
+      first.raw,
+      need(initial.state, 'Actual initial IME state required'),
+      initial.viewport
+    )
+    let before = await this.verifyAndroidClosedCapture(original, end, true)
+    if (before.initialState === 'open') {
+      const positive = await readAndroidComposerKeyboard(
+        this,
+        signal,
+        Math.max(1, Math.min(10000, end - Date.now()))
+      )
+      const fresh = await this.androidHierarchy(signal)
+      const measured = androidDismissReference(
+        fresh.raw,
+        { state: 'open', flags: {}, keyboard: positive.geometry.keyboard },
+        initial.viewport
+      )
+      for (const key of ['history', 'text', 'reply', 'chips'] as const)
+        assert(
+          JSON.stringify(before[key]) === JSON.stringify(measured[key]),
+          'Actual pre-hide context changed: ' + key
+        )
+      before = measured
+      this.steps.push({
+        name: 'Fresh focused Android capture composer before hide',
+        geometry: positive.geometry
+      })
+    }
+    signal.throwIfAborted()
+    await this.device.hideKeyboard(undefined, { signal })
+    signal.throwIfAborted()
+    assert(Date.now() < end, 'Android capture dismissal exceeded 90 seconds')
+    await this.verifyAndroidClosedCapture(before, end)
+    this.androidClosedCapture = before
+  }
+
+  private async verifyAndroidClosedCapture(
+    before: AndroidDismissReference,
+    end: number,
+    initial = false
+  ): Promise<AndroidDismissReference> {
+    const remaining = (): number => {
+      assert(
+        Date.now() < end,
+        'Android capture IME did not settle within its deadline'
+      )
+      return Math.max(1, end - Date.now())
+    }
+    const signal = AbortSignal.any([
+      this.deadline,
+      AbortSignal.timeout(remaining())
+    ])
+    const samples: Args[] = []
+    const proof: Args = {
+      name: initial
+        ? 'Passive Android initial capture state'
+        : 'Positive Android closed capture state',
+      initialState: before.initialState,
+      samples,
+      outcome: 'failed'
+    }
+    this.steps.push(proof)
+    let previous:
+      | { signature: string; hash: string; raster: string; at: number }
+      | undefined
+    try {
+      for (let count = 0; count < 24; count++) {
+        signal.throwIfAborted()
+        const sample: Args = { startedAt: new Date().toISOString() }
+        samples.push(sample)
+        const observed = await this.observeAndroidIme(
+          { signal, timeoutMs: Math.min(5000, remaining()) },
+          'state'
+        )
+        const state = need(observed.state, 'Actual current IME state required')
+        sample.ime = observed
+        const { raw, evidence } = await this.androidHierarchy(signal)
+        sample.rawHierarchy = evidence
+        let geometry: Args | undefined
+        try {
+          geometry = androidClosedCaptureGeometry(raw, before)
+          sample.geometry = geometry
+        } catch (error) {
+          sample.geometryError =
+            error instanceof Error ? error.message : String(error)
+          previous = undefined
+        }
+        let open: AndroidDismissReference | undefined
+        if (initial && state.state === 'open') {
+          const reference = androidDismissReference(raw, state, before.viewport)
+          for (const key of ['history', 'text', 'reply', 'chips'] as const)
+            assert(
+              JSON.stringify(reference[key]) === JSON.stringify(before[key]),
+              'Passive initial context changed: ' + key
+            )
+          if (
+            reference.band.y + reference.band.height <=
+            reference.keyboard!.y + 2
+          )
+            open = reference
+          else sample.openLayoutPending = true
+        }
+        const bytes = Buffer.from(await this.device.screenshot({ signal }))
+        const png = bytes.subarray(0, 8).equals(PNG)
+        const jpeg = bytes[0] === 255 && bytes[1] === 216
+        const path = join(
+          this.runDir,
+          'android-closed-frame-' +
+            randomUUID() +
+            (png ? '.raw.png' : jpeg ? '.raw.jpg' : '.raw.bin')
+        )
+        writeFileSync(path, bytes, { mode: 0o600, flag: 'wx' })
+        const at = Date.now()
+        const image: Args = {
+          path,
+          sha256: digest(path),
+          at: new Date(at).toISOString(),
+          bytes: bytes.length
+        }
+        sample.image = image
+        assert(png || jpeg, 'Actual raw Android PNG/JPEG required')
+        const decoded = spawnSync(
+          process.env.CHAT2_PYTHON ?? 'python3',
+          [
+            '-c',
+            'from PIL import Image; import sys,json; im=Image.open(sys.argv[1]); im.load(); print(json.dumps({"width":im.width,"height":im.height,"mode":im.mode}))',
+            path
+          ],
+          {
+            encoding: 'utf8',
+            timeout: Math.min(10000, remaining()),
+            maxBuffer: 65536
+          }
+        )
+        image.validation = {
+          exitCode: decoded.status,
+          signal: decoded.signal,
+          output: decoded.stdout,
+          error: decoded.error?.message
+        }
+        assert(
+          decoded.status === 0 &&
+            decoded.signal == null &&
+            decoded.error == null,
+          'Actual raw Android frame must decode within deadline'
+        )
+        const raster = JSON.parse(decoded.stdout) as {
+          width: number
+          height: number
+          mode: string
+        }
+        assert(
+          Number.isFinite(raster.width) &&
+            Number.isFinite(raster.height) &&
+            raster.width > 0 &&
+            raster.height > 0,
+          'Actual positive decoded Android raster required'
+        )
+        image.raster = raster
+        signal.throwIfAborted()
+        remaining()
+        if (open != null) {
+          proof.outcome = 'passed'
+          proof.initialDispatch = 'open'
+          return open
+        }
+        if (state.state === 'already-closed' && geometry != null) {
+          const current = {
+            signature: JSON.stringify(geometry),
+            hash: String(image.sha256),
+            raster: JSON.stringify(raster),
+            at
+          }
+          if (
+            current.signature === previous?.signature &&
+            current.hash === previous.hash &&
+            current.raster === previous.raster &&
+            current.at - previous.at >= 200
+          ) {
+            proof.outcome = 'passed'
+            proof.exactPairMs = current.at - previous.at
+            return initial
+              ? androidDismissReference(raw, state, before.viewport)
+              : before
+          }
+          previous = current
+        } else previous = undefined
+        await new Promise(resolve =>
+          setTimeout(resolve, Math.min(200, remaining()))
+        )
+      }
+      throw Error(
+        'Complete Android closed OS/context and exact raw pair did not settle'
+      )
+    } catch (error) {
+      proof.error = error instanceof Error ? error.message : String(error)
+      throw error
+    } finally {
+      proof.completedAt = new Date().toISOString()
+    }
   }
 
   async back(): Promise<void> {
@@ -3366,6 +4139,23 @@ export class Chat2UI {
     rawPath: string
     viewport: { width: number; height: number }
   }> {
+    const result = await this.observeAndroidIme(options, 'open')
+    return {
+      bounds: need(result.bounds, 'Positive observed Android IME required'),
+      rawPath: result.rawPath,
+      viewport: result.viewport
+    }
+  }
+
+  private async observeAndroidIme(
+    options: { signal?: AbortSignal; timeoutMs?: number },
+    mode: 'open' | 'state'
+  ): Promise<{
+    bounds?: Bounds
+    state?: AndroidCaptureIme
+    rawPath: string
+    viewport: { width: number; height: number }
+  }> {
     const limit = Math.min(5000, options.timeoutMs ?? 5000)
     assert(
       Number.isFinite(limit) && limit > 0,
@@ -3441,14 +4231,22 @@ export class Chat2UI {
         width: Number(screen.screenWidth),
         height: Number(screen.screenHeight)
       }
-      const measured = androidImeFrame(result.stdout, viewport)
+      const state =
+        mode === 'state'
+          ? androidCaptureImeState(result.stdout, viewport)
+          : undefined
+      const measured =
+        mode === 'open'
+          ? androidImeFrame(result.stdout, viewport)
+          : state?.keyboard
       proof.bounds = measured
+      if (state != null) proof.observedState = state
       proof.viewport = {
         width: screen.screenWidth,
         height: screen.screenHeight
       }
       proof.outcome = 'passed'
-      return { bounds: measured, rawPath, viewport }
+      return { bounds: measured, state, rawPath, viewport }
     } catch (error) {
       proof.error = error instanceof Error ? error.message : String(error)
       throw error
@@ -3584,6 +4382,17 @@ export class Chat2UI {
 
   async shot(kind: string, note: string): Promise<void> {
     assert(/^[a-z][a-z-]+$/.test(kind), 'Safe proof name required')
+    if (
+      this.surface === 'android' &&
+      this.scenario === 'capture' &&
+      ['conversation', 'floating-pins', 'attention'].includes(kind)
+    ) {
+      const before = need(
+        this.androidClosedCapture,
+        'Immutable actual Android dismissal witness required before closed-keyboard capture'
+      )
+      await this.verifyAndroidClosedCapture(before, Date.now() + 90000)
+    }
     const file = `${this.surface}-${kind}-after.png`
     const path = join(
       this.runDir,
