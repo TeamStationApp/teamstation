@@ -1069,7 +1069,11 @@ describe('chat native adapter compatibility', function () {
       native: surface !== 'web-wide',
       runDir: path,
       steps: [],
-      device: { hierarchyRaw: async () => raw(nodes) }
+      metrics: () => ({ width: 300, height: 600 }),
+      device: {
+        hierarchyRaw: async () => raw(nodes),
+        platformInfo: async () => ({ screenWidth: 300, screenHeight: 600 })
+      }
     }) as Chat2UI
   }
   it('reads the actual unique Button instead of a large identically labelled wrapper', () => {
@@ -1619,13 +1623,25 @@ describe('chat native adapter compatibility', function () {
   it('chooses an actually unique other-member label for native information framing', async () => {
     const actual = ui([])
     const selectors: unknown[] = []
-    actual.device.platformInfo = async () => ({ screenHeight: 600 })
+    actual.device.platformInfo = async () => ({
+      screenWidth: 300,
+      screenHeight: 600
+    })
     actual.device.scrollUntilVisible = async args => {
       selectors.push(args.element)
     }
     actual.device.assertVisible = async () => ({})
     actual.nodes = async () => [
-      { text: 'Back', bounds: { x: 0, y: 0, width: 40, height: 40 } }
+      {
+        type: 'Button',
+        text: 'Back',
+        bounds: { x: 0, y: 0, width: 40, height: 40 }
+      },
+      {
+        type: 'Other',
+        text: 'Home',
+        bounds: { x: 10, y: 550, width: 280, height: 40 }
+      }
     ]
     actual.observedBounds = async (selected, type) => {
       selectors.push([selected, type])
@@ -1735,5 +1751,137 @@ describe('chat native adapter compatibility', function () {
     expect(calls).deep.equals([
       { id: 'chat-bubble-long', point: '50%,50%', duration: 550 }
     ])
+  })
+  it('ignores a full-screen Back wrapper when the real member row is already exposed', async () => {
+    const actual = ui([])
+    const gestures: unknown[] = []
+    actual.device.platformInfo = async () => ({
+      screenWidth: 320,
+      screenHeight: 720
+    })
+    actual.device.scrollUntilVisible = async () => {}
+    actual.device.assertVisible = async () => ({})
+    actual.device.swipe = async args => {
+      gestures.push(args)
+    }
+    actual.nodes = async () => [
+      {
+        type: 'Other',
+        text: 'Back',
+        bounds: { x: 0, y: 0, width: 320, height: 720 }
+      },
+      {
+        type: 'Button',
+        text: 'Back',
+        bounds: { x: 10, y: 30, width: 44, height: 44 }
+      },
+      {
+        type: 'Button',
+        text: 'Account, synthetic',
+        bounds: { x: 266, y: 30, width: 44, height: 44 }
+      },
+      {
+        type: 'Other',
+        text: 'Home',
+        bounds: { x: 20, y: 640, width: 280, height: 60 }
+      }
+    ]
+    actual.observedBounds = async () => ({
+      x: 20,
+      y: 400,
+      width: 280,
+      height: 56
+    })
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      viewerId: 9,
+      f: { members: [{ userId: 3, name: 'Unique', role: 'Member' }] },
+      observations: []
+    }) as Scenarios
+    const selected = await scenario.showInfoMember()
+    expect(selected.userId).equals(3)
+    expect(gestures).deep.equals([])
+    expect(scenario.observations[0]).deep.includes({
+      infoMemberFraming: {
+        userId: 3,
+        selector: { text: '^Safety number with Unique$' },
+        bounds: { x: 20, y: 400, width: 280, height: 56 },
+        unobscuredBand: { top: 82, bottom: 632 },
+        expectedRole: 'Member'
+      }
+    })
+  })
+  it('rejects out-of-viewport measured gestures before any native or browser dispatch', async () => {
+    for (const surface of ['ios', 'android', 'web-wide']) {
+      const actual = ui([], surface)
+      const calls: unknown[] = []
+      actual.device.swipe = async args => {
+        calls.push(args)
+      }
+      actual.device.dragAndDrop = async args => {
+        calls.push(args)
+      }
+      for (const invalid of [
+        { startY: 700 },
+        { endY: 600 },
+        { startX: 300 },
+        { endX: 0 },
+        { endY: Infinity }
+      ]) {
+        try {
+          await actual.measuredSwipe({
+            startX: 10,
+            startY: 20,
+            endX: 40,
+            endY: 50,
+            duration: 200,
+            ...invalid
+          })
+          throw Error('Unexpected success')
+        } catch (error) {
+          expect(String(error)).not.contains('Unexpected success')
+        }
+      }
+      expect(calls).deep.equals([])
+    }
+  })
+  it('rejects an unusably short member band before issuing a swipe', async () => {
+    const actual = ui([])
+    const gestures: unknown[] = []
+    actual.device.platformInfo = async () => ({
+      screenWidth: 320,
+      screenHeight: 160
+    })
+    actual.device.scrollUntilVisible = async () => {}
+    actual.device.swipe = async args => {
+      gestures.push(args)
+    }
+    actual.nodes = async () => [
+      {
+        type: 'Button',
+        text: 'Back',
+        bounds: { x: 10, y: 10, width: 40, height: 40 }
+      },
+      {
+        type: 'Other',
+        text: 'Home',
+        bounds: { x: 20, y: 81, width: 280, height: 40 }
+      }
+    ]
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual,
+      viewerId: 9,
+      f: { members: [{ userId: 3, name: 'Unique', role: 'Member' }] },
+      observations: []
+    }) as Scenarios
+    try {
+      await scenario.showInfoMember()
+      throw Error('Unexpected success')
+    } catch (error) {
+      expect(String(error)).contains(
+        'Meaningful in-viewport member reading band'
+      )
+    }
+    expect(gestures).deep.equals([])
   })
 })

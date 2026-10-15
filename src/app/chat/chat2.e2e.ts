@@ -1527,37 +1527,78 @@ export class Scenarios {
         `const n=document.querySelector(${JSON.stringify('[aria-label="Safety number with ' + member.name + '"]')});if(!n)throw Error('Actual member safety row required');n.scrollIntoView({block:'center'});return {publicMemberScroll:true}`
       )
     const info = ui.native ? await ui.device.platformInfo() : ui.metrics()
+    const width = Number('screenWidth' in info ? info.screenWidth : info.width)
     const height = Number(
       'screenHeight' in info ? info.screenHeight : info.height
     )
+    assert(
+      [width, height].every(value => Number.isFinite(value) && value > 0),
+      'Actual finite member-framing viewport required'
+    )
+    const inViewport = (box: NonNullable<PublicNode['bounds']>): boolean =>
+      [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+      box.width > 0 &&
+      box.height > 0 &&
+      box.x >= 0 &&
+      box.y >= 0 &&
+      box.x + box.width <= width &&
+      box.y + box.height <= height
     const nodes = await ui.nodes()
     const header = nodes.filter(
       n =>
         n.bounds != null &&
-        n.bounds.y < height / 3 &&
+        inViewport(n.bounds) &&
+        n.bounds.y + n.bounds.height <= height / 3 &&
+        (ui.surface !== 'ios' || n.type === 'Button') &&
         (n.text === 'Back' ||
           n.text === 'Notifications' ||
           n.text?.startsWith('Account, ') === true)
     )
     assert(
-      header.length > 0,
+      header.length > 0 &&
+        (ui.surface !== 'ios' ||
+          header.filter(node => node.text === 'Back').length === 1),
       'Observed public header bounds required for member framing'
     )
     const top = Math.max(...header.map(n => n.bounds!.y + n.bounds!.height)) + 8
     const footer = nodes.filter(
       n =>
         n.bounds != null &&
+        inViewport(n.bounds) &&
+        n.bounds.height < height / 3 &&
         n.bounds.y > height / 2 &&
         ['Home', 'Videos', 'Schedule', 'Chat'].includes(n.text ?? '')
     )
+    assert(
+      ui.surface !== 'ios' || footer.length > 0,
+      'Actual native bottom navigation bounds required for member framing'
+    )
     const bottom = Math.min(height - 8, ...footer.map(n => n.bounds!.y - 8))
-    const measure = async (): Promise<NonNullable<PublicNode['bounds']>> =>
-      await ui.observedBounds(
+    assert(
+      [top, bottom].every(Number.isFinite) &&
+        top > 0 &&
+        bottom < height &&
+        bottom - top > 32,
+      'Meaningful in-viewport member reading band required before any gesture'
+    )
+    const measure = async (): Promise<NonNullable<PublicNode['bounds']>> => {
+      const box = await ui.observedBounds(
         ui.surface === 'ios'
           ? { ...selector, childOf: { id: 'chat-info-members' } }
           : selector,
         ui.surface === 'ios' ? 'Button' : undefined
       )
+      assert(
+        [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+          box.width > 0 &&
+          box.height > 0 &&
+          box.x >= 0 &&
+          box.x + box.width <= width &&
+          box.height <= bottom - top,
+        'Finite member row must fit the actual viewport and readable band'
+      )
+      return box
+    }
     let bounds = await measure()
     for (
       let step = 0;

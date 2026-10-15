@@ -1675,6 +1675,24 @@ export class Chat2UI {
         ),
       'Actual finite measured gesture coordinates required'
     )
+    const screen = this.native
+      ? await this.device.platformInfo()
+      : this.metrics()
+    const width = Number(
+      'screenWidth' in screen ? screen.screenWidth : screen.width
+    )
+    const height = Number(
+      'screenHeight' in screen ? screen.screenHeight : screen.height
+    )
+    assert(
+      [width, height].every(value => Number.isFinite(value) && value > 0),
+      'Actual measured gesture viewport required'
+    )
+    assert(
+      [input.startX, input.endX].every(value => value > 0 && value < width) &&
+        [input.startY, input.endY].every(value => value > 0 && value < height),
+      'Measured gesture endpoints must stay strictly inside the actual viewport'
+    )
     if (this.native) await this.device.swipe(input)
     else
       await this.device.dragAndDrop({
