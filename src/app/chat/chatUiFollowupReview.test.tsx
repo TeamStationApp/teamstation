@@ -1512,14 +1512,32 @@ describe('chat review final native scroll positions', function () {
       await wait()
     })
     const callbacks = renderedReadingCallbacks(reading.node)
+    const deliverNative = async (
+      phase: ScrollPhase,
+      offset: number
+    ): Promise<void> => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        ReactNative.Platform,
+        'OS'
+      )!
+      Object.defineProperty(ReactNative.Platform, 'OS', {
+        configurable: true,
+        value: 'ios'
+      })
+      try {
+        await reading.deliver(callbacks, phase, offset)
+      } finally {
+        Object.defineProperty(ReactNative.Platform, 'OS', descriptor)
+      }
+    }
     for (const phase of ['onScrollEndDrag', 'onMomentumScrollEnd'] as const) {
-      await reading.deliver(callbacks, 'onScroll', 22.095)
+      await deliverNative('onScroll', 22.095)
       expect(state.drafts.get('cnv_aurora')!.scrollOffset).equals(22.095)
       expect(
         state.drafts.get('cnv_aurora')!.mentionTokens,
         'Ordinary native scroll preserves selected encrypted IDs'
       ).deep.equals(tokens)
-      await reading.deliver(callbacks, phase, 0)
+      await deliverNative(phase, 0)
       const saved = state.drafts.get('cnv_aurora')!
       expect(saved.scrollOffset, `${phase} carries the real final edge`).equals(
         0
@@ -3612,6 +3630,13 @@ describe('post-deep review2 current geometry persistence', function () {
       const row = document.querySelector<HTMLElement>(
         '[data-testid="chat-message-msg_original"]'
       )!.parentElement!
+      let rowY = 1030
+      Object.defineProperty(row, 'offsetTop', {
+        configurable: true,
+        get: () => rowY
+      })
+      row.getBoundingClientRect = () =>
+        new window.DOMRect(0, rowY - reading.node.scrollTop, 640, 1000)
       await layout(row, 640, 1000, 1030)
       await act(async () => {
         reading.node.dispatchEvent(
@@ -3643,6 +3668,7 @@ describe('post-deep review2 current geometry persistence', function () {
         })
         await wait()
       })
+      rowY = 966
       await layout(row, 640, 1000, 966)
       const content = renderedReadingCallbacks(
         reading.node

@@ -200,6 +200,7 @@ export function ConversationScreen(
         anchor: { id: string; relativeY: number } | undefined
         offset: number
         following: boolean
+        generation: number
       }
     | undefined
   >(undefined)
@@ -363,12 +364,15 @@ export function ConversationScreen(
   // Where the list is, to keep it on the newest message while the person
   // is there: a list read at its bottom follows what arrives, one scrolled
   // up to older messages stays put.
+  const savedPosition =
+    props.draft?.hasScrollPosition === true ||
+    (props.draft?.scrollOffset ?? 0) > 0
   const scrolled = useRef({
     offset: props.draft?.scrollOffset ?? 0,
-    hasPosition:
-      props.draft?.hasScrollPosition === true ||
-      (props.draft?.scrollOffset ?? 0) > 0,
-    followNewest: props.draft?.followNewest === true,
+    hasPosition: savedPosition,
+    followNewest:
+      props.draft?.followNewest === true ||
+      (Platform.OS === 'web' && !savedPosition),
     anchor: props.draft?.scrollAnchor,
     width: 0,
     contentWidth: 0,
@@ -455,6 +459,8 @@ export function ConversationScreen(
   const atBottom = useRef(
     !scrolled.current.hasPosition || scrolled.current.followNewest
   )
+  // Initial content can arrive before the first scroll-to-end acknowledgement.
+  const initialFollow = useRef(Platform.OS === 'web' && !savedPosition)
   const menuReading = useRef<
     | {
         offset: number
@@ -463,6 +469,37 @@ export function ConversationScreen(
       }
     | undefined
   >(undefined)
+  const acknowledgeInitialFollow = (): boolean => {
+    if (!initialFollow.current || !widthLayoutReady()) return false
+    const current = latestView.current
+    const actual = readMessageScrollPosition(
+      scroller.current,
+      messageRefs.current
+    )
+    const geometry = actual?.geometry
+    const populated =
+      current != null &&
+      (current.messages.length > 0
+        ? actual?.anchor != null
+        : current.conversation.lastSeq === 0)
+    if (actual != null) scrolled.current.offset = actual.offset
+    if (
+      !populated ||
+      actual == null ||
+      geometry == null ||
+      actual.offset + geometry.height < geometry.content - 48
+    )
+      return false
+    initialFollow.current = false
+    scrolled.current.hasPosition = true
+    scrolled.current.followNewest = true
+    scrolled.current.anchor = actual.anchor
+    scrolled.current.height = geometry.height
+    scrolled.current.content = geometry.content
+    atBottom.current = true
+    refreshAttention.current()
+    return true
+  }
   identityPress.current = () => {
     if (!mounted.current || !paneActive.current) return
     const physical =
@@ -618,6 +655,7 @@ export function ConversationScreen(
   const hasView = view != null
   const userScrolled = useCallback(() => {
     if (!mounted.current || !paneActive.current) return
+    initialFollow.current = false
     historyGeneration.current += 1
     discoveryPaused.current = true
     setAttentionLoading(false)
@@ -1005,9 +1043,22 @@ export function ConversationScreen(
     )
       return
     const present = new Set(current.messages.map(message => message.id))
-    const next = readingAnchor(
-      new Map([...messagePositions.current].filter(([id]) => present.has(id)))
-    )
+    const physical =
+      Platform.OS === 'web'
+        ? readMessageScrollPosition(
+            scroller.current,
+            new Map([...messageRefs.current].filter(([id]) => present.has(id)))
+          )
+        : undefined
+    const next =
+      physical == null
+        ? readingAnchor(
+            new Map(
+              [...messagePositions.current].filter(([id]) => present.has(id))
+            )
+          )
+        : physical.anchor
+    if (physical != null) scrolled.current.offset = physical.offset
     const previous = scrolled.current.anchor
     if (
       next == null ||
@@ -1095,6 +1146,7 @@ export function ConversationScreen(
   const loadOlder = async (
     cancelled: () => boolean = () => false
   ): Promise<ConversationView> => {
+    initialFollow.current = false
     const visit = readingVisit.current
     const stopped = (): boolean =>
       cancelled() ||
@@ -1146,7 +1198,11 @@ export function ConversationScreen(
       const held = {
         anchor,
         offset,
-        following: scrolled.current.followNewest || atBottom.current
+        following:
+          initialFollow.current ||
+          scrolled.current.followNewest ||
+          atBottom.current,
+        generation: historyGeneration.current
       }
       backgroundReading.current = held
       try {
@@ -1183,6 +1239,7 @@ export function ConversationScreen(
       }
     })
   const jumpTo = (id: string, attention = false): void => {
+    initialFollow.current = false
     historyGeneration.current += 1
     discoveryPaused.current = true
     setAttentionLoading(false)
@@ -1636,6 +1693,7 @@ export function ConversationScreen(
       mentionChoosing != null ||
       reacting != null ||
       composerOverlay ||
+      initialFollow.current ||
       discovering.current ||
       resolvingJump
     ) {
@@ -1687,6 +1745,7 @@ export function ConversationScreen(
         !paneActive.current ||
         session !== attentionSession.current ||
         !session.complete ||
+        initialFollow.current ||
         discovering.current ||
         menuReading.current != null
       )
@@ -2099,8 +2158,18 @@ export function ConversationScreen(
       }
       return
     }
-    scrolled.current.offset = Math.max(0, contentOffset.y)
     const pending = prepend.current
+    const physical =
+      Platform.OS === 'web' &&
+      widthLayoutReady() &&
+      !restoringAnchor.current &&
+      menuReading.current == null &&
+      backgroundReading.current?.generation !== historyGeneration.current &&
+      pending == null &&
+      measuringJump.current == null
+        ? readMessageScrollPosition(scroller.current, messageRefs.current)
+        : undefined
+    scrolled.current.offset = physical?.offset ?? Math.max(0, contentOffset.y)
     if (
       pending != null &&
       latestView.current?.messages[0]?.seq === pending.firstSeq &&
@@ -2109,6 +2178,11 @@ export function ConversationScreen(
     ) {
       pending.offset = scrolled.current.offset
       pending.anchor = readingAnchor(pending.positions)
+    }
+    if (initialFollow.current) {
+      scrolled.current.followNewest = true
+      atBottom.current = true
+      if (!acknowledgeInitialFollow()) return
     }
     scrolled.current.hasPosition = true
     // Native scroll events can carry the temporary viewport geometry
@@ -2119,7 +2193,10 @@ export function ConversationScreen(
     scrolled.current.followNewest =
       scrolled.current.offset + scrolled.current.height >=
       scrolled.current.content - 48
-    scrolled.current.anchor = readingAnchor(messagePositions.current)
+    scrolled.current.anchor =
+      physical == null
+        ? readingAnchor(messagePositions.current)
+        : physical.anchor
     onDraftChange?.({
       text: textNow.current,
       replyTo: replyNow.current,
@@ -2282,6 +2359,7 @@ export function ConversationScreen(
             scrolled.current.width = event.nativeEvent.layout.width
             scrolled.current.height = event.nativeEvent.layout.height
             awaitingWidthLayout.current = false
+            acknowledgeInitialFollow()
             if (
               restoreTarget.current != null &&
               restoreAnchor.current == null &&
@@ -2301,11 +2379,14 @@ export function ConversationScreen(
               if (restoringAnchor.current) restoreAnchorDirty.current = true
             }
             scrolled.current.contentWidth = width
+            acknowledgeInitialFollow()
             const background = backgroundReading.current
             if (background != null) {
               scrolled.current.content = height
               if (
-                (scrolled.current.followNewest || atBottom.current) &&
+                (initialFollow.current ||
+                  scrolled.current.followNewest ||
+                  atBottom.current) &&
                 menuReading.current == null
               )
                 scroller.current?.scrollToEnd({ animated: false })
@@ -2394,11 +2475,12 @@ export function ConversationScreen(
             // At the bottom of what was there before it grew (or asked to
             // go there by a send): follow it down.
             const following =
+              initialFollow.current ||
               atBottom.current ||
               content === 0 ||
               offset + scrolled.current.height >= content - 48
             scrolled.current.content = height
-            atBottom.current = false
+            atBottom.current = initialFollow.current && following
             if (following) scroller.current?.scrollToEnd({ animated: false })
             else recaptureLiveAnchor()
           }}
@@ -2508,6 +2590,7 @@ export function ConversationScreen(
                 )}
                 onLongPress={(pressed, anchor, source) => {
                   if (actionsFor(pressed, view).length > 0) {
+                    initialFollow.current = false
                     const visible = readMessageScrollPosition(
                       scroller.current,
                       messageRefs.current

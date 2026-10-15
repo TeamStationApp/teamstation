@@ -2976,7 +2976,9 @@ describe('chat follow-up conversation message integration', function () {
     geometry = readingGeometry(reading.id, 344, 944)
     await geometry.layout()
     await geometry.userScroll(80)
+    geometry.geometry.y = 444
     await measured(geometry.row, 640, 800, 444)
+    expect(geometry.row.getBoundingClientRect().top).equals(364)
     expect(saved.scrollAnchor).deep.equals({ id: reading.id, relativeY: 364 })
   })
 

@@ -375,7 +375,15 @@ describe('attention controls and synchronized reading visits', function () {
       message({ id: 'msg_two', seq: 220, mentions: [1] })
     ]
     const state = fixture(view({ ownReadSeq: 200, messages: targets }))
-    const owner = new ChatDraftOwner(newChatWorkspaceState())
+    const workspace = newChatWorkspaceState()
+    workspace.drafts.set('cnv_1', {
+      text: '',
+      picked: [],
+      hasScrollPosition: true,
+      scrollOffset: 0,
+      followNewest: false
+    })
+    const owner = new ChatDraftOwner(workspace)
     await render(screen(state.engine, owner))
     await measureBodies({ msg_one: 900, msg_two: 1200 })
     expect(
@@ -1250,6 +1258,268 @@ describe('attention cancellation preserves the current follow intent', function 
   })
 })
 
+describe('new web reader initial follow acknowledgement', function () {
+  it('acknowledges a populated short reader at its actual end without a scroll event', async function () {
+    const current = message({
+      id: 'msg_short_current',
+      seq: 220,
+      mentions: [1]
+    })
+    const initial = view({
+      messages: [current],
+      ownReadSeq: 200,
+      hasEarlier: false
+    })
+    const state = fixture(initial)
+    const owner = new ChatDraftOwner(newChatWorkspaceState())
+    const node = await render(screen(state.engine, owner))
+    const history = node.querySelector<HTMLElement>(
+      '[data-testid="chat-message-history"]'
+    )!
+    const frame = node.querySelector<HTMLElement>(
+      '[data-testid="chat-viewport"]'
+    )!
+    const row = node.querySelector<HTMLElement>(
+      `[data-testid="chat-message-row-${current.id}"]`
+    )!
+    const body = node.querySelector<HTMLElement>(
+      `[data-testid="chat-message-body-${current.id}"]`
+    )!
+    frame.getBoundingClientRect = () => rect(0, 844)
+    history.getBoundingClientRect = () => rect(0, 844)
+    row.getBoundingClientRect = () => rect(200, 100)
+    body.getBoundingClientRect = () => rect(200, 100)
+    Object.defineProperties(history, {
+      clientWidth: { configurable: true, value: 360 },
+      clientHeight: { configurable: true, value: 844 },
+      scrollHeight: { configurable: true, value: 844 }
+    })
+    let scrollEvents = 0
+    history.addEventListener('scroll', () => {
+      scrollEvents++
+    })
+    history.scroll = () => {
+      history.scrollTop = 0
+    }
+    await layout(row, 200, 100)
+    await layout(history, 0, 844)
+    await act(async () => {
+      readingCallbacks(history).onContentSizeChange(360, 844)
+      await wait()
+    })
+    await until(() => owner.attention('cnv_1')!.seen.has(current.id))
+    expect(owner.attention('cnv_1')!.seen.has(current.id)).equals(true)
+    expect(history.scrollTop).equals(0)
+    expect(scrollEvents).equals(0)
+    expect(owner.draft('cnv_1').followNewest).equals(true)
+  })
+
+  for (const contract of ['follow', 'visibility', 'manual'])
+    it(`keeps ${contract} ownership across empty content, deferred history and a late zero acknowledgement`, async function () {
+      const current = message({
+        id: 'msg_cold_current',
+        seq: 290,
+        mentions: [1]
+      })
+      const end = message({ id: 'msg_cold_end', seq: 299, mentions: [1] })
+      const tail = message({ id: 'msg_cold_tail', seq: 300, senderUserId: 1 })
+      const empty = view({
+        conversation: { ...view().conversation, lastSeq: 300 },
+        ownReadSeq: 200,
+        historyBefore: 280,
+        hasEarlier: true,
+        messages: []
+      })
+      const populated = { ...empty, messages: [current, end, tail] }
+      const state = fixture(empty)
+      let opened!: (next: ConversationView) => void
+      let finish!: (next: ConversationView) => void
+      state.setOpen(
+        async () =>
+          await new Promise(resolve => {
+            opened = resolve
+          })
+      )
+      state.setLoad(
+        async () =>
+          await new Promise(resolve => {
+            finish = resolve
+          })
+      )
+      const owner = new ChatDraftOwner(newChatWorkspaceState())
+      const node = await render(screen(state.engine, owner))
+      const history = node.querySelector<HTMLElement>(
+        '[data-testid="chat-message-history"]'
+      )!
+      const frame = node.querySelector<HTMLElement>(
+        '[data-testid="chat-viewport"]'
+      )!
+      let extent = 844
+      const moves: number[] = []
+      history.getBoundingClientRect = () => rect(0, 844)
+      frame.getBoundingClientRect = () => rect(0, 844)
+      Object.defineProperties(history, {
+        clientWidth: { configurable: true, value: 360 },
+        clientHeight: { configurable: true, value: 844 },
+        scrollHeight: { configurable: true, get: () => extent }
+      })
+      history.scroll = options => {
+        const y = Math.min((options as ScrollToOptions).top ?? 0, extent - 844)
+        moves.push(y)
+        history.scrollTop = y
+        // Browser geometry changes before its throttled ScrollView acknowledgement.
+      }
+      await layout(history, 0, 844)
+      await act(async () => {
+        readingCallbacks(history).onContentSizeChange(360, extent)
+        await wait()
+      })
+      expect(moves).contains(0)
+      await act(async () => {
+        extent = 3000
+        state.update(populated)
+        opened(populated)
+        await wait()
+      })
+      await until(() => state.loads === 1)
+      for (const [id, y] of [
+        [current.id, 300],
+        [end.id, 2700],
+        [tail.id, 2850]
+      ] as const) {
+        const row = node.querySelector<HTMLElement>(
+          `[data-testid="chat-message-row-${id}"]`
+        )!
+        const body = node.querySelector<HTMLElement>(
+          `[data-testid="chat-message-body-${id}"]`
+        )!
+        row.getBoundingClientRect = () => rect(y - history.scrollTop, 100)
+        body.getBoundingClientRect = () => rect(y - history.scrollTop, 100)
+        Object.defineProperty(row, 'measureLayout', {
+          configurable: true,
+          get:
+            () =>
+            (
+              _parent: unknown,
+              done: (
+                x: number,
+                y: number,
+                width: number,
+                height: number
+              ) => void
+            ) => {
+              done(0, y, 360, 100)
+            },
+          set: () => {}
+        })
+        await layout(row, y, 100)
+      }
+      await act(async () => {
+        readingCallbacks(history).onContentSizeChange(360, extent)
+        await wait()
+      })
+      if (contract === 'manual')
+        await act(async () => {
+          history.dispatchEvent(
+            new window.WheelEvent('wheel', { deltaY: -2056, bubbles: true })
+          )
+          history.scrollTop = 100
+          history.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+          await wait()
+        })
+      await act(async () => {
+        const next =
+          contract === 'manual'
+            ? { ...populated, historyBefore: 250 }
+            : {
+                ...populated,
+                historyBefore: 190,
+                hasEarlier: false,
+                messages: [
+                  message({
+                    id: 'msg_cold_original',
+                    seq: 190,
+                    senderUserId: 1
+                  }),
+                  ...populated.messages
+                ]
+              }
+        state.update(next)
+        finish(next)
+        await wait()
+      })
+      await until(
+        () =>
+          node.querySelector('[data-testid="chat-attention-loading"]') == null
+      )
+      if (contract === 'follow') {
+        expect(
+          moves,
+          'A fresh pane retains the end request after the empty first extent'
+        ).contains(2156)
+        expect(history.scrollTop).equals(2156)
+      } else if (contract === 'visibility') {
+        expect(
+          owner.attention('cnv_1')!.seen.has(current.id),
+          'Provisional first-page bodies are not consumed'
+        ).equals(false)
+        expect(
+          owner.attention('cnv_1')!.seen.has(end.id),
+          'Even actual end autoack waits for current positioning proof'
+        ).equals(false)
+      } else {
+        expect(
+          history.scrollTop,
+          'A newer genuine reader cancels initial follow'
+        ).equals(100)
+        expect(owner.draft('cnv_1').followNewest).equals(false)
+        expect(owner.draft('cnv_1').scrollOffset).equals(100)
+      }
+      await act(async () => {
+        // A delayed zero packet must acknowledge current physical geometry, not replay old offset0.
+        readingCallbacks(history).onScroll(nativeEvent(0))
+        await wait()
+      })
+      if (contract === 'manual') {
+        expect(history.scrollTop).equals(100)
+        expect(owner.draft('cnv_1').scrollOffset).equals(100)
+        await until(
+          () =>
+            node.querySelector('[data-testid="chat-attention-retry"]') != null
+        )
+        expect(owner.attention('cnv_1')!.complete).equals(false)
+        expect(owner.attention('cnv_1')!.seen.has(current.id)).equals(false)
+        state.setLoad(async () => {
+          const complete = {
+            ...populated,
+            historyBefore: 190,
+            hasEarlier: false,
+            messages: [
+              message({ id: 'msg_cold_original', seq: 190, senderUserId: 1 }),
+              ...populated.messages
+            ]
+          }
+          state.update(complete)
+          return complete
+        })
+        await click('chat-attention-retry')
+        await until(
+          () =>
+            owner.attention('cnv_1')!.complete &&
+            owner.attention('cnv_1')!.seen.has(current.id)
+        )
+        expect(owner.attention('cnv_1')!.seen.has(current.id)).equals(true)
+        expect(history.scrollTop).equals(100)
+        expect(owner.draft('cnv_1').scrollOffset).equals(100)
+      } else {
+        expect(history.scrollTop).equals(2156)
+        expect(owner.draft('cnv_1').followNewest).equals(true)
+        await until(() => owner.attention('cnv_1')!.seen.has(end.id))
+        expect(owner.attention('cnv_1')!.seen.has(current.id)).equals(false)
+      }
+    })
+})
+
 describe('conversation information navigation reader ownership', function () {
   for (const { deferred, offset, following, label, gutter = false } of [
     {
@@ -1633,6 +1903,130 @@ describe('conversation width reflow reader ownership', function () {
     })
   })
 
+  for (const snapshot of ['scroll', 'content'])
+    it(`keeps a current physical row anchor through a later ${snapshot} snapshot with stale same-size layout`, async function () {
+      const windowSize = { width: 1200, height: 844 }
+      restore = measureChatTestViewport(windowSize)
+      const current = message({ id: 'msg_position_only', seq: 300 })
+      const state = fixture(view({ messages: [current] }))
+      const workspace = newChatWorkspaceState()
+      workspace.drafts.set('cnv_1', {
+        text: 'Keep the physical reader',
+        picked: [],
+        scrollOffset: 650,
+        hasScrollPosition: true,
+        followNewest: false,
+        scrollAnchor: { id: current.id, relativeY: 56 }
+      })
+      const owner = new ChatDraftOwner(workspace)
+      const node = await render(screen(state.engine, owner))
+      const history = node.querySelector<HTMLElement>(
+        '[data-testid="chat-message-history"]'
+      )!
+      const content = history.firstElementChild as HTMLElement
+      const row = node.querySelector<HTMLElement>(
+        `[data-testid="chat-message-row-${current.id}"]`
+      )!
+      let paneWidth = 900
+      let rowY = 706
+      let extent = 3000
+      const box = (top: number, height: number): DOMRect =>
+        new window.DOMRect(0, top, paneWidth, height)
+      history.getBoundingClientRect = () => box(0, 844)
+      content.getBoundingClientRect = () => box(-history.scrollTop, extent)
+      row.getBoundingClientRect = () => box(rowY - history.scrollTop, 100)
+      Object.defineProperties(history, {
+        clientHeight: { configurable: true, value: 844 },
+        clientWidth: { configurable: true, get: () => paneWidth },
+        scrollHeight: { configurable: true, get: () => extent }
+      })
+      history.scroll = options => {
+        history.scrollTop = Math.min(
+          (options as ScrollToOptions).top ?? 0,
+          extent - 844
+        )
+        readingCallbacks(history).onScroll(nativeEvent(history.scrollTop))
+      }
+      Object.defineProperty(row, 'measureLayout', {
+        configurable: true,
+        get:
+          () =>
+          (
+            _parent: unknown,
+            done: (x: number, y: number, width: number, height: number) => void
+          ) => {
+            done(0, rowY, paneWidth, 100)
+          },
+        set: () => {}
+      })
+      await layout(row, rowY, 100, paneWidth)
+      await layout(history, 0, 844, paneWidth)
+      await act(async () => {
+        readingCallbacks(history).onContentSizeChange(paneWidth, extent)
+        await wait()
+      })
+      await until(() => history.scrollTop === 650)
+      // A content inset can move a same-size row without a ResizeObserver event.
+      rowY += 61
+      extent += 61
+      await act(async () => {
+        history.dispatchEvent(
+          new window.WheelEvent('wheel', { deltaY: 50, bubbles: true })
+        )
+        history.scrollTop = 700
+        history.dispatchEvent(new window.Event('scroll', { bubbles: true }))
+        await wait()
+      })
+      expect(owner.draft('cnv_1').scrollAnchor).deep.equals({
+        id: current.id,
+        relativeY: 67
+      })
+      await act(async () => {
+        if (snapshot === 'scroll')
+          readingCallbacks(history).onScroll(nativeEvent(history.scrollTop))
+        else readingCallbacks(history).onContentSizeChange(paneWidth, extent)
+        await wait()
+      })
+      expect(
+        owner.draft('cnv_1').scrollAnchor,
+        'A later snapshot cannot replace current DOM67 with cached6'
+      ).deep.equals({ id: current.id, relativeY: 67 })
+      const before = row.getBoundingClientRect().y
+      await act(async () => {
+        windowSize.width = 390
+        window.dispatchEvent(new window.Event('resize'))
+        await wait()
+      })
+      paneWidth = 390
+      rowY = 1600
+      extent = 5000
+      await layout(row, rowY, 100, paneWidth)
+      await layout(history, 0, 844, paneWidth)
+      await act(async () => {
+        readingCallbacks(history).onContentSizeChange(paneWidth, extent)
+        await wait()
+      })
+      await until(() => history.scrollTop === 1533)
+      await act(async () => {
+        windowSize.width = 1200
+        window.dispatchEvent(new window.Event('resize'))
+        await wait()
+      })
+      paneWidth = 900
+      rowY = 767
+      extent = 3061
+      await layout(row, rowY, 100, paneWidth)
+      await layout(history, 0, 844, paneWidth)
+      await act(async () => {
+        readingCallbacks(history).onContentSizeChange(paneWidth, extent)
+        await wait()
+      })
+      await until(() => history.scrollTop === 700)
+      expect(Math.abs(row.getBoundingClientRect().y - before)).at.most(3)
+      expect(owner.draft('cnv_1').text).equals('Keep the physical reader')
+      expect(owner.draft('cnv_1').followNewest).equals(false)
+    })
+
   for (const following of [false, true])
     it(`retains ${following ? 'follow-end' : 'explicit zero'} through width changes`, async function () {
       const windowSize = { width: 1200, height: 844 }
@@ -1772,7 +2166,15 @@ describe('attention composer overlay visibility', function () {
   it('keeps an exposed target unseen while emoji covers the conversation and consumes it after ordinary dismissal', async function () {
     const target = message({ id: 'msg_overlay', seq: 220, mentions: [1] })
     const state = fixture(view({ ownReadSeq: 200, messages: [target] }))
-    const owner = new ChatDraftOwner(newChatWorkspaceState())
+    const workspace = newChatWorkspaceState()
+    workspace.drafts.set('cnv_1', {
+      text: '',
+      picked: [],
+      hasScrollPosition: true,
+      scrollOffset: 0,
+      followNewest: false
+    })
+    const owner = new ChatDraftOwner(workspace)
     const node = await render(screen(state.engine, owner))
     await measureBodies({ msg_overlay: 1200 })
     expect(
@@ -1891,7 +2293,15 @@ describe('attention unresolved arrivals after explicit navigation', function () 
       messages: [message({ id: 'msg_reader', seq: 300 })]
     })
     const state = fixture(initial)
-    const owner = new ChatDraftOwner(newChatWorkspaceState())
+    const workspace = newChatWorkspaceState()
+    workspace.drafts.set('cnv_1', {
+      text: '',
+      picked: [],
+      hasScrollPosition: true,
+      scrollOffset: 0,
+      followNewest: false
+    })
+    const owner = new ChatDraftOwner(workspace)
     const node = await render(screen(state.engine, owner))
     expect(owner.attention('cnv_1')!.complete).equals(true)
     expect(state.loads).equals(0)

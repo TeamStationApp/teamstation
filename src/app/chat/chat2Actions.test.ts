@@ -4236,6 +4236,7 @@ describe('chat native adapter compatibility', function () {
   function keyboardMenu(mode = 'valid'): {
     scenario: Scenarios
     calls: string[]
+    actual: Chat2UI
   } {
     const { actual, page } = browserModel()
     actual.metrics = () => ({ width: 300, height: 600, dpr: 1, coarse: false })
@@ -4280,7 +4281,12 @@ describe('chat native adapter compatibility', function () {
       calls.push('dismiss')
       if (mode !== 'retained-menu') panel?.remove()
       if (mode === 'wrong-focus') editor.focus()
-      else trigger.focus()
+      else if (mode === 'deferred-focus')
+        page.window.setTimeout(() => {
+          trigger.focus()
+        }, 15)
+      else if (mode === 'missing-trigger') trigger.remove()
+      else if (mode !== 'permanent-body') trigger.focus()
       if (mode === 'changed-draft') editor.value = 'Changed'
     }
     actual.shot = async () => {}
@@ -4301,7 +4307,7 @@ describe('chat native adapter compatibility', function () {
     }
     scenario.targetBounds = async () => box
     scenario.menuState = async () => ({})
-    return { scenario, calls }
+    return { scenario, calls, actual }
   }
   it('prepares the E5 reader before focus and verifies the actual desktop More trigger after Escape', async () => {
     const { scenario, calls } = keyboardMenu()
@@ -4320,6 +4326,41 @@ describe('chat native adapter compatibility', function () {
     expect(proof[1].triggerFocused).equals(true)
     expect(proof[1].menus).equals(0)
   })
+  it('waits for deferred real More focus after closed-menu BODY observation', async () => {
+    const { scenario } = keyboardMenu('deferred-focus')
+    await scenario.E5()
+    const samples = (
+      scenario.observations[0].messageActionFocus as Array<
+        Record<string, unknown>
+      >
+    ).filter(sample => sample.phase === 'after-dismissal')
+    expect(samples.length).greaterThan(1)
+    expect(samples[0].triggerFocused).equals(false)
+    expect((samples[0].active as Record<string, unknown>).tag).equals('BODY')
+    expect(samples.at(-1)?.triggerFocused).equals(true)
+    expect(samples.at(-1)?.menus).equals(0)
+    expect(samples.at(-1)?.spotlights).equals(0)
+  })
+  for (const mode of ['permanent-body', 'missing-trigger'])
+    it('rejects unavailable desktop restoration: ' + mode, async () => {
+      const { scenario, actual } = keyboardMenu(mode)
+      Object.assign(actual, { deadline: AbortSignal.timeout(40) })
+      await captureFailure(scenario.E5())
+      const samples = (
+        scenario.observations[0].messageActionFocus as Array<
+          Record<string, unknown>
+        >
+      ).filter(sample => sample.phase === 'after-dismissal')
+      if (mode === 'permanent-body') {
+        expect(samples.length).greaterThan(0)
+        expect(samples.every(sample => sample.triggerFocused === false)).equals(
+          true
+        )
+        expect((samples[0].active as Record<string, unknown>).tag).equals(
+          'BODY'
+        )
+      } else expect(samples).deep.equals([])
+    })
   for (const mode of ['wrong-focus', 'retained-menu', 'changed-draft'])
     it(
       'retains strict desktop dismissal and draft evidence: ' + mode,

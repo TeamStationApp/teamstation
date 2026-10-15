@@ -3594,19 +3594,27 @@ export class Scenarios {
           desktopTrigger: !this.touchActions
         }
         this.observations.push(focusProof)
-        const readFocus = async (phase: string): Promise<Json> => {
-          const current = await ui.dom(`
+        const readFocus = async (
+          phase: string,
+          signal = ui.deadline
+        ): Promise<Json> => {
+          signal.throwIfAborted()
+          const current = await ui.dom(
+            `
             const id=${JSON.stringify('chat-message-' + this.f.messages.target.id)};
             const rows=Array.from(document.querySelectorAll('[data-testid='+JSON.stringify(id)+']'));if(rows.length!==1)throw Error('Unique message row required for action focus');
             const triggers=Array.from(rows[0].querySelectorAll('[aria-label="More message actions"]'));if(triggers.length!==1||triggers[0].getAttribute('role')!=='button')throw Error('Unique actual More trigger required');
             const a=document.activeElement,b=triggers[0].getBoundingClientRect();if(![b.x,b.y,b.width,b.height].every(Number.isFinite)||b.width<=0||b.height<=0)throw Error('Actual positive More trigger geometry required');
             return {composerFocused:a===document.querySelector('[data-testid="chat-composer"]'),triggerFocused:a===triggers[0],menus:document.querySelectorAll('[aria-label^="Message from "]').length,spotlights:document.querySelectorAll('[data-testid="chat-message-spotlight"]').length,active:{tag:a?.tagName,id:a?.getAttribute('data-testid'),label:a?.getAttribute('aria-label')},trigger:{x:b.x,y:b.y,width:b.width,height:b.height}};
-          `)
+          `,
+            signal
+          )
           ;(focusProof.messageActionFocus as unknown[]).push({
             phase,
             at: new Date().toISOString(),
             ...current
           })
+          signal.throwIfAborted()
           return current
         }
         if (!this.touchActions) {
@@ -3640,7 +3648,22 @@ export class Scenarios {
         await this.dismiss()
         if (this.touchActions) await ui.assertKeyboard()
         else {
-          const focused = await readFocus('after-dismissal')
+          const signal = AbortSignal.any([
+            ui.deadline,
+            AbortSignal.timeout(2000)
+          ])
+          const focused = await until(
+            async () => {
+              const current = await readFocus('after-dismissal', signal)
+              return current.triggerFocused === true &&
+                current.menus === 0 &&
+                current.spotlights === 0
+                ? current
+                : undefined
+            },
+            'actual More focus after desktop menu cleanup',
+            2000
+          )
           assert(
             focused.triggerFocused === true &&
               focused.menus === 0 &&
