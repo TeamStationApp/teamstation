@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Platform, Pressable, Text, View } from 'react-native'
 
 import { TextField } from '../components'
 import { lstrings } from '../locales/strings'
@@ -17,7 +17,56 @@ export function MentionPicker(props: {
   onClose: () => void
 }): React.ReactElement {
   const theme = useTheme()
+  const { onSelect, onClose } = props
   const [query, setQuery] = useState('')
+  const [closing, setClosing] = useState(false)
+  const [searchHeight, setSearchHeight] = useState<number>()
+  const [completion, setCompletion] = useState(0)
+  const latest = useRef({ onSelect, onClose })
+  latest.current = { onSelect, onClose }
+  const live = useRef(true)
+  const pending = useRef<{ userId: number } | 'cancel' | undefined>(undefined)
+  const phase = useRef<'idle' | 'closing' | 'settled'>('idle')
+  useEffect(() => {
+    live.current = true
+    return () => {
+      live.current = false
+    }
+  }, [])
+  useEffect(() => {
+    if (phase.current !== 'settled') return
+    // A rejected insertion keeps this picker mounted. Restore its Search only
+    // after the callback's commit; successful selection unmounts the picker.
+    phase.current = 'idle'
+    setClosing(false)
+  }, [completion])
+  const invoke = (choice: { userId: number } | 'cancel'): void => {
+    if (choice === 'cancel') latest.current.onClose()
+    else latest.current.onSelect(choice.userId)
+  }
+  const request = (choice: { userId: number } | 'cancel'): void => {
+    if (Platform.OS === 'web') {
+      invoke(choice)
+      return
+    }
+    if (phase.current !== 'idle') {
+      if (phase.current === 'closing' && choice === 'cancel')
+        pending.current = choice
+      return
+    }
+    pending.current = choice
+    phase.current = 'closing'
+    setClosing(true)
+  }
+  const finish = (): void => {
+    const choice = pending.current
+    if (!live.current || phase.current !== 'closing' || choice == null) return
+    pending.current = undefined
+    phase.current = 'settled'
+    // Search is already unmounted and the background host is released.
+    invoke(choice)
+    if (live.current) setCompletion(value => value + 1)
+  }
   const candidates = useMemo(() => {
     const search = query.trim().toLocaleLowerCase()
     return [
@@ -36,21 +85,35 @@ export function MentionPicker(props: {
   return (
     <ChatActionOverlay
       label={lstrings.chat_mention_title}
-      onClose={props.onClose}
+      onClose={() => {
+        request('cancel')
+      }}
+      closing={closing}
+      focusHandoff={closing}
+      onClosed={finish}
       initialField
       scene
       keyboardRows='[data-testid^="chat-mention-member-"]'
     >
-      <TextField
-        label={lstrings.chat_mention_search}
-        value={query}
-        onChangeText={setQuery}
-        autoFocus
-        onSubmitEditing={() => {
-          const first = candidates[0]
-          if (first != null) props.onSelect(first.userId)
+      <View
+        onLayout={event => {
+          setSearchHeight(event.nativeEvent.layout.height)
         }}
-      />
+        style={closing ? { height: searchHeight } : undefined}
+      >
+        {!closing && (
+          <TextField
+            label={lstrings.chat_mention_search}
+            value={query}
+            onChangeText={setQuery}
+            autoFocus
+            onSubmitEditing={() => {
+              const first = candidates[0]
+              if (first != null) request({ userId: first.userId })
+            }}
+          />
+        )}
+      </View>
       {props.error != null && (
         <Text
           accessibilityLiveRegion="polite"
@@ -67,7 +130,7 @@ export function MentionPicker(props: {
             accessibilityRole="button"
             accessibilityLabel={`${member.shortName}, ${member.label}`}
             onPress={() => {
-              props.onSelect(member.userId)
+              request({ userId: member.userId })
             }}
             style={{
               minHeight: 48,

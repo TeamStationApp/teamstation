@@ -1,8 +1,14 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
-import React, { act } from 'react'
+import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { AccessibilityInfo, Animated, Dimensions } from 'react-native'
+import {
+  AccessibilityInfo,
+  Animated,
+  BackHandler,
+  Dimensions,
+  Platform
+} from 'react-native'
 
 import { MAX_BODY } from '../../common/chatContent'
 import { AppHeader } from '../components/AppHeader'
@@ -35,6 +41,8 @@ let restoreViewport: (() => void) | undefined
 let restoreMotion: (() => void) | undefined
 let restoreAnimation: (() => void) | undefined
 let restoreDimensions: (() => void) | undefined
+let restoreBack: (() => void) | undefined
+let restorePlatform: (() => void) | undefined
 afterEach(async function () {
   await act(async () => {
     root?.unmount()
@@ -50,6 +58,10 @@ afterEach(async function () {
   restoreAnimation = undefined
   restoreDimensions?.()
   restoreDimensions = undefined
+  restorePlatform?.()
+  restorePlatform = undefined
+  restoreBack?.()
+  restoreBack = undefined
 })
 const wait = async (): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, 30))
@@ -211,8 +223,364 @@ async function choose(id: number): Promise<void> {
   )
 }
 
+function nativePicker(platform: 'ios' | 'android' = 'ios'): {
+  finish: () => Promise<void>
+  back: () => void
+  late: () => void
+} {
+  const saved = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+  Object.defineProperty(Platform, 'OS', { configurable: true, value: platform })
+  restorePlatform = () => Object.defineProperty(Platform, 'OS', saved)
+  const timing = Object.getOwnPropertyDescriptor(Animated, 'timing')!
+  const animations: Array<{
+    value: Animated.Value
+    end?: (result: { finished: boolean }) => void
+  }> = []
+  Object.defineProperty(Animated, 'timing', {
+    configurable: true,
+    value: (value: Animated.Value) => {
+      const run: (typeof animations)[number] = { value }
+      animations.push(run)
+      return {
+        start: (end: (result: { finished: boolean }) => void) => {
+          run.end = end
+        },
+        stop: () => {},
+        reset: () => {}
+      }
+    }
+  })
+  restoreAnimation = () => Object.defineProperty(Animated, 'timing', timing)
+  let onBack: (() => boolean | null | undefined) | undefined
+  const back = Object.getOwnPropertyDescriptor(BackHandler, 'addEventListener')!
+  Object.defineProperty(BackHandler, 'addEventListener', {
+    configurable: true,
+    value: (_name: string, accept: () => boolean | null | undefined) => {
+      onBack = accept
+      return {
+        remove: () => {
+          onBack = undefined
+        }
+      }
+    }
+  })
+  restoreBack = () =>
+    Object.defineProperty(BackHandler, 'addEventListener', back)
+  let completed: (typeof animations)[number] | undefined
+  return {
+    finish: async () => {
+      completed = animations.at(-1)!
+      await act(async () => {
+        completed!.value.setValue(0)
+        completed!.end?.({ finished: true })
+        await wait()
+      })
+    },
+    back: () => {
+      onBack?.()
+    },
+    late: () => {
+      completed?.end?.({ finished: true })
+    }
+  }
+}
+
 const token = { userId: 2, start: 0, end: 12, label: '@Aaron Judge' }
 describe('current-member mention picker', function () {
+  it('releases the native modal and competing Search before selecting after exit', async function () {
+    const native = nativePicker()
+    const calls: Array<{ id: number; hidden: boolean; search: boolean }> = []
+    function Scene(): React.ReactElement {
+      const [open, setOpen] = useState(true)
+      return (
+        <>
+          <input aria-label="Native composer" />
+          {open && (
+            <MentionPicker
+              members={[member(2, 'Aaron Judge')]}
+              onClose={() => {
+                setOpen(false)
+              }}
+              onSelect={id => {
+                const composer = labelled('Native composer')
+                const hidden = composer.closest('[aria-hidden="true"]') != null
+                const search =
+                  host!.querySelector('[aria-label="Search members"]') != null
+                calls.push({ id, hidden, search })
+                if (!hidden && !search) composer.focus()
+                setOpen(false)
+              }}
+            />
+          )}
+        </>
+      )
+    }
+    await render(<Scene />)
+    expect(document.activeElement).equals(labelled('Search members'))
+    await choose(2)
+    expect(
+      calls,
+      'Native selection must wait for Search unmount and the modal exit'
+    ).deep.equals([])
+    expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
+    expect(labelled('Native composer').closest('[aria-hidden="true"]')).equals(
+      null
+    )
+    const scene = host!.querySelector<HTMLElement>(
+      '[data-testid="chat-picker-scene"]'
+    )!
+    expect(
+      getComputedStyle(scene).pointerEvents,
+      'Closing scene must shield the released chat'
+    ).equals('auto')
+    expect(
+      getComputedStyle(scene.firstElementChild!).pointerEvents,
+      'Closing controls must not receive another touch'
+    ).equals('none')
+    expect(scene.getAttribute('aria-hidden')).equals('true')
+    await native.finish()
+    expect(calls).deep.equals([{ id: 2, hidden: false, search: false }])
+    expect(document.activeElement).equals(labelled('Native composer'))
+    expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
+  })
+  for (const platform of ['ios', 'android'] as const) {
+    for (const method of ['Cancel', 'Back', 'Escape'] as const)
+      it(`releases Search before ${platform} ${method} hands focus back once`, async () => {
+        const native = nativePicker(platform)
+        const calls: boolean[] = []
+        function Scene(): React.ReactElement {
+          const [open, setOpen] = useState(true)
+          return (
+            <>
+              <input aria-label="Native composer" defaultValue="@" />
+              {open && (
+                <MentionPicker
+                  members={[member(2, 'Aaron Judge')]}
+                  onSelect={() => {
+                    throw Error('Cancelled selection')
+                  }}
+                  onClose={() => {
+                    const composer = labelled('Native composer')
+                    calls.push(
+                      composer.closest('[aria-hidden="true"]') == null &&
+                        host!.querySelector('[aria-label="Search members"]') ==
+                          null
+                    )
+                    composer.focus()
+                    setOpen(false)
+                  }}
+                />
+              )}
+            </>
+          )
+        }
+        await render(<Scene />)
+        await act(async () => {
+          if (method === 'Cancel') button('Cancel').click()
+          else if (method === 'Back') native.back()
+          else
+            labelled('Search members').dispatchEvent(
+              new window.KeyboardEvent('keydown', {
+                key: 'Escape',
+                bubbles: true
+              })
+            )
+          await wait()
+        })
+        expect(calls).deep.equals([])
+        expect(host!.querySelector('[aria-label="Search members"]')).equals(
+          null
+        )
+        await native.finish()
+        await act(async () => {
+          native.late()
+        })
+        expect(calls).deep.equals([true])
+        expect((labelled('Native composer') as HTMLInputElement).value).equals(
+          '@'
+        )
+        expect(document.activeElement).equals(labelled('Native composer'))
+      })
+
+    it(`commits ${platform} selected ID/caret once and preserves reply/files`, async () => {
+      const native = nativePicker(platform)
+      const state = fixture()
+      const owner = new ChatDraftOwner(newChatWorkspaceState())
+      const draft = {
+        ...emptyChatDraft(),
+        replyTo: message({ id: 'msg_original' }),
+        picked: [
+          {
+            bytes: new Uint8Array([1]),
+            fileName: 'notes.pdf',
+            contentType: 'application/pdf'
+          }
+        ]
+      }
+      await render(screen(state.engine, { draft, draftOwner: owner }))
+      const input = host!.querySelector<HTMLTextAreaElement>(
+        '[data-testid="chat-composer"]'
+      )!
+      await type(input, '@')
+      const selected = host!.querySelector<HTMLElement>(
+        '[data-testid="chat-mention-member-3"]'
+      )!
+      await act(async () => {
+        selected.click()
+        selected.click()
+        await wait()
+      })
+      expect(input.value).equals('@')
+      await native.finish()
+      await act(async () => {
+        native.late()
+        await wait()
+      })
+      expect(input.value).equals('@Aaron Judge ')
+      expect(input.selectionStart).equals(13)
+      expect(document.activeElement).equals(input)
+      expect(owner.draft('cnv_1').replyTo?.id).equals('msg_original')
+      expect(owner.draft('cnv_1').picked).deep.equals(draft.picked)
+      expect(owner.draft('cnv_1').mentionTokens?.[0].userId).equals(3)
+      expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
+      expect(state.calls).deep.equals([])
+    })
+  }
+
+  for (const change of [
+    'unmount',
+    'background',
+    'permission',
+    'member loss'
+  ] as const)
+    it(`rejects pending native selection after ${change}`, async () => {
+      const native = nativePicker()
+      const state = fixture()
+      await render(screen(state.engine))
+      const input = host!.querySelector<HTMLTextAreaElement>(
+        '[data-testid="chat-composer"]'
+      )!
+      await type(input, '@')
+      await choose(2)
+      if (change === 'unmount') await render(<div />)
+      else if (change === 'background')
+        await render(screen(state.engine, { active: false }))
+      else
+        await act(async () => {
+          state.update({
+            ...state.shown,
+            ...(change === 'permission'
+              ? { composer: 'locked' as const }
+              : { members: [member(1, 'Trea Turner')] })
+          })
+          await wait()
+        })
+      await native.finish()
+      expect(input.value).equals('@')
+      expect(document.activeElement).not.equals(input)
+      expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
+      expect(state.calls).deep.equals([])
+    })
+
+  it('lets native Back replace a pending selection and ignores rapid rows/late completions', async () => {
+    const native = nativePicker()
+    const state = fixture()
+    await render(screen(state.engine))
+    const input = host!.querySelector<HTMLTextAreaElement>(
+      '[data-testid="chat-composer"]'
+    )!
+    await type(input, '@')
+    await choose(2)
+    await act(async () => {
+      native.back()
+      native.back()
+      await wait()
+    })
+    await native.finish()
+    await act(async () => {
+      native.late()
+    })
+    expect(input.value).equals('@')
+    expect(document.activeElement).equals(input)
+    expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
+  })
+
+  it('reopens native Search with its query/error after a rejected long insertion and allows retry', async () => {
+    const native = nativePicker()
+    const state = fixture()
+    const draft = { ...emptyChatDraft(), text: 'x'.repeat(MAX_BODY - 2) + ' ' }
+    await render(screen(state.engine, { draft }))
+    const input = host!.querySelector<HTMLTextAreaElement>(
+      '[data-testid="chat-composer"]'
+    )!
+    await type(input, draft.text + '@')
+    await type(labelled('Search members') as HTMLInputElement, 'Aaron')
+    await choose(2)
+    expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
+    await native.finish()
+    const search = labelled('Search members') as HTMLInputElement
+    expect(search.value).equals('Aaron')
+    expect(document.activeElement).equals(search)
+    expect(host!.textContent).contains(
+      'This mention would make the message too long.'
+    )
+    expect(input.value).equals(draft.text + '@')
+    await type(input, '')
+    await type(input, '@')
+    await choose(3)
+    await native.finish()
+    expect(input.value).equals('@Aaron Judge ')
+    expect(document.activeElement).equals(input)
+    expect(host!.querySelector('[aria-label="Search members"]')).equals(null)
+  })
+
+  it('keeps web selection and Cancel synchronous in their trusted activation', async () => {
+    let inPress = false
+    const calls: boolean[] = []
+    await render(
+      <MentionPicker
+        members={[member(2, 'Aaron Judge')]}
+        onSelect={() => {
+          calls.push(inPress)
+        }}
+        onClose={() => {
+          calls.push(inPress)
+        }}
+      />
+    )
+    await act(async () => {
+      inPress = true
+      host!
+        .querySelector<HTMLElement>('[data-testid="chat-mention-member-2"]')!
+        .click()
+      button('Cancel').click()
+      inPress = false
+    })
+    expect(calls).deep.equals([true, true])
+  })
+  it('finishes a native handoff after StrictMode effect replay without a late callback after unmount', async () => {
+    const native = nativePicker()
+    let selections = 0
+    await render(
+      <React.StrictMode>
+        <MentionPicker
+          members={[member(2, 'Aaron Judge')]}
+          onSelect={() => {
+            selections += 1
+          }}
+          onClose={() => {}}
+        />
+      </React.StrictMode>
+    )
+    await choose(2)
+    await native.finish()
+    expect(selections).equals(1)
+    await render(<div />)
+    await act(async () => {
+      native.late()
+    })
+    expect(selections).equals(1)
+  })
   for (const fontScale of [1, 1.5])
     it(`reserves the full Cancel label and target without shrinking at font scale ${fontScale}`, async function () {
       const saved = Object.getOwnPropertyDescriptor(Dimensions, 'get')!

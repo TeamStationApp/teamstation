@@ -30,6 +30,9 @@ export interface ChatActionOverlayProps {
   keyboardRows?: string
   /** A chooser owns a full same-window scene with the shared header. */
   scene?: boolean
+  closing?: boolean
+  focusHandoff?: boolean
+  onClosed?: () => void
 }
 
 /** The selected content and controls stay above the blurred backdrop. */
@@ -37,7 +40,7 @@ export function ChatActionOverlay(
   props: ChatActionOverlayProps
 ): React.ReactElement {
   return (
-    <ChatOverlayPortal>
+    <ChatOverlayPortal modal={props.focusHandoff !== true}>
       <OverlayFrame {...props} />
     </ChatOverlayPortal>
   )
@@ -53,18 +56,24 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
   const [headerHeight, setHeaderHeight] = useState(insets.top + theme.rem(3))
   const reduced = useMotionPreference()
   const entrance = useRef(new Animated.Value(0)).current
+  const closed = useRef(props.onClosed)
+  closed.current = props.onClosed
   useEffect(() => {
     if (props.scene !== true) return
+    let live = true
     const animation = Animated.timing(entrance, {
-      toValue: 1,
+      toValue: props.closing === true ? 0 : 1,
       duration: reduced ? 80 : 200,
       useNativeDriver: true
     })
-    animation.start()
+    animation.start(result => {
+      if (live && result.finished && props.closing === true) closed.current?.()
+    })
     return () => {
+      live = false
       animation.stop()
     }
-  }, [props.scene, reduced, entrance])
+  }, [props.scene, props.closing, reduced, entrance])
   const panel = useRef<React.ComponentRef<typeof View>>(null)
   const close = useRef(onClose)
   close.current = onClose
@@ -96,7 +105,13 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
         ref={panel}
         testID="chat-picker-scene"
         accessibilityLabel={props.label}
-        accessibilityViewIsModal
+        accessibilityViewIsModal={props.focusHandoff !== true}
+        aria-hidden={props.closing === true}
+        accessibilityElementsHidden={props.closing === true}
+        importantForAccessibility={
+          props.closing === true ? 'no-hide-descendants' : 'auto'
+        }
+        pointerEvents={props.closing === true ? 'box-only' : 'auto'}
         onAccessibilityEscape={() => {
           close.current()
         }}
