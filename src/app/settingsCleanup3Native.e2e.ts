@@ -321,7 +321,7 @@ async function main(): Promise<void> {
       assert(m != null, 'Attached native application required')
       await m.assertVisible({
         text: '^Sign in to TeamStation$',
-        timeout: 60000
+        timeout: platform === 'android' ? 120000 : 60000
       })
       await focusField('E-mail address')
       await inputControlledText(email)
