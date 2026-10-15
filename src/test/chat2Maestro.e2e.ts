@@ -103,6 +103,265 @@ export interface PublicNode {
   enabled?: boolean
 }
 
+/** A history gutter stays outside measured chrome and composer controls. */
+export function iosKeyboardDismissPoint(input: {
+  history: Bounds
+  identity: Bounds
+  composer: Bounds
+  keyboard: Bounds
+  pins?: Bounds
+  excluded: Bounds[]
+}): { x: number; y: number } {
+  const { history, identity, composer, keyboard, pins, excluded } = input
+  const valid = (b: Bounds): boolean =>
+    [b.x, b.y, b.width, b.height].every(Number.isFinite) &&
+    b.width > 0 &&
+    b.height > 0
+  assert(
+    [
+      history,
+      identity,
+      composer,
+      keyboard,
+      ...excluded,
+      ...(pins != null ? [pins] : [])
+    ].every(valid),
+    'Finite positive observed keyboard-dismissal bounds required'
+  )
+  const top = Math.max(
+    history.y,
+    identity.y + identity.height,
+    pins != null ? pins.y + pins.height : history.y
+  )
+  const bottom = Math.min(history.y + history.height, composer.y, keyboard.y)
+  const left = composer.x - history.x
+  const right = history.x + history.width - composer.x - composer.width
+  assert(left >= 0 && right >= 0, 'Whole composer band must lie inside history')
+  // Rounding must leave the point strictly inside the observed gutter/band.
+  assert(
+    bottom - top > 2 && Math.max(left, right) > 2,
+    'No safe measured history gutter for keyboard dismissal'
+  )
+  const x = Math.round(
+    left >= right
+      ? history.x + left / 2
+      : composer.x + composer.width + right / 2
+  )
+  const y = Math.round((top + bottom) / 2)
+  const contains = (b: Bounds): boolean =>
+    x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height
+  assert(
+    x > history.x &&
+      x < history.x + history.width &&
+      y > top &&
+      y < bottom &&
+      ![
+        identity,
+        composer,
+        keyboard,
+        ...excluded,
+        ...(pins != null ? [pins] : [])
+      ].some(contains),
+    'Measured keyboard-dismissal point intersects public chrome or controls'
+  )
+  return { x, y }
+}
+
+/** Dismiss through one observed gutter, with one observed OS-menu transition. */
+export async function dismissIosChatKeyboard(
+  ui: Pick<Chat2UI, 'device' | 'steps'>,
+  timeout = 8000
+): Promise<void> {
+  const end = Date.now() + timeout
+  const remaining = (): number => {
+    const ms = end - Date.now()
+    assert(ms > 0, 'Timed out verifying iOS keyboard dismissal')
+    return ms
+  }
+  const options = (): { signal: AbortSignal } => ({
+    signal: AbortSignal.timeout(remaining())
+  })
+  const api = ui.device as unknown as {
+    hierarchy: (options: { signal: AbortSignal }) => Promise<unknown>
+    assertVisible: (
+      args: Args,
+      options: { signal: AbortSignal }
+    ) => Promise<unknown>
+    tapOnPoint: (
+      args: Args,
+      options: { signal: AbortSignal }
+    ) => Promise<unknown>
+  }
+  const row: Args = {
+    name: 'Measured iOS keyboard dismissal',
+    startedAt: new Date().toISOString(),
+    samples: []
+  }
+  ui.steps.push(row)
+  const read = async (): Promise<PublicNode[]> =>
+    flattenPublicHierarchy(await api.hierarchy(options()))
+  const keyboardOf = (nodes: PublicNode[]): PublicNode | undefined => {
+    const matches = nodes.filter(n => /keyboard$/i.test(n.type ?? ''))
+    assert(matches.length <= 1, 'Unique observed iOS keyboard required')
+    return matches[0]
+  }
+  const absent = async (selector: Args): Promise<boolean> => {
+    assert(
+      typeof selector.text === 'string' &&
+        selector.text !== '' &&
+        !/[.*+?^${}()|[\]\\]/.test(selector.text),
+      'Literal native deep-query selector required for absence proof'
+    )
+    try {
+      await api.assertVisible(
+        { ...selector, timeout: Math.min(120, remaining()) },
+        options()
+      )
+      return false
+    } catch (error) {
+      if (code(error) !== 'COMMAND_FAILED') throw error
+      return true
+    }
+  }
+  const keysAbsent = async (): Promise<boolean> => {
+    for (const key of ['q', 'w', 'e'])
+      if (!(await absent({ text: key }))) return false
+    return true
+  }
+  const measured = async (
+    nodes: PublicNode[],
+    id: string,
+    optional = false
+  ): Promise<Bounds | undefined> => {
+    const matches = nodes.filter(n => n.id === id)
+    assert(
+      matches.length <= 1,
+      'Unique public keyboard-dismissal element required: ' + id
+    )
+    if (matches[0]?.bounds != null) return matches[0].bounds
+    try {
+      const found = object(
+        await api.assertVisible(
+          { id, timeout: Math.min(120, remaining()) },
+          options()
+        )
+      )
+      return need(
+        bounds(object(found.element).bounds),
+        'Read-only measured public bounds required: ' + id
+      )
+    } catch (error) {
+      if (optional && code(error) === 'COMMAND_FAILED') return undefined
+      throw error
+    }
+  }
+  const tap = async (
+    nodes: PublicNode[],
+    keyboard: PublicNode
+  ): Promise<void> => {
+    const history = need(
+      await measured(nodes, 'chat-message-history'),
+      'Observed chat history required'
+    )
+    const identity = need(
+      await measured(nodes, 'chat-conversation-identity'),
+      'Observed conversation header required'
+    )
+    const composer = need(
+      await measured(nodes, 'chat-composer-band'),
+      'Observed whole composer band required'
+    )
+    const pins = await measured(nodes, 'chat-pinned-band', true)
+    const excluded = nodes
+      .filter(n => /Button$|MenuItem$/i.test(n.type ?? '') && n.bounds != null)
+      .map(n => n.bounds!)
+    for (const id of [
+      'chat-jump-latest',
+      'chat-attention-count',
+      'chat-attention-retry'
+    ]) {
+      const b = await measured(nodes, id, true)
+      if (b != null) excluded.push(b)
+    }
+    let ime = need(keyboard.bounds, 'Observed iOS keyboard bounds required')
+    for (const n of nodes) {
+      const b = n.bounds
+      if (
+        /Toolbar$/i.test(n.type ?? '') &&
+        b != null &&
+        b.y <= ime.y &&
+        b.y + b.height >= ime.y &&
+        b.x < ime.x + ime.width &&
+        b.x + b.width > ime.x
+      )
+        ime = { ...ime, height: ime.y + ime.height - b.y, y: b.y }
+    }
+    const point = iosKeyboardDismissPoint({
+      history,
+      identity,
+      composer,
+      keyboard: ime,
+      pins,
+      excluded
+    })
+    row.samples = [
+      ...(row.samples as Args[]),
+      { history, identity, composer, keyboard: ime, pins, point }
+    ]
+    await api.tapOnPoint({ point: `${point.x},${point.y}` }, options())
+  }
+  try {
+    let nodes = await read()
+    const keyboard = keyboardOf(nodes)
+    if (keyboard == null) {
+      assert(
+        await keysAbsent(),
+        'Keyboard keys remain without measurable keyboard bounds'
+      )
+      row.outcome = 'passed'
+      row.alreadyAbsent = true
+      return
+    }
+    const menus = nodes.filter(
+      n => /MenuItem$/i.test(n.type ?? '') && n.text != null && n.bounds != null
+    )
+    await tap(nodes, keyboard)
+    let menuTransitionUsed = false
+    while (true) {
+      nodes = await read()
+      const current = keyboardOf(nodes)
+      if (current == null && (await keysAbsent())) {
+        row.outcome = 'passed'
+        return
+      }
+      if (
+        current != null &&
+        menus.length > 0 &&
+        !menuTransitionUsed &&
+        !nodes.some(n => /MenuItem$/i.test(n.type ?? ''))
+      ) {
+        let menuGone = true
+        for (const item of menus)
+          menuGone = (await absent({ text: item.text! })) && menuGone
+        if (menuGone) {
+          menuTransitionUsed = true
+          row.observedMenuDismissed = true
+          await tap(nodes, current)
+        }
+      }
+      await new Promise(resolve =>
+        setTimeout(resolve, Math.min(50, remaining()))
+      )
+    }
+  } catch (error) {
+    row.outcome = 'failed'
+    row.error = String(error)
+    throw error
+  } finally {
+    row.finishedAt = new Date().toISOString()
+  }
+}
+
 function object(value: unknown): Args {
   return value != null && typeof value === 'object' ? (value as Args) : {}
 }
@@ -1379,21 +1638,7 @@ export class Chat2UI {
       await this.device.hideKeyboard()
       return
     }
-    const pane = (await this.nodes()).find(
-      n =>
-        n.type?.includes('ScrollView') === true &&
-        n.bounds != null &&
-        n.bounds.width > 200 &&
-        n.bounds.y > 100 &&
-        n.bounds.y < 500
-    )
-    const b = need(
-      pane?.bounds,
-      'Observed history gutter needed to dismiss iOS keyboard'
-    )
-    await this.device.tapOnPoint({
-      point: `${Math.round(b.x + b.width - 5)},${Math.round(b.y + Math.min(50, b.height / 2))}`
-    })
+    await dismissIosChatKeyboard(this)
   }
 
   async back(): Promise<void> {
