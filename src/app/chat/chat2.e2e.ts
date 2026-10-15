@@ -584,7 +584,7 @@ limit=math.ceil(2*sx)+1
 mask=diff.split()[0]
 for band in diff.split()[1:]: mask=ImageChops.lighter(mask,band)
 changed=mask.point(lambda value:255 if value else 0).histogram()[255]
-out={'accepted':box is None,'reason':'identical decoded pixels' if box is None else 'non-caret whole-frame change','width':a.width,'height':a.height,'scale':sx,'editableRasterBounds':editable,'maximumStripeWidthPixels':limit,'diffBounds':box,'changedPixels':changed,'invalidCaretPixels':0,'strongBluePixels':0}
+out={'accepted':box is None,'reason':'identical decoded pixels' if box is None else 'non-caret whole-frame change','width':a.width,'height':a.height,'scale':sx,'editableRasterBounds':editable,'maximumStripeWidthPixels':limit,'caretRgb':[66,107,242],'maximumChannelRounding':3,'diffBounds':box,'changedPixels':changed,'invalidCaretPixels':0,'strongBluePixels':0}
 if box is not None and editable[0]<=box[0]<box[2]<=editable[2] and editable[1]<=box[1]<box[3]<=editable[3] and box[2]-box[0]<=limit:
  rows=set()
  for y in range(box[1],box[3]):
@@ -592,11 +592,17 @@ if box is not None and editable[0]<=box[0]<box[2]<=editable[2] and editable[1]<=
    p0=aa.getpixel((x,y)); p1=bb.getpixel((x,y))
    if p0==p1: continue
    rows.add(y)
-   blue=any(q[2]>q[0] and q[2]>q[1] for q in [p0,p1])
    strong=any(q[2]>=200 and q[2]-q[0]>=80 and q[2]-q[1]>=60 for q in [p0,p1])
-   dr=p0[0]-p1[0]; dg=p0[1]-p1[1]; db=p0[2]-p1[2]
-   opacity=(dr*dg>=0 or max(abs(dr),abs(dg))<=2) and abs(db)<=min(abs(dr),abs(dg))+2
-   if not (p0[3]==p1[3] and blue and opacity): out['invalidCaretPixels']+=1
+   def toward_blue(start,end):
+    # Observed scene caret RGB; a blink may blend over dark glyph ink as well as the field.
+    vector=[target-value for target,value in zip([66,107,242],start)]
+    delta=[end[i]-start[i] for i in range(3)]
+    norm=sum(value*value for value in vector)
+    if norm==0: return False
+    opacity=sum(delta[i]*vector[i] for i in range(3))/norm
+    return 0<opacity<=1.02 and max(abs(delta[i]-opacity*vector[i]) for i in range(3))<=3
+   opacity=toward_blue(p0[:3],p1[:3]) or toward_blue(p1[:3],p0[:3])
+   if not (p0[3]==p1[3] and opacity): out['invalidCaretPixels']+=1
    if strong: out['strongBluePixels']+=1
  out['accepted']=out['invalidCaretPixels']==0 and out['strongBluePixels']>0 and len(rows)==box[3]-box[1]
  if out['accepted']: out['reason']='blue editable caret-sized stripe only'

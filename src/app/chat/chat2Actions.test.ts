@@ -821,6 +821,38 @@ describe('chat native capture readiness transport', function () {
     )
     expect(actual.accepted).equals(true)
   })
+  it('accepts blue caret interpolation over dark glyph ink in either blink direction', function () {
+    const before = composerPng([
+      caret(undefined, [110, 142, 242, 255]),
+      caret([110, 461, 2, 8], [26, 33, 22, 255])
+    ])
+    const after = composerPng([
+      caret(),
+      caret([110, 461, 2, 8], [46, 70, 132, 255])
+    ])
+    for (const [a, b] of [
+      [before, after],
+      [after, before]
+    ]) {
+      const actual = compareFrames(a, b)
+      expect(actual.accepted).equals(true)
+      expect(actual.invalidCaretPixels).equals(0)
+      expect(actual.strongBluePixels).greaterThan(0)
+    }
+  })
+  it('rejects a non-caret color change even inside a narrow blue stripe', function () {
+    const before = composerPng([
+      caret(undefined, [110, 142, 242, 255]),
+      caret([110, 461, 2, 8], [26, 33, 22, 255])
+    ])
+    const after = composerPng([
+      caret(),
+      caret([110, 461, 2, 8], [46, 170, 132, 255])
+    ])
+    const actual = compareFrames(before, after)
+    expect(actual.accepted).equals(false)
+    expect(actual.invalidCaretPixels).greaterThan(0)
+  })
   for (const [name, shapes] of [
     ['status clock', [caret(), caret([10, 10, 8, 12], [0, 0, 0, 255])]],
     ['outside field', [caret([98, 455, 2, 26])]],
@@ -1298,6 +1330,258 @@ describe('chat native adapter compatibility', function () {
       }
     }) as Chat2UI
   }
+  function editable(
+    mode = 'capped',
+    initial = 'B',
+    attached = false
+  ): {
+    actual: Chat2UI
+    calls: string[]
+    value: () => string
+    context: { reply: boolean; attached: boolean }
+  } {
+    const actual = ui([])
+    const calls: string[] = []
+    const context = { reply: true, attached }
+    let value = initial
+    let menu = false
+    let selected = false
+    const field = (): Record<string, unknown> => ({
+      id: mode === 'wrong-id' ? 'other' : 'chat-composer',
+      class: 'TextView',
+      text: value.trim() !== '' ? value.trim() : 'Message',
+      accessibilityLabel: 'Message',
+      enabled: mode !== 'disabled-editor',
+      bounds: {
+        ...box,
+        y: mode === 'moved-editor' && value === '' ? 40 : box.y
+      }
+    })
+    ;(
+      actual.device as typeof actual.device & {
+        hierarchyRaw: () => Promise<Uint8Array>
+      }
+    ).hierarchyRaw = async () => {
+      calls.push('raw')
+      const nodes = [
+        node(0, 'Keyboard', {
+          rect: { x: 0, y: 400, width: 300, height: 200 }
+        }),
+        ...(mode === 'missing-delete'
+          ? []
+          : [
+              node(1, 'Key', {
+                label: 'delete',
+                enabled: mode !== 'disabled-delete',
+                rect: { x: 250, y: 450, width: 40, height: 40 }
+              })
+            ])
+      ]
+      if (mode === 'ambiguous-delete')
+        nodes.push(
+          node(5, 'Key', {
+            label: 'delete',
+            rect: { x: 200, y: 450, width: 40, height: 40 }
+          })
+        )
+      if (mode === 'raw')
+        nodes.push(
+          node(2, 'TextView', {
+            identifier: 'chat-composer',
+            label: 'Message',
+            placeholderValue: 'Message',
+            value: value.trim() !== '' ? value.trim() : undefined
+          })
+        )
+      if (menu && !['no-select-all', 'missing-menu'].includes(mode)) {
+        nodes.push(
+          node(3, 'MenuItem', {
+            label: 'Select All',
+            enabled: mode !== 'disabled-menu',
+            rect: { x: 10, y: 200, width: 80, height: 30 }
+          })
+        )
+        if (mode === 'ambiguous-menu')
+          nodes.push(
+            node(4, 'MenuItem', {
+              label: 'Select All',
+              rect: { x: 100, y: 200, width: 80, height: 30 }
+            })
+          )
+      }
+      if (mode !== 'raw')
+        for (let i = nodes.length; nodes.length < 300; i++)
+          nodes.push(node(10 + i, 'Other'))
+      return raw(nodes)
+    }
+    actual.device.assertVisible = async args => {
+      calls.push('read:' + String(args.id ?? args.text))
+      if (args.id === 'chat-composer') return { element: field() }
+      if (args.text === 'Send')
+        return {
+          element: {
+            class: 'Button',
+            text: 'Send',
+            accessibilityLabel: 'Send',
+            bounds: box,
+            enabled:
+              mode === 'unknown-send'
+                ? undefined
+                : value.trim() !== '' || attached || mode === 'enabled-send'
+          }
+        }
+      if (args.id === 'chat-attachment-chip' && attached)
+        return {
+          element: {
+            id: 'chat-attachment-chip',
+            class: 'Other',
+            enabled: true,
+            bounds: box
+          }
+        }
+      throw new Error('Positive actual control missing')
+    }
+    actual.device.tapOn = async args => {
+      expect(args).deep.equals({ id: 'chat-composer' })
+      calls.push('focus')
+    }
+    actual.device.longPressOn = async args => {
+      expect(args).deep.equals({ id: 'chat-composer', duration: 600 })
+      calls.push('hold')
+      menu = true
+      selected = mode === 'no-select-all' && !value.includes(' ')
+    }
+    actual.device.tapOnPoint = async args => {
+      calls.push('point:' + String(args.point))
+      if (args.point === '50,215') {
+        selected = mode !== 'partial-delete'
+        menu = false
+      } else if (args.point === '270,470') {
+        if (!['retained-text', 'retained-placeholder'].includes(mode))
+          value = selected ? '' : value.slice(0, -1)
+        selected = false
+        menu = false
+      } else throw new Error('Unobserved editor point')
+    }
+    actual.device.inputText = async args => {
+      expect(args.id).equals('chat-composer')
+      calls.push('type:' + String(args.text))
+      value += String(args.text)
+    }
+    actual.device.screenshot = async () => captureImages[0]
+    actual.device.eraseText = async () => {
+      calls.push('erase-ACK')
+      return {}
+    }
+    actual.device.copyTextFrom = async () => {
+      throw new Error('No clipboard mutation')
+    }
+    return { actual, calls, value: () => value, context }
+  }
+  it('clears a capped iOS editor through observed UI and a positively read disjoint sentinel', async () => {
+    const model = editable()
+    await model.actual.replaceDraft('')
+    expect(model.value()).equals('')
+    expect(model.context).deep.equals({ reply: true, attached: false })
+    expect(model.calls).includes('type:7777')
+    expect(model.calls).not.includes('erase-ACK')
+    expect(model.calls.filter(call => call === 'point:270,470')).length(2)
+    const proof = model.actual.steps.find(
+      step => step.name === 'Observed iOS editor replacement'
+    )!
+    expect(proof.outcome).equals('passed')
+    expect(proof.emptyEvidence).contains('lossy AX')
+  })
+  it('verifies exact multiline replacement and keeps attached file/reply context untouched', async () => {
+    const model = editable('capped', 'Prior retained draft', true)
+    await model.actual.replaceDraft('Fresh\nsecond line')
+    expect(model.value()).equals('Fresh\nsecond line')
+    expect(model.context).deep.equals({ reply: true, attached: true })
+    expect(model.calls).not.includes('type:7777')
+  })
+  it('allows an observed already-selected word without pretending missing Select All guarantees selection', async () => {
+    const model = editable('no-select-all')
+    await model.actual.replaceDraft('')
+    expect(model.value()).equals('')
+    expect(model.calls).not.includes('point:50,215')
+    const incomplete = editable('missing-menu', 'Two words')
+    await captureFailure(incomplete.actual.replaceDraft(''))
+    expect(incomplete.value()).not.equals('')
+  })
+  it('uses actual raw empty editor evidence without rejecting retained reply/file chips', async () => {
+    const model = editable('raw', '', true)
+    await model.actual.replaceDraft('')
+    expect(model.calls).not.includes('hold')
+    expect(model.calls).not.includes('type:7777')
+    expect(model.context).deep.equals({ reply: true, attached: true })
+  })
+  it('requires a positive actual attachment when Send remains enabled after clearing', async () => {
+    const attached = editable('capped', 'B', true)
+    await attached.actual.replaceDraft('')
+    expect(attached.calls).includes('read:chat-attachment-chip')
+    const wrong = editable('enabled-send')
+    await captureFailure(wrong.actual.replaceDraft(''))
+    expect(
+      wrong.actual.steps.find(
+        step => step.name === 'Observed iOS editor replacement'
+      )?.outcome
+    ).equals('failed')
+  })
+  for (const [mode, initial] of [
+    ['partial-delete', 'Two words'],
+    ['retained-text', 'B'],
+    ['retained-placeholder', 'Message'],
+    ['ambiguous-menu', 'B'],
+    ['disabled-menu', 'B'],
+    ['missing-delete', 'B'],
+    ['disabled-delete', 'B'],
+    ['ambiguous-delete', 'B'],
+    ['disabled-editor', 'B'],
+    ['wrong-id', 'B'],
+    ['unknown-send', 'B'],
+    ['moved-editor', 'B']
+  ])
+    it('rejects unproved native editor replacement: ' + mode, async () => {
+      const model = editable(mode, initial)
+      await captureFailure(model.actual.replaceDraft(''))
+      expect(
+        model.actual.steps.find(
+          step => step.name === 'Observed iOS editor replacement'
+        )?.outcome
+      ).equals('failed')
+    })
+  it('does not silently trim or accept native outer whitespace as an exact replacement', async () => {
+    const model = editable()
+    await captureFailure(model.actual.replaceDraft(' Keep whitespace '))
+    expect(model.value()).equals(' Keep whitespace ')
+  })
+  it('preserves ordinary non-iOS erase/type behavior', async () => {
+    for (const surface of ['android', 'web-wide']) {
+      const actual = ui([], surface)
+      const calls: unknown[] = []
+      actual.device.tapOn = async args => {
+        calls.push(['focus', args])
+      }
+      actual.device.eraseText = async () => {
+        calls.push('erase')
+      }
+      actual.device.inputText = async args => {
+        calls.push(['type', args])
+      }
+      await actual.replaceDraft('Exact\ntext')
+      expect(calls).deep.equals([
+        ['focus', { id: 'chat-composer' }],
+        'erase',
+        [
+          'type',
+          {
+            text: 'Exact\ntext',
+            ...(surface === 'android' ? { keyPress: true } : {})
+          }
+        ]
+      ])
+    }
+  })
   it('reads the actual unique Button instead of a large identically labelled wrapper', () => {
     const result = iosPublicRead(
       raw([

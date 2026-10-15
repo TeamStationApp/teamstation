@@ -2024,12 +2024,15 @@ export class Chat2UI {
     }
   }
 
-  async iosRead(selected: Args, expectedType?: string): Promise<IosReadNode> {
+  async iosRead(
+    selected: Args,
+    expectedType?: string,
+    signal = AbortSignal.timeout(30000)
+  ): Promise<IosReadNode> {
     assert(
       this.surface === 'ios',
       'iOS read adapter requires its owned iOS session'
     )
-    const signal = AbortSignal.timeout(30000)
     const api = this.device as unknown as {
       hierarchyRaw: (options: { signal: AbortSignal }) => Promise<Uint8Array>
       assertVisible: (
@@ -2629,6 +2632,230 @@ export class Chat2UI {
   }
 
   async replaceDraft(text: string): Promise<void> {
+    if (this.surface === 'ios') {
+      const signal = AbortSignal.timeout(90000)
+      const options = { signal }
+      const api = this.device as unknown as {
+        tapOn: (
+          args: Args,
+          options: { signal: AbortSignal }
+        ) => Promise<unknown>
+        tapOnPoint: (
+          args: Args,
+          options: { signal: AbortSignal }
+        ) => Promise<unknown>
+        longPressOn: (
+          args: Args,
+          options: { signal: AbortSignal }
+        ) => Promise<unknown>
+        inputText: (
+          args: Args,
+          options: { signal: AbortSignal }
+        ) => Promise<unknown>
+        screenshot: (options: { signal: AbortSignal }) => Promise<Uint8Array>
+      }
+      const proof: Args = {
+        name: 'Observed iOS editor replacement',
+        expectedLength: text.length,
+        expectedSha256: createHash('sha256').update(text).digest('hex'),
+        outcome: 'failed',
+        whitespaceFidelity:
+          'Native AX trims outer whitespace; exact ambiguous strings are never accepted'
+      }
+      this.steps.push(proof)
+      const read = async (): Promise<IosReadNode> => {
+        signal.throwIfAborted()
+        const node = await this.iosRead(
+          { id: 'chat-composer' },
+          'TextView',
+          signal
+        )
+        assert(node.enabled === true, 'Actual enabled iOS editor required')
+        return node
+      }
+      const exact = (node: IosReadNode): string | undefined => {
+        const value = node.index >= 0 ? node.value : node.text
+        return value != null &&
+          value !== node.label &&
+          value !== node.placeholderValue
+          ? value
+          : undefined
+      }
+      const rawEmpty = (node: IosReadNode): boolean =>
+        node.index >= 0 &&
+        typeof node.placeholderValue === 'string' &&
+        node.placeholderValue !== '' &&
+        node.value == null
+      const tap = async (node: PublicNode): Promise<void> => {
+        const box = need(
+          node.bounds,
+          'Actual observed editor action bounds required'
+        )
+        await api.tapOnPoint(
+          {
+            point: `${Math.round(box.x + box.width / 2)},${Math.round(box.y + box.height / 2)}`
+          },
+          options
+        )
+      }
+      const actionReads: Args[] = []
+      proof.actionReads = actionReads
+      const actionRaw = async (): Promise<Uint8Array> => {
+        const bytes = await this.iosRaw(signal)
+        const path = join(
+          this.runDir,
+          'ios-editor-actions-' + Date.now() + '-' + randomUUID() + '.json'
+        )
+        writeFileSync(path, bytes, { mode: 0o600, flag: 'wx' })
+        actionReads.push({
+          path,
+          sha256: createHash('sha256').update(bytes).digest('hex')
+        })
+        return bytes
+      }
+      const remove = async (): Promise<void> => {
+        await api.longPressOn({ id: 'chat-composer', duration: 600 }, options)
+        let raw = await actionRaw()
+        const menu = iosPublicRead(
+          raw,
+          { text: exactText('Select All') },
+          'MenuItem'
+        ).element
+        if (menu != null) {
+          assert(menu.enabled === true, 'Enabled observed Select All required')
+          await tap(menu)
+          raw = await actionRaw()
+        }
+        // An absent Select All is no claim about selection; the fresh value proves deletion.
+        const key = need(
+          iosPublicRead(raw, { text: '^delete$' }, 'Key').element,
+          'Observed Delete key required for replacement'
+        )
+        const keyboard = need(
+          iosPublicRead(raw, {}, 'Keyboard').element?.bounds,
+          'Actual Keyboard required for replacement'
+        )
+        const box = need(key.bounds, 'Actual Delete key bounds required')
+        assert(
+          key.enabled === true &&
+            box.x >= keyboard.x &&
+            box.y >= keyboard.y &&
+            box.x + box.width <= keyboard.x + keyboard.width &&
+            box.y + box.height <= keyboard.y + keyboard.height,
+          'Enabled Delete key must belong to actual Keyboard'
+        )
+        await tap(key)
+      }
+      try {
+        await api.tapOn({ id: 'chat-composer' }, options)
+        const before = await read()
+        proof.before = before
+        if (!rawEmpty(before)) await remove()
+        if (text !== '') {
+          await api.inputText({ id: 'chat-composer', text }, options)
+          const after = await read()
+          proof.after = after
+          assert.equal(
+            exact(after),
+            text,
+            'Actual editor must exactly equal requested replacement'
+          )
+        } else {
+          const placeholder = need(
+            before.placeholderValue ?? before.label,
+            'Observed editor placeholder/label required'
+          )
+          assert(
+            placeholder !== '',
+            'Nonempty observed editor placeholder required'
+          )
+          let reference = before
+          if (before.index >= 0 && !rawEmpty(before)) reference = await read()
+          let sentinel: string | undefined
+          if (!rawEmpty(reference)) {
+            const digit = need(
+              ['7', '8', '9', '4', '2', '6', '3', '5', '1', '0'].find(
+                value => !placeholder.includes(value)
+              ),
+              'Disjoint editor sentinel required'
+            )
+            sentinel = digit.repeat(4)
+            await api.inputText(
+              { id: 'chat-composer', text: sentinel },
+              options
+            )
+            reference = await read()
+            assert.equal(
+              exact(reference),
+              sentinel,
+              'Fresh exact sentinel must prove the previous clear'
+            )
+            proof.sentinel = reference
+            await remove()
+          }
+          const verify = async (): Promise<IosReadNode> => {
+            const node = await read()
+            const box = need(node.bounds, 'Actual editor geometry required')
+            const prior = need(
+              reference.bounds,
+              'Actual reference editor geometry required'
+            )
+            assert(
+              node.label === reference.label &&
+                ['x', 'y', 'width', 'height'].every(
+                  key =>
+                    Math.abs(
+                      box[key as keyof Bounds] - prior[key as keyof Bounds]
+                    ) <= 1
+                ),
+              'Same enabled editor and geometry required after deletion'
+            )
+            assert(
+              rawEmpty(node) ||
+                (sentinel != null &&
+                  node.text === placeholder &&
+                  !node.text.includes(sentinel) &&
+                  node.label === placeholder),
+              'Fresh editor must expose empty placeholder after deleting known disjoint sentinel'
+            )
+            return node
+          }
+          proof.after = await verify()
+          const send = await this.iosRead(
+            { text: exactText('Send') },
+            'Button',
+            signal
+          )
+          assert(
+            typeof send.enabled === 'boolean',
+            'Positive Send state required after clearing editor'
+          )
+          if (send.enabled)
+            proof.preservedAttachment = await this.iosRead(
+              { id: 'chat-attachment-chip' },
+              undefined,
+              signal
+            )
+          proof.send = send
+          const path = join(
+            this.runDir,
+            'ios-editor-empty-' + Date.now() + '-' + randomUUID() + '.png'
+          )
+          proof.image = saveCapture(await api.screenshot(options), path)
+          proof.revalidated = await verify()
+          proof.emptyEvidence =
+            sentinel == null
+              ? 'Actual raw empty value and placeholder'
+              : 'Known disjoint sentinel followed only by observed Delete; fresh placeholder and positive controls; lossy AX value/placeholder distinction qualified'
+          proof.actualImageReviewRequired = true
+        }
+        proof.outcome = 'passed'
+      } catch (error) {
+        proof.error = error instanceof Error ? error.message : String(error)
+        throw error
+      }
+      return
+    }
     await this.id('chat-composer')
     await this.device.eraseText()
     if (text !== '') await this.append(text)
