@@ -2663,6 +2663,8 @@ export class Chat2UI {
           'Native AX trims outer whitespace; exact ambiguous strings are never accepted'
       }
       this.steps.push(proof)
+      const editorReads: IosReadNode[] = []
+      proof.editorReads = editorReads
       const read = async (): Promise<IosReadNode> => {
         signal.throwIfAborted()
         const node = await this.iosRead(
@@ -2670,6 +2672,7 @@ export class Chat2UI {
           'TextView',
           signal
         )
+        editorReads.push(node)
         assert(node.enabled === true, 'Actual enabled iOS editor required')
         return node
       }
@@ -2785,37 +2788,49 @@ export class Chat2UI {
               options
             )
             reference = await read()
+            proof.sentinel = reference
             assert.equal(
               exact(reference),
               sentinel,
               'Fresh exact sentinel must prove the previous clear'
             )
-            proof.sentinel = reference
             await remove()
           }
+          const baseLabel = need(
+            reference.placeholderValue ?? reference.label,
+            'Observed product editor label required'
+          )
+          assert(baseLabel !== '', 'Nonempty product editor label required')
+          const emptyLabels = [baseLabel, baseLabel + ' ' + baseLabel]
+          proof.allowedEmptyLabels = emptyLabels
           const verify = async (): Promise<IosReadNode> => {
             const node = await read()
+            proof.afterCandidate = node
             const box = need(node.bounds, 'Actual editor geometry required')
             const prior = need(
               reference.bounds,
               'Actual reference editor geometry required'
             )
             assert(
-              node.label === reference.label &&
-                ['x', 'y', 'width', 'height'].every(
-                  key =>
-                    Math.abs(
-                      box[key as keyof Bounds] - prior[key as keyof Bounds]
-                    ) <= 1
-                ),
-              'Same enabled editor and geometry required after deletion'
+              emptyLabels.includes(node.label ?? ''),
+              'Empty editor label must equal the observed product label or exact label-plus-placeholder'
+            )
+            assert(
+              ['x', 'y', 'width', 'height'].every(
+                key =>
+                  Math.abs(
+                    box[key as keyof Bounds] - prior[key as keyof Bounds]
+                  ) <= 1
+              ),
+              'Same editor geometry required after deletion'
             )
             assert(
               rawEmpty(node) ||
-                (sentinel != null &&
-                  node.text === placeholder &&
-                  !node.text.includes(sentinel) &&
-                  node.label === placeholder),
+                (node.index < 0 &&
+                  sentinel != null &&
+                  typeof node.label === 'string' &&
+                  node.text === node.label &&
+                  !node.text.includes(sentinel)),
               'Fresh editor must expose empty placeholder after deleting known disjoint sentinel'
             )
             return node

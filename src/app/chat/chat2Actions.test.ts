@@ -1346,11 +1346,20 @@ describe('chat native adapter compatibility', function () {
     let value = initial
     let menu = false
     let selected = false
+    let sentinelTyped = false
+    const emptyName = (): string =>
+      mode === 'dynamic-empty-name' || mode === 'raw-empty-name'
+        ? 'Message Message'
+        : mode === 'unrelated-empty-name'
+          ? 'Another field'
+          : mode === 'triple-empty-name'
+            ? 'Message Message Message'
+            : 'Message'
     const field = (): Record<string, unknown> => ({
       id: mode === 'wrong-id' ? 'other' : 'chat-composer',
       class: 'TextView',
-      text: value.trim() !== '' ? value.trim() : 'Message',
-      accessibilityLabel: 'Message',
+      text: value.trim() !== '' ? value.trim() : emptyName(),
+      accessibilityLabel: value === '' ? emptyName() : 'Message',
       enabled: mode !== 'disabled-editor',
       bounds: {
         ...box,
@@ -1384,16 +1393,26 @@ describe('chat native adapter compatibility', function () {
             rect: { x: 200, y: 450, width: 40, height: 40 }
           })
         )
-      if (mode === 'raw')
+      if (
+        mode === 'raw' ||
+        mode === 'raw-empty-name' ||
+        (mode === 'literal-placeholder-after' &&
+          sentinelTyped &&
+          value === 'Message')
+      )
         nodes.push(
           node(2, 'TextView', {
             identifier: 'chat-composer',
-            label: 'Message',
+            label: value === '' ? emptyName() : 'Message',
             placeholderValue: 'Message',
             value: value.trim() !== '' ? value.trim() : undefined
           })
         )
-      if (menu && !['no-select-all', 'missing-menu'].includes(mode)) {
+      if (
+        menu &&
+        !['no-select-all', 'missing-menu'].includes(mode) &&
+        !(mode === 'dynamic-empty-name' && value === '')
+      ) {
         nodes.push(
           node(3, 'MenuItem', {
             label: 'Select All',
@@ -1457,7 +1476,10 @@ describe('chat native adapter compatibility', function () {
         selected = mode !== 'partial-delete'
         menu = false
       } else if (args.point === '270,470') {
-        if (!['retained-text', 'retained-placeholder'].includes(mode))
+        if (sentinelTyped && mode === 'retained-sentinel-name') value = '777'
+        else if (sentinelTyped && mode === 'literal-placeholder-after')
+          value = 'Message'
+        else if (!['retained-text', 'retained-placeholder'].includes(mode))
           value = selected ? '' : value.slice(0, -1)
         selected = false
         menu = false
@@ -1467,6 +1489,7 @@ describe('chat native adapter compatibility', function () {
       expect(args.id).equals('chat-composer')
       calls.push('type:' + String(args.text))
       value += String(args.text)
+      if (args.text === '7777') sentinelTyped = true
     }
     actual.device.screenshot = async () => captureImages[0]
     actual.device.eraseText = async () => {
@@ -1492,6 +1515,56 @@ describe('chat native adapter compatibility', function () {
     expect(proof.outcome).equals('passed')
     expect(proof.emptyEvidence).contains('lossy AX')
   })
+  it('accepts the exact label-plus-placeholder empty name after a fresh singly labelled sentinel', async () => {
+    const model = editable('dynamic-empty-name', '')
+    await model.actual.replaceDraft('')
+    const proof = model.actual.steps.find(
+      step => step.name === 'Observed iOS editor replacement'
+    )!
+    expect(proof.before).deep.includes({
+      label: 'Message Message',
+      text: 'Message Message'
+    })
+    expect(proof.sentinel).deep.includes({ label: 'Message', text: '7777' })
+    expect(proof.after).deep.includes({
+      label: 'Message Message',
+      text: 'Message Message'
+    })
+    expect(model.value()).equals('')
+    expect(proof.outcome).equals('passed')
+  })
+  it('uses the raw placeholder as the base for an already aggregated empty name', async () => {
+    const model = editable('raw-empty-name', '')
+    await model.actual.replaceDraft('')
+    const proof = model.actual.steps.find(
+      step => step.name === 'Observed iOS editor replacement'
+    )!
+    expect(proof.allowedEmptyLabels).deep.equals(['Message', 'Message Message'])
+    expect(proof.outcome).equals('passed')
+  })
+  for (const mode of [
+    'unrelated-empty-name',
+    'triple-empty-name',
+    'retained-sentinel-name',
+    'literal-placeholder-after'
+  ])
+    it(
+      'rejects changed editor identity/value schema and retains its fresh failing node: ' +
+        mode,
+      async () => {
+        const model = editable(mode, 'B', mode === 'literal-placeholder-after')
+        await captureFailure(model.actual.replaceDraft(''))
+        const proof = model.actual.steps.find(
+          step => step.name === 'Observed iOS editor replacement'
+        )!
+        expect(proof.outcome).equals('failed')
+        expect(proof.afterCandidate).equals(
+          (proof.editorReads as unknown[]).at(-1)
+        )
+        if (mode === 'literal-placeholder-after')
+          expect(proof.afterCandidate).deep.includes({ value: 'Message' })
+      }
+    )
   it('verifies exact multiline replacement and keeps attached file/reply context untouched', async () => {
     const model = editable('capped', 'Prior retained draft', true)
     await model.actual.replaceDraft('Fresh\nsecond line')
