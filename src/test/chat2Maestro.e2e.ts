@@ -651,6 +651,51 @@ export function flattenPublicHierarchy(raw: unknown): PublicNode[] {
   ]
 }
 
+/** Verify an observed native value against one exact public raw-node identity. */
+export function observedNativeValue(
+  raw: Uint8Array,
+  expected: { identifier: string; type: string; label: string; value: string }
+): { identifier: string; type: string; label: string; value: string } {
+  assert(
+    expected != null && typeof expected === 'object',
+    'Observed raw value predicate required'
+  )
+  for (const field of ['identifier', 'type', 'label', 'value'] as const)
+    assert(
+      typeof expected[field] === 'string',
+      'Exact observed raw strings required'
+    )
+  assert(
+    expected.type !== '' &&
+      (expected.identifier !== '' || expected.label !== ''),
+    'Named observed native identity required'
+  )
+  const tree = JSON.parse(Buffer.from(raw).toString('utf8')) as {
+    nodes?: unknown
+  }
+  assert(Array.isArray(tree.nodes), 'Actual raw native node array required')
+  const matches = tree.nodes.filter((entry: unknown) => {
+    if (entry == null || typeof entry !== 'object') return false
+    const n = entry as Record<string, unknown>
+    const identifier = n.identifier ?? ''
+    const label = n.label ?? ''
+    return (
+      identifier === expected.identifier &&
+      n.type === expected.type &&
+      label === expected.label
+    )
+  }) as Array<Record<string, unknown>>
+  assert(
+    matches.length === 1,
+    'Unique exact observed native raw identity required'
+  )
+  assert(
+    typeof matches[0].value === 'string' && matches[0].value === expected.value,
+    'Actual native raw value differs from observed predicate'
+  )
+  return { ...expected }
+}
+
 export function exactText(text: string): string {
   return '^' + text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'
 }
@@ -1465,6 +1510,61 @@ export class Chat2UI {
     }
   }
 
+  /** Raw-value predicates observe state; they do not use selector fallbacks. */
+  private async settingsVerify(
+    checks: NonNullable<Chat2Fixture['variants']>[string]['verify']
+  ): Promise<void> {
+    for (const check of checks) {
+      if (check.rawValue == null) {
+        assert(
+          this.surface !== 'ios' || check.checked == null,
+          'iOS checked-only state proof is unsupported'
+        )
+        await this.device.assertVisible({ ...check, timeout: 5000 })
+        continue
+      }
+      assert(this.surface === 'ios', 'Observed raw-value contract is iOS-only')
+      assert(
+        check.id == null &&
+          check.text == null &&
+          check.checked == null &&
+          check.selected == null,
+        'Raw state predicate cannot mix selector state claims'
+      )
+      const device = this.device as unknown as {
+        hierarchyRaw: (options: { signal: AbortSignal }) => Promise<Uint8Array>
+        screenshot: (options: { signal: AbortSignal }) => Promise<Uint8Array>
+      }
+      const raw = await device.hierarchyRaw({
+        signal: AbortSignal.timeout(10000)
+      })
+      const file = join(
+        this.runDir,
+        'native-setting-' + randomUUID() + '.raw-hierarchy.json'
+      )
+      writeFileSync(file, raw, { flag: 'wx', mode: 0o600 })
+      const evidence: Args = {
+        name: 'Observed native raw value',
+        source: this.binding.source,
+        deviceId: this.deviceId,
+        daemonName: this.daemonName,
+        rawPath: file,
+        rawSha256: digest(file),
+        expected: check.rawValue,
+        observedAt: new Date().toISOString(),
+        outcome: 'failed'
+      }
+      this.steps.push(evidence)
+      // Retain actual hierarchy even if parsing or equality fails. No error is inverted.
+      evidence.actual = observedNativeValue(raw, check.rawValue)
+      evidence.image = saveCapture(
+        await device.screenshot({ signal: AbortSignal.timeout(10000) }),
+        file + '.png'
+      )
+      evidence.outcome = 'passed'
+    }
+  }
+
   async variant(name: string, sweep: () => Promise<void>): Promise<void> {
     assert(
       [
@@ -1513,8 +1613,7 @@ export class Chat2UI {
           )
           await this.device.setDarkMode({ enabled: name === 'dark' })
           await this.settingsActions(recipe.set)
-          for (const selector of recipe.verify)
-            await this.device.assertVisible({ ...selector, timeout: 5000 })
+          await this.settingsVerify(recipe.verify)
           await this.device.launchApp({ appId: this.fixture.appId })
           row.environment = {
             method: 'Maestro setDarkMode',
@@ -1533,8 +1632,7 @@ export class Chat2UI {
             'Native variant requires applied and restored setting observations'
           )
           await this.settingsActions(actual.set)
-          for (const selector of actual.verify)
-            await this.device.assertVisible({ ...selector, timeout: 5000 })
+          await this.settingsVerify(actual.verify)
           row.environment = {
             method: 'Observed OS Settings via Maestro',
             selectors: actual.verify
@@ -1634,8 +1732,7 @@ export class Chat2UI {
       if (this.native) {
         if (recipe?.applicability === 'applicable') {
           await this.settingsActions(recipe.restore)
-          for (const selector of recipe.restoreVerify)
-            await this.device.assertVisible({ ...selector, timeout: 5000 })
+          await this.settingsVerify(recipe.restoreVerify)
           await this.device.launchApp({ appId: this.fixture.appId })
         }
       } else {

@@ -179,7 +179,15 @@ const asFixture = asObject({
             text: asOptional(asString),
             id: asOptional(asString),
             checked: asOptional(asBoolean),
-            selected: asOptional(asBoolean)
+            selected: asOptional(asBoolean),
+            rawValue: asOptional(
+              asObject({
+                identifier: asString,
+                type: asString,
+                label: asString,
+                value: asString
+              })
+            )
           })
         ),
         restore: asArray(
@@ -193,7 +201,15 @@ const asFixture = asObject({
             text: asOptional(asString),
             id: asOptional(asString),
             checked: asOptional(asBoolean),
-            selected: asOptional(asBoolean)
+            selected: asOptional(asBoolean),
+            rawValue: asOptional(
+              asObject({
+                identifier: asString,
+                type: asString,
+                label: asString,
+                value: asString
+              })
+            )
           })
         )
       })
