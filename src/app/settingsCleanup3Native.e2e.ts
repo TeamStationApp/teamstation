@@ -438,8 +438,10 @@ async function main(): Promise<void> {
         })
         if (found) return
         await m.swipe({
-          start: `${viewport.width / 2},${viewport.height * 0.75}`,
-          end: `${viewport.width / 2},${viewport.height * 0.35}`,
+          startX: Math.round(viewport.width / 2),
+          startY: Math.round(viewport.height * 0.75),
+          endX: Math.round(viewport.width / 2),
+          endY: Math.round(viewport.height * 0.35),
           duration: 600
         })
         await new Promise(resolve => setTimeout(resolve, 300))
