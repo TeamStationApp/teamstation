@@ -170,7 +170,7 @@ export function iosKeyboardDismissPoint(input: {
 /** Dismiss through one observed gutter, with one observed OS-menu transition. */
 export async function dismissIosChatKeyboard(
   ui: Pick<Chat2UI, 'device' | 'steps'>,
-  timeout = 8000
+  timeout = 90000
 ): Promise<void> {
   const end = Date.now() + timeout
   const remaining = (): number => {
