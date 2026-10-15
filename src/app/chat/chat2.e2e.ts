@@ -37,6 +37,7 @@ import {
   flattenPublicHierarchy,
   iosPublicRead,
   type PublicNode,
+  readAndroidComposerKeyboard,
   readIosComposerKeyboard,
   saveCapture,
   until
@@ -830,11 +831,44 @@ export async function observeComposerCaptureReady(
     ) => Promise<{ data?: unknown }>
     platformInfo: (options: { signal: AbortSignal }) => Promise<Json>
   }
-  const nativeProbe = async (selector: Json): Promise<Box | undefined> => {
+  const nativeProbe = async (
+    selector: Json,
+    observed?: PublicNode[]
+  ): Promise<Box | undefined> => {
     try {
       const args = { ...selector, timeout: Math.min(120, remaining()) }
       const options = { signal: AbortSignal.timeout(remaining()) }
       const found = (await device.assertVisible(args, options)).element
+      if (ui.surface === 'android') {
+        const matches = need(
+          observed,
+          'Fresh Android hierarchy required for control geometry'
+        ).filter(node =>
+          typeof selector.id === 'string'
+            ? node.id === selector.id
+            : typeof selector.text === 'string' &&
+              new RegExp(selector.text).test(node.text ?? '')
+        )
+        assert(matches.length === 1, 'Unique observed Android control required')
+        if (typeof selector.text === 'string')
+          assert(
+            matches[0].type === 'Button',
+            'Typed Android composer Button required'
+          )
+        const bounds = need(
+          matches[0].bounds,
+          'Observed Android control bounds required'
+        )
+        assert(
+          [bounds.x, bounds.y, bounds.width, bounds.height].every(
+            Number.isFinite
+          ) &&
+            bounds.width > 0 &&
+            bounds.height > 0,
+          'Positive finite observed Android control bounds required'
+        )
+        return bounds
+      }
       if (ui.surface === 'ios' && found != null) {
         if (typeof selector.id === 'string')
           assert(
@@ -875,6 +909,14 @@ export async function observeComposerCaptureReady(
       let eligible: boolean
       if (ui.native) {
         const ios = ui.surface === 'ios'
+        const androidPositive =
+          ui.surface === 'android' && expected.focused === true
+            ? await readAndroidComposerKeyboard(
+                ui,
+                AbortSignal.timeout(remaining()),
+                remaining()
+              )
+            : undefined
         const positive =
           ios && expected.focused === true
             ? await readIosComposerKeyboard(
@@ -884,6 +926,7 @@ export async function observeComposerCaptureReady(
             : undefined
         const nodes =
           positive?.nodes ??
+          androidPositive?.nodes ??
           flattenPublicHierarchy(
             await device.hierarchy({ signal: AbortSignal.timeout(remaining()) })
           )
@@ -892,7 +935,7 @@ export async function observeComposerCaptureReady(
             ['chat-message-spotlight', 'chat-picker-scene'].includes(n.id ?? '')
           )
           .map(n => n.id)
-        geometry = { ...positive?.geometry }
+        geometry = { ...positive?.geometry, ...androidPositive?.geometry }
         let visible = true
         for (const [name, selector] of [
           ['composer', { id: 'chat-composer' }],
@@ -901,44 +944,33 @@ export async function observeComposerCaptureReady(
           ['send', { text: ios ? 'Send' : exactText('Send') }]
         ] as const) {
           if (geometry[name] != null) continue
-          const found = await nativeProbe(selector)
+          const found = await nativeProbe(
+            selector,
+            ui.surface === 'android' ? nodes : undefined
+          )
           if (found == null) visible = false
           else geometry[name] = found
         }
         let focused = expected.focused !== true
-        if (expected.focused === true && !ios)
-          focused =
-            (await nativeProbe({ id: 'chat-composer', focused: true })) != null
+        if (expected.focused === true && !ios) focused = androidPositive != null
         const cancel = nodes.find(n => n.text === 'Cancel reply')
         let reply =
           expected.reply == null || (!expected.reply && cancel == null)
         if (expected.reply === true) {
-          const found = await nativeProbe({
-            text: ios ? 'Cancel reply' : exactText('Cancel reply')
-          })
+          const found = await nativeProbe(
+            {
+              text: ios ? 'Cancel reply' : exactText('Cancel reply')
+            },
+            ui.surface === 'android' ? nodes : undefined
+          )
           reply = found != null
           if (found != null) geometry.reply = found
         }
-        let keyboard = expected.focused !== true || positive != null
-        if (expected.focused === true && !ios) {
-          const container = nodes.find(
-            n => /keyboard/i.test(n.type ?? '') && n.bounds != null
-          )
-          if (container?.bounds != null) {
-            geometry.keyboard = container.bounds
-            keyboard = true
-          } else {
-            keyboard = true
-            for (const key of ['q', 'w', 'e']) {
-              const found = await nativeProbe({
-                text: '^[' + key + key.toUpperCase() + ']$'
-              })
-              if (found == null) keyboard = false
-              else geometry['key-' + key] = found
-            }
-          }
-        }
-        if (ios && visible) {
+        const keyboard =
+          expected.focused !== true ||
+          positive != null ||
+          androidPositive != null
+        if ((ios || ui.surface === 'android') && visible) {
           const band = geometry.band
           visible =
             band != null &&
@@ -2127,30 +2159,11 @@ export class Scenarios {
         : 'Actual public Keyboard container bounds'
     let diagnostic: string | undefined
     if (ui.surface === 'android') {
-      const result = spawnSync(
-        process.env.CHAT2_ADB ?? 'adb',
-        ['-s', ui.deviceId, 'shell', 'dumpsys', 'window', 'InputMethod'],
-        { encoding: 'utf8', timeout: 5000 }
-      )
-      diagnostic = join(ui.runDir, 'android-ime-window.txt')
-      writeFileSync(diagnostic, result.stdout ?? '', { mode: 0o600 })
-      if (result.status === 0 && !result.stdout.includes('mInputShown=false')) {
-        const match =
-          /mFrame=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]/.exec(result.stdout) ??
-          (result.stdout.includes('isOnScreen=true')
-            ? /touchable region=SkRegion\(\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)\)/.exec(
-                result.stdout
-              )
-            : null)
-        if (match != null) {
-          const [x, y, right, bottom] = match.slice(1).map(Number)
-          if (right > x && bottom > y) {
-            keyboard = { x, y, width: right - x, height: bottom - y }
-            keyboardMethod =
-              'Read-only exact-owned-serial OS InputMethod window frame; Maestro UIA parser strategy'
-          }
-        }
-      }
+      const observed = await ui.readAndroidIme()
+      keyboard = observed.bounds
+      diagnostic = observed.rawPath
+      keyboardMethod =
+        'Strict positive shown exact-owned-serial OS InputMethod window frame'
     }
     const keys: Box[] = []
     if (ui.surface === 'ios')
@@ -2158,7 +2171,7 @@ export class Scenarios {
         keyboard != null,
         'Actual positive iOS Keyboard container required'
       )
-    if (keyboard == null)
+    if (keyboard == null && ui.surface !== 'android')
       for (const key of ['q', 'w', 'e'])
         keys.push(
           need(

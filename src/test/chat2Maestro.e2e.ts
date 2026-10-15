@@ -89,6 +89,77 @@ interface Bounds {
   width: number
   height: number
 }
+
+/** Parse the same OS window formats used by the Android driver, with positive visibility. */
+export function androidImeFrame(
+  raw: string,
+  viewport: { width: number; height: number }
+): Bounds {
+  assert(
+    /\bInputMethod\b/.test(raw),
+    'Actual InputMethod window output required'
+  )
+  const flags = [...raw.matchAll(/\b(isOnScreen|mInputShown)\s*=\s*(\S+)/g)]
+  assert(flags.length > 0, 'Positive Android IME visibility required')
+  assert(
+    flags.every(flag => flag[2] === 'true'),
+    'Hidden, conflicting or unknown Android IME visibility'
+  )
+  const frames = [
+    ...raw.matchAll(/mFrame=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]/g)
+  ]
+  const regions = [...raw.matchAll(/touchable region=SkRegion\(([^\n]*)\)/g)]
+  const frameMarkers = [...raw.matchAll(/\bmFrame\b/g)]
+  const regionMarkers = [...raw.matchAll(/\btouchable region\b/g)]
+  assert(
+    frameMarkers.length <= 1 && regionMarkers.length <= 1,
+    'Unambiguous Android IME window geometry required'
+  )
+  assert(frames.length === frameMarkers.length, 'Malformed Android IME frame')
+  assert(
+    regions.length === regionMarkers.length,
+    'Malformed Android IME touchable region'
+  )
+  const region =
+    regions[0] == null
+      ? undefined
+      : /^\((-?\d+),(-?\d+),(-?\d+),(-?\d+)\)$/.exec(regions[0][1])
+  if (regions.length > 0)
+    assert(region != null, 'Single rectangular Android IME region required')
+  const parsed = (match: RegExpMatchArray): Bounds => {
+    const [x, y, right, bottom] = match.slice(1).map(Number)
+    assert(
+      [x, y, right, bottom].every(Number.isSafeInteger),
+      'Finite Android IME coordinates required'
+    )
+    assert(right > x && bottom > y, 'Positive Android IME frame required')
+    return { x, y, width: right - x, height: bottom - y }
+  }
+  const box = parsed(
+    need(frames[0] ?? region, 'Observed Android IME frame required')
+  )
+  if (frames[0] != null && region != null) {
+    const touch = parsed(region)
+    assert(
+      touch.x >= box.x &&
+        touch.y >= box.y &&
+        touch.x + touch.width <= box.x + box.width &&
+        touch.y + touch.height <= box.y + box.height,
+      'Android IME region contradicts its window frame'
+    )
+  }
+  assert(
+    [viewport.width, viewport.height].every(
+      value => Number.isFinite(value) && value > 0
+    ) &&
+      box.x >= 0 &&
+      box.y >= 0 &&
+      box.x + box.width <= viewport.width + 2 &&
+      box.y + box.height <= viewport.height + 2,
+    'Android IME frame must fit the observed native viewport'
+  )
+  return box
+}
 interface CaptureViewport {
   width: number
   height: number
@@ -326,6 +397,100 @@ export async function readIosComposerKeyboard(
       focusSignal: 'unavailable-on-ios'
     }
   }
+}
+
+/** Android's assertion response can be opaque; read focused editor geometry independently. */
+export async function readAndroidComposerKeyboard(
+  ui: Pick<Chat2UI, 'device' | 'readAndroidIme'>,
+  signal: AbortSignal,
+  timeoutMs = 10000
+): Promise<{
+  nodes: PublicNode[]
+  geometry: Record<'composer' | 'band' | 'keyboard', Bounds>
+}> {
+  const api = ui.device as unknown as {
+    assertVisible: (
+      args: Args,
+      options: { signal: AbortSignal }
+    ) => Promise<unknown>
+    hierarchy: (options: { signal: AbortSignal }) => Promise<unknown>
+  }
+  const deadline = Date.now() + timeoutMs
+  const remaining = (): number => {
+    signal.throwIfAborted()
+    assert(
+      Date.now() < deadline,
+      'Android focused composer observation deadline expired'
+    )
+    return Math.max(1, deadline - Date.now())
+  }
+  signal.throwIfAborted()
+  await api.assertVisible(
+    {
+      id: 'chat-composer',
+      focused: true,
+      enabled: true,
+      timeout: Math.min(2000, remaining())
+    },
+    { signal }
+  )
+  const ime = await ui.readAndroidIme({
+    signal,
+    timeoutMs: Math.min(5000, remaining())
+  })
+  const nodes = flattenPublicHierarchy(await api.hierarchy({ signal }))
+  const unique = (id: string): PublicNode => {
+    const matches = nodes.filter(node => node.id === id)
+    assert(
+      matches.length === 1,
+      'Unique fresh Android public element required: ' + id
+    )
+    return matches[0]
+  }
+  const editor = unique('chat-composer')
+  assert(
+    editor.type === 'EditText' &&
+      editor.focused === true &&
+      editor.enabled !== false,
+    'Fresh focused Android EditText required after enabled/focused selector proof'
+  )
+  const band = need(
+    unique('chat-composer-band').bounds,
+    'Actual Android composer band required'
+  )
+  const composer = need(
+    editor.bounds,
+    'Actual Android composer geometry required'
+  )
+  assert(
+    [band, composer].every(
+      box =>
+        [box.x, box.y, box.width, box.height].every(Number.isFinite) &&
+        box.width > 0 &&
+        box.height > 0
+    ),
+    'Positive finite Android composer geometry required'
+  )
+  assert(
+    band.x >= 0 &&
+      band.y >= 0 &&
+      band.x + band.width <= ime.viewport.width + 2 &&
+      band.y + band.height <= ime.viewport.height + 2,
+    'Android composer band must fit the observed native viewport'
+  )
+  assert(
+    composer.x >= band.x &&
+      composer.y >= band.y &&
+      composer.x + composer.width <= band.x + band.width &&
+      composer.y + composer.height <= band.y + band.height,
+    'Android composer must remain inside its observed band'
+  )
+  assert(
+    band.y + band.height <= ime.bounds.y + 2,
+    'Android composer band must be above the observed IME'
+  )
+  remaining()
+  return { nodes, geometry: { composer, band, keyboard: ime.bounds } }
 }
 
 /** A history gutter stays outside measured chrome and composer controls. */
@@ -2991,6 +3156,18 @@ export class Chat2UI {
       }
       return
     }
+    if (this.surface === 'android') {
+      const proof = await readAndroidComposerKeyboard(
+        this,
+        AbortSignal.timeout(10000)
+      )
+      this.steps.push({
+        name: 'Positive focused Android composer above observed IME',
+        geometry: proof.geometry,
+        outcome: 'passed'
+      })
+      return
+    }
     await this.device.assertVisible({
       id: 'chat-composer',
       focused: true,
@@ -3012,14 +3189,103 @@ export class Chat2UI {
       await this.assertKeyboard()
       return
     }
-    const nodes = await this.nodes()
-    if (!nodes.some(n => /keyboard/i.test(n.type ?? ''))) {
-      // Direct public key queries avoid the native snapshot's node cap.
-      for (const key of ['q', 'w', 'e'])
-        await this.device.assertVisible({
-          text: '^[' + key + key.toUpperCase() + ']$',
-          timeout: 2000
-        })
+    await this.readAndroidIme()
+  }
+
+  /** Capture-only OS geometry observer; every UI input remains a Maestro command. */
+  async readAndroidIme(
+    options: { signal?: AbortSignal; timeoutMs?: number } = {}
+  ): Promise<{
+    bounds: Bounds
+    rawPath: string
+    viewport: { width: number; height: number }
+  }> {
+    const limit = Math.min(5000, options.timeoutMs ?? 5000)
+    assert(
+      Number.isFinite(limit) && limit > 0,
+      'Finite Android IME observation bound required'
+    )
+    const signal =
+      options.signal == null
+        ? AbortSignal.timeout(limit)
+        : AbortSignal.any([options.signal, AbortSignal.timeout(limit)])
+    const end = Date.now() + limit
+    const proof: Args = {
+      name: 'Read-only owned Android IME window',
+      source: this.binding.source,
+      daemonName: this.daemonName,
+      observedAt: new Date().toISOString(),
+      deviceId: this.deviceId,
+      outcome: 'failed'
+    }
+    this.steps.push(proof)
+    try {
+      signal.throwIfAborted()
+      assert(
+        this.surface === 'android' &&
+          this.native &&
+          this.deviceId !== '' &&
+          this.fixture.devices.android.owned &&
+          this.deviceId === this.fixture.devices.android.id,
+        'Exact owned Android device required for IME observation'
+      )
+      const api = this.device as unknown as {
+        platformInfo: (options: { signal: AbortSignal }) => Promise<Args>
+      }
+      const screen = await api.platformInfo({ signal })
+      const remaining = Math.min(limit, end - Date.now())
+      assert(remaining > 0, 'Android IME observation deadline expired')
+      const args = [
+        '-s',
+        this.deviceId,
+        'shell',
+        'dumpsys',
+        'window',
+        'InputMethod'
+      ]
+      const result = spawnSync(process.env.CHAT2_ADB ?? 'adb', args, {
+        encoding: 'utf8',
+        timeout: remaining,
+        maxBuffer: 2 * 1024 * 1024
+      })
+      const rawPath = join(this.runDir, 'android-ime-' + randomUUID() + '.txt')
+      const stderrPath = rawPath + '.stderr.txt'
+      writeFileSync(rawPath, result.stdout ?? '', { flag: 'wx', mode: 0o600 })
+      writeFileSync(stderrPath, result.stderr ?? '', {
+        flag: 'wx',
+        mode: 0o600
+      })
+      Object.assign(proof, {
+        args,
+        rawPath,
+        rawSha256: digest(rawPath),
+        stderrPath,
+        stderrSha256: digest(stderrPath),
+        exitCode: result.status,
+        signal: result.signal,
+        transportError: result.error?.message
+      })
+      assert(
+        result.status === 0 && result.signal == null && result.error == null,
+        'Android IME observation transport failed'
+      )
+      signal.throwIfAborted()
+      assert(Date.now() <= end, 'Android IME observation deadline expired')
+      const viewport = {
+        width: Number(screen.screenWidth),
+        height: Number(screen.screenHeight)
+      }
+      const measured = androidImeFrame(result.stdout, viewport)
+      proof.bounds = measured
+      proof.viewport = {
+        width: screen.screenWidth,
+        height: screen.screenHeight
+      }
+      proof.outcome = 'passed'
+      return { bounds: measured, rawPath, viewport }
+    } catch (error) {
+      proof.error = error instanceof Error ? error.message : String(error)
+      throw error
     }
   }
 

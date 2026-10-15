@@ -12,9 +12,11 @@ import React from 'react'
 import { transform } from 'sucrase'
 
 import {
+  androidImeFrame,
   Chat2UI,
   iosPublicRead,
-  type PublicNode
+  type PublicNode,
+  readAndroidComposerKeyboard
 } from '../../test/chat2Maestro.e2e'
 import { backdropOf } from '../components/glassBackdrop'
 import type { GlassViewProps } from '../components/glassViewProps'
@@ -3114,4 +3116,422 @@ describe('chat native adapter compatibility', function () {
     }
     expect(gestures).deep.equals([])
   })
+})
+
+describe('positive Android IME observations', function () {
+  this.timeout(10000)
+  const viewport = { width: 400, height: 800 }
+  const shown =
+    'Window #0 Window{0000 u0 InputMethod}:\n isOnScreen=true\n touchable region=SkRegion((0,560,400,800))\n'
+  const paths: string[] = []
+  const processApi = createRequire(resolve('package.json'))(
+    'node:child_process'
+  )
+  const originalSpawn = processApi.spawnSync
+  const originalAdb = process.env.CHAT2_ADB
+  afterEach(() => {
+    processApi.spawnSync = originalSpawn
+    if (originalAdb == null) delete process.env.CHAT2_ADB
+    else process.env.CHAT2_ADB = originalAdb
+    for (const path of paths.splice(0))
+      rmSync(path, { recursive: true, force: true })
+  })
+  function model(mode = 'valid'): {
+    ui: Chat2UI
+    calls: unknown[]
+    raw: string
+    probes: () => number
+  } {
+    const calls: unknown[] = []
+    const runDir = mkdtempSync(join(tmpdir(), 'android-ime-'))
+    paths.push(runDir)
+    // A missed stub must fail locally rather than reach an installed adb.
+    process.env.CHAT2_ADB = join(runDir, 'unavailable-observer-fixture')
+    let probes = 0
+    const tree = (): { nodes: PublicNode[] } => {
+      probes += 1
+      const band = {
+        x: 20,
+        y: mode === 'overlap' ? 500 : 400,
+        width: 360,
+        height: 100
+      }
+      const editor: PublicNode = {
+        id: 'chat-composer',
+        type: 'EditText',
+        focused: mode !== 'unfocused',
+        bounds: {
+          x: 100,
+          y: mode === 'overlap' ? 550 : 450,
+          width: 220,
+          height: 40
+        }
+      }
+      if (mode === 'disabled') editor.enabled = false
+      if (mode === 'outside-editor') editor.bounds!.x = 0
+      if (mode === 'zero-editor') editor.bounds!.height = 0
+      const nodes: PublicNode[] = [
+        { id: 'chat-composer-band', type: 'ViewGroup', bounds: band },
+        editor,
+        {
+          type: 'Button',
+          text: 'Attach',
+          bounds: { x: 24, y: 450, width: 44, height: 44 }
+        },
+        {
+          type: 'Button',
+          text: 'Send',
+          enabled: false,
+          bounds: { x: 332, y: 450, width: 44, height: 44 }
+        },
+        {
+          type: 'Button',
+          text: 'Cancel reply',
+          bounds: { x: 344, y: 410, width: 24, height: 24 }
+        }
+      ]
+      if (mode === 'duplicate-editor') nodes.push({ ...editor })
+      if (mode === 'missing-band') nodes.shift()
+      if (mode === 'missing-editor') nodes.splice(1, 1)
+      if (mode === 'duplicate-send') nodes.push({ ...nodes[3] })
+      if (mode === 'outside-send') nodes[3].bounds!.x = 390
+      for (const [name, index] of [
+        ['attach', 2],
+        ['send', 3],
+        ['cancel', 4]
+      ] as const) {
+        if (mode === 'zero-' + name) nodes[index].bounds!.width = 0
+        if (mode === 'negative-' + name) nodes[index].bounds!.height = -1
+        if (mode === 'nonfinite-' + name) nodes[index].bounds!.x = NaN
+      }
+      if (mode === 'overlay' && probes > 1)
+        nodes.push({ id: 'chat-picker-scene', bounds: band })
+      if (mode === 'geometry-change' && probes % 2 === 0) {
+        nodes[0].bounds = { ...band, y: band.y - 5 }
+        editor.bounds = { ...editor.bounds!, y: editor.bounds!.y - 5 }
+      }
+      return { nodes }
+    }
+    const actualRaw = mode === 'hidden' ? shown.replace('true', 'false') : shown
+    processApi.spawnSync = (
+      command: string,
+      argv: string[],
+      options: Record<string, unknown>
+    ) => {
+      calls.push({ command, argv, options })
+      if (mode === 'transport')
+        return {
+          status: 1,
+          signal: null,
+          stdout: 'Retained output',
+          stderr: 'offline'
+        }
+      if (mode === 'timeout')
+        return {
+          status: null,
+          signal: 'SIGTERM',
+          error: new Error('timed out'),
+          stdout: 'Partial output',
+          stderr: ''
+        }
+      return {
+        status: 0,
+        signal: null,
+        stdout:
+          mode === 'lost-ime' && probes > 0
+            ? shown.replace('true', 'false')
+            : actualRaw,
+        stderr: ''
+      }
+    }
+    const ui = Object.assign(Object.create(Chat2UI.prototype), {
+      surface: 'android',
+      native: true,
+      runDir,
+      deviceId: 'emulator-0000',
+      fixture: { devices: { android: { id: 'emulator-0000', owned: true } } },
+      binding: { source: '0'.repeat(40) },
+      steps: [],
+      device: {
+        platformInfo: async () => ({
+          screenWidth: viewport.width,
+          screenHeight: viewport.height
+        }),
+        hierarchy: async () => {
+          calls.push('hierarchy')
+          return tree()
+        },
+        assertVisible: async (args: Record<string, unknown>) => {
+          calls.push(args)
+          if (
+            typeof args.text === 'string' &&
+            /q|w|e/i.test(args.text) &&
+            !['^Send$', '^Cancel reply$'].includes(args.text)
+          )
+            throw Error('Keyboard keys must never be queried')
+          if (mode === 'query-failed')
+            throw Object.assign(new Error('Actual focused selector failed'), {
+              code: 'COMMAND_FAILED'
+            })
+          // Actual Android assertions may return an opaque id and zero geometry.
+          return {
+            element: {
+              id: 'opaque',
+              bounds: { x: 0, y: 0, width: 0, height: 0 }
+            }
+          }
+        },
+        screenshot: async () => captureImages[0]
+      }
+    }) as Chat2UI
+    return { ui, calls, raw: actualRaw, probes: () => probes }
+  }
+  it('accepts positive shown legacy and current native-coordinate window formats', () => {
+    expect(androidImeFrame(shown, viewport)).deep.equals({
+      x: 0,
+      y: 560,
+      width: 400,
+      height: 240
+    })
+    expect(
+      androidImeFrame(
+        'Window{0000 u0 InputMethod}\n mInputShown=true\n mFrame=[0,560][400,800]',
+        viewport
+      )
+    ).deep.equals({ x: 0, y: 560, width: 400, height: 240 })
+    expect(
+      androidImeFrame(shown + 'mFrame=[0,560][400,800]', viewport)
+    ).deep.equals({ x: 0, y: 560, width: 400, height: 240 })
+  })
+  for (const [name, raw] of [
+    ['hidden', shown.replace('true', 'false')],
+    [
+      'stale-frame-without-positive-visibility',
+      'Window{0000 u0 InputMethod}\n mFrame=[0,560][400,800]'
+    ],
+    ['conflicting-state', shown + 'mInputShown=false'],
+    ['unknown-state', shown.replace('true', 'unknown')],
+    [
+      'ambiguous-frame',
+      shown + 'mFrame=[0,560][400,800]\nmFrame=[0,570][400,800]'
+    ],
+    ['multiple-regions', shown + 'touchable region=SkRegion((0,570,400,800))'],
+    [
+      'complex-region',
+      shown.replace('(0,560,400,800)', '(0,560,400,800)(0,100,200,300)')
+    ],
+    ['zero-frame', shown.replace('560,400,800', '800,400,800')],
+    ['negative-frame', shown.replace('0,560,400,800', '-1,560,400,800')],
+    ['outside-native-viewport', shown.replace('400,800', '401,900')],
+    ['unsafe-integer', shown.replace('400,800', '9007199254740993,800')],
+    ['wrong-window', shown.replace('InputMethod', 'Other')],
+    ['contradictory-formats', shown + 'mFrame=[0,600][400,800]'],
+    ['malformed-frame', shown + 'mFrame=[bad]'],
+    [
+      'valid-plus-malformed-frame',
+      shown + 'mFrame=[0,560][400,800]\nmFrame=[bad]'
+    ],
+    ['valid-plus-malformed-region', shown + 'touchable region=bad'],
+    [
+      'frame-plus-malformed-region',
+      'InputMethod\n isOnScreen=true\n mFrame=[0,560][400,800]\n touchable region=bad'
+    ]
+  ])
+    it('rejects ' + name + ' without guessing keyboard visibility', () => {
+      expect(() => androidImeFrame(raw, viewport)).throws()
+    })
+
+  it('uses only exact-owned read-only adb arguments and retains fresh raw provenance', async () => {
+    const actual = model()
+    const result = await actual.ui.readAndroidIme()
+    expect(result.bounds).deep.equals({ x: 0, y: 560, width: 400, height: 240 })
+    expect(readFileSync(result.rawPath, 'utf8')).equals(actual.raw)
+    const command = actual.calls[0] as {
+      argv: string[]
+      options: { timeout: number }
+    }
+    expect(command.argv).deep.equals([
+      '-s',
+      'emulator-0000',
+      'shell',
+      'dumpsys',
+      'window',
+      'InputMethod'
+    ])
+    expect(command.options.timeout).at.most(5000).and.greaterThan(0)
+    expect(actual.ui.steps.at(-1)?.outcome).equals('passed')
+    expect(actual.calls).length(1)
+  })
+  for (const mode of ['hidden', 'transport', 'timeout'])
+    it('retains actual raw/error output and rejects ' + mode, async () => {
+      const actual = model(mode)
+      await captureFailure(actual.ui.readAndroidIme())
+      const step = actual.ui.steps.at(-1)!
+      expect(step.outcome).equals('failed')
+      expect(readFileSync(step.rawPath as string, 'utf8')).equals(
+        mode === 'transport'
+          ? 'Retained output'
+          : mode === 'timeout'
+            ? 'Partial output'
+            : actual.raw
+      )
+      expect(typeof step.rawSha256).equals('string')
+    })
+  it('refuses an unowned serial before any adb observation', async () => {
+    const actual = model()
+    actual.ui.deviceId = 'emulator-0001'
+    await captureFailure(actual.ui.readAndroidIme())
+    expect(actual.calls).deep.equals([])
+  })
+  it('proves Search/compact-spotlight IME visibility without demanding composer focus', async () => {
+    const actual = model('unfocused')
+    await actual.ui.keyboardVisible()
+    expect(actual.calls).length(1)
+    expect(actual.probes()).equals(0)
+  })
+  it('reuses strict IME observation in the real E2 geometry callback without key reads', async () => {
+    const actual = model()
+    const copies: string[] = []
+    actual.ui.publicBounds = async id =>
+      id === 'chat-composer-band'
+        ? { x: 20, y: 400, width: 360, height: 100 }
+        : { x: 100, y: 450, width: 220, height: 40 }
+    actual.ui.visible = async () => false
+    actual.ui.device.copyTextFrom = async args => {
+      copies.push(String(args.text))
+      if (!['^Attach$', '^Send$'].includes(String(args.text)))
+        throw Error('No key fallback allowed')
+      return {
+        element: {
+          bounds: {
+            x: args.text === '^Attach$' ? 24 : 332,
+            y: 450,
+            width: 44,
+            height: 44
+          }
+        }
+      }
+    }
+    actual.ui.shot = async () => {}
+    const scenario = Object.assign(Object.create(Scenarios.prototype), {
+      ui: actual.ui,
+      observations: []
+    }) as Scenarios
+    await scenario.nativeKeyboardGeometry()
+    expect(copies).deep.equals(['^Attach$', '^Send$'])
+    expect(
+      (
+        scenario.observations[0] as {
+          nativeKeyboardGeometry: { keyboard: CaptureBox }
+        }
+      ).nativeKeyboardGeometry.keyboard
+    ).deep.equals({ x: 0, y: 560, width: 400, height: 240 })
+    expect(
+      actual.ui.steps.find(
+        step => step.name === 'Read-only owned Android IME window'
+      )?.outcome
+    ).equals('passed')
+  })
+  it('rejects already-aborted observation before any adb read', async () => {
+    const actual = model()
+    const controller = new AbortController()
+    controller.abort()
+    await captureFailure(
+      actual.ui.readAndroidIme({ signal: controller.signal })
+    )
+    expect(actual.calls).deep.equals([])
+  })
+  it('combines exact enabled/focused selector proof with independent positive native geometry', async () => {
+    const actual = model()
+    const result = await readAndroidComposerKeyboard(
+      actual.ui,
+      AbortSignal.timeout(1000)
+    )
+    expect(result.geometry.composer).deep.equals({
+      x: 100,
+      y: 450,
+      width: 220,
+      height: 40
+    })
+    expect(actual.calls[0]).deep.equals({
+      id: 'chat-composer',
+      focused: true,
+      enabled: true,
+      timeout: 2000
+    })
+    expect(result.nodes.find(n => n.text === 'Send')?.enabled).equals(false)
+    await actual.ui.assertKeyboard()
+    expect(actual.ui.steps.at(-1)?.outcome).equals('passed')
+  })
+  for (const mode of [
+    'unfocused',
+    'disabled',
+    'duplicate-editor',
+    'missing-band',
+    'missing-editor',
+    'outside-editor',
+    'zero-editor',
+    'overlap',
+    'query-failed'
+  ])
+    it('rejects focused composer proof with ' + mode, async () => {
+      const actual = model(mode)
+      await captureFailure(actual.ui.assertKeyboard())
+      expect(
+        actual.calls.some(
+          call => typeof call === 'object' && call != null && 'text' in call
+        )
+      ).equals(false)
+    })
+  it('requires two fresh IME/focus/control observations with actual stable raw frames and disabled Send visible', async () => {
+    const actual = model()
+    const proof = await observeComposerCaptureReady(
+      actual.ui,
+      { focused: true, reply: true },
+      1500
+    )
+    expect(proof.composerCaptureReady).equals(true)
+    expect(
+      actual.ui.steps.find(
+        step => step.name === 'Settled composer capture readiness'
+      )?.outcome
+    ).equals('passed')
+    expect(actual.probes()).at.least(2)
+    expect(
+      actual.ui.steps.filter(
+        step => step.name === 'Read-only owned Android IME window'
+      )
+    ).length.at.least(2)
+  })
+  for (const mode of [
+    'lost-ime',
+    'duplicate-send',
+    'outside-send',
+    'zero-attach',
+    'negative-attach',
+    'nonfinite-attach',
+    'zero-send',
+    'negative-send',
+    'nonfinite-send',
+    'zero-cancel',
+    'negative-cancel',
+    'nonfinite-cancel',
+    'overlay',
+    'geometry-change'
+  ])
+    it('never accepts Android capture readiness after ' + mode, async () => {
+      const actual = model(mode)
+      await captureFailure(
+        observeComposerCaptureReady(
+          actual.ui,
+          { focused: true, reply: true },
+          120
+        )
+      )
+      expect(
+        actual.ui.steps.find(
+          step => step.name === 'Settled composer capture readiness'
+        )?.outcome
+      ).equals('failed')
+    })
 })
