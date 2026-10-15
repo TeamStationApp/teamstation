@@ -1030,16 +1030,16 @@ describe('a conversation', function () {
           memberCount: 1,
           title: dmTitle(
             1,
-            [member(1, 'Dana D')],
-            [{ userId: 2, shortName: 'Eli C', left: true }]
+            [member(1, 'Trea Turner')],
+            [{ userId: 2, shortName: 'Aaron Judge', left: true }]
           )
         }),
-        members: [member(1, 'Dana D')]
+        members: [member(1, 'Trea Turner')]
       })
     )
-    expect(titles.at(-1)).equals('Eli C (left)')
+    expect(titles.at(-1)).equals('Aaron Judge (left)')
     expect(text()).not.contains('1 member')
-    expect(labelled('Eli C (left), Direct message')).not.equals(null)
+    expect(labelled('Aaron Judge (left), Direct message')).not.equals(null)
   })
 
   it('keeps the member count out of the compact conversation identity', async function () {
