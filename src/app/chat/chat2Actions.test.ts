@@ -22,9 +22,11 @@ import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
 import {
   compareIosComposerFrames,
+  iosMentionHeaderGeometry,
   iosSpotlightCaptureGeometry,
   observeComposerCaptureReady,
   observeInfoCaptureReady,
+  observeMentionHeader,
   observeSpotlightCaptureReady,
   Scenarios
 } from './chat2.e2e'
@@ -1330,6 +1332,334 @@ describe('chat native adapter compatibility', function () {
       }
     }) as Chat2UI
   }
+  function picker(scale = 1): Array<Record<string, unknown>> {
+    const rect = (
+      x: number,
+      y: number,
+      width: number,
+      height: number
+    ): CaptureBox => ({
+      x: x * scale,
+      y: y * scale,
+      width: width * scale,
+      height: height * scale
+    })
+    return [
+      node(0, 'Other', { rect: rect(0, 0, 300, 600) }),
+      node(1, 'Other', {
+        identifier: 'chat-picker-scene',
+        parentIndex: 0,
+        rect: rect(0, 0, 300, 600)
+      }),
+      node(2, 'Other', {
+        identifier: 'chat-picker-transition',
+        parentIndex: 1,
+        rect: rect(0, 0, 300, 600)
+      }),
+      node(3, 'Other', {
+        identifier: 'chat-picker-header',
+        parentIndex: 2,
+        rect: rect(0, 0, 300, 60)
+      }),
+      node(4, 'Other', { parentIndex: 2, rect: rect(0, 0, 300, 60) }),
+      node(5, 'Button', {
+        label: 'Cancel',
+        parentIndex: 4,
+        rect: rect(210, 6, 80, 47.999)
+      }),
+      node(6, 'StaticText', {
+        label: 'Mention a member',
+        parentIndex: 4,
+        rect: rect(10, 20, 140, 23)
+      }),
+      node(7, 'Other', {
+        identifier: 'chat-picker-content',
+        parentIndex: 2,
+        rect: rect(0, 0, 300, 600)
+      }),
+      node(8, 'TextField', {
+        label: 'Search members',
+        parentIndex: 7,
+        rect: rect(10, 80, 280, 44)
+      }),
+      node(9, 'Other', {
+        label: 'Mention a member',
+        parentIndex: 4,
+        rect: rect(0, 0, 300, 60)
+      })
+    ]
+  }
+  function setPickerRaw(
+    actual: Chat2UI,
+    read: () => Promise<Uint8Array>
+  ): void {
+    Object.assign(actual.device, { hierarchyRaw: read })
+  }
+  for (const scale of [1, 2, 3])
+    it(
+      'reads one actual picker tree with a same-bounds header sibling in its original coordinate units: ' +
+        scale,
+      () => {
+        const result = iosMentionHeaderGeometry(raw(picker(scale)))
+        expect(result.scope).equals(
+          'same-bounds native header sibling under picker transition'
+        )
+        expect(result.geometry.cancel).deep.equals({
+          x: 210 * scale,
+          y: 6 * scale,
+          width: 80 * scale,
+          height: 47.999 * scale
+        })
+        expect(result.geometry.header).deep.equals({
+          x: 0,
+          y: 0,
+          width: 300 * scale,
+          height: 60 * scale
+        })
+      }
+    )
+  it('also accepts actual title and Cancel descendants of the header marker', () => {
+    const tree = picker()
+    tree[5].parentIndex = tree[6].parentIndex = 3
+    expect(iosMentionHeaderGeometry(raw(tree)).scope).equals(
+      'header descendants'
+    )
+  })
+  const invalidPickers: Array<
+    [string, (tree: Array<Record<string, unknown>>) => void]
+  > = [
+    ...[1, 2, 3, 5, 6, 7, 8].map(
+      index =>
+        [
+          'duplicate identity or typed control ' + index,
+          (tree: Array<Record<string, unknown>>) => {
+            tree.push({ ...tree[index], index: 20 })
+          }
+        ] as [string, (tree: Array<Record<string, unknown>>) => void]
+    ),
+    [
+      'outside scene transition',
+      tree => {
+        tree[2].parentIndex = 0
+      }
+    ],
+    [
+      'outside transition header',
+      tree => {
+        tree[3].parentIndex = 0
+      }
+    ],
+    [
+      'outside content Search',
+      tree => {
+        tree[8].parentIndex = 0
+      }
+    ],
+    [
+      'different same-scene carrier',
+      tree => {
+        tree.push({ ...tree[4], index: 20 })
+        tree[5].parentIndex = 20
+      }
+    ],
+    [
+      'carrier geometry differs',
+      tree => {
+        tree[4].rect = { x: 0, y: 0, width: 280, height: 60 }
+      }
+    ],
+    [
+      'title and Cancel overlap',
+      tree => {
+        tree[5].rect = { x: 100, y: 6, width: 80, height: 48 }
+      }
+    ],
+    [
+      'Cancel outside header',
+      tree => {
+        tree[5].rect = { x: 250, y: 6, width: 80, height: 48 }
+      }
+    ],
+    [
+      'small Cancel target',
+      tree => {
+        tree[5].rect = { x: 210, y: 6, width: 46, height: 46 }
+      }
+    ],
+    [
+      'Search above header',
+      tree => {
+        tree[8].rect = { x: 10, y: 10, width: 280, height: 44 }
+      }
+    ],
+    [
+      'disabled Cancel',
+      tree => {
+        tree[5].enabled = false
+      }
+    ],
+    [
+      'unknown Search state',
+      tree => {
+        delete tree[8].enabled
+      }
+    ],
+    [
+      'cyclic transition',
+      tree => {
+        tree[2].parentIndex = 2
+      }
+    ],
+    [
+      'missing ancestor',
+      tree => {
+        tree[5].parentIndex = 999
+      }
+    ],
+    [
+      'missing Search',
+      tree => {
+        tree.splice(8, 1)
+      }
+    ],
+    [
+      'nonfinite title geometry',
+      tree => {
+        tree[6].rect = { x: Infinity, y: 20, width: 140, height: 23 }
+      }
+    ],
+    [
+      'zero header geometry',
+      tree => {
+        tree[3].rect = { x: 0, y: 0, width: 0, height: 60 }
+      }
+    ],
+    [
+      'whole-scene title label',
+      tree => {
+        tree[6].rect = { x: 0, y: 0, width: 300, height: 600 }
+      }
+    ],
+    [
+      'footer header',
+      tree => {
+        for (const index of [3, 4, 5, 6]) {
+          const box = tree[index].rect as CaptureBox
+          tree[index].rect = { ...box, y: box.y + 400 }
+        }
+      }
+    ]
+  ]
+  for (const [name, change] of invalidPickers)
+    it('rejects unproved atomic native picker geometry: ' + name, () => {
+      const tree = picker()
+      change(tree)
+      expect(() => iosMentionHeaderGeometry(raw(tree))).throws()
+    })
+  it('takes fresh atomic picker snapshots until two positive geometries remain stable, retaining the real bytes', async () => {
+    const actual = ui([])
+    let reads = 0
+    const snapshots: Buffer[] = []
+    setPickerRaw(actual, async () => {
+      const tree = picker()
+      if (++reads === 1)
+        for (const index of [3, 4, 5, 6, 8]) {
+          const box = tree[index].rect as CaptureBox
+          tree[index].rect = { ...box, y: box.y + 5 }
+        }
+      const bytes = raw(tree)
+      snapshots.push(bytes)
+      return bytes
+    })
+    actual.present = async () => {
+      throw Error('No separate native metadata probes')
+    }
+    actual.observedBounds = async () => {
+      throw Error('No unscoped geometry fallback')
+    }
+    await observeMentionHeader(actual, 1500)
+    const step = actual.steps.find(
+      step => step.name === 'Settled mention chooser header geometry'
+    )!
+    expect(step.outcome).equals('passed')
+    const samples = step.samples as Array<{
+      rawHierarchy: { path: string }
+      bounds: ReturnType<typeof iosMentionHeaderGeometry>['geometry']
+    }>
+    expect(samples.length).at.least(3)
+    for (let i = 0; i < samples.length; i++)
+      expect(
+        readFileSync(samples[i].rawHierarchy.path).equals(snapshots[i])
+      ).equals(true)
+    expect(samples.at(-1)!.bounds.header.y).equals(0)
+  })
+  it('times out continuous picker motion instead of accepting its latest sample', async () => {
+    const actual = ui([])
+    let reads = 0
+    setPickerRaw(actual, async () => {
+      const tree = picker()
+      const offset = ++reads * 0.2
+      for (const index of [3, 4, 5, 6, 8]) {
+        const box = tree[index].rect as CaptureBox
+        tree[index].rect = { ...box, y: box.y + offset }
+      }
+      return raw(tree)
+    })
+    expect(
+      String(await captureFailure(observeMentionHeader(actual, 300)))
+    ).contains('Timed out')
+  })
+  it('propagates native transport failures without a snapshot or fallback success', async () => {
+    const actual = ui([])
+    const error = Error('Transport unavailable')
+    setPickerRaw(actual, async () => {
+      throw error
+    })
+    expect(await captureFailure(observeMentionHeader(actual, 500))).equals(
+      error
+    )
+    expect(actual.steps[0].outcome).equals('failed')
+  })
+  it('rejects the loss of a positive Cancel control in a later fresh snapshot', async () => {
+    const actual = ui([])
+    let reads = 0
+    setPickerRaw(actual, async () => {
+      const tree = picker()
+      if (++reads > 1) tree[5].enabled = false
+      return raw(tree)
+    })
+    await captureFailure(observeMentionHeader(actual, 500))
+    expect(actual.steps[0].outcome).equals('failed')
+  })
+  it('keeps the existing web and Android scoped measurement path', async () => {
+    for (const surface of ['web-wide', 'android']) {
+      const actual = ui([], surface)
+      const selectors: unknown[] = []
+      actual.present = async id => {
+        selectors.push(id)
+      }
+      const geometry = iosMentionHeaderGeometry(raw(picker())).geometry
+      actual.observedBounds = async args => {
+        selectors.push(args)
+        if (args.id === 'chat-picker-header') return geometry.header
+        if (args.text === '^Mention a member$') return geometry.title
+        if (args.text === '^Cancel$') return geometry.cancel
+        return geometry.search
+      }
+      setPickerRaw(actual, async () => {
+        throw Error('No iOS snapshot path')
+      })
+      await observeMentionHeader(actual, 1500)
+      expect(selectors.slice(0, 2)).deep.equals([
+        'chat-picker-scene',
+        'chat-picker-header'
+      ])
+      expect(selectors).deep.includes({
+        text: '^Cancel$',
+        childOf: { id: 'chat-picker-header' }
+      })
+    }
+  })
   function editable(
     mode = 'capped',
     initial = 'B',

@@ -35,6 +35,7 @@ import {
   Chat2UI,
   exactText,
   flattenPublicHierarchy,
+  iosPublicRead,
   type PublicNode,
   readIosComposerKeyboard,
   until
@@ -43,22 +44,165 @@ import type { MessageView } from './engine/apply'
 
 type Peer = Awaited<ReturnType<typeof fixturePeer>>
 type Json = Record<string, unknown>
+type MentionHeaderGeometry = Record<
+  'header' | 'title' | 'cancel' | 'search',
+  NonNullable<PublicNode['bounds']>
+>
+
+/** Native header content can be an AX sibling of its marker; prove the picker tree. */
+export function iosMentionHeaderGeometry(raw: Uint8Array): {
+  geometry: MentionHeaderGeometry
+  scope: string
+  rawNodeCount: number
+} {
+  const { nodes } = iosPublicRead(raw, { id: 'chat-picker-scene' })
+  type Node = (typeof nodes)[number]
+  type Box = NonNullable<PublicNode['bounds']>
+  const byIndex = new Map(nodes.map(node => [node.index, node]))
+  const parents = (node: Node): Node[] => {
+    const result: Node[] = []
+    const seen = new Set([node.index])
+    let index = node.parentIndex
+    while (index != null) {
+      assert(!seen.has(index), 'Acyclic actual picker ancestry required')
+      seen.add(index)
+      const parent = need(
+        byIndex.get(index),
+        'Complete picker ancestry required'
+      )
+      result.push(parent)
+      index = parent.parentIndex
+    }
+    return result
+  }
+  const unique = (matches: Node[], name: string): Node => {
+    assert(matches.length === 1, 'Unique actual picker ' + name + ' required')
+    return matches[0]
+  }
+  const named = (id: string): Node =>
+    unique(
+      nodes.filter(node => node.id === id),
+      id
+    )
+  const box = (node: Node): Box => {
+    const value = need(node.bounds, 'Actual picker bounds required')
+    assert(
+      [value.x, value.y, value.width, value.height].every(Number.isFinite) &&
+        value.width > 0 &&
+        value.height > 0,
+      'Positive finite picker bounds required'
+    )
+    return { ...value }
+  }
+  const inside = (child: Box, parent: Box): boolean =>
+    child.x >= parent.x - 1 &&
+    child.y >= parent.y - 1 &&
+    child.x + child.width <= parent.x + parent.width + 1 &&
+    child.y + child.height <= parent.y + parent.height + 1
+  const under = (node: Node, ancestor: Node): boolean =>
+    parents(node).some(parent => parent.index === ancestor.index)
+  const scene = named('chat-picker-scene')
+  const transition = named('chat-picker-transition')
+  const header = named('chat-picker-header')
+  const content = named('chat-picker-content')
+  parents(scene)
+  assert(
+    under(transition, scene) &&
+      under(header, transition) &&
+      under(content, transition),
+    'Header and content must belong to the actual picker transition and scene'
+  )
+  const exact = (label: string, type: string): Node =>
+    unique(
+      nodes.filter(node => node.label === label && node.type === type),
+      label
+    )
+  const title = exact('Mention a member', 'StaticText')
+  const cancel = exact('Cancel', 'Button')
+  const search = exact('Search members', 'TextField')
+  assert(
+    under(title, transition) &&
+      under(cancel, transition) &&
+      under(search, content),
+    'Actual title, Cancel and Search picker ancestry required'
+  )
+  assert(
+    cancel.enabled === true && search.enabled === true,
+    'Positive enabled picker Cancel and Search required'
+  )
+  const geometry = {
+    header: box(header),
+    title: box(title),
+    cancel: box(cancel),
+    search: box(search)
+  }
+  assert(
+    geometry.cancel.width >= 47 && geometry.cancel.height >= 47,
+    'Actual Cancel must retain its 48-unit target within one border-rounding unit'
+  )
+  assert(
+    geometry.title.x + geometry.title.width <= geometry.cancel.x,
+    'Actual picker title and Cancel must not overlap'
+  )
+  const same = (a: Box, b: Box): boolean =>
+    (['x', 'y', 'width', 'height'] as const).every(
+      key => Math.abs(a[key] - b[key]) <= 0.01
+    )
+  const direct = under(title, header) && under(cancel, header)
+  if (!direct) {
+    const cancelParents = new Set(parents(cancel).map(node => node.index))
+    const carrier = parents(title).filter(
+      node =>
+        cancelParents.has(node.index) &&
+        node.index !== header.index &&
+        node.type === 'Other' &&
+        node.parentIndex === header.parentIndex &&
+        same(box(node), geometry.header)
+    )
+    unique(carrier, 'same-bounds native header sibling')
+  }
+  assert(
+    inside(geometry.header, box(scene)) &&
+      inside(box(content), box(scene)) &&
+      inside(geometry.title, geometry.header) &&
+      inside(geometry.cancel, geometry.header) &&
+      inside(geometry.search, box(content)) &&
+      inside(geometry.search, box(scene)),
+    'Actual picker title, Cancel and Search must occupy their measured bands'
+  )
+  assert(
+    geometry.header.y + geometry.header.height <= geometry.search.y,
+    'Actual picker header must be above Search'
+  )
+  box(transition)
+  return {
+    geometry,
+    scope: direct
+      ? 'header descendants'
+      : 'same-bounds native header sibling under picker transition',
+    rawNodeCount: nodes.length
+  }
+}
 
 /** Compare one public selector coordinate space without assuming native raster scale. */
 export async function observeMentionHeader(
   ui: Chat2UI,
   timeout = 8000
 ): Promise<Json> {
-  type Box = NonNullable<PublicNode['bounds']>
-  type Geometry = Record<'header' | 'title' | 'cancel' | 'search', Box>
+  type Geometry = MentionHeaderGeometry
   const samples: Array<{
     startedAt: string
     completedAt?: string
     bounds: Partial<Geometry>
+    nativeScope?: string
+    rawHierarchy?: { path: string; sha256: string; nodes?: number }
   }> = []
-  const coordinateSpace = ui.native
-    ? 'Native public scoped element bounds; no raster conversion assumed'
-    : 'Public DOM CSS pixels'
+  const coordinateSpace =
+    ui.surface === 'ios'
+      ? 'One raw native public hierarchy coordinate space; no raster conversion assumed'
+      : ui.native
+        ? 'Native public scoped element bounds; no raster conversion assumed'
+        : 'Public DOM CSS pixels'
   const observation: Json = {
     name: 'Settled mention chooser header geometry',
     outcome: 'failed',
@@ -71,8 +215,10 @@ export async function observeMentionHeader(
   }
   ui.steps.push(observation)
   try {
-    await ui.present('chat-picker-scene')
-    await ui.present('chat-picker-header')
+    if (ui.surface !== 'ios') {
+      await ui.present('chat-picker-scene')
+      await ui.present('chat-picker-header')
+    }
     const deadline = Date.now() + timeout
     let reference: Geometry | undefined
     let stableSince = Date.now()
@@ -83,35 +229,56 @@ export async function observeMentionHeader(
       }
       samples.push(sample)
       if (samples.length > 24) samples.splice(1, 1)
-      sample.bounds.header = {
-        ...(await ui.observedBounds({
-          id: 'chat-picker-header',
-          childOf: { id: 'chat-picker-scene' }
-        }))
-      }
-      sample.bounds.title = {
-        ...(await ui.observedBounds(
-          {
-            text: exactText('Mention a member'),
-            childOf: { id: 'chat-picker-header' }
-          },
-          ui.surface === 'ios' ? 'StaticText' : undefined
-        ))
-      }
-      sample.bounds.cancel = {
-        ...(await ui.observedBounds(
-          {
-            text: exactText('Cancel'),
-            childOf: { id: 'chat-picker-header' }
-          },
-          ui.surface === 'ios' ? 'Button' : undefined
-        ))
-      }
-      sample.bounds.search = {
-        ...(await ui.observedBounds({
-          text: exactText('Search members'),
-          childOf: { id: 'chat-picker-content' }
-        }))
+      if (ui.surface === 'ios') {
+        assert(
+          Date.now() < deadline,
+          'Timed out waiting for stable chooser geometry'
+        )
+        const raw = await ui.iosRaw(
+          AbortSignal.timeout(Math.max(1, deadline - Date.now()))
+        )
+        const directory = mkdtempSync(join(ui.runDir, 'picker-geometry-'))
+        const path = join(directory, 'hierarchy.json')
+        writeFileSync(path, raw, { mode: 0o600, flag: 'wx' })
+        sample.rawHierarchy = {
+          path,
+          sha256: createHash('sha256').update(raw).digest('hex')
+        }
+        const actual = iosMentionHeaderGeometry(raw)
+        sample.rawHierarchy.nodes = actual.rawNodeCount
+        sample.bounds = actual.geometry
+        sample.nativeScope = actual.scope
+      } else {
+        sample.bounds.header = {
+          ...(await ui.observedBounds({
+            id: 'chat-picker-header',
+            childOf: { id: 'chat-picker-scene' }
+          }))
+        }
+        sample.bounds.title = {
+          ...(await ui.observedBounds(
+            {
+              text: exactText('Mention a member'),
+              childOf: { id: 'chat-picker-header' }
+            },
+            undefined
+          ))
+        }
+        sample.bounds.cancel = {
+          ...(await ui.observedBounds(
+            {
+              text: exactText('Cancel'),
+              childOf: { id: 'chat-picker-header' }
+            },
+            undefined
+          ))
+        }
+        sample.bounds.search = {
+          ...(await ui.observedBounds({
+            text: exactText('Search members'),
+            childOf: { id: 'chat-picker-content' }
+          }))
+        }
       }
       sample.completedAt = new Date().toISOString()
       const geometry = sample.bounds as Geometry
@@ -160,7 +327,7 @@ export async function observeMentionHeader(
             ...geometry,
             coordinateSpace,
             containmentTolerance: 1,
-            titleScope: 'chat-picker-header',
+            titleScope: sample.nativeScope ?? 'chat-picker-header',
             searchScope: 'chat-picker-content'
           }
         }
