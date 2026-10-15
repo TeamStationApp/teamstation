@@ -338,7 +338,7 @@ async function main(): Promise<void> {
       let code: unknown
       for (
         let attempt = 0;
-        attempt < 30 && typeof code !== 'string';
+        attempt < 60 && typeof code !== 'string';
         attempt++
       ) {
         const response = await fetch(
@@ -347,13 +347,14 @@ async function main(): Promise<void> {
         assert.equal(response.status, 200)
         code = (await response.json()).code
         if (typeof code !== 'string')
-          await new Promise(resolve => setTimeout(resolve, 200))
+          await new Promise(resolve => setTimeout(resolve, 1000))
       }
       assert.equal(
         typeof code,
         'string',
         'Ordinary sign-in must receive fixture mail'
       )
+      await m.assertVisible({ text: '^SIGN-IN CODE$', timeout: 15000 })
       await focusField('Sign-in code')
       await inputControlledText(code as string)
       await m.tapOn({
