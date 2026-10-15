@@ -134,6 +134,47 @@ async function main(): Promise<void> {
         is_player: true
       })
       .execute()
+    // Keep event attendance longer than a tablet viewport so two successive
+    // scrolls can prove the section pills stay fixed while rows move.
+    const attendanceNames = [
+      'Jackie Robinson',
+      'Willie Mays',
+      'Hank Aaron',
+      'Yogi Berra',
+      'Ted Williams',
+      'Stan Musial',
+      'Roberto Clemente',
+      'Nolan Ryan',
+      'Cal Ripken',
+      'Tony Gwynn',
+      'Pedro Martinez',
+      'Greg Maddux'
+    ]
+    for (const [index, name] of attendanceNames.entries()) {
+      const id = 110 + index
+      const [first, last] = name.split(' ')
+      await f.h.db
+        .insertInto('users')
+        .values({
+          id,
+          legacyId: `usr_settings3_attendance_${index}`,
+          display_name: name,
+          first_name: first,
+          last_name: last,
+          login_enabled: false,
+          is_admin: false
+        })
+        .execute()
+      await f.h.db
+        .insertInto('memberships')
+        .values({
+          id: `mem_settings3_attendance_${index}`,
+          team_id: f.teamA,
+          user_id: id,
+          is_player: true
+        })
+        .execute()
+    }
     if (mediaRoot != null) {
       const media = JSON.parse(
         await readFile(join(mediaRoot, 'media-manifest.json'), 'utf8')
