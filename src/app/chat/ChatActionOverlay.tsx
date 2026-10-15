@@ -148,6 +148,7 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
           >
             <AppHeader
               title={props.label}
+              navMinWidth={theme.rem(6) * Math.max(1, window.fontScale)}
               contentHeight={Math.max(
                 theme.rem(3),
                 theme.rem(2.25) * window.fontScale
@@ -157,6 +158,11 @@ function OverlayFrame(props: ChatActionOverlayProps): React.ReactElement {
                 <Button
                   label={lstrings.chat_cancel}
                   kind="text"
+                  small
+                  style={{
+                    minWidth: theme.rem(6) * Math.max(1, window.fontScale),
+                    flexShrink: 0
+                  }}
                   textColor={theme.dangerColor}
                   onPress={() => {
                     close.current()

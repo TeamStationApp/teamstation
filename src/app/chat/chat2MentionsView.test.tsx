@@ -2,9 +2,11 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { AccessibilityInfo, Animated } from 'react-native'
+import { AccessibilityInfo, Animated, Dimensions } from 'react-native'
 
 import { MAX_BODY } from '../../common/chatContent'
+import { AppHeader } from '../components/AppHeader'
+import { Button } from '../components/Button'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { ChatOverlayHost } from './ChatOverlayHost'
@@ -32,6 +34,7 @@ let host: HTMLElement | undefined
 let restoreViewport: (() => void) | undefined
 let restoreMotion: (() => void) | undefined
 let restoreAnimation: (() => void) | undefined
+let restoreDimensions: (() => void) | undefined
 afterEach(async function () {
   await act(async () => {
     root?.unmount()
@@ -45,6 +48,8 @@ afterEach(async function () {
   restoreMotion = undefined
   restoreAnimation?.()
   restoreAnimation = undefined
+  restoreDimensions?.()
+  restoreDimensions = undefined
 })
 const wait = async (): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, 30))
@@ -208,6 +213,48 @@ async function choose(id: number): Promise<void> {
 
 const token = { userId: 2, start: 0, end: 12, label: '@Aaron Judge' }
 describe('current-member mention picker', function () {
+  for (const fontScale of [1, 1.5])
+    it(`reserves the full Cancel label and target without shrinking at font scale ${fontScale}`, async function () {
+      const saved = Object.getOwnPropertyDescriptor(Dimensions, 'get')!
+      const get = Dimensions.get.bind(Dimensions)
+      Object.defineProperty(Dimensions, 'get', {
+        configurable: true,
+        value: (key: Parameters<typeof Dimensions.get>[0]) => ({
+          ...get(key),
+          fontScale
+        })
+      })
+      restoreDimensions = () => Object.defineProperty(Dimensions, 'get', saved)
+      await render(
+        <MentionPicker members={[]} onSelect={() => {}} onClose={() => {}} />
+      )
+      const cancel = button('Cancel')
+      const style = getComputedStyle(cancel)
+      expect(style.minWidth).equals(`${96 * fontScale}px`)
+      expect(style.minHeight).equals('48px')
+      expect(style.flexShrink).equals('0')
+      expect(getComputedStyle(cancel.parentElement!).minWidth).equals(
+        `${96 * fontScale}px`
+      )
+      const label = [...cancel.querySelectorAll<HTMLElement>('*')].find(
+        node => node.childElementCount === 0 && node.textContent === 'Cancel'
+      )!
+      expect(getComputedStyle(label).fontSize).equals('14px')
+      expect(getComputedStyle(label).color).equals('rgb(186, 26, 26)')
+    })
+
+  it('retains the shared header trailing-column default without a scene opt-in', async function () {
+    await render(
+      <AppHeader
+        title="A screen"
+        nav={<Button label="Cancel" kind="text" onPress={() => {}} />}
+      />
+    )
+    const cancel = button('Cancel')
+    expect(getComputedStyle(cancel.parentElement!).minWidth).equals('48px')
+    expect(getComputedStyle(cancel).minWidth).equals('0px')
+  })
+
   for (const width of [390, 1440])
     it(`anchors the glass title and Cancel above Search outside scroll flow (${width})`, async function () {
       restoreViewport = measureChatTestViewport({ width, height: 844 })
