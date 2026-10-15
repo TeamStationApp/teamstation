@@ -10,12 +10,14 @@ import {
 import { asPostEventsBody } from '../../common/gumboPlay'
 import { halfOutcomes } from '../../common/scoring/linescore'
 import { canScore, roleScopes } from '../access'
+import { requireNodeAdmin } from '../admin/nodeAdministration'
 import type { Database } from '../db/database'
 import {
   reconcileEventTags,
   tagChoices,
   writeEventTag
 } from '../events/eventTags'
+import { addPlayEvents, asPlayEventsBody } from '../events/playEventTimes'
 import {
   documentOf,
   playJson,
@@ -86,6 +88,11 @@ export interface EventRouteOptions {
  * committed, so the game's scoreboard can be brought up to date. It is fire
  * and forget: it never delays the answer, and whatever it throws is logged
  * and never fails the post.
+ *
+ * `PATCH /games/:gameId/events` is for a node administrator: it puts every
+ * event, with its time, on plays an outside scorer's import stored without
+ * them, a final game's included, and writes nothing else; statistics and tags
+ * follow the events the next time they are worked out (`addPlayEvents`).
  */
 export function eventRoutes(
   db: Kysely<Database>,
@@ -151,6 +158,33 @@ export function eventRoutes(
       })
     )
   }
+
+  router.patch(
+    '/games/:gameId/events',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const gameId = pathParam(req.params.gameId)
+      const body = cleanBody(asPlayEventsBody, req.body)
+      await requireNodeAdmin(
+        db,
+        actor,
+        'Only a node administrator can add events to stored plays'
+      )
+      const added = await addPlayEvents(db, gameId, body)
+      // The board's timeline steps at the new events from its next read, the
+      // game's updated_at having moved; a viewer watching it is told now, as
+      // after a post. The live board itself does not change: nothing it reads
+      // from a play's result does, and an imported game writes none.
+      try {
+        options.onGameWritten?.(gameId)
+      } catch (error) {
+        console.error(`onGameWritten ${gameId}`, error)
+      }
+      res.json(added)
+    })
+  )
 
   router.post(
     '/games/:gameId/events',

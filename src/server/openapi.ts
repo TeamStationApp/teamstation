@@ -3961,6 +3961,88 @@ export function openApiDocument(version: string): OpenApiDocument {
         }
       },
       '/games/{gameId}/events': {
+        patch: {
+          summary:
+            "Add every event, with its time, to a game's stored plays (a partial update: a play not named keeps its events)",
+          description:
+            "For a node administrator. Puts each named play's `playEvents` " +
+            '(each pitch, ball in play, base-running and line-up event, each ' +
+            "with its `startTime`) on the play an outside scorer's import " +
+            "stored at that `atBatIndex`, a final game's included. Nothing " +
+            'else is written: the plays, their times, scores, people, runners ' +
+            "and credits and the game's status stay as stored, and a play not " +
+            'named keeps its events. No statistics rebuild is asked for: the ' +
+            'stored statistics stand until the next one, which then counts ' +
+            'pitches, called third strikes, wild pitches and balks from the ' +
+            'events; event tags follow the events the next time the plays are ' +
+            "read. Each event's " +
+            '`description` is not stored. The whole body is refused for a game ' +
+            'TeamStation scores (409), and for a play the game does not have, ' +
+            'a play named twice, or an event that is not a GUMBO play event or ' +
+            'has no `startTime` (400).',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'gameId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['plays'],
+                  properties: {
+                    plays: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: ['atBatIndex', 'playEvents'],
+                        properties: {
+                          atBatIndex: { type: 'integer' },
+                          playEvents: {
+                            type: 'array',
+                            items: { type: 'object' }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description: 'How many plays and events were written',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['plays', 'events'],
+                    properties: {
+                      plays: { type: 'integer' },
+                      events: { type: 'integer' }
+                    }
+                  }
+                }
+              }
+            },
+            '400': {
+              description:
+                'A play the game lacks, or an event that is not timed or not GUMBO'
+            },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Node administrator required' },
+            '404': { description: 'Game not found' },
+            '409': { description: 'The game is scored in TeamStation' }
+          }
+        },
         post: {
           summary: "Replace a game's plays",
           description:
