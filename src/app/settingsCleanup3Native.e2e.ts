@@ -357,7 +357,7 @@ async function main(): Promise<void> {
       await focusField('Sign-in code')
       await inputControlledText(code as string)
       await m.tapOn({
-        text: '^Sign in$',
+        ...(platform === 'ios' ? { text: '^Sign in$' } : {}),
         id: 'settings-pill-button',
         timeout: 15000
       })
