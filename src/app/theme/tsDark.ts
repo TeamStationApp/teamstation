@@ -35,7 +35,7 @@ const palette = {
   blackOp35: 'rgba(0, 0, 0, .35)',
   blackOp70: 'rgba(0, 0, 0, .7)',
 
-  helveticaNeue: fonts.helveticaNeue,
+  inter: fonts.inter,
   quicksandRegular: fonts.quicksand,
   quicksandSemiBold: fonts.quicksand,
   quicksandBold: fonts.quicksand
@@ -70,7 +70,7 @@ export const tsDark: Theme = {
   secondaryTextColor: palette.tsVeryDarkGreen,
   tertiaryTextColor: palette.tsDarkOlive,
   placeholderTextColor: palette.tsMediumOlive,
-  secondaryTextFont: palette.helveticaNeue,
+  secondaryTextFont: palette.inter,
   regularTextFont: palette.quicksandRegular,
   boldTextFont: palette.quicksandBold,
   semiBoldTextFont: palette.quicksandSemiBold,

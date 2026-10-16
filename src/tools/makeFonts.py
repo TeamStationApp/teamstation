@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Builds the two fonts the native apps carry, into app/assets/fonts.
+"""Builds the fonts the apps carry, into app/assets/fonts.
 
     python3 -m venv /tmp/tsFonts && /tmp/tsFonts/bin/pip install fonttools
-    /tmp/tsFonts/bin/python tools/makeFonts.py
+    /tmp/tsFonts/bin/python tools/makeFonts.py [spacegrotesk inter quicksand materialsymbols]
 
 Both sources are variable fonts, and neither can be shipped as it stands.
 
@@ -11,6 +11,10 @@ for, so a phone handed the variable file would draw the whole app too thin.
 It is pinned to the four static weights the theme names — 400, 500, 600, 700 —
 each written into the one family `Space Grotesk`, so `fontFamily` plus
 `fontWeight` picks a face that was actually drawn rather than a synthetic one.
+Inter, the scoreboard's lettering (Helvetica Neue cannot be shipped), and
+Quicksand, its labels, are made the same way; Inter's optical size is pinned
+to its text size, 14. The web serves these very files, so the board is drawn
+in the same faces everywhere and never in a system font.
 
 Material Symbols is 10.6 MB of every icon Google has ever published. It is
 pinned to exactly the instance `app/web/index.html` asks the CDN for, then
@@ -25,6 +29,7 @@ loudly instead of shipping an icon that renders as its own name in words.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 import urllib.request
@@ -37,7 +42,7 @@ from fontTools.varLib import instancer
 HERE = Path(__file__).resolve().parent
 OUT = HERE.parent / "app" / "assets" / "fonts"
 ICON_SOURCE = HERE.parent / "app" / "components" / "Icon.tsx"
-CACHE = Path("/tmp/tsFontSources")
+CACHE = Path(os.environ.get("TS_FONT_CACHE", "/tmp/tsFontSources"))
 
 SPACE_GROTESK = (
     "https://github.com/google/fonts/raw/main/ofl/spacegrotesk/"
@@ -46,6 +51,11 @@ SPACE_GROTESK = (
 MATERIAL_SYMBOLS = (
     "https://github.com/google/material-design-icons/raw/master/variablefont/"
     "MaterialSymbolsOutlined%5BFILL%2CGRAD%2Copsz%2Cwght%5D.ttf"
+)
+
+INTER = "https://github.com/google/fonts/raw/main/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf"
+QUICKSAND = (
+    "https://github.com/google/fonts/raw/main/ofl/quicksand/Quicksand%5Bwght%5D.ttf"
 )
 
 WEIGHTS = [(400, "Regular"), (500, "Medium"), (600, "SemiBold"), (700, "Bold")]
@@ -87,33 +97,70 @@ def set_names(font: TTFont, **records: str) -> None:
             table.setName(value, ids[key], *platform)
 
 
-def build_space_grotesk() -> None:
-    source = download(SPACE_GROTESK, "SpaceGroteskVF.ttf")
+# Latin, Latin-1 and Latin Extended-A and B (names with accents), and the
+# punctuation, currency and arrows a board or a screen uses.
+LATIN = [*range(0x20, 0x250), 0x2BB, 0x2BC, 0x2C6, 0x2DA, 0x2DC,
+         *range(0x2000, 0x2070), 0x20AC, 0x2122, 0x2191, 0x2193, 0x2212,
+         0x2215, 0xFEFF, 0xFFFD]
+
+
+def build_family(
+    family: str,
+    prefix: str,
+    url: str,
+    pins: dict[str, float] | None = None,
+    latin_only: bool = False,
+) -> None:
+    """A variable font pinned to the four static weights, one family name."""
+    source = download(url, f"{prefix}VF.ttf")
     for weight, style in WEIGHTS:
         font = TTFont(source)
         instancer.instantiateVariableFont(
-            font, {"wght": weight}, updateFontNames=False, inplace=True
+            font, {**(pins or {}), "wght": weight}, updateFontNames=False, inplace=True
         )
         bold = style == "Bold"
         set_names(
             font,
-            family="Space Grotesk",
+            family=family,
             # The Mac-compatible subfamily may only be one of four words, so
             # the real style lives in the typographic names beside it.
             subfamily="Bold" if bold else "Regular",
-            unique=f"SpaceGrotesk-{style}:teamstation",
-            full="Space Grotesk" if style == "Regular" else f"Space Grotesk {style}",
-            postscript=f"SpaceGrotesk-{style}",
-            typographic_family="Space Grotesk",
+            unique=f"{prefix}-{style}:teamstation",
+            full=family if style == "Regular" else f"{family} {style}",
+            postscript=f"{prefix}-{style}",
+            typographic_family=family,
             typographic_subfamily=style,
         )
         font["OS/2"].usWeightClass = weight
         font["head"].macStyle = 1 if bold else 0
         selection = font["OS/2"].fsSelection & ~0x61
         font["OS/2"].fsSelection = selection | (0x20 if bold else 0x40)
-        out = OUT / f"SpaceGrotesk-{style}.ttf"
+        if latin_only:
+            options = subset.Options()
+            # Tabular figures too: a score or a count that changes keeps its
+            # width (`fontVariant: ['tabular-nums']`).
+            options.layout_features = ["kern", "liga", "calt", "tnum", "case"]
+            options.name_IDs = ["*"]
+            options.name_legacy = True
+            options.notdef_outline = True
+            subsetter = subset.Subsetter(options=options)
+            subsetter.populate(unicodes=LATIN)
+            subsetter.subset(font)
+        out = OUT / f"{prefix}-{style}.ttf"
         font.save(out)
         print(f"{out.name}  {out.stat().st_size:>8,} bytes  wght {weight}")
+
+
+def build_space_grotesk() -> None:
+    build_family("Space Grotesk", "SpaceGrotesk", SPACE_GROTESK)
+
+
+def build_inter() -> None:
+    build_family("Inter", "Inter", INTER, {"opsz": 14}, latin_only=True)
+
+
+def build_quicksand() -> None:
+    build_family("Quicksand", "Quicksand", QUICKSAND)
 
 
 def build_material_symbols() -> None:
@@ -223,9 +270,22 @@ def write_codepoints(names: list[str], codepoints: dict[str, int]) -> None:
     path.write_text("\n".join(lines))
 
 
+BUILDS = {
+    "spacegrotesk": build_space_grotesk,
+    "inter": build_inter,
+    "quicksand": build_quicksand,
+    "materialsymbols": build_material_symbols,
+}
+
+
 if __name__ == "__main__":
+    # Every font, or only those named: `makeFonts.py inter quicksand`.
+    wanted = sys.argv[1:] or list(BUILDS)
+    unknown = [name for name in wanted if name not in BUILDS]
+    if unknown:
+        raise SystemExit(f"No font {unknown}; one of {list(BUILDS)}")
     OUT.mkdir(parents=True, exist_ok=True)
-    build_space_grotesk()
-    build_material_symbols()
+    for name in wanted:
+        BUILDS[name]()
     print("Rebuild the apps: iOS embeds these by reference, Android copies them.")
     sys.exit(0)

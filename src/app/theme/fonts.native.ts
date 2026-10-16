@@ -1,5 +1,3 @@
-import { Platform } from 'react-native'
-
 /**
  * The names a `fontFamily` may be given, on a phone.
  *
@@ -8,19 +6,14 @@ import { Platform } from 'react-native'
  * system font instead, which is a whole app set in the wrong type with no error
  * anywhere to say so.
  *
- * `Space Grotesk` and `Material Symbols Outlined` are carried in the app;
- * `app/assets/fonts/README.md` says how. The two families `tsDark` names are
- * not, so they resolve to the system font rather than to nothing.
+ * Every family is carried in the app (`app/assets/fonts/README.md` says
+ * how), and none is ever the system's: a system font draws at another size
+ * on every platform, which the scoreboard especially cannot have. Inter
+ * stands in for Helvetica Neue, which cannot be shipped.
  */
 export const fonts = {
   spaceGrotesk: 'Space Grotesk',
-  quicksand: Platform.select({
-    ios: 'System',
-    default: 'sans-serif'
-  }),
-  helveticaNeue: Platform.select({
-    ios: 'Helvetica Neue',
-    default: 'sans-serif'
-  }),
+  quicksand: 'Quicksand',
+  inter: 'Inter',
   materialSymbols: 'Material Symbols Outlined'
 }

@@ -36,6 +36,8 @@ import { webSettings } from './web-build-settings.mjs'
 const appSuites = [
   // The scoring screen keeps the server's clock while it is open.
   'src/app/scoring/scoringSession.test.tsx',
+  // The override dashboard letters its board in the carried Inter.
+  'src/app/scoreboard/dashboardTheme.test.tsx',
   // The node settings a node administrator edits, on the wheel the time
   // picker shares.
   'src/app/screens/NodeSettingsCard.test.tsx',

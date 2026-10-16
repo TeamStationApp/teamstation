@@ -8,6 +8,7 @@ import {
   SCOREBOARD_BOARD_SIZE,
   type ScoreboardState
 } from '../../common/scoreboard'
+import { fonts } from '../theme/fonts'
 import { ScoreboardBoard, styles } from './ScoreboardBoard'
 import v1Styles from './v1ScoreboardStyles.json'
 
@@ -130,12 +131,17 @@ describe('ScoreboardBoard', function () {
   it("uses 1.0's styles, style for style", function () {
     // Recorded from 1.0's own `getStyles(tsDark)` (`src/client/Scoreboard.tsx` at 25f9496e
     // at v1.0.0) in a 1920 × 1080 window. Only the "waiting for game data"
-    // card's styles are gone, with the card.
+    // card's styles are gone, with the card, and 1.0's Helvetica Neue is the
+    // bundled Inter (Paul, 2026-10-16: never a system font), named as this
+    // platform names it: on the web with its fallback for a missing file.
     const { noGameContainer, noGameText, noGameSubtext, ...drawn } = v1Styles
     expect([noGameContainer, noGameText, noGameSubtext]).to.not.include(
       undefined
     )
-    expect(JSON.parse(JSON.stringify(styles))).deep.equals(drawn)
+    const named = JSON.parse(
+      JSON.stringify(drawn).replaceAll('"Inter"', JSON.stringify(fonts.inter))
+    ) as typeof drawn
+    expect(JSON.parse(JSON.stringify(styles))).deep.equals(named)
   })
 
   it('paints nothing but keeps the box with no state', async function () {

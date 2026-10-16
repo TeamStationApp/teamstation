@@ -21,17 +21,102 @@
     <link rel="icon" href="/favicon.svg?v=rounded" type="image/svg+xml" sizes="any" />
 
     <!--
-      Space Grotesk, the one family the app uses. The theme's font stack falls
-      back to the system sans, so a blocked or slow font request costs the
-      lettering and nothing else — the layout is unchanged because the metrics
-      are close enough not to reflow.
+      The text fonts, the very files the phones carry (`assets/fonts`, copied
+      by `build.mjs`): Space Grotesk, the app's type, and Inter and Quicksand,
+      the scoreboard's. `block`, so the text waits for them rather than being
+      drawn in a system font first; a system font draws at another size, and
+      the board especially cannot have that.
     -->
+    <link rel="preload" href="/fonts/Inter-Bold.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="/fonts/SpaceGrotesk-Regular.ttf" as="font" type="font/ttf" crossorigin />
+    <style>
+      @font-face {
+        font-family: 'Space Grotesk';
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+        src: url('/fonts/SpaceGrotesk-Regular.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Space Grotesk';
+        font-weight: 500;
+        font-style: normal;
+        font-display: block;
+        src: url('/fonts/SpaceGrotesk-Medium.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Space Grotesk';
+        font-weight: 600;
+        font-style: normal;
+        font-display: block;
+        src: url('/fonts/SpaceGrotesk-SemiBold.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Space Grotesk';
+        font-weight: 700;
+        font-style: normal;
+        font-display: block;
+        src: url('/fonts/SpaceGrotesk-Bold.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Inter';
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+        src: url('/fonts/Inter-Regular.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Inter';
+        font-weight: 500;
+        font-style: normal;
+        font-display: block;
+        src: url('/fonts/Inter-Medium.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Inter';
+        font-weight: 600;
+        font-style: normal;
+        font-display: block;
+        src: url('/fonts/Inter-SemiBold.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Inter';
+        font-weight: 700;
+        font-style: normal;
+        font-display: block;
+        src: url('/fonts/Inter-Bold.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Quicksand';
+        font-weight: 400;
+        font-style: normal;
+        font-display: block;
+        src: url('/fonts/Quicksand-Regular.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Quicksand';
+        font-weight: 500;
+        font-style: normal;
+        font-display: block;
+        src: url('/fonts/Quicksand-Medium.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Quicksand';
+        font-weight: 600;
+        font-style: normal;
+        font-display: block;
+        src: url('/fonts/Quicksand-SemiBold.ttf') format('truetype');
+      }
+      @font-face {
+        font-family: 'Quicksand';
+        font-weight: 700;
+        font-style: normal;
+        font-display: block;
+        src: url('/fonts/Quicksand-Bold.ttf') format('truetype');
+      }
+    </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap"
-    />
 
     <!--
       Material Symbols, which the designs are drawn with. Icons were stood in

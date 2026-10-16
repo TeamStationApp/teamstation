@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import { build, context } from 'esbuild'
 import { copyFile, mkdir, readFile, rm, writeFile } from 'fs/promises'
 import path from 'path'
@@ -167,6 +168,33 @@ await writeFile(
 )
 await copyFile('src/app/web/favicon.ico', 'dist/favicon.ico')
 await copyFile('src/app/web/favicon.png', 'dist/favicon.png')
+// The text fonts the phones carry, so the web draws the very same faces
+// (`index.html` declares them); never a system font. In production each is
+// renamed `<Family>-<Style>-<hash>.ttf`, its content's hash as the bundle's
+// is, so the server can let a browser keep it for ever: the page waits for
+// these faces (`font-display: block`), and a revalidation on every load would
+// leave its text blank for a round trip on a weak connection. Only
+// `index.html` is rewritten to the new names (`withFonts`); a new page naming
+// a font must go through it too, or it names a file production does not have.
+await rm('dist/fonts', { recursive: true, force: true })
+await mkdir('dist/fonts', { recursive: true })
+/** Each font's path in `index.html`, and the path it is served at. */
+const fontPaths = []
+for (const family of ['SpaceGrotesk', 'Inter', 'Quicksand'])
+  for (const style of ['Regular', 'Medium', 'SemiBold', 'Bold']) {
+    const source = `src/app/assets/fonts/${family}-${style}.ttf`
+    const name = serve
+      ? `${family}-${style}.ttf`
+      : `${family}-${style}-${createHash('sha256')
+          .update(await readFile(source))
+          .digest('hex')
+          .slice(0, 12)}.ttf`
+    await copyFile(source, `dist/fonts/${name}`)
+    fontPaths.push([`/fonts/${family}-${style}.ttf`, `/fonts/${name}`])
+  }
+/** The page with each font named as it is served. */
+const withFonts = page =>
+  fontPaths.reduce((text, [from, to]) => text.replaceAll(from, to), page)
 
 if (serve) {
   await writeFile('dist/index.html', template)
@@ -202,7 +230,7 @@ if (serve) {
   // only thing that has to be fetched to learn the current bundle's name.
   await writeFile(
     'dist/index.html',
-    template.replace('src="/app.js"', `src="/${file}"`)
+    withFonts(template.replace('src="/app.js"', `src="/${file}"`))
   )
   console.log(`built dist/${file}`)
 }

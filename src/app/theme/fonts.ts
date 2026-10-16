@@ -11,10 +11,14 @@
  * for a `fontWeight`, which is how both platforms want to be told.
  */
 export const fonts = {
-  spaceGrotesk:
-    '"Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  quicksand: 'Quicksand, -apple-system, BlinkMacSystemFont, sans-serif',
-  helveticaNeue: 'Helvetica Neue, Arial, sans-serif',
+  // The app's own files, which `index.html` declares and the browser waits
+  // for: never a system font, which would draw at another size (the board
+  // especially). Inter stands in for Helvetica Neue, which cannot be shipped.
+  // `sans-serif` is only for a file that failed to arrive, so the app is
+  // not drawn in the browser's default serif.
+  spaceGrotesk: '"Space Grotesk", sans-serif',
+  quicksand: 'Quicksand, sans-serif',
+  inter: 'Inter, sans-serif',
   /** Material Symbols is a ligature font; `Icon` sets the name as text. */
   materialSymbols: 'Material Symbols Outlined'
 }
