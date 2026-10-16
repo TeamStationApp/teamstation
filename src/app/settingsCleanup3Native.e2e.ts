@@ -535,7 +535,25 @@ async function main(): Promise<void> {
           } else if (step.command === 'scrollUntilVisible')
             await scrollToVisible(params)
           else if (step.command === 'stopRecording') await stopRecording()
-          else await m.command(step.command, params)
+          else if (
+            platform === 'android' &&
+            step.command === 'tapOn' &&
+            typeof params.point === 'string' &&
+            params.text == null &&
+            params.id == null
+          ) {
+            // The Android driver's percentage dimensions are cached before
+            // rotation. Resolve screen taps against the current native window.
+            const point = /^\s*([\d.]+)%\s*,\s*([\d.]+)%\s*$/.exec(params.point)
+            assert(point != null, 'Screen tap requires percentage coordinates')
+            const [x, y] = point.slice(1).map(Number)
+            assert(x >= 0 && x < 100 && y >= 0 && y < 100)
+            const viewport = viewportOf((await m.hierarchy()) as NativeNode)
+            await m.command('tapOnPoint', {
+              x: Math.round(viewport.x + (viewport.width * x) / 100),
+              y: Math.round(viewport.y + (viewport.height * y) / 100)
+            })
+          } else await m.command(step.command, params)
           if (step.command.startsWith('assert')) assertions++
         } else if ('input' in step) {
           await focusField(step.input)
