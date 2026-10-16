@@ -1,48 +1,92 @@
 import React from 'react'
-import { Text, View } from 'react-native'
+import { View } from 'react-native'
 
+import { localityLabel } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
-import { Badge, DangerText, Emblem, initialsOf } from '../components'
-import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
+import { Button, DangerText, Emblem, initialsOf } from '../components'
+import { ActionRow } from '../components/ActionRow'
+import { TeamEmblem } from '../components/TeamEmblem'
 
 export function GroupRelationshipRow({
   group,
   label,
   disabled,
-  onLeave
+  onLeave,
+  onOpen,
+  action = 'Leave',
+  detail,
+  links
 }: {
-  group: PublicGroup
-  label: string
+  group: Pick<PublicGroup, 'id' | 'kind' | 'name' | 'imageUrl'>
+  label?: string
+  action?: string
+  detail?: string
+  links?: Array<{ label: string; onPress: () => void }>
   disabled?: boolean
-  onLeave: () => void
+  onLeave?: () => void
+  onOpen?: () => void
 }): React.ReactElement {
-  const styles = getStyles(useTheme())
   return (
-    <View style={styles.row}>
-      <Emblem uri={group.imageUrl} fallback={initialsOf(group.name)} />
-      <View style={styles.words}>
-        <Text style={styles.name}>{group.name}</Text>
-        <Badge label={group.kind === 'league' ? 'League' : 'Season'} />
-      </View>
-      <DangerText
-        label="Leave"
-        accessibilityLabel={label}
-        disabled={disabled}
-        onPress={onLeave}
-      />
-    </View>
+    <ActionRow
+      title={group.name}
+      detail={
+        detail ??
+        (group.kind === 'league'
+          ? 'League'
+          : group.kind === 'season'
+            ? 'Season'
+            : undefined)
+      }
+      leading={
+        group.kind === 'team' ? (
+          <TeamEmblem name={group.name} uri={group.imageUrl} />
+        ) : (
+          <Emblem uri={group.imageUrl} fallback={initialsOf(group.name)} />
+        )
+      }
+      onOpen={onOpen}
+      extra={
+        links == null || links.length === 0 ? undefined : (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {links.map(link => (
+              <Button
+                key={link.label}
+                label={link.label}
+                accessibilityLabel={`Open ${link.label}`}
+                kind="text"
+                small
+                onPress={() => {
+                  link.onPress()
+                }}
+              />
+            ))}
+          </View>
+        )
+      }
+      end={
+        onLeave == null ? undefined : (
+          <DangerText
+            label={action}
+            accessibilityLabel={label}
+            disabled={disabled}
+            onPress={onLeave}
+            style={{ minWidth: 48, alignItems: 'center' }}
+          />
+        )
+      }
+    />
   )
 }
-const getStyles = cacheStyles((theme: Theme) => ({
-  row: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: theme.rem(0.75)
-  },
-  words: { flex: 1, gap: theme.rem(0.25) },
-  name: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1.0625),
-    color: theme.primaryTextColor
-  }
-}))
+export function relationshipDetails(group: PublicGroup): string | undefined {
+  const parts = [
+    group.external ? 'Placeholder team' : null,
+    group.kind === 'season' && group.startsOn != null && group.endsOn != null
+      ? seasonPeriodLabel(group.startsOn, group.endsOn)
+      : null,
+    ...group.parentNames,
+    group.locality == null ? null : localityLabel(group.locality)
+  ]
+  const details = parts.filter(Boolean).join(' · ')
+  return details === '' ? undefined : details
+}

@@ -31,7 +31,7 @@ import {
   useHeaderHandoff,
   useHeaderSlot
 } from '../components'
-import { ChildCard } from '../components/ChildCard'
+import { ActionList } from '../components/ActionRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { FollowButton } from '../components/FollowButton'
 import { SegmentedPill } from '../components/SegmentedPill'
@@ -42,6 +42,7 @@ import { gameCountLabel, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { clock, matchupLines, shortDate, shortTime } from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
+import { GroupRelationshipRow } from './GroupRelationshipRow'
 import { LevelPeopleTab } from './LevelPeopleTab'
 import { SeasonStandings } from './SeasonStandings'
 import { battingColumns, pitchingColumns } from './statColumns'
@@ -356,9 +357,13 @@ export function SeasonPresentation(
           })
         }
   const [choosing, setChoosing] = useState<'add' | 'create'>()
-  const breaker = useBreakParent(client, () => {
-    management?.onChanged()
-  })
+  const breaker = useBreakParent(
+    client,
+    () => {
+      management?.onChanged()
+    },
+    { danger: true, cancelLabel: 'Cancel' }
+  )
   const seasonRef: GroupRef = { kind: 'season', id: season.id }
   const childTeamIds = new Set(
     (publicDetail?.children ?? [])
@@ -371,43 +376,47 @@ export function SeasonPresentation(
       ...(publicDetail?.children ?? [])
     ].map(team => [team.id, team.locality])
   )
-  const teamCards = (list: TeamSummary[]): React.ReactNode =>
-    list.map(team => {
-      const locality = localities.get(team.id)
-      const record =
-        team.record == null
-          ? (team.shortName ?? undefined)
-          : `${team.record.w}–${team.record.l}${team.record.t > 0 ? `–${team.record.t}` : ''}`
-      return (
-        <ChildCard
-          key={team.id}
-          kind="team"
-          title={team.name}
-          imageUrl={team.logoUrl}
-          subtitle={
-            team.kind === 'external'
-              ? ['Placeholder team', record].filter(Boolean).join(' · ')
-              : record
-          }
-          footer={locality == null ? undefined : localityLabel(locality)}
-          onPress={() => {
-            onOpenTeam(team)
-          }}
-          actions={
-            management != null && childTeamIds.has(team.id)
-              ? [
-                  {
-                    label: 'Break parent relationship',
-                    onPress: () => {
-                      breaker.review({ kind: 'team', id: team.id }, seasonRef)
-                    }
+  const teamCards = (list: TeamSummary[]): React.ReactNode => (
+    <ActionList>
+      {list.map(team => {
+        const locality = localities.get(team.id)
+        const record =
+          team.record == null
+            ? (team.shortName ?? undefined)
+            : `${team.record.w}–${team.record.l}${team.record.t > 0 ? `–${team.record.t}` : ''}`
+        return (
+          <GroupRelationshipRow
+            key={team.id}
+            group={{
+              id: team.id,
+              kind: 'team',
+              name: team.name,
+              imageUrl: team.logoUrl
+            }}
+            detail={[
+              team.kind === 'external' ? 'Placeholder team' : undefined,
+              record,
+              locality == null ? undefined : localityLabel(locality)
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+            onOpen={() => {
+              onOpenTeam(team)
+            }}
+            label={`Leave ${team.name} from ${season.name}`}
+            disabled={breaker.busy}
+            onLeave={
+              management == null || !childTeamIds.has(team.id)
+                ? undefined
+                : () => {
+                    breaker.review({ kind: 'team', id: team.id }, seasonRef)
                   }
-                ]
-              : undefined
-          }
-        />
-      )
-    })
+            }
+          />
+        )
+      })}
+    </ActionList>
+  )
   const teamActions =
     management == null
       ? undefined

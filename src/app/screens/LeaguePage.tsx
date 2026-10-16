@@ -18,10 +18,11 @@ import {
   useHeaderHandoff,
   useHeaderSlot
 } from '../components'
-import { ChildCard } from '../components/ChildCard'
+import { ActionList } from '../components/ActionRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { StickySectionLayout } from '../components/StickySectionLayout'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { GroupRelationshipRow } from './GroupRelationshipRow'
 import type { GroupLinkChoice } from './GroupScreen'
 import { LevelPeopleTab } from './LevelPeopleTab'
 import { useBreakParent } from './useBreakParent'
@@ -87,7 +88,10 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
     onTab?.(next)
   }
   const [creatingTeam, setCreatingTeam] = useState(false)
-  const breaker = useBreakParent(client, props.onChanged)
+  const breaker = useBreakParent(client, props.onChanged, {
+    danger: true,
+    cancelLabel: 'Cancel'
+  })
 
   const { headerHeight } = useHeaderSlot()
   const handoff = useHandoff(headerHeight)
@@ -214,32 +218,30 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
               <Text style={styles.muted}>No seasons in this league yet.</Text>
             </Card>
           )}
-          {seasons.map(season => (
-            <ChildCard
-              key={season.id}
-              title={season.name}
-              imageUrl={season.imageUrl}
-              subtitle={seasonPeriodLabel(season.startsOn, season.endsOn)}
-              onPress={() => {
-                onOpen({ kind: 'season', id: season.id })
-              }}
-              actions={
-                detail.canManage
-                  ? [
-                      {
-                        label: 'Break parent relationship',
-                        onPress: () => {
-                          breaker.review(
-                            { kind: 'season', id: season.id },
-                            league
-                          )
-                        }
+          <ActionList>
+            {seasons.map(season => (
+              <GroupRelationshipRow
+                key={season.id}
+                group={season}
+                detail={seasonPeriodLabel(season.startsOn, season.endsOn)}
+                onOpen={() => {
+                  onOpen({ kind: 'season', id: season.id })
+                }}
+                label={`Leave ${season.name} from ${group.name}`}
+                disabled={breaker.busy}
+                onLeave={
+                  !detail.canManage
+                    ? undefined
+                    : () => {
+                        breaker.review(
+                          { kind: 'season', id: season.id },
+                          league
+                        )
                       }
-                    ]
-                  : undefined
-              }
-            />
-          ))}
+                }
+              />
+            ))}
+          </ActionList>
         </View>
       )}
       {tab === 'teams' && (
@@ -280,44 +282,45 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
               <Text style={styles.muted}>No teams in this league yet.</Text>
             </Card>
           )}
-          {teams.map(team => (
-            <ChildCard
-              key={team.id}
-              kind="team"
-              title={team.name}
-              imageUrl={team.imageUrl}
-              subtitle={team.external ? 'Placeholder team' : undefined}
-              pills={(
-                detail.teamSeasons.find(row => row.teamId === team.id)
-                  ?.seasonIds ?? []
-              )
-                .filter(id => seasonNames.has(id))
-                .map(id => ({
-                  label: seasonNames.get(id)!,
-                  onPress: () => {
-                    onOpen({ kind: 'season', id })
-                  }
-                }))}
-              footer={
-                team.locality == null ? undefined : localityLabel(team.locality)
-              }
-              onPress={() => {
-                onOpen({ kind: 'team', id: team.id })
-              }}
-              actions={
-                detail.canManage && childTeamIds.has(team.id)
-                  ? [
-                      {
-                        label: 'Break parent relationship',
-                        onPress: () => {
-                          breaker.review({ kind: 'team', id: team.id }, league)
-                        }
+          <ActionList>
+            {teams.map(team => (
+              <GroupRelationshipRow
+                key={team.id}
+                group={team}
+                detail={[
+                  team.external ? 'Placeholder team' : undefined,
+                  team.locality == null
+                    ? undefined
+                    : localityLabel(team.locality)
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+                onOpen={() => {
+                  onOpen({ kind: 'team', id: team.id })
+                }}
+                links={(
+                  detail.teamSeasons.find(row => row.teamId === team.id)
+                    ?.seasonIds ?? []
+                )
+                  .filter(id => seasonNames.has(id))
+                  .map(id => ({
+                    label: seasonNames.get(id)!,
+                    onPress: () => {
+                      onOpen({ kind: 'season', id })
+                    }
+                  }))}
+                label={`Leave ${team.name} from ${group.name}`}
+                disabled={breaker.busy}
+                onLeave={
+                  !detail.canManage || !childTeamIds.has(team.id)
+                    ? undefined
+                    : () => {
+                        breaker.review({ kind: 'team', id: team.id }, league)
                       }
-                    ]
-                  : undefined
-              }
-            />
-          ))}
+                }
+              />
+            ))}
+          </ActionList>
         </View>
       )}
       {tab === 'people' && detail.canSeePeople === true && (

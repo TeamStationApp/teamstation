@@ -248,13 +248,15 @@ describe('group settings identity and individual saves', () => {
           text().indexOf('PARENT ORGANIZATIONS')
         )
       await press(label)
-      if (kind === 'team') {
-        expect(calls).length(0)
-        await press('Leave Spring Bluebirds')
-      }
+      expect(calls).length(0)
+      await press(
+        kind === 'team' ? 'Leave Spring Bluebirds' : 'Confirm end participation'
+      )
       expect(text()).includes('Participation unavailable')
       fail = false
-      await press(kind === 'team' ? 'Leave Spring Bluebirds' : label)
+      await press(
+        kind === 'team' ? 'Leave Spring Bluebirds' : 'Confirm end participation'
+      )
       await settle()
       expect(calls[1]).deep.equals(
         kind === 'team'

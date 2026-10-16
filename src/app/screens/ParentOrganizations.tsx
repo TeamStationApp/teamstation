@@ -3,7 +3,8 @@ import { Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { PublicGroup } from '../../common/publicGroups'
-import { Card, SectionHeader } from '../components'
+import { SectionHeader } from '../components'
+import { ActionList } from '../components/ActionRow'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { GroupRelationshipRow } from './GroupRelationshipRow'
 import { useBreakParent } from './useBreakParent'
@@ -35,7 +36,7 @@ export function ParentOrganizations({
   return (
     <View style={styles.section}>
       <SectionHeader title="Parent Organizations" />
-      <Card style={styles.card}>
+      <ActionList bounded>
         {parents.map(parent => (
           <GroupRelationshipRow
             key={`${parent.kind}:${parent.id}`}
@@ -51,7 +52,7 @@ export function ParentOrganizations({
             }}
           />
         ))}
-      </Card>
+      </ActionList>
       {breaker.error !== '' && (
         <Text accessibilityRole="alert" style={styles.error}>
           {breaker.error}

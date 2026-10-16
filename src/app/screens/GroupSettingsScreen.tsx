@@ -7,7 +7,6 @@ import type { GroupDetail } from '../../common/publicGroups'
 import { formatDateRange } from '../../common/seasonTimeFrames'
 import {
   Button,
-  Card,
   HeroCard,
   ListCard,
   ListRow,
@@ -25,6 +24,7 @@ import { GroupGameSchedule } from './GroupGameSchedule'
 import { InvitationsWaiting } from './InvitationsWaiting'
 import { ManagementCard, type ManagementCardProps } from './ManagementCard'
 import { ParentOrganizations } from './ParentOrganizations'
+import { ParticipationList } from './ParticipationList'
 import { SeasonParticipations } from './SeasonParticipations'
 
 export function GroupSettingsScreen({
@@ -132,23 +132,6 @@ export function GroupSettingsScreen({
         working.current = false
         setBusy(false)
       }
-    }
-  }
-  const leave = async (teamId: string, seasonId: string): Promise<void> => {
-    setBusy(true)
-    setError('')
-    try {
-      await client.endParticipation(seasonId, teamId)
-      onChanged?.()
-      setRevision(value => value + 1)
-    } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : 'Participation could not end. Retry.'
-      )
-    } finally {
-      setBusy(false)
     }
   }
   const title = settingsTitle(detail?.group.kind ?? kind)
@@ -322,22 +305,22 @@ export function GroupSettingsScreen({
                 }}
               />
             )}
-            {detail.competingTeams.length > 0 && (
+            {detail.group.kind === 'season' && (
               <View style={styles.section}>
-                <SectionHeader title="Participating teams" />
-                {detail.competingTeams.map(team => (
-                  <Card key={team.id} style={styles.card}>
-                    <Text style={styles.name}>{team.name}</Text>
-                    <Button
-                      label={`End participation for ${team.name}`}
-                      kind="secondary"
-                      disabled={busy}
-                      onPress={() => {
-                        leave(team.id, detail.group.id).catch(() => undefined)
-                      }}
-                    />
-                  </Card>
-                ))}
+                <ParticipationList
+                  client={client}
+                  owner={{
+                    kind: 'season',
+                    id: detail.group.id,
+                    name: detail.group.name
+                  }}
+                  groups={detail.competingTeams}
+                  disabled={busy}
+                  onLeft={() => {
+                    setRevision(value => value + 1)
+                    onChanged?.()
+                  }}
+                />
               </View>
             )}
             {detail.group.kind === 'team' && (

@@ -174,7 +174,7 @@ describe('the league page', () => {
     await press('Create season')
     expect(created.at(-1)).equals('season')
   })
-  it('shows each team with its league seasons and breaks a child link from the ⋮ sheet', async () => {
+  it('shows each team with its league seasons and confirms a row Leave action', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     let loads = 0
     api.group = async () => {
@@ -222,8 +222,7 @@ describe('the league page', () => {
     await press('Placeholder team')
     expect(created.at(-1)).equals('placeholder')
 
-    await press('More for Demo Hawks')
-    await press('Break parent relationship')
+    await press('Leave Demo Hawks from Demo League')
     expect(asked.at(-1)).deep.equals([
       {
         operation: 'detach',
@@ -251,6 +250,30 @@ describe('the league page', () => {
     expect(document.body.textContent).not.includes(
       'Review relationship changes'
     )
+  })
+  it('reviews a season row departure and cancels without applying it', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    api.group = async () => detail
+    const asked: ParentAction[][] = []
+    api.parentPreview = async actions => {
+      asked.push(actions)
+      return {
+        actions,
+        effects: actions,
+        expected: {},
+        explanation: ['Only management permissions change.']
+      }
+    }
+    let writes = 0
+    api.changeParents = async () => {
+      writes++
+    }
+    await mount(render(api, []))
+    await press('Leave Demo Spring from Demo League')
+    expect(asked).length(1)
+    expect(asked[0][0].child).deep.equals({ kind: 'season', id: 'season_new' })
+    await press('Cancel')
+    expect(writes).equals(0)
   })
   it('keeps the relationship and hides management from a visitor', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
