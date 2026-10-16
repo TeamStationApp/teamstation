@@ -82,7 +82,7 @@ import { BoxScore } from './BoxScore'
 import { EventInfoTab } from './EventInfoTab'
 import { defaultEventTab, eventEndTime } from './eventTabPolicy'
 import { gameStatusLine, winnerOf } from './format'
-import { gameTabs } from './gameTabs'
+import { gameActions, gameTabs } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { watchHandoff } from './gameWatchLayoutProps'
 import { openableTeams as teamsWithAPage } from './openableTeams'
@@ -398,17 +398,23 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }, [game, clockNow, requestedTab])
   useEffect(() => {
     if (game == null) return
-    const end = eventEndTime(game)
-    if (end == null) return
-    if (end <= Date.now()) {
-      if (clockNow < end) setClockNow(Date.now())
+    const start = game.startAt == null ? NaN : Date.parse(game.startAt)
+    const marks = [eventEndTime(game), Number.isFinite(start) ? start : null]
+    const now = Date.now()
+    if (marks.some(mark => mark != null && mark <= now && clockNow < mark)) {
+      setClockNow(now)
       return
     }
+    const pending = marks.filter(
+      (mark): mark is number => mark != null && mark > now
+    )
+    if (pending.length === 0) return
+    const next = Math.min(...pending)
     const timer = setTimeout(
       () => {
         setClockNow(Date.now())
       },
-      Math.min(2147483647, end - Date.now() + 1)
+      Math.min(2147483647, next - now + 1)
     )
     return () => {
       clearTimeout(timer)
@@ -544,6 +550,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * highlight column leaves the same room in portrait and landscape.
    */
   const [tabsHeight, setTabsHeight] = useState(0)
+  const [sectionPillsHeight, setSectionPillsHeight] = useState(0)
   /**
    * How tall the camera-angle buttons are, so the picture can leave room.
    *
@@ -613,6 +620,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     height,
     // The picture leaves room for the section pills pinned below the header.
     chromeHeight: headerHeight + tabsHeight,
+    // Conditional actions must not feed back into the decision to show them.
+    shortChromeHeight: headerHeight + sectionPillsHeight,
     // The camera-angle buttons are pegged with the picture and have to stay
     // on the screen with it. Twice the small space as well: `onLayout`
     // measures the card and not the margin above it, and the second keeps the
@@ -1136,6 +1145,101 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       onOpenTeam(team)
     }
   }
+  const teamOf = (side: Side): string =>
+    side === 'home' ? game.homeTeamId : game.awayTeamId
+  // Straight to the one team a head coach coaches; a head coach of both
+  // picks one.
+  const openCoach = (): void => {
+    const [only, other] = game.coachSides
+    if (other == null) props.onCoachGame?.(teamOf(only))
+    else setChoosingCoach(true)
+  }
+  const heroActions = gameActions({
+    game,
+    now: clockNow,
+    music: props.music,
+    onDjGame: props.onDjGame,
+    onCoachGame: props.onCoachGame == null ? undefined : openCoach
+  })
+  const actionColor = (id: (typeof heroActions)[number]['id']): string =>
+    id === 'score'
+      ? theme.scoreActionColor
+      : id === 'record'
+        ? theme.liveColor
+        : theme.pillActiveBackground
+
+  const selectSection = (next: Tab): void => {
+    // Leaving the video unmounts it, so where it had got to is written
+    // down here and picked up by the attach that follows the remount.
+    // Without this you came back to the start of the game, which is a
+    // poor reward for having looked at the box score.
+    const player = playerRef.current
+    if (next !== 'watch' && player != null && video != null) {
+      setResumeAt({
+        videoId: video.id,
+        sec: player.currentTime,
+        playing: !player.paused
+      })
+    }
+    explicitSelection.current = true
+    selectTab(next)
+    setTab(next)
+    onTab?.(next)
+  }
+
+  const compactActions = heroActions.length === 3 && width < 420
+  const actionShellHeight = theme.rem(compactActions ? 1.5 : 3)
+  const actionButtons =
+    heroActions.length === 0 ? undefined : (
+      <View style={styles.heroActions}>
+        {heroActions.map(action => (
+          <Pressable
+            key={action.id}
+            accessibilityRole="button"
+            accessibilityLabel={action.label}
+            style={styles.heroAction}
+            onPress={() => {
+              if (action.id === 'score') {
+                selectSection('score')
+                return
+              }
+              if (action.id === 'record') {
+                props.onDjGame?.()
+                return
+              }
+              openCoach()
+            }}
+          >
+            {({ pressed }) => (
+              <View
+                style={[
+                  styles.heroActionShell,
+                  {
+                    height: actionShellHeight,
+                    borderRadius: actionShellHeight / 2,
+                    paddingHorizontal: actionShellHeight / 2,
+                    backgroundColor: actionColor(action.id),
+                    opacity: pressed ? 0.85 : 1
+                  }
+                ]}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={{
+                    color: theme.buttonTextColor,
+                    fontFamily: theme.semiBoldTextFont,
+                    fontSize: theme.rem(compactActions ? 0.875 : 1),
+                    fontWeight: '600'
+                  }}
+                >
+                  {action.label}
+                </Text>
+              </View>
+            )}
+          </Pressable>
+        ))}
+      </View>
+    )
 
   const scoreboard =
     game.eventKind === 'event' ? (
@@ -1202,53 +1306,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         teamStats={nonMemberView ? null : teamStatsOf(game.linescore)}
         onOpenAwayTeam={openSide(game.awayTeamId)}
         onOpenHomeTeam={openSide(game.homeTeamId)}
+        actions={actionButtons}
       />
     )
 
-  const teamOf = (side: Side): string =>
-    side === 'home' ? game.homeTeamId : game.awayTeamId
-  // Straight to the one team a head coach coaches; a head coach of both
-  // picks one.
-  const openCoach = (): void => {
-    const [only, other] = game.coachSides
-    if (other == null) props.onCoachGame?.(teamOf(only))
-    else setChoosingCoach(true)
-  }
   const tabs = (
     <PillTabs
       tabs={gameTabs({
         game,
-        now: clockNow,
-        music: props.music,
-        onDjGame: props.onDjGame,
-        onCoachGame: props.onCoachGame == null ? undefined : openCoach
+        now: clockNow
       })}
       selected={tab}
       onSelect={next => {
-        if (next === 'dj') {
-          props.onDjGame?.()
-          return
-        }
-        if (next === 'coach') {
-          openCoach()
-          return
-        }
-        // Leaving the video unmounts it, so where it had got to is written
-        // down here and picked up by the attach that follows the remount.
-        // Without this you came back to the start of the game, which is a
-        // poor reward for having looked at the box score.
-        const player = playerRef.current
-        if (next !== 'watch' && player != null && video != null) {
-          setResumeAt({
-            videoId: video.id,
-            sec: player.currentTime,
-            playing: !player.paused
-          })
-        }
-        explicitSelection.current = true
-        selectTab(next)
-        setTab(next)
-        onTab?.(next)
+        if (next !== 'info' && next !== 'boxScore' && next !== 'watch') return
+        selectSection(next)
       }}
       size="compact"
       accessibilityLabel="Game sections"
@@ -1488,7 +1559,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       <ContentInsetContext.Provider
         value={short ? NO_INSET : { left: headInset, right: headInset }}
       >
-        {tabs}
+        {short && tab === 'watch' ? actionButtons : null}
+        <View
+          onLayout={event => {
+            setSectionPillsHeight(event.nativeEvent.layout.height)
+          }}
+        >
+          {tabs}
+        </View>
       </ContentInsetContext.Provider>
     </View>
   )
@@ -1698,6 +1776,27 @@ const getStyles = cacheStyles((theme: Theme) =>
       justifyContent: 'center',
       backgroundColor: theme.backgroundColor,
       padding: theme.rem(1)
+    },
+    heroActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.rem(theme.spaceSmRem),
+      paddingHorizontal: theme.rem(theme.cardContentInsetRem),
+      paddingBottom: theme.rem(theme.cardContentInsetRem)
+    },
+    heroAction: {
+      flex: 1,
+      minHeight: theme.rem(3),
+      justifyContent: 'center'
+    },
+    heroActionShell: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: theme.buttonShadowColor,
+      shadowOpacity: 1,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
+      elevation: 3
     },
     scoreboard: {
       flexDirection: 'row',

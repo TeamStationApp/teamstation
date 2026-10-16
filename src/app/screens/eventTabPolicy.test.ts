@@ -1,7 +1,12 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { defaultEventTab, eventEnded, eventEndTime } from './eventTabPolicy'
+import {
+  defaultEventTab,
+  eventEnded,
+  eventEndTime,
+  gameSectionOrder
+} from './eventTabPolicy'
 
 describe('event default and scheduled end policy', () => {
   const startAt = '2027-04-10T18:00:00Z'
@@ -47,5 +52,34 @@ describe('event default and scheduled end policy', () => {
     expect(eventEndTime(dinner)).equals(null)
     expect(eventEnded(dinner, Date.parse(endAt) + 1)).equals(false)
     expect(defaultEventTab(dinner, Date.parse(endAt) + 1)).equals('info')
+  })
+  it('orders the sections from standing plays, a live video and the start time', () => {
+    const before = Date.parse(startAt) - 1
+    const live = [{ status: 'live' }]
+    expect(gameSectionOrder(event, before)).deep.equals([
+      'info',
+      'boxScore',
+      'watch'
+    ])
+    expect(
+      gameSectionOrder({ ...event, hasScoringEvents: true }, before)
+    ).deep.equals(['boxScore', 'watch', 'info'])
+    expect(
+      defaultEventTab(
+        { ...event, hasScoringEvents: true, videos: live },
+        before
+      )
+    ).equals('watch')
+    expect(gameSectionOrder({ ...event, videos: live }, before)).deep.equals([
+      'info',
+      'boxScore',
+      'watch'
+    ])
+    expect(
+      defaultEventTab({ ...event, videos: live }, Date.parse(startAt))
+    ).equals('watch')
+    expect(
+      gameSectionOrder({ ...event, videos: live }, Date.parse(startAt))
+    ).deep.equals(['watch', 'boxScore', 'info'])
   })
 })

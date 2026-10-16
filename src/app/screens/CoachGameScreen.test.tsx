@@ -1005,13 +1005,13 @@ describe('the Coach Game pill', function () {
 
   it('opens a head coach’s one team straight away', async function () {
     const opened = await gameScreen(['away'])
-    await click('Coach Game')
+    await click('Coach')
     expect(opened).deep.equals(['away'])
   })
 
   it('asks a head coach of both teams which to coach', async function () {
     const opened = await gameScreen(['away', 'home'])
-    await click('Coach Game')
+    await click('Coach')
     expect(opened).deep.equals([])
     expect(document.body.textContent).includes('Coach which team?')
     await click('Hawks')
@@ -1061,8 +1061,8 @@ describe('Coach Game in the app', function () {
     fixtureFetch()
     showRoute({ name: 'game', gameId: 'g1' }, true)
     await render(<App />)
-    await waitFor(() => node('Coach Game') != null, 'the pill')
-    await click('Coach Game')
+    await waitFor(() => node('Coach') != null, 'the button')
+    await click('Coach')
     expect(currentRoute()).include({
       name: 'coachGame',
       gameId: 'g1',
