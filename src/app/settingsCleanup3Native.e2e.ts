@@ -362,6 +362,7 @@ async function main(): Promise<void> {
         id: 'settings-pill-button',
         timeout: 15000
       })
+      await m.assertVisible({ text: '^Your Home$', timeout: 60000 })
       await m.assertNotVisible({
         text: '^Sign in to TeamStation$',
         timeout: 15000
