@@ -20,6 +20,27 @@ const base = {
 }
 
 describe('watch layout', function () {
+  it('keeps multi-camera landscape stable when short-mode actions are measured', function () {
+    let chromeHeight = 48 + 56
+    let previous: WatchMode = 'stacked'
+    for (let measurement = 0; measurement < 6; ++measurement) {
+      const layout = watchLayout({
+        width: 844,
+        height: 390,
+        chromeHeight,
+        shortChromeHeight: 48 + 56,
+        belowVideo: 74,
+        aspect: 16 / 9,
+        previous
+      })
+      expect(layout.short).equals(true)
+      expect(layout.mode).equals('sideBySide')
+      expect(layout.videoHeight).equals(measurement === 0 ? 212 : 150)
+      chromeHeight = 48 + 56 + (layout.short ? 64 : 0)
+      previous = layout.mode
+    }
+  })
+
   it('stacks below a thousand and splits at it', function () {
     expect(watchLayout({ ...base, width: 999 }).mode).equals('stacked')
     expect(watchLayout({ ...base, width: 1000 }).mode).equals('sideBySide')

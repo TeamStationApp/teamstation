@@ -295,8 +295,8 @@ async function open(
     path: '/'
   })
   await page.goto(`${APP}/games/${gameId}`)
-  // The game page's Score Game pill, then its screen's Full game scoring.
-  await (await page.waitForSelector('[aria-label="Score Game"]'))!.click()
+  // The game page's Score pill, then its screen's Full game scoring.
+  await (await page.waitForSelector('[aria-label="Score"]'))!.click()
   await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
   await (await page.waitForSelector(
     '[aria-label="Full game scoring"]'

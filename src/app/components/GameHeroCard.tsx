@@ -83,6 +83,11 @@ export interface GameHeroCardProps {
    */
   onOpenAwayTeam?: () => void
   onOpenHomeTeam?: () => void
+  /**
+   * Score, Record and Coach, drawn as the card's last row. The home screen
+   * leaves this out: those actions belong to the game.
+   */
+  actions?: React.ReactNode
 }
 
 /**
@@ -132,7 +137,8 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     awayLogoUrl,
     homeLogoUrl,
     onOpenAwayTeam,
-    onOpenHomeTeam
+    onOpenHomeTeam,
+    actions
   } = props
   const awayScore = pendingApproval ? null : providedAwayScore
   const homeScore = pendingApproval ? null : providedHomeScore
@@ -239,6 +245,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
           />
         </View>
         {line}
+        {actions}
       </View>
     )
   }
@@ -262,6 +269,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
         </View>
       )}
       {line}
+      {actions}
     </View>
   )
 }

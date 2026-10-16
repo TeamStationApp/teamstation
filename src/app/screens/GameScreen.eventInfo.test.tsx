@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
   asGameDetail,
+  asVideoSummary,
   type GameDetail,
   TeamStationClient
 } from '../../common/api'
@@ -116,6 +117,47 @@ async function choose(label: string): Promise<void> {
   })
 }
 describe('the event page’s automatic and explicit sections', () => {
+  it('catches a start crossed during the game request while its end is still future', async () => {
+    const { client, game } = fixture()
+    const originalNow = Date.now
+    let now = Date.parse('2027-04-10T17:59:59Z')
+    Date.now = () => now
+    game.videos = [
+      asVideoSummary({
+        id: 'v1',
+        kind: 'program',
+        title: 'Live',
+        status: 'live',
+        storage: 'local',
+        startAt: null,
+        durationSec: null,
+        width: null,
+        height: null,
+        codecs: null
+      })
+    ]
+    client.game = async () => {
+      now = Date.parse('2027-04-10T18:00:01Z')
+      return { ...game }
+    }
+    client.highlights = async () => ({
+      highlights: [],
+      withheld: null,
+      droppedCount: 0
+    })
+    client.playback = async () => {
+      throw new Error('No recording')
+    }
+    try {
+      await render({ client, gameId: 'g1' })
+      expect(selected()).equals('Videos')
+      expect(document.querySelector('[role="tab"]')?.textContent).equals(
+        'Videos'
+      )
+    } finally {
+      Date.now = originalNow
+    }
+  })
   it('reapplies the default when Back clears an explicit section without another game refresh', async () => {
     const { client, game } = fixture()
     game.status = 'final'

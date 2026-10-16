@@ -66,7 +66,7 @@ async function gameScreen(patch: Partial<GameDetail>): Promise<void> {
 function pills(): string[] {
   return Array.from(document.querySelectorAll<HTMLElement>('[aria-label]'))
     .map(node => node.getAttribute('aria-label') ?? '')
-    .filter(label => ['Videos', 'Score Game', 'Box score'].includes(label))
+    .filter(label => ['Videos', 'Score', 'Box score'].includes(label))
 }
 
 const finalGame = { status: 'final' as const, homeScore: 3, awayScore: 2 }
@@ -81,12 +81,12 @@ const silent = asGameDetail({ ...unsaid, scoreboard: runnable })
 describe('the Score Game pill', function () {
   it('is the one scoring pill, after Box score and Videos, and opens its choices on this page', async function () {
     await gameScreen({ canScore: true, scoreboard: runnable })
-    expect(pills()).deep.equals(['Box score', 'Videos', 'Score Game'])
-    expect(button('Score Game')?.getAttribute('role')).equals('tab')
+    expect(pills()).deep.equals(['Score', 'Box score', 'Videos'])
+    expect(button('Score')?.getAttribute('role')).equals('button')
     expect(button('Override Scoreboard')).equals(null)
     expect(button('Continue Scoring')).equals(null)
     expect(document.body.textContent).includes('Owls')
-    await click('Score Game')
+    await click('Score')
     const text = document.body.textContent ?? ''
     expect(text).includes('Owls')
     expect(text).includes('Full game scoring')
@@ -95,7 +95,7 @@ describe('the Score Game pill', function () {
       text.indexOf('Full game scoring')
     )
     expect(button('Videos')?.getAttribute('aria-selected')).not.equals('true')
-    expect(button('Score Game')?.getAttribute('aria-selected')).equals('true')
+    expect(button('Score')?.getAttribute('role')).equals('button')
   })
 
   for (const [label, patch] of [
@@ -111,7 +111,7 @@ describe('the Score Game pill', function () {
   ] as const) {
     it(`shows, labelled Score Game, for ${label}`, async function () {
       await gameScreen(patch)
-      expect(pills()).deep.equals(['Box score', 'Videos', 'Score Game'])
+      expect(pills()).deep.equals(['Score', 'Box score', 'Videos'])
     })
   }
 
@@ -133,15 +133,15 @@ describe('the Score Game pill', function () {
     it(`is hidden for ${label}`, async function () {
       await gameScreen(patch)
       expect(button('Box score')).not.equals(null)
-      expect(button('Score Game')).equals(null)
+      expect(button('Score')).equals(null)
     })
   }
 
   it('stays on the game page, with the hero, when there is no separate screen to open', async function () {
     await gameScreen({ canScore: true, scoreboard: runnable })
     expect(button('Box score')).not.equals(null)
-    expect(button('Score Game')).not.equals(null)
-    await click('Score Game')
+    expect(button('Score')).not.equals(null)
+    await click('Score')
     expect(document.body.textContent).includes('Owls')
     expect(document.body.textContent).includes('Web Widget Scoreboard Link')
   })
@@ -151,7 +151,7 @@ describe('the Score Game pill', function () {
     Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true })
     try {
       await gameScreen({ canScore: true, scoreboard: runnable })
-      expect(pills()).deep.equals(['Box score', 'Videos', 'Score Game'])
+      expect(pills()).deep.equals(['Score', 'Box score', 'Videos'])
     } finally {
       Object.defineProperty(Platform, 'OS', { value: os, configurable: true })
     }
@@ -220,7 +220,7 @@ describe('the app, the Score Game screen and the dashboard', function () {
     fixtureFetch({ value: true })
     showRoute({ name: 'game', gameId: 'g1' }, true)
     await render(<App />)
-    await click('Score Game')
+    await click('Score')
     expect(currentRoute()).deep.equals({
       name: 'game',
       gameId: 'g1',
@@ -228,7 +228,7 @@ describe('the app, the Score Game screen and the dashboard', function () {
     })
     const text = document.body.textContent ?? ''
     expect(text).includes('Owls')
-    expect(text).includes('Score Game')
+    expect(button('Score')).not.equals(null)
     expect(text).includes('Web Widget Scoreboard Link')
     expect(text).includes('http://localhost/scoreboard/g1')
     expect(text.indexOf('Owls')).lessThan(text.indexOf('Full game scoring'))

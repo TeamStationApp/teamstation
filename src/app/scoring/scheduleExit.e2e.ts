@@ -112,7 +112,7 @@ async function main(): Promise<void> {
     const enter = async (): Promise<void> => {
       await visible('^Upcoming$')
       await tap(gameLabel)
-      await tap('^Score Game$')
+      await tap('^Score$')
       await tap('^Full game scoring$')
       await visible('^Open scoring menu$')
     }
