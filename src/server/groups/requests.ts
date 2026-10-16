@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { type Kysely, type Selectable, sql } from 'kysely'
 
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
+import type { GameRequestTerms } from '../../common/gameApprovals'
 import { calendarDateText, type GroupRef } from '../../common/groupCreation'
 import { groupKey } from '../../common/groupLinks'
 import { makeId } from '../../common/ids'
@@ -29,6 +30,7 @@ import { atomic } from '../db/atomic'
 import type { Database, GroupRequestsTable } from '../db/database'
 import { grantAt, notifyGrant } from '../invites/grants'
 import { snapshotRequestInformation } from '../notifications/requestInformation'
+import { seasonGameConsent } from '../schedule/seasonGameConsent'
 import { authorizePersonChange } from './adminGuard'
 import { checkGuardianLimits, isGuardianRequest } from './guardianLimits'
 import { applyParents, previewParents } from './relationships'
@@ -220,6 +222,18 @@ export async function approvesSide(
         .executeTakeFirst()) != null
     )
   }
+  if (
+    request.kind === 'game' &&
+    side.kind === 'team' &&
+    ((request.terms as GameRequestTerms).game.homeTeamId === side.id ||
+      (request.terms as GameRequestTerms).game.awayTeamId === side.id) &&
+    (await seasonGameConsent(
+      db,
+      fresh,
+      (request.terms as GameRequestTerms).game
+    ))
+  )
+    return true
   if (request.kind === 'game' || request.kind === 'gameChange')
     return await canScheduleFor(db, fresh, { kind: side.kind, id: side.id })
   const team =

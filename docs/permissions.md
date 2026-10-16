@@ -484,6 +484,16 @@ A team **competes in** a season when it is on that season's schedule and standin
 
 The two are independent. A team can have a parent season and also compete in it, or compete in a season it has no parent link to (the Falcons in [section 1](#1-leagues-seasons-and-teams)).
 
+**Participation grants bounded scheduling consent.** A season's administrators,
+whether appointed directly or inherited from a management parent, can schedule
+a game without separate approval from either team when **both teams have active
+participation in that same season and the game is hosted by that season**.
+This grants no roster, role or other team-management permission. Having games in
+a season, a management-parent link alone, or an inactive participation does not
+qualify. A season coach or assistant without administrator authority does not
+receive this permission. Ending participation removes this delegation for future
+approvals; already scheduled games and their results remain unchanged.
+
 On the season's Teams tab, teams are grouped by their games, not by their links. **Exhibition** is a property of a game, not of a team. The groups are:
 
 - **Teams:** has a regular game in the season
@@ -620,17 +630,21 @@ sequenceDiagram
 A game has two sides: the home team and the away team. It is published when **both** sides have approved. For each side, an approval can come from:
 
 - an admin of that team, directly or through a parent link, or
-- for a placeholder team, an admin of its custodian.
+- for a placeholder team, an admin of its custodian, or
+- a direct or inherited admin of the hosting season, when **both proposed teams
+  are active participants in that season**. This authority is checked again
+  before publication, including current participation and administrator rights.
 
 There is no separate approval from the season. However, placing a new game in a season requires the sender to be an admin of that season.
 
 Create Game and Game Settings both end with **Save**. What Save does depends on what you administer:
 
-| You administer… | What happens                                                                     |
-| --------------- | -------------------------------------------------------------------------------- |
-| Both teams      | Published immediately                                                            |
-| One team        | The other team's admins must approve. "An admin of ‹team› must approve changes." |
-| Only the season | Both teams' admins must approve                                                  |
+| You administer…                                            | What happens                                                                     |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Both teams                                                 | Published immediately                                                            |
+| One team                                                   | The other team's admins must approve. "An admin of ‹team› must approve changes." |
+| Only the season, both teams actively participate in it     | Published immediately when hosted in that season                                 |
+| Only the season, either team does not actively participate | Team approvals are required unless you also hold the relevant team authority     |
 
 Until the game is approved, it shows **Pending approval** where the score would be.
 

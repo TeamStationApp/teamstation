@@ -45,6 +45,7 @@ import {
 import { snapshotRequestInformation } from '../notifications/requestInformation'
 import { notifyGameChange } from '../socket/gameChanges'
 import { followMerges } from '../teams/followMerges'
+import { seasonGameConsent } from './seasonGameConsent'
 
 type GameRow = Selectable<GamesTable>
 /** The batch API cannot represent pending proposals: every affected side must approve now. */
@@ -70,8 +71,9 @@ export async function requireImmediateGameConsent(
         `A hosting season administrator of ${season?.name ?? 'its season'} must authorize season placement`
       )
     }
-    for (const id of [game.homeTeamId, game.awayTeamId])
-      sides.set(`team:${id}`, { kind: 'team', id })
+    if (!(await seasonGameConsent(db, fresh, game)))
+      for (const id of [game.homeTeamId, game.awayTeamId])
+        sides.set(`team:${id}`, { kind: 'team', id })
   }
   for (const side of sides.values()) {
     if (!(await canAdminister(db, fresh, side)))

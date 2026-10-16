@@ -14,7 +14,7 @@ import {
   speaksForSender,
   type StoredRequest
 } from '../groups/requests'
-import { currentActor } from '../groups/rights'
+import { canScheduleFor, currentActor } from '../groups/rights'
 import { groupName, heldAt } from '../invites/grants'
 import { titleAndDescription } from './requestInformation'
 
@@ -93,7 +93,8 @@ export async function notificationFor(
     if (
       side.scope_type === 'team' &&
       side.approved_by != null &&
-      (request.kind === 'game' || request.kind === 'gameChange')
+      (request.kind === 'game' || request.kind === 'gameChange') &&
+      (await canScheduleFor(db, fresh, { kind: 'team', id: side.scope_id }))
     )
       representedConsent = true
     let valid = false
@@ -319,6 +320,16 @@ export async function inbox(
           eb('kind', 'in', ['game', 'gameChange']),
           eb('id', 'in', schedulingSides)
         ]),
+        ...(scopes.seasonIds.size === 0
+          ? []
+          : [
+              eb.and([
+                eb('kind', '=', 'game'),
+                eb(sql<string>`terms->'game'->>'seasonId'`, 'in', [
+                  ...scopes.seasonIds
+                ])
+              ])
+            ]),
         eb('id', 'in', historyIds),
         eb('id', 'in', viewedIds),
         eb('sender_id', '=', fresh.userId),
