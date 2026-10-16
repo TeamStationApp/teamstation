@@ -244,6 +244,18 @@ async function main(): Promise<void> {
       await m?.command('stopRecording')
       if (androidRecording != null) {
         const { remote, local } = androidRecording
+        // The driver returns before the encoder has finished writing its index.
+        // Pull only after the recorder on this owned target has exited.
+        execFileSync(
+          'adb',
+          [
+            '-s',
+            device,
+            'shell',
+            'while pidof screenrecord >/dev/null; do sleep 0.2; done'
+          ],
+          { timeout: 15000, stdio: 'ignore' }
+        )
         execFileSync('adb', ['-s', device, 'pull', remote, local], {
           stdio: 'ignore'
         })
