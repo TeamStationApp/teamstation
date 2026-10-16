@@ -423,6 +423,19 @@ async function main(): Promise<void> {
       for (let attempt = 0; attempt < 20; attempt++) {
         const tree = (await m.hierarchy()) as NativeNode
         const viewport = viewportOf(tree)
+        const navigation = flatten(tree).filter(
+          node =>
+            node.type === 'View' &&
+            ['Home', 'Videos', 'Schedule', 'Search'].includes(
+              node.text ?? ''
+            ) &&
+            node.bounds != null &&
+            node.bounds.y > viewport.height * 0.75
+        )
+        const unobstructedBottom = Math.min(
+          viewport.height * 0.92,
+          ...navigation.map(node => node.bounds!.y - viewport.height * 0.02)
+        )
         const found = flatten(tree).some(node => {
           const rect = node.bounds
           return (
@@ -433,7 +446,7 @@ async function main(): Promise<void> {
             rect.width > 0 &&
             rect.height > 0 &&
             rect.y >= viewport.height * 0.15 &&
-            rect.y + rect.height <= viewport.height * 0.8
+            rect.y + rect.height <= unobstructedBottom
           )
         })
         if (found) return
