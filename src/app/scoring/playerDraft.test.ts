@@ -8,11 +8,13 @@ import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
 import {
   addPlayerDraft,
+  addRosteredPlayer,
   draftOfLocalPlayer,
   editLocalPlayerDraft,
   emptyPlayerDraft,
   PLAYER_POSITIONS,
-  playerDraftError
+  playerDraftError,
+  rosterPlayerBody
 } from './playerDraft'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 
@@ -167,5 +169,31 @@ describe('local player entry', function () {
     expect(scoringReducer(saved, { type: 'UNDO' }).session).deep.equals(
       state.session
     )
+  })
+
+  it('adds a created roster player under their user id, once', function () {
+    const session = createDevelopmentSession(gameFixture, [], [])
+    const draft = {
+      ...emptyPlayerDraft(),
+      firstName: 'Cliff',
+      lastName: 'Lee',
+      jersey: '7',
+      positions: ['SS', 'EH']
+    }
+    expect(rosterPlayerBody(draft).positions).deep.equals(['SS'])
+    const entry = { userId: 8800001, shortName: 'Cliff L' }
+    const id = addRosteredPlayer(session, 'home', entry, draft)
+    const player = session.gameData.players[id]
+    expect(player.userId).equals(8800001)
+    expect(player.local).equals(false)
+    expect(player.fullName).equals('Cliff L')
+    expect(player.positions).deep.equals(['SS', 'EH'])
+    expect(
+      session.liveData.boxscore.teams.home.players.filter(row => row === id)
+    ).has.length(1)
+    expect(addRosteredPlayer(session, 'home', entry, draft)).equals(id)
+    expect(
+      session.liveData.boxscore.teams.home.players.filter(row => row === id)
+    ).has.length(1)
   })
 })

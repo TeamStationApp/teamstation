@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import { extname } from 'node:path'
 
 import type { StoredGame } from '../../common/scoring/session'
+import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { POSITIONS } from './scoringTypes'
 
 interface FixturePlayer {
@@ -226,7 +227,15 @@ export async function modalFixture(
         )
       )
         body = []
-      else {
+      else if (
+        request.method === 'POST' &&
+        u.pathname.endsWith('/roster-players')
+      ) {
+        let bytes = ''
+        for await (const chunk of request) bytes += String(chunk)
+        body = rosterEntryFromBody(JSON.parse(bytes === '' ? '{}' : bytes))
+        response.statusCode = 201
+      } else {
         unexpected.push(`${request.method} ${u.pathname}`)
         body = []
       }

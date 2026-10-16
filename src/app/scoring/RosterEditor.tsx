@@ -33,9 +33,10 @@ import { DefensiveField } from './DefensiveField'
 import { EditRosterList } from './EditRosterList'
 import { addPlaceholderPlayers } from './placeholderPlayers'
 import {
-  addPlayerDraft,
+  addRosteredPlayer,
   draftOfLocalPlayer,
-  editLocalPlayerDraft
+  editLocalPlayerDraft,
+  type PlayerDraft
 } from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
 import type { ChatTurn } from './RosterChat'
@@ -164,6 +165,7 @@ export function RosterEditor({
   rosterError: editError,
   onRetryRoster,
   canEditTeams,
+  onCreatePlayer,
   onCancel,
   onReload,
   onSave
@@ -222,6 +224,12 @@ export function RosterEditor({
   onRetryRoster?: () => void
   canEditTeams?: Readonly<Record<string, boolean>>
   /**
+   * Create Player on this team: a real roster player, returned as the roster
+   * entry the editor lists. Absent, the sheet reports that it could not add
+   * the player.
+   */
+  onCreatePlayer?: (teamId: string, player: PlayerDraft) => Promise<RosterEntry>
+  /**
    * Save Rosters, lit when the draft validates and has changed or is
    * `unaccepted`. A scorekeeper's screen applies the draft and closes the
    * sheet; a coach's saves it and stays, answering once it is saved, or
@@ -271,6 +279,7 @@ export function RosterEditor({
   const [areaHeight, setAreaHeight] = useState(0)
   const rosterMinimum = defense ? defenseRosterMinimum(areaHeight, dense) : 0
   const [adding, setAdding] = useState(false)
+  const [created, setCreated] = useState<Record<string, RosterEntry[]>>({})
   const [editingLocal, setEditingLocal] = useState<number>()
   const [nextBatter, setNextBatter] = useState<number | undefined>(
     initialDraft?.nextBatter
@@ -389,6 +398,18 @@ export function RosterEditor({
   }
   const nameProps = rosterNameProps(Platform.OS)
   const row = scoringPlayerCardStyle(theme)
+  const teamId = draft.gameData.teams[side].id
+  const heldRoster = rosters?.[teamId] ?? []
+  const rosterRows = editRosterRows(
+    [
+      ...heldRoster,
+      ...(created[teamId] ?? []).filter(
+        entry => !heldRoster.some(held => held.userId === entry.userId)
+      )
+    ],
+    draft,
+    side
+  )
   return (
     <View
       style={{
@@ -491,11 +512,7 @@ export function RosterEditor({
               held[side] === offset ? held : { ...held, [side]: offset }
             )
           }}
-          rows={editRosterRows(
-            rosters?.[draft.gameData.teams[side].id] ?? [],
-            draft,
-            side
-          )}
+          rows={rosterRows}
           loading={rosterLoading}
           error={editError}
           onRetry={onRetryRoster}
@@ -721,9 +738,18 @@ export function RosterEditor({
               addPlaceholderPlayers(next, side, count)
             })
           }}
-          onAdd={player => {
+          onAdd={async player => {
+            if (onCreatePlayer == null) {
+              throw new Error('Unable to add the player.')
+            }
+            const teamId = draft.gameData.teams[side].id
+            const entry = await onCreatePlayer(teamId, player)
+            setCreated(held => ({
+              ...held,
+              [teamId]: [...(held[teamId] ?? []), entry]
+            }))
             edit(next => {
-              addPlayerDraft(next, side, player)
+              addRosteredPlayer(next, side, entry, player)
             })
           }}
         />
