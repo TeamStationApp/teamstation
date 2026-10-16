@@ -211,6 +211,7 @@ async function main(): Promise<void> {
   let m: MaestroHandle | undefined
   let recording = false
   let iosRecording: ChildProcess | undefined
+  let androidRecording: { remote: string; local: string } | undefined
   let recordingExit: Promise<number> | undefined
   const stopRecording = async (): Promise<void> => {
     if (iosRecording != null) {
@@ -241,6 +242,18 @@ async function main(): Promise<void> {
       }
     } else {
       await m?.command('stopRecording')
+      if (androidRecording != null) {
+        const { remote, local } = androidRecording
+        execFileSync('adb', ['-s', device, 'pull', remote, local], {
+          stdio: 'ignore'
+        })
+        assert(
+          (await readFile(local)).length > 1024,
+          'Native recording required'
+        )
+        execFileSync('adb', ['-s', device, 'shell', 'rm', remote])
+        androidRecording = undefined
+      }
       recording = false
     }
   }
@@ -535,7 +548,14 @@ async function main(): Promise<void> {
             }
           } else if (step.command === 'scrollUntilVisible')
             await scrollToVisible(params)
-          else if (step.command === 'stopRecording') await stopRecording()
+          else if (
+            step.command === 'startRecording' &&
+            platform === 'android'
+          ) {
+            const remote = `/sdcard/settings-cleanup-native-${process.pid}.mp4`
+            await m.command('startRecording', { ...params, path: remote })
+            androidRecording = { remote, local: String(params.path) }
+          } else if (step.command === 'stopRecording') await stopRecording()
           else if (
             platform === 'android' &&
             step.command === 'tapOn' &&
@@ -711,10 +731,16 @@ async function main(): Promise<void> {
             )
           else {
             const nodes = flatten((await m.hierarchy()) as NativeNode)
-            const track = selectNode(nodes, {
-              text: 'Position in the game'
-            }).bounds!
-            const times = nodes
+            // Android exposes the custom fullscreen track as a SeekBar with
+            // its numeric value; iOS exposes its accessibility label.
+            const tracks = nodes.filter(node => node.type === 'SeekBar')
+            if (platform === 'android') assert.equal(tracks.length, 1)
+            const track: NonNullable<NativeNode['bounds']> =
+              platform === 'android'
+                ? tracks[0].bounds!
+                : selectNode(nodes, { text: 'Position in the game' }).bounds!
+            assert(track != null, 'Visible native transport track required')
+            const times: NativeNode[] = nodes
               .filter(
                 node =>
                   node.bounds != null &&
