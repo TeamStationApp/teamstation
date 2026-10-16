@@ -200,6 +200,14 @@ export const asVideoSummary = asObject({
   kind: asString,
   title: asString,
   status: asString,
+  /**
+   * Bytes are arriving on a stream of this video.
+   *
+   * A video stays `live` after its camera drops, so the recording can resume
+   * on the same row. This says whether anything is sending right now. An
+   * older server omits it, which means nothing is.
+   */
+  receiving: asOptional(asBoolean, false),
   storage: asString,
   startAt: asNullable(asString),
   /** This recording's own clock correction, for switching angle in step. */
