@@ -636,6 +636,15 @@ async function main(): Promise<void> {
                 ? 'extra-extra-extra-large'
                 : '1.3'
           )
+          if (platform === 'android') {
+            await new Promise(resolve => setTimeout(resolve, 500))
+            await m.launchApp({
+              appId: 'app.teamstation.app',
+              stopApp: true,
+              clearState: false
+            })
+            await m.assertVisible({ text: '^Your Home$', timeout: 60000 })
+          }
         } else if ('clock' in step) {
           let value: number
           if (step.clock.native === true)
