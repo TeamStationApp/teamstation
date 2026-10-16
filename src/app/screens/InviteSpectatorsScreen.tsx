@@ -1,10 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import type { Invite, TeamStationClient } from '../../common/api'
 import type { GroupRef } from '../../common/groupCreation'
-import { Button, Card, Icon, Screen, TextField } from '../components'
+import {
+  Button,
+  Card,
+  DangerText,
+  Icon,
+  Screen,
+  TextField
+} from '../components'
+import { ActionList, ActionRow } from '../components/ActionRow'
 import { CancelAction } from '../components/CancelAction'
+import { useConfirmedAction } from '../components/useConfirmedAction'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { lstrings, sprintf } from '../locales/strings'
 import { copyToClipboard } from '../platform/clipboard'
@@ -31,7 +40,23 @@ export function InviteSpectatorsScreen({
   const [error, setError] = useState('')
   const [revision, setRevision] = useState(0)
   const begin = useLatestRequest()
+  const beginWrite = useLatestRequest()
+  const confirmation = useConfirmedAction(
+    client,
+    `${group.kind}:${group.id}:${allowed}:${invites.map(i => `${i.id}:${i.problem ?? ''}`).join(',')}`
+  )
   const working = useRef(false)
+  useEffect(() => {
+    setAllowed(undefined)
+    setInvites([])
+    setOpening(false)
+    setCode('')
+    setLabel('')
+    setCopied('')
+    setBusy(false)
+    working.current = false
+    beginWrite()
+  }, [client, group.kind, group.id, beginWrite])
   useEffect(() => {
     const current = begin()
     client.invites(group.kind, group.id).then(
@@ -47,36 +72,44 @@ export function InviteSpectatorsScreen({
       }
     )
   }, [client, group.kind, group.id, revision, begin])
-  const run = async (operation: () => Promise<void>): Promise<void> => {
+  const run = async (
+    operation: (current: () => boolean) => Promise<void>
+  ): Promise<void> => {
     if (working.current) return
     working.current = true
+    const current = beginWrite()
     setBusy(true)
     setError('')
     try {
-      await operation()
-      setRevision(value => value + 1)
+      await operation(current)
+      if (current()) setRevision(value => value + 1)
     } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : 'Invite link could not be changed. Try again.'
-      )
+      if (current())
+        setError(
+          error instanceof Error
+            ? error.message
+            : 'Invite link could not be changed. Try again.'
+        )
     } finally {
-      working.current = false
-      setBusy(false)
+      if (current()) {
+        working.current = false
+        setBusy(false)
+      }
     }
   }
   const create = (): void => {
-    run(async () => {
+    run(async current => {
       await client.createInvite({
         scopeType: group.kind,
         scopeId: group.id,
         code: code.trim() === '' ? undefined : code.trim(),
         label: label.trim() === '' ? undefined : label.trim()
       })
-      setOpening(false)
-      setCode('')
-      setLabel('')
+      if (current()) {
+        setOpening(false)
+        setCode('')
+        setLabel('')
+      }
     }).catch(() => undefined)
   }
   const live = invites
@@ -102,60 +135,57 @@ export function InviteSpectatorsScreen({
             )}
             {allowed === true && (
               <>
-                <Card style={styles.card}>
-                  {live.length === 0 && (
-                    <Text style={styles.hint}>No invite links yet.</Text>
-                  )}
+                {live.length === 0 && (
+                  <Text style={styles.hint}>No invite links yet.</Text>
+                )}
+                <ActionList>
                   {live.map(invite => (
-                    <View key={invite.id} style={styles.row}>
-                      <View style={styles.words}>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel={`Copy the invite link ${invite.code}`}
-                          disabled={busy}
+                    <ActionRow
+                      key={invite.id}
+                      title={invite.label ?? invite.code}
+                      detail={[
+                        invite.url,
+                        invite.uses === 0
+                          ? 'Never used'
+                          : invite.uses === 1
+                            ? 'Used once'
+                            : `Used ${invite.uses} times`,
+                        invite.label,
+                        copied === invite.id ? 'Copied' : null
+                      ]
+                        .filter(value => value != null && value !== '')
+                        .join(' · ')}
+                      leading={<Icon name="content_copy" size={1.25} />}
+                      onOpen={() => {
+                        copyToClipboard(invite.url)
+                        setCopied(invite.id)
+                      }}
+                      openLabel={`Copy the invite link ${invite.code}`}
+                      end={
+                        <DangerText
+                          label="Disable"
+                          accessibilityLabel={`Disable invite link ${invite.label ?? invite.code}`}
+                          disabled={busy || confirmation.busy}
+                          style={{ minWidth: 48, alignItems: 'center' }}
                           onPress={() => {
-                            copyToClipboard(invite.url)
-                            setCopied(invite.id)
+                            confirmation.open({
+                              title: `Disable ${invite.label ?? invite.code} for ${scopeName}?`,
+                              detail:
+                                'This link will no longer let people join. Existing members keep their access.',
+                              label: 'Disable',
+                              accessibilityLabel: 'Confirm disable',
+                              run: async current => {
+                                await client.revokeInvite(invite.id)
+                                if (current()) setRevision(value => value + 1)
+                              }
+                            })
                           }}
-                          style={styles.link}
-                        >
-                          <Icon name="content_copy" size={1} />
-                          <Text
-                            style={styles.url}
-                            numberOfLines={1}
-                            ellipsizeMode="middle"
-                          >
-                            {invite.url}
-                          </Text>
-                        </Pressable>
-                        <Text style={styles.hint}>
-                          {[
-                            invite.uses === 0
-                              ? 'Never used'
-                              : invite.uses === 1
-                                ? 'Used once'
-                                : `Used ${invite.uses} times`,
-                            invite.label,
-                            copied === invite.id ? 'Copied' : null
-                          ]
-                            .filter(value => value != null && value !== '')
-                            .join(' · ')}
-                        </Text>
-                      </View>
-                      <Button
-                        label="Disable"
-                        compact
-                        color={theme.dangerColor}
-                        disabled={busy}
-                        onPress={() => {
-                          run(async () => {
-                            await client.revokeInvite(invite.id)
-                          }).catch(() => undefined)
-                        }}
-                      />
-                    </View>
+                        />
+                      }
+                    />
                   ))}
-                </Card>
+                </ActionList>
+                {confirmation.sheet}
                 {opening ? (
                   <Card style={styles.card}>
                     <TextField

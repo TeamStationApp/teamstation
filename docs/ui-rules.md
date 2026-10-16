@@ -60,6 +60,14 @@ match the surrounding screen; a long scrolling list remains unbounded. Keep
 actions aligned, names readable and touch targets at least 48 points.
 Use green for adding/enabling and red for removing/ending. Destructive actions
 open a confirmation modal; opening or cancelling it must not change the item.
+Use `ActionRow` and `ActionList` for these collections, with
+`GroupRelationshipRow` for groups. Navigation and the destructive action are
+separate touch targets. The confirmation names the item and the relationship,
+keeps failed writes retryable, blocks duplicate submissions, and ignores a
+completion after the user leaves its owning group or person. This includes
+ending season participation, disabling invite links, withdrawing invitations
+and removing held roles. Existing permission checks and inherited-role rules
+remain in force.
 
 ### A pill's label sits on its straight run
 

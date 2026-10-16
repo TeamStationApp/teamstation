@@ -6,7 +6,9 @@ import type {
   ProfileSection,
   TeamStationClient
 } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import {
+  Button,
   Card,
   Emblem,
   initialsOf,
@@ -16,6 +18,7 @@ import {
   SectionHeader
 } from '../components'
 import { type RoleRowKind, RoleRows } from '../components/RoleRows'
+import { useLatestRequest } from '../hooks/useLatestRequest'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -59,42 +62,94 @@ export function PersonProfileScreen(
   const [refused, setRefused] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>()
+  const [readError, setReadError] = useState<string>()
+  const [savedUnavailable, setSavedUnavailable] = useState(false)
 
+  const begin = useLatestRequest()
+  const beginWrite = useLatestRequest()
+  const writing = useRef(false)
+  const identity = useRef({ client, kind, id, userId })
+  identity.current = { client, kind, id, userId }
   // The shell's callback changes with every render of the shell; reading
   // it from a ref keeps the profile from loading again when it does.
   const titled = useRef(onTitle)
   titled.current = onTitle
   const load = useCallback(async (): Promise<void> => {
+    const current = begin()
     const found = await client.personProfile(kind, id, userId)
+    if (!current()) return
     setProfile(found)
+    setReadError(undefined)
+    setSavedUnavailable(false)
     titled.current?.(found.person.fullName ?? found.person.shortName)
-  }, [client, id, kind, userId])
+  }, [client, id, kind, userId, begin])
 
   useEffect(() => {
+    setProfile(undefined)
+    setRefused(false)
+    setBusy(false)
+    setError(undefined)
+    setReadError(undefined)
+    setSavedUnavailable(false)
+    writing.current = false
+    const current = beginWrite()
     load().catch(() => {
-      setRefused(true)
+      if (current()) setRefused(true)
     })
-  }, [load])
+  }, [load, beginWrite])
 
-  const change = (role: RoleRowKind, give: boolean): void => {
+  // A successful write must not become a retryable write when its read fails.
+  const refreshSaved = async (current: () => boolean): Promise<void> => {
+    try {
+      await load()
+    } catch (caught) {
+      if (!current()) return
+      setProfile(undefined)
+      if (caught instanceof HttpError && caught.code === 'notFound')
+        setSavedUnavailable(true)
+      else
+        setReadError(
+          caught instanceof Error ? caught.message : 'Something went wrong'
+        )
+    }
+  }
+
+  const change = async (
+    role: RoleRowKind,
+    give: boolean,
+    active: () => boolean = () => true
+  ): Promise<void> => {
+    if (writing.current) return
+    writing.current = true
+    const alive = beginWrite()
+    const sameOwner = (): boolean =>
+      alive() &&
+      identity.current.client === client &&
+      identity.current.kind === kind &&
+      identity.current.id === id &&
+      identity.current.userId === userId
+    const current = (): boolean => active() && sameOwner()
     setBusy(true)
     setError(undefined)
-    ;(give
-      ? client.addRole(kind, id, userId, role)
-      : client.removeRole(kind, id, userId, role)
-    )
-      .then(async () => {
+    try {
+      if (give) await client.addRole(kind, id, userId, role)
+      else await client.removeRole(kind, id, userId, role)
+      if (current()) {
         onChanged?.()
-        await load()
-      })
-      .catch((caught: unknown) => {
+        await refreshSaved(sameOwner)
+      }
+    } catch (caught) {
+      if (current())
         setError(
           caught instanceof Error ? caught.message : 'Something went wrong'
         )
-      })
-      .finally(() => {
+      throw caught
+    } finally {
+      if (sameOwner()) {
+        writing.current = false
         setBusy(false)
-      })
+      }
+    }
   }
 
   if (profile == null)
@@ -102,8 +157,29 @@ export function PersonProfileScreen(
       <Screen>
         <Card>
           <Text style={styles.muted}>
-            {refused ? lstrings.profile_refused : lstrings.common_loading}
+            {savedUnavailable
+              ? 'Change saved. This person is no longer available in this group.'
+              : readError != null
+                ? 'Change saved. This profile could not be refreshed.'
+                : refused
+                  ? lstrings.profile_refused
+                  : lstrings.common_loading}
           </Text>
+          {readError != null && (
+            <>
+              <Text accessibilityRole="alert" style={styles.error}>
+                {readError}
+              </Text>
+              <Button
+                label="Retry"
+                onPress={() => {
+                  const current = beginWrite()
+                  setReadError(undefined)
+                  refreshSaved(current).catch(() => undefined)
+                }}
+              />
+            </>
+          )}
         </Card>
       </Screen>
     )
@@ -190,14 +266,17 @@ export function PersonProfileScreen(
             )}
             <RoleRows
               section={section}
+              owner={client}
+              ownerLabel={name}
+              ownerIdentity={`${kind}:${id}:${userId}`}
               canHoldRoles={person.canHoldRoles}
               viewer={viewer}
               busy={busy}
               onAdd={role => {
-                change(role, true)
+                change(role, true).catch(() => undefined)
               }}
-              onRemove={role => {
-                change(role, false)
+              onRemove={async (role, current) => {
+                await change(role, false, current)
               }}
             />
           </View>

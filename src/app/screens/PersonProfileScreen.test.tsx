@@ -211,6 +211,9 @@ describe('the person profile', function () {
 
     await click(buttonIn(rowOf('team', 'admin'))!)
     await click(buttonIn(rowOf('team', 'coach'))!)
+    await click(
+      document.querySelector<HTMLElement>('[aria-label="Confirm removal"]')!
+    )
     expect(calls.changes).deep.equals([
       ['add', 'team', 'grp_one', 203, 'admin'],
       ['remove', 'team', 'grp_one', 203, 'coach']
@@ -279,6 +282,9 @@ describe('the person profile', function () {
     expect(rowOf('season', 'admin').textContent).includes('Yes')
 
     await click(buttonIn(rowOf('team', 'scorekeeper'))!)
+    await click(
+      document.querySelector<HTMLElement>('[aria-label="Confirm removal"]')!
+    )
     expect(calls.changes).deep.equals([
       ['remove', 'team', 'grp_one', 203, 'scorekeeper']
     ])

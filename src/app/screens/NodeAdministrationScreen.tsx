@@ -12,6 +12,7 @@ import {
   SectionHeader,
   TextField
 } from '../components'
+import { ActionList } from '../components/ActionRow'
 import { CancelAction } from '../components/CancelAction'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
@@ -223,7 +224,7 @@ export function NodeAdministrationScreen({
           {loaded && matches.length === 0 ? (
             <Text style={styles.hint}>No accounts match.</Text>
           ) : matches.length > 0 ? (
-            <ListCard>{matches.map(row)}</ListCard>
+            <ActionList>{matches.map(row)}</ActionList>
           ) : (
             <Text style={styles.hint}>Looking for accounts…</Text>
           )}
@@ -232,7 +233,7 @@ export function NodeAdministrationScreen({
       <View style={styles.section}>
         <SectionHeader title="Node access" />
         {currentAdmins.length > 0 && (
-          <ListCard>{currentAdmins.map(row)}</ListCard>
+          <ActionList>{currentAdmins.map(row)}</ActionList>
         )}
       </View>
       {confirmation != null && (

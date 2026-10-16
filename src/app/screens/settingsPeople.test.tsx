@@ -407,14 +407,16 @@ describe('settings people flows', function () {
       .and.includes('Aaron Judge')
       .and.not.includes('Babe Ruth')
     expect(find('Open')).equals(undefined)
-    const resend = find('Resend')!
+    const resend = find('Resend invitation to parent@example.test')!
     expect(
-      resend.compareDocumentPosition(find('Withdraw invitation')!) &
-        Node.DOCUMENT_POSITION_FOLLOWING
+      resend.compareDocumentPosition(
+        find('Withdraw invitation to parent@example.test')!
+      ) & Node.DOCUMENT_POSITION_FOLLOWING
     ).not.equals(0)
-    await press('Resend')
+    await press('Resend invitation to parent@example.test')
     expect(text()).includes('Sent again')
-    await press('Withdraw invitation')
+    await press('Withdraw invitation to parent@example.test')
+    await press('Confirm withdrawal')
     await settle()
     expect(text()).not.includes('INVITATIONS WAITING')
     expect(calls).deep.equals([['request_fixture', 'resend'], 'invite_fixture'])
@@ -488,7 +490,12 @@ describe('settings people flows', function () {
     await fill('Label', 'Families')
     await press('Create')
     expect(created).equals(1)
-    await press('Disable')
+    await press('Disable invite link Families')
+    expect(text()).includes('Disable Families for Bluebirds?')
+    await press('Cancel')
+    expect(active).equals(true)
+    await press('Disable invite link Families')
+    await press('Confirm disable')
     await settle()
     expect(text()).includes('No invite links yet.')
   })
