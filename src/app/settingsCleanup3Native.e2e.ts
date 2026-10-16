@@ -460,7 +460,7 @@ async function main(): Promise<void> {
           endY: Math.round(viewport.height * 0.35),
           duration: 600
         })
-        await new Promise(resolve => setTimeout(resolve, 300))
+        await new Promise(resolve => setTimeout(resolve, 800))
       }
       assert.fail(
         'Native scroll target did not enter the unobstructed viewport'
@@ -588,11 +588,24 @@ async function main(): Promise<void> {
           assertions++
         } else if ('signIn' in step) {
           await m.openLink({ link: 'teamstation://account' })
+          await m.assertVisible({ text: '^Account$', timeout: 15000 })
+          await new Promise(resolve => setTimeout(resolve, 500))
           await scrollToVisible({
             element: { text: 'Sign out' },
             timeout: 15000
           })
-          await m.tapOn({ text: 'Sign out', timeout: 15000 })
+          if (platform === 'android') {
+            const tree = (await m.hierarchy()) as NativeNode
+            const rect = selectNode(flatten(tree), {
+              text: 'Sign out',
+              type: 'Button$'
+            }).bounds!
+            const viewport = viewportOf(tree)
+            assert(rect.y >= 0 && rect.y + rect.height <= viewport.height)
+            await m.tapOn({
+              point: `${(100 * (rect.x + rect.width / 2)) / viewport.width}%,${(100 * (rect.y + rect.height / 2)) / viewport.height}%`
+            })
+          } else await m.tapOn({ text: 'Sign out', timeout: 15000 })
           await signIn(step.signIn)
           assertions++
         } else if ('fontScale' in step) {
