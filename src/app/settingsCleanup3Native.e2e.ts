@@ -48,6 +48,7 @@ type Step =
       }
     }
   | { signIn: string }
+  | { pauseVideo: Selector }
   | { fontScale: 'large' | 'default' }
   | {
       clock: (
@@ -625,6 +626,44 @@ async function main(): Promise<void> {
             })
           } else await m.tapOn({ text: 'Sign out', timeout: 15000 })
           await signIn(step.signIn)
+          assertions++
+        } else if ('pauseVideo' in step) {
+          assert.equal(platform, 'android', 'ExoPlayer controls required')
+          let paused = false
+          for (let attempt = 0; attempt <= 3; attempt++) {
+            const tree = (await m.hierarchy()) as NativeNode
+            const nodes = flatten(tree)
+            const buttons = nodes.filter(
+              node => node.id?.endsWith('/exo_play_pause') === true
+            )
+            assert(buttons.length <= 1, 'One native transport button required')
+            const button = buttons[0]
+            if (button?.text === 'Play') {
+              paused = true
+              break
+            }
+            if (attempt === 3) break
+            // A first touch can reveal ExoPlayer's hidden controls without
+            // pausing. Read their actual state before pressing the transport.
+            if (button != null) assert.equal(button.text, 'Pause')
+            const rect = (button ?? selectNode(nodes, step.pauseVideo)).bounds!
+            const viewport = viewportOf(tree)
+            assert(
+              rect != null &&
+                rect.width > 0 &&
+                rect.height > 0 &&
+                rect.x >= 0 &&
+                rect.y >= 0 &&
+                rect.x + rect.width <= viewport.width &&
+                rect.y + rect.height <= viewport.height
+            )
+            await m.command('tapOnPoint', {
+              x: Math.round(rect.x + rect.width / 2),
+              y: Math.round(rect.y + rect.height / 2)
+            })
+            await new Promise(resolve => setTimeout(resolve, 250))
+          }
+          assert(paused, 'Native Play control must confirm paused playback')
           assertions++
         } else if ('fontScale' in step) {
           originalFont ??=
