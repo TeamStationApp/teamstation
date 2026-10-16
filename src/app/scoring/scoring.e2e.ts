@@ -13,7 +13,8 @@ import {
   Vector3
 } from 'three'
 
-import { asGameDetail } from '../../common/api'
+import { asGameDetail, type RosterEntry } from '../../common/api'
+import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
 import { initialHitTarget } from '../field/trajectoryGuide'
@@ -66,6 +67,7 @@ async function open(
   logos?: 'valid' | 'broken',
   uiAnimations = false
 ): Promise<{ page: Page; unexpected: string[] }> {
+  const createdRoster: Record<string, RosterEntry[]> = {}
   const context = await browser.createBrowserContext()
   const page = await context.newPage()
   page.once('close', () => {
@@ -149,7 +151,9 @@ async function open(
     const saving =
       request.method() === 'POST' && url.pathname.endsWith('/events')
     if (saving && holdSaves) return
-    if (request.method() !== 'GET' && !saving)
+    const creatingPlayer =
+      request.method() === 'POST' && url.pathname.endsWith('/roster-players')
+    if (request.method() !== 'GET' && !saving && !creatingPlayer)
       unexpected.push(`${request.method()} ${url.pathname}`)
     if (uiAnimations && url.pathname.endsWith('/playback')) {
       body = {
@@ -167,7 +171,13 @@ async function open(
     // What the app also asks of every server: who holds which team role, the
     // teams' saved default lineups (none here), and the server's health.
     else if (url.pathname === '/api/v1/me/roles') body = { teams: {} }
-    else if (url.pathname.endsWith('/default-lineup'))
+    else if (url.pathname === '/api/v1/time') body = { now: Date.now() }
+    else if (url.pathname === '/api/v1/me/notifications/summary')
+      body = { hasPending: false }
+    else if (url.pathname === '/api/v1/games/g1/lineups') {
+      status = 404
+      body = { error: 'No saved lineup in this events-only fixture' }
+    } else if (url.pathname.endsWith('/default-lineup'))
       body = { lineup: null, fromGameId: null, setAt: null }
     else if (url.pathname === '/api/v1/health')
       body = {
@@ -223,7 +233,30 @@ async function open(
         body = { error: 'Not found' }
       }
     } else if (url.pathname === '/api/v1/teams') body = []
-    else if (url.pathname.endsWith('/roster')) {
+    else if (creatingPlayer) {
+      const answer = async (): Promise<void> => {
+        let nextStatus = 201
+        let nextBody: unknown
+        try {
+          const input = JSON.parse((await request.fetchPostData()) ?? '{}')
+          const entry = rosterEntryFromBody(input)
+          nextBody = entry
+          ;(createdRoster[url.pathname.split('/')[4]] ??= []).push(entry)
+        } catch (error) {
+          nextStatus = 400
+          nextBody = {
+            error: error instanceof Error ? error.message : 'Bad request'
+          }
+        }
+        await request.respond({
+          status: nextStatus,
+          contentType: 'application/json',
+          body: JSON.stringify(nextBody)
+        })
+      }
+      answer().catch(() => undefined)
+      return
+    } else if (url.pathname.endsWith('/roster')) {
       if (failedRoster) status = 503
       body = url.pathname.includes('/away/')
         ? [
@@ -268,6 +301,10 @@ async function open(
             bats: 'right',
             throws: 'right'
           }))
+      body = [
+        ...(body as RosterEntry[]),
+        ...(createdRoster[url.pathname.split('/')[4]] ?? [])
+      ]
     } else if (url.pathname.endsWith('/live-streams'))
       body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
     else {
@@ -356,26 +393,26 @@ async function addPlaceholders(page: Page, count: 1 | 16): Promise<void> {
   await page.waitForSelector('[aria-label="First Name"]', { hidden: true })
 }
 async function click(page: Page, label: string): Promise<void> {
-  const selector = `[aria-label="${label}"]`
+  const selector = `[aria-label="${label}"]:not([aria-disabled="true"]):not(:disabled)`
+  const opening =
+    label === 'Create Player' &&
+    (await page.$('[aria-label="First Name"]')) == null
   await page.waitForFunction(
-    selector => {
-      const node = document.querySelector(selector)
-      return (
-        node != null &&
-        node.getAttribute('aria-disabled') !== 'true' &&
-        !(node instanceof HTMLButtonElement && node.disabled)
-      )
-    },
+    selector =>
+      Array.from(document.querySelectorAll(selector)).some(node =>
+        node.checkVisibility()
+      ),
     {},
     selector
   )
-  await page.locator(selector).click()
-  if (label === 'Create Player')
-    await page.waitForFunction(() => {
-      const field = document.querySelector('[aria-label="First Name"]')
-      if (field == null) return false
-      return field.closest('[role="dialog"]') != null
-    })
+  for (const match of (await page.$$(selector)).reverse()) {
+    if (!(await match.isVisible())) continue
+    await match.click()
+    // Let the sheet transition finish before targeting its next control.
+    await new Promise(resolve => setTimeout(resolve, 350))
+    break
+  }
+  if (opening) await page.waitForSelector('[aria-label="First Name"]')
 }
 async function chooseHit(page: Page, outcome: string): Promise<void> {
   await click(page, 'Swing in Play')
@@ -1961,8 +1998,8 @@ describe('scoring browser', function () {
         () =>
           document.activeElement!.getAttribute('aria-label') === 'First Name'
       )
-      await page.locator('[aria-label="First Name"]').fill('Alex')
-      await page.locator('[aria-label="Last Name"]').fill('Local')
+      await page.locator('[aria-label="First Name"]').fill('Mookie')
+      await page.locator('[aria-label="Last Name"]').fill('Betts')
       await page.locator('[aria-label="Jersey Number"]').fill('07')
       await click(page, 'Throws L')
       await click(page, 'Bats S')
@@ -1984,22 +2021,19 @@ describe('scoring browser', function () {
       expect(await page.$('[aria-label="First Name"]')).equals(null)
       expect(
         await page.$eval(
-          '[aria-label="Add Alex Local to Lineup"]',
+          '[aria-label="Add Mookie B to Lineup"]',
           n => n.textContent
         )
-      ).includes('#07 Alex Local')
+      ).includes('#07 Mookie B')
       await click(page, 'Home Team')
-      expect(await page.$('[aria-label="Add Alex Local to Lineup"]')).equals(
-        null
-      )
+      expect(await page.$('[aria-label="Add Mookie B to Lineup"]')).equals(null)
       await click(page, 'Away Team')
       await click(page, 'Save Rosters')
       await click(page, 'Undo Set team roster')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      expect(await page.$('[aria-label="Add Alex Local to Lineup"]')).equals(
-        null
-      )
+      // Undo removes the game-roster entry; the team player remains persisted.
+      expect(await page.$('[aria-label="Add Mookie B to Lineup"]')).equals(null)
       await click(page, 'Cancel')
       expect(unexpected).deep.equals([])
     } finally {
@@ -2742,6 +2776,7 @@ describe('scoring browser', function () {
       await click(page, 'Set Team Rosters')
       for (let i = 2; i <= 9; i++) await click(page, `Remove Player ${i}`)
       await click(page, 'Save Rosters')
+      await click(page, 'Accept Lineup')
       await chooseHit(page, 'Single')
       await page.waitForSelector('[aria-label^="Next batter is on base."]', {
         timeout: 30000
@@ -2749,13 +2784,13 @@ describe('scoring browser', function () {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       await click(page, 'Create Player')
-      await page.locator('[aria-label="First Name"]').fill('Relief')
-      await page.locator('[aria-label="Last Name"]').fill('Batter')
+      await page.locator('[aria-label="First Name"]').fill('Mike')
+      await page.locator('[aria-label="Last Name"]').fill('Trout')
       await click(page, 'Add Player')
-      await click(page, 'Add Relief Batter to Lineup')
-      await click(page, 'Next batter Relief Batter')
+      await click(page, 'Add Mike T to Lineup')
+      await click(page, 'Next batter Mike T')
       await click(page, 'Save Rosters')
-      await page.waitForSelector('[aria-label*="Batter Relief Batter"]')
+      await page.waitForSelector('[aria-label*="Batter Mike T"]')
       await click(page, 'Undo Set team roster')
       await page.waitForSelector('[aria-label^="Next batter is on base."]')
       await click(page, 'Undo 45° Fly Ball')
@@ -5155,8 +5190,8 @@ describe('scoring browser', function () {
         })
       }
       // Added out of order, then five placeholders.
-      await create('Amy', 'Blank', '')
-      await create('Zed', 'Ten', '10')
+      await create('Aaron', 'Judge', '')
+      await create('Mookie', 'Betts', '10')
       await openPlaceholderSheet(page)
       await new Promise(resolve => setTimeout(resolve, 400))
       await click(page, 'Player count 5')
@@ -5195,17 +5230,17 @@ describe('scoring browser', function () {
       expect(unnumbered).deep.equals(
         [...unnumbered].sort((a, b) => a.localeCompare(b))
       )
-      expect(unnumbered).includes('Amy Blank')
+      expect(unnumbered).includes('Aaron J')
       await click(page, 'Defense')
       expect(await roster()).deep.equals(rows)
       await click(page, 'Lineup')
       // The lineup keeps the order it is built in.
-      await click(page, 'Add Zed Ten to Lineup')
+      await click(page, 'Add Mookie B to Lineup')
       const lineup = await page.$$eval(
         '[data-roster-target^="lineup-"][data-roster-player]',
         nodes => nodes.map(n => String(n.textContent))
       )
-      expect(lineup.at(-1)).includes('Zed Ten')
+      expect(lineup.at(-1)).includes('Mookie B')
       await click(page, 'Cancel')
     } finally {
       await page.close()

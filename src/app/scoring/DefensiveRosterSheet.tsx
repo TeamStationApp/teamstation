@@ -41,6 +41,7 @@ export function DefensiveRosterSheet({
   onChoose,
   onAddPlayer,
   onAddPlaceholders,
+  onCancelCreate,
   onRefresh,
   busy = false,
   problem
@@ -52,6 +53,7 @@ export function DefensiveRosterSheet({
   onChoose: (id: number) => void
   onAddPlayer: (draft: PlayerDraft) => Promise<void>
   onAddPlaceholders: (count: number) => Promise<void>
+  onCancelCreate?: () => void
   onRefresh: () => void
   busy?: boolean
   problem?: string
@@ -201,6 +203,7 @@ export function DefensiveRosterSheet({
             setAdding(false)
           }}
           onCancel={() => {
+            onCancelCreate?.()
             setAdding(false)
             onRefresh()
           }}

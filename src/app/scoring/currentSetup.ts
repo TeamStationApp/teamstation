@@ -95,9 +95,15 @@ export function lineupCountMessage(count: number): string {
     : `Only ${words[count] ?? String(count)} ${count === 1 ? 'player' : 'players'} in lineup`
 }
 export function defensiveRosterName(player: ScoringPlayer): string {
-  // Server roster names already resolve collisions across that team's players.
+  // Nonlocal labels come from the roster, which already resolves collisions.
+  // Name parts may remain for editing; never use them to shorten that label.
   const name = player.local
-    ? shortName({ id: player.id, displayName: player.fullName })
+    ? shortName({
+        id: player.id,
+        firstName: player.firstName,
+        lastName: player.lastName,
+        displayName: player.fullName
+      })
     : player.fullName.trim()
   return name === '' ? '?' : name
 }

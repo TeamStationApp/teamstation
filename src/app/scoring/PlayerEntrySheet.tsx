@@ -50,12 +50,14 @@ export function PlayerEntrySheet({
     fontSize: 14
   }
   const focusFrame = useRef<number | undefined>(undefined)
-  useEffect(
-    () => () => {
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
       if (focusFrame.current != null) cancelAnimationFrame(focusFrame.current)
-    },
-    []
-  )
+    }
+  }, [])
   const focus = (): void => {
     first.current?.focus()
     // The web modal activates its focus trap after onShow; focus after that commit.
@@ -74,6 +76,7 @@ export function PlayerEntrySheet({
     let added = false
     try {
       await onAdd(draft)
+      if (!mounted.current) return
       added = true
       if (another) {
         setDraft(emptyPlayerDraft())

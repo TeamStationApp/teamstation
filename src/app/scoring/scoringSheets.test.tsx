@@ -6,6 +6,7 @@ import { Text } from 'react-native'
 
 import { TeamStationClient } from '../../common/api'
 import { ScoringSession } from '../../common/scoring/session'
+import { mintedRosterEntry } from '../../test/mintedRosterEntry'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
@@ -106,6 +107,8 @@ async function mount(
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
   client.roster = async () => []
+  client.createRosterPlayer = async (_teamId, player) =>
+    mintedRosterEntry(player)
   const source: ScoringSource = {
     open: async () => {
       const session = createDevelopmentSession(gameFixture, [], [])
@@ -353,7 +356,7 @@ describe('scoring slide-up sheets', function () {
       expect(roster().every(row => lineup.includes(row))).equals(true)
       await click('Lineup')
       // Adding to the lineup puts him last there; the lineup is not sorted.
-      await click('Add Zed Ten to Lineup')
+      await click('Add Zed T to Lineup')
       const last = Array.from(
         document.querySelectorAll(
           '[data-roster-target^="lineup-"][data-roster-player]'
@@ -365,7 +368,7 @@ describe('scoring slide-up sheets', function () {
     }
   })
 
-  it('edits both lineups and defense, adds local players and commits once with undo', async function () {
+  it('edits both lineups and defense, adds created players and commits once with undo', async function () {
     await mount()
     await menu('Set Team Rosters')
     await click('Remove Player 2')
