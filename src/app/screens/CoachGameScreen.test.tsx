@@ -744,7 +744,50 @@ describe('Coach Game (U25)', function () {
     })
   })
 
-  it('keeps the game writable for a coach: Add Player opens its sheet', async function () {
+  it('creates a team roster player from the coach form', async () => {
+    const held = server()
+    const sent: unknown[] = []
+    held.client.createRosterPlayer = async (teamId, player) => {
+      sent.push({ teamId, player })
+      return { ...roster('home')[0], userId: 300, shortName: 'Mookie B' }
+    }
+    await coach(held)
+    await click('Create Player')
+    for (const [label, value] of [
+      ['First Name', 'Mookie'],
+      ['Last Name', 'Betts']
+    ])
+      await act(async () => {
+        const input = node(label) as HTMLInputElement
+        Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value'
+        )!.set!.call(input, value)
+        input.dispatchEvent(new window.Event('input', { bubbles: true }))
+      })
+    await act(async () => {
+      const buttons = document.querySelectorAll<HTMLElement>(
+        '[aria-label="Add Player"], [aria-label="Create Player"]'
+      )
+      buttons[buttons.length - 1].click()
+    })
+    await settle()
+    expect(sent).has.length(1)
+    expect(
+      (sent[0] as { player: { firstName: string } }).player.firstName
+    ).equals('Mookie')
+    expect(node('First Name')).equals(null)
+    await click('Roster', 'tab')
+    held.client.gameLineups = async () => lineups('mine', true)
+    await click('Save Rosters')
+    await waitFor(
+      () => held.saved.length === 1 && saveDisabled(),
+      'saved and remounted'
+    )
+    expect(document.body.textContent).includes('Mookie B')
+  })
+
+  it('keeps the game writable for a coach: Create Player opens its sheet', async function () {
     const held = server()
     await coach(held)
     await click('Create Player')

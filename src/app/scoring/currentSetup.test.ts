@@ -292,11 +292,68 @@ describe('current scoring setup', function () {
     expect(
       defensiveRosterLabel({ ...player, fullName: '', jersey: '7' })
     ).equals('#7 ?')
+    expect(
+      defensiveRosterLabel({
+        ...player,
+        local: false,
+        userId: 8800001,
+        firstName: 'Cliff',
+        lastName: 'Lee',
+        fullName: 'Cliff L',
+        jersey: '7'
+      })
+    ).equals('#7 Cliff L')
+    expect(
+      defensiveRosterLabel({
+        ...player,
+        local: false,
+        userId: 42,
+        firstName: undefined,
+        lastName: undefined,
+        fullName: 'Luis Ga',
+        jersey: ''
+      })
+    ).equals('Luis Ga')
     const key = battingWarningKey(session)
     session.liveData.boxscore.teams.home.battingOrder = []
     expect(battingWarningKey(session)).equals(key)
     session.liveData.linescore.isTopInning = false
     expect(battingWarningKey(session)).not.equals(key)
+  })
+  it('preserves hydrated collision labels even when name parts remain', () => {
+    const original = game()
+    const ids = original.liveData.boxscore.teams.home.players.slice(0, 2)
+    const rows = ids.map((id, index) => {
+      const firstName = 'Luis'
+      const lastName = index === 0 ? 'Garcia' : 'Gonzalez'
+      original.gameData.players[id] = {
+        ...original.gameData.players[id],
+        local: false,
+        userId: 200 + index,
+        firstName,
+        lastName,
+        fullName: `${firstName} ${lastName}`,
+        jersey: ''
+      }
+      return asRosterEntry({
+        userId: 200 + index,
+        shortName: index === 0 ? 'Luis Ga' : 'Luis Go',
+        jersey: null,
+        positions: [],
+        isPlayer: true,
+        role: 'member',
+        section: 'player',
+        staffRoles: [],
+        inheritedFrom: null
+      })
+    })
+    const shown = withRosterDetails(original, {
+      [original.gameData.teams.home.id]: rows
+    })
+    expect(
+      ids.map(id => defensiveRosterLabel(shown.gameData.players[id]))
+    ).deep.equals(['Luis Ga', 'Luis Go'])
+    expect(shown.gameData.players[ids[0]].lastName).equals('Garcia')
   })
   it('displays current team jerseys without changing saved setup or placeholders', function () {
     const original = game()
