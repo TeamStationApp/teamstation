@@ -211,6 +211,7 @@ async function open(
                       kind: 'game',
                       title: 'Fixture live video',
                       status: 'live',
+                      receiving: true,
                       storage: 'fixture',
                       startAt: null,
                       durationSec: null,

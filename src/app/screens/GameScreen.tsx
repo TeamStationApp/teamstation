@@ -85,6 +85,7 @@ import { gameStatusLine, winnerOf } from './format'
 import { gameActions, gameTabs } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { watchHandoff } from './gameWatchLayoutProps'
+import { showVideoLivePill } from './livePillPolicy'
 import { openableTeams as teamsWithAPage } from './openableTeams'
 
 export interface GameScreenProps {
@@ -1353,7 +1354,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       </GlassView>
     )
 
-  const isLive = video?.status === 'live'
+  // The selected video object is kept across refreshes so playback is not
+  // reset. Whether it is live is read from the game just fetched: that copy
+  // carries whether bytes are still arriving.
+  const playing =
+    video == null
+      ? undefined
+      : (game.videos.find(item => item.id === video.id) ?? video)
+  const isLive = showVideoLivePill(playing, game, clockNow)
   /**
    * What stands in the player's place when there is nothing to play: a game
    * nothing was recorded of, or a non-member, whose video is kept for
