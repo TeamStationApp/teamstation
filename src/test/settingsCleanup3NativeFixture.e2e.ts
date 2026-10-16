@@ -278,6 +278,14 @@ async function main(): Promise<void> {
     mountMedia?.(`http://${host}:${address.port}`)
     const controlApp = express()
     controlApp.use(express.json())
+    controlApp.delete('/code', (req, res) => {
+      if (typeof req.query.email !== 'string') {
+        res.status(400).json({ error: 'Supply fixture email' })
+        return
+      }
+      f.h.mail.delete(req.query.email)
+      res.sendStatus(204)
+    })
     controlApp.get('/code', (req, res) => {
       res.json({
         code:

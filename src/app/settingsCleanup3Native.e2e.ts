@@ -334,6 +334,10 @@ async function main(): Promise<void> {
       })
       await focusField('E-mail address')
       await inputControlledText(email)
+      const mailbox =
+        manifest.controlOrigin + '/code?email=' + encodeURIComponent(email)
+      const cleared = await fetch(mailbox, { method: 'DELETE' })
+      assert.equal(cleared.status, 204)
       await m.tapOn({ text: 'Send me a sign-in code', timeout: 15000 })
       let code: unknown
       for (
@@ -341,9 +345,7 @@ async function main(): Promise<void> {
         attempt < 60 && typeof code !== 'string';
         attempt++
       ) {
-        const response = await fetch(
-          manifest.controlOrigin + '/code?email=' + encodeURIComponent(email)
-        )
+        const response = await fetch(mailbox)
         assert.equal(response.status, 200)
         code = (await response.json()).code
         if (typeof code !== 'string')
