@@ -795,10 +795,10 @@ describe('team screen: pinned pills and the schedule', function () {
       )`)) as string[]
       observed.push(`${at} player pills: ${labels.join(', ')}`)
       check(
-        ['Videos', 'Stats', 'Walk-up', 'Teams', 'Settings'].every(label =>
+        ['Videos', 'Stats', 'Walk-up', 'Teams'].every(label =>
           labels.some(text => text.startsWith(label))
         ),
-        `${at} P1: Videos, Stats, Walk-up, Teams and Settings are offered`
+        `${at} P1: Videos, Stats, Walk-up, Teams are offered`
       )
 
       // P1
@@ -844,7 +844,7 @@ describe('team screen: pinned pills and the schedule', function () {
       await shot(page, size, 'player-pinned')
 
       // P3
-      for (const label of ['Stats', 'Walk-up', 'Teams', 'Settings', 'Videos']) {
+      for (const label of ['Stats', 'Walk-up', 'Teams', 'Videos']) {
         const shown = await tab(page, label)
         check(
           near(shown.pill.top, pinned?.pill.top),

@@ -4,7 +4,8 @@ import { Pressable, Switch, Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import type { EventType } from '../../common/eventInfo'
 import type { PublicGroup } from '../../common/publicGroups'
-import { Button, Card, initialsOf, Screen, TextField } from '../components'
+import { Button, Card, Screen, TextField } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { EventArrivalField } from '../components/EventArrivalField'
 import { EventScheduleFields } from '../components/EventScheduleFields'
 import { EventTypeRow } from '../components/EventTypeRow'
@@ -130,7 +131,10 @@ export function GameFormScreen({
         const own = await client.group({ kind: sourceKind, id: sourceId })
         if (!current()) return
         setEventType('game')
-        setPermitted(own.canManage)
+        setPermitted(
+          own.canManage ||
+            (sourceKind === 'team' && own.canManagePeople === true)
+        )
         setSourceName(own.group.name)
         setSourceGroupId(own.group.id)
         setEventTeam(
@@ -139,7 +143,12 @@ export function GameFormScreen({
         setDraft(
           newGameDraft(
             { kind: 'create', source: { kind: sourceKind, id: own.group.id } },
-            { group: own.group, canManage: own.canManage }
+            {
+              group: own.group,
+              canManage:
+                own.canManage ||
+                (sourceKind === 'team' && own.canManagePeople === true)
+            }
           )
         )
         return
@@ -159,8 +168,14 @@ export function GameFormScreen({
       setDraft(
         loadedGameDraft(
           state,
-          { group: home.group, canManage: home.canManage },
-          { group: away.group, canManage: away.canManage }
+          {
+            group: home.group,
+            canManage: home.canManage || home.canManagePeople === true
+          },
+          {
+            group: away.group,
+            canManage: away.canManage || away.canManagePeople === true
+          }
         )
       )
       setConfirmation(undefined)
@@ -348,12 +363,7 @@ export function GameFormScreen({
                   setRetry(value => value + 1)
                 }}
               />
-              <Button
-                label="Cancel"
-                kind="text"
-                textColor={theme.dangerColor}
-                onPress={onCancel}
-              />
+              <CancelAction label="Cancel" onPress={onCancel} />
             </>
           )}
         </View>
@@ -405,7 +415,7 @@ export function GameFormScreen({
       <ListRow
         title={choice.group.name}
         subtitle={`${label}${choice.group.external ? ' · Placeholder' : ''}`}
-        emblem={initialsOf(choice.group.name)}
+        teamName={choice.group.name}
         emblemUri={choice.group.imageUrl}
         onPress={open}
       />
@@ -585,7 +595,8 @@ export function GameFormScreen({
             )}
             {problem == null && missing.length > 0 && (
               <Text style={styles.hint}>
-                An admin of {missing.join(' and ')} must approve
+                An administrator, coach or assistant of {missing.join(' and ')}{' '}
+                must approve
                 {creating ? ' this game.' : ' changes.'}
               </Text>
             )}
@@ -619,13 +630,7 @@ export function GameFormScreen({
                 submitGame().catch(() => undefined)
               }}
             />
-            <Button
-              label="Cancel"
-              kind="text"
-              textColor={theme.dangerColor}
-              disabled={busy}
-              onPress={onCancel}
-            />
+            <CancelAction label="Cancel" disabled={busy} onPress={onCancel} />
             {loaded?.canPropose === true &&
               loaded.withdrawTeamIds.map(id => (
                 <Button

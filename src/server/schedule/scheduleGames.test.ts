@@ -22,7 +22,7 @@ import {
 } from './scheduleGames'
 
 const adminUrl = testDatabaseUrl
-const scratchName = `teamstation_schedule_${Date.now()}`
+const scratchName = `teamstation_schedule_${process.pid}_${Date.now()}`
 const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const SITE: ScheduleRights = {
@@ -220,8 +220,26 @@ describe('scheduling a team’s games', function () {
   after(async function () {
     if (db != null) await db.destroy()
     if (admin != null) {
-      await admin.query(`drop database if exists ${scratchName} with (force)`)
-      await admin.end()
+      try {
+        // Pool.end can resolve before the sockets have finished closing.
+        // A normal drop lets them drain without emitting termination errors.
+        const deadline = Date.now() + 5000
+        for (;;) {
+          try {
+            await admin.query(`drop database if exists ${scratchName}`)
+            break
+          } catch (error) {
+            if (
+              (error as { code?: string }).code !== '55006' ||
+              Date.now() >= deadline
+            )
+              throw error
+            await new Promise(resolve => setTimeout(resolve, 50))
+          }
+        }
+      } finally {
+        await admin.end()
+      }
     }
   })
 

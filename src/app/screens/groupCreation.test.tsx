@@ -259,8 +259,10 @@ describe('creation and organization interface behavior', () => {
         onOpenGame={(id, _title, options) => opened.push({ id, options })}
       />
     )
-    expect(document.body.textContent).includes('final · 1–4')
-    expect(document.body.textContent).includes('Canceled — Demo Guest withdrew')
+    expect(document.body.textContent).includes('1–4')
+    expect(document.body.textContent).includes(
+      'Withdrawal — Demo Guest withdrew'
+    )
     expect(document.body.textContent!.match(/Canceled/g)).has.lengthOf(2)
     expect(opened).deep.equals([])
     expect(document.body.textContent).not.includes('Open game')
@@ -323,9 +325,7 @@ describe('creation and organization interface behavior', () => {
     const row = [
       ...document.querySelectorAll<HTMLElement>('[role="button"]')
     ].find(node =>
-      (node.getAttribute('aria-label') ?? '').startsWith(
-        'Demo Hawks vs Demo Guest'
-      )
+      (node.getAttribute('aria-label') ?? '').includes('Demo Guest')
     )
     expect(row).not.equals(undefined)
     await act(async () => {
@@ -441,19 +441,14 @@ describe('creation and organization interface behavior', () => {
     )
     await fill('Team name', 'Demo New Hawks')
     await press('Continue')
-    expect(
-      document.querySelector<HTMLInputElement>(
-        'input[aria-label="Search city and state"]'
-      )!.value
-    ).equals('Demo Parent Town')
+    expect(document.body.textContent).includes('Demo Parent Town')
     const next = [
       ...document.querySelectorAll<HTMLElement>('[role="button"]')
     ].find(
       node =>
         (node.getAttribute('aria-label') ?? node.textContent) === 'Continue'
     )!
-    expect(next.getAttribute('aria-disabled')).equals('true')
-    await press('Choose Demo Parent Town, Demo Region, US')
+    expect(next.getAttribute('aria-disabled')).not.equals('true')
     await press('Continue')
     await press('Use initials')
     await press('Create Team')
@@ -662,69 +657,6 @@ describe('creation and organization interface behavior', () => {
     expect(keys[0]).equals(keys[1])
     expect(document.body.textContent).includes('Resend offline')
   })
-  it('moderates node accounts with explicit confirmation, recovers errors and protects the last node in the interface', async () => {
-    const api = client()
-    const account: NodeAccount = {
-      userId: 106,
-      displayName: 'Hank Aaron',
-      email: 'hank@example.com',
-      isNodeAdmin: false,
-      suspended: false,
-      loginEnabled: true,
-      canRemoveNodeRole: true
-    }
-    api.nodeAccounts = async () => [
-      account,
-      {
-        ...account,
-        userId: 105,
-        displayName: 'Babe Ruth',
-        isNodeAdmin: true,
-        canRemoveNodeRole: false
-      }
-    ]
-    api.accountMail = async () => ({ accountMessages: false })
-    api.setAccountMail = async () => {}
-    let changed = 0
-    api.changeNodeAccount = async () => {
-      throw new Error('Replacement needed')
-    }
-    await mount(
-      <NodeAdministrationScreen
-        client={api}
-        onChanged={id => {
-          changed = id
-        }}
-      />
-    )
-    expect(document.body.textContent).includes(
-      'final active node administrator'
-    )
-    await press('Suspend Hank Aaron')
-    await press('Keep account unchanged')
-    await press('Grant node role to Hank Aaron')
-    await press('Confirm account change')
-    expect(document.body.textContent).includes('Replacement needed')
-    api.changeNodeAccount = async () => {}
-    await press('Confirm account change')
-    expect(changed).equals(106)
-    api.nodeAccounts = async () => [
-      { ...account, isNodeAdmin: true, suspended: true }
-    ]
-    await press('Refresh accounts')
-    await press('Reactivate Hank Aaron')
-    await press('Confirm account change')
-    await press('Remove node role from Hank Aaron')
-    await press('Keep account unchanged')
-    api.nodeAccounts = async () => []
-    await fill('Find an account', 'Nobody')
-    expect(document.body.textContent).includes('No accounts match')
-    api.nodeAccounts = async () => {
-      throw new Error('Lookup offline')
-    }
-    await press('Refresh accounts')
-    expect(document.body.textContent).includes('Lookup offline')
-  })
   it('keeps a saved account-mail switch when an older refresh finishes later', async () => {
     const api = client()
     api.nodeAccounts = async () => []
@@ -738,16 +670,32 @@ describe('creation and organization interface behavior', () => {
     }
     api.setAccountMail = async () => {}
     await mount(<NodeAdministrationScreen client={api} onChanged={() => {}} />)
-    expect(document.body.textContent).includes('Turn on account emails')
+    expect(
+      document.querySelector<HTMLInputElement>('input[type="checkbox"]')
+        ?.checked
+    ).equals(false)
     hang = true
-    await press('Refresh accounts')
-    await press('Turn on account emails')
-    expect(document.body.textContent).includes('Turn off account emails')
+    await act(async () => {
+      window.dispatchEvent(new window.Event('focus'))
+    })
+    await act(async () => {
+      document.querySelector<HTMLElement>('[role="switch"]')!.click()
+    })
+    expect(
+      document.querySelector<HTMLInputElement>('input[type="checkbox"]')
+        ?.checked
+    ).equals(true)
     await act(async () => {
       release({ accountMessages: false })
     })
-    expect(document.body.textContent).includes('Turn off account emails')
-    expect(document.body.textContent).not.includes('Turn on account emails')
+    expect(
+      document.querySelector<HTMLInputElement>('input[type="checkbox"]')
+        ?.checked
+    ).equals(true)
+    expect(
+      document.querySelector<HTMLInputElement>('input[type="checkbox"]')
+        ?.checked
+    ).equals(true)
   })
   it('keeps the account list when account mail cannot load', async () => {
     const api = client()
@@ -796,8 +744,8 @@ describe('creation and organization interface behavior', () => {
         }}
       />
     )
-    await press('Grant node role to Demo Keeper')
-    await press('Confirm account change')
+    await fill('Find an account', 'Demo Keeper')
+    await press('Add Demo Keeper')
     expect(changed).equals(106)
     expect(document.body.textContent).includes('Demo Keeper')
     expect(document.body.textContent).not.includes('Mail offline')
@@ -969,6 +917,7 @@ describe('creation and organization interface behavior', () => {
     await settle()
     await press('Open Demo Hawks')
     expect(opened).equals('team_demo')
+    api.discoverGroups = async () => [{ ...group, kind: 'league' }]
     await press('Leagues')
     await settle()
     await press('Seasons')
@@ -1176,8 +1125,7 @@ describe('creation and organization interface behavior', () => {
       <GroupSettingsScreen
         client={api}
         groupRef={{ kind: 'team', id: group.id }}
-        onLink={() => {}}
-        onSaved={() => {
+        onChanged={() => {
           saved = true
         }}
       />
@@ -1188,13 +1136,15 @@ describe('creation and organization interface behavior', () => {
     expect(text).not.includes('Parent relationships')
     expect(text).not.includes('Break relationship')
     expect(text).not.includes('Add parent league')
-    await press('Save settings')
+    await fill('Name', 'Wrens')
+    await press('Save name')
     expect(document.body.textContent).includes('Settings offline')
     api.updateGroup = async () => group
-    await press('Save settings')
+    await press('Save name')
     expect(saved).equals(true)
-    await press('Change picture')
+    await press('Add picture')
     await press('Use initials')
+    await press('Save photo')
   })
   it('titles league and season settings by their kind', async () => {
     for (const kind of ['league', 'season'] as const) {
@@ -1208,8 +1158,6 @@ describe('creation and organization interface behavior', () => {
         <GroupSettingsScreen
           client={api}
           groupRef={{ kind, id: `${kind}_demo` }}
-          onLink={() => {}}
-          onSaved={() => {}}
         />
       )
       const text = document.body.textContent

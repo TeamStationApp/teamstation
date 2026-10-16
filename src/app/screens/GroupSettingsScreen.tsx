@@ -1,85 +1,97 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
-import type { GroupPicture, GroupRef } from '../../common/groupCreation'
-import type { Locality } from '../../common/locality'
+import type { GroupRef } from '../../common/groupCreation'
 import type { GroupDetail } from '../../common/publicGroups'
 import { formatDateRange } from '../../common/seasonTimeFrames'
-import { Button, Card, Screen, SectionHeader, TextField } from '../components'
+import {
+  Button,
+  Card,
+  HeroCard,
+  ListCard,
+  ListRow,
+  PictureSheet,
+  Screen,
+  SectionHeader,
+  TextField
+} from '../components'
 import { DateRangePicker } from '../components/DateRangePicker'
-import { GroupPictureChooser } from '../components/GroupPictureChooser'
-import { LocalityPicker } from '../components/LocalityPicker'
+import { LocationRow } from '../components/LocationRow'
 import { useTitleHandoff } from '../components/useTitleHandoff'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { GroupGameSchedule } from './GroupGameSchedule'
-import { GroupPeopleSettings } from './GroupPeopleSettings'
-import type { GroupLinkChoice } from './GroupScreen'
-import {
-  TeamSettingsActions,
-  type TeamSettingsActionsProps
-} from './TeamSettingsActions'
+import { InvitationsWaiting } from './InvitationsWaiting'
+import { ManagementCard, type ManagementCardProps } from './ManagementCard'
+import { ParentOrganizations } from './ParentOrganizations'
+import { SeasonParticipations } from './SeasonParticipations'
 
 export function GroupSettingsScreen({
   client,
   groupRef,
-  onLink,
-  onSaved,
   onChanged,
   onRequest,
-  onCancel,
-  onCreateGame,
-  onCreateExternal,
+  onLocation,
+  onAddPeople,
+  onInvites,
   onPromote
 }: {
   client: TeamStationClient
   groupRef: GroupRef
-  onLink: (choice: GroupLinkChoice) => void
-  onSaved: () => void
   onChanged?: () => void
   onRequest?: (id: string) => void
-  onCancel?: () => void
-  onCreateGame?: TeamSettingsActionsProps['onCreateGame']
-  onCreateExternal?: TeamSettingsActionsProps['onCreateExternal']
-  onPromote?: TeamSettingsActionsProps['onPromote']
+  onLocation?: (ref: GroupRef) => void
+  onAddPeople?: (ref: GroupRef) => void
+  onInvites?: (ref: GroupRef) => void
+  onPromote?: ManagementCardProps['onPromote']
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const { kind, id } = groupRef
-  const [detail, setDetail] = useState<GroupDetail | undefined>()
+  const [detail, setDetail] = useState<GroupDetail>()
   const [name, setName] = useState('')
-  const [locality, setLocality] = useState<Locality | null>(null)
-  const [range, setRange] = useState<
-    { startsOn: string; endsOn: string } | undefined
-  >()
-  const [picture, setPicture] = useState<GroupPicture | undefined>()
-  const [choosingPhoto, setChoosingPhoto] = useState(false)
+  const [photo, setPhoto] = useState(false)
   const [calendar, setCalendar] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [revision, setRevision] = useState(0)
+  const lastName = useRef<string | undefined>(undefined)
+  const lastGroup = useRef<string | undefined>(undefined)
+  const working = useRef(false)
+  const begin = useLatestRequest()
   const beginSave = useLatestRequest()
   useEffect(() => {
+    const identity = `${kind}:${id}`
+    if (lastGroup.current !== identity) {
+      lastGroup.current = identity
+      lastName.current = undefined
+      setName('')
+      setDetail(undefined)
+      working.current = false
+      setBusy(false)
+    }
+    const current = begin()
     beginSave()
+    // A relationship refresh can invalidate a save without changing the group.
+    // Release its UI lock; the stale completion cannot update this visit.
+    working.current = false
     setBusy(false)
-  }, [beginSave, client, kind, id])
-  useEffect(() => {
-    let active = true
     client.group({ kind, id }).then(
       value => {
-        if (!active) return
+        if (!current()) return
         setDetail(value)
-        setName(value.group.name)
-        setLocality(value.group.locality)
-        if (value.group.startsOn != null && value.group.endsOn != null)
-          setRange({
-            startsOn: value.group.startsOn,
-            endsOn: value.group.endsOn
-          })
+        const previousName = lastName.current
+        setName(current =>
+          previousName == null || current === previousName
+            ? value.group.name
+            : current
+        )
+        lastName.current = value.group.name
         setError('')
       },
       (error: unknown) => {
-        if (active)
+        if (current())
           setError(
             error instanceof Error
               ? error.message
@@ -87,36 +99,39 @@ export function GroupSettingsScreen({
           )
       }
     )
-    return () => {
-      active = false
-    }
-  }, [client, kind, id, revision])
-  const save = async (): Promise<void> => {
-    if (busy) return
+  }, [client, kind, id, revision, begin, beginSave])
+  const update = async (
+    fields: Parameters<TeamStationClient['updateGroup']>[1]
+  ): Promise<void> => {
+    if (working.current || detail == null) return
+    working.current = true
     const current = beginSave()
     setBusy(true)
     setError('')
+    setNotice('')
     try {
       await client.updateGroup(
-        detail == null
-          ? { kind, id }
-          : { kind: detail.group.kind, id: detail.group.id },
-        {
-          name,
-          ...(kind === 'season' ? range : locality == null ? {} : { locality }),
-          picture
-        }
+        { kind: detail.group.kind, id: detail.group.id },
+        fields
       )
-      if (current()) onSaved()
+      if (current()) {
+        onChanged?.()
+        setRevision(value => value + 1)
+        if (fields.name != null) setNotice('Name saved')
+      }
     } catch (error) {
-      if (!current()) return
-      setError(
-        error instanceof Error
-          ? error.message
-          : 'Settings could not be saved. Retry.'
-      )
+      if (current())
+        setError(
+          error instanceof Error
+            ? error.message
+            : 'Settings could not be saved. Retry.'
+        )
+      throw error
     } finally {
-      if (current()) setBusy(false)
+      if (current()) {
+        working.current = false
+        setBusy(false)
+      }
     }
   }
   const leave = async (teamId: string, seasonId: string): Promise<void> => {
@@ -125,7 +140,7 @@ export function GroupSettingsScreen({
     try {
       await client.endParticipation(seasonId, teamId)
       onChanged?.()
-      setRevision(revision + 1)
+      setRevision(value => value + 1)
     } catch (error) {
       setError(
         error instanceof Error
@@ -138,6 +153,8 @@ export function GroupSettingsScreen({
   }
   const title = settingsTitle(detail?.group.kind ?? kind)
   const handoff = useTitleHandoff(title)
+  const group = detail?.group
+  const dates = formatDateRange(group?.startsOn ?? null, group?.endsOn ?? null)
   return (
     <Screen onScroll={handoff.handleScroll}>
       <View style={styles.page}>
@@ -154,101 +171,136 @@ export function GroupSettingsScreen({
           </Text>
         ) : (
           <>
-            <Card style={styles.card}>
-              <TextField label="Name" value={name} onChangeText={setName} />
-              {kind !== 'season' && (
-                <LocalityPicker
-                  client={client}
-                  value={locality}
-                  onChange={setLocality}
-                />
-              )}
-              {kind === 'season' && (
-                <>
-                  <Text style={styles.hint}>
-                    {formatDateRange(
-                      range?.startsOn ?? null,
-                      range?.endsOn ?? null
-                    )}
-                  </Text>
-                  <Button
-                    label="Change time frame"
-                    kind="secondary"
-                    onPress={() => {
-                      setCalendar(true)
-                    }}
-                  />
-                  {calendar && (
-                    <DateRangePicker
-                      initial={range}
-                      onChoose={value => {
-                        setRange(value)
-                        setCalendar(false)
-                      }}
-                      onCancel={() => {
-                        setCalendar(false)
-                      }}
-                    />
-                  )}
-                  <Text style={styles.hint}>
-                    Editing this reference time frame does not move scheduled
-                    games.
-                  </Text>
-                </>
-              )}
-              <Button
-                label="Change picture"
-                kind="secondary"
-                onPress={() => {
-                  setChoosingPhoto(!choosingPhoto)
+            <HeroCard
+              team={kind === 'team'}
+              name={detail.group.name}
+              uri={detail.group.imageUrl}
+              secondary={
+                kind === 'season'
+                  ? dates
+                  : detail.group.locality == null
+                    ? 'Location not set'
+                    : `${detail.group.locality.city}, ${detail.group.locality.region}`
+              }
+              disabled={busy}
+              onEdit={() => {
+                setPhoto(true)
+              }}
+            />
+            {photo && (
+              <PictureSheet
+                fitInitials
+                team={kind === 'team'}
+                client={client}
+                name={detail.group.name}
+                onSave={async picture => {
+                  await update({ picture })
                 }}
-              />
-              {choosingPhoto && (
-                <GroupPictureChooser
-                  client={client}
-                  name={name}
-                  value={picture}
-                  onChange={setPicture}
-                />
-              )}
-              <Button
-                label="Save settings"
-                busy={busy}
-                disabled={name.trim() === ''}
-                onPress={() => {
-                  save().catch(() => undefined)
+                onClose={() => {
+                  setPhoto(false)
                 }}
-              />
-            </Card>
-            {onCancel != null && (
-              <Button
-                label="Cancel"
-                kind="secondary"
-                disabled={busy}
-                onPress={onCancel}
               />
             )}
-            <TeamSettingsActions
+            <View style={styles.section}>
+              <SectionHeader
+                title={`${detail.group.kind[0].toUpperCase()}${detail.group.kind.slice(1)} Details`}
+              />
+              <ListCard>
+                <View style={styles.nameForm}>
+                  <TextField
+                    label="Name"
+                    value={name}
+                    onChangeText={setName}
+                    disabled={busy}
+                  />
+                  <Button
+                    label="Save name"
+                    style={{ alignSelf: 'flex-start' }}
+                    disabled={
+                      busy ||
+                      name.trim() === '' ||
+                      name.trim() === detail.group.name
+                    }
+                    onPress={() => {
+                      update({ name }).catch(() => undefined)
+                    }}
+                  />
+                  {notice !== '' && (
+                    <Text accessibilityLiveRegion="polite" style={styles.hint}>
+                      {notice}
+                    </Text>
+                  )}
+                </View>
+                {kind !== 'season' && (
+                  <LocationRow
+                    value={detail.group.locality}
+                    onPress={
+                      onLocation == null
+                        ? undefined
+                        : () => {
+                            onLocation({
+                              kind: detail.group.kind,
+                              id: detail.group.id
+                            })
+                          }
+                    }
+                  />
+                )}
+                {kind === 'season' && (
+                  <>
+                    <ListRow
+                      title={dates}
+                      subtitle="Time frame"
+                      onPress={() => {
+                        setCalendar(value => !value)
+                      }}
+                    />
+                    {calendar && (
+                      <DateRangePicker
+                        initial={
+                          detail.group.startsOn == null ||
+                          detail.group.endsOn == null
+                            ? undefined
+                            : {
+                                startsOn: detail.group.startsOn,
+                                endsOn: detail.group.endsOn
+                              }
+                        }
+                        onChoose={range => {
+                          update(range)
+                            .then(() => {
+                              setCalendar(false)
+                            })
+                            .catch(() => undefined)
+                        }}
+                        onCancel={() => {
+                          setCalendar(false)
+                        }}
+                      />
+                    )}
+                    <Text style={styles.hint}>
+                      Editing this reference time frame does not move scheduled
+                      games.
+                    </Text>
+                  </>
+                )}
+              </ListCard>
+            </View>
+            <ManagementCard
               detail={detail}
               disabled={busy}
-              onLink={onLink}
-              onCreateGame={onCreateGame}
-              onCreateExternal={onCreateExternal}
               onPromote={onPromote}
+              onAddPeople={onAddPeople}
+              onInvites={onInvites}
             />
-            {
-              // A placeholder team has no people of its own: its custodian
-              // keeps it, and promoting it is how somebody is added.
-              !detail.group.external && (
-                <GroupPeopleSettings
-                  client={client}
-                  scopeKind={detail.group.kind}
-                  scopeId={detail.group.id}
-                  onOpenRequest={onRequest}
-                  onChanged={onChanged}
-                />
-              )
-            }
+            {!detail.group.external && (
+              <InvitationsWaiting
+                client={client}
+                scopeKind={detail.group.kind}
+                scopeId={detail.group.id}
+                onChanged={onChanged}
+              />
+            )}
             {detail.group.kind === 'team' && onRequest != null && (
               <GroupGameSchedule
                 client={client}
@@ -257,27 +309,18 @@ export function GroupSettingsScreen({
                 disabled={busy}
               />
             )}
-            {detail.participatingSeasons.length > 0 && (
-              <View style={styles.section}>
-                <SectionHeader title="Season participation" />
-                {detail.participatingSeasons.map(season => (
-                  <Card key={season.id} style={styles.card}>
-                    <Text style={styles.name}>{season.name}</Text>
-                    <Text style={styles.hint}>
-                      Ending participation leaves all scheduled games and
-                      management parents unchanged.
-                    </Text>
-                    <Button
-                      label={`End participation in ${season.name}`}
-                      kind="secondary"
-                      disabled={busy}
-                      onPress={() => {
-                        leave(detail.group.id, season.id).catch(() => undefined)
-                      }}
-                    />
-                  </Card>
-                ))}
-              </View>
+            {detail.group.kind === 'team' && (
+              <SeasonParticipations
+                key={detail.group.id}
+                client={client}
+                teamId={detail.group.id}
+                seasons={detail.participatingSeasons}
+                disabled={busy}
+                onLeft={() => {
+                  setRevision(value => value + 1)
+                  onChanged?.()
+                }}
+              />
             )}
             {detail.competingTeams.length > 0 && (
               <View style={styles.section}>
@@ -297,6 +340,18 @@ export function GroupSettingsScreen({
                 ))}
               </View>
             )}
+            {detail.group.kind === 'team' && (
+              <ParentOrganizations
+                client={client}
+                teamId={detail.group.id}
+                teamName={detail.group.name}
+                parents={detail.parents}
+                onLeft={() => {
+                  setRevision(value => value + 1)
+                  onChanged?.()
+                }}
+              />
+            )}
           </>
         )}
         {error !== '' && (
@@ -304,23 +359,19 @@ export function GroupSettingsScreen({
             <Text accessibilityRole="alert" style={styles.error}>
               {error}
             </Text>
-            {detail == null && (
-              <Button
-                label="Retry settings"
-                kind="secondary"
-                onPress={() => {
-                  setRevision(revision + 1)
-                }}
-              />
-            )}
+            <Button
+              label="Retry settings"
+              kind="secondary"
+              onPress={() => {
+                setRevision(value => value + 1)
+              }}
+            />
           </>
         )}
       </View>
     </Screen>
   )
 }
-
-/** `League Settings`, `Season Settings` or `Team Settings`, never "group". */
 export function settingsTitle(kind: GroupRef['kind']): string {
   return kind === 'league'
     ? 'League Settings'
@@ -328,9 +379,11 @@ export function settingsTitle(kind: GroupRef['kind']): string {
       ? 'Season Settings'
       : 'Team Settings'
 }
-
 const getStyles = cacheStyles((theme: Theme) => ({
   page: { gap: theme.rem(1.25) },
+  section: { gap: theme.rem(0.75) },
+  card: { gap: theme.rem(0.75) },
+  nameForm: { gap: theme.rem(0.75), padding: theme.rem(1) },
   title: {
     fontSize: theme.rem(1.5),
     color: theme.primaryTextColor,
@@ -342,11 +395,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont
   },
   hint: {
+    padding: theme.rem(0.5),
     fontSize: theme.rem(0.875),
-    lineHeight: theme.rem(1.35),
     color: theme.secondaryTextColor
   },
-  error: { fontSize: theme.rem(0.875), color: theme.dangerColor },
-  section: { gap: theme.rem(0.75) },
-  card: { gap: theme.rem(0.75) }
+  error: { fontSize: theme.rem(0.875), color: theme.dangerColor }
 }))

@@ -54,7 +54,8 @@ export async function browserSession(
   device: string,
   width: number,
   height: number,
-  artifacts: string
+  artifacts: string,
+  browserName: 'chromium' | 'chrome' = 'chromium'
 ): Promise<BrowserSession> {
   const profile = join(artifacts, 'support', 'browser-profiles', device)
   await mkdir(profile, { recursive: true })
@@ -65,6 +66,7 @@ export async function browserSession(
     appId: `about:blank#${device}`,
     artifacts: 'on-failure',
     extra: {
+      browser: browserName,
       windowSize: `${width}x${height}`,
       headed: false,
       userDataDir: profile
@@ -98,8 +100,11 @@ export async function fill(
   label: string,
   value: string
 ): Promise<void> {
-  await m.tapOn({ css: `input[aria-label="${label}"]`, timeout: 10000 })
-  const selector = `input[aria-label="${label}"]`
+  await m.tapOn({
+    css: `[aria-label="${label}"]:is(input, textarea)`,
+    timeout: 10000
+  })
+  const selector = `[aria-label="${label}"]:is(input, textarea)`
   const page = browserPages.get(m)
   if (page != null) {
     const current = await page.$eval(

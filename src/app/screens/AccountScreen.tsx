@@ -3,7 +3,6 @@ import { Platform, Pressable, Switch, Text, View } from 'react-native'
 
 import type { AccountSettings } from '../../common/accountSettings'
 import type { Session, SessionUser, TeamStationClient } from '../../common/api'
-import type { GroupPicture } from '../../common/groupCreation'
 import {
   type ClientPasswordCosts,
   newPasswordRequirements
@@ -12,15 +11,15 @@ import {
   Button,
   Card,
   CardContent,
-  Emblem,
+  DangerText,
+  HeroCard,
   Icon,
-  initialsOf,
   ListCard,
+  PictureSheet,
   Screen,
   SectionHeader,
   TextField
 } from '../components'
-import { GroupPictureChooser } from '../components/GroupPictureChooser'
 import { NewPasswordFields } from '../components/NewPasswordFields'
 import { lstrings } from '../locales/strings'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
@@ -70,7 +69,6 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const [notice, setNotice] = useState<{ section: string; message: string }>()
   const [passwordOpen, setPasswordOpen] = useState(false)
   const [photoOpen, setPhotoOpen] = useState(false)
-  const [photoChoice, setPhotoChoice] = useState<GroupPicture>()
   const preparation = useRef<Promise<ClientPasswordCosts> | undefined>(
     undefined
   )
@@ -203,26 +201,47 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
 
   return (
     <Screen>
-      {user.isAdmin && onNodeAdministration != null && (
-        <Button
-          label="Node administration"
-          kind="secondary"
-          onPress={onNodeAdministration}
+      <HeroCard
+        person
+        name={user.displayName}
+        secondary={user.email}
+        uri={user.avatarUrl}
+        disabled={account == null || busy !== ''}
+        onEdit={() => {
+          setPhotoOpen(true)
+        }}
+      />
+      {feedback('photo')}
+      {photoOpen && (
+        <PictureSheet
+          client={client}
+          name={user.displayName}
+          allowCatalog
+          pickPhoto={pickPhoto}
+          onClose={() => {
+            setPhotoOpen(false)
+          }}
+          onSave={async choice => {
+            if (working.current)
+              throw new Error('Another change is being saved')
+            working.current = true
+            setBusy('photo')
+            setNotice(undefined)
+            try {
+              if (choice.image != null)
+                accept(await client.setAccountPhoto(choice.image))
+              else if (choice.catalogId != null) {
+                await client.chooseCatalogPicture(choice.catalogId)
+                accept(await client.accountSettings())
+              } else accept(await client.clearAccountPhoto())
+              setNotice({ section: 'photo', message: 'Photo saved' })
+            } finally {
+              working.current = false
+              setBusy('')
+            }
+          }}
         />
       )}
-      <Card style={styles.identity}>
-        <Emblem
-          key={user.avatarUrl}
-          uri={user.avatarUrl}
-          fallback={initialsOf(user.displayName)}
-          shape="circle"
-          size={3.5}
-        />
-        <View style={styles.identityText}>
-          <Text style={styles.name}>{user.displayName}</Text>
-          {user.email != null && <Text style={styles.email}>{user.email}</Text>}
-        </View>
-      </Card>
       {account == null ? (
         <Card style={styles.setting}>
           <Text style={styles.email}>
@@ -240,79 +259,26 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       ) : (
         <>
           <View style={styles.section}>
-            <SectionHeader title="Profile" />
+            <SectionHeader title="Name" />
             <Card style={styles.setting}>
               <TextField label="Name" value={name} onChangeText={setName} />
-              <View style={styles.actions}>
-                <Button
-                  label="Save name"
-                  disabled={
-                    busy !== '' ||
-                    name.trim() === '' ||
-                    name.trim() === user.displayName
-                  }
-                  onPress={() => {
-                    run('profile', async () => {
-                      const value = await client.setAccountName(name)
-                      accept(value)
-                      setName(value.user.displayName)
-                      setNotice({ section: 'profile', message: 'Name saved' })
-                    })
-                  }}
-                />
-                <Button
-                  label={user.avatarUrl == null ? 'Add photo' : 'Change photo'}
-                  kind="secondary"
-                  disabled={busy !== ''}
-                  onPress={() => {
-                    setPhotoChoice(undefined)
-                    setPhotoOpen(true)
-                  }}
-                />
-              </View>
-              {photoOpen && (
-                <View style={styles.setting}>
-                  <GroupPictureChooser
-                    client={client}
-                    name={name}
-                    allowCatalog
-                    value={photoChoice}
-                    onChange={setPhotoChoice}
-                    pickPhoto={pickPhoto}
-                  />
-                  <Button
-                    label="Save profile picture"
-                    disabled={photoChoice == null || busy !== ''}
-                    onPress={() => {
-                      const choice = photoChoice
-                      if (choice == null) return
-                      run('profile', async () => {
-                        if (choice.image != null)
-                          accept(await client.setAccountPhoto(choice.image))
-                        else if (choice.catalogId != null) {
-                          await client.chooseCatalogPicture(choice.catalogId)
-                          accept(await client.accountSettings())
-                        } else accept(await client.clearAccountPhoto())
-                        setPhotoOpen(false)
-                        setNotice({
-                          section: 'profile',
-                          message: 'Profile picture saved'
-                        })
-                      })
-                    }}
-                  />
-                  <Button
-                    label="Cancel photo change"
-                    kind="secondary"
-                    disabled={busy !== ''}
-                    onPress={() => {
-                      setPhotoOpen(false)
-                      setPhotoChoice(undefined)
-                    }}
-                  />
-                </View>
-              )}
-              <Text style={styles.email}>JPEG, PNG or WebP, up to 10 MB.</Text>
+              <Button
+                label="Save name"
+                style={{ alignSelf: 'flex-start' }}
+                disabled={
+                  busy !== '' ||
+                  name.trim() === '' ||
+                  name.trim() === user.displayName
+                }
+                onPress={() => {
+                  run('profile', async () => {
+                    const value = await client.setAccountName(name)
+                    accept(value)
+                    setName(value.user.displayName)
+                    setNotice({ section: 'profile', message: 'Name saved' })
+                  })
+                }}
+              />
               {feedback('profile')}
             </Card>
           </View>
@@ -694,13 +660,15 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           )}
         </View>
       )}
-      <Button
-        label="Sign out"
-        kind="secondary"
-        block
-        disabled={busy !== ''}
-        onPress={onSignOut}
-      />
+      <DangerText label="Sign out" disabled={busy !== ''} onPress={onSignOut} />
+      {user.isAdmin && onNodeAdministration != null && (
+        <Button
+          label="Node administration"
+          kind="secondary"
+          block
+          onPress={onNodeAdministration}
+        />
+      )}
     </Screen>
   )
 }

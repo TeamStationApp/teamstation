@@ -75,6 +75,8 @@ import {
 import { GameScreen } from './screens/GameScreen'
 import { GamesFeedScreen } from './screens/GamesFeedScreen'
 import { GroupLinkScreen } from './screens/GroupLinkScreen'
+import { GroupLocationPage } from './screens/GroupLocationPage'
+import { GroupPeoplePage } from './screens/GroupPeoplePage'
 import { GroupScreen } from './screens/GroupScreen'
 import { GroupSettingsScreen } from './screens/GroupSettingsScreen'
 import { HomeScreen } from './screens/HomeScreen'
@@ -1382,6 +1384,30 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onCancel={pop}
       />
+    ) : top.name === 'groupAddPeople' || top.name === 'groupInvites' ? (
+      <GroupPeoplePage
+        key={`${top.name}:${top.kind}:${top.id}`}
+        client={client}
+        group={{ kind: top.kind, id: top.id }}
+        invites={top.name === 'groupInvites'}
+        onDone={() => {
+          refreshRoles()
+          setSettingsVisit(++settingsVisitId.current)
+          pop()
+        }}
+      />
+    ) : top.name === 'groupLocation' ? (
+      <GroupLocationPage
+        key={`${top.kind}:${top.id}`}
+        client={client}
+        kind={top.kind}
+        id={top.id}
+        onDone={() => {
+          refreshRoles()
+          setSettingsVisit(++settingsVisitId.current)
+          pop()
+        }}
+      />
     ) : top.name === 'group' ? (
       <GroupScreen
         client={client}
@@ -1455,35 +1481,29 @@ function Shell(props: AppProps): React.ReactElement {
         key={`${top.kind}:${top.id}:${settingsVisit}`}
         client={client}
         groupRef={{ kind: top.kind, id: top.id }}
-        onLink={choice => {
-          push({
-            name: 'groupLink',
-            kind: choice.subject.kind,
-            id: choice.subject.id,
-            targetKind: choice.targetKind,
-            relationship: choice.relationship,
-            direction: choice.direction
-          })
+
+        onAddPeople={group => {
+          push({ name: 'groupAddPeople', ...group, teamReturn: top.teamReturn })
+        }}
+        onInvites={group => {
+          push({ name: 'groupInvites', ...group, teamReturn: top.teamReturn })
+        }}
+        onLocation={group => {
+          if (group.kind !== 'season')
+            push({
+              name: 'groupLocation',
+              kind: group.kind,
+              id: group.id,
+              teamReturn: top.teamReturn
+            })
         }}
         onChanged={refreshRoles}
         onRequest={id => {
           push({ name: 'notification', id })
         }}
-        onCancel={pop}
-        onCreateGame={group => {
-          if (group.kind === 'team')
-            push({ name: 'createGame', kind: 'team', id: group.id })
-        }}
-        onCreateExternal={custodian => {
-          push({ name: 'createGroup', kind: 'team', custodian })
-        }}
+
         onPromote={group => {
           push({ name: 'promoteExternal', id: group.id })
-        }}
-        onSaved={() => {
-          if (settingsVisitId.current !== settingsVisit) return
-          refreshRoles()
-          pop()
         }}
       />
     ) : top.name === 'nodeAdministration' ? (
@@ -1717,6 +1737,9 @@ function Shell(props: AppProps): React.ReactElement {
         client={client}
         id={top.team.id}
         team={top.team}
+        onCreateGame={id => {
+          push({ name: 'createGame', kind: 'team', id })
+        }}
         onOpenGame={openGame}
         onOpenPlayer={openPlayer}
         onOpenPerson={(userId, name, teamId) => {
@@ -2114,6 +2137,19 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     }
   if (route.name === 'gameSettings')
     return { [tab]: [gameUnder(route.gameId), route] }
+  if (
+    route.name === 'groupLocation' ||
+    route.name === 'groupAddPeople' ||
+    route.name === 'groupInvites'
+  ) {
+    const settings = {
+      name: 'groupSettings' as const,
+      kind: route.kind,
+      id: route.id,
+      teamReturn: route.teamReturn
+    }
+    return { [tab]: [...stackFor(settings)[tab]!, route] }
+  }
   if (route.name === 'groupSettings' && route.kind === 'team') {
     const target = route.teamReturn
     const underlying =

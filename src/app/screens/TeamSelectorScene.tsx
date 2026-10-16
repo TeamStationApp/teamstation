@@ -1,12 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
+import { Modal, ScrollView, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { localityLabel } from '../../common/locality'
 import type { PublicGroup, SearchRow } from '../../common/publicGroups'
-import { Button, Emblem, initialsOf, TextField } from '../components'
+import { Button, TextField } from '../components'
 import { ListRow } from '../components/ListRow'
-import { RadioMark } from '../components/RadioMark'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { PlaceholderTeamForm, type TeamChoice } from './PlaceholderTeamForm'
@@ -125,7 +124,10 @@ export function TeamSelectorScene({
     try {
       const detail = await client.group({ kind: 'team', id: row.id })
       if (open.current)
-        onChoose({ group: detail.group, canManage: detail.canManage })
+        onChoose({
+          group: detail.group,
+          canManage: detail.canManage || detail.canManagePeople === true
+        })
     } catch (caught) {
       if (open.current)
         setError(
@@ -159,6 +161,7 @@ export function TeamSelectorScene({
             accessibilityLabel="Cancel team selector"
             kind="text"
             textColor={theme.dangerColor}
+            style={styles.cancel}
             onPress={onClose}
           />
         </View>
@@ -211,68 +214,55 @@ export function TeamSelectorScene({
               )}
               <View style={styles.list}>
                 {shown.map((row, index) => (
-                  <Pressable
+                  <View
                     key={row.id}
-                    testID={`team-result-${row.id}`}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Choose ${row.name}`}
-                    aria-selected={row.id === currentId}
-                    disabled={choosing}
-                    onPress={() => {
-                      choose(row).catch(() => undefined)
-                    }}
-                    style={({ pressed }) => [
-                      styles.row,
-                      index > 0 && styles.divider,
-                      pressed && styles.pressed
-                    ]}
+                    style={index > 0 ? styles.divider : undefined}
                   >
-                    <Emblem
-                      uri={row.imageUrl}
-                      fallback={initialsOf(row.name)}
-                      icon={row.external ? 'groups' : undefined}
+                    <ListRow
+                      testID={`team-result-${row.id}`}
+                      accessibilityLabel={`Choose ${row.name}`}
+                      selected={row.id === currentId}
+                      disabled={choosing}
+                      teamName={row.name}
+                      emblemUri={row.imageUrl}
+                      title={row.name}
+                      subtitle={
+                        teamRowContext(row) === ''
+                          ? undefined
+                          : teamRowContext(row)
+                      }
+                      subtitleNumberOfLines={2}
+                      detailTestID={`team-staff-${row.id}`}
+                      detail={
+                        row.staffNames == null || row.staffNames.length === 0
+                          ? undefined
+                          : row.staffNames.join(', ')
+                      }
+                      onPress={() => {
+                        choose(row).catch(() => undefined)
+                      }}
                     />
-                    <View style={styles.rowText}>
-                      <Text style={styles.name} numberOfLines={1}>
-                        {row.name}
-                      </Text>
-                      {teamRowContext(row) !== '' && (
-                        <Text style={styles.detail} numberOfLines={1}>
-                          {teamRowContext(row)}
-                        </Text>
-                      )}
-                      {(row.staffNames ?? []).length > 0 && (
-                        <Text
-                          style={styles.detail}
-                          numberOfLines={1}
-                          testID={`team-staff-${row.id}`}
-                        >
-                          {(row.staffNames ?? []).join(', ')}
-                        </Text>
-                      )}
-                    </View>
-                    <RadioMark on={row.id === currentId} />
-                  </Pressable>
+                  </View>
                 ))}
-                <ListRow
-                  title="Create Placeholder Team"
-                  subtitle={
-                    custodianNote ??
-                    (custodian == null
-                      ? 'You need to manage a team or season to create a placeholder.'
-                      : 'A team that is not on TeamStation yet')
-                  }
-                  subtitleNumberOfLines={2}
-                  emblemIcon="groups"
-                  onPress={
-                    custodian == null || custodianNote != null
-                      ? undefined
-                      : () => {
-                          setPlacing(true)
-                        }
-                  }
-                />
               </View>
+              <ListRow
+                title="Create Placeholder Team"
+                subtitle={
+                  custodianNote ??
+                  (custodian == null
+                    ? 'You need to manage a team or season to create a placeholder.'
+                    : 'A team that is not on TeamStation yet')
+                }
+                subtitleNumberOfLines={2}
+                emblemIcon="groups"
+                onPress={
+                  custodian == null || custodianNote != null
+                    ? undefined
+                    : () => {
+                        setPlacing(true)
+                      }
+                }
+              />
             </>
           )}
         </ScrollView>
@@ -312,32 +302,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont,
     textTransform: 'uppercase'
   },
-  list: { gap: theme.rem(0.25) },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.rem(0.75),
-    minHeight: theme.rem(4),
-    paddingVertical: theme.rem(0.5),
-    paddingHorizontal: theme.rem(0.5),
-    borderRadius: theme.rem(0.75)
+  cancel: {
+    paddingRight: 0,
+    paddingLeft: theme.rem(1),
+    minWidth: theme.rem(3),
+    alignItems: 'flex-end'
   },
-  pressed: { backgroundColor: theme.highlightRowActiveBackground },
-  divider: {
-    borderTopWidth: 1,
-    borderTopColor: theme.defaultBorderColor
-  },
-  rowText: { flex: 1, gap: theme.rem(0.125) },
-  name: {
-    fontSize: theme.rem(1),
-    color: theme.primaryTextColor,
-    fontFamily: theme.semiBoldTextFont
-  },
-  detail: {
-    fontSize: theme.rem(0.8125),
-    color: theme.secondaryTextColor,
-    fontFamily: theme.regularTextFont
-  },
+  list: {},
+  divider: { borderTopWidth: 1, borderTopColor: theme.defaultBorderColor },
   hint: {
     fontSize: theme.rem(0.875),
     lineHeight: theme.rem(1.35),

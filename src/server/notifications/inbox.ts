@@ -290,6 +290,11 @@ export async function inbox(
           )
         ])
       )
+    const schedulingSides = db
+      .selectFrom('group_request_sides')
+      .select('request_id')
+      .where('scope_type', '=', 'team')
+      .where('scope_id', 'in', teamIds.length === 0 ? [''] : teamIds)
     const historyIds = db
       .selectFrom('notification_events')
       .select('source_id')
@@ -310,6 +315,10 @@ export async function inbox(
     rows = rows.where(eb =>
       eb.or([
         eb('id', 'in', candidateSides),
+        eb.and([
+          eb('kind', 'in', ['game', 'gameChange']),
+          eb('id', 'in', schedulingSides)
+        ]),
         eb('id', 'in', historyIds),
         eb('id', 'in', viewedIds),
         eb('sender_id', '=', fresh.userId),
@@ -337,6 +346,13 @@ export async function inbox(
                 )
               ])
             ]),
+        ...teamIds.map(id =>
+          eb.and([
+            eb('kind', 'in', ['game', 'gameChange']),
+            eb('sender_scope_type', '=', 'team'),
+            eb('sender_scope_id', '=', id)
+          ])
+        ),
         ...refs.map(ref =>
           eb.and([
             eb('sender_scope_type', '=', ref.kind),

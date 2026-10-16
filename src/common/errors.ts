@@ -31,7 +31,8 @@ export const asErrorCode = asLiteral(
   'membersOnly',
   'internal',
   /** A service the answer depends on is away for now; ask again later. */
-  'unavailable'
+  'unavailable',
+  'invalidLocation'
 )
 export type ErrorCode = ReturnType<typeof asErrorCode>
 
@@ -70,7 +71,8 @@ export const errorStatus: Record<ErrorCode, number> = {
   rateLimited: 429,
   membersOnly: 403,
   internal: 500,
-  unavailable: 503
+  unavailable: 503,
+  invalidLocation: 422
 }
 
 /**
@@ -150,6 +152,8 @@ export const unsupportedMedia = (message: string): HttpError =>
 /** Something the answer needs is away for now, and will be back. */
 export const unavailable = (message: string): HttpError =>
   new HttpError('unavailable', message)
+export const invalidLocation = (message: string): HttpError =>
+  new HttpError('invalidLocation', message)
 
 /** Turns anything at all into the one shape, without leaking internals. */
 export function toApiError(error: unknown): ApiError {

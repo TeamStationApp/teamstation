@@ -4,6 +4,8 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { googlePlaces } from '../server/location/googlePlaces'
+import { googlePlacesStub } from '../test/googlePlacesStub'
 import { groupFixture } from '../test/groupFixtures'
 import { recordBrowserCoverage } from './browserCoverage.e2e'
 import {
@@ -18,7 +20,13 @@ if (artifacts == null) throw new Error('Set TS_CREATION_ARTIFACTS for UI proof')
 
 async function main(): Promise<void> {
   await mkdir(artifacts!, { recursive: true })
-  const f = await groupFixture(resolve('dist'))
+  const provider = await googlePlacesStub()
+  const f = await groupFixture(
+    resolve('dist'),
+    undefined,
+    undefined,
+    googlePlaces({ apiKey: 'placeholder-key', baseUrl: provider.baseUrl })
+  )
   let browser: Browser | undefined
   const pages: Page[] = []
   const lines = ['$ node -r sucrase/register src/app/creationUi.e2e.ts']
@@ -107,17 +115,18 @@ async function main(): Promise<void> {
     await shot(p, 'league-name')
     await fill(p, 'League name', 'Demo Only League')
     await press(p, 'Continue')
-    await press(p, 'Enter location manually')
-    await fill(p, 'City', 'Demo City')
-    await fill(p, 'State or region', 'Demo Region')
-    await press(p, 'Confirm location')
+    await press(p, 'Location not set, Add a city')
+    await p.waitForSelector('input[aria-label="City"]', { visible: true })
+    await fill(p, 'City', 'tor')
+    await press(p, 'Choose Toronto, Ontario, Canada')
+    await press(p, 'Save')
     await press(p, 'Continue')
     await press(p, 'Use initials')
     expect(await p.$('[aria-label="Initials preview: DO"]')).not.equals(null)
     expect(await p.$('[aria-label="Baseball"]')).equals(null)
     await shot(p, 'group-photo')
     await press(p, 'Create League')
-    await text(p, 'Group settings')
+    await p.waitForSelector('[aria-label="League settings"]')
     await p.goto(f.h.origin)
     await text(p, 'Demo Only League')
     await shot(p, 'partial-no-teams-home')
@@ -150,8 +159,9 @@ async function main(): Promise<void> {
     await press(p, 'Use this range')
     await press(p, 'Continue')
     await press(p, 'Use initials')
+    await press(p, 'Continue')
     await press(p, 'Create Season')
-    await text(p, 'Group settings')
+    await p.waitForSelector('[aria-label="Season settings"]')
     await p.reload()
     await text(p, 'Demo Spring')
     lines.push(
@@ -168,8 +178,8 @@ async function main(): Promise<void> {
       'Create an organization'
     )
     await press(admin, 'Demo League A')
-    await press(admin, 'Group settings')
-    await press(admin, 'Change picture')
+    await press(admin, 'League settings')
+    await press(admin, 'Add picture')
     await shot(admin, 'settings-photo')
     await admin.setViewport({ width: 390, height: 844 })
     await admin.goto(f.h.origin)
@@ -204,16 +214,15 @@ async function main(): Promise<void> {
     const team = await login(104)
     await text(team, 'Demo Only Team')
     await shot(team, 'team-only-home')
-    expect(await team.evaluate(() => document.body.textContent)).not.includes(
-      'Create an organization'
-    )
-    await press(team, 'Add Team')
+    await text(team, 'Create Team')
+    await press(team, 'Create Team')
     await fill(team, 'Team name', 'Demo New Team')
     await press(team, 'Continue')
-    await press(team, 'Enter location manually')
-    await fill(team, 'City', 'Demo City')
-    await fill(team, 'State or region', 'Demo Region')
-    await press(team, 'Confirm location')
+    await press(team, 'Location not set, Add a city')
+    await team.waitForSelector('input[aria-label="City"]', { visible: true })
+    await fill(team, 'City', 'tor')
+    await press(team, 'Choose Toronto, Ontario, Canada')
+    await press(team, 'Save')
     await press(team, 'Continue')
     const chooser = team.waitForFileChooser()
     await press(team, 'Add Photo')
@@ -222,7 +231,7 @@ async function main(): Promise<void> {
     ).accept([resolve('src/app/assets/sports/baseball-192.png')])
     await team.waitForSelector('[aria-label="Your selected photo"]')
     await press(team, 'Create Team')
-    await text(team, 'Group settings')
+    await team.waitForSelector('[aria-label="Team sections"]')
     await team.reload()
     await text(team, 'Demo New Team')
     lines.push(
@@ -238,6 +247,7 @@ async function main(): Promise<void> {
   } finally {
     await browser?.close()
     await f.h.close()
+    await provider.close()
   }
 }
 main().catch((error: unknown) => {

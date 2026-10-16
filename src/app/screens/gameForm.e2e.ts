@@ -637,15 +637,10 @@ async function scenes({ f, seeded, m, page, artifacts }: Scene): Promise<void> {
   await see('Kept by Demo Hawks')
   await fill('Team name', 'Riverside Owls')
   await tap('Continue')
-  await fill('Search city and state', 'Spring')
-  await wait(
-    `Array.from(document.querySelectorAll('[role="button"]')).some(node=>(node.getAttribute('aria-label')??'').startsWith('Choose Spring'))`
-  )
+  // The shared creation step starts with the custodian's location. Search
+  // itself is exercised by settingsCleanup E8 and the live Places run.
+  await see('Demo City')
   await shot('placeholder-form.png')
-  const city = await evaluate<string>(
-    `Array.from(document.querySelectorAll('[role="button"]')).map(node=>node.getAttribute('aria-label')??'').find(name=>name.startsWith('Choose Spring'))`
-  )
-  await tap(city)
   await tap('Continue')
   await tap('Skip')
   await wait(`document.querySelector('[data-testid="team-selector"]')==null`)

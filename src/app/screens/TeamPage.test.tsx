@@ -11,8 +11,8 @@ import {
 import { HttpError } from '../../common/errors'
 import { asGroupDetail, type GroupDetail } from '../../common/publicGroups'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { ManagementCard } from './ManagementCard'
 import { TeamPage } from './TeamPage'
-import { TeamSettingsActions } from './TeamSettingsActions'
 
 let root: Root | undefined
 const detail = (patch: Partial<GroupDetail> = {}): GroupDetail =>
@@ -59,6 +59,37 @@ async function press(label: string): Promise<void> {
   })
 }
 describe('restored access-aware team presentation', () => {
+  for (const allowed of [true, false])
+    it(`offers canonical-team event creation only when scheduling is ${allowed ? 'allowed' : 'refused'}`, async () => {
+      const api = new TeamStationClient({ baseUrl: '/api/v1' })
+      api.group = async () =>
+        detail({ canViewPrivate: true, canManagePeople: allowed })
+      api.teamGames = async () => []
+      api.roster = async () => []
+      api.teamStats = async () => []
+      api.teamPitchingStats = async () => []
+      api.standings = async () => []
+      api.follows = async () => []
+      let created = ''
+      await mount(
+        <TeamPage
+          client={api}
+          id="alias"
+          initialTab="schedule"
+          onOpenGame={() => undefined}
+          onCreateGame={id => {
+            created = id
+          }}
+        />
+      )
+      expect(
+        document.querySelector('[data-testid="add-event-card"]') != null
+      ).equals(allowed)
+      if (allowed) {
+        await press('Add Event')
+        expect(created).equals('canonical')
+      }
+    })
   for (const refused of [false, true])
     it(`revalidates the mounted private schedule on foreground ${refused ? 'and clears refused collections' : 'without resetting its section'}`, async () => {
       const api = new TeamStationClient({ baseUrl: '/api/v1' })
@@ -440,29 +471,18 @@ describe('gear-only team actions', () => {
   it('forwards canonical team contexts for every full-team management action', async () => {
     const seen: unknown[] = []
     await mount(
-      <TeamSettingsActions
+      <ManagementCard
         detail={detail({ canManage: true })}
-        onLink={v => seen.push(v)}
-        onCreateGame={v => seen.push(v)}
-        onCreateExternal={v => seen.push(v)}
+        onAddPeople={v => seen.push(v)}
+        onInvites={v => seen.push(v)}
         onPromote={v => seen.push(v)}
       />
     )
-    for (const label of [
-      'Join a Season',
-      'Create Game',
-      'Create placeholder team'
-    ])
+    for (const label of ['Add Person to Team', 'Create Invite Link'])
       await press(label)
     // People are added from Settings and managed from the roster now.
     expect(document.body.textContent).not.includes('Manage people')
     expect(seen).deep.equals([
-      {
-        subject: { kind: 'team', id: 'canonical' },
-        targetKind: 'season',
-        relationship: 'participation',
-        direction: 'parents'
-      },
       ...Array(2).fill({ kind: 'team', id: 'canonical' })
     ])
   })
@@ -479,9 +499,8 @@ describe('gear-only team actions', () => {
       }
     })
     await mount(
-      <TeamSettingsActions
+      <ManagementCard
         detail={ph}
-        onLink={() => undefined}
         onPromote={v => {
           promoted = v.id
         }}
@@ -494,7 +513,7 @@ describe('gear-only team actions', () => {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <TeamSettingsActions detail={detail()} onLink={() => undefined} />
+          <ManagementCard detail={detail()} />
         </ThemeProvider>
       )
     })
@@ -502,16 +521,15 @@ describe('gear-only team actions', () => {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <TeamSettingsActions
+          <ManagementCard
             detail={detail({
               group: { ...detail().group, kind: 'league' },
               canManage: true
             })}
-            onLink={() => undefined}
           />
         </ThemeProvider>
       )
     })
-    expect(document.body.textContent).equals('')
+    expect(document.body.textContent).includes('LEAGUE MANAGEMENT')
   })
 })

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
@@ -10,10 +10,10 @@ import {
   Card,
   Emblem,
   HandoffView,
-  Icon,
   initialsOf,
   PillTabs,
   SectionHeader,
+  SettingsGear,
   useHandoff,
   useHeaderHandoff,
   useHeaderSlot
@@ -149,23 +149,12 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
             />
             <Text style={styles.name}>{group.name}</Text>
             {detail.canManage && (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="League settings"
+              <SettingsGear
+                label="League settings"
                 onPress={() => {
                   props.onSettings(league)
                 }}
-                style={({ pressed }) => [
-                  styles.gear,
-                  pressed && styles.pressed
-                ]}
-              >
-                <Icon
-                  name="settings"
-                  size={1.25}
-                  color={theme.secondaryTextColor}
-                />
-              </Pressable>
+              />
             )}
           </View>
           <Text style={styles.meta}>
@@ -294,6 +283,7 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
           {teams.map(team => (
             <ChildCard
               key={team.id}
+              kind="team"
               title={team.name}
               imageUrl={team.imageUrl}
               subtitle={team.external ? 'Placeholder team' : undefined}
@@ -383,7 +373,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   identity: { gap: theme.rem(theme.spaceMdRem) },
   identityTop: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: theme.rem(theme.spaceSmRem)
   },
   name: {

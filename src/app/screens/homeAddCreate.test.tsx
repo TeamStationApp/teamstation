@@ -228,7 +228,6 @@ describe('Home Add and Create, following, and choosing a new team’s parents', 
     )
     await fill('Team name', 'Demo New Hawks')
     await press('Continue')
-    await press('Choose Demo Town, Demo Region, US')
     await press('Continue')
     await press('Use initials')
     await press('Continue')

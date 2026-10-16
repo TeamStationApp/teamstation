@@ -3,7 +3,7 @@ import { type Kysely, type RawBuilder, sql } from 'kysely'
 import { HttpError } from '../../common/errors'
 import type { GameRequestTerms } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
-import { adminScopes, type VisibleScopes, visibleScopes } from '../access'
+import { roleScopes, type VisibleScopes, visibleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { currentActor } from '../groups/rights'
@@ -166,11 +166,11 @@ export async function pendingSchedule(
       .execute())
       names.set(team.id, team)
   const permissions = new Map<string, boolean>()
-  let scopes: Awaited<ReturnType<typeof adminScopes>> | undefined
+  let scopes: Awaited<ReturnType<typeof roleScopes>> | undefined
   if (actor != null && actor.apiTokenId == null) {
     try {
       const fresh = await currentActor(db, actor)
-      scopes = await adminScopes(db, fresh.userId, fresh.isAdmin)
+      scopes = await roleScopes(db, fresh.userId, fresh.isAdmin)
     } catch (error) {
       if (
         !(error instanceof HttpError) ||
@@ -193,19 +193,26 @@ export async function pendingSchedule(
           (team.custodian_type !== 'team' ||
             names.get(team.custodian_id)?.kind === 'full')
         )
-          result = administers({
-            kind: team.custodian_type,
-            id: team.custodian_id
-          })
+          result =
+            scopes.isAdmin ||
+            (team.custodian_type === 'team'
+              ? scopes.admin.teamIds
+              : team.custodian_type === 'season'
+                ? scopes.admin.seasonIds
+                : scopes.admin.leagueIds
+            ).has(team.custodian_id)
       } else
         result =
           scopes.isAdmin ||
           (ref.kind === 'league'
-            ? scopes.leagueIds
+            ? scopes.admin.leagueIds
             : ref.kind === 'season'
-              ? scopes.seasonIds
-              : scopes.teamIds
-          ).has(ref.id)
+              ? scopes.admin.seasonIds
+              : scopes.admin.teamIds
+          ).has(ref.id) ||
+          (ref.kind === 'team' &&
+            (scopes.coach.teamIds.has(ref.id) ||
+              scopes.assistant.teamIds.has(ref.id)))
     }
     permissions.set(key, result)
     return result

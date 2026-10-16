@@ -117,6 +117,43 @@ export async function canManagePeople(
   return scopes.coach[key].has(group.id) || scopes.assistant[key].has(group.id)
 }
 
+/** Team scheduling belongs to its administrators, coaches and assistants. */
+export async function canScheduleFor(
+  db: Kysely<Database>,
+  actor: Actor,
+  group: GroupRef
+): Promise<boolean> {
+  return group.kind === 'team'
+    ? await canManagePeople(db, actor, group)
+    : await canAdminister(db, actor, group)
+}
+export async function requireScheduler(
+  db: Kysely<Database>,
+  actor: Actor,
+  group: GroupRef
+): Promise<void> {
+  const table =
+    group.kind === 'team'
+      ? 'teams'
+      : group.kind === 'season'
+        ? 'seasons'
+        : 'leagues'
+  if (
+    (await db
+      .selectFrom(table)
+      .select('id')
+      .where('id', '=', group.id)
+      .executeTakeFirst()) == null
+  )
+    throw notFound()
+  if (!(await canScheduleFor(db, actor, group)))
+    throw forbidden(
+      group.kind === 'team'
+        ? 'Only team administrators, coaches and assistants may schedule for this team'
+        : 'Only an administrator may schedule for this group'
+    )
+}
+
 /**
  * `canManagePeople`, or 404 for somebody who is neither an administrator,
  * coach nor assistant here, so a level's people are not confirmed to anybody
@@ -140,10 +177,27 @@ export async function adminRecipients(
   db: Kysely<Database>,
   refs: GroupRef[]
 ): Promise<number[]> {
+  return await groupRecipients(db, refs, false)
+}
+export async function schedulingRecipients(
+  db: Kysely<Database>,
+  refs: GroupRef[]
+): Promise<number[]> {
+  return await groupRecipients(db, refs, true)
+}
+async function groupRecipients(
+  db: Kysely<Database>,
+  refs: GroupRef[],
+  scheduling: boolean
+): Promise<number[]> {
   const roles = await db
     .selectFrom('scope_roles')
     .select('user_id')
-    .where('role', '=', 'admin')
+    .where(
+      'role',
+      'in',
+      scheduling ? ['admin', 'coach', 'assistant'] : ['admin']
+    )
     .execute()
   const owners = await db
     .selectFrom('memberships')
@@ -168,7 +222,7 @@ export async function adminRecipients(
   for (const user of users) {
     for (const ref of refs) {
       if (
-        await canAdminister(
+        await (scheduling ? canScheduleFor : canAdminister)(
           db,
           { userId: user.id, isAdmin: user.is_admin, scopes: [] },
           ref

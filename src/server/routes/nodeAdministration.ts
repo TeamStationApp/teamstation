@@ -12,24 +12,44 @@ import {
 import type { Database } from '../db/database'
 import { accountMailEnabled, setAccountMailEnabled } from '../email/accountMail'
 import { cleanBody } from '../jsonBody'
+import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
 const asAccountMail = asObject({ accountMessages: asBoolean })
 
-export function nodeAdministrationRoutes(db: Kysely<Database>): Router {
+export function nodeAdministrationRoutes(
+  db: Kysely<Database>,
+  space?: SpaceSettings
+): Router {
   const router = Router()
   router.get(
     '/users',
     withAsync(async (req, res, next) => {
       if (req.query.view !== 'administration') {
+        if (req.query.nodeAdmin != null)
+          throw badRequest('nodeAdmin requires view=administration')
         next()
         return
       }
       if (req.actor == null) throw unauthorized()
       if (req.query.query != null && typeof req.query.query !== 'string')
         throw badRequest('Enter one account search')
-      res.json(await nodeAccounts(db, req.actor, req.query.query ?? ''))
+      if (
+        req.query.nodeAdmin != null &&
+        req.query.nodeAdmin !== 'true' &&
+        req.query.nodeAdmin !== 'false'
+      )
+        throw badRequest('nodeAdmin must be true or false')
+      res.json(
+        await nodeAccounts(
+          db,
+          req.actor,
+          req.query.query ?? '',
+          req.query.nodeAdmin === 'true',
+          space
+        )
+      )
     })
   )
   router.patch(

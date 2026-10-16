@@ -13,6 +13,63 @@ describe('limited public organization profiles', function () {
   after(async () => {
     await f?.h.close()
   })
+  it('keeps long provider references in storage while returning localities compatible with installed readers', async () => {
+    const locality = {
+      city: 'Demo City',
+      region: 'Demo Region',
+      country: 'US',
+      timezone: 'UTC',
+      placeId: 'google:' + 'p'.repeat(27)
+    }
+    await f.h.db
+      .updateTable('teams')
+      .set({ locality })
+      .where('id', '=', f.teamA)
+      .execute()
+    await f.h.db
+      .updateTable('leagues')
+      .set({ locality })
+      .where('id', '=', f.leagueA)
+      .execute()
+    for (const [collection, id] of [
+      ['teams', f.teamA],
+      ['leagues', f.leagueA],
+      ['seasons', f.seasonA]
+    ]) {
+      const response = await f.h.request(
+        'GET',
+        `/${collection}/${id}`,
+        undefined,
+        101
+      )
+      expect(response.status).equals(200)
+      const profile = (await response.json()) as {
+        group: { locality: typeof locality }
+      }
+      expect(profile.group.locality).deep.equals({ ...locality, placeId: null })
+    }
+    const stored = await f.h.db
+      .selectFrom('teams')
+      .select('locality')
+      .where('id', '=', f.teamA)
+      .executeTakeFirstOrThrow()
+    expect(stored.locality).deep.equals(locality)
+    await f.h.db
+      .updateTable('teams')
+      .set({ locality: { ...locality, placeId: '1234567' } })
+      .where('id', '=', f.teamA)
+      .execute()
+    const response = await f.h.request(
+      'GET',
+      `/teams/${f.teamA}`,
+      undefined,
+      101
+    )
+    const profile = (await response.json()) as {
+      group: { locality: typeof locality }
+    }
+    expect(profile.group.locality.placeId).equals('1234567')
+  })
   it('returns every owned season while keeping public discovery capped separately', async () => {
     await f.h.db
       .insertInto('seasons')

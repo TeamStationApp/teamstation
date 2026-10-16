@@ -26,6 +26,7 @@ import {
   PinnedContent,
   PinnedSpacer,
   Screen,
+  SettingsGear,
   type StatFilter,
   StatFilterModal,
   StatGrid,
@@ -136,10 +137,6 @@ const WALKUP_TAB = {
 const TEAMS_TAB = {
   id: 'teams' as const,
   label: lstrings.player_teams
-}
-const SETTINGS_TAB = {
-  id: 'settings' as const,
-  label: lstrings.player_settings
 }
 
 /**
@@ -312,12 +309,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   const teamName = player?.teams.find(
     team => team.teamId === forTeam && team.current
   )?.teamName
-  const tabs = [
-    ...TABS,
-    ...(walkUpShown ? [WALKUP_TAB] : []),
-    TEAMS_TAB,
-    ...(settingsShown || settingsPending ? [SETTINGS_TAB] : [])
-  ]
+  const tabs = [...TABS, ...(walkUpShown ? [WALKUP_TAB] : []), TEAMS_TAB]
   const refused =
     (tab === 'settings' && canManage === false) ||
     (tab === 'walkup' && canKeepSongs === false)
@@ -551,6 +543,16 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                 />
               )}
             </View>
+            {settingsShown && (
+              <SettingsGear
+                label="Player settings"
+                onPress={() => {
+                  selectTab('settings')
+                  setTab('settings')
+                  onTab?.('settings')
+                }}
+              />
+            )}
           </View>
         </Card>
       </CardBand>
@@ -768,8 +770,11 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                 {scopeOf(stats, filter, player?.teams)}
               </Text>
               <Button
-                label={lstrings.player_filter}
+                label={filterName(stats, filter, player?.teams)}
+                accessibilityLabel="Filter stats"
+                icon="filter_alt"
                 kind="secondary"
+                compact
                 onPress={() => {
                   setFiltering('stats')
                 }}
@@ -970,7 +975,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   identityTop: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: theme.rem(theme.spaceMdRem)
   },
   identityText: {

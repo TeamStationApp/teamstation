@@ -544,7 +544,9 @@ describe('game settings in the shared game scene', () => {
     await mount(f)
     await change('Demo Eagles')
     await press('Choose Demo Comets')
-    expect(text()).includes('An admin of Demo Comets must approve changes.')
+    expect(text()).includes(
+      'An administrator, coach or assistant of Demo Comets must approve changes.'
+    )
     expect(f.sent).length(0)
     await press('Save')
     expect(f.sent[0].game.awayTeamId).equals(replacement.id)

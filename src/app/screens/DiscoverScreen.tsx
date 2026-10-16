@@ -12,6 +12,7 @@ import {
   Emblem,
   initialsOf,
   Screen,
+  TeamEmblem,
   TextField
 } from '../components'
 import { useTitleHandoff } from '../components/useTitleHandoff'
@@ -202,11 +203,15 @@ export function DiscoverScreen({
                 }}
                 style={styles.open}
               >
-                <Emblem
-                  uri={group.imageUrl}
-                  fallback={initialsOf(group.name)}
-                  size={3}
-                />
+                {group.kind === 'team' ? (
+                  <TeamEmblem name={group.name} uri={group.imageUrl} size={3} />
+                ) : (
+                  <Emblem
+                    uri={group.imageUrl}
+                    fallback={initialsOf(group.name)}
+                    size={3}
+                  />
+                )}
                 <View style={styles.details}>
                   <Text style={styles.name}>{group.name}</Text>
                   {group.parentNames.length > 0 && (

@@ -263,6 +263,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const followedRow = (group: PublicGroup): React.ReactElement => (
     <ListRow
       title={group.name}
+      teamName={group.kind === 'team' ? group.name : undefined}
       subtitle={
         group.kind === 'season'
           ? seasonPeriodLabel(group.startsOn, group.endsOn)
@@ -369,7 +370,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 ]
                   .filter(part => part != null)
                   .join(' · ')}
-                emblem={initialsOf(game.homeTeamName)}
+                teamName={game.homeTeamName}
                 badgeLabel="live"
                 badgeTone="live"
                 onPress={() => {
@@ -407,8 +408,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               date={shortDate(recent.startAt)}
               venue={recent.venue ?? undefined}
               winner={winnerOf(recent)}
-              awayTeamId={recent.awayTeamId}
-              homeTeamId={recent.homeTeamId}
+
               awayLogoUrl={recent.awayLogoUrl}
               homeLogoUrl={recent.homeLogoUrl}
               posterUrl={recent.posterUrl}
@@ -489,7 +489,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 key={team.id}
                 title={team.name}
                 subtitle={subtitleFor(team)}
-                emblem={initialsOf(team.name)}
+                teamName={team.name}
                 emblemUri={team.logoUrl}
                 onPress={() => {
                   onOpenTeam(team)
@@ -605,10 +605,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   actions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: theme.rem(theme.spaceSmRem)
   },
   action: {
-    flex: 1
+    flexGrow: 1,
+    flexBasis: theme.rem(10)
   },
   gameMeta: {
     fontFamily: theme.semiBoldTextFont,

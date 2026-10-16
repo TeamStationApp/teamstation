@@ -14,6 +14,7 @@ import {
 } from '../events/eventInfo'
 import { cleanBody } from '../jsonBody'
 import { type EventGeocoder, eventGeocoder } from '../location/eventGeocoder'
+import { limitGoogleLookup } from '../location/googleLookupLimits'
 import type { MediaContext } from '../media/mediaContext'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
@@ -109,6 +110,14 @@ export function eventInfoRoutes(
             ]
               .filter(Boolean)
               .join(', ')
+      const hasSavedCoordinates =
+        address !== '' && info.latitude != null && info.longitude != null
+      if (
+        location !== '' &&
+        !hasSavedCoordinates &&
+        geocoder.usesGoogle === true
+      )
+        await limitGoogleLookup(db, req.actor.userId, true)
       const coordinates =
         location === ''
           ? { latitude: null, longitude: null }

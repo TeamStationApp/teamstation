@@ -408,13 +408,12 @@ async function main(): Promise<void> {
     await show('Game changes saved')
     await show('Demo Native Opponent')
     await m.scrollUntilVisible({
-      element: { text: 'Settings' },
-      from: { text: 'Game sections' },
-      direction: 'RIGHT',
+      element: { text: 'Event settings' },
+      direction: 'UP',
       centerElement: true,
       timeout: 15000
     })
-    await show('Settings')
+    await show('Event settings')
     const saved = await state()
     const placeholder = saved.teams.filter(
       (t: any) => t.name === 'Demo Native Opponent'

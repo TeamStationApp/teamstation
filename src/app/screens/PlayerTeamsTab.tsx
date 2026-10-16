@@ -2,7 +2,7 @@ import React from 'react'
 import { Text } from 'react-native'
 
 import type { PlayerTeam } from '../../common/api'
-import { Card, initialsOf, ListCard, ListRow } from '../components'
+import { Card, ListCard, ListRow } from '../components'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -48,7 +48,7 @@ export function PlayerTeamsTab(props: PlayerTeamsTabProps): React.ReactElement {
             key={`${team.teamId} ${team.seasonId ?? ''}`}
             title={team.teamName}
             subtitle={subtitle === '' ? undefined : subtitle}
-            emblem={initialsOf(team.teamName)}
+            teamName={team.teamName}
             emblemUri={team.logoUrl}
             trailing={jersey === '' ? undefined : `#${jersey}`}
             onPress={
