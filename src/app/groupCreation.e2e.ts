@@ -76,9 +76,13 @@ async function main(): Promise<void> {
     await fill(plain, 'League name', 'Demo Browser League')
     await text(plain, 'recurring basis')
     await press(plain, 'Continue')
-    await press(plain, 'Use my location')
-    await text(plain, 'location')
-    await manualLocation(plain)
+    await fill(plain, 'City', 'York')
+    await plain.waitForSelector('[aria-label^="Choose "]')
+    const cityChoice = await plain.$eval('[aria-label^="Choose "]', node =>
+      node.getAttribute('aria-label')
+    )
+    if (cityChoice == null) throw new Error('No city matched York')
+    await press(plain, cityChoice)
     await shot(plain, 'league-location.png')
     await press(plain, 'Continue')
     await press(plain, 'Use initials')
@@ -91,9 +95,12 @@ async function main(): Promise<void> {
       .selectAll()
       .where('name', '=', 'Demo Browser League')
       .executeTakeFirstOrThrow()
-    expect(league.locality).property('city', 'Demo Browser City')
+    expect(league.locality).property(
+      'city',
+      cityChoice.slice('Choose '.length).split(',')[0]
+    )
     lines.push(
-      'E3 league PASS: denied GPS remains usable; confirmed own city, initials and recurring organization name saved once'
+      'E3 league PASS: city chosen on the create screen, initials and recurring organization name saved once'
     )
 
     await press(plain, 'Create season')

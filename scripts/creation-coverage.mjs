@@ -123,11 +123,13 @@ const paths = [...globSync('src/server/groups/**/*.ts')]
     'src/app/platform/getRoughLocation.ts',
     'src/app/components/PhotoGrid.tsx',
     'src/app/components/CreationCard.tsx',
-    'src/app/components/LocalityPicker.tsx'
+    'src/app/components/LocalityPicker.tsx',
+    'src/app/components/LeagueCityField.tsx'
   ])
 const uiSuites = [
   'src/app/components/PhotoGrid.test.tsx',
   'src/app/components/LocalityPicker.test.tsx',
+  'src/app/components/LeagueCityField.test.tsx',
   'src/app/platform/getRoughLocation.test.tsx',
   'src/app/components/VideoPoster.test.tsx',
   'src/app/screens/OnboardingScreen.test.tsx',

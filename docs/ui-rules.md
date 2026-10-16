@@ -39,8 +39,28 @@ it is its own scene that slides up from the bottom (a full-screen `Modal`
 with `animationType="slide"`). The scene has its title and a red **Cancel**
 text button at the top. Cancelling changes nothing. Choosing a row closes the
 scene and returns the choice. `TeamSelectorScene` and the time zone picker
-are the examples. Such a picker is
-never a list expanding inside a card on the screen beneath.
+are the examples. A team search and a time zone list are never a list
+expanding inside a card on the screen beneath.
+
+### A required city stays on the screen that asks for it
+
+Create League asks for a city on the screen titled Create League, the one
+that says to choose a city and state. The text field is on that screen. It
+is not a button that opens another scene.
+
+Typing opens a dropdown of matching cities in the space above the keyboard.
+That space is the keyboard's real frame, from Reanimated, not a guessed
+height. The dropdown has no Save button. Choosing a row writes the full
+place into the field, dismisses the keyboard, and the screen then offers
+Continue.
+
+## Motion
+
+A transition on a screen runs through Reanimated. A text field never snaps
+from one position to another. When the keyboard opens or closes, or when
+rows appear or leave around a field, the field and the space above the
+keyboard move with the keyboard's own frame on the animation thread.
+Applying a guessed keyboard height in a React render is a snap.
 
 ## Buttons
 

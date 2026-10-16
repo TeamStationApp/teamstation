@@ -19,6 +19,7 @@ export interface TextFieldProps {
   error?: string
   onSubmitEditing?: () => void
   onFocus?: () => void
+  onBlur?: () => void
   disabled?: boolean
   multiline?: boolean
   maxLength?: number
@@ -48,7 +49,8 @@ export function TextField(props: TextFieldProps): React.ReactElement {
     autoComplete = 'off',
     action,
     error,
-    onSubmitEditing
+    onSubmitEditing,
+    onBlur
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -107,6 +109,7 @@ export function TextField(props: TextFieldProps): React.ReactElement {
           }}
           onBlur={() => {
             setFocused(false)
+            onBlur?.()
           }}
           style={[
             styles.input,

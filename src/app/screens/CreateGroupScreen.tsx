@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
+import Animated, { FadeIn } from 'react-native-reanimated'
 
 import type { TeamStationClient } from '../../common/api'
 import type {
@@ -17,6 +18,7 @@ import {
 import { Button, Card, Screen, TextField } from '../components'
 import { DateRangePicker } from '../components/DateRangePicker'
 import { GroupPictureChooser } from '../components/GroupPictureChooser'
+import { LeagueCityField } from '../components/LeagueCityField'
 import { LocalityPicker } from '../components/LocalityPicker'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { type ParentChoice, ParentChooser } from './ParentChooser'
@@ -78,6 +80,7 @@ export function CreateGroupScreen({
   const step = steps[position]
   const [name, setName] = useState('')
   const [locality, setLocality] = useState<Locality | undefined>()
+  const [cityBrowsing, setCityBrowsing] = useState(false)
   const [suggestion, setSuggestion] = useState(initialLocality)
   const [timezone, setTimezone] = useState(
     Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -218,7 +221,7 @@ export function CreateGroupScreen({
         : 'Add Team to Season or League'
       : `Create ${custodian == null ? '' : 'Placeholder '}${kind[0].toUpperCase()}${kind.slice(1)}`
   return (
-    <Screen>
+    <Screen keyboardInset={!(kind === 'league' && step === 'location')}>
       <Card style={styles.card}>
         <Text style={styles.title}>{title}</Text>
         {step === 'name' && (
@@ -250,7 +253,22 @@ export function CreateGroupScreen({
             )}
           </>
         )}
-        {step === 'location' && (
+        {step === 'location' && kind === 'league' && (
+          <>
+            <Text style={styles.hint}>
+              Choose this league’s city and state.
+            </Text>
+            <LeagueCityField
+              client={client}
+              value={locality ?? null}
+              onChange={next => {
+                setLocality(next ?? undefined)
+              }}
+              onBrowsing={setCityBrowsing}
+            />
+          </>
+        )}
+        {step === 'location' && kind !== 'league' && (
           <>
             <Text style={styles.hint}>
               Choose this {kind}’s city and state. You can use approximate
@@ -336,8 +354,8 @@ export function CreateGroupScreen({
             {error}
           </Text>
         )}
-        {!custom && (
-          <>
+        {!custom && !cityBrowsing && (
+          <Animated.View entering={FadeIn.duration(220)}>
             {contextPending && (
               <Text style={styles.hint}>Loading parent details…</Text>
             )}
@@ -374,7 +392,7 @@ export function CreateGroupScreen({
                 position === 0 ? onCancel() : setPosition(position - 1)
               }}
             />
-          </>
+          </Animated.View>
         )}
       </Card>
     </Screen>

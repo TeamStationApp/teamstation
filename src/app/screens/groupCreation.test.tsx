@@ -407,6 +407,64 @@ describe('creation and organization interface behavior', () => {
         }
       ])
   })
+  it('chooses a league city on the create screen and continues from that choice', async () => {
+    const api = client()
+    const locality = {
+      city: 'Demo City',
+      region: 'Demo Region',
+      country: 'US',
+      placeId: '1',
+      timezone: 'UTC'
+    }
+    api.locations = async () => [locality]
+    let saved: unknown
+    api.createGroup = async body => {
+      saved = body
+      return {
+        id: 'league_new',
+        kind: body.kind,
+        name: body.name,
+        imageUrl: null
+      }
+    }
+    await mount(
+      <CreateGroupScreen
+        client={api}
+        kind="league"
+        onCreated={() => {}}
+        onCancel={() => {}}
+      />
+    )
+    await fill('League name', 'Demo League')
+    await press('Continue')
+    expect(document.body.textContent).includes('Choose this league’s city')
+    expect(
+      document.querySelector('[aria-label="Enter location manually"]')
+    ).equals(null)
+    expect(document.body.textContent).not.includes('Save')
+    const city = document.querySelector<HTMLInputElement>(
+      'input[aria-label="City"]'
+    )!
+    await act(async () => {
+      city.focus()
+      city.dispatchEvent(new window.Event('focus', { bubbles: true }))
+    })
+    await fill('City', 'De')
+    await settle()
+    expect(
+      [...document.querySelectorAll('[role="button"]')].some(
+        node =>
+          (node.getAttribute('aria-label') ?? node.textContent) === 'Continue'
+      )
+    ).equals(false)
+    await press('Choose Demo City, Demo Region, US')
+    expect(city.value).equals('Demo City, Demo Region, US')
+    await press('Continue')
+    await press('Use initials')
+    await press('Create League')
+    expect(saved).property('name', 'Demo League')
+    expect(saved).property('locality').deep.equals(locality)
+  })
   it('resolves parent locality on a fresh creation form and requires confirming the team suggestion', async () => {
     const api = client()
     const locality = {

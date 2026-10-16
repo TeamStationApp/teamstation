@@ -65,6 +65,12 @@ export interface ScreenProps {
   scrollRef?: React.Ref<React.ComponentRef<typeof Animated.ScrollView>>
   /** The scroll view's own size: how much of the page is in view. */
   onLayout?: (event: LayoutChangeEvent) => void
+  /**
+   * Let the scroll view pad itself by the keyboard. Off when the screen
+   * sizes what sits above the keyboard from Reanimated's keyboard frame,
+   * so a guessed inset cannot cover that content or jump a text field.
+   */
+  keyboardInset?: boolean
 }
 
 /**
@@ -112,7 +118,8 @@ export function Screen(props: ScreenProps): React.ReactElement {
     contentStyle,
     onScroll,
     scrollRef,
-    onLayout
+    onLayout,
+    keyboardInset = true
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -184,7 +191,7 @@ export function Screen(props: ScreenProps): React.ReactElement {
       // the window instead, which `adjustResize` in the manifest already asks
       // for; and a browser has no keyboard of its own to make room for. One
       // property, three answers, and only one of them needs saying here.
-      automaticallyAdjustKeyboardInsets
+      automaticallyAdjustKeyboardInsets={keyboardInset}
       contentContainerStyle={[
         styles.scrollContent,
         centreContent && styles.centreContent,
