@@ -45,6 +45,22 @@ never a list expanding inside a card on the screen beneath.
 
 ## Buttons
 
+### Membership and access actions belong in list rows
+
+Whenever a collection lets the user enable or disable, join or leave, add or
+revoke, or end a relationship, render a proper list with one row per item.
+Use a leading image, name-hashed initials tile or appropriate icon when available;
+put the name above quieter details in the flexible middle and a compact action
+at the right. Use short visible labels such as **Add**, **Leave**, **Revoke** or
+**End**, with an accessible label that also names the affected item.
+
+Separate rows with hairline dividers. Do not give each item its own bounding
+card or put a full-width action below its name. A shared list container may
+match the surrounding screen; a long scrolling list remains unbounded. Keep
+actions aligned, names readable and touch targets at least 48 points.
+Use green for adding/enabling and red for removing/ending. Destructive actions
+open a confirmation modal; opening or cancelling it must not change the item.
+
 ### A pill's label sits on its straight run
 
 A fully rounded button, badge, count or tab has semicircular ends, each as
