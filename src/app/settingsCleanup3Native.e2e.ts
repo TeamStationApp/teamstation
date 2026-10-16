@@ -49,6 +49,7 @@ type Step =
     }
   | { signIn: string }
   | { pauseVideo: Selector }
+  | { playVideo: Selector }
   | { fontScale: 'large' | 'default' }
   | {
       clock: (
@@ -663,9 +664,12 @@ async function main(): Promise<void> {
           } else await m.tapOn({ text: 'Sign out', timeout: 15000 })
           await signIn(step.signIn)
           assertions++
-        } else if ('pauseVideo' in step) {
+        } else if ('pauseVideo' in step || 'playVideo' in step) {
           assert.equal(platform, 'android', 'ExoPlayer controls required')
-          let paused = false
+          const play = 'playVideo' in step
+          const target = play ? step.playVideo : step.pauseVideo
+          const desired = play ? 'Pause' : 'Play'
+          let confirmed = false
           for (let attempt = 0; attempt <= 3; attempt++) {
             const tree = (await m.hierarchy()) as NativeNode
             const nodes = flatten(tree)
@@ -674,15 +678,16 @@ async function main(): Promise<void> {
             )
             assert(buttons.length <= 1, 'One native transport button required')
             const button = buttons[0]
-            if (button?.text === 'Play') {
-              paused = true
+            if (button?.text === desired) {
+              confirmed = true
               break
             }
             if (attempt === 3) break
-            // A first touch can reveal ExoPlayer's hidden controls without
-            // pausing. Read their actual state before pressing the transport.
-            if (button != null) assert.equal(button.text, 'Pause')
-            const rect = (button ?? selectNode(nodes, step.pauseVideo)).bounds!
+            // A first touch can reveal ExoPlayer's hidden controls. Read their
+            // actual state before pressing the requested transport action.
+            if (button != null)
+              assert.equal(button.text, play ? 'Play' : 'Pause')
+            const rect = (button ?? selectNode(nodes, target)).bounds!
             const viewport = viewportOf(tree)
             assert(
               rect != null &&
@@ -699,7 +704,7 @@ async function main(): Promise<void> {
             })
             await new Promise(resolve => setTimeout(resolve, 250))
           }
-          assert(paused, 'Native Play control must confirm paused playback')
+          assert(confirmed, 'Native transport must confirm playback state')
           assertions++
         } else if ('fontScale' in step) {
           originalFont ??=
