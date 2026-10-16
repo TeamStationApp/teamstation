@@ -3,8 +3,7 @@ import { lstrings } from '../locales/strings'
 import { scoringEntry } from '../scoring/isUnscoredGame'
 import { eventEnded, type EventTabState } from './eventTabPolicy'
 
-export type GameTab =
-  'info' | 'boxScore' | 'watch' | 'score' | 'coach' | 'dj' | 'settings'
+export type GameTab = 'info' | 'boxScore' | 'watch' | 'score' | 'coach' | 'dj'
 
 export interface GameTabPill {
   id: GameTab
@@ -32,8 +31,6 @@ export interface GameTabsInput {
   onDjGame?: () => void
   /** Present where the app can open Coach Game. */
   onCoachGame?: () => void
-  onSettings?: () => void
-  canManage?: boolean
   now?: number
 }
 
@@ -47,10 +44,7 @@ export interface GameTabsInput {
 export function gameTabs(input: GameTabsInput): GameTabPill[] {
   const { game, music, onDjGame } = input
   const info: GameTabPill = { id: 'info', label: 'Info' }
-  if (game.eventKind === 'event')
-    return input.canManage === true && input.onSettings != null
-      ? [info, { id: 'settings', label: 'Settings', role: 'button' }]
-      : [info]
+  if (game.eventKind === 'event') return [info]
   const pills: GameTabPill[] = [
     { id: 'boxScore', label: lstrings.game_box_score },
     { id: 'watch', label: lstrings.game_videos }
@@ -77,9 +71,6 @@ export function gameTabs(input: GameTabsInput): GameTabPill[] {
   // status: songs are set and played before, during and after.
   if (game.canDj && music?.djSupported === true && onDjGame != null) {
     pills.push({ id: 'dj', label: lstrings.dj_game, role: 'button' })
-  }
-  if (input.canManage === true && input.onSettings != null) {
-    pills.push({ id: 'settings', label: 'Settings', role: 'button' })
   }
   if (eventEnded(game, input.now)) pills.push(info)
   else pills.unshift(info)

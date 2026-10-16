@@ -1,7 +1,23 @@
 import type React from 'react'
 import type { StyleProp, ViewStyle } from 'react-native'
 
+import type { Handoff } from '../components/handoff'
+import type { PinnedHead } from '../components/pinnedHead'
 import type { WatchLayout } from '../layout/watch'
+
+/** Every pinned-head notification keeps the header visible when its hero is omitted. */
+export function watchHandoff(
+  handoff: Handoff,
+  shortWindow: React.RefObject<boolean>
+): Handoff {
+  return {
+    ...handoff,
+    handleScroll: () => {
+      if (shortWindow.current) handoff.progress.value = 1
+      else handoff.handleScroll()
+    }
+  }
+}
 
 /**
  * What the watch layout is handed, shared by both implementations.
@@ -17,13 +33,15 @@ import type { WatchLayout } from '../layout/watch'
  * the game screen and the two drift apart.
  */
 export interface GameWatchLayoutProps {
-  /** The card and the section pills, drawn above everything where they fit. */
+  /** The same pinned head used by every event section. */
+  pinned: PinnedHead
+  /** The card, drawn above the section pills where it fits. */
   head: React.ReactNode
   /** The picture, and the camera-angle strip under it. */
   player: React.ReactNode
   /** The chosen play's full account. */
   description: React.ReactNode
-  /** The section pills on their own, for the narrow column. */
+  /** The section pills, pinned across the screen above the picture. */
   sections: React.ReactNode
   highlightList: React.ReactNode
   /** The stream panel and the refresh button, at the end of the list. */
@@ -35,21 +53,11 @@ export interface GameWatchLayoutProps {
   sideBySide: boolean
   /** The glass header this content runs under, and the picture pegs below. */
   headerHeight: number
-  /** How far the section pills push the highlights down. */
+  /** The full-width section band, which the picture and highlights clear. */
   tabsHeight: number
   /** The window's height, for the column that has to end at the bottom of it. */
   height: number
-  /**
-   * The page moved.
-   *
-   * Deliberately no event. The one thing above this that cares — the header
-   * hand-off — reads the source's position at the moment it is asked rather
-   * than deriving it from an offset, and the native layout needs the scroll
-   * event for its own purposes and cannot pass a second handler down.
-   */
-  onScroll: () => void
   style?: StyleProp<ViewStyle>
   contentStyle?: StyleProp<ViewStyle>
   headStyle?: StyleProp<ViewStyle>
-  columnHeadStyle?: StyleProp<ViewStyle>
 }
