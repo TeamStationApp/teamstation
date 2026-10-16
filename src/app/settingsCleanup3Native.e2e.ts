@@ -484,6 +484,7 @@ async function main(): Promise<void> {
       assert(test.steps.length > 0, 'Acceptance case cannot be empty')
       let assertions = 0
       let captures = 0
+      let recordingCount = 0
       await note(`${test.id} START`)
       for (const step of test.steps) {
         if ('open' in step) {
@@ -497,7 +498,9 @@ async function main(): Promise<void> {
           const params = { ...step.params }
           if (step.command === 'startRecording') {
             assert(!recording, 'One recording at a time')
-            params.path = join(artifacts, `${test.id}.mp4`)
+            recordingCount++
+            const suffix = recordingCount > 1 ? `-${recordingCount}` : ''
+            params.path = join(artifacts, `${test.id}${suffix}.mp4`)
             recording = true
           }
           if (step.command === 'startRecording' && platform === 'ios') {
@@ -574,7 +577,8 @@ async function main(): Promise<void> {
               x: Math.round(viewport.x + (viewport.width * x) / 100),
               y: Math.round(viewport.y + (viewport.height * y) / 100)
             })
-          } else await m.command(step.command, params)
+          } else if (step.command === 'back') await m.command('back')
+          else await m.command(step.command, params)
           if (step.command.startsWith('assert')) assertions++
         } else if ('input' in step) {
           await focusField(step.input)
