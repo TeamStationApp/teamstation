@@ -463,7 +463,10 @@ The app shows every one of these in a preview before anything is saved.
 | **Break** a parent link           | An admin of **either** side. It happens at once, with no invitation.      |
 | **Create** a group under a parent | You must already be an admin of the parent. The link is made on creation. |
 
-When the same person administers both sides, they can approve for both at once: **"I approve for all affected groups"**. Otherwise the request goes to the other side's admins ([section 10](#10-invitations-and-approvals)).
+When the same person can approve all required sides, **Save** applies their
+approvals together. The app returns to the connection and shows its details in
+a five-second success toast. Otherwise the request goes to the other side's
+admins ([section 10](#10-invitations-and-approvals)).
 
 ---
 
@@ -581,11 +584,21 @@ sequenceDiagram
 
 ## 10. Invitations and approvals
 
-Every change that affects more than one group is an **invitation**, as is granting a guardianship, or access for an email address nobody has verified yet. Adding somebody who has an account, as a member or to any role, is not: it applies at once ([section 4](#how-people-become-members)). Invitations follow the same rules:
+Changes affecting more than one group use shared approval records. When the
+person submitting can approve every required side, Save applies the change
+immediately, returns to its connection or game and shows a detailed five-second
+toast; it does not open an invitation notification. Other changes are invitations,
+as are granting a guardianship or access for an email address nobody has verified
+yet. Adding somebody who has an account, as a member or to any role, applies at
+once ([section 4](#how-people-become-members)). Invitations follow the same rules:
 
 - **Two-way.** Every affected side must approve. Sending counts as your side's approval.
 - **Any eligible admin can answer** for their team, season or league. "Opening this invitation does not approve it."
 - **Seven days.** An invitation expires if it isn't answered. The sender can **withdraw** it, and can **resend** it, except a guardian invitation or request, which is sent anew instead.
+- **Current approvals when submitted again.** An authorized sender's available
+  approvals are applied to the successor. If none remain outstanding, it returns
+  to the connection or game with a five-second confirmation instead of opening
+  an approved notification. Someone else's consent is never supplied for them.
 - **Approval is checked again at the end.** If your admin rights came from a parent link that has since been broken, your earlier approval no longer counts.
 - **Changing a season's dates or time zone** cancels its pending parent and participation invitations, because they named the old dates.
 

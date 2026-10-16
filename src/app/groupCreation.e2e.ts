@@ -462,7 +462,7 @@ async function main(): Promise<void> {
     const oldId = new URL(host.url()).pathname.split('/').at(-1)!
     await press(host, 'Withdraw invitation')
     await text(host, 'Cancelled')
-    await press(host, 'Resend invitation')
+    await press(host, 'Submit again')
     await text(host, 'Pending')
     const newId = new URL(host.url()).pathname.split('/').at(-1)!
     expect(newId).not.equals(oldId)

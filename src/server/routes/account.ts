@@ -1,5 +1,5 @@
 import { type Request, Router } from 'express'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
 import {
   type AccountSettings,
@@ -64,7 +64,12 @@ export async function readAccount(
   if (user == null) throw unauthorized()
   const emails = await db
     .selectFrom('user_emails')
-    .select(['id', 'email', 'is_primary as isPrimary'])
+    .select([
+      'id',
+      'email',
+      'is_primary as isPrimary',
+      sql<boolean>`verified_at is not null`.as('isVerified')
+    ])
     .where('user_id', '=', userId)
     .orderBy('is_primary', 'desc')
     .orderBy('created_at')

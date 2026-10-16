@@ -391,7 +391,7 @@ describe('creation and organization interface behavior', () => {
     await press('Choose change Demo Other League')
     await press('Review all parent changes')
     expect(document.body.textContent).includes('Reviewed both changes')
-    await press('Send invitation')
+    await press('Save')
     expect(sent)
       .property('actions')
       .deep.equals([
@@ -652,8 +652,8 @@ describe('creation and organization interface behavior', () => {
         onChanged={() => {}}
       />
     )
-    await press('Resend invitation')
-    await press('Resend invitation')
+    await press('Submit again')
+    await press('Submit again')
     expect(keys[0]).equals(keys[1])
     expect(document.body.textContent).includes('Resend offline')
   })
@@ -1069,7 +1069,7 @@ describe('creation and organization interface behavior', () => {
     expect(document.body.textContent).not.includes('Group settings')
     expect(document.body.textContent).not.includes('Open team videos and stats')
   })
-  it('preserves an invitation selection and explicit both-side choice across a sending error', async () => {
+  it('preserves a direct action selection and both-side authority across a saving error', async () => {
     const api = client()
     let sent = false
     api.parentPreview = async actions => ({
@@ -1098,14 +1098,13 @@ describe('creation and organization interface behavior', () => {
     )
     await settle()
     await press('Choose Demo Hawks')
-    await press('I approve for all affected groups')
-    await press('Confirm relationship')
+    await press('Save')
     expect(document.body.textContent).includes('Sending offline')
     api.inviteRelationship = async () => ({
       id: 'request_demo',
       status: 'accepted'
     })
-    await press('Confirm relationship')
+    await press('Save')
     expect(sent).equals(true)
     await press('Choose another group')
     await press('Retry candidates')
@@ -1203,7 +1202,7 @@ describe('creation and organization interface behavior', () => {
     expect(document.body.textContent).includes(
       'Opening this invitation does not approve it'
     )
-    await press('Resend invitation')
+    await press('Submit again')
     expect(replacement).equals('request_new')
     await press('Accept invitation')
     expect(document.body.textContent).includes('Accepted')

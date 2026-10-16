@@ -38,7 +38,12 @@ const relationship = {
     },
     sender: ref,
     idempotencyKey: retryKey,
-    confirmBoth: { type: 'boolean' },
+    confirmBoth: {
+      type: 'boolean',
+      default: false,
+      description:
+        'Apply all approvals the current actor actually holds, including promotion to their own verified account. Never substitutes for another person or group consent. An immediately accepted result is a completed action; pending results still require the remaining approvals.'
+    },
     actions: { type: 'array', items: action },
     teamId: { type: 'string' },
     seasonId: { type: 'string' },
@@ -473,7 +478,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
             ? {
                 201: {
                   description:
-                    'Fresh seven-day request; prior request atomically cancelled'
+                    'Prior request atomically cancelled. Current actor approvals apply immediately; an accepted response includes source {kind,id} for returning to the connection. Otherwise a fresh seven-day request remains pending.'
                 }
               }
             : {})

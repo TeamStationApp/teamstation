@@ -39,6 +39,7 @@ export interface GameSettingsResult {
   id: string
   status: string
   gameId: string | null
+  notice?: string
 }
 
 const retryKey = (): string =>
@@ -80,6 +81,7 @@ export function GameFormScreen({
   // The source as the server names it: a merged team's address answers with
   // the team it became, and that is the team that must stay in the game.
   const [sourceGroupId, setSourceGroupId] = useState<string>()
+  const [seasonConsentTeams, setSeasonConsentTeams] = useState<string[]>([])
   const formMode: GameFormMode =
     mode.kind === 'create' && sourceGroupId != null
       ? {
@@ -126,6 +128,7 @@ export function GameFormScreen({
     setLoading(true)
     setLoadError('')
     setError('')
+    setSeasonConsentTeams([])
     const load = async (): Promise<void> => {
       if (sourceKind != null && sourceId != null) {
         const own = await client.group({ kind: sourceKind, id: sourceId })
@@ -137,6 +140,8 @@ export function GameFormScreen({
         )
         setSourceName(own.group.name)
         setSourceGroupId(own.group.id)
+        if (sourceKind === 'season' && own.canManage)
+          setSeasonConsentTeams(own.competingTeams.map(team => team.id))
         setEventTeam(
           sourceKind === 'team' && !own.group.external ? own.group : undefined
         )
@@ -160,6 +165,18 @@ export function GameFormScreen({
       ])
       if (!current()) return
       setLoaded(state)
+      if (state.game.seasonId != null) {
+        const host = await client
+          .group({ kind: 'season', id: state.game.seasonId })
+          .catch(() => undefined)
+        if (!current()) return
+        if (
+          host?.canManage === true &&
+          host.group.kind === 'season' &&
+          host.group.id === state.game.seasonId
+        )
+          setSeasonConsentTeams(host.competingTeams.map(team => team.id))
+      }
       setPermitted(state.canPropose)
       setOriginalNames({
         [home.group.id]: home.group.name,
@@ -290,15 +307,15 @@ export function GameFormScreen({
         ...fields,
         idempotencyKey: submitted.current.key
       })
-      if (
-        !creating &&
-        result.status !== 'pending' &&
-        result.status !== 'accepted'
-      )
+      if (result.status !== 'pending' && result.status !== 'accepted')
         throw new Error(
           'This proposal is closed. Review it in your inbox before sending another proposal.'
         )
-      if (mounted.current) onSaved(result)
+      if (mounted.current)
+        onSaved({
+          ...result,
+          notice: `${result.status === 'accepted' ? (creating ? 'Game scheduled' : 'Game changes saved') : 'Game proposal sent'}: ${home.group.name} vs ${away.group.name}${draft.season == null ? '' : ` in ${draft.season.name}`}`
+        })
     } catch (caught) {
       if (mounted.current)
         setError(
@@ -390,8 +407,14 @@ export function GameFormScreen({
     draft.schedule.date
   ])
   const problem = draftProblem(draft, formMode, sourceName)
+  const seasonApproves = [draft.away, draft.home].every(
+    choice =>
+      choice != null &&
+      choice.placeholder == null &&
+      seasonConsentTeams.includes(choice.group.id)
+  )
   const missing = [draft.away, draft.home]
-    .filter(choice => choice != null && !choice.canManage)
+    .filter(choice => choice != null && !choice.canManage && !seasonApproves)
     .map(choice => choice!.group.name)
   const teamRow = (side: Side): React.ReactElement => {
     const choice = draft[side]
@@ -550,7 +573,10 @@ export function GameFormScreen({
                 <>
                   {season != null && (
                     <Text style={styles.hint}>
-                      In {season.name}. Every affected team must approve.
+                      In {season.name}.{' '}
+                      {seasonApproves
+                        ? 'You can schedule this game for both season participants.'
+                        : 'Each team must approve unless you can approve for it.'}
                     </Text>
                   )}
                   {sourceKind === 'team' && (

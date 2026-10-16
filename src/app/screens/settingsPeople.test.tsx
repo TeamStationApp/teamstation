@@ -119,13 +119,13 @@ describe('settings people flows', function () {
         )
       }
       await mount(<Visit />)
-      expect(find(location ? 'Save' : 'Send invite')).not.equals(undefined)
+      expect(find(location ? 'Save' : 'Add people')).not.equals(undefined)
       await act(async () => {
         move()
       })
       expect(text()).includes('Loading…')
       expect(find('Save')).equals(undefined)
-      expect(find('Send invite')).equals(undefined)
+      expect(find('Add people')).equals(undefined)
       await act(async () => {
         finish!()
       })
@@ -349,7 +349,7 @@ describe('settings people flows', function () {
       />
     )
     await fill('E-mail addresses', 'added@example.test,failed@example.test')
-    await press('Send invites')
+    await press('Add people')
     expect(text())
       .includes('Added 1, invited 0, 1 failed')
       .and.includes('Delivery unavailable')
@@ -359,7 +359,7 @@ describe('settings people flows', function () {
       )!.value
     ).equals('failed@example.test')
     fail = false
-    await press('Send invite')
+    await press('Add people')
     expect(done).equals(1)
     expect(calls[2].key).equals(calls[1].key)
     expect(calls.filter(row => row.email === 'added@example.test')).length(1)
@@ -382,7 +382,7 @@ describe('settings people flows', function () {
       />
     )
     await fill('E-mail addresses', 'valid@example.test,invalid')
-    expect(find('Send invite')?.getAttribute('aria-disabled')).equals('true')
+    expect(find('Add people')?.getAttribute('aria-disabled')).equals('true')
     await press('Cancel')
     expect(cancelled).equals(true)
   })

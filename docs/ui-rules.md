@@ -82,6 +82,19 @@ touch target stay large enough. Dense tab strips reduce gaps and scroll.
 
 ## Explain a choice where it is made
 
+### Use action language when no invitation is needed
+
+When current permissions show the person can supply all required approvals,
+use **Save**, **Add** or **Create Game**, as appropriate, and apply those
+available approvals on submission. Do not ask for a separate approval toggle.
+Use invitation/request wording when somebody else's consent is still needed.
+The server's final result decides what happened: an accepted action returns to
+the relevant connection or created item and shows a detailed success toast for
+five seconds. Do not route it to a sent/approved notification. A pending request
+keeps its pending flow. This also applies when submitting an older request
+again: use neutral action language, apply currently available approvals and
+route by the actual result. Cancel and failed writes show no success confirmation.
+
 When a screen cannot offer a choice, say why in a sentence near the action
 it affects, instead of a control that does nothing. A team page's Create
 Game says above Save that its games are always scrimmages or exhibitions,

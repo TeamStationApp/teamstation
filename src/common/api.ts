@@ -39,7 +39,12 @@ import {
   type GameProposal,
   type GameScheduleProposal
 } from './gameApprovals'
-import type { CreateGroup, GroupKind, GroupRef } from './groupCreation'
+import {
+  asGroupRef,
+  type CreateGroup,
+  type GroupKind,
+  type GroupRef
+} from './groupCreation'
 import {
   asParentPreview,
   type ParentAction,
@@ -2029,6 +2034,7 @@ export class TeamStationClient {
     gameId: string | null
     proposedGameId: string | null
     replacesGameId: string | null
+    notice?: string
   }> {
     return await this.request(
       'POST',
@@ -2038,7 +2044,8 @@ export class TeamStationClient {
         status: asString,
         gameId: asNullable(asString),
         proposedGameId: asOptional(asNullable(asString), null),
-        replacesGameId: asOptional(asNullable(asString), null)
+        replacesGameId: asOptional(asNullable(asString), null),
+        notice: asOptional(asString)
       }),
       { idempotencyKey }
     )
@@ -2099,11 +2106,21 @@ export class TeamStationClient {
     id: string,
     decision: 'accept' | 'decline' | 'withdraw' | 'resend',
     idempotencyKey?: string
-  ): Promise<{ id: string; status: string }> {
+  ): Promise<{
+    id: string
+    status: string
+    source?: GroupRef
+    notice?: string
+  }> {
     return await this.request(
       'POST',
       `/relationship-requests/${encodeURIComponent(id)}/${decision}`,
-      asObject({ id: asString, status: asString }),
+      asObject({
+        id: asString,
+        status: asString,
+        source: asOptional(asGroupRef),
+        notice: asOptional(asString)
+      }),
       { idempotencyKey }
     )
   }

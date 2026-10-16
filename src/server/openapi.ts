@@ -222,7 +222,11 @@ const accountResponse = {
               properties: {
                 id: { type: 'string' },
                 email: { type: 'string', format: 'email' },
-                isPrimary: { type: 'boolean' }
+                isPrimary: { type: 'boolean' },
+                isVerified: {
+                  type: 'boolean',
+                  description: 'Whether this account has verified the address.'
+                }
               }
             }
           }

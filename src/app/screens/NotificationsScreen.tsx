@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import type { GroupRef } from '../../common/groupCreation'
 import type { Notification } from '../../common/notifications'
 import { Button, Card, Screen } from '../components'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
@@ -220,7 +221,10 @@ function statusLine(
 interface DetailProps {
   client: TeamStationClient
   id: string
-  onChanged: (replacementId?: string) => void
+  onChanged: (
+    replacementId?: string,
+    completion?: { gameId?: string; source?: GroupRef; notice: string }
+  ) => void
 }
 
 /** A different route owns a different cache and decision state. */
@@ -294,7 +298,20 @@ function NotificationDetail({
       if (!mounted.current) return
       if (action === 'resend') {
         resendKey.current = undefined
-        onChanged(result.id)
+        onChanged(
+          result.id,
+          result.status !== 'accepted'
+            ? undefined
+            : {
+                ...('gameId' in result && result.gameId != null
+                  ? { gameId: result.gameId }
+                  : {}),
+                ...('source' in result ? { source: result.source } : {}),
+                notice:
+                  result.notice ??
+                  (item.type === 'game' ? 'Game saved' : 'Connection saved')
+              }
+        )
       } else {
         await load()
         if (mounted.current) onChanged()
@@ -400,7 +417,7 @@ function NotificationDetail({
             )}
             {item.canResend && (
               <Button
-                label="Resend invitation"
+                label="Submit again"
                 kind="secondary"
                 disabled={busy || readUnavailable}
                 onPress={() => {

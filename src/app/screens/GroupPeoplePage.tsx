@@ -19,7 +19,7 @@ export function GroupPeoplePage({
   client: TeamStationClient
   group: GroupRef
   invites: boolean
-  onDone: () => void
+  onDone: (notice?: string) => void
 }): React.ReactElement {
   const [detail, setDetail] = useState<GroupDetail>()
   const [error, setError] = useState('')
@@ -53,14 +53,24 @@ export function GroupPeoplePage({
             }}
           />
         )}
-        <CancelAction label="Cancel" onPress={onDone} />
+        <CancelAction
+          label="Cancel"
+          onPress={() => {
+            onDone()
+          }}
+        />
       </Screen>
     )
   if (!detail.canManage)
     return (
       <Screen>
         <Text>Only a current administrator can change these settings.</Text>
-        <CancelAction label="Cancel" onPress={onDone} />
+        <CancelAction
+          label="Cancel"
+          onPress={() => {
+            onDone()
+          }}
+        />
       </Screen>
     )
   const ref = { kind: detail.group.kind, id: detail.group.id }
@@ -76,7 +86,9 @@ export function GroupPeoplePage({
       group={ref}
       scopeName={detail.group.name}
       onDone={onDone}
-      onCancel={onDone}
+      onCancel={() => {
+        onDone()
+      }}
     />
   )
 }

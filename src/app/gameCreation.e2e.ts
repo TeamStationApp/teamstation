@@ -352,7 +352,7 @@ async function main(): Promise<void> {
           .catch(() => undefined)
       } else request.continue().catch(() => undefined)
     })
-    await press(team, 'Resend invitation')
+    await press(team, 'Submit again')
     await team.waitForFunction(
       old => !window.location.pathname.endsWith(old),
       {},

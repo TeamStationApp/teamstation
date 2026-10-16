@@ -67,6 +67,11 @@ const suites = [
   'src/server/groups/authority.test.ts',
   'src/server/groups/clientContract.test.ts',
   'src/server/groups/linkRequests.test.ts',
+  'src/server/groups/directActions.test.ts',
+  'src/server/groups/guardianRequests.test.ts',
+  'src/server/groups/parentTerms.test.ts',
+  'src/server/notifications/requestInformation.test.ts',
+  'src/server/routes/account.test.ts',
   'src/server/openapi.test.ts'
 ]
 run(
@@ -87,7 +92,7 @@ if (!serverOnly) {
       '60000',
       'lib/scoring-tests.cjs',
       '--grep',
-      'direct action|actual app Create Game navigation|creation and organization interface behavior|settings people flows|success confirmation toast|game settings in the shared game scene|create game in the shared game scene'
+      'direct action|actual app Create Game navigation|actual app event Settings navigation|creation and organization interface behavior|settings people flows|success confirmation toast|game settings in the shared game scene|create game in the shared game scene|Account settings screen|guardian notifications|a notification that somebody added you'
     ],
     { NODE_V8_COVERAGE: temp }
   )

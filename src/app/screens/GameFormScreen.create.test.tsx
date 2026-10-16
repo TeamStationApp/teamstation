@@ -147,6 +147,31 @@ const arrival = (): string =>
   )!.value
 
 describe('create game in the shared game scene', () => {
+  it('uses active season participation for immediate consent without team management', async () => {
+    const f = api(ref => ref.kind === 'season')
+    const load = f.client.group.bind(f.client)
+    f.client.group = async ref => ({
+      ...(await load(ref)),
+      competingTeams: ref.kind === 'season' ? [team, third] : []
+    })
+    f.client.proposeGame = async body => {
+      f.sent.push(body)
+      return { ...proposal('request_demo', 'accepted'), gameId: 'game_demo' }
+    }
+    await open(f, { kind: 'season', id: season.id })
+    await choose('Home', team.name)
+    await choose('Away', third.name)
+    expect(text()).includes(
+      'You can schedule this game for both season participants'
+    )
+    expect(text()).not.includes('must approve this game')
+    await press('Save')
+    expect(f.saved[0].notice)
+      .includes(team.name)
+      .and.includes(third.name)
+      .and.includes(season.name)
+    expect(f.saved[0].status).equals('accepted')
+  })
   it('lets a team coach propose a game and keeps a season source administrator-only', async () => {
     const f = api(
       () => false,
@@ -242,7 +267,7 @@ describe('create game in the shared game scene', () => {
       seasonId: null,
       outsideTournament: 'Demo Classic'
     })
-    expect(f.saved).deep.equals([
+    expect(f.saved.map(({ notice, ...result }) => result)).deep.equals([
       {
         id: 'request_demo',
         status: 'pending',

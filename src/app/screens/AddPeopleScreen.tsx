@@ -22,7 +22,7 @@ export function AddPeopleScreen({
   client: TeamStationClient
   group: GroupRef
   scopeName: string
-  onDone: () => void
+  onDone: (notice?: string) => void
   onCancel: () => void
 }): React.ReactElement {
   const styles = getStyles(useTheme())
@@ -81,7 +81,10 @@ export function AddPeopleScreen({
         }
       }
       if (!current()) return
-      if (failed.length === 0) onDone()
+      if (failed.length === 0)
+        onDone(
+          `${scopeName}: Added ${added}, invited ${invited} — ${parsed.valid.join(', ')}`
+        )
       else {
         setAddresses(failed.map(row => row.email).join(', '))
         setErrors(failed)
@@ -142,7 +145,7 @@ export function AddPeopleScreen({
         ))}
         {notice !== '' && <Text style={styles.hint}>{notice}</Text>}
         <Button
-          label={parsed.valid.length > 1 ? 'Send invites' : 'Send invite'}
+          label="Add people"
           block
           busy={busy}
           disabled={parsed.valid.length === 0 || parsed.invalid.length > 0}

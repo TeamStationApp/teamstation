@@ -1390,7 +1390,9 @@ function Shell(props: AppProps): React.ReactElement {
         client={client}
         group={{ kind: top.kind, id: top.id }}
         invites={top.name === 'groupInvites'}
-        onDone={() => {
+        onDone={notice => {
+          if (notice != null)
+            setSuccessNotice({ id: Date.now(), message: notice })
           refreshRoles()
           setSettingsVisit(++settingsVisitId.current)
           pop()
@@ -1535,11 +1537,12 @@ function Shell(props: AppProps): React.ReactElement {
           setSuccessNotice({
             id: Date.now(),
             message:
-              result.status === 'pending'
+              result.notice ??
+              (result.status === 'pending'
                 ? 'Game proposal sent'
                 : result.status === 'eventUpdated'
                   ? 'Event changes saved'
-                  : 'Game changes saved'
+                  : 'Game changes saved')
           })
           if (
             result.status === 'accepted' &&
@@ -1563,12 +1566,11 @@ function Shell(props: AppProps): React.ReactElement {
         onSaved={result => {
           setSuccessNotice({
             id: Date.now(),
-            message:
-              result.status === 'accepted'
-                ? 'Game scheduled'
-                : 'Game proposal sent'
+            message: result.notice ?? 'Game saved'
           })
-          replace({ name: 'notification', id: result.id })
+          if (result.status === 'accepted' && result.gameId != null)
+            replace({ name: 'game', gameId: result.gameId, title: '' })
+          else replace({ name: 'notification', id: result.id })
           refreshRoles()
           refreshNotifications().catch(() => undefined)
         }}
@@ -1578,8 +1580,11 @@ function Shell(props: AppProps): React.ReactElement {
       <PromoteExternalScreen
         client={client}
         teamId={top.id}
-        onSent={id => {
-          replace({ name: 'notification', id })
+        onSent={(id, result) => {
+          if (result?.status === 'accepted') {
+            setSuccessNotice({ id: Date.now(), message: result.message })
+            replace({ name: 'group', kind: 'team', id: top.id })
+          } else replace({ name: 'notification', id })
           refreshRoles()
           refreshNotifications().catch(() => undefined)
         }}
@@ -1594,8 +1599,18 @@ function Shell(props: AppProps): React.ReactElement {
           relationship: top.relationship,
           direction: top.direction
         }}
-        onSent={id => {
-          replace({ name: 'notification', id })
+        onSent={(id, result) => {
+          if (result?.status === 'accepted') {
+            setSuccessNotice({ id: Date.now(), message: result.message })
+            if (stacks[tab].length > 1) pop()
+            else
+              replace({
+                name: 'group',
+                kind: top.kind,
+                id: top.id,
+                tab: top.kind === 'season' ? 'teams' : undefined
+              })
+          } else replace({ name: 'notification', id })
           refreshRoles()
           refreshNotifications().catch(() => undefined)
         }}
@@ -1612,9 +1627,16 @@ function Shell(props: AppProps): React.ReactElement {
       <NotificationDetailScreen
         client={client}
         id={top.id}
-        onChanged={replacementId => {
+        onChanged={(replacementId, completion) => {
           refreshRoles()
-          if (replacementId != null)
+          if (completion != null) {
+            setSuccessNotice({ id: Date.now(), message: completion.notice })
+            if (completion.gameId != null)
+              replace({ name: 'game', gameId: completion.gameId, title: '' })
+            else if (completion.source != null)
+              replace({ name: 'group', ...completion.source })
+            else pop()
+          } else if (replacementId != null)
             replace({ name: 'notification', id: replacementId })
           refreshNotifications().catch(() => undefined)
         }}

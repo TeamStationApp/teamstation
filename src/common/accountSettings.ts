@@ -26,10 +26,22 @@ export const asAccountSettings = asObject({
   ),
   newPasswordSalt: asOptional((raw: unknown) => asHex(raw, 16)),
   emails: asArray(
-    asObject({ id: asString, email: asString, isPrimary: asBoolean })
+    asObject({
+      id: asString,
+      email: asString,
+      isPrimary: asBoolean,
+      isVerified: asOptional(asBoolean, false)
+    })
   )
 })
-export type AccountSettings = ReturnType<typeof asAccountSettings>
+type CleanedAccountSettings = ReturnType<typeof asAccountSettings>
+export type AccountSettings = Omit<CleanedAccountSettings, 'emails'> & {
+  emails: Array<
+    Omit<CleanedAccountSettings['emails'][number], 'isVerified'> & {
+      isVerified?: boolean
+    }
+  >
+}
 
 export function asAccountName(raw: unknown): string {
   const name = asString(raw).trim().replace(/\s+/g, ' ')
