@@ -339,7 +339,7 @@ describe('actual App scoring player Settings return', function () {
       await press('Open scoring menu')
       await press('Exit Current Game')
       await waitFor(() => currentRoute().name === 'game')
-      await press('Score Game')
+      await press('Score')
       await press('Full game scoring')
       await waitFor(
         () => document.querySelector('[aria-label="Open scoring menu"]') != null

@@ -1,7 +1,11 @@
 import type { GameDetail } from '../../common/api'
 import { lstrings } from '../locales/strings'
 import { scoringEntry } from '../scoring/isUnscoredGame'
-import { eventEnded, type EventTabState } from './eventTabPolicy'
+import {
+  type EventTabState,
+  type GameSection,
+  gameSectionOrder
+} from './eventTabPolicy'
 
 export type GameTab = 'info' | 'boxScore' | 'watch' | 'score' | 'coach' | 'dj'
 
@@ -9,6 +13,11 @@ export interface GameTabPill {
   id: GameTab
   label: string
   role?: 'button'
+}
+
+export interface GameAction {
+  id: 'score' | 'record' | 'coach'
+  label: string
 }
 
 export interface GameTabsInput {
@@ -23,6 +32,7 @@ export interface GameTabsInput {
     | 'awayScore'
     | 'status'
     | 'scoringOwner'
+    | 'videos'
   > &
     EventTabState
   /** DJ Game is an iPhone's: never the web, and never Android. */
@@ -34,45 +44,49 @@ export interface GameTabsInput {
   now?: number
 }
 
+const sectionLabel: Record<GameSection, string> = {
+  info: 'Info',
+  boxScore: lstrings.game_box_score,
+  watch: lstrings.game_videos
+}
+
 /**
- * The pills across a game, left to right.
- *
- * The same on every platform: Score Game belongs to whoever may score, on a
- * phone as much as in a browser, and Coach Game to a team's head coach, right
- * after it; both sit before DJ Game where a songkeeper has that too.
+ * The content pills across a game, left to right. Settings lives in the gear.
  */
 export function gameTabs(input: GameTabsInput): GameTabPill[] {
-  const { game, music, onDjGame } = input
+  const { game } = input
   const info: GameTabPill = { id: 'info', label: 'Info' }
   if (game.eventKind === 'event') return [info]
-  const pills: GameTabPill[] = [
-    { id: 'boxScore', label: lstrings.game_box_score },
-    { id: 'watch', label: lstrings.game_videos }
-  ]
-  // The one scoring pill, for the people whose plays the server would take,
-  // and only while there is something behind it to use. It is a tab, like the
-  // other two: the hero stays and the choices appear under the pills.
+  const pills: GameTabPill[] = gameSectionOrder(game, input.now).map(id => ({
+    id,
+    label: sectionLabel[id]
+  }))
+  return pills
+}
+
+/**
+ * Score, Record and Coach, on the hero. Each is offered to the same people,
+ * on the same devices, as before they left the pills.
+ */
+export function gameActions(input: GameTabsInput): GameAction[] {
+  const { game, music, onDjGame } = input
+  if (game.eventKind === 'event') return []
+  const actions: GameAction[] = []
   if (
     game.canScore &&
     (scoringEntry(game) != null || game.scoreboard?.open === true)
   ) {
-    pills.push({ id: 'score', label: lstrings.game_score_game })
+    actions.push({ id: 'score', label: lstrings.game_hero_score })
   }
-  // For a head coach (not an assistant) of either team, for his own team's
-  // box score, roster, lineup and defence, until the game is called off.
+  if (game.canDj && music?.djSupported === true && onDjGame != null) {
+    actions.push({ id: 'record', label: lstrings.game_hero_record })
+  }
   if (
     game.coachSides.length > 0 &&
     game.status !== 'cancelled' &&
     input.onCoachGame != null
   ) {
-    pills.push({ id: 'coach', label: lstrings.game_coach_game, role: 'button' })
+    actions.push({ id: 'coach', label: lstrings.game_hero_coach })
   }
-  // For a songkeeper of either team, on an iPhone, whatever the game's
-  // status: songs are set and played before, during and after.
-  if (game.canDj && music?.djSupported === true && onDjGame != null) {
-    pills.push({ id: 'dj', label: lstrings.dj_game, role: 'button' })
-  }
-  if (eventEnded(game, input.now)) pills.push(info)
-  else pills.unshift(info)
-  return pills
+  return actions
 }

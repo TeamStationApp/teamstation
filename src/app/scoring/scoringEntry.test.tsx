@@ -35,19 +35,18 @@ afterEach(async function () {
   root = undefined
 })
 describe('actual game scoring entry', function () {
-  it('renders Score Game after Box score and Videos, and shows its choices under the pills', async function () {
+  it('renders Score on the hero and shows its choices under the pills', async function () {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => ({ ...gameFixture, canScore: true })
     client.teams = async () => []
     await render(<GameScreen client={client} gameId="g1" />)
-    expect(button('Score Game')?.getAttribute('role')).equals('tab')
+    expect(button('Score')?.getAttribute('role')).equals('button')
     const text = document.body.textContent ?? ''
     expect(text.indexOf('Box score')).lessThan(text.indexOf('Videos'))
-    expect(text.indexOf('Videos')).lessThan(text.indexOf('Score Game'))
     expect(text).includes('Owls')
     expect(text).not.includes('Full game scoring')
     await act(async () => {
-      button('Score Game')?.click()
+      button('Score')?.click()
     })
     const next = document.body.textContent ?? ''
     expect(next).includes('Owls')
@@ -93,7 +92,7 @@ describe('actual game scoring entry', function () {
     })
     client.teams = async () => []
     await render(<GameScreen client={client} gameId="g1" />)
-    expect(button('Score Game')).equals(null)
+    expect(button('Score')).equals(null)
     expect(button('Videos')).not.equals(null)
     expect(button('Box score')).not.equals(null)
   })
@@ -115,7 +114,7 @@ describe('actual game scoring entry', function () {
       client.game = async () => game
       client.teams = async () => []
       await render(<GameScreen client={client} gameId="g1" />)
-      expect(button('Score Game')).equals(null)
+      expect(button('Score')).equals(null)
       expect(button('Continue Scoring')).equals(null)
       expect(button('Box score')).not.equals(null)
       await act(async () => {
@@ -133,7 +132,7 @@ describe('actual game scoring entry', function () {
     })
     client.teams = async () => []
     await render(<GameScreen client={client} gameId="g1" />)
-    expect(button('Score Game')).not.equals(null)
+    expect(button('Score')).not.equals(null)
   })
 })
 
@@ -155,11 +154,11 @@ describe('scoring entry on the phones', function () {
     return Array.from(document.querySelectorAll<HTMLElement>('[aria-label]'))
       .map(node => node.getAttribute('aria-label') ?? '')
       .filter(label =>
-        ['Box score', 'Videos', 'Score Game', 'DJ Game'].includes(label)
+        ['Box score', 'Videos', 'Score', 'Record'].includes(label)
       )
   }
   for (const os of ['ios', 'android'] as const) {
-    it(`offers Score Game on ${os}, before DJ Game`, async function () {
+    it(`offers Score and Record on ${os}`, async function () {
       const client = new TeamStationClient({ baseUrl: '/api/v1' })
       client.game = async () => ({
         ...gameFixture,
@@ -176,12 +175,7 @@ describe('scoring entry on the phones', function () {
           onDjGame={() => undefined}
         />
       )
-      expect(pills()).deep.equals([
-        'Box score',
-        'Videos',
-        'Score Game',
-        'DJ Game'
-      ])
+      expect(pills()).deep.equals(['Score', 'Record', 'Box score', 'Videos'])
       expect(button('Continue Scoring')).equals(null)
     })
 
@@ -190,7 +184,7 @@ describe('scoring entry on the phones', function () {
       client.game = async () => ({ ...gameFixture, canScore: false })
       client.teams = async () => []
       await renderOn(os, <GameScreen client={client} gameId="g1" />)
-      expect(button('Score Game')).equals(null)
+      expect(button('Score')).equals(null)
       expect(button('Box score')).not.equals(null)
     })
   }

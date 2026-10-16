@@ -30,6 +30,7 @@ const palette = {
   coralRed: '#ef4444',
   amber: '#ffa500',
   gold: '#DAA520',
+  scoreBlue: '#1D4ED8',
 
   blackOp30: 'rgba(0, 0, 0, .3)',
   blackOp35: 'rgba(0, 0, 0, .35)',
@@ -85,6 +86,7 @@ export const tsDark: Theme = {
   clearIconBackgroundColor: palette.tsMediumOlive,
   clearIconColor: palette.white,
   buttonTextColor: palette.tsBeige,
+  scoreActionColor: palette.scoreBlue,
 
   inputBackgroundColor: palette.white,
   inputBorderColor: palette.tsMediumOlive,

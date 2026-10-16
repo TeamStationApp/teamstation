@@ -772,7 +772,7 @@ async function tileOverridden(page: Page, group: string): Promise<boolean> {
   }, group)
 }
 
-/** Where the Score Game screen's parts sit, top to bottom, and its link. */
+/** Where the Score screen's parts sit, top to bottom, and its link. */
 async function scoreGameScreen(page: Page): Promise<{
   inOrder: boolean
   link: string
@@ -827,7 +827,7 @@ async function disabledWith(
   )
 }
 
-describe('the Score Game screen and the override dashboard (E10–E11)', function () {
+describe('the Score screen and the override dashboard (E10–E11)', function () {
   let group: Group
   let browser: Browser
   let runner: BrowserContext
@@ -849,21 +849,21 @@ describe('the Score Game screen and the override dashboard (E10–E11)', functio
     await browser?.close()
   })
 
-  it('E10: one Score Game pill opens the Score Game screen, whose Scoreboard taps reach the board, and a non-runner gets no pill', async function () {
+  it('E10: one Score pill opens the Score screen, whose Scoreboard taps reach the board, and a non-runner gets no pill', async function () {
     const gameId = group.games['-10m']
-    // 1. Exactly one Score Game pill, and no Override Scoreboard pill.
+    // 1. Exactly one Score pill, and no Override Scoreboard pill.
     const page = await open(runner, `/games/${gameId}`, {
       width: 1200,
       height: 900
     })
-    await page.waitForSelector('[aria-label="Score Game"]')
-    expect(await page.$$('[aria-label="Score Game"]')).length(1)
+    await page.waitForSelector('[aria-label="Score"]')
+    expect(await page.$$('[aria-label="Score"]')).length(1)
     expect(await page.$('[aria-label="Override Scoreboard"]')).equals(null)
     expect(await page.$('[aria-label="Continue Scoring"]')).equals(null)
     await shot(page, 'gamePill')
 
-    // 2. The Score Game screen, top to bottom, and its link copied.
-    await press(page, 'Score Game')
+    // 2. The Score screen, top to bottom, and its link copied.
+    await press(page, 'Score')
     await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
     expect(new URL(page.url()).pathname).equals(`/games/${gameId}/score-game`)
     const screen = await scoreGameScreen(page)
@@ -980,8 +980,8 @@ describe('the Score Game screen and the override dashboard (E10–E11)', functio
       'the game page loaded'
     ).not.equals(null)
     expect(
-      await theirs.$('[aria-label="Score Game"]'),
-      'no Score Game pill for somebody who may not score'
+      await theirs.$('[aria-label="Score"]'),
+      'no Score pill for somebody who may not score'
     ).equals(null)
     expect(await theirs.$('[aria-label="Override Scoreboard"]')).equals(null)
     await shot(theirs, 'gameMember')
@@ -1001,13 +1001,13 @@ describe('the Score Game screen and the override dashboard (E10–E11)', functio
     await other.close()
   })
 
-  it('E10: the scorer path, pill to Score Game screen to one pitch and Back', async function () {
+  it('E10: the scorer path, pill to Score screen to one pitch and Back', async function () {
     const gameId = group.games['+1h']
     const page = await open(runner, `/games/${gameId}`, {
       width: 1200,
       height: 900
     })
-    await press(page, 'Score Game')
+    await press(page, 'Score')
     await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
     await press(page, 'Full game scoring')
     await page.waitForFunction(() => location.pathname.endsWith('/score'))
@@ -1028,7 +1028,7 @@ describe('the Score Game screen and the override dashboard (E10–E11)', functio
     await page.waitForFunction(
       () => document.querySelector('[aria-label="Save status"]') == null
     )
-    // Back returns to the Score Game screen, where the scorer was opened.
+    // Back returns to the Score screen, where the scorer was opened.
     await page.goBack()
     await page.waitForSelector('[aria-label="Copy scoreboard link"]')
     expect(new URL(page.url()).pathname).equals(`/games/${gameId}/score-game`)
@@ -1046,7 +1046,7 @@ describe('the Score Game screen and the override dashboard (E10–E11)', functio
     await page.close()
   })
 
-  it('E11: an expired game’s dashboard is the branded 404, and its Score Game screen says the board has closed', async function () {
+  it('E11: an expired game’s dashboard is the branded 404, and its Score screen says the board has closed', async function () {
     const gameId = group.games['-4h']
     const page = await open(runner, `/games/${gameId}/scoreboard-override`)
     await until('the branded 404', async () => await notFoundShown(page))
