@@ -24,6 +24,11 @@ describe('scoring layering', function () {
       join(root, 'src/app/scoring/screen.tsx'),
       "import { applyAction } from '../../common/scoring/apply'\nimport type { GameState } from '../../common/scoring/state'\nconst later = import('../../common/scoring/gumbo')\nimport { documentOf } from '../../common/scoring/document'\n"
     )
+    // Fixture setup may construct scoring documents without becoming app code.
+    writeFileSync(
+      join(root, 'src/app/scoring/fixture.e2e.ts'),
+      "import { documentOf } from '../../common/scoring/document'\n"
+    )
     expect(checkLayering(root)).deep.equals([
       'src/common/scoring/apply.ts: the scoring library imports ../../app/scoring/thing',
       'src/common/scoring/apply.ts: the scoring library imports ../../server/db',

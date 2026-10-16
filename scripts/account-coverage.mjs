@@ -16,6 +16,7 @@ import { webSettings } from './web-build-settings.mjs'
 const suites = [
   'src/app/scoreboard/scoreGameEntry.test.tsx',
   'src/app/screens/AccountScreen.test.tsx',
+  'src/app/components/settingsPieces.test.tsx',
   'src/app/platform/pickAccountPhoto.test.tsx',
   'src/app/walkup/useSongPlayer.test.tsx',
   'src/app/screens/fullName.test.tsx',
@@ -34,6 +35,9 @@ const required = [
   'src/server/routes/account.ts',
   'src/server/account/emails.ts',
   'src/app/screens/AccountScreen.tsx',
+  'src/app/components/HeroCard.tsx',
+  'src/app/components/PictureSheet.tsx',
+  'src/app/components/DangerText.tsx',
   'src/app/platform/pickAccountPhoto.ts',
   'src/app/platform/accountPhotoNative.ts'
 ]
