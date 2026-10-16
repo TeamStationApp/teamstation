@@ -91,7 +91,11 @@ import {
   describeLastPlay,
   describePlay
 } from './playDescription'
-import { addPlayerDraft, type PlayerDraft } from './playerDraft'
+import {
+  addRosteredPlayer,
+  type PlayerDraft,
+  rosterPlayerBody
+} from './playerDraft'
 import { useDictationHandover } from './rosterDictation'
 import { sameValue } from './rosterDirty'
 import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
@@ -1615,7 +1619,7 @@ function ScoringPanel(props: {
   }
   const creatingDefender = useRef(false)
   const createDefensivePlayers = async (
-    add: (draft: GameState, side: Side) => void
+    add: (draft: GameState, side: Side) => void | Promise<void>
   ): Promise<void> => {
     const slot = defensiveSlot
     if (slot == null || creatingDefender.current || rosterLoading)
@@ -1629,7 +1633,7 @@ function ScoringPanel(props: {
         throw new Error('The current defense has changed.')
       }
       const draft = copyState(fresh)
-      add(draft, slot.side)
+      await add(draft, slot.side)
       currentSetup.current = draft
       dispatch({ type: 'ROSTER', draft })
     } finally {
@@ -1637,8 +1641,12 @@ function ScoringPanel(props: {
     }
   }
   const createDefensivePlayer = async (player: PlayerDraft): Promise<void> => {
-    await createDefensivePlayers((draft, side) => {
-      addPlayerDraft(draft, side, player)
+    await createDefensivePlayers(async (draft, side) => {
+      const entry = await props.client.createRosterPlayer(
+        draft.gameData.teams[side].id,
+        rosterPlayerBody(player)
+      )
+      addRosteredPlayer(draft, side, entry.userId, player)
     })
   }
   const createDefensivePlaceholders = async (count: number): Promise<void> => {
@@ -2619,6 +2627,12 @@ function ScoringPanel(props: {
                 conflict={rosterLive.conflict}
                 onDirtyChange={setRosterChanged}
                 onEditPlayer={props.onEditPlayer}
+                onCreatePlayer={async (teamId, player) =>
+                  await props.client.createRosterPlayer(
+                    teamId,
+                    rosterPlayerBody(player)
+                  )
+                }
                 canEditTeams={props.rosterRights}
                 rosterLoading={props.detailsLoading}
                 rosterError={props.detailsProblem}

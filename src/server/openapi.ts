@@ -4793,6 +4793,91 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/teams/{teamId}/roster-players': {
+        post: {
+          summary: 'Create a player on a team',
+          description:
+            'Makes a user who cannot sign in, with no e-mail address, and a ' +
+            'player membership on the team. A coach, assistant or scorekeeper ' +
+            'of the team — the flag set on the team, its season or its league ' +
+            '— an admin of any of those, or a site admin. Anybody else, and a ' +
+            'team that does not exist, gets 404. At least one name part is ' +
+            'required. `jersey` and `positions` are this membership. `bats` ' +
+            'and `throws` are the player\u2019s own and are marked set by ' +
+            'hand, so a roster import does not overwrite them. The person ' +
+            'can be merged later because they are a real user. Audited. ' +
+            "Answers with the player's authorized roster entry, including " +
+            'the whole name, as GET /teams/{teamId}/roster lists it for a ' +
+            'roster manager.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: [
+                    'firstName',
+                    'lastName',
+                    'jersey',
+                    'positions',
+                    'bats',
+                    'throws'
+                  ],
+                  properties: {
+                    firstName: {
+                      type: 'string',
+                      maxLength: PLAYER_NAME_MAX_LENGTH
+                    },
+                    lastName: {
+                      type: 'string',
+                      maxLength: PLAYER_NAME_MAX_LENGTH
+                    },
+                    jersey: {
+                      type: 'string',
+                      nullable: true,
+                      maxLength: JERSEY_MAX_LENGTH,
+                      description: 'Trimmed; empty or null is no number.'
+                    },
+                    positions: {
+                      type: 'array',
+                      items: {
+                        type: 'string',
+                        enum: [...PLAYER_POSITIONS]
+                      }
+                    },
+                    bats: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right', 'switch']
+                    },
+                    throws: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right']
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description:
+                "The new player's roster entry, as GET /teams/{teamId}/roster lists it",
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/RosterEntry' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/teams/{teamId}/players/{userId}/settings': {
         put: {
           summary: "Set a player's name, jersey, positions, bats and throws",

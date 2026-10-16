@@ -71,7 +71,11 @@ import {
   type ResetAuthorization
 } from './passwordProtocol'
 import type { AvailablePicture } from './pictureCatalog'
-import type { PersonSettings, PlayerSettings } from './playerSettings'
+import type {
+  NewRosterPlayer,
+  PersonSettings,
+  PlayerSettings
+} from './playerSettings'
 import {
   asGroupDetail,
   asPublicGroup,
@@ -2692,6 +2696,22 @@ export class TeamStationClient {
    * What a roster manager sets for one player on one team. Only the fields sent
    * change; the answer is the player's roster entry as it now reads.
    */
+  /**
+   * Creates a player on the team. The answer is their roster entry, whole
+   * name included, as a roster manager reads it.
+   */
+  async createRosterPlayer(
+    teamId: string,
+    player: NewRosterPlayer
+  ): Promise<RosterEntry> {
+    return await this.request(
+      'POST',
+      `/teams/${encodeURIComponent(teamId)}/roster-players`,
+      asRosterEntry,
+      player
+    )
+  }
+
   async setPlayerSettings(
     teamId: string,
     userId: number | string,

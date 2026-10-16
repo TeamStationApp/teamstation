@@ -95,10 +95,20 @@ export function lineupCountMessage(count: number): string {
     : `Only ${words[count] ?? String(count)} ${count === 1 ? 'player' : 'players'} in lineup`
 }
 export function defensiveRosterName(player: ScoringPlayer): string {
-  // Server roster names already resolve collisions across that team's players.
-  const name = player.local
-    ? shortName({ id: player.id, displayName: player.fullName })
-    : player.fullName.trim()
+  const parts =
+    `${player.firstName ?? ''}${player.lastName ?? ''}`.trim() !== ''
+  // A stored roster label already resolved collisions, so it is shown as it
+  // is. A player entered with a first and last name is shortened the same
+  // way, whether or not they are only in this game.
+  const name =
+    player.local || parts
+      ? shortName({
+          id: player.id,
+          firstName: player.firstName,
+          lastName: player.lastName,
+          displayName: player.fullName
+        })
+      : player.fullName.trim()
   return name === '' ? '?' : name
 }
 

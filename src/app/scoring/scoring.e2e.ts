@@ -14,6 +14,7 @@ import {
 } from 'three'
 
 import { asGameDetail } from '../../common/api'
+import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
 import { initialHitTarget } from '../field/trajectoryGuide'
@@ -149,7 +150,9 @@ async function open(
     const saving =
       request.method() === 'POST' && url.pathname.endsWith('/events')
     if (saving && holdSaves) return
-    if (request.method() !== 'GET' && !saving)
+    const creatingPlayer =
+      request.method() === 'POST' && url.pathname.endsWith('/roster-players')
+    if (request.method() !== 'GET' && !saving && !creatingPlayer)
       unexpected.push(`${request.method()} ${url.pathname}`)
     if (uiAnimations && url.pathname.endsWith('/playback')) {
       body = {
@@ -223,7 +226,29 @@ async function open(
         body = { error: 'Not found' }
       }
     } else if (url.pathname === '/api/v1/teams') body = []
-    else if (url.pathname.endsWith('/roster')) {
+    else if (creatingPlayer) {
+      const answer = async (): Promise<void> => {
+        let nextStatus = 201
+        let nextBody: unknown
+        try {
+          nextBody = rosterEntryFromBody(
+            JSON.parse((await request.fetchPostData()) ?? '{}')
+          )
+        } catch (error) {
+          nextStatus = 400
+          nextBody = {
+            error: error instanceof Error ? error.message : 'Bad request'
+          }
+        }
+        await request.respond({
+          status: nextStatus,
+          contentType: 'application/json',
+          body: JSON.stringify(nextBody)
+        })
+      }
+      answer().catch(() => undefined)
+      return
+    } else if (url.pathname.endsWith('/roster')) {
       if (failedRoster) status = 503
       body = url.pathname.includes('/away/')
         ? [

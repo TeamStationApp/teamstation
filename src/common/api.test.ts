@@ -210,6 +210,56 @@ describe('api client', function () {
     })
   })
 
+  it('creates a roster player and reads back the roster entry', async function () {
+    const set = stubFetch(201, {
+      userId: 7,
+      shortName: 'Alex L',
+      nameDetails: {
+        firstName: 'Alex',
+        lastName: 'Lee',
+        displayName: 'Alex Lee'
+      },
+      jersey: '7',
+      positions: ['SS'],
+      bats: 'right',
+      throws: 'right',
+      isPlayer: true,
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null,
+      avatarUrl: null,
+      walkUpSong: null
+    })
+    const client = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: set.fetch
+    })
+    const entry = await client.createRosterPlayer('tem 1', {
+      firstName: 'Alex',
+      lastName: 'Lee',
+      jersey: '7',
+      positions: ['SS'],
+      bats: 'right',
+      throws: 'right'
+    })
+    expect(entry.userId).equals(7)
+    expect(entry.shortName).equals('Alex L')
+    expect(entry.nameDetails?.displayName).equals('Alex Lee')
+    expect(set.calls[0].method).equals('POST')
+    expect(set.calls[0].url).equals(
+      'http://x/api/v1/teams/tem%201/roster-players'
+    )
+    expect(JSON.parse(set.calls[0].body ?? '')).deep.equals({
+      firstName: 'Alex',
+      lastName: 'Lee',
+      jersey: '7',
+      positions: ['SS'],
+      bats: 'right',
+      throws: 'right'
+    })
+  })
+
   it('sets and clears a walk-up song, and reads it on the roster', async function () {
     const song = {
       provider: 'appleMusic',

@@ -420,6 +420,22 @@ describe('a player, and who may change their name', function () {
     expect(await mayEditName(db, parentId, legendId, about)).equals(false)
   })
 
+  const post = async (
+    path: string,
+    viewer: number | undefined,
+    body: unknown
+  ): Promise<{ status: number; body: unknown }> => {
+    const response = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(viewer == null ? {} : { 'x-test-user': String(viewer) })
+      },
+      body: JSON.stringify(body)
+    })
+    return { status: response.status, body: await response.json() }
+  }
+
   const get = async (
     path: string,
     viewer: number
@@ -1124,5 +1140,95 @@ describe('a player, and who may change their name', function () {
   // in is an option that can only ever answer "nothing".
   it('leaves out a team they are only a spectator on', async function () {
     expect(await teamsOf(db, [strangerId])).deep.equals([])
+  })
+
+  const createdPlayer = {
+    firstName: 'Alex',
+    lastName: 'Lee',
+    jersey: '7',
+    positions: ['SS', 'DH'],
+    bats: 'left',
+    throws: 'right'
+  }
+
+  it('creates a real roster player for a roster manager', async function () {
+    const viewers = [
+      [teamCoachId, 'Lane'],
+      [assistantId, 'Moss'],
+      [scorekeeperId, 'Nash'],
+      [leagueCoachId, 'Owen'],
+      [siteAdminId, 'Park']
+    ] as const
+    for (const [viewer, lastName] of viewers) {
+      const answer = await post(`/teams/${teamId}/roster-players`, viewer, {
+        ...createdPlayer,
+        lastName
+      })
+      expect(answer.status, String(viewer)).equals(201)
+      const entry = asRosterEntry(answer.body)
+      expect(entry.isPlayer).equals(true)
+      expect(entry.section).equals('player')
+      expect(entry.role).equals('member')
+      expect(entry.jersey).equals('7')
+      expect(entry.positions).deep.equals(['SS', 'DH'])
+      expect(entry.bats).equals('left')
+      expect(entry.throws).equals('right')
+      expect(entry.shortName).equals(`Alex ${lastName[0]}`)
+      expect(entry.nameDetails).deep.equals({
+        firstName: 'Alex',
+        lastName,
+        displayName: `Alex ${lastName}`
+      })
+      const user = await db
+        .selectFrom('users')
+        .select(['login_enabled', 'bats_source', 'merged_into', 'display_name'])
+        .where('id', '=', entry.userId)
+        .executeTakeFirstOrThrow()
+      expect(user.login_enabled).equals(false)
+      expect(user.bats_source).equals('manual')
+      expect(user.merged_into).equals(null)
+      expect(user.display_name).equals(`Alex ${lastName}`)
+      const email = await db
+        .selectFrom('user_emails')
+        .select('id')
+        .where('user_id', '=', entry.userId)
+        .executeTakeFirst()
+      expect(email).equals(undefined)
+    }
+  })
+
+  it('refuses to create a player for someone who does not manage the roster', async function () {
+    for (const viewer of [
+      songkeeperId,
+      videographerId,
+      strangerId,
+      parentId,
+      otherCoachId
+    ]) {
+      const answer = await post(
+        `/teams/${teamId}/roster-players`,
+        viewer,
+        createdPlayer
+      )
+      expect(answer.status, String(viewer)).equals(404)
+    }
+    const signedOut = await post(
+      `/teams/${teamId}/roster-players`,
+      undefined,
+      createdPlayer
+    )
+    expect(signedOut.status).equals(401)
+    const missing = await post(
+      '/teams/tem_missing/roster-players',
+      siteAdminId,
+      createdPlayer
+    )
+    expect(missing.status).equals(404)
+    const blank = await post(`/teams/${teamId}/roster-players`, teamCoachId, {
+      ...createdPlayer,
+      firstName: ' ',
+      lastName: ''
+    })
+    expect(blank.status).equals(400)
   })
 })

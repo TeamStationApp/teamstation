@@ -292,6 +292,28 @@ describe('current scoring setup', function () {
     expect(
       defensiveRosterLabel({ ...player, fullName: '', jersey: '7' })
     ).equals('#7 ?')
+    expect(
+      defensiveRosterLabel({
+        ...player,
+        local: false,
+        userId: 8800001,
+        firstName: 'Alex',
+        lastName: 'Lee',
+        fullName: 'Alex Lee',
+        jersey: '7'
+      })
+    ).equals('#7 Alex L')
+    expect(
+      defensiveRosterLabel({
+        ...player,
+        local: false,
+        userId: 42,
+        firstName: undefined,
+        lastName: undefined,
+        fullName: 'Luis Ga',
+        jersey: ''
+      })
+    ).equals('Luis Ga')
     const key = battingWarningKey(session)
     session.liveData.boxscore.teams.home.battingOrder = []
     expect(battingWarningKey(session)).equals(key)

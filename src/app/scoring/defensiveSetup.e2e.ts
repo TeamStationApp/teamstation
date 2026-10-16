@@ -11,6 +11,7 @@ import { asGameDetail, asRosterEntry } from '../../common/api'
 import { shortName } from '../../common/names'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { ScoringSession, type StoredGame } from '../../common/scoring/session'
+import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
 import { createPlayers } from '../field/fieldModel'
 import {
@@ -440,7 +441,15 @@ async function open(fixture: Fixture = {}): Promise<{
       } else if (u.pathname === '/api/v1/teams') body = []
       else if (u.pathname.endsWith('/live-streams'))
         body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
-      else {
+      else if (
+        request.method === 'POST' &&
+        u.pathname.endsWith('/roster-players')
+      ) {
+        let bytes = ''
+        for await (const chunk of request) bytes += String(chunk)
+        body = rosterEntryFromBody(JSON.parse(bytes === '' ? '{}' : bytes))
+        response.statusCode = 201
+      } else {
         unexpected.push(`${request.method} ${u.pathname}`)
         body = []
       }

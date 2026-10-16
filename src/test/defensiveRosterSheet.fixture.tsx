@@ -8,7 +8,7 @@ import {
 } from '../app/scoring/DefensiveRosterSheet'
 import { createDevelopmentSession } from '../app/scoring/developmentSession'
 import { addPlaceholderPlayers } from '../app/scoring/placeholderPlayers'
-import { addPlayerDraft } from '../app/scoring/playerDraft'
+import { addRosteredPlayer, rosterPlayerBody } from '../app/scoring/playerDraft'
 import { copyState } from '../app/scoring/scoringMachine'
 import { ScoringScreen } from '../app/scoring/ScoringScreen'
 import { memoryStore, type ScoringSource } from '../app/scoring/scoringSource'
@@ -19,6 +19,7 @@ import { shortName } from '../common/names'
 import { freshGame } from '../common/scoring/rules'
 import { ScoringSession } from '../common/scoring/session'
 import { setupOf } from '../common/scoring/state'
+import { mintedRosterEntry } from './mintedRosterEntry'
 
 const game = asGameDetail({
   nonMemberView: false,
@@ -93,6 +94,7 @@ const client = new TeamStationClient({
 })
 client.game = async () => game
 client.roster = async side => roster(side)
+client.createRosterPlayer = async (_teamId, player) => mintedRosterEntry(player)
 const source: ScoringSource = {
   open: async () =>
     ScoringSession.start(
@@ -165,9 +167,10 @@ export function DefensiveRosterSheetFixture(): React.ReactElement {
                   setPosition(undefined)
                 }}
                 onAddPlayer={async draft => {
+                  const entry = mintedRosterEntry(rosterPlayerBody(draft))
                   setSession(previous => {
                     const next = copyState(previous)
-                    addPlayerDraft(next, 'home', draft)
+                    addRosteredPlayer(next, 'home', entry.userId, draft)
                     return next
                   })
                 }}

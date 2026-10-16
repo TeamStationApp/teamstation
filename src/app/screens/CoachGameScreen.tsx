@@ -38,6 +38,7 @@ import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
+import { rosterPlayerBody } from '../scoring/playerDraft'
 import type { RosterDictationOptions } from '../scoring/rosterDictation'
 import { sameValue } from '../scoring/rosterDirty'
 import { RosterEditor, type RosterEditorDraft } from '../scoring/RosterEditor'
@@ -587,6 +588,9 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
               initialDraft={held}
               onDraftChange={setHeld}
               rosters={opened.rosters}
+              onCreatePlayer={async (id, player) =>
+                await client.createRosterPlayer(id, rosterPlayerBody(player))
+              }
               unaccepted={unaccepted}
               conflict={live.conflict}
               onDirtyChange={setDirty}

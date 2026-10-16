@@ -1,3 +1,9 @@
+import {
+  JERSEY_MAX_LENGTH,
+  type NewRosterPlayer,
+  PLAYER_POSITIONS as STORED_POSITIONS
+} from '../../common/playerSettings'
+import { allocatePlayer } from '../../common/scoring/lineup'
 import { addDevelopmentPlayer } from './developmentSession'
 import type { ScoringPlayer, ScoringSessionState, Side } from './scoringTypes'
 
@@ -35,6 +41,8 @@ export function playerDraftError(draft: PlayerDraft): string | undefined {
     return 'Enter a player name.'
   if (!/^\d*$/.test(draft.jersey.trim()))
     return 'Use digits for the jersey number.'
+  if (draft.jersey.trim().length > JERSEY_MAX_LENGTH)
+    return `A jersey number is at most ${JERSEY_MAX_LENGTH} characters.`
 }
 export function addPlayerDraft(
   session: ScoringSessionState,
@@ -60,6 +68,62 @@ export function addPlayerDraft(
       draft.positions.includes(position)
     )
   })
+  return id
+}
+
+/** The body `POST /teams/:teamId/roster-players` stores. `EH` stays on the game only. */
+export function rosterPlayerBody(draft: PlayerDraft): NewRosterPlayer {
+  const error = playerDraftError(draft)
+  if (error != null) throw new Error(error)
+  const jersey = draft.jersey.trim()
+  return {
+    firstName: draft.firstName.trim(),
+    lastName: draft.lastName.trim(),
+    jersey: jersey === '' ? null : jersey,
+    bats: draft.bats,
+    throws: draft.throws,
+    positions: STORED_POSITIONS.filter(position =>
+      draft.positions.includes(position)
+    )
+  }
+}
+
+/**
+ * Puts a player who already exists on the team into this game. `userId` is
+ * the server's identity, so the person can be merged later. The typed name
+ * stays on the session; the roster entry is what the edit-roster list reads.
+ */
+export function addRosteredPlayer(
+  session: ScoringSessionState,
+  side: Side,
+  userId: number,
+  draft: PlayerDraft
+): number {
+  const error = playerDraftError(draft)
+  if (error != null) throw new Error(error)
+  const firstName = draft.firstName.trim()
+  const lastName = draft.lastName.trim()
+  const id = allocatePlayer(session.meta.identities, userId)
+  const team = session.liveData.boxscore.teams[side]
+  const player = {
+    id,
+    userId,
+    teamId: session.gameData.teams[side].id,
+    fullName: [firstName, lastName].filter(Boolean).join(' '),
+    firstName,
+    lastName,
+    jersey: draft.jersey.trim(),
+    bats: draft.bats,
+    throws: draft.throws,
+    positions: PLAYER_POSITIONS.filter(position =>
+      draft.positions.includes(position)
+    ),
+    local: false
+  }
+  const existing = session.gameData.players[id]
+  if (existing == null) session.gameData.players[id] = player
+  else Object.assign(existing, player, { id })
+  if (!team.players.includes(id)) team.players.push(id)
   return id
 }
 

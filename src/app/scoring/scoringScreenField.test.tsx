@@ -13,6 +13,7 @@ import type { ScoringAction } from '../../common/scoring/actions'
 import { baseIds, freshGame, overrideOf } from '../../common/scoring/rules'
 import { applyAction, ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
+import { mintedRosterEntry } from '../../test/mintedRosterEntry'
 import { F } from '../../test/scoringGames'
 import type { BaseballScreen } from '../field/BaseballScreen'
 import type { FieldPlacement } from '../field/fieldTypes'
@@ -172,6 +173,8 @@ async function mount(
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
   client.roster = async teamId => rosters[teamId] ?? []
+  client.createRosterPlayer = async (_teamId, player) =>
+    mintedRosterEntry(player)
   const node = document.createElement('div')
   document.body.appendChild(node)
   container = node
