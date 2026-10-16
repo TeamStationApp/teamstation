@@ -175,7 +175,7 @@ describe('scoring shell and exit', function () {
     fixtureFetch()
     showRoute({ name: 'game', gameId: 'g1' }, true)
     await render(<App />)
-    await click('Score Game')
+    await click('Score')
     expect(currentRoute()).deep.equals({
       name: 'game',
       gameId: 'g1',
@@ -218,7 +218,7 @@ describe('scoring shell and exit', function () {
       await render(<App />)
       for (let cycle = 0; cycle < 2; cycle++) {
         await openListedGame()
-        await click('Score Game')
+        await click('Score')
         await click('Full game scoring')
         await click('Open scoring menu')
         await click('Exit Current Game')
@@ -244,10 +244,10 @@ describe('scoring shell and exit', function () {
     showRoute({ name: 'schedule', when: 'upcoming' }, true)
     await render(<App />)
     await openListedGame()
-    await click('Score Game')
+    await click('Score')
     await clickTab('Videos')
     await openListedGame()
-    await click('Score Game')
+    await click('Score')
     await click('Full game scoring')
     await click('Open scoring menu')
     await click('Exit Current Game')

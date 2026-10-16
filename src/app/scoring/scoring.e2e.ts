@@ -320,9 +320,9 @@ async function readGuide(
   })
 }
 /* eslint-enable @typescript-eslint/prefer-optional-chain */
-/** The Score Game pill, then the Score Game screen's Full game scoring. */
+/** The Score pill, then the Score screen's Full game scoring. */
 async function startScoring(page: Page): Promise<void> {
-  await click(page, 'Score Game')
+  await click(page, 'Score')
   await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
   await click(page, 'Full game scoring')
   await page.waitForFunction(() => location.pathname.endsWith('/score'))
@@ -978,7 +978,7 @@ describe('scoring browser', function () {
       await page.waitForFunction(
         () => document.querySelector('[aria-label="Save status"]') == null
       )
-      // Back returns to the Score Game screen.
+      // Back returns to the Score screen.
       await page.evaluate(() => {
         history.back()
       })
@@ -1020,7 +1020,7 @@ describe('scoring browser', function () {
     const scored = await open('/games/g1', true)
     try {
       await scored.page.waitForSelector('[aria-label="Box score"]')
-      expect(await scored.page.$('[aria-label="Score Game"]')).equals(null)
+      expect(await scored.page.$('[aria-label="Score"]')).equals(null)
       expect(scored.unexpected).deep.equals([])
     } finally {
       await scored.page.close()
@@ -1029,7 +1029,7 @@ describe('scoring browser', function () {
     try {
       await click(direct.page, 'Open scoring menu')
       await click(direct.page, 'Exit Current Game')
-      await direct.page.waitForSelector('[aria-label="Score Game"]')
+      await direct.page.waitForSelector('[aria-label="Score"]')
       expect(new URL(direct.page.url()).pathname).equals('/games/g1')
       expect(direct.unexpected).deep.equals([])
     } finally {
@@ -4074,7 +4074,7 @@ describe('scoring browser', function () {
     const scored = await open('/games/g1', 7)
     try {
       await scored.page.waitForSelector('[aria-label="Box score"]')
-      expect(await scored.page.$('[aria-label="Score Game"]')).equals(null)
+      expect(await scored.page.$('[aria-label="Score"]')).equals(null)
     } finally {
       await scored.page.close()
     }

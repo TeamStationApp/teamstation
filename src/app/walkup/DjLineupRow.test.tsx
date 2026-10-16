@@ -217,17 +217,13 @@ describe('the DJ Game button (U30)', function () {
         music={{ djSupported: true }}
       />
     )
-    const dj = labelled('DJ Game')
+    const dj = labelled('Record')
     expect(dj?.getAttribute('role')).equals('button')
+    const score = labelled('Score')
+    expect(score?.getAttribute('role')).equals('button')
     const all = text()
-    const score = Math.max(
-      all.indexOf('Score Game'),
-      all.indexOf('Continue Scoring')
-    )
-    expect(score).greaterThan(-1)
+    expect(all.indexOf('Score')).lessThan(all.indexOf('Record'))
     expect(all.indexOf('Box score')).lessThan(all.indexOf('Videos'))
-    expect(all.indexOf('Videos')).lessThan(score)
-    expect(score).lessThan(all.indexOf('DJ Game'))
     await act(async () => {
       dj?.click()
     })
@@ -244,7 +240,7 @@ describe('the DJ Game button (U30)', function () {
           music={{ djSupported: true }}
         />
       )
-      expect(labelled('DJ Game'), status).not.equals(null)
+      expect(labelled('Record'), status).not.equals(null)
       await act(async () => {
         root?.unmount()
       })
@@ -261,7 +257,7 @@ describe('the DJ Game button (U30)', function () {
           music={{ djSupported }}
         />
       )
-      expect(labelled('DJ Game'), `${canDj} ${djSupported}`).equals(null)
+      expect(labelled('Record'), `${canDj} ${djSupported}`).equals(null)
       await act(async () => {
         root?.unmount()
       })

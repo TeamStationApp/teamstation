@@ -193,7 +193,7 @@ async function bodyText(page: Page): Promise<string> {
   return await page.evaluate(() => document.body.innerText)
 }
 
-const PILLS = ['Box score', 'Videos', 'Score Game', 'DJ Game']
+const PILLS = ['Box score', 'Videos', 'Score', 'Record']
 
 before(async function () {
   mkdirSync(SHOTS, { recursive: true })
@@ -217,23 +217,20 @@ after(async function () {
 
 for (const size of SIZES) {
   describe(`CH ${size.name}: Score Game (A)`, function () {
-    it('A1 shows the scorer Box score, Videos, Score Game, in that order', async function () {
+    it('A1 shows the scorer Box score, Videos, and Score on the hero', async function () {
       const context = await contextAs(SCORER)
       const page = await open(context, `/games/${GAME}`, size)
       await until('the pills', async () =>
-        (await labelled(page, PILLS)).length >= 3 ? true : undefined
+        (await labelled(page, PILLS)).includes('Score') ? true : undefined
       )
-      // The web has no music, so no DJ Game.
+      // The web has no music, so no Record. Score sits on the hero, above the pills.
       expect(await labelled(page, PILLS)).deep.equals([
+        'Score',
         'Box score',
-        'Videos',
-        'Score Game'
+        'Videos'
       ])
       expect(await leftOf(page, 'Box score')).lessThan(
         await leftOf(page, 'Videos')
-      )
-      expect(await leftOf(page, 'Videos')).lessThan(
-        await leftOf(page, 'Score Game')
       )
       await shot(page, `A1-CH-${size.name}`)
       await context.close()
@@ -242,7 +239,7 @@ for (const size of SIZES) {
     it('A2 opens the choices, copies the link, and comes back from each', async function () {
       const context = await contextAs(SCORER)
       const page = await open(context, `/games/${GAME}`, size)
-      await press(page, 'Score Game')
+      await press(page, 'Score')
       await until('the Score Game choices', async () =>
         (await bodyText(page)).includes('Full game scoring') ? true : undefined
       )

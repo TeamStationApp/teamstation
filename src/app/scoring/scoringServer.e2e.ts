@@ -314,11 +314,11 @@ async function reachOnError(page: Page): Promise<void> {
   await click(page, credits.at(-1)!)
 }
 /**
- * The game page's one Score Game pill, whether the game is new or being
- * continued, then the Score Game screen's Full game scoring.
+ * The game page's one Score pill, whether the game is new or being
+ * continued, then the Score screen's Full game scoring.
  */
 async function openScoring(page: Page): Promise<void> {
-  await click(page, 'Score Game')
+  await click(page, 'Score')
   await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
   await click(page, 'Full game scoring')
   await page.waitForFunction(() => location.pathname.endsWith('/score'))
@@ -713,7 +713,7 @@ describe('scoring into the server', function () {
       const before = await summary(page)
       await page.close()
       page = await openAs(scorer, `/games/${gameId}`)
-      await page.waitForSelector('[aria-label="Score Game"]')
+      await page.waitForSelector('[aria-label="Score"]')
       expect(await page.$('[aria-label="Continue Scoring"]')).equals(null)
       await page.reload()
       await openScoring(page)
@@ -787,11 +787,11 @@ describe('scoring into the server', function () {
       ).equals('1')
 
       // Somebody who can see the game and scores for neither team: the game
-      // page offers them no Score Game pill, and the scorer's own address
+      // page offers them no Score pill, and the scorer's own address
       // opens read-only.
       const viewing = await openAs(viewer, `/games/${gameId}`, context)
       await viewing.waitForSelector('[aria-label="Box score"]')
-      expect(await viewing.$('[aria-label="Score Game"]')).equals(null)
+      expect(await viewing.$('[aria-label="Score"]')).equals(null)
       await viewing.close()
       const refused = await openAs(viewer, `/games/${gameId}/score`, context)
       await refused.waitForSelector('canvas[data-field-ready="true"]', {

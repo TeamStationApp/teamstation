@@ -27,6 +27,7 @@ import type { Side } from '../../common/scoring/state'
 import {
   AnglePickerModal,
   AnglesUnavailableModal,
+  Button,
   Card,
   FLOATING_BOTTOM_REM,
   GameHeroCard,
@@ -69,7 +70,7 @@ import { BoxScore } from './BoxScore'
 import { EventInfoTab } from './EventInfoTab'
 import { defaultEventTab, eventEndTime } from './eventTabPolicy'
 import { gameStatusLine, winnerOf } from './format'
-import { gameTabs } from './gameTabs'
+import { gameActions, gameTabs } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { openableTeams as teamsWithAPage } from './openableTeams'
 
@@ -386,17 +387,23 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }, [game, clockNow, requestedTab])
   useEffect(() => {
     if (game == null) return
-    const end = eventEndTime(game)
-    if (end == null) return
-    if (end <= Date.now()) {
-      if (clockNow < end) setClockNow(Date.now())
+    const start = game.startAt == null ? NaN : Date.parse(game.startAt)
+    const marks = [eventEndTime(game), Number.isFinite(start) ? start : null]
+    const now = Date.now()
+    const pending = marks.filter(
+      (mark): mark is number => mark != null && mark > now
+    )
+    if (pending.length === 0) {
+      if (marks.some(mark => mark != null && mark <= now && clockNow < mark))
+        setClockNow(now)
       return
     }
+    const next = Math.min(...pending)
     const timer = setTimeout(
       () => {
         setClockNow(Date.now())
       },
-      Math.min(2147483647, end - Date.now() + 1)
+      Math.min(2147483647, next - now + 1)
     )
     return () => {
       clearTimeout(timer)
@@ -1030,6 +1037,28 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       onOpenTeam(team)
     }
   }
+  const teamOf = (side: Side): string =>
+    side === 'home' ? game.homeTeamId : game.awayTeamId
+  // Straight to the one team a head coach coaches; a head coach of both
+  // picks one.
+  const openCoach = (): void => {
+    const [only, other] = game.coachSides
+    if (other == null) props.onCoachGame?.(teamOf(only))
+    else setChoosingCoach(true)
+  }
+  const heroActions = gameActions({
+    game,
+    now: clockNow,
+    music: props.music,
+    onDjGame: props.onDjGame,
+    onCoachGame: props.onCoachGame == null ? undefined : openCoach
+  })
+  const actionColor = (id: (typeof heroActions)[number]['id']): string =>
+    id === 'score'
+      ? theme.scoreActionColor
+      : id === 'record'
+        ? theme.liveColor
+        : theme.pillActiveBackground
 
   const scoreboard =
     game.eventKind === 'event' ? (
@@ -1088,26 +1117,43 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         teamStats={nonMemberView ? null : teamStatsOf(game.linescore)}
         onOpenAwayTeam={openSide(game.awayTeamId)}
         onOpenHomeTeam={openSide(game.homeTeamId)}
+        actions={
+          heroActions.length === 0 ? undefined : (
+            <View style={styles.heroActions}>
+              {heroActions.map(action => (
+                <Button
+                  key={action.id}
+                  label={action.label}
+                  accessibilityLabel={action.label}
+                  color={actionColor(action.id)}
+                  textColor={theme.buttonTextColor}
+                  style={styles.heroAction}
+                  onPress={() => {
+                    if (action.id === 'score') {
+                      explicitSelection.current = true
+                      setTab('score')
+                      onTab?.('score')
+                      return
+                    }
+                    if (action.id === 'record') {
+                      props.onDjGame?.()
+                      return
+                    }
+                    openCoach()
+                  }}
+                />
+              ))}
+            </View>
+          )
+        }
       />
     )
 
-  const teamOf = (side: Side): string =>
-    side === 'home' ? game.homeTeamId : game.awayTeamId
-  // Straight to the one team a head coach coaches; a head coach of both
-  // picks one.
-  const openCoach = (): void => {
-    const [only, other] = game.coachSides
-    if (other == null) props.onCoachGame?.(teamOf(only))
-    else setChoosingCoach(true)
-  }
   const tabs = (
     <PillTabs
       tabs={gameTabs({
         game,
         now: clockNow,
-        music: props.music,
-        onDjGame: props.onDjGame,
-        onCoachGame: props.onCoachGame == null ? undefined : openCoach,
         canManage: canManageSchedule,
         onSettings: props.onSettings
       })}
@@ -1117,14 +1163,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           props.onSettings?.()
           return
         }
-        if (next === 'dj') {
-          props.onDjGame?.()
-          return
-        }
-        if (next === 'coach') {
-          openCoach()
-          return
-        }
+        if (next !== 'info' && next !== 'boxScore' && next !== 'watch') return
         // Leaving the video unmounts it, so where it had got to is written
         // down here and picked up by the attach that follows the remount.
         // Without this you came back to the start of the game, which is a
@@ -1593,6 +1632,16 @@ const getStyles = cacheStyles((theme: Theme) =>
       justifyContent: 'center',
       backgroundColor: theme.backgroundColor,
       padding: theme.rem(1)
+    },
+    heroActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.rem(theme.spaceSmRem),
+      paddingHorizontal: theme.rem(theme.cardContentInsetRem),
+      paddingBottom: theme.rem(theme.cardContentInsetRem)
+    },
+    heroAction: {
+      flex: 1
     },
     scoreboard: {
       flexDirection: 'row',

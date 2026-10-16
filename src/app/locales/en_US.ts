@@ -118,6 +118,12 @@ export const enUs = {
   game_box_score: 'Box score',
   /** The game page's one scoring pill, and the screen it opens. */
   game_score_game: 'Score Game',
+  /** The Score action on the game hero. */
+  game_hero_score: 'Score',
+  /** The Record action on the game hero. It opens DJ Game. */
+  game_hero_record: 'Record',
+  /** The Coach action on the game hero. */
+  game_hero_coach: 'Coach',
   /** The game page's pill for a head coach, and the screen it opens. */
   game_coach_game: 'Coach Game',
   /** Asked of a head coach of both teams before Coach Game opens. */
