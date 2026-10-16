@@ -2,9 +2,12 @@ import React, { useState } from 'react'
 import { Image, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { FittedInitials } from './FittedInitials'
 import { Icon, type IconName } from './Icon'
 
 export interface EmblemProps {
+  /** Opt-in large group preview; ordinary identity tiles keep their sizing. */
+  fitInitials?: boolean
   /** Signed, short-lived, and often absent. */
   uri?: string | null
   /** Drawn when there is no picture, or when the picture will not load. */
@@ -45,7 +48,7 @@ export function Emblem(props: EmblemProps): React.ReactElement {
   const { uri, fallback, icon, shape = 'rounded', size = 2.5, tint } = props
   const theme = useTheme()
   const styles = getStyles(theme)
-  const [failed, setFailed] = useState(false)
+  const [failedUri, setFailedUri] = useState<string | null>()
 
   const box = {
     width: theme.rem(size),
@@ -54,13 +57,19 @@ export function Emblem(props: EmblemProps): React.ReactElement {
       shape === 'circle' ? theme.radiusPill : theme.rem(theme.radiusRem)
   }
 
-  if (uri == null || uri === '' || failed) {
+  if (uri == null || uri === '' || failedUri === uri) {
     return (
       <View
         style={[styles.tile, box, tint != null && { backgroundColor: tint }]}
       >
         {icon != null ? (
           <Icon name={icon} size={size / 2} color={theme.activeColor} />
+        ) : props.fitInitials === true ? (
+          <FittedInitials
+            letters={fallback}
+            size={size}
+            color={tint != null ? '#FFFFFF' : theme.activeColor}
+          />
         ) : (
           <Text
             style={[
@@ -87,7 +96,7 @@ export function Emblem(props: EmblemProps): React.ReactElement {
       source={{ uri }}
       style={[styles.picture, box]}
       onError={() => {
-        setFailed(true)
+        setFailedUri(uri)
       }}
     />
   )

@@ -42,7 +42,7 @@ describe('a team’s tile colour', function () {
     )
   })
 
-  it('is always one of the eight', function () {
+  it('is always one of the 32', function () {
     for (let i = 0; i < 200; i++) {
       expect(TEAM_TINTS).includes(teamTint(`tem_${i}`))
     }
@@ -50,8 +50,10 @@ describe('a team’s tile colour', function () {
 
   it('spreads teams across the colours', function () {
     const used = new Set<string>()
-    for (let i = 0; i < 64; i++) used.add(teamTint(`tem_sample${i}`))
-    expect(used.size).at.least(6)
+    for (let i = 0; i < 4096; i++) used.add(teamTint(`tem_sample${i}`))
+    expect(used.size).equals(32)
+    expect(new Set(TEAM_TINTS).size).equals(32)
+    expect(teamTint(' Winter Wolves ')).equals(teamTint('Winter Wolves'))
   })
 
   it('keeps white letters readable on every colour', function () {

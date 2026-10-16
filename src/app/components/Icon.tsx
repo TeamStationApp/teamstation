@@ -47,6 +47,8 @@ export type IconName =
   | 'notifications'
   | 'search'
   | 'filter_alt'
+  | 'edit'
+  | 'place'
 
 export interface IconProps {
   name: IconName
