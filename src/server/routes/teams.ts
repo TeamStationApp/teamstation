@@ -39,6 +39,7 @@ import {
   withDropped
 } from '../highlights'
 import { cleanBody } from '../jsonBody'
+import { receivingVideoIds } from '../live/receiving'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { posterSecond, posterUrl, warmPosters } from '../media/posters'
@@ -499,6 +500,10 @@ export function teamRoutes(
         .orderBy(sql`coalesce(start_at, created_at)`)
         .orderBy('id')
         .execute()
+      const receiving = await receivingVideoIds(
+        db,
+        videos.filter(video => video.status === 'live').map(video => video.id)
+      )
 
       // Whether this caller runs the game, and so may override its scoreboard:
       // a manager of either side or anybody above one. It needs no Redis.
@@ -638,6 +643,7 @@ export function teamRoutes(
           kind: video.kind,
           title: video.title,
           status: video.status,
+          receiving: receiving.has(video.id),
           storage: video.storage,
           startAt: toIso(video.start_at),
           durationSec: video.duration_sec,
