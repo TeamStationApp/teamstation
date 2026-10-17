@@ -16,6 +16,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)refresh;
 - (void)turn:(CGFloat)rotationAngle mirrored:(BOOL)mirrored;
 - (void)detach;
+- (void)park;
+- (void)unpark;
 @end
 
 NS_ASSUME_NONNULL_END
@@ -87,6 +89,8 @@ static void *TSPhoneStreamPreviewGeometryContext = &TSPhoneStreamPreviewGeometry
 {
   const auto &newProps = *std::static_pointer_cast<TSPhoneStreamPreviewProps const>(props);
   _mirrored = newProps.mirrored;
+  // Fabric hands a view its props first whenever it is put to use, a pooled one included.
+  [_link unpark];
   [self applyConnection];
   [super updateProps:props oldProps:oldProps];
 }
@@ -183,8 +187,9 @@ static void *TSPhoneStreamPreviewGeometryContext = &TSPhoneStreamPreviewGeometry
 {
   [super prepareForRecycle];
   _mirrored = NO;
-  // A recycled view waits in the pool still holding its layer; the camera must not draw into it.
-  [_link detach];
+  // A recycled view waits in the pool still holding its layer, and still hears the engine open; the
+  // camera must not draw into it until the view is used again.
+  [_link park];
 }
 
 @end

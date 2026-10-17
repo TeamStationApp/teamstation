@@ -33,6 +33,26 @@ extension PhoneStreamTests {
       #expect(device.previews.count == 4)
     }
 
+    @Test("A parked layer is taken from its camera and given to none until it is unparked")
+    func parked() async {
+      let first = FakeCaptureDevice()
+      let second = FakeCaptureDevice()
+      let link = PhoneStreamPreviewLink(layer: AVCaptureVideoPreviewLayer())
+      link.follow(first)
+      link.park()
+      #expect(first.previews == [ "show 90 false", "hide" ])
+
+      // The engine opens again while the view waits in the pool.
+      link.follow(second)
+      link.turn(rotationAngle: 180, mirrored: false)
+      try? await Task.sleep(for: .milliseconds(100))
+      #expect(second.previews.isEmpty)
+
+      link.unpark()
+      link.follow(second)
+      #expect(await waitUntil(2) { second.previews == [ "show 180 false" ] })
+    }
+
     @Test("A new camera gets the layer once the old one has let it go, at the angle last asked for")
     func handOver() async {
       let first = FakeCaptureDevice()

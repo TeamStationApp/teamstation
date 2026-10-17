@@ -21,6 +21,8 @@ public final class PhoneStreamPreviewLink {
   private var shown = false
   /// Whether the camera before still has the layer.
   private var releasing = false
+  /// Whether the layer is put away until `unpark`, and no camera may have it.
+  private var parked = false
   private var rotationAngle: CGFloat
   private var mirrored: Bool
 
@@ -30,8 +32,10 @@ public final class PhoneStreamPreviewLink {
     self.mirrored = mirrored
   }
 
-  /// The camera to draw, nil for none. The same camera again changes nothing.
+  /// The camera to draw, nil for none. The same camera again changes nothing, and while the link is
+  /// parked only none is taken.
   public func follow(_ next: (any PhoneCaptureDevice)?) {
+    if parked, next != nil { return }
     if let device, let next, device === next { return }
     if shown, let device {
       releasing = true
@@ -42,6 +46,18 @@ public final class PhoneStreamPreviewLink {
     device = next
     shown = false
     showIfReady()
+  }
+
+  /// Takes the layer from its camera and keeps it from every camera until `unpark`: a view waiting in
+  /// a pool to be used again must not be drawn into when the engine next opens.
+  public func park() {
+    follow(nil)
+    parked = true
+  }
+
+  /// Lets `follow` give the layer to a camera again, once its view is in use.
+  public func unpark() {
+    parked = false
   }
 
   /// Turns and mirrors the picture. Only a change goes to the camera.

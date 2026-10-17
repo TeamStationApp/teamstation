@@ -35,9 +35,19 @@ final class TSPhoneStreamPreviewLink: NSObject {
     link.turn(rotationAngle: rotationAngle, mirrored: mirrored)
   }
 
-  /// Takes the layer from the camera, as a view that is put away or freed must.
+  /// Takes the layer from the camera, as a view that is freed must.
   @objc func detach() {
     link.follow(nil)
+  }
+
+  /// Takes the layer from the camera and keeps it off every `refresh`, while the view waits in the
+  /// pool; `unpark` once it is in use again.
+  @objc func park() {
+    link.park()
+  }
+
+  @objc func unpark() {
+    link.unpark()
   }
 }
 
