@@ -79,6 +79,7 @@ import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
+import { timeRoutes } from './routes/time'
 import { userRoutes } from './routes/users'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
 import { attachScoreboard } from './scoreboard/attachScoreboard'
@@ -473,6 +474,7 @@ function runWorker(): void {
         serverConfig.dictation == null ? [] : modelsOf(serverConfig.dictation)
     })
   )
+  app.use('/api/v1', timeRoutes())
   app.use(
     '/api/v1',
     authRoutes(db, {

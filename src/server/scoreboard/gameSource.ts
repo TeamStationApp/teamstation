@@ -117,13 +117,32 @@ export async function writeGameScoreboard(
   }
 }
 
-/** The hook `POST /games/:gameId/events` calls: fire and forget. */
+/**
+ * The hook `POST /games/:gameId/events` calls: fire and forget.
+ *
+ * It runs once the post has committed, so after the live board is written it
+ * announces that the game's board timeline changed, whatever the write did:
+ * written, refused as stale or closed, or not made at all, because the game
+ * has nothing TeamStation scored or Redis is away. The timeline is read from
+ * the plays, which have changed either way, and a viewer of a game whose live
+ * board has closed still has to hear of it.
+ */
 export function gameWrittenHook(options: {
   db: Kysely<Database>
   store: ScoreboardStore
   log: (message: string) => void
 }): (gameId: string) => void {
+  const { store, log } = options
   return gameId => {
-    writeGameScoreboard(options, gameId).catch(() => undefined)
+    writeGameScoreboard(options, gameId)
+      .catch(() => undefined)
+      .then(async () => {
+        await store.announceTimeline(gameId)
+      })
+      .catch((error: unknown) => {
+        log(
+          `scoreboard: game ${gameId} timeline not announced: ${error instanceof Error ? error.message : String(error)}`
+        )
+      })
   }
 }

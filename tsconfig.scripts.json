@@ -1,0 +1,13 @@
+{
+  // The TypeScript scripts that are not part of any build: the wall-clock
+  // stamper's command line, and the end-to-end helpers that run in Node or in
+  // a page. Here so the linter's type-aware rules see them; they reach into
+  // `src` for what they share with the server.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "lib": ["es2023", "dom"]
+  },
+  "include": ["scripts/stampWallClockSei.ts", "scripts/e2e/**/*.ts"]
+}

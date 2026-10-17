@@ -44,6 +44,13 @@ import {
  *
  * `rate`, `muted` and `paused` are props on the component rather than setters
  * on the player, so those go into `props` and the view is told to re-render.
+ *
+ * Between the player's reports the playhead is carried forward at the rate it
+ * plays: `t = lastReport + (now − lastReportAt) · rate`, from the last report,
+ * seek or change of pace. Four reports a second moved the scoreboard drawn
+ * over the picture a quarter of a second late, and the grid measured its
+ * angles against each other a quarter of a second apart; a browser's element
+ * is read to the frame, and this is read as nearly so.
  */
 
 /** What the component has to pass to the player. */
@@ -58,13 +65,32 @@ interface Listener {
   once: boolean
 }
 
+/**
+ * The furthest the playhead is carried past the player's last report: four
+ * of its reports. A player that has stopped reporting without saying it
+ * stopped has most likely stalled, and the picture is not moving either; a
+ * second is also short of what the scoreboard reads as a seek, so the step
+ * back when the next report comes is never taken for one.
+ */
+export const MAX_INTERPOLATION_MS = 1000
+
+// React Native has `performance.now()`, but its types leave it out.
+const monotonic = (globalThis as { performance?: { now: () => number } })
+  .performance
+const steadyNow = (): number => monotonic?.now() ?? Date.now()
+
 export class NativeVideoHandle implements VideoHandle {
   /** Set by the view once the player exists. */
   private player: VideoRef | null = null
   private readonly listeners = new Map<VideoEventName, Listener[]>()
   private readonly onPropsChange: () => void
+  /** A clock that only goes forwards, which the playhead is carried on. */
+  private readonly clock: () => number
 
+  /** The playhead as last reported, sought or fixed by a change of pace. */
   private time = 0
+  /** When, on `clock`, `time` was true. */
+  private timeAt = 0
   private length = Number.POSITIVE_INFINITY
   private state = 0
   private width = 0
@@ -102,8 +128,9 @@ export class NativeVideoHandle implements VideoHandle {
   /** What is playing, kept so a stalled stream can be asked for again. */
   source: string | null = null
 
-  constructor(onPropsChange: () => void) {
+  constructor(onPropsChange: () => void, clock: () => number = steadyNow) {
     this.onPropsChange = onPropsChange
+    this.clock = clock
   }
 
   attach(player: VideoRef | null): void {
@@ -117,12 +144,13 @@ export class NativeVideoHandle implements VideoHandle {
   // ---- the shape the shared modules use -------------------------------
 
   get currentTime(): number {
-    return this.time
+    return this.time + this.carried()
   }
 
   set currentTime(seconds: number) {
     const next = Number.isFinite(seconds) ? Math.max(0, seconds) : 0
     this.time = next
+    this.timeAt = this.clock()
     if (next < this.length - 0.5) this.over = false
     this.pendingSeekTo = next
     this.pendingSeekAt = Date.now()
@@ -158,6 +186,7 @@ export class NativeVideoHandle implements VideoHandle {
 
   set playbackRate(value: number) {
     if (this.props.rate === value) return
+    this.rebase()
     this.props = { ...this.props, rate: value }
     this.onPropsChange()
   }
@@ -176,6 +205,7 @@ export class NativeVideoHandle implements VideoHandle {
 
   async play(): Promise<void> {
     if (!this.props.paused) return
+    this.rebase()
     this.props = { ...this.props, paused: false }
     this.onPropsChange()
     // `play` is emitted here rather than waiting for the player to say so,
@@ -187,6 +217,7 @@ export class NativeVideoHandle implements VideoHandle {
 
   pause(): void {
     if (this.props.paused) return
+    this.rebase()
     this.props = { ...this.props, paused: true }
     this.onPropsChange()
     this.emit('pause')
@@ -234,6 +265,7 @@ export class NativeVideoHandle implements VideoHandle {
     // *previous* one will never be answered now.
     this.pendingSeekTo = null
     this.time = data.currentTime
+    this.timeAt = this.clock()
     this.emit('loadedmetadata')
   }
 
@@ -247,13 +279,17 @@ export class NativeVideoHandle implements VideoHandle {
     if (adopt) {
       this.pendingSeekTo = null
       this.time = data.currentTime
+      this.timeAt = this.clock()
     }
     this.emit('timeupdate')
   }
 
   handleSeek = (data: OnSeekData): void => {
     if (answersSeek(this.pendingSeekTo, data.seekTime)) {
+      // Held where it was sent while the player got there, and carried on
+      // from there now that it has.
       this.pendingSeekTo = null
+      this.timeAt = this.clock()
     }
     if (shouldResumeAfterSeek({ wantsPaused: this.props.paused })) {
       this.player?.resume()
@@ -273,12 +309,14 @@ export class NativeVideoHandle implements VideoHandle {
     // believe a viewer paused something they did not.
     const paused = !data.isPlaying
     if (paused === this.props.paused) return
+    this.rebase()
     this.props = { ...this.props, paused }
     this.onPropsChange()
     this.emit(paused ? 'pause' : 'play')
   }
 
   handleReadyForDisplay = (): void => {
+    this.rebase()
     // A picture is up: what a browser calls `HAVE_ENOUGH_DATA`, which is what
     // the multi-camera grid asks before it believes a tile has started.
     this.state = Math.max(this.state, HAVE_ENOUGH_DATA)
@@ -301,6 +339,7 @@ export class NativeVideoHandle implements VideoHandle {
    * likely to keep up.
    */
   handleBuffer = (data: OnBufferData): void => {
+    this.rebase()
     if (data.isBuffering) {
       this.state = Math.min(this.state, HAVE_CURRENT_DATA)
       return
@@ -338,6 +377,7 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   handleEnd = (): void => {
+    this.rebase()
     this.over = true
   }
 
@@ -363,6 +403,7 @@ export class NativeVideoHandle implements VideoHandle {
     // answer itself wrongly and the resume never runs — in precisely the case
     // the whole ladder exists for.
     if (!this.props.paused) {
+      this.rebase()
       this.props = { ...this.props, paused: true }
       this.onPropsChange()
     }
@@ -372,12 +413,47 @@ export class NativeVideoHandle implements VideoHandle {
   /** A new source: everything known about the last one is now wrong. */
   reset(): void {
     this.time = 0
+    this.timeAt = this.clock()
     this.length = Number.POSITIVE_INFINITY
     this.state = 0
     this.width = 0
     this.height = 0
     this.pendingSeekTo = null
     this.over = false
+  }
+
+  /**
+   * How far the picture has moved since `time` was true: only while it is
+   * playing a picture with enough behind it, not ended and not on its way to
+   * a seek, at the rate it plays, never past `MAX_INTERPOLATION_MS` of it and
+   * never past the end.
+   */
+  private carried(): number {
+    if (
+      this.props.paused ||
+      this.over ||
+      this.state !== HAVE_ENOUGH_DATA ||
+      this.pendingSeekTo != null
+    ) {
+      return 0
+    }
+    const elapsed = Math.min(
+      Math.max(0, this.clock() - this.timeAt),
+      MAX_INTERPOLATION_MS
+    )
+    return Math.min(
+      (elapsed / 1000) * this.props.rate,
+      Math.max(0, this.length - this.time)
+    )
+  }
+
+  /**
+   * Fixes the carried playhead as the new starting point, just before the
+   * pace changes: a pause, a new rate, a stall, or a stall's end.
+   */
+  private rebase(): void {
+    this.time = this.currentTime
+    this.timeAt = this.clock()
   }
 
   private emit(type: VideoEventName): void {

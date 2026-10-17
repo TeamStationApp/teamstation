@@ -44,7 +44,8 @@ class MainApplication : Application(), ReactApplication {
   }
 
   /**
-   * The two families the theme names, by the names it uses.
+   * The families the theme names, by the names it uses: Space Grotesk, the
+   * scoreboard's Inter and Quicksand, and the icons.
    *
    * Without this React Native looks for `assets/fonts/Space Grotesk.ttf` and,
    * finding nothing, draws the system font — the whole app in the wrong type,
@@ -56,6 +57,8 @@ class MainApplication : Application(), ReactApplication {
   private fun registerFonts() {
     val fonts = ReactFontManager.getInstance()
     fonts.addCustomFont(this, "Space Grotesk", R.font.space_grotesk)
+    fonts.addCustomFont(this, "Inter", R.font.inter)
+    fonts.addCustomFont(this, "Quicksand", R.font.quicksand)
     fonts.addCustomFont(
         this, "Material Symbols Outlined", R.font.material_symbols_outlined)
   }

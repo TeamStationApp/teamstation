@@ -280,25 +280,28 @@ final class DistributorModel {
   /// The sending is `UploadService`, through this Mac's account — the same
   /// path TS Director takes, so a broken upload resumes the same way on both.
   func teamStationPlan(
+    listing: RecordingListing,
     gameId: String,
     title: String,
-    tracks: [UploadTrack],
-    startedAt: Date
+    tracks: [UploadTrack]
   ) -> TeamStationPlan {
     let account = teamStation
+    // The take's wall clock, not this upload's: every file of the export
+    // starts there, and the library lays a take's cameras out against it.
+    let startedAt = listing.startedAt.date
     return TeamStationPlan(
+      listing: listing,
       gameId: gameId,
       title: title,
       tracks: tracks
-    ) { file, fileTitle, kind, progress in
+    ) { file, fileTitle, kind, serverClockOffsetMs, progress in
       try await account.send(
         file: file,
         gameId: gameId,
         title: fileTitle,
         kind: kind,
-        // The take's wall clock, not this upload's: every file of the export
-        // starts there, and the library lays a take's cameras out against it.
         startedAt: startedAt,
+        serverClockOffsetMs: serverClockOffsetMs,
         onProgress: progress
       )
     }

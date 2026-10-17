@@ -6,6 +6,7 @@ import {
   asObject,
   asOptional,
   asString,
+  asTuple,
   type Cleaner
 } from 'cleaners'
 
@@ -58,6 +59,12 @@ import {
   type NodeAccountChange
 } from './nodeAdministration'
 import {
+  asNodeSettings,
+  asScoreboardOverlay,
+  type NodeSettings,
+  type ScoreboardOverlay
+} from './nodeSettings'
+import {
   asNotification,
   asNotificationPage,
   type Notification,
@@ -86,6 +93,7 @@ import {
   type SearchRow
 } from './publicGroups'
 import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
+import { asScoreboardState, type ScoreboardState } from './scoreboard'
 import {
   cleanAction,
   type Problem,
@@ -108,6 +116,7 @@ import type { SaveChange, StoredGame } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
 import { asUserId } from './userIdNumber'
 import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
+import type { WallTimeline } from './wallTimeline'
 
 /**
  * The client the app talks to the server through.
@@ -1515,6 +1524,34 @@ export const asDjGame = asObject({
 })
 export type DjGame = ReturnType<typeof asDjGame>
 
+/** `GET /videos/:videoId/wall-timeline`: a video's points on the server clock. */
+export const asWallTimeline: Cleaner<WallTimeline> = asObject({
+  anchors: asArray(asTuple(asNumber, asNumber)),
+  source: asLiteral('sei', 'arrival', 'start'),
+  confidence: asLiteral('frame', 'clock', 'approximate'),
+  live: asBoolean,
+  startAt: asNullable(asString)
+})
+
+/** One step of a game's board: what it showed from `at` until the next. */
+export interface BoardStep {
+  /** Milliseconds, on the server's clock. */
+  at: number
+  state: ScoreboardState
+}
+
+/** `GET /games/:gameId/scoreboard-timeline`. */
+export interface BoardTimelineWindow {
+  /** Changes whenever anything the timeline is built from does. */
+  version: string
+  steps: BoardStep[]
+}
+
+export const asBoardTimelineWindow: Cleaner<BoardTimelineWindow> = asObject({
+  version: asString,
+  steps: asArray(asObject({ at: asNumber, state: asScoreboardState }))
+})
+
 export class TeamStationClient {
   async nodeAccounts(query = '', nodeAdmin = false): Promise<NodeAccount[]> {
     return await this.request(
@@ -1546,6 +1583,25 @@ export class TeamStationClient {
 
   async setAccountMail(accountMessages: boolean): Promise<void> {
     await this.request('PUT', '/node/mail', asUnknownOk, { accountMessages })
+  }
+
+  /** Every node setting, for a node administrator. */
+  async nodeSettings(): Promise<NodeSettings> {
+    return await this.request('GET', '/node/settings', asNodeSettings)
+  }
+
+  /** A node administrator sets every node setting at once. */
+  async setNodeSettings(settings: NodeSettings): Promise<NodeSettings> {
+    return await this.request('PUT', '/node/settings', asNodeSettings, settings)
+  }
+
+  /** Whether a game's board shows over its videos, and where. */
+  async scoreboardOverlay(gameId: string): Promise<ScoreboardOverlay> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/scoreboard-overlay`,
+      asScoreboardOverlay
+    )
   }
 
   /** Where the API is, which is also where its sockets are. */
@@ -1875,6 +1931,16 @@ export class TeamStationClient {
   /** What the server can do, including whether it takes dictation. */
   async health(): Promise<Health> {
     return await this.request('GET', '/health', asHealth)
+  }
+
+  /** The server's clock, in milliseconds since the epoch. */
+  async serverTime(): Promise<number> {
+    const answer = await this.request(
+      'GET',
+      '/time',
+      asObject({ now: asNumber })
+    )
+    return answer.now
   }
 
   async teams(): Promise<TeamSummary[]> {
@@ -2465,6 +2531,43 @@ export class TeamStationClient {
       'GET',
       `/videos/${encodeURIComponent(videoId)}/playback`,
       asPlayback
+    )
+  }
+
+  /**
+   * Where each position of a video falls on the server's clock. With
+   * `afterMs`, only the points after that position: what a live player polls
+   * for as the stream grows.
+   */
+  async wallTimeline(videoId: string, afterMs?: number): Promise<WallTimeline> {
+    const query = afterMs == null ? '' : `?afterMs=${Math.floor(afterMs)}`
+    return await this.request(
+      'GET',
+      `/videos/${encodeURIComponent(videoId)}/wall-timeline${query}`,
+      asWallTimeline
+    )
+  }
+
+  /**
+   * A game's board at every moment from `fromMs` on (to `toMs`, when given),
+   * with the step already in effect at `fromMs`.
+   */
+  async scoreboardTimeline(
+    gameId: string,
+    window: { fromMs?: number; toMs?: number } = {}
+  ): Promise<BoardTimelineWindow> {
+    const query = new URLSearchParams()
+    if (window.fromMs != null)
+      query.set('from', String(Math.max(0, Math.floor(window.fromMs))))
+    if (window.toMs != null)
+      query.set('to', String(Math.max(0, Math.ceil(window.toMs))))
+    const text = query.toString()
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/scoreboard-timeline${
+        text === '' ? '' : `?${text}`
+      }`,
+      asBoardTimelineWindow
     )
   }
 
@@ -3184,7 +3287,20 @@ export class TeamStationClient {
       )
     }
 
-    const text = await response.text()
+    // The connection can drop after the answer starts, while its body is
+    // read. The status has arrived by then: a refusal is still the server's
+    // answer, and only a success cut short is as offline as a fetch that
+    // never reached the server.
+    let text: string
+    try {
+      text = await response.text()
+    } catch {
+      if (!response.ok) throw errorFrom(response.status, '')
+      throw new HttpError(
+        'offline',
+        'Cannot reach TeamStation. Check your connection and try again.'
+      )
+    }
     if (!response.ok) throw errorFrom(response.status, text)
     if (text === '') return cleaner(undefined)
 

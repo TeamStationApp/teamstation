@@ -166,6 +166,26 @@ public final class AppEnvironment {
     ),
     keyStore: EventControlKeyStore(service: EventControlCoordinator.keyStoreService)
   )
+  /// How far TeamStation's clock is from this iPad's steady wall clock: measured at sign-in, then
+  /// every minute while a take linked to an event records or streams, each measurement kept in the
+  /// index, where a take reads its own (`RecordingSummary.serverClockOffsetMs`) for its uploads.
+  /// Asked of the server Director is built for, with no sign-in.
+  @ObservationIgnored
+  public private(set) lazy var serverClock: ServerClock = {
+    let index = self.index
+    let clock = self.clock
+    return ServerClock(
+      client: TeamStationClient(baseURL: AppServer.url),
+      now: { clock.now.date },
+      onSample: { sample in
+        try? index.insertServerClockSample(ServerClockRecord(
+          wall: WallClock(date: sample.wall),
+          offsetMs: sample.offsetMs,
+          rttMs: sample.rttMs
+        ))
+      }
+    )
+  }()
   /// The camera name the next claim sends.
   ///
   /// Copied from `config.cameraName` at launch and again when Settings opens.
@@ -186,6 +206,7 @@ public final class AppEnvironment {
       distributorEvents.publish(.recordingsChanged)
       updateScoreboards()
       holdProgrammeSound()
+      followServerClock()
     }
   }
   /// TS Distributor is attached by cable and talking to this Director.
@@ -207,6 +228,7 @@ public final class AppEnvironment {
       distributorEvents.publish(.streamingStateChanged(isStreaming: isStreaming))
       updateScoreboards()
       holdProgrammeSound()
+      followServerClock()
     }
   }
 
@@ -535,6 +557,11 @@ public final class AppEnvironment {
     programEncoder.setSoundCheckSink { recording, check in
       try? anchorIndex.recordSoundCheck(check, for: recording)
     }
+    // Every stream frame's wall-clock SEI is put on TeamStation's clock by the offset last measured.
+    // The clock itself, not `self`, for the same reason as the anchor sink: it is read on the
+    // encoder's thread, and `ServerClock` is safe to read from any.
+    let serverClock = self.serverClock
+    programStreamer.setServerClockOffset { serverClock.offsetMs }
   }
 
   /// Called once from the app's `task` modifier.
@@ -602,6 +629,7 @@ public final class AppEnvironment {
     eventControl.start(enabled: config.eventControlEnabled)
     eventControl.monitorNetwork()
     watchAccountForEventControl()
+    watchSignInForServerClock()
     apply(remoteStore.loadManifest())
     remoteInput.onDown = { [weak self] id, pressed in
       self?.handleRemoteDown(id, pressed: pressed)
@@ -3259,7 +3287,31 @@ public final class AppEnvironment {
     } onChange: { [weak self] in
       Task { @MainActor in
         self?.updateScoreboards()
+        self?.followServerClock()
         self?.watchChosenEvent()
+      }
+    }
+  }
+
+  /// Measures the server's clock every minute while a take linked to an event records or streams,
+  /// and stops when none does.
+  private func followServerClock() {
+    serverClock.follow((isRecording || isStreaming) && teamStation.chosen != nil)
+  }
+
+  /// Measures the server's clock when somebody signs in, and when a relaunch finds them signed in.
+  private func watchSignInForServerClock() {
+    let wasSignedIn = teamStation.isSignedIn
+    withObservationTracking {
+      _ = teamStation.user
+    } onChange: { [weak self] in
+      Task { @MainActor in
+        guard let self else { return }
+        if !wasSignedIn, self.teamStation.isSignedIn {
+          let clock = self.serverClock
+          Task { await clock.measure() }
+        }
+        self.watchSignInForServerClock()
       }
     }
   }
@@ -4457,7 +4509,10 @@ public final class AppEnvironment {
             // starts at — `ExportWindow` begins at `recording.startedAt` and
             // each track is padded to it. The same instant for every file,
             // whatever order they go up in and however long each takes.
-            startedAt: recording.startedAt.date
+            startedAt: recording.startedAt.date,
+            // How far the server's clock was from this iPad's during the take, which the
+            // server adds to that start so the video sits on its clock with the scoring.
+            serverClockOffsetMs: recording.serverClockOffsetMs
           )
           if videoId == nil { break }
         }

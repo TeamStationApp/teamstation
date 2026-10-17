@@ -422,10 +422,10 @@ final class APIAdapter: DistributorActions {
     }
 
     return model.teamStationPlan(
+      listing: recording,
       gameId: gameId,
       title: request.title ?? gameTitle,
-      tracks: tracks,
-      startedAt: recording.startedAt.date
+      tracks: tracks
     )
   }
 

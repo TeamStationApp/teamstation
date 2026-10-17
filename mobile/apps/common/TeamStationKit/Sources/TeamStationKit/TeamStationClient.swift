@@ -176,6 +176,24 @@ public struct TeamStationClient: Sendable {
     )
   }
 
+  // MARK: - The server's clock
+
+  /// The server's clock, in milliseconds since 1970.
+  ///
+  /// Asked with no sign-in, because a device measures its clock against the
+  /// server's before anybody has signed in, and the answer says nothing about
+  /// anybody. Five seconds rather than twenty: an answer that slow is no use
+  /// for measuring a clock, and `ServerClock` keeps the fastest of several.
+  public func serverTime() async throws -> Double {
+    let reply: ServerTime = try await send("time", method: "GET", timeout: 5)
+    return reply.now
+  }
+
+  /// `GET /api/v1/time`'s answer.
+  private struct ServerTime: Decodable {
+    let now: Double
+  }
+
   // MARK: - Sending a recording in
 
   /// Opens an upload, and is told how the server wants it sent.
@@ -185,26 +203,31 @@ public struct TeamStationClient: Sendable {
   /// game's wall clock, and the multi-camera view lays a take's angles side by
   /// side on it. Sent with every file of a take, the same instant each time,
   /// however long the one before took to go up.
+  ///
+  /// `serverClockOffsetMs` is how far the server's clock was ahead of the
+  /// recording device's while the take was made (`ServerClock`), which the
+  /// server adds to `startedAt` so the video sits on the server's clock with
+  /// the game's scoring. Left out when nothing was measured; the server then
+  /// takes `startedAt` as it is.
   public func openUpload(
     gameId: String,
     title: String,
     kind: String,
     filename: String,
     sizeBytes: Int,
-    startedAt: Date
+    startedAt: Date,
+    serverClockOffsetMs: Int? = nil
   ) async throws -> TeamStationUpload {
-    try await send(
-      "director/uploads",
-      method: "POST",
-      body: [
-        "gameId": gameId,
-        "title": title,
-        "kind": kind,
-        "filename": filename,
-        "sizeBytes": sizeBytes,
-        "startAt": Self.instant(startedAt)
-      ]
-    )
+    var body: [String: any Sendable] = [
+      "gameId": gameId,
+      "title": title,
+      "kind": kind,
+      "filename": filename,
+      "sizeBytes": sizeBytes,
+      "startAt": Self.instant(startedAt)
+    ]
+    if let serverClockOffsetMs { body["serverClockOffsetMs"] = serverClockOffsetMs }
+    return try await send("director/uploads", method: "POST", body: body)
   }
 
   /// ISO 8601 with fractional seconds, which is what the server reads.

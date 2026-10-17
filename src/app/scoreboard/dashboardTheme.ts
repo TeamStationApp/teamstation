@@ -61,7 +61,7 @@ export const dashboardTheme = {
 
   // Text
   primaryTextColor: palette.tsBeige,
-  secondaryTextFont: fonts.helveticaNeue,
+  secondaryTextFont: fonts.inter,
 
   // Buttons
   secondaryButtonColor: palette.tsLightOlive,

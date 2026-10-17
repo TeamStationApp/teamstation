@@ -151,12 +151,16 @@ public final class TeamStationAccount: TeamStationEventService {
   /// The plain form, for a caller that reports progress its own way — TS
   /// Distributor tracks it per export rather than per take. `upload` below is
   /// the same thing with the Director's bookkeeping around it.
+  ///
+  /// `serverClockOffsetMs` is the take's server clock offset, as its
+  /// `RecordingSummary` or `RecordingListing` holds it; nil sends none.
   public func send(
     file: URL,
     gameId: String,
     title: String,
     kind: String,
     startedAt: Date,
+    serverClockOffsetMs: Int? = nil,
     onProgress: @escaping @Sendable (Int64, Int64, String?) -> Void = { _, _, _ in }
   ) async throws -> String {
     let service = UploadService(client: client)
@@ -166,6 +170,7 @@ public final class TeamStationAccount: TeamStationEventService {
       title: title,
       kind: kind,
       startedAt: startedAt,
+      serverClockOffsetMs: serverClockOffsetMs,
       onProgress: { progress in
         onProgress(
           Int64(progress.bytesSent),
@@ -188,7 +193,8 @@ public final class TeamStationAccount: TeamStationEventService {
     gameId: String,
     title: String,
     kind: String,
-    startedAt: Date
+    startedAt: Date,
+    serverClockOffsetMs: Int? = nil
   ) async -> String? {
     guard keychain.token() != nil else {
       lastError = "Sign in to TeamStation first."
@@ -207,6 +213,7 @@ public final class TeamStationAccount: TeamStationEventService {
         title: title,
         kind: kind,
         startedAt: startedAt,
+        serverClockOffsetMs: serverClockOffsetMs,
         onProgress: { [weak self] sent, total, step in
           Task { @MainActor in
             guard let self, total > 0 else { return }

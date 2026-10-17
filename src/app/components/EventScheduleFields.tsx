@@ -1,13 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  View
-} from 'react-native'
+import React, { useMemo, useState } from 'react'
+import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
 
 import {
   changeEventSchedule,
@@ -21,8 +13,10 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { CancelAction } from './CancelAction'
 import { Icon } from './Icon'
+import { PickerDialog } from './PickerDialog'
 import { RadioMark } from './RadioMark'
 import { TextField } from './TextField'
+import { Wheel } from './Wheel'
 
 type Picker = 'date' | 'time' | 'endDate' | 'endTime' | 'timezone'
 
@@ -140,66 +134,45 @@ export function EventScheduleFields({
         </Modal>
       )}
       {picker != null && picker !== 'timezone' && (
-        <Modal
-          transparent
-          animationType="fade"
-          visible
-          onRequestClose={() => {
+        <PickerDialog
+          onClose={() => {
             setPicker(undefined)
           }}
         >
-          <KeyboardAvoidingView
-            style={styles.backdrop}
-            behavior={
-              Platform.OS === 'ios'
-                ? 'padding'
-                : Platform.OS === 'android'
-                  ? 'height'
-                  : undefined
-            }
-          >
-            <View accessibilityViewIsModal style={styles.dialog}>
-              <ScrollView
-                style={{ flexShrink: 1 }}
-                keyboardShouldPersistTaps="handled"
-              >
-                {picker === 'date' || picker === 'endDate' ? (
-                  <CalendarPicker
-                    value={value[picker]}
-                    onChoose={date => {
-                      update({ [picker]: date })
-                      setPicker(undefined)
-                    }}
-                    onCancel={() => {
-                      setPicker(undefined)
-                    }}
-                  />
-                ) : (
-                  <TimePicker
-                    value={value[picker]}
-                    onChoose={(time, dayOffset) => {
-                      if (dayOffset === 0) update({ [picker]: time })
-                      else {
-                        const key = picker === 'time' ? 'date' : 'endDate'
-                        const date = new Date(`${value[key]}T12:00:00Z`)
-                        date.setUTCDate(date.getUTCDate() + dayOffset)
-                        update({
-                          [picker]: time,
-                          [key]: date.toISOString().slice(0, 10),
-                          ...(picker === 'endTime' ? { hasEndDate: true } : {})
-                        })
-                      }
-                      setPicker(undefined)
-                    }}
-                    onCancel={() => {
-                      setPicker(undefined)
-                    }}
-                  />
-                )}
-              </ScrollView>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
+          {picker === 'date' || picker === 'endDate' ? (
+            <CalendarPicker
+              value={value[picker]}
+              onChoose={date => {
+                update({ [picker]: date })
+                setPicker(undefined)
+              }}
+              onCancel={() => {
+                setPicker(undefined)
+              }}
+            />
+          ) : (
+            <TimePicker
+              value={value[picker]}
+              onChoose={(time, dayOffset) => {
+                if (dayOffset === 0) update({ [picker]: time })
+                else {
+                  const key = picker === 'time' ? 'date' : 'endDate'
+                  const date = new Date(`${value[key]}T12:00:00Z`)
+                  date.setUTCDate(date.getUTCDate() + dayOffset)
+                  update({
+                    [picker]: time,
+                    [key]: date.toISOString().slice(0, 10),
+                    ...(picker === 'endTime' ? { hasEndDate: true } : {})
+                  })
+                }
+                setPicker(undefined)
+              }}
+              onCancel={() => {
+                setPicker(undefined)
+              }}
+            />
+          )}
+        </PickerDialog>
       )}
     </View>
   )
@@ -380,141 +353,6 @@ export function CalendarPicker({
   )
 }
 
-function Wheel({
-  label,
-  options,
-  value,
-  onChange
-}: {
-  label: string
-  options: number[]
-  value: number
-  onChange: (value: number) => void
-}): React.ReactElement {
-  const styles = getStyles(useTheme())
-  const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const height = 44
-  const initialOffset = useRef(options.indexOf(value) * height)
-  const initialized = useRef(false)
-  useEffect(() => {
-    if (Platform.OS === 'web') {
-      scroll.current?.scrollTo({ y: initialOffset.current, animated: false })
-      initialized.current = true
-    }
-  }, [])
-  useEffect(
-    () => () => {
-      if (timer.current != null) clearTimeout(timer.current)
-    },
-    []
-  )
-  const selectOffset = (offset: number): void => {
-    const index = Math.min(
-      options.length - 1,
-      Math.max(0, Math.round(offset / height))
-    )
-    onChange(options[index])
-  }
-  return (
-    <View style={styles.wheelColumn}>
-      <Text style={styles.label}>{label}</Text>
-      <View
-        style={styles.wheelViewport}
-        accessibilityRole="adjustable"
-        accessibilityLabel={`${label}: ${value}`}
-        accessibilityValue={{
-          min: options[0],
-          max: options[options.length - 1],
-          now: value
-        }}
-        accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
-        onAccessibilityAction={event => {
-          const index = Math.min(
-            options.length - 1,
-            Math.max(
-              0,
-              options.indexOf(value) +
-                (event.nativeEvent.actionName === 'increment' ? 1 : -1)
-            )
-          )
-          onChange(options[index])
-          scroll.current?.scrollTo({ y: index * height, animated: false })
-        }}
-      >
-        <View pointerEvents="none" style={styles.wheelSelection} />
-        <ScrollView
-          ref={scroll}
-          testID={`event-time-${label.toLowerCase()}-wheel`}
-          style={styles.wheel}
-          contentContainerStyle={{ paddingVertical: height }}
-          contentOffset={{ x: 0, y: initialOffset.current }}
-          onContentSizeChange={() => {
-            // Fabric can lay out a modal's content after applying contentOffset.
-            // Position once after content layout, without fighting later drags.
-            if (!initialized.current) {
-              initialized.current = true
-              scroll.current?.scrollTo({
-                y: initialOffset.current,
-                animated: false
-              })
-            }
-          }}
-          snapToInterval={height}
-          decelerationRate="fast"
-          showsVerticalScrollIndicator={false}
-          onMomentumScrollEnd={event => {
-            selectOffset(event.nativeEvent.contentOffset.y)
-          }}
-          onScrollEndDrag={event => {
-            selectOffset(event.nativeEvent.contentOffset.y)
-          }}
-          scrollEventThrottle={16}
-          onScroll={
-            Platform.OS === 'web'
-              ? event => {
-                  const offset = event.nativeEvent.contentOffset.y
-                  if (timer.current != null) clearTimeout(timer.current)
-                  timer.current = setTimeout(() => {
-                    selectOffset(offset)
-                  }, 120)
-                }
-              : undefined
-          }
-        >
-          {options.map(option => (
-            <Pressable
-              key={option}
-              testID={`event-time-${label.toLowerCase()}-${option}`}
-              accessibilityRole="button"
-              accessibilityLabel={`${label} ${label === 'Period' ? (option === 0 ? 'AM' : 'PM') : String(option).padStart(2, '0')}`}
-              accessibilityState={{ selected: option === value }}
-              onPress={() => {
-                onChange(option)
-                scroll.current?.scrollTo({
-                  y: options.indexOf(option) * height,
-                  animated: false
-                })
-              }}
-              style={styles.wheelItem}
-            >
-              <Text
-                style={[styles.value, option === value && styles.wheelText]}
-              >
-                {label === 'Period'
-                  ? option === 0
-                    ? 'AM'
-                    : 'PM'
-                  : String(option).padStart(2, '0')}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      </View>
-    </View>
-  )
-}
-
 export function TimePicker({
   value,
   onChoose,
@@ -545,18 +383,27 @@ export function TimePicker({
       <View style={styles.wheels}>
         <Wheel
           label="Hour"
+          format={option => String(option).padStart(2, '0')}
+          testID="event-time-hour-wheel"
+          rowTestID="event-time-hour"
           options={Array.from({ length: 12 }, (_, i) => i + 1)}
           value={hours}
           onChange={setHours}
         />
         <Wheel
           label="Minute"
+          format={option => String(option).padStart(2, '0')}
+          testID="event-time-minute-wheel"
+          rowTestID="event-time-minute"
           options={Array.from({ length: 12 }, (_, i) => i * 5)}
           value={minutes}
           onChange={setMinutes}
         />
         <Wheel
           label="Period"
+          format={option => (option === 0 ? 'AM' : 'PM')}
+          testID="event-time-period-wheel"
+          rowTestID="event-time-period"
           options={[0, 1]}
           value={period}
           onChange={setPeriod}
@@ -811,21 +658,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.8125),
     color: theme.activeColor
   },
-  backdrop: {
-    flex: 1,
-    backgroundColor: '#00000066',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: theme.rem(1)
-  },
-  dialog: {
-    backgroundColor: theme.backgroundColor,
-    padding: theme.rem(1),
-    borderRadius: theme.rem(theme.radiusRem),
-    width: '100%',
-    maxWidth: theme.rem(28),
-    maxHeight: '95%'
-  },
   title: {
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(1.25),
@@ -885,23 +717,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor
   },
   wheels: { flexDirection: 'row', gap: theme.rem(0.5) },
-  wheelColumn: { flex: 1, gap: theme.rem(0.5), alignItems: 'center' },
-  // Nested native ScrollViews need a bounded viewport rather than growing to content.
-  wheelViewport: { height: 132, width: 80, overflow: 'hidden' },
-  wheel: { height: 132, width: 80, flexGrow: 0, flexShrink: 0 },
-  wheelItem: { height: 44, alignItems: 'center', justifyContent: 'center' },
-  wheelSelection: {
-    position: 'absolute',
-    top: 44,
-    height: 44,
-    left: 0,
-    right: 0,
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: theme.defaultBorderColor,
-    backgroundColor: theme.containerBackgroundColor
-  },
-  wheelText: { fontFamily: theme.semiBoldTextFont, color: theme.activeColor },
   scene: { flex: 1, backgroundColor: theme.backgroundColor },
   sceneHeader: {
     flexDirection: 'row',

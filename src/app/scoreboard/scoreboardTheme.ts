@@ -1,3 +1,5 @@
+import { fonts } from '../theme/fonts'
+
 /**
  * The values of 1.0's dark TeamStation theme (`src/client/themes/tsDark.ts` at 25f9496e)
  * that 1.0's scoreboard reads, exactly, for the board alone. It draws in these
@@ -28,8 +30,9 @@ const palette = {
   darkCharcoal: '#383838',
   darkerGray: '#2d2d2d',
 
-  // Fonts
-  helveticaNeue: 'Helvetica Neue, Arial, sans-serif'
+  // Fonts. 1.0's CSS stack on the web, and a family a phone has, since a
+  // phone takes one name and resolves no stack (`fonts.native.ts`).
+  inter: fonts.inter
 }
 
 /**
@@ -56,7 +59,7 @@ export const scoreboardTheme = {
   },
 
   primaryTextColor: palette.tsBeige,
-  secondaryTextFont: palette.helveticaNeue,
+  secondaryTextFont: palette.inter,
 
   // Status colors
   activeColor: palette.coralRed, // PRESERVED - used for bases and inning arrows

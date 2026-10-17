@@ -65,6 +65,12 @@ const LARGE_BODIES: ReadonlyArray<{
     parser: gameBody
   },
   {
+    // A whole game's events, as large as the plays they go on.
+    method: 'PATCH',
+    path: /^\/api\/v1\/games\/[^/]+\/events$/,
+    parser: gameBody
+  },
+  {
     method: 'PUT',
     path: /^\/api\/v1\/teams\/[^/]+\/logo$/,
     parser: pictureBody

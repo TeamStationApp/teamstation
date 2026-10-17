@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import type { OnSeekData, VideoRef } from 'react-native-video'
 
-import { NativeVideoHandle } from './nativeVideoHandle'
+import { MAX_INTERPOLATION_MS, NativeVideoHandle } from './nativeVideoHandle'
 
 /** The calls a handle makes on the player, in order. */
 function fakePlayer(): { ref: VideoRef; calls: string[] } {
@@ -16,6 +16,9 @@ function fakePlayer(): { ref: VideoRef; calls: string[] } {
     },
     pause: () => {
       calls.push('pause')
+    },
+    setSource: (source: { uri: string }) => {
+      calls.push(`source ${source.uri}`)
     }
   } as unknown as VideoRef
   return { ref, calls }
@@ -189,5 +192,140 @@ describe('NativeVideoHandle', function () {
     >[0]
     handle.handleError(error)
     expect(errors).deep.equals([error])
+  })
+})
+
+/** A handle on a clock the test moves, showing a picture and playing. */
+async function playing(): Promise<{
+  handle: NativeVideoHandle
+  advance: (ms: number) => void
+}> {
+  let now = 1000
+  const handle = new NativeVideoHandle(
+    () => undefined,
+    () => now
+  )
+  handle.attach(fakePlayer().ref)
+  handle.handleLoad({
+    currentTime: 0,
+    duration: 600,
+    naturalSize: { width: 1920, height: 1080, orientation: 'landscape' }
+  } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+  handle.handleReadyForDisplay()
+  await handle.play()
+  return {
+    handle,
+    advance: ms => {
+      now += ms
+    }
+  }
+}
+
+function progress(handle: NativeVideoHandle, currentTime: number): void {
+  handle.handleProgress({ currentTime } as unknown as Parameters<
+    NativeVideoHandle['handleProgress']
+  >[0])
+}
+
+describe('the native playhead between reports (U37)', function () {
+  it('moves on at the rate it plays while playing', async function () {
+    const { handle, advance } = await playing()
+    progress(handle, 10)
+    advance(100)
+    expect(handle.currentTime).closeTo(10.1, 1e-9)
+    advance(140)
+    expect(handle.currentTime).closeTo(10.24, 1e-9)
+  })
+
+  it('stands still while paused, from where the pause caught it', async function () {
+    const { handle, advance } = await playing()
+    progress(handle, 10)
+    advance(200)
+    handle.pause()
+    expect(handle.currentTime).closeTo(10.2, 1e-9)
+    advance(500)
+    expect(handle.currentTime).closeTo(10.2, 1e-9)
+    // Played again, it carries on from there.
+    await handle.play()
+    advance(100)
+    expect(handle.currentTime).closeTo(10.3, 1e-9)
+  })
+
+  it('moves a quarter as far at a quarter of the speed', async function () {
+    const { handle, advance } = await playing()
+    progress(handle, 10)
+    advance(200)
+    handle.playbackRate = 0.25
+    advance(200)
+    expect(handle.currentTime).closeTo(10.25, 1e-9)
+    handle.playbackRate = 1
+    advance(100)
+    expect(handle.currentTime).closeTo(10.35, 1e-9)
+  })
+
+  it('starts again from a seek, held there until the player gets there', async function () {
+    const { handle, advance } = await playing()
+    progress(handle, 10)
+    advance(200)
+    handle.currentTime = 40
+    advance(300)
+    expect(handle.currentTime).equals(40)
+    handle.handleSeek(seeked(40))
+    expect(handle.currentTime).equals(40)
+    advance(100)
+    expect(handle.currentTime).closeTo(40.1, 1e-9)
+  })
+
+  it('starts again from each report, forwards or back', async function () {
+    const { handle, advance } = await playing()
+    progress(handle, 10)
+    advance(240)
+    expect(handle.currentTime).closeTo(10.24, 1e-9)
+    // The player was a little behind the clock: its word stands.
+    progress(handle, 10.2)
+    expect(handle.currentTime).closeTo(10.2, 1e-9)
+    advance(50)
+    expect(handle.currentTime).closeTo(10.25, 1e-9)
+  })
+
+  it('goes no further than a second past the last report, nor past the end', async function () {
+    const { handle, advance } = await playing()
+    progress(handle, 10)
+    advance(5000)
+    expect(handle.currentTime).closeTo(10 + MAX_INTERPOLATION_MS / 1000, 1e-9)
+    progress(handle, 599.5)
+    advance(800)
+    expect(handle.currentTime).equals(600)
+  })
+
+  it('stands still while it buffers, and after it ends', async function () {
+    const { handle, advance } = await playing()
+    progress(handle, 10)
+    advance(100)
+    handle.handleBuffer({ isBuffering: true })
+    advance(500)
+    expect(handle.currentTime).closeTo(10.1, 1e-9)
+    handle.handleBuffer({ isBuffering: false })
+    advance(100)
+    expect(handle.currentTime).closeTo(10.2, 1e-9)
+    handle.handleEnd()
+    advance(500)
+    expect(handle.currentTime).closeTo(10.2, 1e-9)
+  })
+
+  it('stands still once the player pauses itself, and when reloaded', async function () {
+    const { handle, advance } = await playing()
+    progress(handle, 10)
+    advance(100)
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    advance(500)
+    expect(handle.currentTime).closeTo(10.1, 1e-9)
+    handle.handlePlaybackState({ isPlaying: true, isSeeking: false })
+    advance(100)
+    expect(handle.currentTime).closeTo(10.2, 1e-9)
+    handle.source = 'https://media.example.test/a/index.m3u8'
+    handle.reload()
+    advance(500)
+    expect(handle.currentTime).closeTo(10.2, 1e-9)
   })
 })

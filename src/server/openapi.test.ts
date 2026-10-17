@@ -20,6 +20,7 @@ import { adminRoutes } from './routes/admin'
 import { authRoutes } from './routes/auth'
 import { deviceEventControlRoutes } from './routes/deviceEventControl'
 import { directorRoutes } from './routes/director'
+import { directorUploadRoutes } from './routes/directorUploads'
 import { eventInfoRoutes } from './routes/eventInfo'
 import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
@@ -45,6 +46,7 @@ import { seasonRoutes } from './routes/seasons'
 import { statsRoutes } from './routes/stats'
 import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
+import { timeRoutes } from './routes/time'
 import { userRoutes } from './routes/users'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
 import type { ScoreboardStore } from './scoreboard/scoreboardStore'
@@ -91,6 +93,8 @@ const live: LiveRouteOptions = {
   sessionSecret: 'secret',
   host: '127.0.0.1'
 }
+
+const uploads = { uploadsDir: '/tmp', ffmpegPath: '/usr/bin/ffmpeg' }
 
 interface RouteLayer {
   route?: { path: string; methods: Record<string, boolean> }
@@ -144,6 +148,7 @@ describe('the API document', function () {
     const mounted = [
       ...oauthRoutes(),
       ...routesOf(healthRoutes(db, '0.0.0')),
+      ...routesOf(timeRoutes()),
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(
         accountRoutes(db, { ...media, sendCode: async () => undefined })
@@ -161,6 +166,7 @@ describe('the API document', function () {
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
       ...routesOf(directorRoutes(db, live)),
+      ...routesOf(directorUploadRoutes(db, uploads)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(peopleRoutes(db, media)),
@@ -196,6 +202,7 @@ describe('the API document', function () {
     const mounted = new Set([
       ...oauthRoutes(),
       ...routesOf(healthRoutes(db, '0.0.0')),
+      ...routesOf(timeRoutes()),
       ...routesOf(authRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(
         accountRoutes(db, { ...media, sendCode: async () => undefined })
@@ -213,6 +220,7 @@ describe('the API document', function () {
       ...routesOf(mediaRoutes(db, media)),
       ...routesOf(liveRoutes(db, live)),
       ...routesOf(directorRoutes(db, live)),
+      ...routesOf(directorUploadRoutes(db, uploads)),
       ...routesOf(inviteRoutes(db, { sendCode: async () => undefined })),
       ...routesOf(manageRoutes(db, { sendInvite: async () => undefined })),
       ...routesOf(peopleRoutes(db, media)),
@@ -580,5 +588,28 @@ describe('the API document', function () {
     const refs = JSON.stringify(document).match(/#\/components\/schemas\/\w+/g)
     for (const ref of refs ?? [])
       expect(schemas, ref).to.have.property(ref.split('/').at(-1)!)
+  })
+
+  it('describes the node settings once, a speed hold above 0, for reading and replacing them', function () {
+    const path = (
+      openApiDocument('0.0.0').paths as Record<string, Record<string, any>>
+    )['/node/settings']
+    const read = path.get.responses[200].content['application/json'].schema
+    const sent = path.put.requestBody.content['application/json'].schema
+    const answered = path.put.responses[200].content['application/json'].schema
+    expect(sent).equals(read)
+    expect(answered).equals(read)
+    expect(read.properties.scoreboard.properties.speedHoldSec).deep.include({
+      exclusiveMinimum: 0,
+      maximum: 600
+    })
+    expect(
+      read.properties.scoreboard.properties.speedHoldSec
+    ).not.have.property('minimum')
+    // A play type's key as the server takes it (`asLeadMap`).
+    const leads = read.properties.highlights.properties.leadSecByEventType
+    const pattern = new RegExp(leads.propertyNames.pattern)
+    expect(pattern.test('home_run')).equals(true)
+    expect(pattern.test('Home-Run')).equals(false)
   })
 })

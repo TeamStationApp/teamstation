@@ -35,10 +35,11 @@ import { WRITE_SCOREBOARD } from './scoreboardScript'
  * `WRITE_SCOREBOARD`, and one pub/sub channel on which every write is
  * announced with the whole hash after it.
  *
- * Nothing about a scoreboard is kept in Postgres. Every key expires, so a
- * scoreboard nobody writes to is gone two hours after its game's start, and
- * one that is written to lasts two hours past its last write, never more than
- * three days past its start.
+ * The store keeps nothing in Postgres. Every key expires, so a scoreboard
+ * nobody writes to is gone two hours after its game's start, and one that is
+ * written to lasts two hours past its last write, never more than three days
+ * past its start. What outlives the key is the hub's: it logs every write
+ * that is not the game's own scoring in `scoreboard_log` (`scoreboardLog.ts`).
  */
 
 /** Redis is not there: the scoreboard answers 503 and its sockets 1011. */
@@ -239,8 +240,13 @@ function withoutAbsent<T extends object>(value: T): T {
   ) as T
 }
 
+/**
+ * What a write did. A written one carries the hash after it and `now`, the
+ * time the store passed the script: when the write was taken in, which the
+ * scoreboard log records.
+ */
 export type WriteResult =
-  | { kind: 'written'; message: ScoreboardMessage }
+  | { kind: 'written'; message: ScoreboardMessage; now: number }
   | { kind: 'closed' }
   | { kind: 'stale' }
 
@@ -258,6 +264,11 @@ export function watcherMode(
 export interface ScoreboardStore {
   /** The channel every write is published on. */
   readonly channel: string
+  /**
+   * The channel a game's board timeline is announced on, as `{ gameId }`,
+   * once everything the timeline reads from Postgres has committed.
+   */
+  readonly timelineChannel: string
   readonly prefix: string
   keyOf: (gameId: string) => string
   now: () => number
@@ -285,6 +296,8 @@ export interface ScoreboardStore {
    */
   resetScoreboard: (gameId: string, startAt: number) => Promise<WriteResult>
   readScoreboard: (gameId: string) => Promise<ScoreboardHash | undefined>
+  /** Tells every worker that the game's board timeline has changed. */
+  announceTimeline: (gameId: string) => Promise<void>
   exists: (gameId: string) => Promise<boolean>
   /** Called each time the command connection is ready, the first included. */
   onReady: (listener: () => void) => void
@@ -299,6 +312,7 @@ export function makeScoreboardStore(options: {
   const { client, prefix } = options
   const now = options.now ?? Date.now
   const channel = `${prefix}:scoreboard`
+  const timelineChannel = `${prefix}:scoreboardTimeline`
   const keyOf = (gameId: string): string => `${prefix}:scoreboard:${gameId}`
 
   /** Runs one command, turning a lost connection into `ScoreboardUnavailable`. */
@@ -327,13 +341,14 @@ export function makeScoreboardStore(options: {
     startAt: number,
     sourceVersion = ''
   ): Promise<WriteResult> {
+    const at = now()
     const reply = await command(
       async () =>
         await client.writeScoreboard(keyOf(gameId), [
           field,
           json,
           mode,
-          String(now()),
+          String(at),
           String(startAt),
           sourceVersion,
           channel,
@@ -341,11 +356,12 @@ export function makeScoreboardStore(options: {
         ])
     )
     if (reply === 'closed' || reply === 'stale') return { kind: reply }
-    return { kind: 'written', message: parseScoreboardMessage(reply) }
+    return { kind: 'written', message: parseScoreboardMessage(reply), now: at }
   }
 
   return {
     channel,
+    timelineChannel,
     prefix,
     keyOf,
     now,
@@ -399,6 +415,12 @@ export function makeScoreboardStore(options: {
         watcher: sourceOf(parse('watcher', asStoredSource)),
         overrides: parse('overrides', asDashboardOverrides)
       })
+    },
+    announceTimeline: async gameId => {
+      await command(
+        async () =>
+          await client.publish(timelineChannel, JSON.stringify({ gameId }))
+      )
     },
     exists: async gameId =>
       (await command(async () => await client.exists(keyOf(gameId)))) === 1,

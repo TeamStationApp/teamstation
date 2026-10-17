@@ -46,6 +46,12 @@ export interface TeamStationRecord {
   setupBefore: GameSetup
   /** The actions of this play, in order, lineup changes included. */
   actions: ScoringAction[]
+  /**
+   * When each action was taken, on the server's clock, as ISO times: one per
+   * action, in the same order. A play scored before actions carried times, or
+   * with an action that has none, has only the play's own times.
+   */
+  actionTimes?: string[]
   /** What the scoring screen recorded that Gumbo has no place for. */
   detail?: unknown
 }
@@ -54,6 +60,7 @@ const asRecord: Cleaner<TeamStationRecord> = asObject({
   version: asLiteral(1),
   setupBefore: asGameSetup,
   actions: asArray(asUnknown),
+  actionTimes: asUnknown,
   detail: asUnknown
 }) as Cleaner<TeamStationRecord>
 
@@ -76,14 +83,20 @@ export function recordOf(play: unknown): TeamStationRecord | null {
 
 function cleanRecord(raw: unknown): TeamStationRecord | null {
   try {
-    const record = asRecord(raw)
+    const { actionTimes, ...record } = asRecord(raw)
     const actions: ScoringAction[] = []
     for (const action of record.actions) {
       const cleaned = cleanAction(action)
       if ('problem' in cleaned) return null
       actions.push(cleaned.action)
     }
-    return { ...record, actions }
+    // Times that do not line up with the actions name no action's moment, so
+    // they are dropped and the play is read as one scored before them.
+    const timed =
+      Array.isArray(actionTimes) &&
+      actionTimes.length === actions.length &&
+      actionTimes.every(time => typeof time === 'string')
+    return { ...record, actions, ...(timed ? { actionTimes } : {}) }
   } catch {
     return null
   }
@@ -175,8 +188,15 @@ export interface Replayed {
   state: GameState
   /** The game before any logged action: fresh, or after the derived plays. */
   base: GameState
-  /** Each logged play's actions, in order: completed plays, then the current one. */
-  segments: Array<{ atBatIndex: number; actions: ScoringAction[] }>
+  /**
+   * Each logged play's actions, in order: completed plays, then the current
+   * one, with the time each was taken where its record holds one.
+   */
+  segments: Array<{
+    atBatIndex: number
+    actions: ScoringAction[]
+    actionTimes: Array<string | undefined>
+  }>
   /** Plays rebuilt from their documents, which cannot be undone into. */
   derived: number
   /** An action that no longer applies, and everything after it, is dropped. */
@@ -190,6 +210,10 @@ export interface Replayed {
  * there every play's actions are applied in order, the current play's last.
  * A completed play at the current play's index was reopened by an undo, so
  * only the current play's actions count for it.
+ *
+ * `onAction`, when given, sees the game after each action it applies, with
+ * the play's index and the action's time where its record holds one: the
+ * board timeline reads the board after every action from it.
  */
 export function replayPlays(
   stored: { plays: GumboPlay[]; currentPlay: CurrentPlay | null },
@@ -198,7 +222,12 @@ export function replayPlays(
     teams: Record<Side, GameTeam>
     setup: GameSetup
     fenceDistanceFt?: number
-  }
+  },
+  onAction?: (
+    state: GameState,
+    atBatIndex: number,
+    actionTime: string | undefined
+  ) => void
 ): Replayed {
   const reopened = stored.currentPlay?.about.atBatIndex
   const plays = [...stored.plays]
@@ -236,7 +265,8 @@ export function replayPlays(
     })
   for (const { atBatIndex, record } of logged) {
     const kept: ScoringAction[] = []
-    for (const action of record.actions) {
+    const times: Array<string | undefined> = []
+    for (const [i, action] of record.actions.entries()) {
       if (problems.length > 0) break
       // `copyGame` shares the finished plays an earlier copy made, where
       // `applyAction`'s own copy copies every one of them again: at 85 plate
@@ -249,8 +279,10 @@ export function replayPlays(
       }
       state = applied.state
       kept.push(action)
+      times.push(record.actionTimes?.[i])
+      onAction?.(state, atBatIndex, record.actionTimes?.[i])
     }
-    segments.push({ atBatIndex, actions: kept })
+    segments.push({ atBatIndex, actions: kept, actionTimes: times })
   }
   return { state, base, segments, derived: prefix.length, problems }
 }

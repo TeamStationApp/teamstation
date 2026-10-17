@@ -169,7 +169,8 @@ dependencies {
 }
 
 /**
- * The two fonts, copied in rather than kept here.
+ * The fonts, copied in rather than kept here: Space Grotesk, the app's type;
+ * Inter and Quicksand, the scoreboard's; and the icons.
  *
  * `app/assets/fonts` is the one copy — `ios` embeds those very files — and
  * Android resource names may only be lowercase with underscores, so they
@@ -206,15 +207,17 @@ tasks.register('tsFonts', Copy) {
             "    <font android:fontStyle=\"normal\" android:fontWeight=\"$weight\" android:font=\"@font/$file\"" +
             " app:fontStyle=\"normal\" app:fontWeight=\"$weight\" app:font=\"@font/$file\" />"
         }
-        tsFontRes.get().dir("font").file("space_grotesk.xml").asFile.text = """<?xml version="1.0" encoding="utf-8"?>
+        ['space_grotesk', 'inter', 'quicksand'].each { family ->
+            tsFontRes.get().dir("font").file("${family}.xml").asFile.text = """<?xml version="1.0" encoding="utf-8"?>
 <font-family xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
-${familyFile('space_grotesk_regular', 400)}
-${familyFile('space_grotesk_medium', 500)}
-${familyFile('space_grotesk_semi_bold', 600)}
-${familyFile('space_grotesk_bold', 700)}
+${familyFile("${family}_regular", 400)}
+${familyFile("${family}_medium", 500)}
+${familyFile("${family}_semi_bold", 600)}
+${familyFile("${family}_bold", 700)}
 </font-family>
 """
+        }
     }
 }
 

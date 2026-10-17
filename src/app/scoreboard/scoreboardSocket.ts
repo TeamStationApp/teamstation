@@ -65,6 +65,12 @@ export function openReconnecting(options: {
   url: string
   stopOn: readonly number[]
   onOpen?: () => void
+  /**
+   * Every close of an open or opening socket, before it is tried again or
+   * stopped: how a caller that polls while it has no socket knows it has
+   * none.
+   */
+  onClose?: (code: number) => void
   onMessage: (data: unknown) => void
   onStop: (code: number) => void
   /**
@@ -113,6 +119,7 @@ export function openReconnecting(options: {
     next.onclose = event => {
       if (done || socket !== next) return
       socket = undefined
+      options.onClose?.(event.code)
       if (options.stopOn.includes(event.code)) {
         done = true
         options.onStop(event.code)

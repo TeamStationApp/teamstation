@@ -2,22 +2,27 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Text } from 'react-native'
 
 import {
   SAMPLE_SCOREBOARD,
   SCOREBOARD_BOARD_SIZE,
   type ScoreboardState
 } from '../../common/scoreboard'
+import { fonts } from '../theme/fonts'
 import { ScoreboardBoard, styles } from './ScoreboardBoard'
 import v1Styles from './v1ScoreboardStyles.json'
 
 let root: Root | undefined
-async function draw(state?: ScoreboardState): Promise<HTMLElement> {
+async function draw(
+  state?: ScoreboardState,
+  minWidth?: number
+): Promise<HTMLElement> {
   const node = document.createElement('div')
   document.body.appendChild(node)
   root = createRoot(node)
   await act(async () => {
-    root?.render(<ScoreboardBoard state={state} />)
+    root?.render(<ScoreboardBoard state={state} minWidth={minWidth} />)
   })
   return part('board')
 }
@@ -27,6 +32,14 @@ afterEach(async function () {
   })
   root = undefined
 })
+
+interface Fiber {
+  type: unknown
+  memoizedProps: Record<string, unknown>
+  child: Fiber | null
+  sibling: Fiber | null
+  return: Fiber | null
+}
 
 function part(name: string): HTMLElement {
   const node = document.querySelector<HTMLElement>(
@@ -130,12 +143,64 @@ describe('ScoreboardBoard', function () {
   it("uses 1.0's styles, style for style", function () {
     // Recorded from 1.0's own `getStyles(tsDark)` (`src/client/Scoreboard.tsx` at 25f9496e
     // at v1.0.0) in a 1920 × 1080 window. Only the "waiting for game data"
-    // card's styles are gone, with the card.
+    // card's styles are gone, with the card, and 1.0's Helvetica Neue is the
+    // bundled Inter (Paul, 2026-10-16: never a system font), named as this
+    // platform names it: on the web with its fallback for a missing file.
     const { noGameContainer, noGameText, noGameSubtext, ...drawn } = v1Styles
     expect([noGameContainer, noGameText, noGameSubtext]).to.not.include(
       undefined
     )
-    expect(JSON.parse(JSON.stringify(styles))).deep.equals(drawn)
+    const named = JSON.parse(
+      JSON.stringify(drawn).replaceAll('"Inter"', JSON.stringify(fonts.inter))
+    ) as typeof drawn
+    expect(JSON.parse(JSON.stringify(styles))).deep.equals(named)
+  })
+
+  it('keeps its team bars from their names, never narrower than asked, for the overlay', async function () {
+    const board = await draw(
+      { ...SAMPLE_SCOREBOARD, awayTeam: '', homeTeam: '' },
+      SCOREBOARD_BOARD_SIZE.width
+    )
+    expect(css(board, 'min-width')).equals(`${SCOREBOARD_BOARD_SIZE.width}px`)
+    // A phone starts a `flex: 1` box from nothing; these start from their
+    // names, so an empty name keeps its bar and a long one widens the board.
+    const bars = [part('awayTeam'), part('homeTeam')].map(
+      name => name.parentElement!
+    )
+    for (const bar of [...bars, bars[0].parentElement?.parentElement]) {
+      expect(
+        ['flex-grow', 'flex-shrink', 'flex-basis'].map(key => css(bar!, key))
+      ).deep.equals(['1', '1', 'auto'])
+    }
+    expect(part('awayTeam').textContent).equals('')
+  })
+
+  it('leaves its own sizing alone with no least width', async function () {
+    const board = await draw(SAMPLE_SCOREBOARD)
+    expect(css(board, 'min-width')).not.equals(
+      `${SCOREBOARD_BOARD_SIZE.width}px`
+    )
+    expect(css(part('awayTeam').parentElement!, 'flex-basis')).not.equals(
+      'auto'
+    )
+  })
+
+  it('letters the board at its own sizes, whatever size a phone sets text to', async function () {
+    const board = await draw(SAMPLE_SCOREBOARD)
+    // Every text React drew, from the fibers above the board's parts.
+    const key = Object.keys(board).find(one => one.startsWith('__reactFiber'))!
+    let fiber = (board as unknown as Record<string, unknown>)[key] as Fiber
+    while (fiber.return != null) fiber = fiber.return
+    const texts: Array<Record<string, unknown>> = []
+    const visit = (one: Fiber | null): void => {
+      for (let child = one; child != null; child = child.sibling) {
+        if (child.type === Text) texts.push(child.memoizedProps)
+        visit(child.child)
+      }
+    }
+    visit(fiber)
+    expect(texts.length).greaterThan(8)
+    expect(texts.filter(one => one.allowFontScaling !== false)).deep.equals([])
   })
 
   it('paints nothing but keeps the box with no state', async function () {

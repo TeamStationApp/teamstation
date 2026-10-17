@@ -70,6 +70,15 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
   /// The dated title that upload uses, kept so a take can name its game with
   /// no network and no list to look it up in.
   public var gameTitle: String?
+  /// How far the server's clock was ahead of this iPad's steady wall clock while the take was made,
+  /// in milliseconds: the median of the `server_clock` samples inside the take, or the sample
+  /// nearest it when none fell inside. Nil when the iPad never measured. Its uploads send it, so
+  /// the server can put the take on its own clock, where the game's scoring is.
+  ///
+  /// Final once the take has ended: the first listing after its end stores the value on the take,
+  /// and every later listing returns that, so every file of the take goes up with the same offset
+  /// whichever app sends it and however long after. See `ArchiveIndex.recordings()`.
+  public var serverClockOffsetMs: Int?
 
   /// How long the take is, from what was actually written.
   ///
@@ -95,7 +104,8 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     encoding: TakeEncoding? = nil,
     soundChecks: [ProgramSoundCheck] = [],
     gameId: String? = nil,
-    gameTitle: String? = nil
+    gameTitle: String? = nil,
+    serverClockOffsetMs: Int? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -108,6 +118,23 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     self.soundChecks = soundChecks
     self.gameId = gameId
     self.gameTitle = gameTitle
+    self.serverClockOffsetMs = serverClockOffsetMs
+  }
+}
+
+/// One measurement of the server's clock against this iPad's (`ServerClock` in TeamStationKit).
+public struct ServerClockRecord: Sendable, Equatable {
+  /// When it was measured, on the steady wall clock the takes are recorded by.
+  public var wall: WallClock
+  /// The server's clock less this iPad's, in milliseconds.
+  public var offsetMs: Int
+  /// The round trip it was measured over, in milliseconds.
+  public var rttMs: Int
+
+  public init(wall: WallClock, offsetMs: Int, rttMs: Int) {
+    self.wall = wall
+    self.offsetMs = offsetMs
+    self.rttMs = rttMs
   }
 }
 
@@ -208,6 +235,9 @@ public final class ArchiveIndex: @unchecked Sendable {
     // The title that upload is given — dated, as the picker composes it — so
     // a take can say where it belongs with no network and no list.
     try? store.execute("ALTER TABLE recordings ADD COLUMN game_title TEXT;")
+    // The take's server clock offset, stored by the first listing after the take ended and read
+    // from then on (`recordings()`), so a sample measured later cannot move a take already uploaded.
+    try? store.execute("ALTER TABLE recordings ADD COLUMN server_clock_offset_ms INTEGER;")
     try store.execute("""
       CREATE TABLE IF NOT EXISTS segments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -314,6 +344,19 @@ public final class ArchiveIndex: @unchecked Sendable {
       """)
     try store.execute(
       "CREATE INDEX IF NOT EXISTS program_cuts_lookup ON program_cuts(recording_id, wall);"
+    )
+    // How far the server's clock was from this iPad's, measured at sign-in and every minute while a
+    // take linked to an event records or streams. Kept by time rather than by take: a measurement
+    // belongs to the clock, and a take reads those inside it (`RecordingSummary.serverClockOffsetMs`).
+    try store.execute("""
+      CREATE TABLE IF NOT EXISTS server_clock (
+        wall REAL NOT NULL,
+        offset_ms INTEGER NOT NULL,
+        rtt_ms INTEGER NOT NULL
+      );
+      """)
+    try store.execute(
+      "CREATE INDEX IF NOT EXISTS server_clock_wall ON server_clock(wall);"
     )
   }
 
@@ -634,17 +677,35 @@ public final class ArchiveIndex: @unchecked Sendable {
     Set(try store.query("SELECT id FROM recordings WHERE ended_at IS NULL;").map { $0.int(0) })
   }
 
+  /// Every take, newest first.
+  ///
+  /// A take's server clock offset is final once it has ended. The server moves each uploaded file's
+  /// start by the offset that file was opened with, and a take's files can go up in several runs:
+  /// a camera retried later, or one file from Director and another from TS Distributor. A take with
+  /// no sample inside it falls back to the nearest sample, and a sample measured after the take can
+  /// be nearer than the one an earlier listing used, which would put that take's cameras apart by
+  /// the difference. So the first listing after the end stores the value it computed on the take,
+  /// and every later listing returns the stored value.
+  ///
+  /// A take still recording is computed afresh each time: its samples are still arriving. A take
+  /// whose computation gives nil stores nothing. Nil means the index holds no sample at all, since
+  /// the nearest-sample fallback takes any sample there is; the iPad has never measured the
+  /// server's clock, so there is no value an earlier upload could have used, and the first sample
+  /// it ever measures (the sign-in after an offline take) is the one the take freezes on. A store
+  /// that cannot be written still lists: it computes without storing.
   public func recordings() throws -> [RecordingSummary] {
     let rows = try store.query(
       """
       SELECT r.id, r.started_at, r.ended_at, r.program_filename,
         (SELECT MAX(s.start_wall + s.duration) FROM segments s
           WHERE s.recording_id = r.id AND s.is_initialization = 0),
-        r.resume_count, r.encoding_json, r.sound_checks_json, r.game_id, r.game_title
+        r.resume_count, r.encoding_json, r.sound_checks_json, r.game_id, r.game_title,
+        r.server_clock_offset_ms
       FROM recordings r
       ORDER BY r.started_at DESC;
       """
     )
+    let clockSamples = try serverClockSamples()
     return try rows.map { row in
       let id = row.int(0)
       let started = WallClock(seconds: row.double(1))
@@ -662,9 +723,95 @@ public final class ArchiveIndex: @unchecked Sendable {
         encoding: Self.takeEncoding(row.values[6] == .null ? nil : row.string(6)),
         soundChecks: Self.soundChecks(row.values[7] == .null ? nil : row.string(7)),
         gameId: row.values[8] == .null || row.string(8).isEmpty ? nil : row.string(8),
-        gameTitle: row.values[9] == .null || row.string(9).isEmpty ? nil : row.string(9)
+        gameTitle: row.values[9] == .null || row.string(9).isEmpty ? nil : row.string(9),
+        serverClockOffsetMs: try serverClockOffset(
+          take: id,
+          stored: row.values[10] == .null ? nil : Int(row.int(10)),
+          samples: clockSamples,
+          from: started,
+          endedAt: ended,
+          lastSegment: lastSegment
+        )
       )
     }
+  }
+
+  /// One take's offset for `recordings()`: the stored one once the take has ended, else computed,
+  /// and stored when the take has ended and there is something to store.
+  private func serverClockOffset(
+    take id: Int64,
+    stored: Int?,
+    samples: [ServerClockRecord],
+    from started: WallClock,
+    endedAt ended: WallClock?,
+    lastSegment: WallClock?
+  ) throws -> Int? {
+    guard ended != nil else {
+      return Self.serverClockOffset(samples, from: started, to: lastSegment)
+    }
+    if let stored { return stored }
+    guard let computed = Self.serverClockOffset(samples, from: started, to: ended) else { return nil }
+    // Written only over no value, then read back: two listings racing on a take just ended both
+    // return the one that landed. An index that cannot be written keeps nothing and returns the
+    // computed value.
+    try? store.execute(
+      "UPDATE recordings SET server_clock_offset_ms = ? WHERE id = ? AND server_clock_offset_ms IS NULL;",
+      [ .integer(Int64(computed)), .integer(id) ]
+    )
+    let kept = try store.query(
+      "SELECT server_clock_offset_ms FROM recordings WHERE id = ?;",
+      [ .integer(id) ]
+    ).first
+    guard let kept, kept.values[0] != .null else { return computed }
+    return Int(kept.int(0))
+  }
+
+  // MARK: - The server's clock
+
+  /// Keeps one measurement of the server's clock against this iPad's.
+  public func insertServerClockSample(_ sample: ServerClockRecord) throws {
+    try store.execute(
+      "INSERT INTO server_clock (wall, offset_ms, rtt_ms) VALUES (?, ?, ?);",
+      [ .real(sample.wall.seconds), .integer(Int64(sample.offsetMs)), .integer(Int64(sample.rttMs)) ]
+    )
+  }
+
+  /// Every measurement, earliest first.
+  public func serverClockSamples() throws -> [ServerClockRecord] {
+    try store.query("SELECT wall, offset_ms, rtt_ms FROM server_clock ORDER BY wall ASC;").map {
+      ServerClockRecord(
+        wall: WallClock(seconds: $0.double(0)),
+        offsetMs: Int($0.int(1)),
+        rttMs: Int($0.int(2))
+      )
+    }
+  }
+
+  /// A take's server clock offset: the median of the samples from `start` to `end` (to the latest
+  /// sample for a take still open), or the sample nearest the take when none fell inside it; nil
+  /// with no samples at all.
+  ///
+  /// The median rather than the mean, so one measurement over a congested uplink does not move the
+  /// take. The nearest sample stands in for a take too short for a minute's schedule to land in, or
+  /// one recorded offline that was measured at sign-in before or after it.
+  public static func serverClockOffset(
+    _ samples: [ServerClockRecord],
+    from start: WallClock,
+    to end: WallClock?
+  ) -> Int? {
+    let inside = samples
+      .filter { sample in sample.wall >= start && end.map { sample.wall <= $0 } ?? true }
+      .map(\.offsetMs)
+      .sorted()
+    if !inside.isEmpty {
+      let middle = inside.count / 2
+      guard inside.count.isMultiple(of: 2) else { return inside[middle] }
+      return Int((Double(inside[middle - 1] + inside[middle]) / 2).rounded())
+    }
+    func distance(_ sample: ServerClockRecord) -> Double {
+      sample.wall < start ? start - sample.wall : sample.wall - (end ?? start)
+    }
+    return samples.min { distance($0) < distance($1) }?.offsetMs
   }
 
   public func segments(forRecording id: Int64) throws -> [SegmentRecord] {

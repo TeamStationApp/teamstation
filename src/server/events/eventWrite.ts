@@ -107,18 +107,24 @@ export function storedGumbo(
   if (source !== 'external') return next
   const { description, ...result } = gumbo.result
   next.result = result
-  // `playEvents` is not checked by the cleaner, so each entry is looked at.
-  if (Array.isArray(gumbo.playEvents)) {
-    next.playEvents = gumbo.playEvents.map((event: unknown) => {
-      if (event == null || typeof event !== 'object' || Array.isArray(event)) {
-        return event
-      }
-      const kept = { ...(event as Record<string, unknown>) }
-      delete kept.description
-      return kept
-    })
-  }
+  if (Array.isArray(gumbo.playEvents))
+    next.playEvents = withoutDescriptions(gumbo.playEvents)
   return next
+}
+
+/**
+ * An outside scorer's play events without their `description`s, that
+ * service's words. `playEvents` is not checked by the cleaner, so each entry
+ * is looked at, and anything that is not an event is kept as it is.
+ */
+export function withoutDescriptions(events: readonly unknown[]): unknown[] {
+  return events.map(event => {
+    if (event == null || typeof event !== 'object' || Array.isArray(event))
+      return event
+    const kept = { ...(event as Record<string, unknown>) }
+    delete kept.description
+    return kept
+  })
 }
 
 /**

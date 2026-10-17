@@ -231,7 +231,9 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const [retry, setRetry] = useState(0)
   const surface = useFieldSurface()
   const fallback = useMemo(() => new DevelopmentScoringSource(), [])
-  const source = props.source ?? fallback
+  const source: ScoringSource = props.source ?? fallback
+  // Every action is stamped on the server's clock, measured while this is open.
+  useEffect(() => source.keepTime?.(), [source])
   useEffect(() => {
     let live = true
     setOpened(undefined)

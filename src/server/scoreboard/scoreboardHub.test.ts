@@ -26,6 +26,7 @@ import {
   until
 } from '../../test/scoreboardKit'
 import type { Database } from '../db/database'
+import { forgetScoreboardSettings } from '../nodeSettings'
 import { attachScoreboard } from './attachScoreboard'
 import { makeScoreboardHub, type ScoreboardHub } from './scoreboardHub'
 import {
@@ -159,6 +160,10 @@ describe('the scoreboard hub', function () {
     connect(`${worker.url}/${gameId}/publish`, {
       headers: who == null ? {} : { authorization: `Bearer ${who.token}` }
     })
+  const timeline = (worker: Worker, gameId: string, who?: Person): Probe =>
+    connect(`${worker.url}/${gameId}/socket?timeline=1`, {
+      headers: who == null ? {} : { authorization: `Bearer ${who.token}` }
+    })
   const dashboard = (worker: Worker, gameId: string, who: Person): Probe =>
     connect(`${worker.url}/${gameId}/dashboard`, {
       headers: { authorization: `Bearer ${who.token}` }
@@ -256,6 +261,65 @@ describe('the scoreboard hub', function () {
     expect(byCookie.closed).equals(undefined)
   })
 
+  it('admits a timeline socket only for somebody signed in who can see the game, and a plain viewer for anybody', async function () {
+    const worker = await startWorker()
+    const gameId = await newGame()
+    expect(await closedWith(timeline(worker, gameId))).equals(
+      SCOREBOARD_CLOSE.notSignedIn
+    )
+    expect(await closedWith(timeline(worker, gameId, stranger))).equals(
+      SCOREBOARD_CLOSE.notAllowed
+    )
+    expect(stranger.token).not.equals(runner.token)
+
+    // A member is admitted by token, and a browser by its cookie.
+    const byToken = timeline(worker, gameId, runner)
+    const byCookie = connect(`${worker.url}/${gameId}/socket?timeline=1`, {
+      headers: { cookie: `ts_session=${runner.token}` }
+    })
+    await Promise.all([byToken.opened, byCookie.opened])
+    await until('both to hear a notice', async () => {
+      await worker.store.announceTimeline(gameId)
+      await new Promise(resolve => setTimeout(resolve, 20))
+      return byToken.messages.length > 0 && byCookie.messages.length > 0
+    })
+    expect(byToken.messages[0]).deep.equals({ type: 'changed' })
+    expect(byToken.closed).equals(undefined)
+    expect(byCookie.closed).equals(undefined)
+
+    // The plain viewer needs no sign-in, and is sent the board as before.
+    const plain = viewer(worker, gameId)
+    const [board] = await heard(plain, 1)
+    expect(board).includes({ homeTeam: 'Pioneers', awayTeam: 'Visitors' })
+  })
+
+  it('ends a timeline socket whose session is signed out, or who can no longer see the game', async function () {
+    const worker = await startWorker({ checkMs: 50 })
+    // Long past its start, so the board has closed: only the timeline stays.
+    const gameId = await newGame(new Date(Date.now() - 4 * HOUR))
+    const leaving = await addPerson(db, 'leaving', { owns: away })
+    const signingOut = await addPerson(db, 'signingOut', { owns: away })
+    const left = timeline(worker, gameId, leaving)
+    const out = timeline(worker, gameId, signingOut)
+    const staying = timeline(worker, gameId, runner)
+    await Promise.all([left.opened, out.opened, staying.opened])
+    await new Promise(resolve => setTimeout(resolve, 150))
+    expect(left.closed).equals(undefined)
+    expect(out.closed).equals(undefined)
+
+    await db
+      .deleteFrom('memberships')
+      .where('user_id', '=', leaving.userId)
+      .execute()
+    await db
+      .deleteFrom('auth_sessions')
+      .where('user_id', '=', signingOut.userId)
+      .execute()
+    expect(await closedWith(left)).equals(SCOREBOARD_CLOSE.notAllowed)
+    expect(await closedWith(out)).equals(SCOREBOARD_CLOSE.notSignedIn)
+    expect(staying.closed).equals(undefined)
+  })
+
   it('carries a partial to every viewer, with the game’s own team names', async function () {
     const worker = await startWorker()
     const gameId = await newGame()
@@ -300,6 +364,39 @@ describe('the scoreboard hub', function () {
     await new Promise(resolve => setTimeout(resolve, 120))
     expect(last(watching).pitchSpeed).equals(0)
     expect(watching.messages).has.length(cleared)
+  })
+
+  it("holds a pitch speed for the node's setting when no hold is given", async function () {
+    await db
+      .insertInto('system_settings')
+      .values({ key: 'scoreboard.speedHoldSec', value: JSON.stringify(0.2) })
+      .onConflict(oc =>
+        oc.column('key').doUpdateSet({ value: JSON.stringify(0.2) })
+      )
+      .execute()
+    forgetScoreboardSettings()
+    try {
+      const worker = await startWorker()
+      const gameId = await newGame()
+      const watching = viewer(worker, gameId)
+      await heard(watching, 1)
+      const phone = publisher(worker, gameId, runner)
+      await phone.opened
+      // The hub reads the setting as it starts; give that a moment.
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const sent = Date.now()
+      send(phone, { pitchSpeed: 77 })
+      await until('77 mph', () => last(watching)?.pitchSpeed === 77)
+      await until('cleared', () => last(watching)?.pitchSpeed === 0)
+      // Well short of the 5 s default.
+      expect(Date.now() - sent).lessThan(2000)
+    } finally {
+      await db
+        .deleteFrom('system_settings')
+        .where('key', '=', 'scoreboard.speedHoldSec')
+        .execute()
+      forgetScoreboardSettings()
+    }
   })
 
   it('a publisher zero cancels the pitch-speed hold', async function () {
@@ -605,6 +702,37 @@ describe('the scoreboard hub', function () {
     await until('outs 2 after the reconnect', () => last(probe)?.outs === 2)
   })
 
+  it('tells a timeline socket its timeline may have changed after its subscriber reconnects', async function () {
+    const a = await startWorker()
+    const gameId = await newGame()
+    const probe = timeline(a, gameId, runner)
+    await probe.opened
+    // A notice it hears says it has joined its game.
+    await until('the socket to join its game', async () => {
+      await a.store.announceTimeline(gameId)
+      await new Promise(resolve => setTimeout(resolve, 20))
+      return probe.messages.length > 0
+    })
+    // Every notice sent so far has landed before counting them.
+    await new Promise(resolve => setTimeout(resolve, 200))
+    const joined = probe.messages.length
+    const name = `${prefix.replace(':', '-')}-0`
+    const list = await a.client.sendCommand(['CLIENT', 'LIST'])
+    const id = (typeof list === 'string' ? list : '')
+      .split('\n')
+      .find(line => line.includes(` name=${name} `))
+      ?.match(/^id=(\d+)/)?.[1]
+    expect(id, name).is.a('string')
+    // The notice goes out while A's subscriber is gone, so A never hears it:
+    // the reconnect tells the socket instead.
+    await Promise.all([
+      a.client.sendCommand(['CLIENT', 'KILL', 'ID', id ?? '']),
+      a.store.announceTimeline(gameId)
+    ])
+    await heard(probe, joined + 1)
+    expect(probe.messages.at(-1)).deep.equals({ type: 'changed' })
+  })
+
   it('closes the sockets of a game whose board has expired', async function () {
     const worker = await startWorker({ checkMs: 50 })
     const gameId = await newGame(new Date(Date.now() - HOUR))
@@ -686,7 +814,9 @@ describe('the scoreboard hub', function () {
         return Reflect.get(target, name)
       }
     })
-    const worker = await startWorker({ db: broken })
+    // The hold is fixed so the hub reads no setting from the broken store:
+    // only the sockets' own lookups are counted.
+    const worker = await startWorker({ db: broken, speedHoldMs: 5000 })
     const loggedBefore = logged.length
     for (const id of ['%00', 'gam_%01x', 'g'.repeat(65), 'gam_%2Fx']) {
       expect(await closedWith(viewer(worker, id)), id).equals(

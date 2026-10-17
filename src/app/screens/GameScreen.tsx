@@ -63,6 +63,7 @@ import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
 import { MultiCamView } from '../player/MultiCamView'
 import { PlayerSurface } from '../player/PlayerSurface'
+import { pictureRect } from '../player/scoreboardOverlay/overlayLayout'
 import { useVideoAspect } from '../player/useVideoAspect'
 import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
@@ -1191,6 +1192,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       : nonMemberView
         ? lstrings.game_videos_members_only
         : undefined
+  // The game's board over the picture, at the wall time of the frame on
+  // screen, where the node's single-camera setting puts it on the picture:
+  // the box less any black bars.
+  const pictureBoard =
+    video == null
+      ? undefined
+      : {
+          client,
+          gameId: game.id,
+          videoId: video.id,
+          live: isLive,
+          durationSec: video.durationSec,
+          picture: pictureRect(layout.videoWidth, layout.videoHeight, aspect)
+        }
   const player = (
     <View style={styles.playerBlock}>
       {notice != null ? (
@@ -1209,6 +1224,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           height={layout.videoHeight}
           controlsVisible={controlsVisible}
           active={!showAngles}
+          scoreboard={pictureBoard}
         >
           {isLive && <LivePill />}
           {playback == null ? (
@@ -1421,6 +1437,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const multiCam = showAngles ? (
     <MultiCamView
       client={client}
+      gameId={game.id}
       videos={game.videos}
       order={angles ?? defaultAngles(game.videos)}
       audioId={audioId ?? null}

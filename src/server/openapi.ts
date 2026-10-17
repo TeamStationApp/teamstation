@@ -493,6 +493,13 @@ const streamIdParam = {
   schema: { type: 'string' }
 }
 
+const uploadIdParam = {
+  name: 'uploadId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
+
 const videoIdParam = {
   name: 'videoId',
   in: 'path',
@@ -748,6 +755,116 @@ const gumboCount = {
  * The stored play: a standard MLB Gumbo play, in the shape of the live feed
  * (`statsapi.mlb.com/api/v1.1/game/{gamePk}/feed/live`, `liveData.plays`).
  */
+/**
+ * The node settings as `GET /node/settings` answers them and `PUT` takes and
+ * answers them: one copy, so the three cannot drift apart (`asNodeSettings`).
+ */
+const nodeSettingsSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['scoreboard', 'highlights'],
+  properties: {
+    scoreboard: {
+      type: 'object',
+      additionalProperties: false,
+      required: [
+        'overlayStartDate',
+        'single',
+        'landscape',
+        'portraitHeight',
+        'speedHoldSec'
+      ],
+      properties: {
+        overlayStartDate: {
+          type: 'string',
+          format: 'date',
+          description:
+            'The first date, in UTC, whose games show the board: a game starting at or after its 00:00 UTC'
+        },
+        single: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['x', 'y', 'height'],
+          properties: {
+            x: {
+              type: 'number',
+              minimum: 0,
+              exclusiveMaximum: 1
+            },
+            y: {
+              type: 'number',
+              minimum: 0,
+              exclusiveMaximum: 1
+            },
+            height: {
+              type: 'number',
+              exclusiveMinimum: 0,
+              maximum: 1
+            }
+          }
+        },
+        landscape: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['x', 'y', 'height'],
+          properties: {
+            x: {
+              type: 'number',
+              minimum: 0,
+              exclusiveMaximum: 1
+            },
+            y: {
+              type: 'number',
+              minimum: 0,
+              exclusiveMaximum: 1
+            },
+            height: {
+              type: 'number',
+              exclusiveMinimum: 0,
+              maximum: 1
+            }
+          }
+        },
+        portraitHeight: {
+          type: 'number',
+          exclusiveMinimum: 0,
+          maximum: 1
+        },
+        speedHoldSec: {
+          type: 'number',
+          exclusiveMinimum: 0,
+          maximum: 600
+        }
+      }
+    },
+    highlights: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['lagSec', 'leadSec', 'leadSecByEventType', 'mergeWithinSec'],
+      properties: {
+        lagSec: { type: 'number', minimum: 0, maximum: 600 },
+        leadSec: { type: 'number', minimum: 0, maximum: 600 },
+        leadSecByEventType: {
+          type: 'object',
+          // A play type as `asLeadMap` takes one: lower case, digits and
+          // underscores, starting with a letter.
+          propertyNames: { pattern: '^[a-z][a-z0-9_]*$' },
+          additionalProperties: {
+            type: 'number',
+            minimum: 0,
+            maximum: 600
+          }
+        },
+        mergeWithinSec: {
+          type: 'number',
+          minimum: 0,
+          maximum: 600
+        }
+      }
+    }
+  }
+}
+
 const gumboSchemas = {
   GumboPlay: {
     type: 'object',
@@ -1154,12 +1271,23 @@ const gumboSchemas = {
       'estimates (trajectory, launch angle). Replay and undo read it; ' +
       '`npm run refold-scored-games` rebuilds the rest of the play from it.' +
       ' `version` is 1; a post whose record has any other version is ' +
-      'refused with 400.',
+      'refused with 400. The server stores the record as it is sent.',
     required: ['version', 'setupBefore', 'actions'],
     properties: {
       version: { type: 'integer', enum: [1] },
       setupBefore: { type: 'object' },
       actions: { type: 'array', items: { type: 'object' } },
+      actionTimes: {
+        type: 'array',
+        items: { type: 'string', format: 'date-time' },
+        description:
+          "When each action was taken, on the server's clock (`GET /time`): " +
+          'one ISO time per action, in the order of `actions`. Left out of a ' +
+          'play scored before actions carried times, or holding an action ' +
+          'with no time; such a play has only its `about.startTime` and ' +
+          '`about.endTime`. A list that does not match `actions` in length ' +
+          'is ignored when the play is read back.'
+      },
       detail: { type: 'object' }
     }
   }
@@ -2444,6 +2572,37 @@ export function openApiDocument(version: string): OpenApiDocument {
               content: {
                 'application/json': {
                   schema: { $ref: '#/components/schemas/Health' }
+                }
+              }
+            }
+          }
+        }
+      },
+      '/time': {
+        get: {
+          summary: "The server's clock",
+          description:
+            'Needs no sign-in, and answers with `Cache-Control: no-store`. ' +
+            "A device measures how far its clock is from the server's with " +
+            'it — from the reading that comes back quickest, taking `now` as ' +
+            'read halfway through — and stamps each scoring action with its ' +
+            "own clock plus that offset, so every device's moments are on one " +
+            'clock.',
+          responses: {
+            200: {
+              description: "The server's clock",
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['now'],
+                    properties: {
+                      now: {
+                        type: 'integer',
+                        description: 'Milliseconds since the epoch.'
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -3802,6 +3961,88 @@ export function openApiDocument(version: string): OpenApiDocument {
         }
       },
       '/games/{gameId}/events': {
+        patch: {
+          summary:
+            "Add every event, with its time, to a game's stored plays (a partial update: a play not named keeps its events)",
+          description:
+            "For a node administrator. Puts each named play's `playEvents` " +
+            '(each pitch, ball in play, base-running and line-up event, each ' +
+            "with its `startTime`) on the play an outside scorer's import " +
+            "stored at that `atBatIndex`, a final game's included. Nothing " +
+            'else is written: the plays, their times, scores, people, runners ' +
+            "and credits and the game's status stay as stored, and a play not " +
+            'named keeps its events. No statistics rebuild is asked for: the ' +
+            'stored statistics stand until the next one, which then counts ' +
+            'pitches, called third strikes, wild pitches and balks from the ' +
+            'events; event tags follow the events the next time the plays are ' +
+            "read. Each event's " +
+            '`description` is not stored. The whole body is refused for a game ' +
+            'TeamStation scores (409), and for a play the game does not have, ' +
+            'a play named twice, or an event that is not a GUMBO play event or ' +
+            'has no `startTime` (400).',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'gameId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['plays'],
+                  properties: {
+                    plays: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: ['atBatIndex', 'playEvents'],
+                        properties: {
+                          atBatIndex: { type: 'integer' },
+                          playEvents: {
+                            type: 'array',
+                            items: { type: 'object' }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description: 'How many plays and events were written',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['plays', 'events'],
+                    properties: {
+                      plays: { type: 'integer' },
+                      events: { type: 'integer' }
+                    }
+                  }
+                }
+              }
+            },
+            '400': {
+              description:
+                'A play the game lacks, or an event that is not timed or not GUMBO'
+            },
+            '401': { description: 'Authentication required' },
+            '403': { description: 'Node administrator required' },
+            '404': { description: 'Game not found' },
+            '409': { description: 'The game is scored in TeamStation' }
+          }
+        },
         post: {
           summary: "Replace a game's plays",
           description:
@@ -4275,6 +4516,135 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games/{gameId}/scoreboard-overlay': {
+        get: {
+          summary: "Whether a game's board shows over its videos, and where",
+          description:
+            "Shown for a game starting at or after the node's overlay start date, 00:00 UTC; times are compared in UTC. The placements are the node's settings, as fractions of the video from its top-left.",
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'gameId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: {
+              description: "The game's overlay",
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['show', 'single', 'landscape', 'portraitHeight'],
+                    properties: {
+                      show: { type: 'boolean' },
+                      single: {
+                        type: 'object',
+                        additionalProperties: false,
+                        required: ['x', 'y', 'height'],
+                        properties: {
+                          x: {
+                            type: 'number',
+                            minimum: 0,
+                            exclusiveMaximum: 1
+                          },
+                          y: {
+                            type: 'number',
+                            minimum: 0,
+                            exclusiveMaximum: 1
+                          },
+                          height: {
+                            type: 'number',
+                            exclusiveMinimum: 0,
+                            maximum: 1
+                          }
+                        }
+                      },
+                      landscape: {
+                        type: 'object',
+                        additionalProperties: false,
+                        required: ['x', 'y', 'height'],
+                        properties: {
+                          x: {
+                            type: 'number',
+                            minimum: 0,
+                            exclusiveMaximum: 1
+                          },
+                          y: {
+                            type: 'number',
+                            minimum: 0,
+                            exclusiveMaximum: 1
+                          },
+                          height: {
+                            type: 'number',
+                            exclusiveMinimum: 0,
+                            maximum: 1
+                          }
+                        }
+                      },
+                      portraitHeight: {
+                        type: 'number',
+                        exclusiveMinimum: 0,
+                        maximum: 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/scoreboard-timeline': {
+        get: {
+          summary: "A game's scoreboard at every moment",
+          description:
+            '`{ version, steps }`. Each step is `{ at, state }`: `state` is ' +
+            'the board as it was drawn, `ScoreState` with every override ' +
+            'applied, from `at` (epoch ms, on the server clock) until the next ' +
+            "step. It is rebuilt from the game's stored plays, each scoring " +
+            'action at the time it was taken (a play scored before actions ' +
+            'carried times puts its actions at its own end), the score of the ' +
+            'last play that had ended, and the scoreboard log of every other ' +
+            'change: the publisher, the pitch-speed hold and the override ' +
+            'dashboard. `version` changes whenever any of those does. A game ' +
+            'with nothing on its board has no steps. 404 when there is no such ' +
+            'game; 403 `membersOnly` for somebody who cannot see it. Read ' +
+            'from the database alone, so it answers long after the live ' +
+            'scoreboard has closed.',
+          security: [{ bearer: [] }],
+          parameters: [
+            gameIdParam,
+            {
+              name: 'from',
+              in: 'query',
+              schema: { type: 'integer', minimum: 0 },
+              description:
+                'Epoch ms. Steps before it are left out, except the one in effect at it. Omitted, from the first step.'
+            },
+            {
+              name: 'to',
+              in: 'query',
+              schema: { type: 'integer', minimum: 0 },
+              description:
+                'Epoch ms. Steps after it are left out. Omitted, to the last step. 400 when it is before `from`.'
+            }
+          ],
+          responses: {
+            200: { description: '`{ version, steps: [{ at, state }] }`' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/games/{gameId}/halves': {
         get: {
           summary: 'One outcome per half inning',
@@ -4620,6 +4990,53 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'Season-owned child teams, active competition members and canonical committed game participants, including placeholders and canceled historical participants. TeamSummary adds seasonCategory inSeason/exhibition/unscheduled and canViewPrivate matching private team endpoint visibility; parent-only teams without games and canceled-only participants are unscheduled. Membership/management links are never created by this read.'
             },
             404: errorResponse
+          }
+        }
+      },
+      '/node/settings': {
+        get: {
+          summary: 'Every node setting, for a node administrator',
+          description:
+            "Where the scoreboard sits over video (fractions of the video, from its top-left: x right, y down; a height is the full board's), the overlay's start date, the pitch-speed hold and the highlight timings.",
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description: 'The node settings',
+              content: {
+                'application/json': {
+                  schema: nodeSettingsSchema
+                }
+              }
+            },
+            401: errorResponse,
+            403: errorResponse
+          }
+        },
+        put: {
+          summary: 'A node administrator sets every node setting at once',
+          description:
+            'Every field is required and checked: positions from 0 to under 1, heights above 0 up to 1, the speed hold above 0 up to 600 seconds, the highlight timings from 0 to 600 seconds, a real date.',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: nodeSettingsSchema
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The settings as stored',
+              content: {
+                'application/json': {
+                  schema: nodeSettingsSchema
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse
           }
         }
       },
@@ -5911,6 +6328,50 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/videos/{videoId}/wall-timeline': {
+        get: {
+          summary: "Where each moment of a video falls on the server's clock",
+          description:
+            '`{ anchors, source, confidence, live, startAt }`. `anchors` are ' +
+            '`[mediaMs, wallMs]` pairs in media order: `mediaMs` is a ' +
+            "position as a player's `currentTime` reports it, `wallMs` the " +
+            'server-clock instant (epoch ms) of the frame there. A position ' +
+            'falls at the last anchor at or before it, plus the media time ' +
+            'since, at 1×. `source` is `sei` (a wall clock in every frame), ' +
+            '`arrival` (when the server took each live segment in; any such ' +
+            'anchor makes the whole video `arrival`) or `start` (no anchors ' +
+            'stored: one at media time zero from `startAt` less the ' +
+            "video's sync offset, none without a `startAt`). `confidence` " +
+            'is `frame` for `sei` stamped on the server clock throughout, ' +
+            '`clock` for a start moved onto the server clock by a measured ' +
+            'offset, and `approximate` for everything else. `live` is true ' +
+            'while the video is still streaming and more anchors may come. ' +
+            '404 for no such video or a hidden one; 403 `membersOnly` for ' +
+            'somebody who cannot see its game.',
+          security: [{ bearer: [] }],
+          parameters: [
+            videoIdParam,
+            {
+              name: 'afterMs',
+              in: 'query',
+              schema: { type: 'integer', minimum: 0, maximum: 2147483647 },
+              description:
+                'Only the anchors after this media time, for a live player ' +
+                'that holds the rest. `source` and `confidence` still ' +
+                'describe the whole video. Omitted, every anchor.'
+            }
+          ],
+          responses: {
+            200: {
+              description: '`{ anchors, source, confidence, live, startAt }`'
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/videos/{videoId}': {
         delete: {
           summary: 'Delete a recording, its files, and its copy in the Space',
@@ -6204,8 +6665,27 @@ export function openApiDocument(version: string): OpenApiDocument {
             'on open and after every change from any source. Inbound ' +
             'messages are ignored. Closes with 4404 when there is no such ' +
             'game or its scoreboard is closed, and 1011 while the store is ' +
-            'unreachable.',
-          parameters: [gameIdParam],
+            'unreachable. With `timeline=1` it sends no boards: it sends ' +
+            "`{ type: 'changed' }` each time the game's board timeline " +
+            '(`GET /games/{gameId}/scoreboard-timeline`) changes, once the ' +
+            'change has been stored, and it stays open for as long as the ' +
+            'game exists, whether or not its scoreboard is open. **Who may ' +
+            'call with `timeline=1`:** what the timeline asks, somebody ' +
+            'signed in, by bearer token or session cookie, who can see the ' +
+            'game; asked again every minute while it is open. Its close ' +
+            'codes add 4401 not signed in and 4403 cannot see the game.',
+          parameters: [
+            gameIdParam,
+            {
+              name: 'timeline',
+              in: 'query',
+              schema: { type: 'string', enum: ['1'] },
+              description:
+                '`1` for change notices instead of boards, for somebody ' +
+                'signed in who can see the game. Omitted, the socket sends ' +
+                'the board as before, to anybody.'
+            }
+          ],
           responses: { 101: { description: 'The viewer socket' } }
         }
       },
@@ -6241,6 +6721,155 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'The URL with its key, which the operator never sees or types'
             },
             400: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/director/uploads': {
+        post: {
+          summary: 'Open an upload of a finished recording',
+          description:
+            'TS Director and TS Distributor send a take in parts, so an ' +
+            'upload cut off half way carries on rather than starting again. ' +
+            'For a videographer of either team of the game, which every ' +
+            'admin of it is; anybody else gets 404. 400 when the server has ' +
+            'nowhere to put a recording, or the recording is empty. The ' +
+            'answer says how big each part is and how many to send.',
+          security: [{ bearer: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['gameId', 'title', 'filename', 'sizeBytes'],
+                  properties: {
+                    gameId: { type: 'string' },
+                    title: { type: 'string' },
+                    kind: {
+                      type: 'string',
+                      description:
+                        '`program` (the default) for the programme output, ' +
+                        "or the camera's own name"
+                    },
+                    filename: { type: 'string' },
+                    sizeBytes: { type: 'integer', minimum: 1 },
+                    startAt: {
+                      type: 'string',
+                      format: 'date-time',
+                      description:
+                        "When the recording began, on the app's clock. The " +
+                        'video starts here. Left out, or more than a year ' +
+                        "from now, the game's own start is used instead"
+                    },
+                    serverClockOffsetMs: {
+                      type: 'integer',
+                      description:
+                        "The server's clock less the app's while it " +
+                        'recorded, in ms, as the app measured it from ' +
+                        '`GET /time`. Added to `startAt`, so the video ' +
+                        "starts on the server's clock and its wall " +
+                        'timeline says `clock`. Left out, `startAt` is used ' +
+                        'as it is. A value that is not finite or is more ' +
+                        'than a day either way is ignored, and the upload ' +
+                        'goes in as one without it'
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description: '`{ uploadId, partSize, parts, received: [] }`'
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/director/uploads/{uploadId}': {
+        get: {
+          summary: 'What of an upload has arrived, and what is left',
+          description:
+            '`{ uploadId, state, step, partSize, parts, received, missing, ' +
+            'receivedBytes, videoId, message }`. `state` is `open`, ' +
+            '`assembling` (with `step` saying which part of taking it in), ' +
+            '`ready` (with `videoId`), `failed` (with `message`) or ' +
+            '`abandoned`. Somebody else’s upload is 404.',
+          security: [{ bearer: [] }],
+          parameters: [uploadIdParam],
+          responses: {
+            200: { description: 'The upload as it stands' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        },
+        delete: {
+          summary: 'Give an upload up, and its parts with it',
+          security: [{ bearer: [] }],
+          parameters: [uploadIdParam],
+          responses: {
+            204: { description: 'Abandoned' },
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/director/uploads/{uploadId}/parts/{index}': {
+        put: {
+          summary: 'One part of an upload',
+          description:
+            'The raw bytes of part `index`, counting from zero, exactly as ' +
+            'long as the open said. Sending a part again replaces it. 400 ' +
+            'for a part of the wrong length or not in the recording, and ' +
+            'once the upload is past taking parts.',
+          security: [{ bearer: [] }],
+          parameters: [
+            uploadIdParam,
+            {
+              name: 'index',
+              in: 'path',
+              required: true,
+              schema: { type: 'integer', minimum: 0 }
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/octet-stream': {
+                schema: { type: 'string', format: 'binary' }
+              }
+            }
+          },
+          responses: {
+            200: { description: '`{ received, parts, missing }`' },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/director/uploads/{uploadId}/finish': {
+        post: {
+          summary: 'Make a complete upload a video',
+          description:
+            'Answered at once with 202 `{ state: "assembling" }` while the ' +
+            'parts are joined, remuxed and copied to the Space; `GET ' +
+            '/director/uploads/{uploadId}` says when it is `ready` and its ' +
+            '`videoId`. The video starts at the open’s `startAt` plus its ' +
+            '`serverClockOffsetMs`, less any pre-roll the file holds. The ' +
+            'live recording of the game it replaces is hidden. Asked again ' +
+            'once ready, the same `videoId`; a failed upload can be asked ' +
+            'again. 400 while parts are missing.',
+          security: [{ bearer: [] }],
+          parameters: [uploadIdParam],
+          responses: {
+            200: { description: '`{ videoId, state: "ready" }`, already done' },
+            202: { description: '`{ state: "assembling", step }`' },
+            400: errorResponse,
+            401: errorResponse,
             404: errorResponse
           }
         }

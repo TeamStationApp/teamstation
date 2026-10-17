@@ -8,6 +8,7 @@ import {
 } from '../eventTags'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { Problem, ScoringAction } from './actions'
+import { keyOf, matchTimes, REPLACED_KEEPS_TIME_MS } from './actionTimes'
 import { type Applied, applyAction } from './apply'
 import { fenceOf, foldInputsOf, type PlayFolder } from './document'
 import {
@@ -142,22 +143,33 @@ interface Mark {
 }
 
 /**
- * Whether two actions say the same, whatever order their keys are in: JSON
- * with each object's keys sorted, unless the plain JSON already agrees.
+ * Whether two actions say the same, whatever order their keys are in: the
+ * one written-out form `keyOf` gives, and keeps, for each action.
  */
 function sameAction(a: ScoringAction, b: ScoringAction): boolean {
-  if (JSON.stringify(a) === JSON.stringify(b)) return true
-  const sorted = (value: ScoringAction): string =>
-    JSON.stringify(value, (_key, item: unknown) =>
-      item != null && typeof item === 'object' && !Array.isArray(item)
-        ? Object.fromEntries(
-            Object.entries(item).sort(([x], [y]) =>
-              x < y ? -1 : x > y ? 1 : 0
-            )
-          )
-        : item
-    )
-  return sorted(a) === sorted(b)
+  return a === b || keyOf(a) === keyOf(b)
+}
+
+/**
+ * The actions the last cut took off the log (an Undo, or a sync cutting back),
+ * with their times, which the actions applied after it are matched against.
+ */
+interface Displaced {
+  /** The length the cut left the log at, where the actions applied since begin. */
+  at: number
+  /** Each displaced action written out, as `sync` compares them. */
+  keys: string[]
+  times: Array<string | undefined>
+  /** When each displaced action was cut off. */
+  cutAt: string[]
+  /** How many of the first displaced actions this cut took off. */
+  cut: number
+  /** When each action applied since the cut was applied. */
+  stamped: string[]
+  /** How many of the first actions applied since came in the sync that cut. */
+  replayed: number
+  /** How many of the displaced actions the last match used or passed. */
+  consumed: number
 }
 
 /** A folded play as the server is sent it, written out once per play. */
@@ -173,11 +185,22 @@ function written(play: GumboPlay): string {
 
 export class ScoringSession {
   private log: ScoringAction[] = []
+  /**
+   * When each action of `log` was taken, on the session's clock, in the same
+   * order: undefined for one read back from a play scored before actions
+   * carried times. Each play's own times are kept apart, in `times`.
+   */
+  private actionTimes: Array<string | undefined> = []
+  /** What the last cut displaced, while the actions after it are matched. */
+  private displaced: Displaced | null = null
+  /** Set while `sync` applies a run of actions, which it matches once. */
+  private holding = false
   private tagIdentities = new TagIdentityRegistry()
   private tagSnapshot = 0
   private readonly importedDocuments = new Map<number, GumboPlay>()
   /** The log as far as the server has acknowledged it. */
   private savedLog: ScoringAction[] = []
+  private savedTimes: Array<string | undefined> = []
   private game: GameState
   private completed: Completed[] = []
   private segment: Segment
@@ -206,6 +229,8 @@ export class ScoringSession {
     last: Completed | undefined
     plays: Map<number, GumboPlay>
     folder: PlayFolder
+    /** How many actions of the log those plays hold. */
+    covered: number
   } | null = null
 
   private readonly times = new Map<number, { start?: string; end?: string }>()
@@ -324,8 +349,14 @@ export class ScoringSession {
         )
     }
     session.log = replayed.segments.flatMap(segment => segment.actions)
+    // Loaded actions keep the times they were taken at, so a reload or a
+    // replay never stamps history again.
+    session.actionTimes = replayed.segments.flatMap(
+      segment => segment.actionTimes
+    )
     session.rebuild()
     session.savedLog = [...session.log]
+    session.savedTimes = [...session.actionTimes]
     for (const play of loaded.plays)
       if (!session.derivedIndexes.has(play.about.atBatIndex))
         session.stored.add(play.about.atBatIndex)
@@ -590,8 +621,12 @@ export class ScoringSession {
         state: this.game,
         play: this.game.liveData.plays.currentPlay
       }
+    const now = this.now().toISOString()
     this.log.push(action)
-    this.record(action, applied)
+    this.actionTimes.push(now)
+    this.displaced?.stamped.push(now)
+    this.record(action, applied, now)
+    if (!this.holding) this.align()
     this.blocked = false
     this.dropped = null
     this.changed()
@@ -609,7 +644,9 @@ export class ScoringSession {
       return unchanged({ code: 'notNow', message: this.refusal })
     if (this.log.length === 0)
       return unchanged({ code: 'notNow', message: 'Nothing to undo' })
-    this.log.pop()
+    // An Undo puts nothing back, so what it took off within the minute is let
+    // go at once (`settle`).
+    this.settle(this.cut(this.log.length - 1))
     this.rebuild()
     this.blocked = false
     this.dropped = null
@@ -645,16 +682,31 @@ export class ScoringSession {
       this.log[same] = target[same]
       same++
     }
+    let cut: Displaced | null = null
     if (same < this.log.length) {
-      this.log = this.log.slice(0, same)
+      cut = this.cut(same)
       this.rebuild()
       this.changed()
     }
-    for (const action of target.slice(same)) {
-      const applied = this.apply(action)
-      if (applied.problems.length > 0) return applied.problems
+    // The run is matched against what the cut displaced once, at its end:
+    // a correction far back re-applies hundreds of actions.
+    this.holding = true
+    try {
+      for (const action of target.slice(same)) {
+        const applied = this.apply(action)
+        if (applied.problems.length > 0) return applied.problems
+      }
+      return []
+    } finally {
+      this.holding = false
+      // What this call applied after cutting is the screen's own history
+      // put back, which keeps its times however recent (`matchTimes`).
+      if (cut != null) cut.replayed = cut.stamped.length
+      this.align()
+      // Then that history is settled, and what the cut took off within the
+      // minute is let go.
+      if (cut != null) this.settle(cut)
     }
-    return []
   }
 
   /**
@@ -710,7 +762,10 @@ export class ScoringSession {
       this.importedDocuments.set(index, play)
     this.base = fresh.base
     this.log = fresh.log
+    this.actionTimes = fresh.actionTimes
+    this.displaced = null
     this.savedLog = fresh.savedLog
+    this.savedTimes = fresh.savedTimes
     this.game = fresh.game
     this.completed = fresh.completed
     // Its plays carry the times the server holds.
@@ -772,10 +827,14 @@ export class ScoringSession {
     const kept = agree(this.savedLog, fresh.log)
     const ours = this.log.slice(same)
     const theirs = fresh.log.slice(kept)
+    // Each action put back keeps the time it was taken, not the rebase's.
+    const ourTimes = this.actionTimes.slice(same)
+    const theirTimes = fresh.actionTimes.slice(kept)
     const times = new Map(this.times)
     this.adopt(fresh)
     // An action of this session's undone before the server's came after it.
     const replay = same < kept ? [...theirs, ...ours] : ours
+    const replayTimes = same < kept ? [...theirTimes, ...ourTimes] : ourTimes
     if (same < kept) {
       this.log = this.log.slice(0, same)
       this.rebuild()
@@ -784,7 +843,7 @@ export class ScoringSession {
     for (const [index, time] of times)
       if (!this.times.has(index)) this.times.set(index, time)
     const refused: string[] = []
-    for (const action of replay) {
+    for (const [index, action] of replay.entries()) {
       // A roster the screen logged while showing a default in place of an
       // unseen order. It replaces only a side that is still that order.
       // Every other side stays as the server holds it, and the pitch that
@@ -799,8 +858,12 @@ export class ScoringSession {
         refused.push(applied.problems[0].message)
         continue
       }
+      // An action that had no time, scored by an app before actions carried
+      // them, stays without one; its play keeps only its own times.
+      const time = replayTimes[index]
       this.log.push(roster)
-      this.record(roster, applied)
+      this.actionTimes.push(time)
+      this.record(roster, applied, time ?? this.now().toISOString())
     }
     this.dropped =
       refused.length === 0
@@ -834,9 +897,8 @@ export class ScoringSession {
 
   // ---- The log, split into plays ----
 
-  private record(action: ScoringAction, applied: Applied): void {
+  private record(action: ScoringAction, applied: Applied, now: string): void {
     const before = this.game
-    const now = this.now().toISOString()
     const startIndex = before.liveData.plays.allPlays.length
     const split = segmentAfter(before, action, applied, this.segment)
     split.finished.forEach(({ play, segment }) => {
@@ -864,6 +926,101 @@ export class ScoringSession {
       const times = this.times.get(index) ?? {}
       times.start ??= now
       this.times.set(index, times)
+    }
+  }
+
+  /**
+   * Takes the log back to `length`. The actions taken off, with their times,
+   * join what an earlier cut displaced and the actions applied since have not
+   * used, so the actions applied next can find their times there (`align`).
+   */
+  private cut(length: number): Displaced {
+    const held = this.displaced
+    const rest = held?.consumed ?? 0
+    const removed = this.log.slice(length)
+    // How old an action was when it was cut says whether it was a mistake
+    // taken back or a correction (`matchTimes`).
+    const now = this.now().toISOString()
+    this.displaced = {
+      at: length,
+      keys: [...removed.map(keyOf), ...(held?.keys.slice(rest) ?? [])],
+      times: [
+        ...this.actionTimes.slice(length),
+        ...(held?.times.slice(rest) ?? [])
+      ],
+      cutAt: [...removed.map(() => now), ...(held?.cutAt.slice(rest) ?? [])],
+      cut: removed.length,
+      stamped: [],
+      replayed: 0,
+      consumed: 0
+    }
+    this.log = this.log.slice(0, length)
+    this.actionTimes = this.actionTimes.slice(0, length)
+    return this.displaced
+  }
+
+  /**
+   * Once the call that made a cut returns: the history it put back is
+   * settled, with the times it was given, and what it took off a minute old
+   * or younger is let go. Such a pitch was a mistake taken back on the spot,
+   * so nothing entered later, however long after, is matched against it,
+   * either as the pitch put back or as one an insertion went in ahead of.
+   * Only a pitch cut over a minute after it was taken stays, for a later
+   * correction to go back to.
+   */
+  private settle(cut: Displaced): void {
+    if (this.displaced !== cut) return
+    const left = cut.keys.flatMap((key, j) => {
+      const time = cut.times[j]
+      return j < cut.consumed ||
+        (time != null &&
+          Date.parse(cut.cutAt[j]) - Date.parse(time) <= REPLACED_KEEPS_TIME_MS)
+        ? []
+        : [{ key, time, cutAt: cut.cutAt[j] }]
+    })
+    this.displaced =
+      left.length === 0
+        ? null
+        : {
+            at: cut.at + cut.stamped.length,
+            keys: left.map(each => each.key),
+            times: left.map(each => each.time),
+            cutAt: left.map(each => each.cutAt),
+            cut: 0,
+            stamped: [],
+            replayed: 0,
+            consumed: 0
+          }
+  }
+
+  /**
+   * Gives the actions applied since the last cut the times of the actions it
+   * displaced (`matchTimes`). A later action can change how earlier ones
+   * match, so every action since the cut is matched again each time. Once
+   * the newest lies beyond everything displaced, the displaced are let go.
+   */
+  private align(): void {
+    const held = this.displaced
+    if (held == null || this.log.length <= held.at) return
+    const matched = matchTimes(
+      this.log.slice(held.at).map(keyOf),
+      held.stamped,
+      held,
+      this.actionTimes[held.at - 1],
+      held.replayed
+    )
+    let first = -1
+    for (const [k, time] of matched.times.entries())
+      if (this.actionTimes[held.at + k] !== time) {
+        this.actionTimes[held.at + k] = time
+        if (first < 0) first = held.at + k
+      }
+    held.consumed = matched.consumed
+    if (matched.past) this.displaced = null
+    if (first >= 0) {
+      this.revision++
+      // A play already folded holds the times it was folded with.
+      if (first < (this.foldedPlays?.covered ?? 0)) this.foldedPlays = null
     }
   }
 
@@ -897,6 +1054,7 @@ export class ScoringSession {
         })
     }
     this.log = kept
+    this.actionTimes.length = kept.length
     this.game = game
     this.completed = completed
     this.segment = segment
@@ -967,14 +1125,21 @@ export class ScoringSession {
       kept = null
     const folder = (kept?.folder ?? playFolder(this.game)).continuing(this.game)
     for (const [index, play] of kept?.plays ?? []) plays.set(index, play)
-    for (const { play, segment } of this.completed.slice(kept?.count ?? 0))
+    // The plays split the log in order, so each play's actions, and their
+    // times, start where the play before it ended.
+    let offset = kept?.covered ?? 0
+    for (const { play, segment } of this.completed.slice(kept?.count ?? 0)) {
+      const end = offset + segment.actions.length
       plays.set(
         play.about.atBatIndex,
         folder.play(play, {
           ...segment,
+          actionTimes: this.actionTimes.slice(offset, end),
           ...time(play.about.atBatIndex)
         })
       )
+      offset = end
+    }
     this.foldedPlays = {
       inputs,
       count: this.completed.length,
@@ -982,12 +1147,17 @@ export class ScoringSession {
       plays: new Map(plays),
       // The at-bat in progress is folded by this one below, which carries it
       // past that play too; the next fold carries on from before it.
-      folder: folder.continuing(this.game)
+      folder: folder.continuing(this.game),
+      covered: offset
+    }
+    const stamp = {
+      ...this.segment,
+      actionTimes: this.actionTimes.slice(offset)
     }
     if (this.game.final) {
       plays.set(
         FINAL_INDEX,
-        foldFinal(this.game, { ...this.segment, ...time(FINAL_INDEX) })
+        foldFinal(this.game, { ...stamp, ...time(FINAL_INDEX) })
       )
       return { plays, current: null }
     }
@@ -995,7 +1165,7 @@ export class ScoringSession {
     return {
       plays,
       current: folder.current(this.game.liveData.plays.currentPlay, {
-        ...this.segment,
+        ...stamp,
         ...time(index)
       })
     }
@@ -1055,6 +1225,7 @@ export class ScoringSession {
     for (;;) {
       if (this.refusal != null || this.blocked) return
       const covering = [...this.log]
+      const coveringTimes = [...this.actionTimes]
       const change = this.change()
       if (
         change.plays.length === 0 &&
@@ -1108,6 +1279,7 @@ export class ScoringSession {
       if (change.currentPlay !== undefined)
         this.postedCurrent = JSON.stringify(change.currentPlay)
       this.savedLog = covering
+      this.savedTimes = coveringTimes
       this.isOffline = false
       this.failure = null
       this.retryMs = FIRST_RETRY_MS
@@ -1141,6 +1313,8 @@ export class ScoringSession {
       this.refusal = message
       this.isOffline = false
       this.log = [...this.savedLog]
+      this.actionTimes = [...this.savedTimes]
+      this.displaced = null
       this.marks = []
       this.rebuild()
       this.notify()

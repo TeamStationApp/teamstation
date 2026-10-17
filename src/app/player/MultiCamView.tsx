@@ -19,6 +19,10 @@ import {
 } from './multiCam/useMultiCam'
 import { MultiCamBar } from './MultiCamBar'
 import type { PlayIntent } from './playIntent'
+import {
+  GridScoreboard,
+  useGridBoard
+} from './scoreboardOverlay/GridScoreboard'
 
 export type MultiCamViewProps = MultiCamProps
 
@@ -79,7 +83,18 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       new URLSearchParams(location.search).get('debug') === '1',
     []
   )
-  const mc = useMultiCam(props, { width, height, debug })
+
+  // The game's board, at the wall time of the master tile's frame: in a
+  // band above the column upright, over the top-left angle sideways.
+  const board = useGridBoard(props, { width, height }, landscape)
+  const mc = useMultiCam(props, {
+    width,
+    height,
+    debug,
+    top: board.band,
+    boardCell: board.boardCell
+  })
+  board.follow(mc)
   const {
     askAgain,
     attaching,
@@ -300,6 +315,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           takeRef={takeElement(video.id)}
           touchAction={touchAction}
           heard={video.id === mc.heardId}
+          nameTop={board.nameTop(index, mc.rects[index], mc.zoomed)}
           onPressStart={pressStart}
           onPressMoved={pressMoved}
           onPressEnd={pressEnd}
@@ -314,6 +330,14 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           }}
         />
       ))}
+
+      <GridScoreboard
+        board={board}
+        box={{ width, height }}
+        landscape={landscape}
+        rects={mc.rects}
+        zoomed={mc.zoomed}
+      />
 
       <SeekFlashView flash={mc.flash} />
       {/* Top right, clear of the finger holding the crawl on the right, and
@@ -331,9 +355,17 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       {/* One at a time, most specific first: they share a place on the screen
           and two of them printed over each other unreadably. The swipe for
           full screen comes last, because it is advice about the browser and
-          can wait while the pictures themselves have something to say. */}
+          can wait while the pictures themselves have something to say. On
+          the pictures, below the board's band: it is about them, and over
+          the band it hid the score. */}
       {notice != null ? (
-        <View style={styles.notice} pointerEvents="none">
+        <View
+          style={[
+            styles.notice,
+            { top: board.band + theme.rem(theme.spaceSmRem) }
+          ]}
+          pointerEvents="none"
+        >
           <Text style={styles.noticeText}>{notice}</Text>
         </View>
       ) : null}
@@ -400,6 +432,8 @@ function Tile(props: {
   touchAction: 'none' | 'pan-y'
   /** True while this is the one being heard. */
   heard: boolean
+  /** Where its name goes, below the grid's board; at the top otherwise. */
+  nameTop?: number
   /**
    * False while the press is doing something else, like a crawl, or once
    * another finger has taken it over.
@@ -433,7 +467,8 @@ function Tile(props: {
     unplaceable,
     waiting,
     takeRef,
-    heard
+    heard,
+    nameTop
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -647,7 +682,10 @@ function Tile(props: {
         }}
       />
       {armed ? <View style={styles.tileArmed} pointerEvents="none" /> : null}
-      <View style={styles.tileName} pointerEvents="none">
+      <View
+        style={[styles.tileName, nameTop == null ? null : { top: nameTop }]}
+        pointerEvents="none"
+      >
         <Text style={styles.tileNameText} numberOfLines={1}>
           {heard ? `🔊 ${name}` : name}
         </Text>
@@ -763,9 +801,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
   notice: {
     position: 'absolute',
     // Above the tiles, which stack explicitly: otherwise the pictures draw
-    // over the words.
+    // over the words. Its top is the band's bottom, set where it is drawn.
     zIndex: 6,
-    top: theme.rem(theme.spaceSmRem),
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',

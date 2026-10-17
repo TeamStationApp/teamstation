@@ -38,8 +38,9 @@ export type Engine = 'chrome' | 'webkit' | 'avplayer' | 'exoplayer' | 'unknown'
 
 // iOS places fullscreen, PiP and route controls along the top. Their grouping
 // varies by player and available routes, so leave the whole strip to iOS,
-// including the inset around its 44-point touch targets.
-const IOS_TOP_CONTROLS_HEIGHT = 60
+// including the inset around its 44-point touch targets. The scoreboard drawn
+// over a single picture starts below it on these engines.
+export const IOS_TOP_CONTROLS_HEIGHT = 60
 
 /**
  * Chrome 147, macOS. Probed through the debugging protocol, which can read into
