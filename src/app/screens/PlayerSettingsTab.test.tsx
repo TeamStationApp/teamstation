@@ -156,6 +156,9 @@ describe('a player’s settings form', function () {
     )
     await render(<PlayerSettingsTab client={client} teamId="t1" userId="7" />)
     expect((labelled('First name') as HTMLInputElement).value).equals('Mookie')
+    expect(labelled('Jersey number')?.getAttribute('inputmode')).equals(
+      'numeric'
+    )
     await type('First name', ' Mookie ')
     expect(saveDisabled()).equals(true)
     await type('First name', 'Paul')
