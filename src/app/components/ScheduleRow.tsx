@@ -1,9 +1,7 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import type { EventTabState } from '../screens/eventTabPolicy'
 import { scheduleDate } from '../screens/format'
-import { useGameLivePill } from '../screens/useGameLivePill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
 import { SideCamera } from './SideCamera'
@@ -11,7 +9,7 @@ import { SideCamera } from './SideCamera'
 /** Wide enough for the widest month and two-digit day, with iOS's wider digits. */
 export const SCHEDULE_DATE_WIDTH_REM = 3.25
 
-export interface ScheduleRowProps extends EventTabState {
+export interface ScheduleRowProps {
   /**
    * The away team, or the team whose page this is. On that team's own page
    * it is the only line, and it is the opponent: `@ Bay Stars`.
@@ -25,6 +23,7 @@ export interface ScheduleRowProps extends EventTabState {
   startAt: string | null
   venue?: string | null
   status: string
+  isGameLive?: boolean
   pendingApproval?: boolean
   cancellationReason?: string | null
   withdrawnByTeamName?: string | null
@@ -74,7 +73,7 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
   const styles = getStyles(theme)
   const dated = scheduleDate(startAt)
   const inProgress = status === 'inProgress'
-  const live = useGameLivePill(props)
+  const live = props.isGameLive === true
   const scored = awayScore != null && homeScore != null && !inProgress
   const cancelled = status === 'cancelled'
   const badgeLabel = pendingApproval

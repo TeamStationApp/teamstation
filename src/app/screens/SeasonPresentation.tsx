@@ -626,9 +626,7 @@ export function SeasonPresentation(
                       first={lines.first}
                       second={lines.second}
                       startAt={game.startAt}
-                      endAt={game.endAt}
-                      eventKind={game.eventKind}
-                      hasScoringEvents={game.hasScoringEvents}
+                      isGameLive={game.isGameLive}
                       venue={game.venue}
                       status={game.status}
                       awayScore={game.awayScore}
