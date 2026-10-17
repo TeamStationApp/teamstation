@@ -15,14 +15,18 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 import { remuxToHls, VIDEO_FILE } from '../media/ffmpeg'
-import { fileForRemux, segmentTimelineStart, timelineHole } from './finishVideo'
+import { fileForRemux, timelineHole } from './finishVideo'
 import {
   hevcInit,
   hevcSegment,
   IDR_SLICE,
   wallClockNal
 } from './frameWallFixture'
-import { segmentsFrom, stampNewSegments } from './segmentClock'
+import {
+  segmentsFrom,
+  stampNewSegments,
+  timelineStartSec
+} from './segmentClock'
 import {
   attachSessionForTest,
   CAPTURE_LAG_MAX_MS,
@@ -1029,7 +1033,7 @@ describe('a live playlist through a reconnect', function () {
     }) as typeof readdir
     writeFileSync(join(dir, 'seg000001.m4s'), segment(0))
     const placed = async (name: string): Promise<number | undefined> =>
-      segmentTimelineStart(init, readFileSync(join(dir, name)))
+      timelineStartSec(init, readFileSync(join(dir, name)))
     let moved = await placed('seg000001.m4s')
     try {
       for (let i = 0; i < 50 && !(moved != null && moved > 10); i++) {
@@ -1108,7 +1112,7 @@ describe('a live playlist through a reconnect', function () {
     let at: number | undefined
     for (let i = 0; i < 100; i++) {
       try {
-        at = segmentTimelineStart(init, readFileSync(join(dir, name)))
+        at = timelineStartSec(init, readFileSync(join(dir, name)))
       } catch {
         at = undefined
       }
@@ -1181,7 +1185,7 @@ describe('a live playlist through a reconnect', function () {
     forcePublishForTest(KEY, true)
     await writerArgs()
     expect(
-      segmentTimelineStart(init, readFileSync(join(dir, 'seg000003.m4s')))
+      timelineStartSec(init, readFileSync(join(dir, 'seg000003.m4s')))
     ).closeTo(41.96, 0.001)
     expect(readFileSync(join(dir, 'seg000003.m4s')).equals(placed)).equals(true)
   })
@@ -1210,7 +1214,7 @@ describe('a live playlist through a reconnect', function () {
       0.001
     )
     expect(
-      segmentTimelineStart(init, readFileSync(join(dir, 'seg000003.m4s')))
+      timelineStartSec(init, readFileSync(join(dir, 'seg000003.m4s')))
     ).closeTo(41.96, 0.001)
   })
 
@@ -1314,7 +1318,7 @@ describe('a live playlist through a reconnect', function () {
     expect(events.filter(event => event.type === 'publisherPlaced')).length(1)
     // A first writer stamps nothing.
     expect(
-      segmentTimelineStart(hevcInit(), readFileSync(join(dir, 'seg000001.m4s')))
+      timelineStartSec(hevcInit(), readFileSync(join(dir, 'seg000001.m4s')))
     ).closeTo(4.2, 1e-9)
   })
 
@@ -1526,6 +1530,11 @@ describe('a live playlist through a reconnect', function () {
     ).equals(454)
     // Where keeping it would overwrite one, it moves just far enough.
     expect(playlistContinuation(listed(0, [5, 6, 7]), 8).startNumber).equals(5)
+    // A name with no length is not listed, as the writer that continues the
+    // playlist counts it: it numbers the new segments after the one listed.
+    expect(
+      playlistContinuation(`${listed(0, [5])}\nseg000009.m4s\n`, 10)
+    ).deep.equals({ startNumber: 5, offsetSec: 4 })
   })
 
   it('adds the wall-clock absence to the timestamp offset', function () {
@@ -1762,8 +1771,8 @@ describe('a live playlist through a reconnect', function () {
     const second = readFileSync(join(dir, 'seg000001.m4s'))
     expect(init.equals(initBefore)).equals(true)
     expect(first.equals(firstBefore)).equals(true)
-    expect(segmentTimelineStart(init, first)).closeTo(0, 0.2)
-    expect(segmentTimelineStart(init, second)).closeTo(31, 0.1)
+    expect(timelineStartSec(init, first)).closeTo(0, 0.2)
+    expect(timelineStartSec(init, second)).closeTo(31, 0.1)
     const ffprobe = ffmpeg.replace(/ffmpeg$/, 'ffprobe')
     const range = (bytes: Buffer): { min: number; max: number } => {
       const file = join(dir, 'probe.mp4')
