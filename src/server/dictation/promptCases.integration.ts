@@ -201,7 +201,7 @@ function scoreable(turn: Turn): boolean {
 }
 
 /** An undo the server ignored is not a missed play. Anything else dropped is. */
-function problems(turn: Turn): Turn['dropped'] {
+function problems(turn: Turn): Extract<Turn, { kind: 'actions' }>['dropped'] {
   if (turn.kind === 'ask' || turn.kind === 'error') return []
   return turn.dropped.filter(
     item => item.message !== 'An undo the words did not ask for was ignored'
