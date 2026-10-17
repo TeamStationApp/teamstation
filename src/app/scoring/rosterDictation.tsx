@@ -1,10 +1,11 @@
 import React, { type ReactNode, useEffect, useRef, useState } from 'react'
 
-import type { DictationModel, Health } from '../../common/api'
+import type { DictationModel, Health, RosterEntry } from '../../common/api'
 import { promptContext, type ScoringAction } from '../../common/scoring/actions'
 import {
   applyRosterCommands,
   type ChosenRosterCommand,
+  explicitPlaceholders,
   resolveRosterCommands,
   rosterPrompt,
   type RosterQuestion,
@@ -14,6 +15,10 @@ import {
 } from '../../common/scoring/rosterCommands'
 import type { GameState } from '../../common/scoring/state'
 import { lstrings, sprintf } from '../locales/strings'
+import {
+  createDictatedPlayers,
+  type CreateRosterPlayer
+} from './createDictatedPlayers'
 import { AskCard, useDictationControls } from './DictationButton'
 import { upcoming } from './dictationHook'
 import type { DictationSocket, OpenMicrophone } from './dictationTypes'
@@ -108,6 +113,8 @@ export function useRosterDictation({
   size,
   chat,
   question: asked,
+  pending,
+  onCreatePlayer,
   onStage
 }: {
   options?: RosterDictationOptions
@@ -123,6 +130,8 @@ export function useRosterDictation({
   chat?: readonly ChatTurn[]
   /** What the chat opens asking, about the last of those turns. */
   question?: RosterQuestion
+  pending?: readonly ChosenRosterCommand[]
+  onCreatePlayer?: CreateRosterPlayer
   onStage: (staged: StagedRoster) => void
 }): {
   control: ReactNode
@@ -133,7 +142,23 @@ export function useRosterDictation({
   note: (text: string) => void
   /** Shows a refusal in the chat, opening one when the scorer had not dictated. */
   problem: (text: string) => void
+  busy: boolean
 } {
+  const [busy, setBusy] = useState(false)
+  const pendingWrite = useRef(false)
+  const created = useRef({
+    gameId: options?.gameId,
+    players: new Map<string, RosterEntry>()
+  })
+  if (created.current.gameId !== options?.gameId)
+    created.current = { gameId: options?.gameId, players: new Map() }
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const [turns, setTurns] = useState<ChatTurn[]>(() => [...(chat ?? [])])
   const next = useRef(chat?.length ?? 0)
   // An answer to the question it opens with goes under the turn it is about.
@@ -154,7 +179,8 @@ export function useRosterDictation({
   }
   // Which player the scorer meant, when one said fits two or more.
   const [question, setQuestion] = useState<RosterQuestion | undefined>(asked)
-  const stage = (said: readonly ChosenRosterCommand[]): void => {
+  const stage = async (said: readonly ChosenRosterCommand[]): Promise<void> => {
+    if (pendingWrite.current) return
     const situation = { ...rosterSituation(game), runners, nextBatter }
     const found = resolveRosterCommands(draft, said, {
       ...situation,
@@ -189,14 +215,65 @@ export function useRosterDictation({
       ])
       return
     }
-    const staged = applyRosterCommands(draft, found.commands, situation)
-    if ('problem' in staged) {
-      addLines([{ kind: 'problem', text: staged.problem }])
+    if (
+      !found.commands.some(
+        command => command.type === 'addPlayer' && command.placeholder !== true
+      )
+    ) {
+      const staged = applyRosterCommands(draft, found.commands, situation)
+      if ('problem' in staged)
+        addLines([{ kind: 'problem', text: staged.problem }])
+      else {
+        onStage(staged)
+        addLines(staged.lines.map(text => ({ kind: 'done' as const, text })))
+      }
       return
     }
-    onStage(staged)
-    addLines(staged.lines.map(text => ({ kind: 'done' as const, text })))
+    pendingWrite.current = true
+    setBusy(true)
+    const completed = created.current.players
+    const stillCurrent = (): boolean =>
+      mounted.current && completed === created.current.players
+    try {
+      const staged = await createDictatedPlayers(
+        draft,
+        found.commands,
+        situation,
+        onCreatePlayer,
+        stillCurrent,
+        completed
+      )
+      if (!stillCurrent()) return
+      if ('problem' in staged)
+        addLines([{ kind: 'problem', text: staged.problem }])
+      else {
+        onStage(staged)
+        addLines(staged.lines.map(text => ({ kind: 'done' as const, text })))
+      }
+    } catch (error: unknown) {
+      if (mounted.current)
+        addLines([
+          {
+            kind: 'problem',
+            text:
+              error instanceof Error
+                ? error.message
+                : 'Unable to create the player. Please try again.'
+          }
+        ])
+    } finally {
+      pendingWrite.current = false
+      if (mounted.current) setBusy(false)
+    }
   }
+  const started = useRef(false)
+  const stagePending = useRef(stage)
+  stagePending.current = stage
+  useEffect(() => {
+    if (started.current || pending == null) return
+    started.current = true
+    stagePending.current(pending).catch(() => undefined)
+  }, [pending])
   const sides: Side[] = fixedSide == null ? ['away', 'home'] : [fixedSide]
   const controls = useDictationControls({
     shape: 'round',
@@ -229,7 +306,8 @@ export function useRosterDictation({
       )
       if (actions.length > 0)
         addLines([{ kind: 'problem', text: lstrings.dictation_roster_play }])
-      else stage(roster)
+      else
+        stage(explicitPlaceholders(roster, transcript)).catch(() => undefined)
     }
   })
   const { dictation } = controls
@@ -259,6 +337,7 @@ export function useRosterDictation({
   }, [dictation.message])
   const { ask } = dictation
   return {
+    busy,
     control: controls.control,
     chat: (
       <RosterChat
@@ -281,7 +360,7 @@ export function useRosterDictation({
               options={question.options.map(option => option.label)}
               onChoose={index => {
                 setQuestion(undefined)
-                stage(question.options[index].commands)
+                stage(question.options[index].commands).catch(() => undefined)
               }}
               onDismiss={() => {
                 setQuestion(undefined)
