@@ -125,6 +125,18 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
  * portrait. `any` is the settings sheet over the camera, which may stand
  * upright or lie sideways either way. An iPad asks for landscape while the
  * camera is up, and every orientation otherwise.
+ *
+ * On an iPad that is a request, not a lock. The app is resizable there
+ * (`UIRequiresFullScreen` is false; making it true would take Split View and
+ * windows from the whole app, and iPadOS 26 deprecates the key), and on
+ * iPadOS 26 a resizable scene follows the device, or the shape of its window,
+ * whatever these masks say. `prefersInterfaceOrientationLocked` holds only the orientation
+ * the scene already has, so it would keep an iPad held upright upright and
+ * stop the flip between the two landscapes. The iPad camera view therefore
+ * follows the iPad. The capture stays landscape (`CameraSession` keeps the
+ * last landscape angle), so on an upright iPad the preview, which turns with
+ * the interface, stands upright while the recording lies on its side; turning
+ * the iPad sideways brings them back together.
  */
 enum CameraGeometry {
   enum Mode {
@@ -228,7 +240,7 @@ public final class TSCameraGeometry: NSObject {
   }
 }
 
-/** Upright on an iPhone until the camera view asks otherwise; any way up on an iPad. */
+/** Upright on an iPhone until the camera view asks otherwise; on an iPad, any way up, or landscape asked for while the camera is up. */
 class PortraitRootViewController: UIViewController {
   override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
     CameraGeometry.mask
