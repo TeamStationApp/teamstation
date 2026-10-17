@@ -1,5 +1,13 @@
 import React, { useState } from 'react'
-import { Modal, Pressable, Text, View } from 'react-native'
+import {
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  View
+} from 'react-native'
 
 import { Button } from '../components/Button'
 import { TextField } from '../components/TextField'
@@ -56,6 +64,10 @@ export interface AngleNamePromptProps {
 /**
  * "Name this camera angle": what Record video asks before it opens the
  * camera. The name is how the game's viewers tell this angle from the others.
+ * The field opens the keyboard at once, so the prompt rises above it, Cancel
+ * and Start whole, the way `PickerDialog` does; and when the window left over
+ * is too short for all of it, it scrolls, and a tap on a button while the
+ * keyboard is up reaches the button.
  */
 export function AngleNamePrompt(
   props: AngleNamePromptProps
@@ -94,14 +106,31 @@ export function AngleNamePrompt(
       onRequestClose={onCancel}
       onDismiss={onDismiss}
     >
-      <View style={styles.scrim}>
+      <KeyboardAvoidingView
+        style={styles.scrim}
+        // Android draws the modal's window edge to edge, and that window does
+        // not shrink for the keyboard, so the view shrinks itself (`height`),
+        // as `PickerDialog` does; iOS pads by the keyboard's height.
+        behavior={
+          Platform.OS === 'ios'
+            ? 'padding'
+            : Platform.OS === 'android'
+              ? 'height'
+              : undefined
+        }
+      >
         <Pressable
           style={styles.behind}
           onPress={onCancel}
           accessibilityRole="button"
           accessibilityLabel={lstrings.stream_prompt_cancel}
         />
-        <View style={styles.sheet} testID="angle-name-prompt">
+        <ScrollView
+          style={styles.sheet}
+          contentContainerStyle={styles.sheetContent}
+          keyboardShouldPersistTaps="handled"
+          testID="angle-name-prompt"
+        >
           <Text style={styles.title}>{lstrings.stream_prompt_title}</Text>
           <TextField
             label={lstrings.stream_prompt_label}
@@ -148,8 +177,8 @@ export function AngleNamePrompt(
               onPress={start}
             />
           </View>
-        </View>
-      </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Modal>
   )
 }
@@ -170,12 +199,15 @@ const getStyles = cacheStyles((theme: Theme) => ({
     left: 0
   },
   sheet: {
+    flexGrow: 0,
     width: '100%',
     maxWidth: theme.rem(24),
-    padding: theme.rem(theme.spaceMdRem),
-    gap: theme.rem(theme.spaceMdRem),
     borderRadius: theme.rem(theme.radiusRem),
     backgroundColor: theme.cardBackgroundColor
+  },
+  sheetContent: {
+    padding: theme.rem(theme.spaceMdRem),
+    gap: theme.rem(theme.spaceMdRem)
   },
   title: {
     color: theme.primaryTextColor,
