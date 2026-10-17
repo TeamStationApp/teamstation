@@ -116,6 +116,11 @@ export function relationshipSides(
   sender: GroupRef | null = null,
   senderId?: number
 ): RequestSide[] {
+  if (terms.kind === 'membership')
+    return [
+      { kind: 'user', id: String(terms.userId) },
+      { kind: 'team', id: terms.teamId }
+    ]
   if (terms.kind === 'guardian') {
     const guardian: RequestSide = {
       kind: 'user',
@@ -727,7 +732,7 @@ export async function createRelationshipRequest(
       body.terms.kind === 'guardian'
         ? await authorizeGuardian(trx, fresh, sender, body.terms)
         : body.terms
-    if (terms.kind !== 'guardian') {
+    if (terms.kind !== 'guardian' && terms.kind !== 'membership') {
       if (sender == null) throw badRequest('Choose the sending organization')
       await requireGroupAdmin(trx, fresh, sender)
     }
@@ -740,7 +745,38 @@ export async function createRelationshipRequest(
       throw forbidden(
         'The sending organization must be a side of this invitation'
       )
-    if (terms.kind === 'parent') {
+    if (terms.kind === 'membership') {
+      if (sender != null || terms.userId !== fresh.userId)
+        throw forbidden('Request membership only for yourself')
+      const team = await trx
+        .selectFrom('teams')
+        .select(['kind', 'merged_into'])
+        .where('id', '=', terms.teamId)
+        .executeTakeFirst()
+      if (team?.kind !== 'full' || team.merged_into != null)
+        throw notFound('Choose a full TeamStation team')
+      const waiting = await trx
+        .selectFrom('group_requests')
+        .selectAll()
+        .where('kind', '=', 'membership')
+        .where('sender_id', '=', fresh.userId)
+        .where(sql<string>`terms->>'teamId'`, '=', terms.teamId)
+        .where('status', '=', 'pending')
+        .where('expires_at', '>', clock.now())
+        .executeTakeFirst()
+      if (waiting != null) {
+        await trx
+          .insertInto('creation_idempotency')
+          .values({
+            user_id: fresh.userId,
+            key: body.idempotencyKey,
+            body_hash: hash,
+            response: { id: waiting.id }
+          })
+          .execute()
+        return waiting
+      }
+    } else if (terms.kind === 'parent') {
       const live = await previewParents(trx, terms.preview.actions)
       if (!isDeepStrictEqual(live, terms.preview))
         throw conflict('Review the current parent preview before sending')
@@ -1035,6 +1071,36 @@ export async function finishRelationshipRequest(
         oc.columns(['season_id', 'team_id']).doUpdateSet({ active: true })
       )
       .execute()
+  } else if (terms.kind === 'membership') {
+    const approval = sides.find(side => side.scope_type === 'team')!
+    const scope = { kind: 'team' as const, id: terms.teamId }
+    const team = await db
+      .selectFrom('teams')
+      .select(['kind', 'merged_into'])
+      .where('id', '=', terms.teamId)
+      .executeTakeFirst()
+    if (team?.kind !== 'full' || team.merged_into != null) throw notFound()
+    await authorizePersonChange(
+      db,
+      scope,
+      terms.userId,
+      approval.approved_by!,
+      false
+    )
+    const added = await grantAt(
+      db,
+      scope,
+      terms.userId,
+      ['member'],
+      approval.approved_by!
+    )
+    await notifyGrant(db, {
+      ref: scope,
+      userId: terms.userId,
+      added,
+      actorId: approval.approved_by!,
+      at: clock.now()
+    })
   } else if (terms.kind === 'person') {
     const side = await db
       .selectFrom('group_request_sides')

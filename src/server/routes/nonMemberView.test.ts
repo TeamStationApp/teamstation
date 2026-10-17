@@ -325,6 +325,17 @@ describe('the non-member view', function () {
     })
 
   describe('for nobody signed in', function () {
+    it('allows public highlight thumbnails without allowing playback', async function () {
+      const { status, body } = await call(`/videos/${video}/highlights`, null)
+      expect(status).equals(200)
+      expect(body.highlights.length).greaterThan(0)
+      const still = await fetch(`${f.h.origin}${body.highlights[0].stillUrl}`, {
+        redirect: 'manual'
+      })
+      expect(still.status).equals(302)
+      expect((await call(`/videos/${video}/playback`, null)).status).equals(401)
+    })
+
     it('answers the public team page, not the non-member view', async function () {
       const { status, body } = await call(`/teams/${f.teamA}`, null)
       expect(status).equals(200)
@@ -339,7 +350,6 @@ describe('the non-member view', function () {
         `/seasons/${f.seasonA}/standings`,
         `/games/${game}`,
         `/games/${game}/box-score`,
-        `/videos/${video}/highlights`,
         `/videos/${video}/playback`,
         `/videos/${video}/still?t=60`
       ]) {

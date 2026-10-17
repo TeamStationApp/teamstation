@@ -1897,6 +1897,15 @@ function Shell(props: AppProps): React.ReactElement {
       // DJ Game is an iPhone's: on the web and Android its address shows
       // the game.
       <GameScreen
+        signedIn={session != null}
+        onSignIn={() => {
+          const destination: Route = {
+            name: 'signIn',
+            next: routePath(routeOf(tab, top, filters))
+          }
+          goToRoute(destination)
+          showRoute(destination)
+        }}
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
@@ -1965,6 +1974,15 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'scoreGame' ? null : top.name === 'game' ? (
       <GameScreen
+        signedIn={session != null}
+        onSignIn={() => {
+          const destination: Route = {
+            name: 'signIn',
+            next: routePath(routeOf(tab, top, filters))
+          }
+          goToRoute(destination)
+          showRoute(destination)
+        }}
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
