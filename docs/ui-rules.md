@@ -24,6 +24,9 @@ A row in a picker has:
   navigation choices such as Choose Team use a right chevron instead;
 - at least 48 points of height, and a hairline divider between rows.
 
+Group search results use the individual-card treatment below instead of shared
+row dividers; their identity layout is still a row, never a pill.
+
 A grid of plain cells is a row picker too: the calendar's days and the
 month grid. Its cells are text, the chosen one shaded, with no pill shell.
 
@@ -43,6 +46,31 @@ scene and returns the choice. `TeamSelectorScene` and the time zone picker
 are the examples. Such a picker is
 never a list expanding inside a card on the screen beneath.
 
+## Cards and collections
+
+Use the Home team row (`ListRow`) for group identities: a fixed-size logo or
+initials tile on the left, with left-aligned name and details vertically centered
+beside it. Omit missing details, including location; never show "Location not set"
+in a search result. Let content determine row height. Fewer lines make a shorter
+row, down to the logo height plus the row's padding. Keep every logo the same size
+and every text column at the same left edge, regardless of the number of lines.
+
+- **Search and other unbounded or infinite scrolling results:** give each item
+  its own white (theme card background) card with rounded corners, a subtle border
+  and shadow, and space between cards. Do not wrap the whole result list in one
+  white card. Discover and Add Team/management-relationship searches use
+  `GroupSearchCard`, which wraps the Home row in a single `Card`. This applies to
+  team, season and league search results, including additional relationship changes.
+- **Static collections on Home and settings screens:** group related people,
+  teams, seasons or leagues in one `ListCard`, with padded rows and hairline
+  dividers. Relationship lists with independent actions use `ActionList bounded`
+  and `GroupRelationshipRow`. Each category may have its own shared card.
+
+Navigation and a trailing action such as Follow remain separate touch targets.
+Do not nest the action inside the navigation button. Empty, loading and error
+states remain outside the result cards. Editable location fields may still explain
+that a location has not been set.
+
 ## Buttons
 
 ### Membership and access actions belong in list rows
@@ -54,10 +82,10 @@ put the name above quieter details in the flexible middle and a compact action
 at the right. Use short visible labels such as **Add**, **Leave**, **Revoke** or
 **End**, with an accessible label that also names the affected item.
 
-Separate rows with hairline dividers. Do not give each item its own bounding
-card or put a full-width action below its name. A shared list container may
-match the surrounding screen; a long scrolling list remains unbounded. Keep
-actions aligned, names readable and touch targets at least 48 points.
+In static collections, separate rows with hairline dividers inside one shared
+card. Search results use individual cards as described above. Do not put a
+full-width action below the item's name. Keep actions aligned, names readable
+and touch targets at least 48 points.
 Use green for adding/enabling and red for removing/ending. Destructive actions
 open a confirmation modal; opening or cancelling it must not change the item.
 Use `ActionRow` and `ActionList` for these collections, with
