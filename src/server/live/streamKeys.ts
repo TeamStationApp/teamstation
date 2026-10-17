@@ -457,6 +457,38 @@ export async function placeByPublisher(
   startedAt: Date,
   now = new Date()
 ): Promise<boolean> {
+  return await placeVideoStart(db, streamId, startedAt, now, ['liveSession'])
+}
+
+/**
+ * Places a stream's live video where the wall clock its first writer's
+ * pictures carry says the first of them was captured, on the server's clock
+ * (`FrameWall`).
+ *
+ * The same account as `placeByPublisher`'s, read off the picture the video
+ * actually starts with rather than the one the publisher sent first, so it
+ * takes the place of a start the publisher reported; one somebody set by
+ * hand, or an upload's, stays. Answers whether the video moved.
+ */
+export async function placeByFrameWall(
+  db: Kysely<Database>,
+  streamId: string,
+  startedAt: Date,
+  now = new Date()
+): Promise<boolean> {
+  return await placeVideoStart(db, streamId, startedAt, now, [
+    'liveSession',
+    'publisher'
+  ])
+}
+
+async function placeVideoStart(
+  db: Kysely<Database>,
+  streamId: string,
+  startedAt: Date,
+  now: Date,
+  replacing: Array<'liveSession' | 'publisher'>
+): Promise<boolean> {
   const row = await db
     .selectFrom('live_streams')
     .select(['video_id as videoId', 'first_published_at as firstPublishedAt'])
@@ -477,7 +509,7 @@ export async function placeByPublisher(
     .where(eb =>
       eb.or([
         eb('start_at_source', 'is', null),
-        eb('start_at_source', '=', 'liveSession')
+        eb('start_at_source', 'in', replacing)
       ])
     )
     .executeTakeFirst()

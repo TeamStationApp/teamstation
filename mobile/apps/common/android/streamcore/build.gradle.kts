@@ -40,6 +40,11 @@ android {
                 // The golden vectors TS Director's tests write, which the stream and recording ports
                 // assert byte for byte.
                 test.systemProperty("mediaFixtures", file("../../MediaFixtures").absolutePath)
+                // The wall-clock SEI's byte vectors, which TeamStation's and TS Director's tests check
+                // as well.
+                val seiVectors = file("../../../../../src/test/wallClockSeiVectors.json")
+                test.systemProperty("wallClockSeiVectors", seiVectors.absolutePath)
+                test.inputs.file(seiVectors)
                 // The end-to-end runs (RtmpInteropTest, RecordingExportTest) are gated on these, and
                 // must run again whenever they change rather than be skipped as up to date.
                 listOf(

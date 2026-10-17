@@ -5,10 +5,24 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 import {
+  hevcInit,
+  hevcSegment,
+  IDR_SLICE,
+  wallClockNal
+} from './frameWallFixture'
+import {
   LEADING_BOX_BYTES,
+  listedTimelineEndSec,
+  moveSegmentOnTimeline,
   placeSegmentOnTimeline,
+  readFrameWall,
   readLeadingBoxes,
+  readLeadingBoxesSync,
   recoverUnstampedSegments,
+  restampSegments,
+  segmentName,
+  segmentNumber,
+  segmentsFrom,
   stampNewSegments,
   timelineStartSec
 } from './segmentClock'
@@ -100,7 +114,8 @@ describe('placing a returned segment on the programme clock', function () {
       writeFileSync(join(dir, 'init.mp4'), init)
       writeFileSync(join(dir, 'seg000000.m4s'), prior)
       writeFileSync(join(dir, 'seg000001.m4s'), added)
-      const moved = stampNewSegments(dir, 12, new Set(['seg000000.m4s']))
+      expect(segmentsFrom(dir, 1)).deep.equals(['seg000001.m4s'])
+      const moved = stampNewSegments(dir, 12, segmentsFrom(dir, 1))
       expect(moved).deep.equals(['seg000001.m4s'])
       expect(readFileSync(join(dir, 'seg000000.m4s')).equals(prior)).equals(
         true
@@ -108,9 +123,8 @@ describe('placing a returned segment on the programme clock', function () {
       const next = readFileSync(join(dir, 'seg000001.m4s'))
       const at = next.indexOf('tfdt')
       expect(next.readUInt32BE(at + 8)).equals(12_000)
-      expect(
-        stampNewSegments(dir, 12, new Set(['seg000000.m4s', ...moved]))
-      ).deep.equals([])
+      expect(segmentsFrom(dir, 2)).deep.equals([])
+      expect(stampNewSegments(dir, 12, segmentsFrom(dir, 2))).deep.equals([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -133,6 +147,54 @@ describe('placing a returned segment on the programme clock', function () {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('reads a segment start in its own sidx timescale, whichever track comes first', function () {
+    // The FLV demuxer's first packet decides the track order, so the sound
+    // can be the init segment's first track while the sidx is the picture's.
+    const soundFirst = Buffer.concat([
+      box('ftyp', Buffer.alloc(8)),
+      // A stray 'mdhd' in the bytes ahead of the tracks is not a box.
+      box(
+        'free',
+        Buffer.from('mdhd\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\x01', 'latin1')
+      ),
+      box(
+        'moov',
+        Buffer.concat([track(1, 48000, 'soun'), track(2, 90000, 'vide')])
+      )
+    ])
+    expect(
+      timelineStartSec(
+        soundFirst,
+        Buffer.concat([sidx(0, 90000, 360_000n), fragment(2, 0, 360_000n)])
+      )
+    ).closeTo(4, 1e-9)
+    expect(
+      timelineStartSec(
+        soundFirst,
+        Buffer.concat([
+          box('styp', Buffer.alloc(8)),
+          sidx(1, 48000, 192_000n),
+          fragment(1, 1, 192_000n)
+        ])
+      )
+    ).closeTo(4, 1e-9)
+    // A 'sidx' that is only bytes inside another box is not read.
+    expect(
+      timelineStartSec(
+        soundFirst,
+        Buffer.concat([
+          box('free', Buffer.from('sidx', 'latin1')),
+          fragment(2, 0, 0n)
+        ])
+      )
+    ).equals(undefined)
+    // With no timescale of its own, the sidx is read in its track's.
+    const bare = sidx(0, 0, 180_000n)
+    bare.writeUInt32BE(2, 12)
+    expect(timelineStartSec(soundFirst, bare)).closeTo(2, 1e-9)
+    expect(timelineStartSec(soundFirst, sidx(0, 0, 180_000n))).equals(undefined)
   })
 
   it('stamps a segment left at the publisher zero when the continuation is past the media', async function () {
@@ -179,6 +241,86 @@ describe('placing a returned segment on the programme clock', function () {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('reads only the segments from the first one a writer left unstamped', async function () {
+    const dir = mkdtempSync(join(tmpdir(), 'ts-segment-clock-'))
+    try {
+      writeFileSync(join(dir, 'init.mp4'), init)
+      writeFileSync(
+        join(dir, 'seg000000.m4s'),
+        Buffer.concat([sidx(0, 1000, 0n), fragment(1, 0, 0n)])
+      )
+      // Looks unstamped, but the writer before said it is placed.
+      const known = Buffer.concat([sidx(0, 1000, 66n), fragment(1, 0, 0n)])
+      writeFileSync(join(dir, 'seg000001.m4s'), known)
+      writeFileSync(
+        join(dir, 'seg000002.m4s'),
+        Buffer.concat([sidx(0, 1000, 4066n), fragment(1, 0, 4000n)])
+      )
+      const playlist = [
+        '#EXTM3U',
+        '#EXT-X-PROGRAM-DATE-TIME:2026-10-14T16:00:00.000Z',
+        '#EXTINF:4.000000,',
+        'seg000000.m4s',
+        '#EXT-X-PROGRAM-DATE-TIME:2026-10-14T16:00:30.000Z',
+        '#EXTINF:4.000000,',
+        'seg000001.m4s',
+        '#EXT-X-PROGRAM-DATE-TIME:2026-10-14T16:00:34.000Z',
+        '#EXTINF:4.000000,',
+        'seg000002.m4s',
+        ''
+      ].join('\n')
+      expect(await recoverUnstampedSegments(dir, playlist, 38, 2)).deep.equals([
+        'seg000002.m4s'
+      ])
+      expect(readFileSync(join(dir, 'seg000001.m4s')).equals(known)).equals(
+        true
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('judges the first segment it reads against the listed ones it skips', async function () {
+    const dir = mkdtempSync(join(tmpdir(), 'ts-segment-clock-'))
+    try {
+      writeFileSync(join(dir, 'init.mp4'), init)
+      for (const name of ['seg000000.m4s', 'seg000001.m4s']) {
+        writeFileSync(
+          join(dir, name),
+          Buffer.concat([sidx(0, 1000, 0n), fragment(1, 0, 0n)])
+        )
+      }
+      // Half a second behind its date, and with no gap before it: not a
+      // return, whether or not the segment before it is read.
+      const playlist = [
+        '#EXTM3U',
+        '#EXT-X-PROGRAM-DATE-TIME:2026-10-14T16:00:00.000Z',
+        '#EXTINF:0.500000,',
+        'seg000000.m4s',
+        '#EXT-X-PROGRAM-DATE-TIME:2026-10-14T16:00:00.500Z',
+        '#EXTINF:0.500000,',
+        'seg000001.m4s',
+        ''
+      ].join('\n')
+      expect(await recoverUnstampedSegments(dir, playlist, 1, 0)).deep.equals(
+        []
+      )
+      expect(await recoverUnstampedSegments(dir, playlist, 1, 1)).deep.equals(
+        []
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('names segments as the writer does', function () {
+    expect(segmentName(7)).equals('seg000007.m4s')
+    expect(segmentName(1_234_567)).equals('seg1234567.m4s')
+    expect(segmentNumber('seg000042.m4s')).equals(42)
+    expect(segmentNumber('seg000042.m4s.tmp')).equals(undefined)
+    expect(segmentNumber('init.mp4')).equals(undefined)
   })
 
   it('leaves a segment already moved onto its programme date', async function () {
@@ -266,6 +408,133 @@ describe('placing a returned segment on the programme clock', function () {
           readFileSync(join(dir, 'seg000001.m4s'))
         )
       ).closeTo(0.8, 0.001)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('the wall clock a segment carries', function () {
+  const captured = 1_790_000_000_123
+
+  it('reads the first picture’s wall clock and its place in the segment', function () {
+    const nal = wallClockNal(captured)
+    // The wall's zeros are escaped in the NAL, as an encoder writes them.
+    expect(nal.includes(Buffer.from([0, 0, 3]))).equals(true)
+    const found = readFrameWall(
+      hevcInit(),
+      hevcSegment(12, [nal, IDR_SLICE], { compositionSec: 0.5 })
+    )
+    expect(found?.capturedAtMs).equals(captured)
+    expect(found?.pictureSec).closeTo(12.5, 1e-9)
+  })
+
+  it('finds nothing from a publisher that sends none, or one on its own clock', function () {
+    expect(readFrameWall(hevcInit(), hevcSegment(4, [IDR_SLICE]))).equals(
+      undefined
+    )
+    // The corrected bit clear: the publisher had not measured the server's clock.
+    expect(
+      readFrameWall(
+        hevcInit(),
+        hevcSegment(4, [wallClockNal(captured, false), IDR_SLICE])
+      )
+    ).equals(undefined)
+    // An SEI after the picture belongs to no frame.
+    expect(
+      readFrameWall(
+        hevcInit(),
+        hevcSegment(4, [IDR_SLICE, wallClockNal(captured)])
+      )
+    ).equals(undefined)
+    expect(readFrameWall(hevcInit(), Buffer.alloc(40))).equals(undefined)
+    expect(readFrameWall(Buffer.alloc(40), hevcSegment(4, [IDR_SLICE]))).equals(
+      undefined
+    )
+  })
+
+  it('reads it from the opening bytes alone, behind a large picture', function () {
+    const big = Buffer.concat([IDR_SLICE, Buffer.alloc(300_000, 0x55)])
+    const dir = mkdtempSync(join(tmpdir(), 'ts-frame-wall-'))
+    try {
+      writeFileSync(
+        join(dir, 'seg000001.m4s'),
+        hevcSegment(0, [wallClockNal(captured), big])
+      )
+      const found = readFrameWall(
+        hevcInit(),
+        readLeadingBoxesSync(join(dir, 'seg000001.m4s'))
+      )
+      expect(found?.capturedAtMs).equals(captured)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('moving a segment already placed', function () {
+  it('moves it back as exactly as forward, and never before zero', function () {
+    const segment = Buffer.concat([
+      sidx(1, 1000, 5n),
+      fragment(1, 1, 0n),
+      fragment(2, 0, 100n)
+    ])
+    const placed = placeSegmentOnTimeline(init, segment, 30.7)!
+    const back = moveSegmentOnTimeline(init, placed, 30.7, 30)!
+    expect(back.equals(placeSegmentOnTimeline(init, segment, 30)!)).equals(true)
+    expect(() => moveSegmentOnTimeline(init, placed, 30.7, -1)).throws(
+      /before zero/
+    )
+  })
+
+  it('restamps only the segments it is given', function () {
+    const dir = mkdtempSync(join(tmpdir(), 'ts-restamp-'))
+    try {
+      writeFileSync(join(dir, 'init.mp4'), init)
+      const segment = Buffer.concat([sidx(1, 1000, 0n), fragment(1, 1, 0n)])
+      const listed = placeSegmentOnTimeline(init, segment, 10)!
+      writeFileSync(join(dir, 'seg000000.m4s'), listed)
+      writeFileSync(
+        join(dir, 'seg000001.m4s'),
+        placeSegmentOnTimeline(init, segment, 40)!
+      )
+      expect(
+        restampSegments(dir, ['seg000001.m4s', 'gone.m4s'], 40, 40.7)
+      ).deep.equals(['seg000001.m4s'])
+      const start = (name: string): number | undefined =>
+        timelineStartSec(init, readFileSync(join(dir, name)))
+      expect(start('seg000001.m4s')).closeTo(40.7, 1e-9)
+      expect(readFileSync(join(dir, 'seg000000.m4s')).equals(listed)).equals(
+        true
+      )
+      expect(restampSegments(dir, ['seg000001.m4s'], 40.7, 40.7)).deep.equals(
+        []
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('finds where the listed timeline ends from the last segment’s own stamp', async function () {
+    const dir = mkdtempSync(join(tmpdir(), 'ts-listed-end-'))
+    try {
+      writeFileSync(join(dir, 'init.mp4'), init)
+      const segment = Buffer.concat([sidx(1, 1000, 0n), fragment(1, 1, 0n)])
+      writeFileSync(
+        join(dir, 'seg000003.m4s'),
+        placeSegmentOnTimeline(init, segment, 42.5)!
+      )
+      const playlist = [
+        '#EXTM3U',
+        '#EXTINF:4.000000,',
+        'seg000002.m4s',
+        '#EXTINF:3.960000,',
+        'seg000003.m4s',
+        ''
+      ].join('\n')
+      expect(await listedTimelineEndSec(dir, playlist)).closeTo(46.46, 1e-9)
+      expect(await listedTimelineEndSec(dir, '#EXTM3U\n')).equals(undefined)
+      expect(await listedTimelineEndSec(dir, undefined)).equals(undefined)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

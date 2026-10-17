@@ -42,6 +42,7 @@ import {
   statusFor,
   stopIngest
 } from './splitter'
+import { placeByFrameWall } from './streamKeys'
 import { resumeScan, type ScanCursor, scanNewSegments } from './wallAnchors'
 
 /**
@@ -440,6 +441,10 @@ async function handle(
     await beganPublishing(current, event.liveStreamId)
     return
   }
+  if (event.type === 'publisherPlaced') {
+    await placeByFrameWall(db, event.liveStreamId, event.startedAt)
+    return
+  }
   await stoppedPublishing(current, event.liveStreamId, event.reason)
 }
 
@@ -610,6 +615,7 @@ export async function resolveKey(
 
   const row = await db
     .selectFrom('live_streams')
+    .leftJoin('videos', 'videos.id', 'live_streams.video_id')
     .select([
       'live_streams.id as id',
       'live_streams.user_id as userId',
@@ -618,7 +624,8 @@ export async function resolveKey(
       'live_streams.state as state',
       'live_streams.opens_at as opensAt',
       'live_streams.closes_at as closesAt',
-      'live_streams.video_id as videoId'
+      'live_streams.video_id as videoId',
+      'videos.start_at as videoStartAt'
     ])
     .where('live_streams.key_hash', '=', hashToken(key))
     // `ended` and `revoked` are looked up too, so that a key which *was* ours
@@ -672,8 +679,16 @@ export async function resolveKey(
   return {
     liveStreamId: row.id,
     hlsDir,
-    destinations: []
+    destinations: [],
+    videoStartMs: millisOf(row.videoStartAt)
   }
+}
+
+/** A row's timestamp in milliseconds, or undefined when it has none. */
+function millisOf(value: Date | string | null | undefined): number | undefined {
+  if (value == null) return undefined
+  const ms = new Date(value).getTime()
+  return Number.isFinite(ms) ? ms : undefined
 }
 
 /**
@@ -690,6 +705,7 @@ export async function sync(
 
   const rows = await db
     .selectFrom('live_streams')
+    .leftJoin('videos', 'videos.id', 'live_streams.video_id')
     .select([
       'live_streams.id as id',
       'live_streams.user_id as userId',
@@ -702,7 +718,8 @@ export async function sync(
       'live_streams.video_id as videoId',
       'live_streams.last_published_at as lastPublishedAt',
       'live_streams.last_error as lastError',
-      'live_streams.local_recording as localRecording'
+      'live_streams.local_recording as localRecording',
+      'videos.start_at as videoStartAt'
     ])
     .where(eb =>
       eb.or([
@@ -820,7 +837,12 @@ export async function sync(
 
       const hlsDir = liveVideoDir(mediaRoot, row.videoId)
       await mkdir(hlsDir, { recursive: true })
-      setLive(key, { liveStreamId: row.id, hlsDir, destinations: [] })
+      setLive(key, {
+        liveStreamId: row.id,
+        hlsDir,
+        destinations: [],
+        videoStartMs: millisOf(row.videoStartAt)
+      })
       tracked.set(row.id, { key, videoId: row.videoId })
       wanted.add(key)
       await recordWallPoints(current, row.videoId, hlsDir)

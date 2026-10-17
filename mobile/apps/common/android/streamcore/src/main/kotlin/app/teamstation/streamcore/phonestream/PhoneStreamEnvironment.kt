@@ -29,6 +29,12 @@ interface PhoneStreamOutput : StreamPublishing, ProgrammeStreamTarget {
 
     /** When the first picture this publish sent was captured, in wall seconds; null before one has gone. */
     val liveTimelineStart: Double?
+
+    /**
+     * TeamStation's clock less the wall clock, in milliseconds: while it is set, every frame's
+     * wall-clock SEI is on that clock ([ProgramStreamer.serverClockOffsetMs]).
+     */
+    var serverClockOffsetMs: Int?
 }
 
 /** [ProgramStreamer] as the phone's stream. */
@@ -37,6 +43,11 @@ class ProgramStreamerOutput(val streamer: ProgramStreamer) : PhoneStreamOutput, 
     override fun append(audio: AudioFrame) = streamer.append(audio)
     override fun onInputSurface(listener: ((Surface?) -> Unit)?) = streamer.onInputSurface(listener)
     override val liveTimelineStart: Double? get() = streamer.liveTimelineStart
+    override var serverClockOffsetMs: Int?
+        get() = streamer.serverClockOffsetMs
+        set(value) {
+            streamer.serverClockOffsetMs = value
+        }
 }
 
 /**
@@ -82,6 +93,8 @@ class PhoneStreamEnvironment(
     val heartbeatSeconds: Double = 5.0,
     val statusIntervalSeconds: Double = 0.25,
     val storageCheckSeconds: Double = 5.0,
+    /** How often TeamStation's clock is measured again while a take streams. */
+    val serverClockIntervalSeconds: Double = PhoneStreamEngine.SERVER_CLOCK_INTERVAL_MILLIS / 1000.0,
     /** The first wait before a lost camera is asked to open again; each try after waits twice as long. */
     val cameraReopenSeconds: Double = 1.0,
     /** How long a stop waits for the recording's mix to hand over the sound up to the stop. */

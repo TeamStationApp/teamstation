@@ -125,8 +125,8 @@ export async function toRecording(
 }
 
 /**
- * Where a segment sits on the playlist's timeline, from its `sidx` and the
- * init segment's timescale. Undefined when either box is missing.
+ * Where a segment sits on the playlist's timeline, from its `sidx` in that
+ * box's own timescale (`timelineStartSec`). Undefined when it has none.
  */
 export function segmentTimelineStart(
   init: Buffer,

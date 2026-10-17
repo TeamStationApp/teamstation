@@ -8,11 +8,13 @@ import app.teamstation.streamcore.rtmp.AMF0
 import app.teamstation.streamcore.rtmp.ChannelRTMPTransport
 import app.teamstation.streamcore.rtmp.FLVTag
 import app.teamstation.streamcore.rtmp.FakeRtmpServer
+import app.teamstation.streamcore.rtmp.FrameWallClock
 import app.teamstation.streamcore.rtmp.RTMPClient
 import app.teamstation.streamcore.rtmp.RTMPClientError
 import app.teamstation.streamcore.rtmp.RTMPMessageType
 import app.teamstation.streamcore.rtmp.RTMPURL
 import app.teamstation.streamcore.rtmp.RTMPVideoCodec
+import app.teamstation.streamcore.rtmp.WallClockSEI
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
@@ -168,6 +170,29 @@ class ProgramStreamerTest {
         }
     }
 
+    /**
+     * The wall and the corrected bit of the wall-clock SEI in an FLV video tag: the bytes after its
+     * UUID, with emulation prevention taken out.
+     */
+    private fun seiWall(payload: ByteArray): Pair<Long, Boolean> {
+        val at = (0..payload.size - 16).first { start -> (0 until 16).all { payload[start + it] == WallClockSEI.UUID[it] } } + 16
+        val rbsp = mutableListOf<Int>()
+        var zeros = 0
+        var index = at
+        while (rbsp.size < 10) {
+            val value = payload[index++].toInt() and 0xFF
+            if (zeros >= 2 && value == 3) {
+                zeros = 0
+                continue
+            }
+            rbsp += value
+            zeros = if (value == 0) zeros + 1 else 0
+        }
+        assertEquals(WallClockSEI.VERSION, rbsp[0])
+        val wall = (1..8).fold(0L) { sum, i -> (sum shl 8) or rbsp[i].toLong() }
+        return wall to (rbsp[9] and 1 == 1)
+    }
+
     private fun frame(keyframe: Boolean) = EncodedVideoFrame(
         nalUnits = listOf(if (keyframe) idr else trail),
         parameterSets = if (keyframe) listOf(vps, sps, pps) else emptyList(),
@@ -228,10 +253,14 @@ class ProgramStreamerTest {
         assertTrue(FLVTag.isVideoKeyframe(video[1].payload))
         assertEquals(0L, video[1].timestamp)
         assertTrue(video[2].timestamp in 31L..34L)
-        assertArrayEquals(
-            FLVTag.videoFrame(RTMPVideoCodec.HEVC, false, ProgramStreamer.lengthPrefixed(listOf(trail))),
-            video[2].payload
-        )
+        // Every picture carries when it was captured, its stamp on the wall clock, on the phone's own
+        // clock until the host has measured TeamStation's.
+        val (firstWall, firstCorrected) = seiWall(video[1].payload)
+        assertEquals(Math.round(start * 1000), firstWall)
+        assertFalse(firstCorrected)
+        val (secondWall, secondCorrected) = seiWall(video[2].payload)
+        assertEquals((firstWall + video[2].timestamp - video[1].timestamp).toDouble(), secondWall.toDouble(), 1.0)
+        assertFalse(secondCorrected)
         val sound = server.messages(RTMPMessageType.AUDIO)
         assertTrue(FLVTag.isAudioSequenceHeader(sound[0].payload))
         assertEquals(listOf(456L, 456L, 477L), sound.take(3).map { it.timestamp })
@@ -255,6 +284,50 @@ class ProgramStreamerTest {
         assertEquals(listOf("session 1", "session -1"), telemetry.events.filter { it.startsWith("session") })
         assertFalse(streamer.append(wall))
         streamer.append(AudioFrame(ShortArray(2048), wallClock = wall))
+    }
+
+    @Test
+    fun everyFrameCarriesItsWallClockOnTheServersClockOnceKnown() {
+        val server = FakeRtmpServer().also { closers += it }
+        val streamer = streamer()
+        runBlocking { streamer.start(server.url, StreamSettings(), null) }
+        val encoder = videos.single()
+        val start = wall
+        assertTrue(streamer.append(wall))
+        encoder.output!!.onFrame(frame(true))
+        // Measured: TeamStation's clock reads 3.25 s ahead of the phone's.
+        streamer.serverClockOffsetMs = 3_250
+        wall += 1.0 / 30
+        assertTrue(streamer.append(wall))
+        encoder.output!!.onFrame(frame(false))
+
+        waitFor { server.messages(RTMPMessageType.VIDEO).size == 3 }
+        val video = server.messages(RTMPMessageType.VIDEO)
+        // After the decoder configuration, the keyframe on the phone's own clock, the corrected bit
+        // clear, and the SEI ahead of the picture.
+        val own = FrameWallClock(Math.round(start * 1000), null)
+        assertArrayEquals(
+            FLVTag.videoFrame(RTMPVideoCodec.HEVC, true, ProgramStreamer.lengthPrefixed(own.inserted(listOf(idr), RTMPVideoCodec.HEVC))),
+            video[1].payload
+        )
+        // The next, on TeamStation's clock with the bit set: its own stamp plus the offset.
+        val (wall, corrected) = seiWall(video[2].payload)
+        assertTrue(corrected)
+        assertEquals((Math.round(start * 1000) + video[2].timestamp - video[1].timestamp + 3_250).toDouble(), wall.toDouble(), 1.0)
+        assertArrayEquals(
+            FLVTag.videoFrame(
+                RTMPVideoCodec.HEVC,
+                false,
+                ProgramStreamer.lengthPrefixed(listOf(WallClockSEI.encode(RTMPVideoCodec.HEVC, wall, corrected = true), trail))
+            ),
+            video[2].payload
+        )
+
+        // The next publish keeps the offset: the clocks did not move apart in the redial.
+        streamer.stop()
+        runBlocking { streamer.start(server.url, StreamSettings(), null) }
+        assertEquals(3_250, streamer.serverClockOffsetMs)
+        streamer.stop()
     }
 
     @Test
