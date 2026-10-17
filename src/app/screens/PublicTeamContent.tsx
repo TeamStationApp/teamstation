@@ -25,9 +25,11 @@ import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
 export function PublicTeamContent({
   detail,
   tab,
+  membershipAccess,
   onOpenGame
 }: {
   detail: GroupDetail
+  membershipAccess?: React.ReactNode
   tab: 'videos' | 'schedule' | 'team' | 'stats'
   onOpenGame?: (
     id: string,
@@ -38,9 +40,13 @@ export function PublicTeamContent({
   const styles = getStyles(useTheme())
   if (tab === 'stats')
     return (
-      <Text style={styles.hint}>
-        Team membership is required to view statistics.
-      </Text>
+      <>
+        {membershipAccess ?? (
+          <Text style={styles.hint}>
+            Team membership is required to view statistics.
+          </Text>
+        )}
+      </>
     )
   if (tab === 'videos') {
     const videos = detail.games.filter(game => (game.videoCount ?? 0) > 0)

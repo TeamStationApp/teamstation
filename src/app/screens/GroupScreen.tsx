@@ -24,6 +24,8 @@ export interface GroupLinkChoice {
 }
 export interface GroupScreenProps {
   client: TeamStationClient
+  signedIn?: boolean
+  onSignIn?: () => void
   groupRef: GroupRef
   onOpen: (group: GroupRef) => void
   onOpenTeam?: (team: TeamSummary) => void
@@ -57,6 +59,8 @@ export function GroupScreen(props: GroupScreenProps): React.ReactElement {
   if (props.groupRef.kind === 'team')
     return (
       <TeamPage
+        signedIn={props.signedIn}
+        onSignIn={props.onSignIn}
         client={props.client}
         id={props.groupRef.id}
         initialTab={props.initialTab}
@@ -110,7 +114,7 @@ function GroupContent({
   onTab,
   initialWhen,
   onWhen
-}: GroupScreenProps): React.ReactElement {
+}: Omit<GroupScreenProps, 'signedIn' | 'onSignIn'>): React.ReactElement {
   const styles = getStyles(useTheme())
   const { kind, id } = groupRef
   const [detail, setDetail] = useState<GroupDetail | undefined>()
