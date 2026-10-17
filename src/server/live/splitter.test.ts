@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
-import { remuxToHls, VIDEO_FILE } from '../media/ffmpeg'
+import { remuxToHls, remuxToHlsArgs, VIDEO_FILE } from '../media/ffmpeg'
 import { fileForRemux, timelineHole } from './finishVideo'
 import {
   hevcInit,
@@ -1849,8 +1849,8 @@ describe('a live playlist through a reconnect', function () {
     ).equals(false)
   })
 
-  it('keeps a timestamp hole when the live playlist is remuxed', async function () {
-    this.timeout(30_000)
+  it("fills a live recording's hole with black and silence at the stream's frame rate, with the return at its own time", async function () {
+    this.timeout(60_000)
     let ffmpeg = process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
     try {
       execFileSync(ffmpeg, ['-version'])
@@ -1867,10 +1867,19 @@ describe('a live playlist through a reconnect', function () {
       'lavfi',
       '-i',
       'testsrc2=size=160x120:rate=30:duration=1',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:sample_rate=48000:duration=1',
       '-c:v',
-      'libx264',
-      '-g',
-      '30',
+      'libx265',
+      // A phone's pictures come in the order they are shown.
+      '-x265-params',
+      'log-level=error:bframes=0:keyint=30:min-keyint=30',
+      '-tag:v',
+      'hvc1',
+      '-c:a',
+      'aac',
       '-f',
       'hls',
       '-hls_time',
@@ -1961,15 +1970,21 @@ describe('a live playlist through a reconnect', function () {
       hole = Math.max(hole, listed[i] - listed[i - 1])
     }
     expect(hole).closeTo(30, 1)
-    const source = await fileForRemux(dir)
-    const scratch = readdirSync(join(dir, '.holes'))
-    expect(scratch.some(name => name.endsWith('.mp4'))).equals(false)
+    const source = await fileForRemux(dir, ffmpeg)
+    // Only the init segment is rewritten; the phone's segments are read in
+    // place.
+    const scratch = readdirSync(join(dir, '.holes')).sort()
+    expect(scratch).deep.equals([
+      'filler0.mp4',
+      'init.mp4',
+      'list.txt',
+      'unfilled.txt'
+    ])
     const vod = join(dir, 'vod')
     mkdirSync(vod)
     await remuxToHls(ffmpeg, {
       input: source,
       outDir: vod,
-      videoTag: 'avc1',
       concatList: true
     })
     const probed = execFileSync(ffmpeg.replace(/ffmpeg$/, 'ffprobe'), [
@@ -1982,5 +1997,125 @@ describe('a live playlist through a reconnect', function () {
       join(vod, VIDEO_FILE)
     ])
     expect(Number(probed.toString().trim())).closeTo(32, 1)
+
+    // The hole is black at the stream's frame rate and silent at its sample
+    // rate, in the recording and in any later copy of it: every picture lasts
+    // one frame, none is replayed, and the return's keyframe (and its
+    // wall-clock point) opens at its live time.
+    const packets = (
+      file: string,
+      stream: string
+    ): Array<{ pts: number; duration: number; key: boolean }> =>
+      execFileSync(ffprobe, [
+        '-v',
+        'error',
+        '-select_streams',
+        stream,
+        '-show_entries',
+        'packet=pts_time,duration_time,flags',
+        '-of',
+        'csv=p=0',
+        file
+      ])
+        .toString()
+        .trim()
+        .split('\n')
+        .map(line => line.split(','))
+        .map(([pts, duration, flags]) => ({
+          pts: Number(pts),
+          duration: Number(duration),
+          key: flags.startsWith('K')
+        }))
+        .sort((a, b) => a.pts - b.pts)
+    const lumaAt = (file: string, second: number): number => {
+      const gray = execFileSync(ffmpeg, [
+        '-v',
+        'error',
+        '-ss',
+        String(second),
+        '-i',
+        file,
+        '-frames:v',
+        '1',
+        '-vf',
+        'extractplanes=y',
+        '-f',
+        'rawvideo',
+        'pipe:1'
+      ])
+      return gray.reduce((sum, value) => sum + value, 0) / gray.length
+    }
+    const loudestAt = (file: string, second: number): number => {
+      const pcm = execFileSync(ffmpeg, [
+        '-v',
+        'error',
+        '-ss',
+        String(second),
+        '-t',
+        '1',
+        '-i',
+        file,
+        '-vn',
+        '-f',
+        's16le',
+        'pipe:1'
+      ])
+      let loudest = 0
+      for (let i = 0; i + 1 < pcm.length; i += 2) {
+        loudest = Math.max(loudest, Math.abs(pcm.readInt16LE(i)))
+      }
+      return loudest
+    }
+    const copy = join(dir, 'copy')
+    mkdirSync(copy)
+    execFileSync(
+      ffmpeg,
+      remuxToHlsArgs({ input: join(vod, VIDEO_FILE), outDir: copy })
+    )
+    const live = packets(closed, 'v:0')
+    const liveSound = packets(closed, 'a:0')
+    const after = (
+      list: Array<{ pts: number; duration: number; key: boolean }>
+    ): number => list.findIndex(packet => packet.pts - list[0].pts > 10)
+    const liveReturn = live[after(live)].pts - live[0].pts
+    const liveSoundReturn = liveSound[after(liveSound)].pts - live[0].pts
+    expect(liveReturn).closeTo(31, 0.002)
+    const frame = 1 / 30
+    for (const file of [join(vod, VIDEO_FILE), join(copy, VIDEO_FILE)]) {
+      const pictures = packets(file, 'v:0')
+      const start = pictures[0].pts
+      expect(pictures.length, file).equals(live.length + 30 * 30)
+      for (let i = 1; i < pictures.length; i++) {
+        expect(pictures[i].pts - pictures[i - 1].pts, file).closeTo(
+          frame,
+          0.002
+        )
+      }
+      for (const picture of pictures) {
+        expect(picture.duration, file).closeTo(frame, 0.002)
+      }
+      const back = pictures.findIndex(
+        picture => Math.abs(picture.pts - start - liveReturn) < 0.002
+      )
+      expect(back, file).equals(30 + 30 * 30)
+      expect(pictures[back].key, file).equals(true)
+      expect(lumaAt(file, 16), file).closeTo(16, 1)
+      expect(lumaAt(file, 0.5), file).greaterThan(40)
+      expect(lumaAt(file, liveReturn + 0.5), file).greaterThan(40)
+
+      const sound = packets(file, 'a:0')
+      for (let i = 1; i < sound.length; i++) {
+        const gap = sound[i].pts - (sound[i - 1].pts + sound[i - 1].duration)
+        expect(gap, file).within(-0.0005, sound[i - 1].duration)
+      }
+      expect(
+        sound.some(
+          packet => Math.abs(packet.pts - start - liveSoundReturn) < 0.002
+        ),
+        file
+      ).equals(true)
+      expect(loudestAt(file, 16), file).equals(0)
+      expect(loudestAt(file, 0.2), file).greaterThan(1000)
+    }
   })
 })
