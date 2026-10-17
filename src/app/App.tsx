@@ -662,7 +662,8 @@ function Shell(props: AppProps): React.ReactElement {
       !(tab === 'search' && top == null) &&
       top?.name !== 'discover' &&
       top?.name !== 'group' &&
-      top?.name !== 'team'
+      top?.name !== 'team' &&
+      top?.name !== 'game'
     )
       return
     // Nor while an invitation is open, for the same reason.
@@ -1125,7 +1126,8 @@ function Shell(props: AppProps): React.ReactElement {
     (tab === 'search' && top == null) ||
     top?.name === 'discover' ||
     top?.name === 'group' ||
-    top?.name === 'team'
+    top?.name === 'team' ||
+    top?.name === 'game'
   if (session == null && props.fieldPreview !== true && !publicSurface) {
     // The sign-in screen must not be drawn until the question is answered: a
     // flash of it is how a link to a game becomes a link to the sign-in

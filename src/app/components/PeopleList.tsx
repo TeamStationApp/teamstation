@@ -56,22 +56,9 @@ export function PeopleList({
             />
             <ListCard>
               {listed.map(person => (
-                <ListRow
+                <PersonRow
                   key={person.userId}
-                  title={person.shortName}
-                  subtitle={peopleSubtitle(person)}
-                  emblem={initialsOf(person.shortName)}
-                  emblemUri={person.avatarUrl}
-                  emblemShape="circle"
-                  badgeLabel={inheritedPill(person)}
-                  badgeTone="neutral"
-                  trailing={
-                    // An empty string is not a jersey number. Without this
-                    // the row reads as a bare `#`.
-                    person.jersey == null || person.jersey.trim() === ''
-                      ? undefined
-                      : `#${person.jersey.trim()}`
-                  }
+                  person={person}
                   onPress={onOpen?.(person)}
                 />
               ))}
@@ -83,13 +70,54 @@ export function PeopleList({
   )
 }
 
+/** Shared member/public presentation; callers alone supply navigation. */
+type PersonPresentation = Pick<
+  RosterEntry,
+  | 'shortName'
+  | 'section'
+  | 'staffRoles'
+  | 'positions'
+  | 'teamNames'
+  | 'guardianOf'
+  | 'avatarUrl'
+  | 'inheritedFrom'
+  | 'jersey'
+>
+export function PersonRow({
+  person,
+  onPress
+}: {
+  person: PersonPresentation
+  onPress?: () => void
+}): React.ReactElement {
+  return (
+    <ListRow
+      title={person.shortName}
+      subtitle={peopleSubtitle(person)}
+      emblem={initialsOf(person.shortName)}
+      emblemUri={person.avatarUrl}
+      emblemShape="circle"
+      badgeLabel={inheritedPill(person)}
+      badgeTone="neutral"
+      trailing={
+        person.jersey == null || person.jersey.trim() === ''
+          ? undefined
+          : `#${person.jersey.trim()}`
+      }
+      onPress={onPress}
+    />
+  )
+}
+
 /**
  * The line under a name: a player's positions, or on a season's or league's
  * list the teams they play on; for an admin or staff the roles they hold,
  * `Coach · Scorekeeper`; and for a family member the players here they are a
  * parent or guardian of, `Parent/guardian of Avery S`.
  */
-export function peopleSubtitle(person: RosterEntry): string | undefined {
+export function peopleSubtitle<T extends PersonPresentation>(
+  person: T
+): string | undefined {
   if (person.section === 'family')
     return person.guardianOf != null && person.guardianOf.length > 0
       ? sprintf(lstrings.roster_guardian_of, person.guardianOf.join(', '))
@@ -108,7 +136,9 @@ export function peopleSubtitle(person: RosterEntry): string | undefined {
  * highest one: `Season coach`, `League admin`, and for a member of a season
  * or league above `Season spectator`.
  */
-export function inheritedPill(person: RosterEntry): string | undefined {
+export function inheritedPill(
+  person: Pick<RosterEntry, 'inheritedFrom'>
+): string | undefined {
   const from = person.inheritedFrom
   if (from == null) return undefined
   return sprintf(

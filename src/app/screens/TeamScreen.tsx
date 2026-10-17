@@ -78,9 +78,8 @@ export interface TeamScreenProps {
   publicDetail?: GroupDetail
   /**
    * Somebody signed in who is not a member, following the team or not: the
-   * members' page less what is kept for members. No batting or pitching, no
-   * video library, and no player pages, which answer them `404`. The
-   * schedule carries the thumbnails the Videos tab would have.
+   * members' page less what is kept for members. No batting or pitching and no player pages, which answer them `404`.
+   * The video library opens the game with playback unavailable.
    */
   nonMemberView?: boolean
   /** Revalidate private collections when the access adapter refreshes. */
@@ -422,14 +421,16 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       {loading && <Text style={styles.muted}>Loading…</Text>}
 
       {publicDetail != null && (
-        <PublicTeamContent detail={publicDetail} tab={tab} />
+        <PublicTeamContent
+          detail={publicDetail}
+          tab={tab}
+          onOpenGame={onOpenGame}
+        />
       )}
 
       {!loading && publicDetail == null && (
         <PinnedContent key={tab} part={pinned.content} testID="teamTabContent">
-          {tab === 'videos' && nonMemberView && <MembersOnly />}
-
-          {tab === 'videos' && !nonMemberView && (
+          {tab === 'videos' && (
             <View style={styles.section}>
               <SectionHeader
                 title="Game video library"
@@ -443,6 +444,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                     key={game.id}
                     game={game}
                     mode="videos"
+                    nonMemberView={nonMemberView}
                     teamId={team.id}
                     onOpen={onOpenGame}
                   />
@@ -476,8 +478,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                     }
                   >
                     {nonMemberView ? (
-                      // A visitor opens recordings from the schedule;
-                      // the library itself is kept for members.
+                      // Visitors can open every published game without
+                      // receiving member-only RSVP controls.
                       <GameCard
                         game={game}
                         mode="schedule"
@@ -520,7 +522,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                         onTeam: team.id
                       })
                     }
-                  if (managesPeople && onOpenPerson != null)
+                  if (!nonMemberView && managesPeople && onOpenPerson != null)
                     return () => {
                       onOpenPerson(person.userId, person.shortName, team.id)
                     }
