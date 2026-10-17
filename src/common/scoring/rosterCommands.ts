@@ -1,4 +1,11 @@
-import { asArray, asObject, asOptional, asString, type Cleaner } from 'cleaners'
+import {
+  asArray,
+  asBoolean,
+  asObject,
+  asOptional,
+  asString,
+  type Cleaner
+} from 'cleaners'
 
 import { asLiteral } from '../asLiteral'
 import { type Base, BASES, type JsonSchema, shortName } from './actions'
@@ -22,7 +29,13 @@ import {
  * him from what was said.
  */
 export type RosterCommand =
-  | { type: 'addPlayer'; side: Side; name: string; jersey?: string }
+  | {
+      type: 'addPlayer'
+      side: Side
+      name: string
+      jersey?: string
+      placeholder?: boolean
+    }
   | { type: 'setLineup'; side: Side; order: number[] }
   | {
       type: 'placeInLineup'
@@ -49,7 +62,13 @@ export interface PlayerSaid {
 
 /** A roster command's shape, with its players as `P` and its team as said. */
 type Said<P> =
-  | { type: 'addPlayer'; side?: Side; name: string; jersey?: string }
+  | {
+      type: 'addPlayer'
+      side?: Side
+      name: string
+      jersey?: string
+      placeholder?: boolean
+    }
   | { type: 'setLineup'; side?: Side; order: P[] }
   | {
       type: 'placeInLineup'
@@ -77,6 +96,20 @@ export type SaidRosterCommand = Said<PlayerSaid>
  * a `RosterQuestion` carries. A resolved `RosterCommand` is one too.
  */
 export type ChosenRosterCommand = Said<PlayerSaid | number>
+
+/** A model cannot turn an ordinary creation into a game-only player. */
+export function explicitPlaceholders<T extends ChosenRosterCommand>(
+  commands: readonly T[],
+  transcript: string
+): T[] {
+  return commands.map(command =>
+    command.type === 'addPlayer' &&
+    command.placeholder === true &&
+    !/\bplaceholders?\b/i.test(transcript)
+      ? { ...command, placeholder: false }
+      : command
+  )
+}
 
 export const ROSTER_COMMAND_TYPES = [
   'addPlayer',
@@ -135,7 +168,8 @@ function cleanersOf<P, S extends Side | undefined>(
       type: asLiteral('addPlayer'),
       side: asTeam,
       name: asString,
-      jersey: asOptional(asString)
+      jersey: asOptional(asString),
+      placeholder: asOptional(asBoolean)
     }),
     setLineup: asObject({
       type: asLiteral('setLineup'),
@@ -806,11 +840,16 @@ export function rosterToolSchema(): RosterTool[] {
   return [
     rosterTool(
       'addPlayer',
-      "Adds a new player to a team's roster for this game.",
+      'Creates a real player on the team roster by default. Only set placeholder true when the speaker explicitly says placeholder; that creates a game-only player.',
       {
         side: sideField,
         name: { type: 'string', description: "The player's name" },
-        jersey: { type: 'string', description: 'His number, digits only' }
+        jersey: { type: 'string', description: 'His number, digits only' },
+        placeholder: {
+          type: 'boolean',
+          description:
+            'True only when the speaker explicitly says placeholder. Otherwise omit or false: create a real rostered player.'
+        }
       },
       ['name']
     ),
