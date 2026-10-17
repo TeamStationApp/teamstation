@@ -15,6 +15,16 @@ struct BlankProgrammeHoleTests {
     #expect(!ArchiveRemux.leavesGapFrameBlank(hasNewPicture: false, hasShownPicture: true, hasLaterPicture: false))
   }
 
+  @Test("A hole is black once a second: its first frame, then every second after")
+  func blankFramesOnceASecond() {
+    #expect(ArchiveRemux.encodesBlankFrame(framesIntoHole: 0, rate: 30))
+    #expect(!ArchiveRemux.encodesBlankFrame(framesIntoHole: 1, rate: 30))
+    #expect(!ArchiveRemux.encodesBlankFrame(framesIntoHole: 29, rate: 30))
+    #expect(ArchiveRemux.encodesBlankFrame(framesIntoHole: 30, rate: 30))
+    #expect(ArchiveRemux.encodesBlankFrame(framesIntoHole: 120, rate: 60))
+    #expect(!ArchiveRemux.encodesBlankFrame(framesIntoHole: 30, rate: 60))
+  }
+
   @Test("Two parts thirty seconds apart export with a hole and no repeated picture")
   func holeIsWallClock() async throws {
     let root = FileManager.default.temporaryDirectory
@@ -45,18 +55,20 @@ struct BlankProgrammeHoleTests {
     )
     let asset = AVURLAsset(url: destination)
     let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
-    let holes = try await track.load(.segments).filter(\.isEmpty).map(\.timeMapping.target)
-    #expect(holes.count == 1)
-    #expect(abs((holes.first?.start.seconds ?? 0) - 0.5) < 0.002)
-    #expect(abs((holes.first?.duration.seconds ?? 0) - 30) < 0.002, "hole \(holes)")
-    let times = try await presentationTimes(destination).filter(\.isFinite)
+    #expect(try await track.load(.segments).allSatisfy { !$0.isEmpty }, "no edit leaves the hole")
+    let times = try await presentationTimes(destination).filter(\.isFinite).sorted()
     #expect(times.count < 80, "\(times.count) pictures, a repeated hole would be hundreds")
+    // A black picture at the start of the hole and every second after, then the second part on time.
+    let hole = times.filter { $0 > 0.49 && $0 < 30.49 }
+    #expect(hole.count == 30, "\(hole)")
+    #expect(zip(hole, hole.dropFirst()).allSatisfy { abs($1 - $0 - 1) < 0.002 }, "\(hole)")
+    #expect(abs((times.first { $0 > 30.49 } ?? 0) - 30.5) < 0.002)
   }
 
   /// A phone's programme with a part, a ten-second absence, and a part that stops a second before
   /// the window does, with sound, as the phone exports it.
-  @Test("The picture before a hole lasts one frame, the hole is an empty edit, and the track runs the whole length")
-  func holeIsAnEmptyEdit() async throws {
+  @Test("The picture before a hole lasts one frame, the hole is black a picture a second, and the track runs the whole length")
+  func holeIsBlackOnceASecond() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("blank-edit-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -84,43 +96,54 @@ struct BlankProgrammeHoleTests {
     let sound = try #require(try await asset.loadTracks(withMediaType: .audio).first)
     #expect(abs(try await sound.load(.timeRange).duration.seconds - 12) < 0.05)
 
-    // The first part, the hole, then the second part and the tail after it.
-    let segments = try await track.load(.segments)
-    try #require(segments.map(\.isEmpty) == [false, true, false])
-    let targets = segments.map(\.timeMapping.target)
-    #expect(abs(targets[0].end.seconds - 0.5) < 0.002)
-    #expect(abs(targets[1].duration.seconds - 10) < 0.002)
-    #expect(abs(targets[2].end.seconds - 12) < 0.002)
+    // One edit, the whole file: no reader has an edit list to apply.
+    #expect(try await track.load(.segments).allSatisfy { !$0.isEmpty })
 
-    // The sample before the hole is shown from one frame before the edit ends, and no sample in the
-    // file is longer than a few frames: nothing is stretched across the hole.
+    // The last picture before the hole lasts one frame. The hole is ten black pictures a second
+    // apart, each lasting a second. The second part starts at its own instant on a keyframe, and no
+    // sample in the file lasts more than a second.
     let samples = try await timing(destination)
-    let before = try #require(samples.filter { $0.start < segments[0].timeMapping.source.end.seconds - 0.001 }
-      .map(\.start).max())
-    #expect(abs(segments[0].timeMapping.source.end.seconds - before - 1 / 30) < 0.002)
+    let before = try #require(samples.last { $0.start < 0.49 })
+    #expect(abs(before.start - 14.0 / 30) < 0.002)
+    #expect(abs(before.duration - 1.0 / 30) < 0.002, "the picture before the hole lasts \(before.duration) s")
+    let hole = samples.filter { $0.start > 0.49 && $0.start < 10.49 }
+    #expect(hole.map(\.start).enumerated().allSatisfy { abs($1 - 0.5 - Double($0)) < 0.002 }, "\(hole)")
+    #expect(hole.count == 10 && hole.allSatisfy { abs($0.duration - 1) < 0.002 }, "\(hole)")
+    let after = try #require(samples.first { $0.start > 10.49 })
+    #expect(abs(after.start - 10.5) < 0.002)
+    #expect(after.sync, "the second part opens on a keyframe")
     let longest = samples.map(\.duration).max() ?? 0
-    #expect(longest < 0.2, "a sample lasts \(longest) s")
+    #expect(longest < 1.002, "a sample lasts \(longest) s")
 
-    // The pictures are the right ones on both sides of the hole, and the last repeats to the end.
+    // The pictures are the right ones on both sides of the hole, the hole is black, and the last
+    // picture repeats to the end.
     #expect(try await marked.marker(in: destination, at: 0.47) == 1_014)
+    #expect(try await marked.marker(in: destination, at: 5) == nil)
     #expect(try await marked.marker(in: destination, at: 10.5) == 500_000)
     #expect(try await marked.marker(in: destination, at: 11.9) == 500_014)
   }
 
-  /// Every sample's presentation time and duration as stored, in the file's own media time.
-  private func timing(_ url: URL) async throws -> [(start: Double, duration: Double)] {
+  /// Every sample's presentation time, duration and keyframe flag as stored, in the file's own media
+  /// time.
+  private func timing(_ url: URL) async throws -> [(start: Double, duration: Double, sync: Bool)] {
     let asset = AVURLAsset(url: url)
     guard let track = try await asset.loadTracks(withMediaType: .video).first else { return [] }
     let reader = try AVAssetReader(asset: asset)
     let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
     reader.add(output)
     guard reader.startReading() else { return [] }
-    var found: [(start: Double, duration: Double)] = []
+    var found: [(start: Double, duration: Double, sync: Bool)] = []
     while let sample = output.copyNextSampleBuffer() {
       guard CMSampleBufferGetNumSamples(sample) > 0 else { continue }
-      found.append((CMSampleBufferGetPresentationTimeStamp(sample).seconds, CMSampleBufferGetDuration(sample).seconds))
+      let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
+      let sync = !((attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool) ?? false)
+      found.append((
+        CMSampleBufferGetPresentationTimeStamp(sample).seconds,
+        CMSampleBufferGetDuration(sample).seconds,
+        sync
+      ))
     }
-    return found
+    return found.sorted { $0.start < $1.start }
   }
 
   private func movie(_ url: URL, seconds: Double) async throws {

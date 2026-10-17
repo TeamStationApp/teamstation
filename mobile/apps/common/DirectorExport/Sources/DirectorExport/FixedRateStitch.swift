@@ -20,13 +20,24 @@ extension ArchiveRemux {
   /// that lasts minutes. Every output frame is its own sample here, so a gap is a run of identical
   /// pictures, which the encoder compresses to almost nothing between keyframes.
   ///
-  /// `blankGaps` leaves the hole empty instead. The outgoing picture keeps the one frame it was
-  /// encoded on, and every frame until the next part is left out. The pictures are encoded back to
-  /// back, every sample one frame long, and the file's picture track places each run of them at its
-  /// own instant with an empty edit between: an `AVAssetWriter` file has no other way to leave time
-  /// with no picture, and a sample timed past a hole is stretched across it. Each run opens on a
-  /// keyframe. After the last part there is nothing to leave a hole before, and the last picture is
-  /// repeated to `length`, so the picture track still runs the whole output.
+  /// `blankGaps` shows the hole as black instead. The outgoing picture keeps the one frame it was
+  /// encoded on, and the hole until the next part is black, encoded once a second
+  /// (`blankPictureEvery`) rather than every frame, each black picture lasting until the next. The
+  /// next part opens on a keyframe at its own instant. After the last part there is nothing to
+  /// leave a hole before, and the last picture is repeated to `length`, so the picture track still
+  /// runs the whole output.
+  ///
+  /// Black pictures rather than no pictures. The file is read by AVFoundation, by FFmpeg (TeamStation's
+  /// upload copies it into HLS with `ffmpeg -c copy`) and by mpv and IINA, and every way an MP4 can
+  /// leave time with no picture fails one of them. An empty edit over pictures stored back to back
+  /// is read by FFmpeg's demuxer as pictures replayed early and repeated. A fragmented file whose
+  /// next fragment starts after a jump in decode time (`tfdt`) is read right by all of them, but
+  /// the HLS copy closes the jump up: FFmpeg's fragmenting muxer starts the next fragment where the
+  /// last ended and stretches the picture after the hole back across it, so the return's first
+  /// picture, and its wall-clock point, show from the start of the hole. A sample timed past a hole
+  /// is stretched across it in any MP4. Black pictures a second apart have none of these: every
+  /// reader and every copy shows the same pictures at the same times, no sample lasts more than a
+  /// second, and they cost a few hundred bytes each.
   ///
   /// Without `startWalls` the files are laid end to end from the start of the output. `length` nil
   /// runs to the end of the last file.
@@ -73,7 +84,7 @@ extension ArchiveRemux {
       let withSound = await hasSound(plan.placements)
       let pictureShare = withSound ? 0.85 : 0.95
       let soundShare = withSound ? 0.1 : 0
-      let runs = try await encodePictures(
+      try await encodePictures(
         plan.placements,
         length: span,
         settings: settings,
@@ -92,14 +103,8 @@ extension ArchiveRemux {
         )
         : false
       try Task.checkCancellation()
-      if hasRendered || runs != nil {
-        try await join(
-          pictures: pictures,
-          sound: hasRendered ? rendered : nil,
-          length: span,
-          runs: runs,
-          to: destination
-        )
+      if hasRendered {
+        try await join(pictures: pictures, sound: rendered, length: span, to: destination)
       } else {
         // Nothing to add to the pictures: they are the file.
         try FileManager.default.moveItem(at: pictures, to: destination)
@@ -127,7 +132,7 @@ extension ArchiveRemux {
   /// rounding.
   static let pictureTolerance: TimeInterval = 0.001
 
-  /// Whether an output frame in a blank gap is left out.
+  /// Whether an output frame in a blank gap is left blank.
   ///
   /// The picture already encoded keeps its one frame. Every later frame until the next part is
   /// left blank, including the one immediately before that part. With no picture still to come, the
@@ -136,17 +141,18 @@ extension ArchiveRemux {
     !hasNewPicture && hasShownPicture && hasLaterPicture
   }
 
-  /// A run of output frames that each have a picture, with `blankGaps`: where the run sits in the
-  /// output, and where its pictures sit in the encoded file, which has them back to back.
-  struct PictureRun: Equatable, Sendable {
-    /// The run's place in the output.
-    var output: CMTimeRange
-    /// Where its first picture is in the encoded file; the run is as long there as in the output.
-    var encoded: CMTime
+  /// How often, in seconds, a black picture is encoded in a blank gap: each lasts until the next, so
+  /// this is the longest any sample of the file lasts.
+  public static let blankPictureEvery = 1
+
+  /// Whether the blank frame `framesIntoHole` frames into a hole (0 for the first) is encoded, as a
+  /// black picture, at `rate`; the frames between are left out and the black picture before lasts
+  /// across them.
+  public static func encodesBlankFrame(framesIntoHole: Int, rate: Int) -> Bool {
+    framesIntoHole % max(1, rate * blankPictureEvery) == 0
   }
 
-  /// Every output frame of `placements`, encoded into `url` at `settings`. With `blankGaps`, the runs
-  /// of frames that were encoded, for `join` to place; nil without.
+  /// Every output frame of `placements`, encoded into `url` at `settings`.
   private static func encodePictures(
     _ placements: [Placement],
     length: CMTime,
@@ -154,7 +160,7 @@ extension ArchiveRemux {
     to url: URL,
     blankGaps: Bool = false,
     progress: (@Sendable (Double) -> Void)?
-  ) async throws -> [PictureRun]? {
+  ) async throws {
     try? FileManager.default.removeItem(at: url)
     var transform = CGAffineTransform.identity
     if let track = placements.lazy.compactMap(\.video).first,
@@ -172,7 +178,6 @@ extension ArchiveRemux {
         progress: progress
       )
       try await encoder.run()
-      return blankGaps ? encoder.runs : nil
     } catch {
       try? FileManager.default.removeItem(at: url)
       throw error
@@ -206,14 +211,8 @@ private final class PictureEncoder: @unchecked Sendable {
   private let length: CMTime
   private let transform: CGAffineTransform
   private let progress: (@Sendable (Double) -> Void)?
-  /// A frame with no new picture is left out. The picture already encoded keeps its one frame, and
-  /// every frame that is encoded goes into the file straight after the one before; see `runs`.
+  /// A hole between parts is black, a picture a second, and the next part opens on a keyframe.
   private let blankGaps: Bool
-  /// With `blankGaps`, the frames encoded so far, and the runs of consecutive output frames among
-  /// them as (first output frame, first encoded frame, count). Touched only by `encodeAll` until it
-  /// returns.
-  private var encodedFrames = 0
-  private var frameRuns: [(output: Int, encoded: Int, count: Int)] = []
   /// Made empty and filled in `init`. A semaphore made with a count traps if it is freed holding less
   /// than that count, which is exactly what a cancelled encode leaves -- a place taken for a frame
   /// that never went in. Made at zero, it can go at any count.
@@ -264,7 +263,7 @@ private final class PictureEncoder: @unchecked Sendable {
     guard status == noErr, let created else {
       throw ArchiveRemux.Error.exportFailed("cannot encode \(settings.codec.displayName) (\(status))")
     }
-    Self.configure(created, settings: settings, rate: rate)
+    Self.configure(created, settings: settings, rate: rate, inOrder: blankGaps)
     VTCompressionSessionPrepareToEncodeFrames(created)
     guard let pool = VTCompressionSessionGetPixelBufferPool(created),
           let fitter = try? PictureFitter(width: width, height: height, pool: pool)
@@ -292,7 +291,11 @@ private final class PictureEncoder: @unchecked Sendable {
   /// H.264 at High profile or HEVC at Main, at the setting's average bitrate, with a keyframe at
   /// least every `keyframeSeconds`, encoded for quality rather than latency. Tagged BT.709, which is
   /// what every camera and the programme are.
-  private static func configure(_ session: VTCompressionSession, settings: EncodeSettings, rate: Int) {
+  ///
+  /// `inOrder` encodes every picture in the order it is shown, with no B-frames, as Android's encoder
+  /// does, so each picture's sample lasts until the next one shown: the picture before a hole lasts
+  /// its one frame, and each black picture until the next.
+  private static func configure(_ session: VTCompressionSession, settings: EncodeSettings, rate: Int, inOrder: Bool) {
     let keyframeSeconds = max(1 / Double(rate), settings.keyframeSeconds)
     let properties: [(CFString, CFTypeRef)] = [
       (kVTCompressionPropertyKey_RealTime, kCFBooleanFalse),
@@ -313,6 +316,9 @@ private final class PictureEncoder: @unchecked Sendable {
     // One at a time: a key an encoder does not support fails alone rather than taking the rest with it.
     for (key, value) in properties {
       VTSessionSetProperty(session, key: key, value: value)
+    }
+    if inOrder {
+      VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
     }
     if settings.codec == .h264 {
       VTSessionSetProperty(session, key: kVTCompressionPropertyKey_H264EntropyMode, value: kVTH264EntropyMode_CABAC)
@@ -357,11 +363,8 @@ private final class PictureEncoder: @unchecked Sendable {
       }
       guard let input else { throw ArchiveRemux.Error.exportFailed("no pictures were encoded") }
       input.markAsFinished()
-      // The last frame ends where the file does, even when that is part-way through it. Back to back,
-      // the last encoded frame keeps its whole frame; `join` cuts it at the output's end.
-      writer.endSession(
-        atSourceTime: blankGaps ? CMTime(value: CMTimeValue(encodedFrames), timescale: CMTimeScale(rate)) : length
-      )
+      // The last frame ends where the file does, even when that is part-way through it.
+      writer.endSession(atSourceTime: length)
       await writer.finishWriting()
       guard writer.status == .completed else {
         throw ArchiveRemux.Error.exportFailed(writer.error?.localizedDescription ?? "picture finish")
@@ -370,20 +373,6 @@ private final class PictureEncoder: @unchecked Sendable {
     } catch {
       if writer.status == .writing { writer.cancelWriting() }
       throw error
-    }
-  }
-
-  /// With `blankGaps`, where each run of encoded frames goes in the output, the last cut at its end.
-  var runs: [ArchiveRemux.PictureRun] {
-    let timescale = CMTimeScale(rate)
-    return frameRuns.compactMap { run in
-      let start = CMTime(value: CMTimeValue(run.output), timescale: timescale)
-      guard start < length else { return nil }
-      let duration = CMTimeMinimum(CMTime(value: CMTimeValue(run.count), timescale: timescale), length - start)
-      return ArchiveRemux.PictureRun(
-        output: CMTimeRange(start: start, duration: duration),
-        encoded: CMTime(value: CMTimeValue(run.encoded), timescale: timescale)
-      )
     }
   }
 
@@ -402,6 +391,8 @@ private final class PictureEncoder: @unchecked Sendable {
     var waiting: PictureFeed.Picture?
     var reported = 0.0
     let timescale = CMTimeScale(rate)
+    // With `blankGaps`, how many frames into a hole this one is, nil outside one.
+    var intoHole: Int?
     do {
       for frame in 0 ..< frames {
         // A free place in the encoder, looking up now and then to see whether to stop waiting.
@@ -415,12 +406,11 @@ private final class PictureEncoder: @unchecked Sendable {
           // encoder frees a place within milliseconds, so 20 ms with every place taken means it is
           // holding them, and it hands back what it holds. One that has held them once is asked
           // again as soon as the places run out, or a half-hour hole would take many minutes.
-          let next = blankGaps ? encodedFrames : frame
-          if next > 0, holdsFrames || waits % 4 == 0 {
+          if frame > 0, holdsFrames || waits % 4 == 0 {
             holdsFrames = true
             VTCompressionSessionCompleteFrames(
               session,
-              untilPresentationTimeStamp: CMTime(value: CMTimeValue(next - 1), timescale: timescale)
+              untilPresentationTimeStamp: CMTime(value: CMTimeValue(frame - 1), timescale: timescale)
             )
           }
         }
@@ -436,39 +426,35 @@ private final class PictureEncoder: @unchecked Sendable {
           waiting = nil
         }
         if let latest { shown = try fitter.fit(latest) }
+        var picture = shown ?? black
+        // The part after a hole opens on a keyframe, so a reader seeking to it needs nothing from
+        // before the hole.
+        var properties: CFDictionary?
         if blankGaps, ArchiveRemux.leavesGapFrameBlank(
           hasNewPicture: latest != nil,
           hasShownPicture: shown != nil,
           hasLaterPicture: waiting != nil
         ) {
-          slots.signal()
-          let fraction = Double(frame + 1) / Double(frames)
-          if fraction - reported >= 0.005 {
-            reported = fraction
-            progress?(fraction)
-          }
-          continue
-        }
-        var stamp = frame
-        // A run after a hole opens on a keyframe, so the file can place it without the pictures
-        // before it.
-        var properties: CFDictionary?
-        if blankGaps {
-          stamp = encodedFrames
-          if let last = frameRuns.last, last.output + last.count == frame {
-            frameRuns[frameRuns.count - 1].count += 1
-          } else {
-            if !frameRuns.isEmpty {
-              properties = [ kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue ] as CFDictionary
+          let into = intoHole.map { $0 + 1 } ?? 0
+          intoHole = into
+          guard ArchiveRemux.encodesBlankFrame(framesIntoHole: into, rate: rate) else {
+            slots.signal()
+            let fraction = Double(frame + 1) / Double(frames)
+            if fraction - reported >= 0.005 {
+              reported = fraction
+              progress?(fraction)
             }
-            frameRuns.append((output: frame, encoded: encodedFrames, count: 1))
+            continue
           }
-          encodedFrames += 1
+          picture = black
+        } else if intoHole != nil {
+          intoHole = nil
+          properties = [ kVTEncodeFrameOptionKey_ForceKeyFrame: kCFBooleanTrue ] as CFDictionary
         }
         let status = VTCompressionSessionEncodeFrame(
           session,
-          imageBuffer: shown ?? black,
-          presentationTimeStamp: CMTime(value: CMTimeValue(stamp), timescale: timescale),
+          imageBuffer: picture,
+          presentationTimeStamp: CMTime(value: CMTimeValue(frame), timescale: timescale),
           duration: CMTime(value: 1, timescale: timescale),
           frameProperties: properties,
           infoFlagsOut: nil
