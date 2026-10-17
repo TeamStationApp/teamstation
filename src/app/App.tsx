@@ -1925,14 +1925,7 @@ function Shell(props: AppProps): React.ReactElement {
       // the game.
       <GameScreen
         signedIn={session != null}
-        onSignIn={() => {
-          const destination: Route = {
-            name: 'signIn',
-            next: routePath(routeOf(tab, top, filters))
-          }
-          goToRoute(destination)
-          showRoute(destination)
-        }}
+        onSignIn={signInHere}
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
@@ -1945,13 +1938,6 @@ function Shell(props: AppProps): React.ReactElement {
         onCoachGame={teamId => {
           push({ name: 'coachGame', gameId: top.gameId, teamId })
         }}
-        onDjGame={
-          walkUpMusic.djSupported
-            ? () => {
-                push({ name: 'djGame', gameId: top.gameId })
-              }
-            : undefined
-        }
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
@@ -2009,14 +1995,7 @@ function Shell(props: AppProps): React.ReactElement {
     ) : top.name === 'scoreGame' ? null : top.name === 'game' ? (
       <GameScreen
         signedIn={session != null}
-        onSignIn={() => {
-          const destination: Route = {
-            name: 'signIn',
-            next: routePath(routeOf(tab, top, filters))
-          }
-          goToRoute(destination)
-          showRoute(destination)
-        }}
+        onSignIn={signInHere}
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
