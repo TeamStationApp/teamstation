@@ -14,7 +14,8 @@ export function ActionRow({
   end,
   onOpen,
   openLabel,
-  extra
+  extra,
+  separateEndAction = false
 }: {
   title: string
   detail?: string
@@ -22,6 +23,7 @@ export function ActionRow({
   end?: React.ReactNode
   onOpen?: () => void
   openLabel?: string
+  separateEndAction?: boolean
   extra?: React.ReactNode
 }): React.ReactElement {
   const styles = getStyles(useTheme())
@@ -34,7 +36,7 @@ export function ActionRow({
           <Text style={styles.detail}>{detail}</Text>
         )}
       </View>
-      {onOpen != null && <Icon name="chevron_right" />}
+      {onOpen != null && !separateEndAction && <Icon name="chevron_right" />}
     </>
   )
   return (
@@ -54,7 +56,17 @@ export function ActionRow({
         )}
         {extra}
       </View>
-      {end}
+      {separateEndAction && end != null ? (
+        <View style={styles.endAction}>
+          <View
+            testID="relationship-action-divider"
+            style={styles.endDivider}
+          />
+          {end}
+        </View>
+      ) : (
+        end
+      )}
     </View>
   )
 }
@@ -88,6 +100,20 @@ const getStyles = cacheStyles((theme: Theme) => ({
     gap: theme.rem(0.5),
     padding: theme.rem(theme.cardContentInsetRem),
     minHeight: 64
+  },
+  endAction: {
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    paddingLeft: theme.rem(0.75),
+    marginVertical: -theme.rem(theme.cardContentInsetRem)
+  },
+  endDivider: {
+    position: 'absolute',
+    left: 0,
+    top: '10%',
+    bottom: '10%',
+    width: 1,
+    backgroundColor: theme.defaultBorderColor
   },
   left: { flex: 1, minWidth: 0 },
   identity: {
