@@ -25,32 +25,18 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 export function eventReplyRows(infos: EventInfo[]): EventAttendee[] {
   const primary = infos[0]
   if (primary == null) return []
-  const parent = primary.replyUserIds[0]
-  return primary.replyUserIds.flatMap(id => {
-    const row = primary.attendees.find(row => row.userId === id && row.canReply)
-    const plays = infos.some(info =>
-      info.attendees.some(
-        row =>
-          row.userId === id &&
-          row.isPlayer === true &&
-          row.isTeamParticipant === true
-      )
-    )
-    return row != null && (id === parent || plays) ? [row] : []
-  })
+  // The server applies the same eligibility policy to reads and writes,
+  // including children on the other participating team and merged identities.
+  return primary.replyUserIds.flatMap(id =>
+    primary.attendees.filter(row => row.userId === id && row.canReply)
+  )
 }
 export async function loadEventReplyInfos(
   client: TeamStationClient,
   eventId: string,
   teamId: string
 ): Promise<EventInfo[]> {
-  const primary = await client.eventInfo(eventId, teamId)
-  const others = await Promise.all(
-    (primary.attendanceTeams ?? [])
-      .filter(team => team.id !== primary.teamId && team.isParticipant === true)
-      .map(async team => await client.eventInfo(eventId, team.id))
-  )
-  return [primary, ...others]
+  return [await client.eventInfo(eventId, teamId)]
 }
 /** What the modal needs of a game or event: its id and how to name it. */
 export type RsvpEvent = Pick<

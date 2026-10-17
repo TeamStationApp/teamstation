@@ -26,7 +26,7 @@ export function eventInfoPaths(
   const responses = {
     200: {
       description:
-        'Event info: id, eventKind, eventType (game/practice/other), title, selected teamId/teamName, attendanceTeams {id,name,isParticipant}, startAt/endAt, arrivalTimeDelta, notes, timezone, venue/address/coordinates, status, canManage, replyUserIds and attendees {userId,name,avatarUrl,response,canReply,isTeamParticipant,isPlayer,staffRoles,bats,throws,positions,guardianOf}. isParticipant marks the viewer’s direct team or guardian-of-player affiliation; inherited visibility alone does not show a team selector. Names and guardian names are abbreviated. Private family controls may be outside the team; public lists include only isTeamParticipant. No reply is null.'
+        'Event info: id, eventKind, eventType (game/practice/other), title, selected teamId/teamName, attendanceTeams {id,name,isParticipant}, startAt/endAt, arrivalTimeDelta, notes, timezone, venue/address/coordinates, status, canManage, replyUserIds and attendees {userId,name,avatarUrl,response,canReply,isTeamParticipant,isPlayer,staffRoles,bats,throws,positions,guardianOf}. isParticipant marks the viewer’s direct team or guardian-of-player affiliation; inherited visibility alone does not show a team selector. Names and guardian names are abbreviated. Reply controls include only explicit members/admins/coaches of a participating team and their guardian-linked children who play on a participating roster; inherited access alone never grants a self reply. Eligible children on the other participating team remain private; public lists include only isTeamParticipant. No reply is null.'
     },
     400: errorResponse,
     401: errorResponse,
