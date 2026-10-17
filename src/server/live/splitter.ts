@@ -10,6 +10,7 @@ import {
   listedTimelineEndSec,
   readFrameWall,
   readLeadingBoxesSync,
+  recordPlacedBelow,
   recoverUnstampedSegments,
   restampSegments,
   segmentName,
@@ -245,14 +246,6 @@ interface OutputRuntime {
   stampSegments?: () => void
   /** Where the current writer's segments go; see `WriterPlacement`. */
   placement?: WriterPlacement
-  /**
-   * Every segment numbered below this is on the programme clock: a
-   * continuing writer's once stamped, and every one a first writer closes,
-   * which needs no stamp. The next continuation recovers only the segments
-   * from here on. Unknown after this process restarts, when it reads them
-   * all.
-   */
-  placedBelow?: number
   /** Stops watching for those segments, after moving the last one. */
   stopStamp?: () => void
 }
@@ -898,12 +891,7 @@ async function spawnPrepared(
         // A segment closed before the last stamp is still on the publisher's
         // clock. Move it onto its programme date; every name already in the
         // directory is then on that clock and stays there.
-        await recoverUnstampedSegments(
-          entry.hlsDir,
-          playlist,
-          offsetSec,
-          output.placedBelow ?? 0
-        )
+        await recoverUnstampedSegments(entry.hlsDir, playlist, offsetSec)
         if (stoppedDuringRead()) return
         if (deferIfWriterAlive()) return
         // The end of what is listed, read off the last segment's own stamp;
@@ -942,17 +930,24 @@ async function spawnPrepared(
         // writer's are numbered from `next` on, closed in order, so the
         // stamper looks only past the lowest one it has not handled yet:
         // it runs on every watch event and every progress line for the rest
-        // of the game.
+        // of the game. Below that number, beside the playlist, is what the
+        // next continuation leaves alone, in this process or the next.
         let cursor = next
         const handled = new Set<string>()
         const unhandled = (): string[] =>
           segmentsFrom(entry.hlsDir, cursor).filter(name => !handled.has(name))
         const handle = (name: string): void => {
           handled.add(name)
+          const was = cursor
           while (handled.delete(segmentName(cursor))) cursor += 1
-          if (held.continuing) output.placedBelow = cursor
+          if (held.continuing && cursor !== was) {
+            recordPlacedBelow(entry.hlsDir, cursor)
+          }
         }
-        output.placedBelow = held.continuing ? cursor : Number.POSITIVE_INFINITY
+        recordPlacedBelow(
+          entry.hlsDir,
+          held.continuing ? cursor : Number.POSITIVE_INFINITY
+        )
         const stamp = (): void => {
           if (!held.settled) {
             const fresh = unhandled()

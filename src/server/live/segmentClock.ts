@@ -391,6 +391,45 @@ const yieldTurn = async (): Promise<void> => {
 }
 
 /**
+ * Beside the playlist: the number below which every segment is on the
+ * programme clock, as the writers so far recorded it. A dot file, so it is
+ * neither served nor sent to the Space with the recording.
+ */
+const PLACED_BELOW_FILE = '.placed-below'
+
+/**
+ * Records beside the playlist that every segment numbered below `below` is
+ * on the programme clock: a continuing writer's once it has stamped them, and
+ * every one a first writer closes (`Infinity`), which needs no stamp. It
+ * outlives this process, so a restart's recovery does not judge them again.
+ * A segment its frame wall clocks placed sits off its program date by the
+ * difference between two writers' capture-to-start lags, which can pass for
+ * one left unstamped. A failed write leaves the recovery reading more.
+ */
+export function recordPlacedBelow(directory: string, below: number): void {
+  try {
+    writeStamped(
+      `${directory}/${PLACED_BELOW_FILE}`,
+      Buffer.from(String(below))
+    )
+  } catch {
+    // The directory is gone, or the disk full.
+  }
+}
+
+/** What {@link recordPlacedBelow} last recorded; nought when nothing is. */
+export function placedBelowOnDisk(directory: string): number {
+  try {
+    const below = Number(
+      readFileSync(`${directory}/${PLACED_BELOW_FILE}`, 'utf8').trim()
+    )
+    return below >= 0 ? below : 0
+  } catch {
+    return 0
+  }
+}
+
+/**
  * Moves segments a restarted writer would otherwise leave on the publisher's
  * clock.
  *
@@ -405,9 +444,12 @@ const yieldTurn = async (): Promise<void> => {
  * of the ingest keeps running. A segment still before the last discontinuity
  * is included: a later writer may already have marked its own join, and
  * leaving that file at zero would be permanent. Segments numbered below
- * `from` are known to be on the programme clock already, as the writers
- * before stamped them, and are not read: late in a long game that is a
- * thousand files or more ahead of every reconnect. Returns the names moved.
+ * `from`, or below the number recorded beside the playlist
+ * ({@link recordPlacedBelow}), are known to be on the programme clock
+ * already, as the writers before placed them, and are neither read nor
+ * judged: late in a long game that is a thousand files or more ahead of
+ * every reconnect, and one its frame wall clocks placed is where it belongs
+ * whatever its date says. Returns the names moved.
  */
 export async function recoverUnstampedSegments(
   directory: string,
@@ -423,12 +465,13 @@ export async function recoverUnstampedSegments(
   } catch {
     return []
   }
+  const below = Math.max(from, placedBelowOnDisk(directory))
   const moved: string[] = []
   let placedEnd = 0
   for (const name of [...listed.keys()].sort()) {
     const programme = listed.get(name)
     if (programme == null) continue
-    if ((segmentNumber(name) ?? 0) < from) {
+    if ((segmentNumber(name) ?? 0) < below) {
       placedEnd = Math.max(placedEnd, programme.start + programme.duration)
       continue
     }

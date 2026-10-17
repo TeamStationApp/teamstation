@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { execFileSync } from 'child_process'
 import {
+  appendFileSync,
   chmodSync,
   mkdirSync,
   readdirSync,
@@ -1142,6 +1143,46 @@ describe('a live playlist through a reconnect', function () {
       )
     })
     expect(logs.join('\n')).contains('by its frame wall clocks')
+  })
+
+  it('leaves a return its frame wall clocks placed where it is when this server restarts', async function () {
+    // The return's writer started 3 s after its first picture was captured,
+    // the first publish's 1.4 s after, so the program date listed for the
+    // return is 1.6 s past where its pictures were placed.
+    const back = Date.now() - 300
+    const videoStartMs = back - 41_960
+    const { init } = firstPublishOnDisk(videoStartMs)
+    setLive(KEY, { ...spec(), videoStartMs })
+    forcePublishForTest(KEY, true)
+    await writerArgs()
+    writeFileSync(
+      join(dir, 'seg000003.m4s'),
+      hevcSegment(0, [wallClockNal(back), IDR_SLICE])
+    )
+    expect((await placedAt(init, 'seg000003.m4s')) ?? 0).closeTo(41.96, 0.001)
+    appendFileSync(
+      join(dir, 'master.m3u8'),
+      [
+        '#EXT-X-DISCONTINUITY',
+        `#EXT-X-PROGRAM-DATE-TIME:${new Date(back + 3000).toISOString()}`,
+        '#EXTINF:4.000000,',
+        'seg000003.m4s',
+        ''
+      ].join('\n')
+    )
+    const placed = readFileSync(join(dir, 'seg000003.m4s'))
+    // A deploy mid-game, and the publisher returns once more: the new
+    // process remembers nothing of the writers before it.
+    resetForTest()
+    configure()
+    rmSync(argsFile, { force: true })
+    setLive(KEY, { ...spec(), videoStartMs })
+    forcePublishForTest(KEY, true)
+    await writerArgs()
+    expect(
+      segmentTimelineStart(init, readFileSync(join(dir, 'seg000003.m4s')))
+    ).closeTo(41.96, 0.001)
+    expect(readFileSync(join(dir, 'seg000003.m4s')).equals(placed)).equals(true)
   })
 
   it('moves the segments it stamped at the wall clock once a later one carries the server’s clock', async function () {

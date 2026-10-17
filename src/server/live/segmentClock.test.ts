@@ -14,10 +14,12 @@ import {
   LEADING_BOX_BYTES,
   listedTimelineEndSec,
   moveSegmentOnTimeline,
+  placedBelowOnDisk,
   placeSegmentOnTimeline,
   readFrameWall,
   readLeadingBoxes,
   readLeadingBoxesSync,
+  recordPlacedBelow,
   recoverUnstampedSegments,
   restampSegments,
   segmentName,
@@ -277,6 +279,51 @@ describe('placing a returned segment on the programme clock', function () {
       expect(readFileSync(join(dir, 'seg000001.m4s')).equals(known)).equals(
         true
       )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves alone the segments recorded beside the playlist as placed, in a process that remembers nothing', async function () {
+    const dir = mkdtempSync(join(tmpdir(), 'ts-segment-clock-'))
+    try {
+      writeFileSync(join(dir, 'init.mp4'), init)
+      writeFileSync(
+        join(dir, 'seg000000.m4s'),
+        Buffer.concat([sidx(0, 1000, 0n), fragment(1, 0, 0n)])
+      )
+      // Placed by its frame wall clocks 1.6 s before its program date.
+      const placed = Buffer.concat([sidx(0, 1000, 28_400n), fragment(1, 0, 0n)])
+      writeFileSync(join(dir, 'seg000001.m4s'), placed)
+      const playlist = [
+        '#EXTM3U',
+        '#EXT-X-PROGRAM-DATE-TIME:2026-10-14T16:00:00.000Z',
+        '#EXTINF:4.000000,',
+        'seg000000.m4s',
+        '#EXT-X-PROGRAM-DATE-TIME:2026-10-14T16:00:30.000Z',
+        '#EXTINF:4.000000,',
+        'seg000001.m4s',
+        ''
+      ].join('\n')
+      expect(placedBelowOnDisk(dir)).equals(0)
+      recordPlacedBelow(dir, 2)
+      expect(placedBelowOnDisk(dir)).equals(2)
+      expect(await recoverUnstampedSegments(dir, playlist, 38, 0)).deep.equals(
+        []
+      )
+      expect(readFileSync(join(dir, 'seg000001.m4s')).equals(placed)).equals(
+        true
+      )
+      recordPlacedBelow(dir, Number.POSITIVE_INFINITY)
+      expect(placedBelowOnDisk(dir)).equals(Number.POSITIVE_INFINITY)
+      // Anything else there is no record, and every segment is judged.
+      writeFileSync(join(dir, '.placed-below'), 'not a number')
+      expect(placedBelowOnDisk(dir)).equals(0)
+      expect(await recoverUnstampedSegments(dir, playlist, 38, 0)).deep.equals([
+        'seg000001.m4s'
+      ])
+      recordPlacedBelow(join(dir, 'gone'), 3)
+      expect(placedBelowOnDisk(join(dir, 'gone'))).equals(0)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
