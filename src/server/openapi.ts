@@ -2211,6 +2211,11 @@ export function openApiDocument(version: string): OpenApiDocument {
           type: 'object',
           required: ['token', 'expiresAt', 'user'],
           properties: {
+            next: {
+              type: 'string',
+              description:
+                'Optional local return path from the original sign-in request, including its query string. Returned when claiming an email link or its approved request.'
+            },
             token: {
               type: 'string',
               description: 'Shown once. Only its hash is stored.'

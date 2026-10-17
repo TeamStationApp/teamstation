@@ -6,6 +6,7 @@ import { asAccountEmail } from '../../common/accountSettings'
 import { asSession } from '../../common/api'
 import { badRequest, unauthorized, unavailable } from '../../common/errors'
 import { asClientHash, rejectRawPassword } from '../../common/passwordProtocol'
+import { safeNext } from '../../common/signInReturn'
 import { allowedAppOrigin } from '../appLinks/appOrigin'
 import {
   asSignInOrigin,
@@ -374,7 +375,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       // Email ownership is established by verification, never by requesting a code.
       const request = await createEmailCode(db, email, 'login', {
         origin: body.origin,
-        next: body.next,
+        next: safeNext(body.next),
         appOrigin
       })
       try {
@@ -489,6 +490,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       setSessionCookie(res, session.token, session.expiresAt, secureCookie)
       res.json(
         asSession({
+          next: safeNext(claim.next),
           token: session.token,
           expiresAt: session.expiresAt.toISOString(),
           user: {
@@ -537,6 +539,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       setSessionCookie(res, session.token, session.expiresAt, secureCookie)
       res.json(
         asSession({
+          next: safeNext(claim.next),
           token: session.token,
           expiresAt: session.expiresAt.toISOString(),
           user: {

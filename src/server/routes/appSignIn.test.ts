@@ -291,4 +291,33 @@ describe('signing in from an app', function () {
       86400000
     expect(Math.round(browserDays)).lessThan(180)
   })
+
+  it('preserves the game, video and tab through email links and approved requests', async function () {
+    const next = '/games/gam_example?tab=watch&video=vid_example&t=42'
+    const asked = await post('/auth/email-code', {
+      email: 'returning@example.com',
+      next,
+      appOrigin: APP1
+    })
+    expect(asked.status).equals(202)
+    const token = LINK.exec(sent[sent.length - 1].link ?? '')?.[1]
+    const signedIn = await post('/auth/link/verify', { token })
+    expect(signedIn.status).equals(200)
+    expect(signedIn.body.next).equals(next)
+    const claimed = await post('/auth/request/claim', asked.body)
+    expect(claimed.status).equals(200)
+    expect(claimed.body.next).equals(next)
+  })
+
+  it('does not return an external destination after sign-in', async function () {
+    await post('/auth/email-code', {
+      email: 'safe-return@example.com',
+      next: '//outside.example.test',
+      appOrigin: APP1
+    })
+    const token = LINK.exec(sent[sent.length - 1].link ?? '')?.[1]
+    const signedIn = await post('/auth/link/verify', { token })
+    expect(signedIn.status).equals(200)
+    expect(signedIn.body.next).equals(undefined)
+  })
 })
