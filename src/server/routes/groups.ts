@@ -963,8 +963,8 @@ export function groupRoutes(
           .selectAll()
           .where('id', '=', id)
           .executeTakeFirstOrThrow()
-        if (original.kind === 'guardian')
-          throw conflict('A guardian request is not resent. Send a new one.')
+        if (original.kind === 'guardian' || original.kind === 'membership')
+          throw conflict('A personal request is not resent. Send a new one.')
         await requireGroupAdmin(trx, actor, {
           kind: original.sender_scope_type!,
           id: original.sender_scope_id!
