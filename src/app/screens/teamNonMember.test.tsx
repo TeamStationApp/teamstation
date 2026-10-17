@@ -26,7 +26,6 @@ import { TeamScreen } from './TeamScreen'
  */
 let root: Root | undefined
 
-const MEMBERS_ONLY = 'You need to be a member of one of the teams to see this.'
 const VIDEOS_MEMBERS_ONLY =
   "You need to be a member of one of the teams to watch this game's videos."
 
@@ -208,6 +207,7 @@ describe('a non-member’s team page', function () {
     await render(
       <TeamScreen
         client={client}
+        signedIn
         team={{
           id: 'tem_hawks',
           name: 'Demo Hawks',
@@ -264,7 +264,11 @@ describe('a non-member’s team page', function () {
     const { asked } = await team('stats')
     expect(text()).includes('SEASON PERFORMANCE')
     expect(text()).includes('2–0')
-    expect(text()).includes(MEMBERS_ONLY)
+    expect(text()).includes(
+      'You need to be a member of this team to see individual player stats.'
+    )
+    expect(text()).includes('Request membership')
+    expect(document.querySelector('[data-testid="warningSheet"]')).equals(null)
     readable(document.querySelector('[role="alert"]'))
     expect(text()).not.includes('BATTING')
     expect(text()).not.includes('PITCHING')
