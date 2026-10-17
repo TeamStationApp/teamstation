@@ -1100,6 +1100,15 @@ function Shell(props: AppProps): React.ReactElement {
     }
   }
 
+  const signInHere = (): void => {
+    const destination: Route = {
+      name: 'signIn',
+      next: routePath(routeOf(tab, top, filters))
+    }
+    goToRoute(destination)
+    showRoute(destination)
+  }
+
   if (
     askedAboutSession &&
     (route.name === 'oauthApprove' || route.name === 'oauthNative')
@@ -1450,6 +1459,8 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'group' ? (
       <GroupScreen
+        signedIn={session != null}
+        onSignIn={signInHere}
         client={client}
         groupRef={{ kind: top.kind, id: top.id }}
         initialTab={top.tab}
@@ -1803,6 +1814,8 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'team' ? (
       <TeamPage
+        signedIn={session != null}
+        onSignIn={signInHere}
         client={client}
         id={top.team.id}
         team={top.team}

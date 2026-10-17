@@ -46,7 +46,7 @@ import {
   PeopleList,
   peopleSubtitle
 } from '../components/PeopleList'
-import { lstrings, videoCountLabel } from '../locales/strings'
+import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
@@ -57,6 +57,7 @@ import {
   shortTime
 } from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
+import { MembershipAccess } from './MembershipAccess'
 import { PublicTeamContent } from './PublicTeamContent'
 import { hasScheduleRsvpLine, ScheduleRsvpControl } from './ScheduleRsvpControl'
 import {
@@ -70,6 +71,8 @@ import { chronological, gamesFor, nextGameIndex } from './whenFilter'
 
 export interface TeamScreenProps {
   client: TeamStationClient
+  signedIn?: boolean
+  onSignIn?: () => void
   team: TeamSummary
   /**
    * The public projection, for somebody not signed in: nobody signed in
@@ -177,6 +180,15 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const membershipAccess = (
+    <MembershipAccess
+      key={`${team.id}:${props.signedIn === true}`}
+      client={client}
+      signedIn={props.signedIn === true}
+      teams={[{ id: team.id, name: team.name }]}
+      onSignIn={() => props.onSignIn?.()}
+    />
+  )
   const { width, fontScale } = useWindowDimensions()
   const [identityWidth, setIdentityWidth] = useState<number>()
 
@@ -422,6 +434,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
 
       {publicDetail != null && (
         <PublicTeamContent
+          membershipAccess={membershipAccess}
           detail={publicDetail}
           tab={tab}
           onOpenGame={onOpenGame}
@@ -544,7 +557,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                 is: the batting and pitching are kept for members.
               */}
               {nonMemberView ? (
-                <MembersOnly />
+                membershipAccess
               ) : (
                 <>
                   <SectionHeader
@@ -821,20 +834,6 @@ function StatsTable<T extends { userId: number; shortName?: string }>(props: {
   )
 }
 
-/**
- * What a non-member is told in place of the team's videos and its players'
- * figures: the page's own text colour on the page, read rather than skimmed
- * past as a hint, the way the game page says it.
- */
-function MembersOnly(): React.ReactElement {
-  const styles = getStyles(useTheme())
-  return (
-    <Text accessibilityRole="alert" style={styles.notice}>
-      {lstrings.members_only}
-    </Text>
-  )
-}
-
 function Empty(props: { text: string }): React.ReactElement {
   const styles = getStyles(useTheme())
   return (
@@ -1009,14 +1008,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.875),
     fontWeight: '600',
     color: theme.primaryTextColor
-  },
-  notice: {
-    color: theme.primaryTextColor,
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(1),
-    lineHeight: theme.rem(1.4),
-    textAlign: 'center' as const,
-    paddingVertical: theme.rem(1)
   },
   muted: {
     fontFamily: theme.regularTextFont,
