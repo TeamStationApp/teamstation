@@ -210,10 +210,7 @@ export function DefensiveRosterSheet({
           onAdd={async draft => {
             await onAddPlayer(draft)
           }}
-          onAddPlaceholders={async count => {
-            await onAddPlaceholders(count)
-            setAdding(false)
-          }}
+          onAddPlaceholders={onAddPlaceholders}
         />
       )}
     </ScoringSheet>
