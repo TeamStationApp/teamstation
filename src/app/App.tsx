@@ -35,6 +35,7 @@ import {
   parseRoute,
   type Route,
   routePath,
+  safeNext,
   type When
 } from './navigation/routes'
 import {
@@ -722,16 +723,25 @@ function Shell(props: AppProps): React.ReactElement {
         route.name === 'game' &&
         route.tab !== 'score' &&
         route.gameId === previous.top.gameId
-      const next = returningFromScoreOptions
-        ? previous.tab
-        : (visit?.tab ?? tabOf(route))
-      if (returningFromScoreOptions) inPlace.current = true
+      const returningToScoreOptions =
+        (previous.top?.name === 'scoreboardOverride' ||
+          previous.top?.name === 'scoreGame') &&
+        route.name === 'scoreOptions' &&
+        route.gameId === previous.top.gameId
+      const returnFrame = returningFromScoreOptions
+        ? 'game'
+        : returningToScoreOptions
+          ? 'scoreOptions'
+          : undefined
+      const next =
+        returnFrame != null ? previous.tab : (visit?.tab ?? tabOf(route))
+      if (returnFrame != null) inPlace.current = true
       setTab(next)
       setStacks(current => {
-        if (returningFromScoreOptions && route.name === 'game') {
+        if (returnFrame != null && 'gameId' in route) {
           const held = current[next]
           const at = held.findLastIndex(
-            item => item.name === 'game' && item.gameId === route.gameId
+            item => item.name === returnFrame && item.gameId === route.gameId
           )
           if (at >= 0) return { ...current, [next]: held.slice(0, at + 1) }
         }
@@ -1075,8 +1085,11 @@ function Shell(props: AppProps): React.ReactElement {
    */
   const signedIn = (next: Session): void => {
     rememberSession(next)
-    if (route.name === 'signIn' && route.next != null) {
-      const [path, search = ''] = route.next.split('?')
+    const returnPath = safeNext(
+      route.name === 'signIn' ? (route.next ?? next.next) : next.next
+    )
+    if (returnPath != null) {
+      const [path, search = ''] = returnPath.split('?')
       const destination = parseRoute(path, search)
       goToRoute(destination)
       if (
@@ -1207,7 +1220,7 @@ function Shell(props: AppProps): React.ReactElement {
             client={client}
             token={route.token}
             server={route.server}
-            onSignedIn={rememberSession}
+            onSignedIn={signedIn}
             onSignInAgain={linkSpent => {
               const destination: Route = { name: 'signIn' }
               goToRoute(destination)
@@ -1216,6 +1229,7 @@ function Shell(props: AppProps): React.ReactElement {
           />
         ) : (
           <LoginScreen
+            next={route.name === 'signIn' ? route.next : undefined}
             client={client}
             onSignedIn={signedIn}
             onDiscover={() => {
