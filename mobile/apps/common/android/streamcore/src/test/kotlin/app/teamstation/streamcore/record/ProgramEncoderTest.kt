@@ -172,6 +172,23 @@ class ProgramEncoderTest {
     }
 
     @Test
+    fun repeatsThatCarryTheirHeldCaptureTimeStillLeaveTheSoundOriginToFreshPictures() {
+        val encoder = encoder()
+        encoder.start(wall)
+        // As above, but each repeat carries a capture time that would imply an origin 0.1 s later.
+        val start = wall
+        for (frame in 0 until 60) {
+            val fresh = frame % 2 == 0
+            val capture = if (fresh) wall - 0.15 else wall - 0.05
+            encoder.append(frame.toDouble() / 30, captureWall = capture, onClockGrid = true, repeat = !fresh)
+            host += 1.0 / 30
+            wall += 1.0 / 30
+        }
+        assertEquals(start - 0.15, encoder.soundOriginForTesting!!, 1e-6)
+        encoder.finish()
+    }
+
+    @Test
     fun aSecondPictureInOneSlotIsLeftOutAndAFastSourceFollowsRealTime() {
         val encoder = encoder()
         encoder.start(wall)

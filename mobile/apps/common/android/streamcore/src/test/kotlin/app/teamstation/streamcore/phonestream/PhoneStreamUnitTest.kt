@@ -150,11 +150,13 @@ class PhoneStreamUnitTest {
     private class FakeRecording : ProgrammeRecordingTarget {
         override var running = true
         val placed = mutableListOf<Pair<Double, Double?>>()
+        val repeats = mutableListOf<Boolean>()
         val sound = mutableListOf<AudioFrame>()
         var refuse = false
-        override fun place(presentationTime: Double, captureWall: Double?): Double? {
+        override fun place(presentationTime: Double, captureWall: Double?, repeat: Boolean): Double? {
             if (refuse) return null
             placed += presentationTime to captureWall
+            repeats += repeat
             return presentationTime
         }
 
@@ -203,12 +205,16 @@ class PhoneStreamUnitTest {
         )
         assertEquals(1_005.0, recording.placed.last().second!!, 1e-9)
         assertEquals(1_005.0, programme.streamWall(5.0), 1e-9)
-        // A late tick: the frames it skipped go to the recording as repeats, with no new capture time.
+        // A late tick: the frames it skipped go to the recording as repeats, with no new capture time,
+        // and its own frame repeats the picture with its capture time plus its time on air (none here).
         now += 4.0 / 30
         wall = 1005.0
         val late = programme.tick(now, 5_000_000_000)!!
         assertEquals(listOf(2L, 3L, 4L, 5L), late.recordingFrames)
-        assertTrue(recording.placed.takeLast(4).all { it.second == null })
+        assertTrue(recording.placed.takeLast(4).dropLast(1).all { it.second == null })
+        assertEquals(1_005.0, recording.placed.last().second!!, 1e-9)
+        assertTrue(recording.repeats.takeLast(4).all { it })
+        assertFalse(recording.repeats.first())
         // The stream never goes back or repeats a time: the same picture goes a frame on.
         assertEquals(PhoneProgramme.nanos(5.0 + 1.0 / 30), late.draws.last().presentationNanos)
         // A very late tick repeats at most a quarter of a second.
@@ -245,6 +251,66 @@ class PhoneStreamUnitTest {
         wall = 1_007.0
         assertEquals(1, programme.tick(7_000_000_000, PhoneProgramme.allKeys).size)
         assertEquals(30, programme.frameRate)
+    }
+
+    /**
+     * A part that opens on a picture held since before the last part finished (the camera stopped
+     * delivering across it) took it as a repeat with no capture time, and a part's first picture
+     * borrows a lag the new part has not measured: it was anchored as of now, a picture delay late.
+     */
+    @Test
+    fun aPartStartedOnAPictureTheLastPartHadCarriesItsCaptureTimePlusItsTimeOnAir() {
+        val recording = FakeRecording()
+        var now = 0.0
+        val programme = PhoneProgramme(
+            recording, FakeStream(), captureWall = { it / 1e9 }, uptime = { now }, wall = { 1_000.0 + now }
+        )
+        programme.start(wall = 1_000.0)
+        // Captured at 999, on air at 1,000, and then the camera stops: the picture is held.
+        programme.pictureArrived(999_000_000_000)
+        for (tick in 0..3) {
+            now = tick / 30.0
+            programme.tick(null, PhoneProgramme.allKeys)
+        }
+        assertEquals(999.0, recording.placed.first().second!!, 1e-9)
+        // The part finishes, and the next one opens half a second after the picture came on air.
+        recording.running = false
+        for (tick in 4..14) {
+            now = tick / 30.0
+            programme.tick(null, PhoneProgramme.allKeys)
+        }
+        recording.running = true
+        recording.placed.clear()
+        now = 15 / 30.0
+        programme.tick(null, PhoneProgramme.allKeys)
+        assertEquals(999.5, recording.placed.single().second ?: Double.NaN, 1e-6)
+        assertTrue(recording.repeats.last())
+    }
+
+    /**
+     * A part that opens after the camera was lost for longer than the recording believes a capture
+     * time (ten seconds) gave the held picture's own capture time; the recording threw it out and
+     * anchored the picture as of now. Its time on air brings it to when it stands for.
+     */
+    @Test
+    fun aPictureHeldThroughALongCameraLossIsPlacedByItsTimeOnAir() {
+        val recording = FakeRecording()
+        var now = 0.0
+        val programme = PhoneProgramme(
+            recording, FakeStream(), captureWall = { it / 1e9 }, uptime = { now }, wall = { 1_000.0 + now }
+        )
+        programme.start(wall = 1_000.0)
+        recording.running = false
+        programme.pictureArrived(999_000_000_000)
+        for (tick in 0 until 600) {
+            now = tick / 30.0
+            programme.tick(null, PhoneProgramme.allKeys)
+        }
+        // Twenty seconds later the camera is back and a part opens, before its first new picture is due.
+        recording.running = true
+        now = 20.0
+        programme.tick(null, PhoneProgramme.allKeys)
+        assertEquals(1_019.0, recording.placed.single().second ?: Double.NaN, 1e-6)
     }
 
     @Test

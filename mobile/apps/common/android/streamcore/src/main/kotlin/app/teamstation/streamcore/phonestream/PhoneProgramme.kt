@@ -15,9 +15,11 @@ interface ProgrammeRecordingTarget {
 
     /**
      * Where a picture for programme frame time [presentationTime] goes on the part's timeline, in
-     * seconds, or null when it is left out. [captureWall] is when a new picture was captured.
+     * seconds, or null when it is left out. [captureWall] is when the picture was captured, moved on
+     * by the time it has been on air for a repeat ([ProgrammeHeldPictureWall]); [repeat] says the
+     * picture is the one this part's last frame showed, which says nothing new about its age.
      */
-    fun place(presentationTime: Double, captureWall: Double?): Double?
+    fun place(presentationTime: Double, captureWall: Double?, repeat: Boolean): Double?
 
     fun append(audio: AudioFrame)
 }
@@ -35,8 +37,8 @@ interface ProgrammeStreamTarget {
 /** [ProgramEncoder] as the programme's recording: pictures on the programme clock's grid. */
 class ProgramEncoderTarget(val encoder: ProgramEncoder) : ProgrammeRecordingTarget {
     override val running: Boolean get() = encoder.running
-    override fun place(presentationTime: Double, captureWall: Double?): Double? =
-        encoder.append(presentationTime, captureWall, onClockGrid = true)
+    override fun place(presentationTime: Double, captureWall: Double?, repeat: Boolean): Double? =
+        encoder.append(presentationTime, captureWall, onClockGrid = true, repeat = repeat)
 
     override fun append(audio: AudioFrame) = encoder.append(audio)
 }
@@ -84,6 +86,7 @@ class PhoneProgramme(
     private var zero: Double? = null
     private var lastFrame = -1L
     private var lastRecordedSequence: Long? = null
+    private val heldCapture = ProgrammeHeldPictureWall()
     private var lastStreamSeconds = Double.NEGATIVE_INFINITY
     private val pictures = ProgrammePictureQueue(pictureDelaySeconds)
     private var lastOffered: Long? = null
@@ -106,6 +109,7 @@ class PhoneProgramme(
             zero = null
             lastFrame = -1
             lastRecordedSequence = null
+            heldCapture.reset()
             pictures.reset()
             lastOffered = null
             lastStreamSeconds = Double.NEGATIVE_INFINITY
@@ -163,6 +167,9 @@ class PhoneProgramme(
         val entry = pictures.pick(wallNow - lateness, 1.0 / frameRate) ?: return TickOutput()
         val capture = entry.captureWall
         val held = entry.captureNanos
+        // Kept on every tick, whether or not the recording runs: a part that opens on a picture
+        // already on air is placed by its capture time, never by a lag the part has not measured.
+        val recordingCapture = heldCapture.capture(entry.sequence, capture, wallNow)
         val draws = mutableListOf<ProgrammeDraw>()
         val recorded = mutableListOf<Long>()
         if (RECORDING_KEY in attached && recording.running) {
@@ -170,12 +177,12 @@ class PhoneProgramme(
             lastRecordedSequence = entry.sequence
             val repeats = minOf(missed, (frameRate / 4).toLong())
             for (skipped in frame - repeats until frame) {
-                recording.place(skipped.toDouble() / frameRate, null)?.let {
+                recording.place(skipped.toDouble() / frameRate, null, repeat = true)?.let {
                     draws += ProgrammeDraw(RECORDING_KEY, nanos(it), held)
                     recorded += skipped
                 }
             }
-            recording.place(frame.toDouble() / frameRate, if (fresh) capture else null)?.let {
+            recording.place(frame.toDouble() / frameRate, recordingCapture, repeat = !fresh)?.let {
                 draws += ProgrammeDraw(RECORDING_KEY, nanos(it), held)
                 recorded += frame
             }
