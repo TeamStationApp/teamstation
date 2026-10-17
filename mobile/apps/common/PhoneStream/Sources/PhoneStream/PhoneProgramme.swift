@@ -15,7 +15,8 @@ public protocol ProgrammeRecordingTarget: AnyObject, Sendable {
 /// Where the programme's stream frames go: `ProgramStreamer`, or a fake in a test.
 public protocol ProgrammeStreamTarget: AnyObject, Sendable {
   var running: Bool { get }
-  /// `captureWall` is when a picture new to the stream was captured; nil for a repeat.
+  /// `captureWall` is when the picture was captured, moved on by the time it has been on air for a
+  /// repeat (`ProgrammeHeldPictureWall`).
   func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, captureWall: WallClock?)
   func append(audio frame: AudioFrame)
 }
@@ -59,8 +60,10 @@ public final class PhoneProgramme: @unchecked Sendable {
   private let lock = NSLock()
   private var programmeClock: ProgrammeClock
   private var pictures: ProgrammePictureQueue<Picture>
-  private var lastRecordedSequence: UInt64?
-  private var lastStreamedSequence: UInt64?
+  /// The capture time each recording frame and each stream frame carries: a new picture's own, and
+  /// a repeat's from the picture it repeats; see `ProgrammeHeldPictureWall`.
+  private var recordedCapture = ProgrammeHeldPictureWall()
+  private var streamedCapture = ProgrammeHeldPictureWall()
   private var timer: DispatchSourceTimer?
   private let queue = DispatchQueue(label: "app.teamstation.phonestream.programme", qos: .userInteractive)
   private var soundEnabled = true
@@ -145,8 +148,8 @@ public final class PhoneProgramme: @unchecked Sendable {
     pictures = ProgrammePictureQueue(delaySeconds: PhoneStreamProfile.pictureDelaySeconds)
     let rate = PhoneStreamProfile.frameRate
     programmeClock = ProgrammeClock(recordingRate: rate, streamRate: rate)
-    lastRecordedSequence = nil
-    lastStreamedSequence = nil
+    recordedCapture = ProgrammeHeldPictureWall()
+    streamedCapture = ProgrammeHeldPictureWall()
     lock.unlock()
     timer?.cancel()
     liveMix.stop()
@@ -226,15 +229,16 @@ public final class PhoneProgramme: @unchecked Sendable {
       return TickOutput()
     }
     let picture = entry.picture
-    var fresh = false
+    // Kept on every tick, whether or not an output runs: a stream or a part that starts on a picture
+    // already on air (the one held while the camera comes back after the background) stamps it from
+    // its capture time, never from a lag the new publish or part has not measured.
+    var recordingCapture: WallClock?
     if tick.recordingFrame != nil {
-      fresh = entry.sequence != lastRecordedSequence
-      lastRecordedSequence = entry.sequence
+      recordingCapture = recordedCapture.capture(sequence: entry.sequence, capture: picture.capture, at: wallNow)
     }
-    var freshToStream = false
+    var streamCapture: WallClock?
     if tick.streamFrame != nil {
-      freshToStream = entry.sequence != lastStreamedSequence
-      lastStreamedSequence = entry.sequence
+      streamCapture = streamedCapture.capture(sequence: entry.sequence, capture: picture.capture, at: wallNow)
     }
     let rate = programmeClock.recordingRate
     let streamRate = programmeClock.streamRate
@@ -256,7 +260,7 @@ public final class PhoneProgramme: @unchecked Sendable {
       recording.append(
         picture.buffer,
         presentationTime: CMTime(value: frame, timescale: CMTimeScale(rate)),
-        captureWall: fresh ? picture.capture : nil,
+        captureWall: recordingCapture,
         onClockGrid: true
       )
       output.recordingFrames.append(frame)
@@ -265,7 +269,7 @@ public final class PhoneProgramme: @unchecked Sendable {
       stream.append(
         picture.buffer,
         presentationTime: CMTime(value: frame, timescale: CMTimeScale(streamRate)),
-        captureWall: freshToStream ? picture.capture : nil
+        captureWall: streamCapture
       )
       output.streamFrame = frame
     }
