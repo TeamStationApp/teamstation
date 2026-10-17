@@ -17,6 +17,7 @@ import {
 
 import type { RosterEntry } from '../../common/api'
 import {
+  type ChosenRosterCommand,
   ROSTER_TAB,
   type RosterQuestion,
   type RosterTab,
@@ -112,6 +113,8 @@ export interface RosterEditorDraft {
    * on the scoring screen means, when the player said fits two or more.
    */
   question?: RosterQuestion
+  /** Named creations from the scoring screen await the roster API here. */
+  pending?: ChosenRosterCommand[]
   /**
    * The game the draft was opened over, when it is not the screen's own
    * session: Save Rosters lights when the draft differs from it.
@@ -377,6 +380,18 @@ export function RosterEditor({
     size: sizes.mic,
     chat: initialDraft?.chat,
     question: initialDraft?.question,
+    pending: initialDraft?.pending,
+    onCreatePlayer:
+      onCreatePlayer == null
+        ? undefined
+        : async (teamId, player) => {
+            const entry = await onCreatePlayer(teamId, player)
+            setCreated(held => ({
+              ...held,
+              [teamId]: [...(held[teamId] ?? []), entry]
+            }))
+            return entry
+          },
     onStage: staged => {
       setDraft(staged.draft)
       setRunners(staged.runners)
@@ -412,6 +427,7 @@ export function RosterEditor({
   )
   return (
     <View
+      pointerEvents={spoken.busy ? 'none' : 'auto'}
       style={{
         flex: 1,
         minHeight: 0,
@@ -776,7 +792,7 @@ export function RosterEditor({
           testID="Roster footer bar"
           style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}
         >
-          <View style={{ flex: 1, alignItems: 'flex-start' }}>
+          <View style={{ flex: 1, alignItems: 'flex-end' }}>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Create Player"
@@ -787,7 +803,7 @@ export function RosterEditor({
               style={{
                 minHeight: sizes.save,
                 justifyContent: 'center',
-                paddingHorizontal: 4
+                paddingHorizontal: 0
               }}
             >
               {/* The sheet's green text action, as Create Placeholder Player. */}
@@ -827,7 +843,9 @@ export function RosterEditor({
               style={dense && defense ? { minHeight: sizes.save } : undefined}
               accessibilityLabel="Save Rosters"
               label="Save Rosters"
-              disabled={!rosterSavable(dirty, unaccepted, validation)}
+              disabled={
+                spoken.busy || !rosterSavable(dirty, unaccepted, validation)
+              }
               onPress={() => {
                 const saving = onSave(
                   draft,
