@@ -128,7 +128,7 @@ describe('player entry sheet', function () {
     expect(original.throws).equals(null)
   })
 
-  it('focuses, validates, saves all optional fields, resets for another and cancels without adding', async function () {
+  it('opens without focusing, validates, and focuses the reset form only after saving another', async function () {
     const host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -158,7 +158,7 @@ describe('player entry sheet', function () {
     await act(async () => {
       changeTheme(tsBallpark)
     })
-    expect(document.activeElement).equals(node('First Name'))
+    expect(document.activeElement).not.equals(node('First Name'))
     await tap('Create Player')
     expect(document.body.textContent).includes('Enter a player name.')
     await input('First Name', 'Alex')
