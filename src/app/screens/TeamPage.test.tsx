@@ -243,7 +243,7 @@ describe('restored access-aware team presentation', () => {
     expect(document.body.textContent).includes('Standalone team')
     await press('Stats')
     expect(document.body.textContent).includes(
-      'Team membership is required to view statistics.'
+      'You need to be a member of this team to see individual player stats.'
     )
     expect(document.body.textContent).not.includes('Create Game')
     expect(privateReads).equals(0)
@@ -305,7 +305,7 @@ describe('restored access-aware team presentation', () => {
       await press('Stats')
       expect(document.body.textContent).includes('SEASON PERFORMANCE')
       expect(document.body.textContent).includes(
-        'You need to be a member of one of the teams to see this.'
+        'You need to be a member of this team to see individual player stats.'
       )
       expect(asked).deep.equals(['teamGames canonical', 'roster canonical'])
       // Following it or not changes the button on the card, and nothing else.

@@ -1064,9 +1064,10 @@ describe('api client', function () {
       idempotencyKey: 'demo-proposal-key'
     }
     expect(await client.proposeGame(proposal)).deep.equals(response)
-    expect(await client.decideGameRequest('req_demo', 'accept')).deep.equals(
-      response
-    )
+    expect(await client.decideGameRequest('req_demo', 'accept')).deep.equals({
+      ...response,
+      notice: undefined
+    })
     const legacy = stubFetch(200, {
       id: 'req_demo',
       status: 'accepted',
