@@ -73,7 +73,7 @@ export type RosterMode = 'boxScore' | RosterTab
 export type RosterAudience = 'scorekeeper' | 'coach'
 /** Each tab's label, which is also its accessible name. */
 export const ROSTER_MODE_LABELS: Record<RosterMode, string> = {
-  boxScore: 'Box Score',
+  boxScore: 'Box',
   editRoster: lstrings.scoring_roster_tab,
   lineup: 'Lineup',
   defense: 'Defense'

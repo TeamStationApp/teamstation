@@ -81,7 +81,7 @@ describe('roster screen bottom bar and slider', function () {
       'defense'
     ])
     expect(ROSTER_MODE_LABELS).deep.equals({
-      boxScore: 'Box Score',
+      boxScore: 'Box',
       editRoster: 'Roster',
       lineup: 'Lineup',
       defense: 'Defense'
@@ -111,7 +111,7 @@ describe('roster screen bottom bar and slider', function () {
         onSave={() => undefined}
       />
     )
-    expect(tabs()).deep.equals(['Box Score', 'Roster', 'Lineup', 'Defense'])
+    expect(tabs()).deep.equals(['Box', 'Roster', 'Lineup', 'Defense'])
   })
 
   it('draws Create Player as green text with no outline, labelled Create Player, opening the player sheet', async function () {

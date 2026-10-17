@@ -353,11 +353,9 @@ describe('Coach Game (U25)', function () {
     )!
     expect(header.textContent).equals('Hawks')
     expect(getComputedStyle(header).textAlign).equals('right')
-    for (const tab of ['Box Score', 'Roster', 'Lineup', 'Defense'])
+    for (const tab of ['Box', 'Roster', 'Lineup', 'Defense'])
       expect(node(tab, 'tab'), tab).not.equals(null)
-    expect(node('Box Score', 'tab')!.getAttribute('aria-selected')).equals(
-      'true'
-    )
+    expect(node('Box', 'tab')!.getAttribute('aria-selected')).equals('true')
     // His own team alone.
     expect(node('Away Team')).equals(null)
     expect(node('Home Team')).equals(null)
