@@ -114,6 +114,41 @@ const notification: Notification = {
 }
 
 describe('creation and organization interface behavior', () => {
+  it('labels matching season dates in discovery and group linking', async () => {
+    const api = client()
+    const season = {
+      ...group,
+      kind: 'season' as const,
+      startsOn: '2027-03-01',
+      endsOn: '2027-05-31'
+    }
+    api.discoverGroups = async () => [season]
+    api.ownGroups = async () => [season]
+    await mount(
+      <DiscoverScreen client={api} initialKind="season" onOpen={() => {}} />
+    )
+    await settle()
+    expect(document.body.textContent).includes('Spring 2027')
+    await act(async () => {
+      root!.unmount()
+    })
+    document.body.replaceChildren()
+    await mount(
+      <GroupLinkScreen
+        client={api}
+        choice={{
+          subject: { kind: 'league', id: 'league_demo' },
+          targetKind: 'season',
+          direction: 'children',
+          relationship: 'parent'
+        }}
+        onSent={() => {}}
+        onCancel={() => {}}
+      />
+    )
+    await settle()
+    expect(document.body.textContent).includes('Spring 2027')
+  })
   it('forwards Home-linked Teams and Standings permissions to the shared participant opener', async () => {
     const api = client()
     const participants = [
@@ -1053,7 +1088,9 @@ describe('creation and organization interface behavior', () => {
       />
     )
     await mount(render())
-    expect(document.body.textContent).includes('membership is required')
+    expect(document.body.textContent).includes(
+      'No game has a video attached yet.'
+    )
     expect(document.body.textContent).not.includes('Manage people')
     await act(async () => {
       root!.unmount()

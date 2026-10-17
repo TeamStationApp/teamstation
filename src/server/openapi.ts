@@ -3784,13 +3784,16 @@ export function openApiDocument(version: string): OpenApiDocument {
             "whether the game's scoreboard is open, and whether the caller " +
             'runs the game and so may override it; null when the ' +
             'scoreboard store cannot be asked. `nonMemberView` is true for ' +
-            'anybody signed in who is a member of neither team: ' +
+            'anonymous callers and signed-in callers who are members of neither team: ' +
             'that caller reads the game, its records, logos and videos with ' +
             'their posters, but each `linescore` side carries `runs` and `r` ' +
             'alone (`h`, `e`, `bb`, `k`, `hr` and `hbp` are null), and ' +
             '`canScore` and `canDj` are false and `coachSides` empty. ' +
+            'Private notes, arrival timing, ingest details, scoring ownership and ' +
+            'scoreboard access are null in this public projection. Playback ' +
+            'and detailed statistics still require team membership. ' +
             'False for members.',
-          security: [{ bearer: [] }],
+          security: [{}, { bearer: [] }],
           parameters: [gameIdParam],
           responses: {
             200: { description: 'The game, its score and its videos' },

@@ -443,17 +443,19 @@ export function teamRoutes(
 
   router.get(
     '/games/:gameId',
-    requireActor,
     withAsync(async (req, res) => {
       const actor = req.actor
-      if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
-      const event = await teamEventDetail(db, actor, gameId)
+      const event =
+        actor == null ? null : await teamEventDetail(db, actor, gameId)
       if (event != null) {
         res.json(event)
         return
       }
-      const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
+      const scopes =
+        actor == null
+          ? null
+          : await visibleScopes(db, actor.userId, actor.isAdmin)
 
       const game = await db
         .selectFrom('games')
@@ -467,9 +469,9 @@ export function teamRoutes(
         awayTeamId: game.away_team_id,
         seasonId: game.season_id
       }
-      // Anybody signed in reads the game: a member of either side or its
-      // season as a member, anybody else in the non-member view.
-      const nonMemberView = !canSeeGame(scopes, scope)
+      // Games are public: members of either side or its season get the
+      // full detail, and everybody else gets the non-member view.
+      const nonMemberView = scopes == null || !canSeeGame(scopes, scope)
 
       const videos = await db
         .selectFrom('videos')
@@ -507,10 +509,14 @@ export function teamRoutes(
 
       // Whether this caller runs the game, and so may override its scoreboard:
       // a manager of either side or anybody above one. It needs no Redis.
-      const editors = await adminScopes(db, actor.userId, actor.isAdmin)
+      const editors =
+        actor == null
+          ? null
+          : await adminScopes(db, actor.userId, actor.isAdmin)
       const mayOverride =
-        canManageTeam(editors, game.home_team_id) ||
-        canManageTeam(editors, game.away_team_id)
+        editors != null &&
+        (canManageTeam(editors, game.home_team_id) ||
+          canManageTeam(editors, game.away_team_id))
 
       const names = await teamNames(db, [game.home_team_id, game.away_team_id])
       // Whether to offer Score Game: a scorekeeper of either team, which
@@ -518,7 +524,8 @@ export function teamRoutes(
       // And whether to offer DJ Game: a songkeeper of either team, which
       // every scorekeeper is. And the sides whose lineups this caller saves
       // as their team's head coach, as the lineups route allows.
-      const roles = await roleScopes(db, actor.userId, actor.isAdmin)
+      const roles =
+        actor == null ? null : await roleScopes(db, actor.userId, actor.isAdmin)
 
       // Each side's record in the season this game was played in.
       const recordRows = await teamRecords(db, {
@@ -575,8 +582,8 @@ export function teamRoutes(
         venue: game.venue,
         endAt: toIso(game.end_at),
         address: game.address,
-        notes: game.notes,
-        arrivalTimeDelta: game.arrival_time_delta,
+        notes: nonMemberView ? null : game.notes,
+        arrivalTimeDelta: nonMemberView ? null : game.arrival_time_delta,
         eventType: 'game',
         latitude: game.latitude,
         longitude: game.longitude,
@@ -597,8 +604,8 @@ export function teamRoutes(
         homeScore: game.home_score,
         awayScore: game.away_score,
         ingestStatus: game.ingest_status,
-        ingestMessage: game.ingest_message,
-        scoringOwner: game.scoringOwner,
+        ingestMessage: nonMemberView ? null : game.ingest_message,
+        scoringOwner: nonMemberView ? null : game.scoringOwner,
         awayRecord: recordOf(game.away_team_id),
         homeRecord: recordOf(game.home_team_id),
         awayLogoUrl: logoOf(game.away_team_id),
@@ -611,27 +618,32 @@ export function teamRoutes(
         fenceDistanceFt: Number(game.resolved_fence_distance_ft),
         canScore:
           !nonMemberView &&
+          roles != null &&
           (canScore(roles, game.home_team_id) ||
             canScore(roles, game.away_team_id)),
         canDj:
           !nonMemberView &&
+          roles != null &&
           (canKeepSongs(roles, game.home_team_id) ||
             canKeepSongs(roles, game.away_team_id)),
-        coachSides: nonMemberView
-          ? []
-          : (['away', 'home'] as const).filter(side =>
-              isHeadCoach(
-                roles,
-                side === 'home' ? game.home_team_id : game.away_team_id
-              )
-            ),
+        coachSides:
+          nonMemberView || roles == null
+            ? []
+            : (['away', 'home'] as const).filter(side =>
+                isHeadCoach(
+                  roles,
+                  side === 'home' ? game.home_team_id : game.away_team_id
+                )
+              ),
         // Whether this is the non-member view, so the app draws it as one.
         nonMemberView,
-        scoreboard: await scoreboardOf(store, mayOverride, {
-          startAt: new Date(game.start_at).getTime(),
-          status: game.status,
-          gameId
-        }),
+        scoreboard: nonMemberView
+          ? null
+          : await scoreboardOf(store, mayOverride, {
+              startAt: new Date(game.start_at).getTime(),
+              status: game.status,
+              gameId
+            }),
         videos: videos.map(video => ({
           id: video.id,
           numCameras: video.num_cameras,
@@ -779,13 +791,15 @@ export function teamRoutes(
         return
       }
       if (!(await nonMemberTeam(db, actor, scopes, teamId))) throw notFound()
-      // A non-member reads every name, and no face, and not whom a family
-      // member is a guardian of.
+      // Staff imagery is public; other people's faces and family links are not.
       const roster = await teamRoster(db, media.space, teamId)
       res.json(
         roster.map(entry => ({
           ...entry,
-          avatarUrl: null,
+          avatarUrl:
+            entry.section === 'admin' || entry.section === 'staff'
+              ? entry.avatarUrl
+              : null,
           guardianOf: undefined
         }))
       )

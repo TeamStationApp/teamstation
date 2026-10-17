@@ -48,8 +48,9 @@ const game = (
     ...patch
   })
 async function show(
-  tab: 'team' | 'schedule',
-  patch: Record<string, unknown> = {}
+  tab: 'team' | 'schedule' | 'videos' | 'stats',
+  patch: Record<string, unknown> = {},
+  onOpenGame?: React.ComponentProps<typeof PublicTeamContent>['onOpenGame']
 ): Promise<void> {
   const detail = asGroupDetail({
     group,
@@ -71,12 +72,75 @@ async function show(
   await act(async () => {
     root!.render(
       <ThemeProvider>
-        <PublicTeamContent detail={detail} tab={tab} />
+        <PublicTeamContent detail={detail} tab={tab} onOpenGame={onOpenGame} />
       </ThemeProvider>
     )
   })
 }
 describe('minimal public team information', () => {
+  it('opens public video and schedule rows without autoplay and keeps staff inert', async () => {
+    const opened: unknown[][] = []
+    const open = (...args: unknown[]): void => {
+      opened.push(args)
+    }
+    await show(
+      'videos',
+      { games: [game({ videoCount: 1 }), game({ id: 'empty' })] },
+      open
+    )
+    expect(document.querySelectorAll('[role="button"]')).has.length(1)
+    await act(async () => {
+      document.querySelector<HTMLElement>('[role="button"]')!.click()
+    })
+    expect(opened[0]).deep.equals([
+      'game',
+      'Demo Away at Demo Home',
+      { tab: 'watch', autoPlay: false }
+    ])
+    await show('schedule', {}, open)
+    await act(async () => {
+      document.querySelector<HTMLElement>('[role="button"]')!.click()
+    })
+    expect(opened[1]).deep.equals([
+      'game',
+      'Demo Away at Demo Home',
+      { autoPlay: false }
+    ])
+    await show('team', { staff: [{ name: 'Mike T.', roles: ['coach'] }] })
+    expect(document.body.textContent).includes('STAFF')
+    expect(document.querySelector('[role="button"], a, [tabindex="0"]')).equals(
+      null
+    )
+    await show('team', { staff: [] })
+    expect(document.body.textContent).includes('No public staff listed')
+    await show('videos', { games: [] })
+    expect(document.body.textContent).includes(
+      'No game has a video attached yet'
+    )
+    await show('stats')
+    expect(document.body.textContent).includes('membership is required')
+  })
+  it('uses the member role badge and subtitle without making staff navigable', async () => {
+    await show('team', {
+      staff: [
+        {
+          name: 'Babe R.',
+          roles: ['admin'],
+          inheritedFrom: { level: 'league', role: 'admin' }
+        },
+        {
+          name: 'Mike T.',
+          roles: ['coach', 'scorekeeper'],
+          inheritedFrom: { level: 'season', role: 'coach' }
+        }
+      ]
+    })
+    for (const text of ['League admin', 'Season coach', 'Coach · Scorekeeper'])
+      expect(document.body.textContent).includes(text)
+    expect(document.querySelector('[role="button"], a, [tabindex="0"]')).equals(
+      null
+    )
+  })
   it('shows location, parent relationships, participation and short staff names', async () => {
     await show('team', {
       group: { ...group, external: true },
@@ -87,7 +151,7 @@ describe('minimal public team information', () => {
       'Parent league: Demo Team',
       'Participating season: Demo Team',
       'Demo A.',
-      'coach, admin',
+      'Coach',
       'Placeholder team',
       'Managed by Demo Team'
     ])

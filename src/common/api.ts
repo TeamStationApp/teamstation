@@ -359,7 +359,7 @@ export const asGameDetail = withEventMetadata(
       null
     ),
     /**
-     * Whether this caller is signed in and a member of neither team: `linescore`
+     * Whether this caller is not a member of either team, including signed-out viewers: `linescore`
      * then carries each side's runs alone, `canScore` and `canDj` are false,
      * and the box score and playback answer `membersOnly`. False for members.
      */
