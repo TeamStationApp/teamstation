@@ -22,6 +22,7 @@ import {
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
+import { hasScoringEventsSql } from '../games/scoringActivity'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
@@ -195,6 +196,7 @@ export async function publicGames(
       'away.name as awayName',
       'games.season_id',
       'games.start_at',
+      'games.end_at',
       'games.venue',
       'games.exhibition',
       'games.timezone',
@@ -207,6 +209,7 @@ export async function publicGames(
       'games.withdrawn_by_team_id',
       'withdrawn.name as withdrawnName'
     ])
+    .select(hasScoringEventsSql.as('hasScoringEvents'))
   if (ref.kind === 'team')
     query = query.where(eb =>
       eb.or([
@@ -249,6 +252,8 @@ export async function publicGames(
     awayTeam: { id: row.away_team_id, name: row.awayName },
     seasonId: row.season_id,
     startAt: row.start_at.toISOString(),
+    endAt: row.end_at?.toISOString() ?? null,
+    hasScoringEvents: row.hasScoringEvents,
     venue: row.venue,
     exhibition: row.exhibition,
     timezone: row.timezone,
