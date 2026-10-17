@@ -259,14 +259,24 @@ class ProgrammeExportTest {
         val second = part("program-20261012-100000-2.mp4", 2)
         val anchors = anchors(count = 2) + anchors(part = 2, start = 1_032.0, count = 2)
         val output = File(folder.root, "hole.mp4")
-        ProgrammeExport.export(listOf(first, second), anchors, 1, 1_000.0, 1_034.0, 60, silent, output, blankHoles = true)
-        val video = FragmentedMp4Reader.read(output)!!.video!!
+        ProgrammeExport.export(listOf(first, second), anchors, 1, 1_000.0, 1_034.0, 30, silent, output, blankHoles = true)
+        val reader = FragmentedMp4Reader.read(output)!!
+        val video = reader.video!!
+        val frame = 1.0 / 30
         val gaps = video.samples.zipWithNext().map { (a, b) -> (b.ticks - a.ticks).toDouble() / video.timescale }
         val hole = gaps.max()
         // The last picture of the first part starts one frame before that part ends, so the
         // start-to-start gap is the 30 s absence plus that frame.
-        assertEquals(30.0 + 1.0 / 30, hole, 1e-4)
-        val before = video.samples.zipWithNext().maxBy { (a, b) -> b.ticks - a.ticks }.first
-        assertEquals(1.0 / 60, before.duration.toDouble() / video.timescale, 1e-4)
+        assertEquals(30.0 + frame, hole, 1e-4)
+        val outgoing = gaps.indexOf(hole)
+        assertEquals(59, outgoing)
+        // The outgoing picture is cut to one frame, and every picture inside a part keeps its frame.
+        video.samples.dropLast(1).forEachIndexed { index, sample ->
+            assertEquals("picture $index", frame, sample.duration.toDouble() / video.timescale, 1e-4)
+        }
+        assertEquals(32.0, video.samples[60].ticks.toDouble() / video.timescale, 1e-4)
+        // The pictures go out in 3 s fragments: one per part, cut at the hole, plus the sound that
+        // runs through it. A fragment per picture would be over a hundred.
+        assertTrue("${reader.fragments} fragments", reader.fragments <= 2 + (30 / 3))
     }
 }
