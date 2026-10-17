@@ -46,11 +46,18 @@ each row, which no write to one game does.
 ## Game LIVE state
 
 Game detail, schedule rows and public group games return `isGameLive`, computed
-on the server by `gameIsLive`. It requires a surviving scoring action or stored
-play, a game that is neither final nor cancelled, and server time within the
+on the server by `gameIsLive`. It requires a surviving pitch or ball-in-play
+event, a game that is neither final nor cancelled, and server time within the
 inclusive window from one hour before start through one hour after end. A
 missing end uses the existing three-hour duration. Non-game events and new
 pending proposals return false.
+
+Game status uses the same activity check: roster changes, substitutions,
+initialized at-bats, runner placement and game-flow overrides cannot start a
+game. A pitch or ball-in-play action (or a corresponding Gumbo play event)
+must remain in a stored play or the current play. Undoing the last one returns
+an unfinished game to `scheduled`. Final and cancelled games retain their
+existing finalization rules.
 
 Clients display this flag directly and refresh it through their normal visible
 screen refresh. They must not derive it from `status`, scoring fields or the
