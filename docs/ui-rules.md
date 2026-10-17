@@ -73,6 +73,14 @@ that a location has not been set.
 
 ## Buttons
 
+### Game hero actions stay compact
+
+Order hero actions Score, Coach, DJ, Record, filtering each by its capability.
+Coach and DJ use Score's existing scoring availability; DJ also needs device
+support. Keep each button 4.5 rem wide with a 1.5 rem visible pill, 0.875 rem
+label and a 3 rem touch target, regardless of the number of visible actions.
+Wrap on narrow screens instead of stretching or shrinking the buttons.
+
 ### Membership and access actions belong in list rows
 
 Whenever a collection lets the user enable or disable, join or leave, add or
