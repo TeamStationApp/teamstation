@@ -27,8 +27,7 @@ function gameWith(fields: Partial<GameDetail>): GameDetail {
   }
 }
 
-const music = { djSupported: true }
-const onDjGame = (): void => undefined
+const onRecordGame = (): void => undefined
 
 function ids(pills: Array<{ id: string }>): string[] {
   return pills.map(pill => pill.id)
@@ -40,8 +39,7 @@ describe('the pills across a game', function () {
       ids(
         gameTabs({
           game: gameWith({ canScore: true, canDj: true }),
-          music,
-          onDjGame
+          onRecordGame
         })
       )
     ).deep.equals(['info', 'boxScore', 'watch'])
@@ -91,18 +89,17 @@ describe('the pills across a game', function () {
       canScore: false,
       scoreboard: { open: true, mayOverride: false }
     })
-    expect(ids(gameTabs({ game, music, onDjGame }))).deep.equals([
+    expect(ids(gameTabs({ game, onRecordGame }))).deep.equals([
       'info',
       'boxScore',
       'watch'
     ])
   })
 
-  it('offers Record to a songkeeper with music', function () {
+  it('offers Record with a camera recording controller', function () {
     const actions = gameActions({
       game: gameWith({ canDj: true }),
-      music,
-      onDjGame
+      onRecordGame
     })
     expect(ids(actions)).deep.equals(['record'])
     expect(actions[0].label).equals('Record')
@@ -111,19 +108,17 @@ describe('the pills across a game', function () {
   it('puts Score before Record', function () {
     const actions = gameActions({
       game: gameWith({ canScore: true, canDj: true }),
-      music,
-      onDjGame
+      onRecordGame
     })
     expect(ids(actions)).deep.equals(['score', 'record'])
   })
 
-  it('leaves Record out without an iPhone’s music or a way to open it', function () {
+  it('leaves Record out without a supported, authorized recording controller', function () {
     const game = gameWith({ canScore: true, canDj: true })
-    expect(ids(gameActions({ game, onDjGame }))).deep.equals(['score'])
+    expect(ids(gameActions({ game }))).deep.equals(['score'])
     expect(
-      ids(gameActions({ game, music: { djSupported: false }, onDjGame }))
-    ).not.includes('record')
-    expect(ids(gameActions({ game, music }))).not.includes('record')
+      ids(gameActions({ game: gameWith({ canDj: false }), onRecordGame }))
+    ).deep.equals(['record'])
   })
   it('keeps Info as the only titled-event content tab', () => {
     expect(
@@ -136,8 +131,7 @@ describe('the pills across a game', function () {
   it('puts Coach after Score and Record, for a head coach (U23)', function () {
     const input = {
       game: gameWith({ canScore: true, canDj: true, coachSides: ['home'] }),
-      music,
-      onDjGame,
+      onRecordGame,
       onCoachGame
     }
     expect(ids(gameTabs(input))).deep.equals(['info', 'boxScore', 'watch'])

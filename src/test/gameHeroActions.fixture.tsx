@@ -4,7 +4,6 @@ import { Text } from 'react-native'
 
 import { GameScreen } from '../app/screens/GameScreen'
 import { ThemeProvider } from '../app/theme/ThemeContext'
-import webMusic from '../app/walkup/walkUpMusic'
 import { asGameDetail, TeamStationClient } from '../common/api'
 
 const game = asGameDetail({
@@ -44,9 +43,10 @@ function Fixture(): React.ReactElement {
         client={client}
         gameId={game.id}
         initialTab="watch"
-        music={{ ...webMusic, djSupported: true }}
-        onDjGame={() => {
-          setAction('Record')
+        recording={{
+          open: () => {
+            setAction('Record')
+          }
         }}
         onCoachGame={() => {
           setAction('Coach')

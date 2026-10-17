@@ -1889,13 +1889,9 @@ function Shell(props: AppProps): React.ReactElement {
         onScoreboard={() => {
           push({ name: 'scoreboardOverride', gameId: top.gameId })
         }}
-        onDjGame={() => {
-          push({ name: 'djGame', gameId: top.gameId })
-        }}
         onCoachGame={teamId => {
           push({ name: 'coachGame', gameId: top.gameId, teamId })
         }}
-        music={walkUpMusic}
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
@@ -1952,13 +1948,9 @@ function Shell(props: AppProps): React.ReactElement {
         onScoreboard={() => {
           push({ name: 'scoreboardOverride', gameId: top.gameId })
         }}
-        onDjGame={() => {
-          push({ name: 'djGame', gameId: top.gameId })
-        }}
         onCoachGame={teamId => {
           push({ name: 'coachGame', gameId: top.gameId, teamId })
         }}
-        music={walkUpMusic}
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })

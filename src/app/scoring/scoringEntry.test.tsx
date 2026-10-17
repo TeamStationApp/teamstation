@@ -171,8 +171,7 @@ describe('scoring entry on the phones', function () {
         <GameScreen
           client={client}
           gameId="g1"
-          music={{ djSupported: true }}
-          onDjGame={() => undefined}
+          recording={{ open: () => undefined }}
         />
       )
       expect(pills()).deep.equals(['Score', 'Record', 'Box score', 'Videos'])

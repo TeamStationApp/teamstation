@@ -35,10 +35,8 @@ export interface GameTabsInput {
     | 'videos'
   > &
     EventTabState
-  /** DJ Game is an iPhone's: never the web, and never Android. */
-  music?: { djSupported: boolean }
-  /** Present where the app can open DJ Game. */
-  onDjGame?: () => void
+  /** Present when this device can record and the viewer may film the game. */
+  onRecordGame?: () => void
   /** Present where the app can open Coach Game. */
   onCoachGame?: () => void
   now?: number
@@ -65,11 +63,11 @@ export function gameTabs(input: GameTabsInput): GameTabPill[] {
 }
 
 /**
- * Score, Record and Coach, on the hero. Each is offered to the same people,
- * on the same devices, as before they left the pills.
+ * Score, Record and Coach, on the hero. Recording uses the phone camera's
+ * capability and authorization, independently of music permissions.
  */
 export function gameActions(input: GameTabsInput): GameAction[] {
-  const { game, music, onDjGame } = input
+  const { game, onRecordGame } = input
   if (game.eventKind === 'event') return []
   const actions: GameAction[] = []
   if (
@@ -78,7 +76,7 @@ export function gameActions(input: GameTabsInput): GameAction[] {
   ) {
     actions.push({ id: 'score', label: lstrings.game_hero_score })
   }
-  if (game.canDj && music?.djSupported === true && onDjGame != null) {
+  if (onRecordGame != null) {
     actions.push({ id: 'record', label: lstrings.game_hero_record })
   }
   if (

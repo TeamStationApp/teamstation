@@ -75,7 +75,9 @@ import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
 import { ScoreGameOptions } from '../scoreboard/ScoreGameScreen'
+import type { GameRecording } from '../stream/gameRecording'
 import { StreamFooter } from '../stream/StreamFooter'
+import { useGameRecording } from '../stream/useGameRecording'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { BoxScore } from './BoxScore'
@@ -96,11 +98,8 @@ export interface GameScreenProps {
   onFullScoring?: () => void
   /** Opens the simplified scoreboard from the Score Game tab. */
   onScoreboard?: () => void
-  /**
-   * An explicit section. Bare addresses use the event's current default.
-   */
-  /** Opens DJ Game, for a songkeeper of either team. */
-  onDjGame?: () => void
+  /** An embedded recording controller; otherwise use this device's camera. */
+  recording?: GameRecording
   /**
    * Opens Coach Game on a team the viewer head-coaches. A head coach of both
    * teams picks one first.
@@ -108,11 +107,7 @@ export interface GameScreenProps {
   onCoachGame?: (teamId: string) => void
   /** Opens a separate scheduling settings screen for a participating team admin. */
   onSettings?: () => void
-  /**
-   * The phone's music. DJ Game plays songs, and is offered only on an
-   * iPhone: never on the web or Android.
-   */
-  music?: { djSupported: boolean }
+  /** An explicit section. Bare addresses use the event's current default. */
   initialTab?: Tab
   /** Start the video. Arriving here by pressing `Watch Replay` is a gesture a
    * browser accepts, which is what makes an unmuted autoplay legal. */
@@ -305,6 +300,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     onOpenTeam,
     onOpenPlayer
   } = props
+  const deviceRecording = useGameRecording(client, gameId)
+  const recording = props.recording ?? deviceRecording
   const theme = useTheme()
   const styles = getStyles(theme)
   const { height, width } = useWindowDimensions()
@@ -1158,8 +1155,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const heroActions = gameActions({
     game,
     now: clockNow,
-    music: props.music,
-    onDjGame: props.onDjGame,
+    onRecordGame: recording.open,
     onCoachGame: props.onCoachGame == null ? undefined : openCoach
   })
   const actionColor = (id: (typeof heroActions)[number]['id']): string =>
@@ -1198,6 +1194,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             key={action.id}
             accessibilityRole="button"
             accessibilityLabel={action.label}
+            disabled={action.id === 'record' && recording.busy === true}
+            accessibilityState={{
+              disabled: action.id === 'record' && recording.busy === true
+            }}
             style={styles.heroAction}
             onPress={() => {
               if (action.id === 'score') {
@@ -1205,7 +1205,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 return
               }
               if (action.id === 'record') {
-                props.onDjGame?.()
+                recording.open?.()
                 return
               }
               openCoach()
@@ -1747,6 +1747,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       </View>
       {anglePicker}
       {multiCam}
+      {recording.screen}
+      {recording.error != null && (
+        <Text
+          accessibilityRole="alert"
+          style={{ color: theme.primaryTextColor }}
+        >
+          {recording.error}
+        </Text>
+      )}
       {choosingCoach && (
         <ChoiceSheet
           title={lstrings.game_coach_which}
