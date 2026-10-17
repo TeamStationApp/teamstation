@@ -16,7 +16,7 @@ export interface GameTabPill {
 }
 
 export interface GameAction {
-  id: 'score' | 'record' | 'coach'
+  id: 'score' | 'record' | 'coach' | 'dj'
   label: string
 }
 
@@ -39,6 +39,8 @@ export interface GameTabsInput {
   onRecordGame?: () => void
   /** Present where the app can open Coach Game. */
   onCoachGame?: () => void
+  /** Present when this platform supports the DJ screen. */
+  onDjGame?: () => void
   now?: number
 }
 
@@ -62,29 +64,22 @@ export function gameTabs(input: GameTabsInput): GameTabPill[] {
   return pills
 }
 
-/**
- * Score, Record and Coach, on the hero. Recording uses the phone camera's
- * capability and authorization, independently of music permissions.
- */
+/** Hero actions share scoring availability, with independent capabilities. */
 export function gameActions(input: GameTabsInput): GameAction[] {
-  const { game, onRecordGame } = input
+  const { game, onRecordGame, onCoachGame, onDjGame } = input
   if (game.eventKind === 'event') return []
   const actions: GameAction[] = []
-  if (
-    game.canScore &&
-    (scoringEntry(game) != null || game.scoreboard?.open === true)
-  ) {
-    actions.push({ id: 'score', label: lstrings.game_hero_score })
+  // Preserve Score's existing availability, including reopening our own games.
+  const scoringAvailable =
+    scoringEntry(game) != null || game.scoreboard?.open === true
+  if (scoringAvailable) {
+    if (game.canScore)
+      actions.push({ id: 'score', label: lstrings.game_hero_score })
+    if (game.coachSides.length > 0 && onCoachGame != null)
+      actions.push({ id: 'coach', label: lstrings.game_hero_coach })
+    if (game.canDj && onDjGame != null) actions.push({ id: 'dj', label: 'DJ' })
   }
-  if (onRecordGame != null) {
+  if (onRecordGame != null)
     actions.push({ id: 'record', label: lstrings.game_hero_record })
-  }
-  if (
-    game.coachSides.length > 0 &&
-    game.status !== 'cancelled' &&
-    input.onCoachGame != null
-  ) {
-    actions.push({ id: 'coach', label: lstrings.game_hero_coach })
-  }
   return actions
 }

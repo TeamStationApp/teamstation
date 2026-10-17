@@ -112,6 +112,7 @@ export interface GameScreenProps {
    * teams picks one first.
    */
   onCoachGame?: (teamId: string) => void
+  onDjGame?: () => void
   /** Opens a separate scheduling settings screen for a participating team admin. */
   onSettings?: () => void
   /** An explicit section. Bare addresses use the event's current default. */
@@ -1169,6 +1170,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     game,
     now: clockNow,
     onRecordGame: recording.open,
+    onDjGame: props.onDjGame,
     onCoachGame: props.onCoachGame == null ? undefined : openCoach
   })
   const actionColor = (id: (typeof heroActions)[number]['id']): string =>
@@ -1197,8 +1199,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     onTab?.(next)
   }
 
-  const compactActions = heroActions.length === 3 && width < 420
-  const actionShellHeight = theme.rem(compactActions ? 1.5 : 3)
+  const actionShellHeight = theme.rem(1.5)
   const actionButtons =
     heroActions.length === 0 ? undefined : (
       <View style={styles.heroActions}>
@@ -1226,6 +1227,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 )
                 return
               }
+              if (action.id === 'dj') {
+                props.onDjGame?.()
+                return
+              }
               if (action.id === 'record') {
                 recording.open?.()
                 return
@@ -1251,7 +1256,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                   style={{
                     color: theme.buttonTextColor,
                     fontFamily: theme.semiBoldTextFont,
-                    fontSize: theme.rem(compactActions ? 0.875 : 1),
+                    fontSize: theme.rem(0.875),
                     fontWeight: '600'
                   }}
                 >
@@ -1845,12 +1850,13 @@ const getStyles = cacheStyles((theme: Theme) =>
     heroActions: {
       flexDirection: 'row',
       alignItems: 'center',
+      flexWrap: 'wrap',
       gap: theme.rem(theme.spaceSmRem),
       paddingHorizontal: theme.rem(theme.cardContentInsetRem),
       paddingBottom: theme.rem(theme.cardContentInsetRem)
     },
     heroAction: {
-      flex: 1,
+      width: theme.rem(4.5),
       minHeight: theme.rem(3),
       justifyContent: 'center'
     },
