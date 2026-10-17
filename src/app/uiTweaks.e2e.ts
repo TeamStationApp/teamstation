@@ -397,8 +397,14 @@ async function main(): Promise<void> {
           { timeout: 30000 }
         )
         console.log('Member playback advancing')
-        for (const paused of [false, true]) {
-          if (paused) await s.m.pressKey({ key: 'SPACE' })
+        for (const { paused, browserBack } of [
+          { paused: false, browserBack: false },
+          { paused: true, browserBack: false },
+          { paused: false, browserBack: true },
+          { paused: true, browserBack: true }
+        ]) {
+          if ((await s.page.$eval('video', video => video.paused)) !== paused)
+            await s.m.pressKey({ key: 'SPACE' })
           await s.page.waitForFunction(
             expected => {
               const video = document.querySelector('video')
@@ -411,7 +417,10 @@ async function main(): Promise<void> {
           const time = await s.page.$eval('video', video => video.currentTime)
           await s.m.tapOn({ text: 'Score', role: 'button' })
           await contains(s.page, 'Full game scoring')
-          await s.m.tapOn({ text: 'Videos', role: 'tab' })
+          expect(await s.page.$('[aria-label="Game sections"]')).equals(null)
+          await shot('scoring-choices')
+          if (browserBack) await s.page.goBack()
+          else await s.m.tapOn({ text: 'Back', role: 'button' })
           await s.page.waitForFunction(
             ({ time, paused }) => {
               const video = document.querySelector('video')
@@ -489,7 +498,7 @@ async function main(): Promise<void> {
         await shot('landscape-game-actions')
         await s.m.tapOn({ text: 'Score', role: 'button' })
         await contains(s.page, 'Full game scoring')
-        await s.m.tapOn({ text: 'Videos', role: 'tab' })
+        await s.m.tapOn({ text: 'Back', role: 'button' })
         await s.page.setViewport({ width: 390, height: 844 })
 
         logs.push(
