@@ -300,13 +300,7 @@ describe('scoring slide-up sheets', function () {
     await click('Create Placeholder Player')
     await click('Player count 3')
     await click('Create')
-    expect(document.querySelector('[aria-label="First Name"]')).not.equals(null)
-    await act(async () => {
-      const cancels = document.querySelectorAll<HTMLElement>(
-        '[aria-label="Cancel"]'
-      )
-      cancels[cancels.length - 1].click()
-    })
+    expect(document.querySelector('[aria-label="First Name"]')).equals(null)
     expect(
       document.querySelector('[data-roster-target="roster"]')!.textContent
     ).includes('Owls A')
@@ -401,9 +395,9 @@ describe('scoring slide-up sheets', function () {
     }
     await click('Create Player')
     await input('First Name', 'Alex')
-    await input('Last Name', 'Local')
+    await input('Last Name', 'Rodriguez')
     await click('Create Player')
-    await click('Add Alex Local to Lineup')
+    await click('Add Alex R to Lineup')
     await click('Defense')
     await click('Clear P')
     expect(
@@ -426,7 +420,7 @@ describe('scoring slide-up sheets', function () {
     ).not.equals(null)
     await click('Undo Set team roster')
     await menu('Set Team Rosters')
-    expect(document.body.textContent).not.includes('Alex Local')
+    expect(document.body.textContent).not.includes('Alex R')
     await click('Cancel')
     expect(document.querySelector('[aria-label="Nothing to undo"]')).not.equals(
       null

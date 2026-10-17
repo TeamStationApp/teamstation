@@ -159,6 +159,7 @@ describe('player entry sheet', function () {
       changeTheme(tsBallpark)
     })
     expect(document.activeElement).not.equals(node('First Name'))
+    expect(node('Jersey Number').getAttribute('inputmode')).equals('numeric')
     await tap('Create Player')
     expect(document.body.textContent).includes('Enter a player name.')
     await input('First Name', 'Alex')

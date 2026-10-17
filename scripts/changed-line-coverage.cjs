@@ -97,12 +97,12 @@ function resolveSpecs(topLevel, specs, cwd = process.cwd()) {
 // The gate. `counts` is { path: { line: count } }, with no entry for a file
 // that has no coverage record; `executable(path)` says whether such a file
 // should have had one. Every added file is held to `newFileMin` on its own,
-// as well as the whole to 90.
+// as well as the whole to the selected minimum (90 for unit-only gates).
 function lineReportFromCounts(
   changes,
   counts,
   executable,
-  { newFiles = [], newFileMin = 90 } = {}
+  { newFiles = [], newFileMin = 90, min = 90 } = {}
 ) {
   const added = new Set(newFiles)
   const files = {}
@@ -144,7 +144,7 @@ function lineReportFromCounts(
     files,
     newFiles: newFileReport,
     shortNewFiles,
-    pass: missing.length === 0 && percent >= 90 && shortNewFiles.length === 0
+    pass: missing.length === 0 && percent >= min && shortNewFiles.length === 0
   }
 }
 
