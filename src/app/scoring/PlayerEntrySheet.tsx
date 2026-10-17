@@ -136,9 +136,7 @@ export function PlayerEntrySheet({
                       autoFocus={editing && key === 'firstName'}
                       accessibilityLabel={label}
                       value={draft[key]}
-                      keyboardType={
-                        key === 'jersey' ? 'numbers-and-punctuation' : 'default'
-                      }
+                      keyboardType={key === 'jersey' ? 'number-pad' : 'default'}
                       autoCapitalize="words"
                       onChangeText={value => {
                         setDraft(previous => ({ ...previous, [key]: value }))
