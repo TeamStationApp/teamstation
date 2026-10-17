@@ -63,3 +63,15 @@ Clients display this flag directly and refresh it through their normal visible
 screen refresh. They must not derive it from `status`, scoring fields or the
 device clock. Missing flags from older servers are treated as false. The existing
 `isLive` field describes a video stream, not game scoring.
+
+## Public video previews and membership requests
+
+Game metadata and `/videos/:videoId/highlights` expose posters and signed stills
+to guests and nonmembers. Hidden videos remain unavailable and playback keeps
+its membership check. These previews never grant a media playback token.
+
+`POST /relationship-requests` accepts `{kind: "membership", teamId,
+idempotencyKey}` from a signed-in user. The server binds the request to that
+user, deduplicates pending requests to the same team, and asks the team's
+administrators through the approval inbox. Acceptance grants only membership,
+never staff roles. Requests for missing, merged or placeholder teams fail.

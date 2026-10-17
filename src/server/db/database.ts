@@ -727,11 +727,12 @@ export interface GroupRequestsTable {
     | 'participation'
     | 'promotion'
     | 'person'
+    | 'membership'
     | 'guardian'
     | 'game'
     | 'gameChange'
   sender_id: number
-  /** Null only for a guardian request, which a person sends for themselves. */
+  /** Null for a guardian or membership request sent on one’s own behalf. */
   sender_scope_type: 'league' | 'season' | 'team' | null
   sender_scope_id: string | null
   terms: Json

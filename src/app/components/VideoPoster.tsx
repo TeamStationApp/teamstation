@@ -260,7 +260,13 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
         <Text style={[styles.time, hero && styles.timeHero]}>{time}</Text>
       )}
 
-      {showPlay && !moving && (
+      {showPlay && !moving && onPlay == null ? (
+        <View style={styles.playTarget}>
+          <View style={[styles.disc, hero && styles.discHero]}>
+            <View style={[styles.triangle, hero && styles.triangleHero]} />
+          </View>
+        </View>
+      ) : showPlay && !moving ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Play"
@@ -276,7 +282,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
             <View style={[styles.triangle, hero && styles.triangleHero]} />
           </View>
         </Pressable>
-      )}
+      ) : null}
     </View>
   )
 }
