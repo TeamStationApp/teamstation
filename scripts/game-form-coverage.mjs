@@ -20,7 +20,9 @@ import { transformSync } from 'esbuild'
  * outside `src/app/`; `--phase=ui` runs the bundled UI suites and measures
  * the changed files under it. Each phase keeps its own V8 output, so one
  * stands without the other; with no phase, both run and every changed file
- * counts. `GAME_FORM_BROWSER_COVERAGE` merges the browser run's coverage.
+ * counts within this feature's owned runtime paths. Other changed settings
+ * paths are measured by coverage.creation. `GAME_FORM_BROWSER_COVERAGE`
+ * merges the browser run's coverage.
  */
 const phase =
   process.argv.find(arg => arg.startsWith('--phase='))?.slice(8) ?? 'finished'
@@ -53,11 +55,20 @@ const base =
 const untracked = git(['ls-files', '--others', '--exclude-standard'])
   .split('\n')
   .filter(Boolean)
+const ownedPaths = new Set([
+  'src/app/screens/GameFormScreen.tsx',
+  'src/app/screens/TeamSelectorScene.tsx',
+  'src/app/screens/EventSettingsScreen.tsx',
+  'src/app/screens/gameDraft.ts',
+  'src/server/events/eventInfo.ts',
+  'src/server/events/eventInfoOpenApi.ts'
+])
 const paths = [
   ...new Set([...git(['diff', '--name-only', base]).split('\n'), ...untracked])
 ].filter(
   path =>
     existsSync(path) &&
+    ownedPaths.has(path) &&
     /^src\/(app|common|server)\//.test(path) &&
     /\.tsx?$/.test(path) &&
     !/\.(test|e2e|smoke)\./.test(path) &&

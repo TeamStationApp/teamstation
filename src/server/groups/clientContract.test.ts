@@ -203,7 +203,34 @@ describe('group and inbox client contracts over real HTTP', function () {
     expect((await host.decideRelationship(sent.id, 'accept')).status).equals(
       'accepted'
     )
+    const beforeParents = (await client.group({ kind: 'team', id: f.teamA }))
+      .parents
+    await f.h.db
+      .insertInto('games')
+      .values({
+        id: 'gam_participation_contract',
+        home_team_id: f.teamA,
+        away_team_id: f.teamB,
+        season_id: f.seasonB,
+        start_at: new Date('2027-04-10T19:00:00Z'),
+        status: 'scheduled'
+      })
+      .execute()
     await client.endParticipation(f.seasonB, f.teamA)
+    expect(
+      (await client.group({ kind: 'team', id: f.teamA })).parents
+    ).deep.equals(beforeParents)
+    expect(
+      await f.h.db
+        .selectFrom('games')
+        .select(['home_team_id', 'season_id', 'status'])
+        .where('id', '=', 'gam_participation_contract')
+        .executeTakeFirstOrThrow()
+    ).deep.equals({
+      home_team_id: f.teamA,
+      season_id: f.seasonB,
+      status: 'scheduled'
+    })
     expect(
       (
         await f.h.db

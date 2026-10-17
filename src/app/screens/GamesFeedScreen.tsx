@@ -15,6 +15,12 @@ import {
   useHeaderHandoff,
   useHeaderSlot
 } from '../components'
+import {
+  PillBand,
+  PinnedContent,
+  PinnedSpacer
+} from '../components/PinnedBands'
+import { usePinnedTabs } from '../components/usePinnedTabs'
 import { columnsForWidth } from '../layout/grid'
 import { gameCountLabel, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -82,56 +88,39 @@ export function GamesFeedScreen(
   useEffect(() => {
     if (initialWhen != null) setWhen(initialWhen)
   }, [initialWhen])
-  // The filter row slides into the header as it goes under, and still filters
-  // from up there: it is the same component with the same handler, not a
-  // second row that would drift the day a fourth filter is added. This screen
-  // has no title in the header — the pills say which list you are looking at
-  // better than the word `Videos` does.
+  // Navigation stays below the header; its title hands up as the page scrolls.
   const { headerHeight } = useHeaderSlot()
   const handoff = useHandoff(headerHeight)
-  const choose = useCallback(
-    (next: When): void => {
-      setWhen(next)
-      onWhenChange?.(next)
-    },
-    [onWhenChange]
-  )
   const progress = handoff.progress
   useHeaderHandoff(
     useMemo(
       () => (
         <HandoffView progress={progress} style={styles.headerPills}>
-          {mode === 'videos' ? (
-            // Videos has no filter to hand up, so the header takes the name of
-            // the list instead — the thing that scrolled out of view.
-            <Text style={styles.headerTitle}>Game videos</Text>
-          ) : (
-            <View style={styles.headerPillsRow}>
-              <PillTabs
-                bleed={false}
-                tabs={WHEN_TABS}
-                selected={when}
-                onSelect={choose}
-                size="compact"
-              />
-            </View>
-          )}
+          <Text style={styles.headerTitle}>
+            {mode === 'videos' ? 'Game videos' : 'Schedule'}
+          </Text>
         </HandoffView>
       ),
-      [
-        choose,
-        mode,
-        progress,
-        styles.headerPills,
-        styles.headerPillsRow,
-        styles.headerTitle,
-        when
-      ]
+      [mode, progress, styles.headerPills, styles.headerTitle]
     )
   )
   const [games, setGames] = useState<SeasonGame[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
+  const { pinned, selectTab } = usePinnedTabs({
+    head: { headerHeight, handoff },
+    ready: mode === 'schedule' && !loading,
+    tab: when,
+    anchorOnRow: false
+  })
+  const choose = useCallback(
+    (next: When): void => {
+      selectTab(next)
+      setWhen(next)
+      onWhenChange?.(next)
+    },
+    [onWhenChange, selectTab]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -169,141 +158,148 @@ export function GamesFeedScreen(
 
   return (
     <Screen
-      onScroll={handoff.handleScroll}
+      {...(mode === 'schedule'
+        ? pinned.screen
+        : { onScroll: handoff.handleScroll })}
       // Videos lays its cards out in up to four columns, so it keeps the
       // margins and loses the reading-width cap: a cap made for a line of text
       // would hold a grid of pictures to two columns on any monitor.
       wide={mode === 'videos'}
     >
       {mode === 'schedule' && (
-        <View ref={handoff.ref}>
+        <PillBand part={pinned.pillBand}>
           <PillTabs
             tabs={WHEN_TABS}
             selected={when}
             onSelect={choose}
             size="compact"
           />
+        </PillBand>
+      )}
+
+      <PinnedContent key={`${mode}-${when}`} part={pinned.content}>
+        <View ref={handoff.ref}>
+          <SectionHeader
+            title={mode === 'videos' ? 'Game videos' : 'Schedule'}
+            note={gameCountLabel(sorted.length)}
+          />
         </View>
-      )}
 
-      <View ref={mode === 'videos' ? handoff.ref : undefined}>
-        <SectionHeader
-          title={mode === 'videos' ? 'Game videos' : 'Schedule'}
-          note={gameCountLabel(sorted.length)}
-        />
-      </View>
+        {error != null && <Text style={styles.error}>{error}</Text>}
+        {loading && <Text style={styles.muted}>Loading…</Text>}
 
-      {error != null && <Text style={styles.error}>{error}</Text>}
-      {loading && <Text style={styles.muted}>Loading…</Text>}
+        {!loading && sorted.length === 0 && (
+          <Card>
+            <Text style={styles.muted}>
+              {mode === 'videos'
+                ? 'No recorded games here yet.'
+                : 'No games here yet.'}
+            </Text>
+          </Card>
+        )}
 
-      {!loading && sorted.length === 0 && (
-        <Card>
-          <Text style={styles.muted}>
-            {mode === 'videos'
-              ? 'No recorded games here yet.'
-              : 'No games here yet.'}
-          </Text>
-        </Card>
-      )}
-
-      {/*
+        {/*
         A grid on a wide window, one column on a phone. Reading order is left
         to right and then down, newest first, which is how somebody looks for
         last night's game.
       */}
-      <View style={styles.grid}>
-        {sorted.map(game => {
-          const lines = matchupLines(game)
-          const options = gameListOptions(game, mode)
-          return (
-            <View
-              key={game.id}
-              style={[styles.cell, { width: `${100 / columns}%` }]}
-            >
-              <Card>
-                {mode === 'schedule' ? (
-                  <ScheduleRow
-                    first={lines.first}
-                    second={lines.second}
-                    startAt={game.startAt}
-                    venue={game.venue}
-                    status={game.status}
-                    awayScore={game.awayScore}
-                    homeScore={game.homeScore}
-                    isLive={game.isLive}
-                    videoCount={game.videoCount}
-                    pendingApproval={game.pendingApproval}
-                    cancellationReason={game.cancellationReason}
-                    withdrawnByTeamName={game.withdrawnByTeamName}
-                    onPress={
-                      options == null
-                        ? undefined
-                        : () => {
-                            onOpenGame(
-                              game.id,
-                              [lines.first, lines.second]
-                                .filter(line => line !== '')
-                                .join(' '),
-                              options
-                            )
-                          }
-                    }
-                  />
-                ) : (
-                  <GameRow
-                    first={lines.first}
-                    second={lines.second}
-                    detail={[
-                      narrow
-                        ? shortDateNoWeekday(game.startAt)
-                        : shortDate(game.startAt),
-                      shortTime(game.startAt),
-                      videoCountLabel(game.videoCount)
-                    ]
-                      .filter(part => part !== '')
-                      .join(' · ')}
-                    venue={game.venue}
-                    posterUrl={game.posterUrl}
-                    length={
-                      game.durationSec == null
-                        ? undefined
-                        : clock(game.durationSec)
-                    }
-                    badgeLabel={
-                      game.pendingApproval
-                        ? 'Pending approval'
-                        : game.status === 'cancelled'
-                          ? 'Canceled'
-                          : game.isLive
-                            ? 'live'
-                            : game.awayScore == null
-                              ? undefined
-                              : `${game.awayScore}–${game.homeScore}`
-                    }
-                    badgeTone={
-                      game.isLive && !game.pendingApproval ? 'live' : 'neutral'
-                    }
-                    onPress={
-                      options == null
-                        ? undefined
-                        : () => {
-                            onOpenGame(
-                              game.id,
-                              [lines.first, lines.second]
-                                .filter(line => line !== '')
-                                .join(' '),
-                              options
-                            )
-                          }
-                    }
-                  />
-                )}
-              </Card>
-            </View>
-          )
-        })}
-      </View>
-      <View />
+        <View style={styles.grid}>
+          {sorted.map(game => {
+            const lines = matchupLines(game)
+            const options = gameListOptions(game, mode)
+            return (
+              <View
+                key={game.id}
+                style={[styles.cell, { width: `${100 / columns}%` }]}
+              >
+                <Card>
+                  {mode === 'schedule' ? (
+                    <ScheduleRow
+                      first={lines.first}
+                      second={lines.second}
+                      startAt={game.startAt}
+                      venue={game.venue}
+                      status={game.status}
+                      awayScore={game.awayScore}
+                      homeScore={game.homeScore}
+                      isLive={game.isLive}
+                      videoCount={game.videoCount}
+                      pendingApproval={game.pendingApproval}
+                      cancellationReason={game.cancellationReason}
+                      withdrawnByTeamName={game.withdrawnByTeamName}
+                      onPress={
+                        options == null
+                          ? undefined
+                          : () => {
+                              onOpenGame(
+                                game.id,
+                                [lines.first, lines.second]
+                                  .filter(line => line !== '')
+                                  .join(' '),
+                                options
+                              )
+                            }
+                      }
+                    />
+                  ) : (
+                    <GameRow
+                      first={lines.first}
+                      second={lines.second}
+                      detail={[
+                        narrow
+                          ? shortDateNoWeekday(game.startAt)
+                          : shortDate(game.startAt),
+                        shortTime(game.startAt),
+                        videoCountLabel(game.videoCount)
+                      ]
+                        .filter(part => part !== '')
+                        .join(' · ')}
+                      venue={game.venue}
+                      posterUrl={game.posterUrl}
+                      length={
+                        game.durationSec == null
+                          ? undefined
+                          : clock(game.durationSec)
+                      }
+                      badgeLabel={
+                        game.pendingApproval
+                          ? 'Pending approval'
+                          : game.status === 'cancelled'
+                            ? 'Canceled'
+                            : game.isLive
+                              ? 'live'
+                              : game.awayScore == null
+                                ? undefined
+                                : `${game.awayScore}–${game.homeScore}`
+                      }
+                      badgeTone={
+                        game.isLive && !game.pendingApproval
+                          ? 'live'
+                          : 'neutral'
+                      }
+                      onPress={
+                        options == null
+                          ? undefined
+                          : () => {
+                              onOpenGame(
+                                game.id,
+                                [lines.first, lines.second]
+                                  .filter(line => line !== '')
+                                  .join(' '),
+                                options
+                              )
+                            }
+                      }
+                    />
+                  )}
+                </Card>
+              </View>
+            )
+          })}
+        </View>
+        <View />
+      </PinnedContent>
+      {mode === 'schedule' && <PinnedSpacer part={pinned.spacer} />}
     </Screen>
   )
 }

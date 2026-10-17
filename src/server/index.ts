@@ -33,6 +33,8 @@ import {
   stopLiveController
 } from './live/controller'
 import { livingWorkers } from './livingWorkers'
+import { eventGeocoder } from './location/eventGeocoder'
+import { googlePlaces } from './location/googlePlaces'
 import type { MediaContext } from './media/mediaContext'
 import { spaceConfigured } from './media/spacesHls'
 import { withAudit } from './middleware/withAudit'
@@ -522,7 +524,7 @@ function runWorker(): void {
       publicUrl
     })
   )
-  app.use('/api/v1', nodeAdministrationRoutes(db))
+  app.use('/api/v1', nodeAdministrationRoutes(db, mediaContext.space))
   app.use('/api/v1', gameApprovalRoutes(db))
   app.use('/api/v1', notificationRoutes(db))
   app.use('/api/v1', seasonRoutes(db, mediaContext))
@@ -530,7 +532,16 @@ function runWorker(): void {
     '/api/v1',
     eventListRoutes(db, mediaContext, { store: scoreboard.store })
   )
-  app.use('/api/v1', eventInfoRoutes(db, mediaContext))
+  const placesProvider =
+    serverConfig.googlePlaces == null
+      ? undefined
+      : googlePlaces(serverConfig.googlePlaces)
+  app.use(
+    '/api/v1',
+    eventInfoRoutes(db, mediaContext, {
+      geocoder: eventGeocoder(db, { googlePlaces: placesProvider })
+    })
+  )
   app.use('/api/v1', teamRoutes(db, mediaContext, scoreboard.store))
   app.use('/api/v1', scheduleRoutes(db))
   app.use('/api/v1', teamMemberRoutes(db, mediaContext))
@@ -551,7 +562,13 @@ function runWorker(): void {
   app.use('/api/v1', meRoutes(db, serverConfig.buildsUrl))
   app.use('/api/v1', pictureRoutes(db, mediaContext.space))
   app.use('/api/v1', onboardingRoutes(db, mediaContext))
-  app.use('/api/v1', locationRoutes())
+  app.use(
+    '/api/v1',
+    locationRoutes(undefined, {
+      db,
+      googlePlaces: placesProvider
+    })
+  )
   app.use(
     '/api/v1',
     deviceEventControlRoutes(db, {

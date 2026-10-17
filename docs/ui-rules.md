@@ -20,7 +20,8 @@ A row in a picker has:
 - the name, on one line;
 - a quieter detail line when there is something worth knowing: a season's
   dates and league, a team's seasons, a time zone's offset and time now;
-- a mark on the chosen row (`RadioMark`), never a filled background;
+- a mark on the chosen row (`RadioMark`), never a filled background; immediate
+  navigation choices such as Choose Team use a right chevron instead;
 - at least 48 points of height, and a hairline divider between rows.
 
 A grid of plain cells is a row picker too: the calendar's days and the
@@ -44,15 +45,63 @@ never a list expanding inside a card on the screen beneath.
 
 ## Buttons
 
+### Membership and access actions belong in list rows
+
+Whenever a collection lets the user enable or disable, join or leave, add or
+revoke, or end a relationship, render a proper list with one row per item.
+Use a leading image, name-hashed initials tile or appropriate icon when available;
+put the name above quieter details in the flexible middle and a compact action
+at the right. Use short visible labels such as **Add**, **Leave**, **Revoke** or
+**End**, with an accessible label that also names the affected item.
+
+Separate rows with hairline dividers. Do not give each item its own bounding
+card or put a full-width action below its name. A shared list container may
+match the surrounding screen; a long scrolling list remains unbounded. Keep
+actions aligned, names readable and touch targets at least 48 points.
+Use green for adding/enabling and red for removing/ending. Destructive actions
+open a confirmation modal; opening or cancelling it must not change the item.
+Use `ActionRow` and `ActionList` for these collections, with
+`GroupRelationshipRow` for groups. Navigation and the destructive action are
+separate touch targets. The confirmation names the item and the relationship,
+keeps failed writes retryable, blocks duplicate submissions, and ignores a
+completion after the user leaves its owning group or person. This includes
+ending season participation, disabling invite links, withdrawing invitations
+and removing held roles. Existing permission checks and inherited-role rules
+remain in force.
+
+### A pill's label sits on its straight run
+
+A fully rounded button, badge, count or tab has semicircular ends, each as
+wide as half its height. The first and last glyph must clear those arcs:
+horizontal padding is at least half the explicit shell height. Derive the
+padding from that height, and check the longest label. A label that would
+truncate gets smaller type, a shorter label or its own row; its padding and
+touch target stay large enough. Dense tab strips reduce gaps and scroll.
+
+
 - **One filled button per form.** The primary action (Save, Create) is the
   only filled button.
-- **Cancel is red text.** Cancelling a form or dismissing a picker is a text
-  button in the danger colour (`Button kind="text"` with
-  `textColor={theme.dangerColor}`). It is never a filled or pale button.
+- **Cancel is centered beneath a primary action.** Use `CancelAction`: blue text
+  beneath a red destructive primary, red text otherwise. Header and toolbar Cancels
+  retain their header alignment; the team picker places its visible text on the
+  right content margin. Cancel is never a filled or pale button.
 - **A long label gets smaller type, not a smaller target.** Use
   `Button small`, which keeps the 48-point height.
 
 ## Explain a choice where it is made
+
+### Use action language when no invitation is needed
+
+When current permissions show the person can supply all required approvals,
+use **Save**, **Add** or **Create Game**, as appropriate, and apply those
+available approvals on submission. Do not ask for a separate approval toggle.
+Use invitation/request wording when somebody else's consent is still needed.
+The server's final result decides what happened: an accepted action returns to
+the relevant connection or created item and shows a detailed success toast for
+five seconds. Do not route it to a sent/approved notification. A pending request
+keeps its pending flow. This also applies when submitting an older request
+again: use neutral action language, apply currently available approvals and
+route by the actual result. Cancel and failed writes show no success confirmation.
 
 When a screen cannot offer a choice, say why in a sentence near the action
 it affects, instead of a control that does nothing. A team page's Create

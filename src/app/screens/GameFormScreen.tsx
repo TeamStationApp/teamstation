@@ -4,7 +4,8 @@ import { Pressable, Switch, Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import type { EventType } from '../../common/eventInfo'
 import type { PublicGroup } from '../../common/publicGroups'
-import { Button, Card, initialsOf, Screen, TextField } from '../components'
+import { Button, Card, Screen, TextField } from '../components'
+import { CancelAction } from '../components/CancelAction'
 import { EventArrivalField } from '../components/EventArrivalField'
 import { EventScheduleFields } from '../components/EventScheduleFields'
 import { EventTypeRow } from '../components/EventTypeRow'
@@ -38,6 +39,7 @@ export interface GameSettingsResult {
   id: string
   status: string
   gameId: string | null
+  notice?: string
 }
 
 const retryKey = (): string =>
@@ -79,6 +81,7 @@ export function GameFormScreen({
   // The source as the server names it: a merged team's address answers with
   // the team it became, and that is the team that must stay in the game.
   const [sourceGroupId, setSourceGroupId] = useState<string>()
+  const [seasonConsentTeams, setSeasonConsentTeams] = useState<string[]>([])
   const formMode: GameFormMode =
     mode.kind === 'create' && sourceGroupId != null
       ? {
@@ -125,21 +128,32 @@ export function GameFormScreen({
     setLoading(true)
     setLoadError('')
     setError('')
+    setSeasonConsentTeams([])
     const load = async (): Promise<void> => {
       if (sourceKind != null && sourceId != null) {
         const own = await client.group({ kind: sourceKind, id: sourceId })
         if (!current()) return
         setEventType('game')
-        setPermitted(own.canManage)
+        setPermitted(
+          own.canManage ||
+            (sourceKind === 'team' && own.canManagePeople === true)
+        )
         setSourceName(own.group.name)
         setSourceGroupId(own.group.id)
+        if (sourceKind === 'season' && own.canManage)
+          setSeasonConsentTeams(own.competingTeams.map(team => team.id))
         setEventTeam(
           sourceKind === 'team' && !own.group.external ? own.group : undefined
         )
         setDraft(
           newGameDraft(
             { kind: 'create', source: { kind: sourceKind, id: own.group.id } },
-            { group: own.group, canManage: own.canManage }
+            {
+              group: own.group,
+              canManage:
+                own.canManage ||
+                (sourceKind === 'team' && own.canManagePeople === true)
+            }
           )
         )
         return
@@ -151,6 +165,18 @@ export function GameFormScreen({
       ])
       if (!current()) return
       setLoaded(state)
+      if (state.game.seasonId != null) {
+        const host = await client
+          .group({ kind: 'season', id: state.game.seasonId })
+          .catch(() => undefined)
+        if (!current()) return
+        if (
+          host?.canManage === true &&
+          host.group.kind === 'season' &&
+          host.group.id === state.game.seasonId
+        )
+          setSeasonConsentTeams(host.competingTeams.map(team => team.id))
+      }
       setPermitted(state.canPropose)
       setOriginalNames({
         [home.group.id]: home.group.name,
@@ -159,8 +185,14 @@ export function GameFormScreen({
       setDraft(
         loadedGameDraft(
           state,
-          { group: home.group, canManage: home.canManage },
-          { group: away.group, canManage: away.canManage }
+          {
+            group: home.group,
+            canManage: home.canManage || home.canManagePeople === true
+          },
+          {
+            group: away.group,
+            canManage: away.canManage || away.canManagePeople === true
+          }
         )
       )
       setConfirmation(undefined)
@@ -275,15 +307,15 @@ export function GameFormScreen({
         ...fields,
         idempotencyKey: submitted.current.key
       })
-      if (
-        !creating &&
-        result.status !== 'pending' &&
-        result.status !== 'accepted'
-      )
+      if (result.status !== 'pending' && result.status !== 'accepted')
         throw new Error(
           'This proposal is closed. Review it in your inbox before sending another proposal.'
         )
-      if (mounted.current) onSaved(result)
+      if (mounted.current)
+        onSaved({
+          ...result,
+          notice: `${result.status === 'accepted' ? (creating ? 'Game scheduled' : 'Game changes saved') : 'Game proposal sent'}: ${home.group.name} vs ${away.group.name}${draft.season == null ? '' : ` in ${draft.season.name}`}`
+        })
     } catch (caught) {
       if (mounted.current)
         setError(
@@ -348,12 +380,7 @@ export function GameFormScreen({
                   setRetry(value => value + 1)
                 }}
               />
-              <Button
-                label="Cancel"
-                kind="text"
-                textColor={theme.dangerColor}
-                onPress={onCancel}
-              />
+              <CancelAction label="Cancel" onPress={onCancel} />
             </>
           )}
         </View>
@@ -380,8 +407,14 @@ export function GameFormScreen({
     draft.schedule.date
   ])
   const problem = draftProblem(draft, formMode, sourceName)
+  const seasonApproves = [draft.away, draft.home].every(
+    choice =>
+      choice != null &&
+      choice.placeholder == null &&
+      seasonConsentTeams.includes(choice.group.id)
+  )
   const missing = [draft.away, draft.home]
-    .filter(choice => choice != null && !choice.canManage)
+    .filter(choice => choice != null && !choice.canManage && !seasonApproves)
     .map(choice => choice!.group.name)
   const teamRow = (side: Side): React.ReactElement => {
     const choice = draft[side]
@@ -405,7 +438,7 @@ export function GameFormScreen({
       <ListRow
         title={choice.group.name}
         subtitle={`${label}${choice.group.external ? ' · Placeholder' : ''}`}
-        emblem={initialsOf(choice.group.name)}
+        teamName={choice.group.name}
         emblemUri={choice.group.imageUrl}
         onPress={open}
       />
@@ -540,7 +573,10 @@ export function GameFormScreen({
                 <>
                   {season != null && (
                     <Text style={styles.hint}>
-                      In {season.name}. Every affected team must approve.
+                      In {season.name}.{' '}
+                      {seasonApproves
+                        ? 'You can schedule this game for both season participants.'
+                        : 'Each team must approve unless you can approve for it.'}
                     </Text>
                   )}
                   {sourceKind === 'team' && (
@@ -585,7 +621,8 @@ export function GameFormScreen({
             )}
             {problem == null && missing.length > 0 && (
               <Text style={styles.hint}>
-                An admin of {missing.join(' and ')} must approve
+                An administrator, coach or assistant of {missing.join(' and ')}{' '}
+                must approve
                 {creating ? ' this game.' : ' changes.'}
               </Text>
             )}
@@ -619,13 +656,7 @@ export function GameFormScreen({
                 submitGame().catch(() => undefined)
               }}
             />
-            <Button
-              label="Cancel"
-              kind="text"
-              textColor={theme.dangerColor}
-              disabled={busy}
-              onPress={onCancel}
-            />
+            <CancelAction label="Cancel" disabled={busy} onPress={onCancel} />
             {loaded?.canPropose === true &&
               loaded.withdrawTeamIds.map(id => (
                 <Button

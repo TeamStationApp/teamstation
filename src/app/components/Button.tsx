@@ -7,6 +7,7 @@ import {
   type ViewStyle
 } from 'react-native'
 
+import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Icon, type IconName } from './Icon'
 
@@ -81,7 +82,7 @@ export function Button(props: ButtonProps): React.ReactElement {
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled: inert, busy }}
-      testID={testID}
+      testID={testID ?? 'settings-pill-button'}
       aria-busy={busy}
       disabled={inert}
       onPress={onPress}
@@ -95,7 +96,12 @@ export function Button(props: ButtonProps): React.ReactElement {
         pressed && !inert && kind !== 'text' && styles.lowered,
         inert && styles.inert,
         shape === 'rounded' && { borderRadius: theme.rem(theme.radiusRem) },
-        compact && { minHeight: 36, borderRadius: 18, paddingHorizontal: 8 },
+        compact && {
+          height: 36,
+          minHeight: 36,
+          borderRadius: 18,
+          paddingHorizontal: pillPadding(36)
+        },
         style
       ]}
     >
@@ -142,11 +148,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row',
     gap: theme.rem(theme.spaceXsRem),
     minHeight: theme.rem(3),
-    // Small enough that two of these side by side on a phone fit their
-    // labels. A pill spends more of its width on the curve than a rounded
-    // rectangle did, so this is the padding that stops `Box Score` coming out
-    // `Box Sc…` beside another button.
-    paddingHorizontal: theme.rem(theme.spaceMdRem),
+    height: theme.rem(3),
+    // The label stays on the straight run, clear of both semicircular ends.
+    paddingHorizontal: pillPadding(theme.rem(3)),
     // Half the height: a pill at any label length, without a magic number
     // that stops being half the day the height changes.
     borderRadius: theme.rem(1.5),

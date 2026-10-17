@@ -1024,12 +1024,7 @@ async function player(run: Run): Promise<void> {
   const opened = new URL(coach.page.url())
   expect(opened.pathname).equals(`/players/${avery.id}`)
   expect(opened.search).equals(`?onTeam=${f.teamA}`)
-  expect(await tabNames(coach)).deep.equals([
-    'Videos',
-    'Stats',
-    'Teams',
-    'Settings'
-  ])
+  expect(await tabNames(coach)).deep.equals(['Videos', 'Stats', 'Teams'])
   // Narrowed to the Hawks: the pill says so, and every row is a Hawks play,
   // the season's four and the game outside it.
   expect(await pill(coach)).includes('Demo Hawks')
@@ -1080,7 +1075,11 @@ async function player(run: Run): Promise<void> {
 
   // Settings beside the team: the name a roster manager may correct, the
   // jersey and positions, and no hands.
-  await coach.m.tapOn({ text: 'Settings', role: 'tab', timeout: 15000 })
+  await coach.m.tapOn({
+    text: 'Player settings',
+    role: 'button',
+    timeout: 15000
+  })
   await coach.page.waitForSelector('input[aria-label="Jersey number"]', {
     timeout: 20000
   })
@@ -1120,8 +1119,7 @@ async function player(run: Run): Promise<void> {
     'Videos',
     'Stats',
     'Walk-up',
-    'Teams',
-    'Settings'
+    'Teams'
   ])
   expect(await teamRows(guardian)).deep.equals([
     'DCDemo CometsDemo Playoffs · P#9chevron_right',
@@ -1443,7 +1441,11 @@ async function guardian(run: Run): Promise<void> {
 
   // She opens Avery from the Hawks and saves his number and positions.
   await openFromRoster(faye, 'Avery S', avery.id)
-  await faye.m.tapOn({ text: 'Settings', role: 'tab', timeout: 15000 })
+  await faye.m.tapOn({
+    text: 'Player settings',
+    role: 'button',
+    timeout: 15000
+  })
   await faye.page.waitForSelector('input[aria-label="Jersey number"]', {
     timeout: 20000
   })
@@ -1599,8 +1601,15 @@ async function guardian(run: Run): Promise<void> {
     expect(decided.status).equals(200)
     expect(decided.body.status).equals('declined')
   }
-  const blocked =
-    'Three guardian requests were declined. You can ask again on October 13, 2026.'
+  const retryOn = new Date(
+    f.clock.now().getTime() + 7 * 24 * 3600 * 1000
+  ).toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC'
+  })
+  const blocked = `Three guardian requests were declined. You can ask again on ${retryOn}.`
   const ivy = await run.signIn('guardian-declined', declined)
   await openFromRoster(ivy, 'Eli F', eli.id)
   await ask(ivy, 'Eli F')
@@ -2200,12 +2209,7 @@ async function home(run: Run): Promise<void> {
   const opened = new URL(guardian.page.url())
   expect(opened.pathname).equals(`/players/${avery.id}`)
   expect(opened.search).equals('')
-  expect(await tabNames(guardian)).deep.equals([
-    'Videos',
-    'Stats',
-    'Teams',
-    'Settings'
-  ])
+  expect(await tabNames(guardian)).deep.equals(['Videos', 'Stats', 'Teams'])
   await guardian.m.tapOn({ text: 'Stats', role: 'tab', timeout: 15000 })
   await contains(guardian.page, 'Career')
   await settle(guardian)
@@ -2230,7 +2234,11 @@ async function home(run: Run): Promise<void> {
   ])
 
   // Settings from Home: how he bats and throws, nothing about a team.
-  await guardian.m.tapOn({ text: 'Settings', role: 'tab', timeout: 15000 })
+  await guardian.m.tapOn({
+    text: 'Player settings',
+    role: 'button',
+    timeout: 15000
+  })
   await guardian.page.waitForSelector('[aria-label="Bats Switch"]', {
     timeout: 20000
   })

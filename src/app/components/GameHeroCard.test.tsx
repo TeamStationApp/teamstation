@@ -101,7 +101,7 @@ describe('GameHeroCard', function () {
     const container = await render(<GameHeroCard {...oct4} />)
     const tile = tileOf(container, 'AG')
     expect(hex(getComputedStyle(tile).backgroundColor)).equals(
-      teamTint('tem_vShybFtE3zX82D8W')
+      teamTint('Amber Gardens')
     )
   })
 
@@ -113,7 +113,7 @@ describe('GameHeroCard', function () {
     expect(leaf(container, 'LIVE')).equals(undefined)
     const date = leaf(container, 'SUN, OCT 4')
     if (date == null) throw new Error('no date')
-    const row = pill.parentElement
+    const row = pill.parentElement?.parentElement
     expect(row?.contains(date)).equals(true)
   })
 
@@ -131,7 +131,7 @@ describe('GameHeroCard', function () {
 
   it('colours a tile by the name where there is no team id', async function () {
     const container = await render(
-      <GameHeroCard {...oct4} awayLogoUrl={null} awayTeamId={undefined} />
+      <GameHeroCard {...oct4} awayLogoUrl={null} />
     )
     const tile = tileOf(container, 'BR')
     expect(hex(getComputedStyle(tile).backgroundColor)).equals(

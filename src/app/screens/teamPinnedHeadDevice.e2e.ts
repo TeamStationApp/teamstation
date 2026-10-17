@@ -736,10 +736,8 @@ async function main(): Promise<void> {
         `player pills: ${offered.filter(t => /^[A-Z][a-z-]+$/.test(t)).join(', ')}`
       )
       check(
-        ['Videos', 'Stats', 'Walk-up', 'Teams', 'Settings'].every(t =>
-          offered.includes(t)
-        ),
-        'P1: Videos, Stats, Walk-up, Teams and Settings are offered'
+        ['Videos', 'Stats', 'Walk-up', 'Teams'].every(t => offered.includes(t)),
+        'P1: Videos, Stats, Walk-up, Teams are offered'
       )
       check(
         player.card != null &&
@@ -820,7 +818,7 @@ async function main(): Promise<void> {
       )
 
       // P3 — each pill leaves the pills pinned and starts its tab under them.
-      for (const name of ['Stats', 'Walk-up', 'Teams', 'Settings', 'Videos']) {
+      for (const name of ['Stats', 'Walk-up', 'Teams', 'Videos']) {
         const now = await tapPill(name)
         check(
           near(now.pill.y, pinned?.pill.y),

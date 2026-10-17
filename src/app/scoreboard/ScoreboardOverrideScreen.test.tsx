@@ -158,6 +158,9 @@ async function longPress(
   })
   await act(async () => {
     target.dispatchEvent(touch('touchend', []))
+    // Complete the browser's emulated mouse sequence after this touch.
+    // Otherwise RN web ignores the next test's first real mouse drag.
+    document.dispatchEvent(touch('mouseup', []))
   })
 }
 

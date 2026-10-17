@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.native.json",
+  "compilerOptions": {
+    "moduleSuffixes": [".android", ".native", ""]
+  }
+}

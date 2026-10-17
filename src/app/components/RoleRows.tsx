@@ -7,6 +7,7 @@ import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { ListCard } from './ListCard'
 import { flagLabel } from './RolesModal'
+import { useConfirmedAction } from './useConfirmedAction'
 
 /** What a row of a person's roles can be given or lose. */
 export type RoleRowKind = Role | 'member'
@@ -24,7 +25,10 @@ export interface RoleRowsProps {
   player?: boolean
   busy?: boolean
   onAdd: (role: RoleRowKind) => void
-  onRemove: (role: RoleRowKind) => void
+  onRemove: (role: RoleRowKind, current?: () => boolean) => Promise<void> | void
+  ownerLabel?: string
+  ownerIdentity?: string
+  owner?: unknown
 }
 
 /** `Admin`, `Coach`, … `Member`, `Follower`: one row each, in this order. */
@@ -60,76 +64,95 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const confirmation = useConfirmedAction(
+    props.owner ?? props.section.level,
+    `${props.ownerIdentity ?? section.groups.map(g => g.id).join(',')}:${section.editable}:${viewer.manages}:${viewer.admin}:${section.roles.join(',')}:${section.member}`
+  )
   const holdsAdmin = section.roles.includes('admin')
   const implied = impliedRoles(section.roles)
   return (
-    <ListCard>
-      {ROWS.map(row => {
-        const held =
-          row === 'follower'
-            ? section.follower
-            : row === 'member'
-              ? section.member
-              : section.roles.includes(row)
-        const impliedBy =
-          row === 'follower' || row === 'member' || row === 'admin'
-            ? undefined
-            : implied.get(row)
-        // Read as Player only while they are on the team; anybody else's
-        // Member row is the usual one.
-        const playerRow = player && row === 'member' && section.member
-        const changeable =
-          impliedBy == null &&
-          !playerRow &&
-          section.editable &&
-          viewer.manages &&
-          (row !== 'admin' || viewer.admin) &&
-          (row !== 'member' || !held || !holdsAdmin || viewer.admin) &&
-          (row === 'member' || held || canHoldRoles)
-        const label = labelOf(row)
-        return (
-          <View
-            key={row}
-            testID={`role-${section.level}-${row}`}
-            style={styles.row}
-          >
-            <Text style={styles.label}>{label}</Text>
-            {changeable && row !== 'follower' ? (
-              <RoleToggle
-                testID={`role-${section.level}-${row}-switch`}
-                on={held}
-                label={label}
-                disabled={busy}
-                onPress={() => {
-                  if (held) onRemove(row)
-                  else onAdd(row)
-                }}
-              />
-            ) : (
-              <Text
-                style={
-                  held || impliedBy != null || playerRow
-                    ? styles.held
-                    : styles.notHeld
-                }
-              >
-                {impliedBy != null
-                  ? sprintf(lstrings.profile_with, labelOf(impliedBy))
-                  : playerRow
-                    ? lstrings.profile_player
-                    : row === 'follower'
-                      ? held
-                        ? lstrings.profile_following
-                        : lstrings.profile_not_following
-                      : held
-                        ? lstrings.profile_held
-                        : lstrings.profile_not_held}
-              </Text>
-            )}
-          </View>
-        )
-      })}
-    </ListCard>
+    <>
+      <ListCard>
+        {ROWS.map(row => {
+          const held =
+            row === 'follower'
+              ? section.follower
+              : row === 'member'
+                ? section.member
+                : section.roles.includes(row)
+          const impliedBy =
+            row === 'follower' || row === 'member' || row === 'admin'
+              ? undefined
+              : implied.get(row)
+          // Read as Player only while they are on the team; anybody else's
+          // Member row is the usual one.
+          const playerRow = player && row === 'member' && section.member
+          const changeable =
+            impliedBy == null &&
+            !playerRow &&
+            section.editable &&
+            viewer.manages &&
+            (row !== 'admin' || viewer.admin) &&
+            (row !== 'member' || !held || !holdsAdmin || viewer.admin) &&
+            (row === 'member' || held || canHoldRoles)
+          const label = labelOf(row)
+          return (
+            <View
+              key={row}
+              testID={`role-${section.level}-${row}`}
+              style={styles.row}
+            >
+              <Text style={styles.label}>{label}</Text>
+              {changeable && row !== 'follower' ? (
+                <RoleToggle
+                  testID={`role-${section.level}-${row}-switch`}
+                  on={held}
+                  label={label}
+                  disabled={busy || confirmation.busy}
+                  onPress={() => {
+                    if (held)
+                      confirmation.open({
+                        title: `Remove ${label} from ${props.ownerLabel ?? 'this person'}?`,
+                        detail:
+                          row === 'member'
+                            ? `They leave ${section.groups.map(g => g.name).join(', ')} and lose every role held directly there. Roles inherited elsewhere remain.`
+                            : `Their ${label} role on ${section.groups.map(g => g.name).join(', ')} will be removed. Other memberships remain.`,
+                        label: 'Remove',
+                        accessibilityLabel: 'Confirm removal',
+                        run: async current => {
+                          await onRemove(row, current)
+                        }
+                      })
+                    else onAdd(row)
+                  }}
+                />
+              ) : (
+                <Text
+                  style={
+                    held || impliedBy != null || playerRow
+                      ? styles.held
+                      : styles.notHeld
+                  }
+                >
+                  {impliedBy != null
+                    ? sprintf(lstrings.profile_with, labelOf(impliedBy))
+                    : playerRow
+                      ? lstrings.profile_player
+                      : row === 'follower'
+                        ? held
+                          ? lstrings.profile_following
+                          : lstrings.profile_not_following
+                        : held
+                          ? lstrings.profile_held
+                          : lstrings.profile_not_held}
+                </Text>
+              )}
+            </View>
+          )
+        })}
+      </ListCard>
+      {confirmation.sheet}
+    </>
   )
 }
 
@@ -234,7 +257,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontWeight: '600',
     color: theme.successColor
   },
-  toggle: { padding: TOGGLE_SLOP, margin: -TOGGLE_SLOP },
+  toggle: { padding: TOGGLE_SLOP, margin: -TOGGLE_SLOP, minHeight: 48 },
   track: {
     width: TRACK_WIDTH,
     height: TRACK_HEIGHT,

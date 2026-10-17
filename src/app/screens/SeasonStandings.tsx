@@ -2,7 +2,7 @@ import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import type { StandingsRow } from '../../common/api'
-import { Card, Emblem, initialsOf } from '../components'
+import { Card, TeamEmblem } from '../components'
 import { FrozenNameTable } from '../components/FrozenNameTable'
 import { useTheme } from '../theme/ThemeContext'
 import type { StatColumn } from './statColumns'
@@ -88,11 +88,7 @@ export function SeasonStandings({
               >
                 {index + 1}
               </Text>
-              <Emblem
-                uri={row.logoUrl}
-                fallback={initialsOf(row.teamName)}
-                size={1.5}
-              />
+              <TeamEmblem uri={row.logoUrl} name={row.teamName} size={1.5} />
               <View style={{ flex: 1, gap: 2 }}>
                 <Text
                   numberOfLines={1}

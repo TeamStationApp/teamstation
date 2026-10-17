@@ -121,12 +121,13 @@ describe('legacy batch scheduling approval boundary', function () {
       expect(
         (await roleScopes(f.h.db, 101, false)).admin.teamIds.has(f.teamB)
       ).equals(false)
-      const refused = await scheduleGames(f.h.db, {
+      const admitted = await scheduleGames(f.h.db, {
         teamId: f.teamA,
         rows: [row(f)],
         actor: actor(101)
       })
-      expect(refused.results[0]).property('error').property('code', 'forbidden')
+      // Active participation now delegates consent to the hosting season's admin.
+      expect(admitted.results[0].result).equals('created')
       await grant(101, 'team', f.teamB)
       expect(
         (
@@ -136,7 +137,7 @@ describe('legacy batch scheduling approval boundary', function () {
             actor: actor(101)
           })
         ).results[0].result
-      ).equals('created')
+      ).equals('unchanged')
     })
   it('preserves a safe unchanged retry while unresolved, but rolls back material revisions and new game aliases', async () => {
     await grant(101, 'team', f.teamB)

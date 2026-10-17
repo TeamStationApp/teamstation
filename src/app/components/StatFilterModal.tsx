@@ -5,6 +5,7 @@ import type { PlayerStats } from '../../common/api'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { CancelAction } from './CancelAction'
 import { RadioMark } from './RadioMark'
 
 /** What a player's figures are narrowed to. Everything unset is a career. */
@@ -126,9 +127,8 @@ export function StatFilterModal(
               onApply(chosen)
             }}
           />
-          <Button
+          <CancelAction
             label={lstrings.player_filter_cancel}
-            kind="text"
             onPress={onClose}
           />
         </View>

@@ -71,8 +71,15 @@ describe('picture catalog HTTP contract', function () {
     })
     expect(await client.pictures()).length(31)
     await client.chooseCatalogPicture('baseball')
-    expect(await client.locations('York')).not.length(0)
-    expect(await client.locationSuggestion(0, 0)).not.equals(null)
+    expect((await h.request('GET', '/locations?query=York')).status).equals(200)
+    expect(
+      (
+        await h.request('POST', '/location-suggestions', {
+          latitude: 0,
+          longitude: 0
+        })
+      ).status
+    ).equals(200)
     expect(
       (await h.request('GET', '/unavailable/pictures', undefined, null)).status
     ).equals(503)

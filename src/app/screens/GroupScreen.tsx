@@ -63,6 +63,13 @@ export function GroupScreen(props: GroupScreenProps): React.ReactElement {
         onTab={props.onTab}
         onOpenGame={props.onOpenGame ?? (() => undefined)}
         onOpenPlayer={props.onOpenPlayer}
+        onCreateGame={
+          props.onCreateGame == null
+            ? undefined
+            : id => {
+                props.onCreateGame?.({ kind: 'team', id })
+              }
+        }
         onOpenPerson={
           props.onOpenPerson == null
             ? undefined

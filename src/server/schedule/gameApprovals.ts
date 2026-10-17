@@ -35,14 +35,17 @@ import {
   type StoredRequest
 } from '../groups/requests'
 import {
-  adminRecipients,
   canAdminister,
+  canScheduleFor,
   currentActor,
-  requireGroupAdmin
+  requireGroupAdmin,
+  requireScheduler,
+  schedulingRecipients
 } from '../groups/rights'
 import { snapshotRequestInformation } from '../notifications/requestInformation'
 import { notifyGameChange } from '../socket/gameChanges'
 import { followMerges } from '../teams/followMerges'
+import { seasonGameConsent } from './seasonGameConsent'
 
 type GameRow = Selectable<GamesTable>
 /** The batch API cannot represent pending proposals: every affected side must approve now. */
@@ -68,8 +71,9 @@ export async function requireImmediateGameConsent(
         `A hosting season administrator of ${season?.name ?? 'its season'} must authorize season placement`
       )
     }
-    for (const id of [game.homeTeamId, game.awayTeamId])
-      sides.set(`team:${id}`, { kind: 'team', id })
+    if (!(await seasonGameConsent(db, fresh, game)))
+      for (const id of [game.homeTeamId, game.awayTeamId])
+        sides.set(`team:${id}`, { kind: 'team', id })
   }
   for (const side of sides.values()) {
     if (!(await canAdminister(db, fresh, side)))
@@ -239,7 +243,7 @@ async function currentAdministrator(
   ref: GroupRef
 ): Promise<boolean> {
   try {
-    return await canAdminister(db, { userId, isAdmin: false, scopes: [] }, ref)
+    return await canScheduleFor(db, { userId, isAdmin: false, scopes: [] }, ref)
   } catch (error) {
     if (
       error instanceof HttpError &&
@@ -431,7 +435,8 @@ export async function finishGameRequest(
         stillAuthorized = (
           await Promise.all(
             removed.map(
-              async id => await canAdminister(trx, sender, { kind: 'team', id })
+              async id =>
+                await canScheduleFor(trx, sender, { kind: 'team', id })
             )
           )
         ).every(Boolean)
@@ -569,7 +574,7 @@ export async function proposeGame(
         )
       return repeated
     }
-    await requireGroupAdmin(trx, fresh, body.sender)
+    await requireScheduler(trx, fresh, body.sender)
     let resumedTerms: GameRequestTerms | undefined
     if (resumingRequestId != null) {
       if (typeof resumingRequestId !== 'string')
@@ -643,7 +648,7 @@ export async function proposeGame(
       old == null &&
       resumedTerms == null &&
       game.seasonId != null &&
-      !(await canAdminister(trx, fresh, { kind: 'season', id: game.seasonId }))
+      !(await canScheduleFor(trx, fresh, { kind: 'season', id: game.seasonId }))
     )
       throw forbidden(
         'A hosting season administrator must authorize season placement'
@@ -658,11 +663,13 @@ export async function proposeGame(
     ].sort()
     const administered: string[] = []
     for (const teamId of affectedTeamIds)
-      if (await canAdminister(trx, fresh, { kind: 'team', id: teamId }))
+      if (await canScheduleFor(trx, fresh, { kind: 'team', id: teamId }))
         administered.push(teamId)
     const hostOnlyCreation = old == null && body.sender.kind === 'season'
     if (administered.length === 0 && !hostOnlyCreation)
-      throw forbidden('A participating team administrator must send this game')
+      throw forbidden(
+        'A participating team administrator, coach or assistant must send this game'
+      )
     if (
       body.sender.kind === 'team' &&
       !affectedTeamIds.includes(body.sender.id)
@@ -682,13 +689,13 @@ export async function proposeGame(
     if (
       initiatingTeamId != null &&
       (!affectedTeamIds.includes(initiatingTeamId) ||
-        !(await canAdminister(trx, fresh, {
+        !(await canScheduleFor(trx, fresh, {
           kind: 'team',
           id: initiatingTeamId
         })))
     )
       throw forbidden(
-        'Only a team administrator can represent the inviting team'
+        'Only a team administrator, coach or assistant can represent the inviting team'
       )
     const terms: GameRequestTerms = {
       kind: 'game',
@@ -723,7 +730,7 @@ export async function proposeGame(
     const id = makeId('invite')
     const sent = clock.now()
     if (replacement) {
-      const recipients = await adminRecipients(
+      const recipients = await schedulingRecipients(
         trx,
         originalIds.map(id => ({ kind: 'team' as const, id }))
       )
@@ -916,7 +923,7 @@ export async function withdrawFromGame(
     if (game == null) throw notFound()
     if (![game.home_team_id, game.away_team_id].includes(teamId))
       throw forbidden('Only a participating team can withdraw')
-    await requireGroupAdmin(trx, fresh, { kind: 'team', id: teamId })
+    await requireScheduler(trx, fresh, { kind: 'team', id: teamId })
     if (
       game.cancellation_reason === 'withdrawal' ||
       game.cancellation_reason === 'replacement'
@@ -929,7 +936,7 @@ export async function withdrawFromGame(
         ? []
         : [{ kind: 'season' as const, id: game.season_id }])
     ]
-    const recipients = await adminRecipients(trx, refs)
+    const recipients = await schedulingRecipients(trx, refs)
     const withdrawn = await trx
       .updateTable('games')
       .set({
@@ -1052,7 +1059,7 @@ export async function withdrawGameRequest(
             .filter(side => side.approved_by != null)
             .map(
               async side =>
-                await canAdminister(trx, fresh, {
+                await canScheduleFor(trx, fresh, {
                   kind: 'team',
                   id: side.scope_id
                 })
@@ -1062,7 +1069,7 @@ export async function withdrawGameRequest(
     if (
       request.sender_id !== fresh.userId &&
       !representedConsent &&
-      !(await canAdminister(trx, fresh, {
+      !(await canScheduleFor(trx, fresh, {
         kind: request.sender_scope_type!,
         id: request.sender_scope_id!
       }))
@@ -1102,7 +1109,7 @@ export async function resendGameRequest(
     ])
     const fresh = await currentActor(trx, actor)
     const original = await requestById(trx, id)
-    await requireGroupAdmin(trx, fresh, {
+    await requireScheduler(trx, fresh, {
       kind: original.sender_scope_type!,
       id: original.sender_scope_id!
     })
@@ -1204,7 +1211,7 @@ export async function scheduleProposals(
   }>
 > {
   const fresh = await currentActor(db, actor)
-  await requireGroupAdmin(db, fresh, ref)
+  await requireScheduler(db, fresh, ref)
   const requests = await db
     .selectFrom('group_requests')
     .leftJoin('notification_events as event', join =>
@@ -1256,7 +1263,8 @@ export async function scheduleProposals(
           request.hiddenScopes.includes(`${ref.kind}:${ref.id}`)
     )
       continue
-    if (status === 'pending' && !(await canAdminister(db, fresh, ref))) continue
+    if (status === 'pending' && !(await canScheduleFor(db, fresh, ref)))
+      continue
     result.push({
       requestId: request.id,
       gameId: request.game_id,
@@ -1291,7 +1299,7 @@ export async function schedulingGame(
   if (row == null) throw notFound()
   const teamIds = []
   for (const teamId of [row.home_team_id, row.away_team_id])
-    if (await canAdminister(db, fresh, { kind: 'team', id: teamId }))
+    if (await canScheduleFor(db, fresh, { kind: 'team', id: teamId }))
       teamIds.push(teamId)
   if (teamIds.length === 0) throw forbidden()
   return {

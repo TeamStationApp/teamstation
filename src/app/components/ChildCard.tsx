@@ -5,6 +5,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Card } from './Card'
 import { Emblem } from './Emblem'
 import { initialsOf } from './initials'
+import { TeamEmblem } from './TeamEmblem'
 
 export interface ChildCardPill {
   label: string
@@ -15,6 +16,7 @@ export interface ChildCardAction {
   onPress: () => void
 }
 export interface ChildCardProps {
+  kind?: 'team' | 'season'
   title: string
   imageUrl: string | null
   /** The line under the name: a season's time frame, a team's record. */
@@ -72,7 +74,11 @@ export function ChildCard(props: ChildCardProps): React.ReactElement {
       />
       <View style={styles.body}>
         <View style={styles.through}>
-          <Emblem uri={imageUrl} fallback={initialsOf(title)} size={3} />
+          {props.kind === 'team' ? (
+            <TeamEmblem name={title} uri={imageUrl} size={3} />
+          ) : (
+            <Emblem uri={imageUrl} fallback={initialsOf(title)} size={3} />
+          )}
         </View>
         <View style={styles.text}>
           <View style={styles.through}>

@@ -42,7 +42,13 @@ async function main(): Promise<void> {
     height: number,
     login: boolean
   ): Promise<BrowserSession> => {
-    const b = await browserSession(daemon, name, width, height, artifacts)
+    const b = await browserSession(
+      daemon,
+      `${name}-${process.pid}`,
+      width,
+      height,
+      artifacts
+    )
     sessions.push(b)
     if (login) {
       await b.m.openBrowser({ url: f.h.origin + '/sign-in' })
@@ -57,6 +63,75 @@ async function main(): Promise<void> {
   }
   try {
     const b = await make('restore-wide', 1440, 1000, true)
+    const recentResponse = await f.h.request(
+      'GET',
+      '/events?played=1&limit=1',
+      undefined,
+      101
+    )
+    const recentRows = await recentResponse.json()
+    expect(recentRows).length(1)
+    await b.page.setRequestInterception(true)
+    b.page.on('request', request => {
+      if (
+        new URL(request.url()).pathname === '/api/v1/events' &&
+        new URL(request.url()).searchParams.get('played') === '1'
+      ) {
+        request
+          .respond({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify([{ ...recentRows[0], videoCount: 1 }])
+          })
+          .catch(() => undefined)
+      } else request.continue().catch(() => undefined)
+    })
+    for (const width of [360, 375]) {
+      await b.page.setViewport({ width, height: 874 })
+      await b.m.openBrowser({ url: f.h.origin })
+      await contains(b.page, 'Box Score')
+      await b.page.evaluate(async () => await document.fonts.ready)
+      const labels = await diagnostic(b.page, () =>
+        [...document.querySelectorAll<HTMLElement>('[role="button"]')]
+          .filter(
+            node =>
+              node.textContent !== null &&
+              /(?:Watch|Box Score)$/.test(node.textContent)
+          )
+          .map(node => {
+            const label = [...node.querySelectorAll<HTMLElement>('*')].find(
+              child =>
+                child.children.length === 0 &&
+                (child.textContent === 'Watch' ||
+                  child.textContent === 'Box Score')
+            )!
+            const range = document.createRange()
+            range.selectNodeContents(label)
+            return {
+              label: label.textContent,
+              text: range.getBoundingClientRect().width,
+              available: label.getBoundingClientRect().width,
+              button: node.getBoundingClientRect().toJSON()
+            }
+          })
+      )
+      expect(labels).length(2)
+      for (const label of labels) {
+        expect(label.text, `${width}px ${label.label}`).at.most(
+          label.available + 1
+        )
+        expect(label.button.left).at.least(0)
+        expect(label.button.right).at.most(width)
+      }
+      await capture(b.m, artifacts, `home-pills-${width}.png`)
+    }
+    await b.page.setRequestInterception(false)
+    b.page.removeAllListeners('request')
+    await b.page.setViewport({ width: 1440, height: 1000 })
+    await b.m.openBrowser({ url: f.h.origin })
+    await pass(
+      'Home Watch and Box Score retain complete labels at 360 and 375 pixels with bundled fonts'
+    )
     const visit = async (path: string): Promise<void> => {
       await b.m.openBrowser({ url: f.h.origin + path })
     }
@@ -101,35 +176,49 @@ async function main(): Promise<void> {
       script: 'window.history.forward()'
     })
     await contains(b.page, 'TEAM MANAGEMENT')
-    await tap(b.m, 'Cancel')
+    await b.m.command('back')
     await shell()
     expect(b.page.url()).includes('tab=schedule')
     await contains(b.page, 'SCHEDULE')
     await tap(b.m, 'Manage')
-    // Adding people is here now, with the Manage People page gone.
-    await contains(b.page, 'ADD SOMEBODY')
+    await contains(b.page, 'TEAM MANAGEMENT')
     for (const label of [
-      'Join a Season',
-      'Create Game',
-      'Create placeholder team'
+      'Add Person to Team',
+      'Create Invite Link',
+      'Demo City, Demo Region, US'
     ]) {
       await tap(b.m, label)
       expect(
         await diagnostic(b.page, () => document.body.textContent)
       ).not.equals('')
+      const childAddress = b.page.url()
+      await b.m.openBrowser({ url: childAddress })
+      await contains(
+        b.page,
+        label === 'Add Person to Team'
+          ? 'Send invite'
+          : label === 'Create Invite Link'
+            ? 'Invite Spectators'
+            : 'City'
+      )
       await b.m.command('back')
       await contains(b.page, 'TEAM MANAGEMENT')
     }
     await fill(b.m, 'Name', 'Demo Canceled Edit')
-    await tap(b.m, 'Cancel')
+    await b.m.command('back')
     await shell()
     await contains(b.page, 'SCHEDULE')
     await absent(b.page, 'Demo Canceled Edit')
     await tap(b.m, 'Manage')
     await fill(b.m, 'Name', 'Demo Renamed Hawks')
-    await tap(b.m, 'Change picture')
+    await b.m.tapOn({
+      css: '[aria-label="Add picture"], [aria-label="Change picture"]'
+    })
     await tap(b.m, 'Use initials')
-    await tap(b.m, 'Save settings')
+    await tap(b.m, 'Save photo')
+    await tap(b.m, 'Save name')
+    await contains(b.page, 'Name saved')
+    await b.m.command('back')
     await b.page.waitForSelector('[aria-label="Team sections"]', {
       timeout: 15000
     })
@@ -144,10 +233,12 @@ async function main(): Promise<void> {
     expect(renamed.status).equals(200)
     await tap(b.m, 'Manage')
     await fill(b.m, 'Name', 'Demo Hawks')
-    await tap(b.m, 'Save settings')
+    await tap(b.m, 'Save name')
+    await contains(b.page, 'Name saved')
+    await b.m.command('back')
     await shell()
     await pass(
-      'B2/B5 four tabs, gear actions, Cancel without mutation, Save refresh and same-tab return'
+      'B2/B5 four tabs, routed people actions, Back without mutation, individual name save and same-tab return'
     )
     for (const path of [
       `/teams/${f.teamA}`,
@@ -255,10 +346,12 @@ async function main(): Promise<void> {
     await tap(b.m, 'Create Team')
     await fill(b.m, 'Team name', 'Demo Created Team')
     await tap(b.m, 'Continue')
-    await tap(b.m, 'Enter location manually')
-    await fill(b.m, 'City', 'Demo City')
-    await fill(b.m, 'State or region', 'Demo Region')
-    await tap(b.m, 'Confirm location')
+    await tap(b.m, 'Location not set, Add a city')
+    await fill(b.m, 'City', 'Austin')
+    await b.m.tapOn({ css: '[aria-label^="Choose Austin,"]', timeout: 15000 })
+    await contains(b.page, 'Save to use Austin')
+    await tap(b.m, 'Save')
+    await contains(b.page, 'Austin, Texas')
     await tap(b.m, 'Continue')
     await tap(b.m, 'Use initials')
     await tap(b.m, 'Continue')

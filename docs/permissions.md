@@ -463,7 +463,10 @@ The app shows every one of these in a preview before anything is saved.
 | **Break** a parent link           | An admin of **either** side. It happens at once, with no invitation.      |
 | **Create** a group under a parent | You must already be an admin of the parent. The link is made on creation. |
 
-When the same person administers both sides, they can approve for both at once: **"I approve for all affected groups"**. Otherwise the request goes to the other side's admins ([section 10](#10-invitations-and-approvals)).
+When the same person can approve all required sides, **Save** applies their
+approvals together. The app returns to the connection and shows its details in
+a five-second success toast. Otherwise the request goes to the other side's
+admins ([section 10](#10-invitations-and-approvals)).
 
 ---
 
@@ -483,6 +486,16 @@ A team **competes in** a season when it is on that season's schedule and standin
 | How to end it                                         | **Break parent relationship** (either side) | **End participation** (either side). Games are kept.                  |
 
 The two are independent. A team can have a parent season and also compete in it, or compete in a season it has no parent link to (the Falcons in [section 1](#1-leagues-seasons-and-teams)).
+
+**Participation grants bounded scheduling consent.** A season's administrators,
+whether appointed directly or inherited from a management parent, can schedule
+a game without separate approval from either team when **both teams have active
+participation in that same season and the game is hosted by that season**.
+This grants no roster, role or other team-management permission. Having games in
+a season, a management-parent link alone, or an inactive participation does not
+qualify. A season coach or assistant without administrator authority does not
+receive this permission. Ending participation removes this delegation for future
+approvals; already scheduled games and their results remain unchanged.
 
 On the season's Teams tab, teams are grouped by their games, not by their links. **Exhibition** is a property of a game, not of a team. The groups are:
 
@@ -571,11 +584,21 @@ sequenceDiagram
 
 ## 10. Invitations and approvals
 
-Every change that affects more than one group is an **invitation**, as is granting a guardianship, or access for an email address nobody has verified yet. Adding somebody who has an account, as a member or to any role, is not: it applies at once ([section 4](#how-people-become-members)). Invitations follow the same rules:
+Changes affecting more than one group use shared approval records. When the
+person submitting can approve every required side, Save applies the change
+immediately, returns to its connection or game and shows a detailed five-second
+toast; it does not open an invitation notification. Other changes are invitations,
+as are granting a guardianship or access for an email address nobody has verified
+yet. Adding somebody who has an account, as a member or to any role, applies at
+once ([section 4](#how-people-become-members)). Invitations follow the same rules:
 
 - **Two-way.** Every affected side must approve. Sending counts as your side's approval.
 - **Any eligible admin can answer** for their team, season or league. "Opening this invitation does not approve it."
 - **Seven days.** An invitation expires if it isn't answered. The sender can **withdraw** it, and can **resend** it, except a guardian invitation or request, which is sent anew instead.
+- **Current approvals when submitted again.** An authorized sender's available
+  approvals are applied to the successor. If none remain outstanding, it returns
+  to the connection or game with a five-second confirmation instead of opening
+  an approved notification. Someone else's consent is never supplied for them.
 - **Approval is checked again at the end.** If your admin rights came from a parent link that has since been broken, your earlier approval no longer counts.
 - **Changing a season's dates or time zone** cancels its pending parent and participation invitations, because they named the old dates.
 
@@ -620,17 +643,21 @@ sequenceDiagram
 A game has two sides: the home team and the away team. It is published when **both** sides have approved. For each side, an approval can come from:
 
 - an admin of that team, directly or through a parent link, or
-- for a placeholder team, an admin of its custodian.
+- for a placeholder team, an admin of its custodian, or
+- a direct or inherited admin of the hosting season, when **both proposed teams
+  are active participants in that season**. This authority is checked again
+  before publication, including current participation and administrator rights.
 
 There is no separate approval from the season. However, placing a new game in a season requires the sender to be an admin of that season.
 
 Create Game and Game Settings both end with **Save**. What Save does depends on what you administer:
 
-| You administer… | What happens                                                                     |
-| --------------- | -------------------------------------------------------------------------------- |
-| Both teams      | Published immediately                                                            |
-| One team        | The other team's admins must approve. "An admin of ‹team› must approve changes." |
-| Only the season | Both teams' admins must approve                                                  |
+| You administer…                                            | What happens                                                                     |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Both teams                                                 | Published immediately                                                            |
+| One team                                                   | The other team's admins must approve. "An admin of ‹team› must approve changes." |
+| Only the season, both teams actively participate in it     | Published immediately when hosted in that season                                 |
+| Only the season, either team does not actively participate | Team approvals are required unless you also hold the relevant team authority     |
 
 Until the game is approved, it shows **Pending approval** where the score would be.
 

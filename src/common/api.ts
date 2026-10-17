@@ -39,7 +39,12 @@ import {
   type GameProposal,
   type GameScheduleProposal
 } from './gameApprovals'
-import type { CreateGroup, GroupKind, GroupRef } from './groupCreation'
+import {
+  asGroupRef,
+  type CreateGroup,
+  type GroupKind,
+  type GroupRef
+} from './groupCreation'
 import {
   asParentPreview,
   type ParentAction,
@@ -1089,7 +1094,8 @@ export type Redeemed = ReturnType<typeof asRedeemed>
 export const asScopeGrant = asObject({
   id: asString,
   name: asString,
-  role: asString
+  role: asString,
+  isPlayer: asOptional(asBoolean, false)
 })
 export type ScopeGrant = ReturnType<typeof asScopeGrant>
 
@@ -1510,10 +1516,10 @@ export const asDjGame = asObject({
 export type DjGame = ReturnType<typeof asDjGame>
 
 export class TeamStationClient {
-  async nodeAccounts(query = ''): Promise<NodeAccount[]> {
+  async nodeAccounts(query = '', nodeAdmin = false): Promise<NodeAccount[]> {
     return await this.request(
       'GET',
-      `/users?view=administration&query=${encodeURIComponent(query)}`,
+      `/users?view=administration&query=${encodeURIComponent(query)}${nodeAdmin ? '&nodeAdmin=true' : ''}`,
       asNodeAccounts
     )
   }
@@ -2028,6 +2034,7 @@ export class TeamStationClient {
     gameId: string | null
     proposedGameId: string | null
     replacesGameId: string | null
+    notice?: string
   }> {
     return await this.request(
       'POST',
@@ -2037,7 +2044,8 @@ export class TeamStationClient {
         status: asString,
         gameId: asNullable(asString),
         proposedGameId: asOptional(asNullable(asString), null),
-        replacesGameId: asOptional(asNullable(asString), null)
+        replacesGameId: asOptional(asNullable(asString), null),
+        notice: asOptional(asString)
       }),
       { idempotencyKey }
     )
@@ -2098,11 +2106,21 @@ export class TeamStationClient {
     id: string,
     decision: 'accept' | 'decline' | 'withdraw' | 'resend',
     idempotencyKey?: string
-  ): Promise<{ id: string; status: string }> {
+  ): Promise<{
+    id: string
+    status: string
+    source?: GroupRef
+    notice?: string
+  }> {
     return await this.request(
       'POST',
       `/relationship-requests/${encodeURIComponent(id)}/${decision}`,
-      asObject({ id: asString, status: asString }),
+      asObject({
+        id: asString,
+        status: asString,
+        source: asOptional(asGroupRef),
+        notice: asOptional(asString)
+      }),
       { idempotencyKey }
     )
   }
@@ -2222,38 +2240,52 @@ export class TeamStationClient {
     await this.request('PUT', '/me/onboarding/photo', asUnknownOk, picture)
   }
 
-  async locations(query: string): Promise<Locality[]> {
+  async citySuggestions(
+    query: string,
+    session: string
+  ): Promise<{
+    suggestions: Array<{ id: string; primary: string; secondary: string }>
+    provider: 'google' | 'geonames'
+    attribution: string
+  }> {
+    return await this.request(
+      'GET',
+      `/locations?query=${encodeURIComponent(query)}&session=${encodeURIComponent(session)}`,
+      asObject({
+        suggestions: asArray(
+          asObject({ id: asString, primary: asString, secondary: asString })
+        ),
+        provider: asLiteral('google', 'geonames'),
+        attribution: asString
+      })
+    )
+  }
+
+  async location(id: string, session: string): Promise<Locality> {
     const answer = await this.request(
       'GET',
-      `/locations?query=${encodeURIComponent(query)}`,
-      asObject({ places: asArray(asLocality) })
+      `/locations/${encodeURIComponent(id)}?session=${encodeURIComponent(session)}`,
+      asObject({ place: asLocality })
     )
-    return answer.places
+    return answer.place
   }
 
   async eventPlaces(
     query: string,
     kind: EventPlaceKind
   ): Promise<EventPlace[]> {
-    const answer = await this.request(
+    return (await this.eventPlaceSuggestions(query, kind)).places
+  }
+
+  async eventPlaceSuggestions(
+    query: string,
+    kind: EventPlaceKind
+  ): Promise<ReturnType<typeof asEventPlaces>> {
+    return await this.request(
       'GET',
       `/locations?kind=${kind}&query=${encodeURIComponent(query)}`,
       asEventPlaces
     )
-    return answer.places
-  }
-
-  async locationSuggestion(
-    latitude: number,
-    longitude: number
-  ): Promise<Locality | null> {
-    const answer = await this.request(
-      'POST',
-      '/location-suggestions',
-      asObject({ place: asNullable(asLocality) }),
-      { latitude, longitude }
-    )
-    return answer.place
   }
 
   /** The seasons this person can see, which is what home leads with. */

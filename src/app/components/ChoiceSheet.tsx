@@ -2,7 +2,7 @@ import React from 'react'
 import { Modal, Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { Button } from './Button'
+import { CancelAction } from './CancelAction'
 
 export interface ChoiceSheetProps {
   title: string
@@ -19,7 +19,8 @@ export interface ChoiceSheetProps {
 /** A short list of choices that slides up, e.g. what `Create` should make. */
 export function ChoiceSheet(props: ChoiceSheetProps): React.ReactElement {
   const { title, choices, onClose } = props
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
   return (
     <Modal transparent animationType="slide" visible onRequestClose={onClose}>
       <View style={styles.scrim}>
@@ -57,7 +58,13 @@ export function ChoiceSheet(props: ChoiceSheetProps): React.ReactElement {
               )}
             </Pressable>
           ))}
-          <Button label="Cancel" kind="secondary" onPress={onClose} />
+          <CancelAction
+            destructivePrimary={
+              choices.length === 1 && choices[0].destructive === true
+            }
+            label="Cancel"
+            onPress={onClose}
+          />
         </View>
       </View>
     </Modal>

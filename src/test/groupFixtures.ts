@@ -3,6 +3,8 @@ import { expect } from 'chai'
 import type { Actor } from '../server/auth/sessions'
 import { createSession } from '../server/auth/sessions'
 import type { Clock } from '../server/groups/requests'
+import type { GooglePlaces } from '../server/location/googlePlaces'
+import type { eventInfoRoutes } from '../server/routes/eventInfo'
 import type { AccountHarness, MountExtra } from './accountHarness'
 import { creationHarness } from './creationHarness'
 
@@ -37,12 +39,23 @@ export interface GroupFixture {
 export async function groupFixture(
   webRoot?: string,
   bindHost?: string,
-  mountExtra?: MountExtra
+  mountExtra?: MountExtra,
+  cityLookup?: GooglePlaces,
+  eventOptions: Parameters<typeof eventInfoRoutes>[2] = {}
 ): Promise<GroupFixture> {
-  let timestamp = Date.parse('2026-10-06T19:00:00Z')
+  // Public readers and sign-in use the real clock. Start the controllable
+  // fixture clock alongside it so newly created requests are not already expired.
+  let timestamp = Date.now()
   let key = 0
   const clock = { now: () => new Date(timestamp) }
-  const h = await creationHarness(webRoot, clock, bindHost, mountExtra)
+  const h = await creationHarness(
+    webRoot,
+    clock,
+    bindHost,
+    mountExtra,
+    cityLookup,
+    eventOptions
+  )
   try {
     await h.db
       .updateTable('memberships')

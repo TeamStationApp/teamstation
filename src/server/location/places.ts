@@ -33,6 +33,10 @@ function locality(place: Place): Locality {
     timezone: place[6]
   }
 }
+export function placeById(id: string): Locality | undefined {
+  const place = places.find(row => row[0] === id)
+  return place == null ? undefined : locality(place)
+}
 
 function fold(value: string): string {
   return value.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()

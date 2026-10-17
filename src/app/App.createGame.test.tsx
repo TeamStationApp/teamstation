@@ -13,7 +13,7 @@ const team = (id: string, name: string): ReturnType<typeof asSearchRow> =>
 
 describe('actual app Create Game navigation', () => {
   for (const status of ['pending', 'accepted'])
-    it(`opens the ${status} request with its notice after Save`, async () => {
+    it(`opens the ${status === 'accepted' ? 'game' : 'request'} with its notice after Save`, async () => {
       const proto = TeamStationClient.prototype
       const originals = Object.getOwnPropertyDescriptors(proto)
       const sent: Array<Parameters<TeamStationClient['proposeGame']>[0]> = []
@@ -68,7 +68,11 @@ describe('actual app Create Game navigation', () => {
         await press('Save')
         await settle(120)
         expect(sent[0].sender).deep.equals({ kind: 'team', id: 'home' })
-        expect(window.location.pathname).equals('/notifications/proposal_demo')
+        expect(window.location.pathname).equals(
+          status === 'accepted'
+            ? '/games/game_new'
+            : '/notifications/proposal_demo'
+        )
         expect(document.body.textContent).includes(
           status === 'accepted' ? 'Game scheduled' : 'Game proposal sent'
         )

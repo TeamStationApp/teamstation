@@ -12,6 +12,7 @@ import type { Database } from '../db/database'
 import { type Clock, realClock, requestStatus } from '../groups/requests'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { completionNotice } from '../notifications/completionNotice'
 import {
   decideGameRequest,
   hideDeclinedGame,
@@ -153,6 +154,14 @@ export function gameApprovalRoutes(
         clock
       )
       res.status(201).json({
+        ...(request.status === 'accepted'
+          ? {
+              notice: await completionNotice(
+                db,
+                request.terms as GameRequestTerms
+              )
+            }
+          : {}),
         id: request.id,
         status: requestStatus(request, clock),
         gameId: request.game_id,

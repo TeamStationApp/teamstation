@@ -4,6 +4,8 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { googlePlaces } from '../server/location/googlePlaces'
+import { googlePlacesStub } from '../test/googlePlacesStub'
 import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 import { recordBrowserCoverage } from './browserCoverage.e2e'
 import {
@@ -35,12 +37,16 @@ async function login(page: Page, f: GroupFixture, user: number): Promise<void> {
   await page.waitForSelector('[aria-label^="Account,"]')
   await text(page, 'Your Home')
 }
-async function manualLocation(page: Page): Promise<void> {
-  await press(page, 'Enter location manually')
-  await fill(page, 'City', 'Demo Browser City')
-  await fill(page, 'State or region', 'Demo Browser Region')
-  await press(page, 'Confirm location')
-  await text(page, 'Demo Browser City')
+async function chooseLocation(
+  page: Page,
+  label = 'Location not set, Add a city'
+): Promise<void> {
+  await press(page, label)
+  await page.waitForSelector('input[aria-label="City"]', { visible: true })
+  await fill(page, 'City', 'tor')
+  await press(page, 'Choose Toronto, Ontario, Canada')
+  await press(page, 'Save')
+  await text(page, 'Toronto, Ontario')
 }
 async function shot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: join(artifacts!, name) })
@@ -48,7 +54,13 @@ async function shot(page: Page, name: string): Promise<void> {
 
 async function main(): Promise<void> {
   await mkdir(artifacts!, { recursive: true })
-  const f = await groupFixture(resolve('dist'))
+  const provider = await googlePlacesStub()
+  const f = await groupFixture(
+    resolve('dist'),
+    undefined,
+    undefined,
+    googlePlaces({ apiKey: 'placeholder-key', baseUrl: provider.baseUrl })
+  )
   let browser: Browser | undefined
   const pages: Page[] = []
   const cover = async (page: Page): Promise<void> => {
@@ -76,9 +88,7 @@ async function main(): Promise<void> {
     await fill(plain, 'League name', 'Demo Browser League')
     await text(plain, 'recurring basis')
     await press(plain, 'Continue')
-    await press(plain, 'Use my location')
-    await text(plain, 'location')
-    await manualLocation(plain)
+    await chooseLocation(plain)
     await shot(plain, 'league-location.png')
     await press(plain, 'Continue')
     await press(plain, 'Use initials')
@@ -91,9 +101,9 @@ async function main(): Promise<void> {
       .selectAll()
       .where('name', '=', 'Demo Browser League')
       .executeTakeFirstOrThrow()
-    expect(league.locality).property('city', 'Demo Browser City')
+    expect(league.locality).property('city', 'Toronto')
     lines.push(
-      'E3 league PASS: denied GPS remains usable; confirmed own city, initials and recurring organization name saved once'
+      'E3 league PASS: searched city and retained time zone, initials and recurring organization name saved once'
     )
 
     await press(plain, 'Create season')
@@ -144,7 +154,7 @@ async function main(): Promise<void> {
     await press(plain, 'Team')
     await fill(plain, 'Team name', 'Demo Browser Owls')
     await press(plain, 'Continue')
-    await manualLocation(plain)
+    await chooseLocation(plain, 'Toronto, Ontario, Canada')
     await shot(plain, 'team-location-after.png')
     await press(plain, 'Continue')
     await press(plain, 'Use initials')
@@ -180,10 +190,11 @@ async function main(): Promise<void> {
     await press(plain, 'Manage')
     await text(plain, 'Team management')
     await shot(plain, 'parent-settings-after.png')
-    await press(plain, 'Change picture')
+    await press(plain, 'Add picture')
     await press(plain, 'Use initials')
+    await press(plain, 'Save photo')
     await fill(plain, 'Name', 'Demo Browser Owls Renamed')
-    await press(plain, 'Save settings')
+    await press(plain, 'Save name')
     await text(plain, 'Demo Browser Owls Renamed')
     await plain.reload({ waitUntil: 'networkidle0' })
     await text(plain, 'Demo Browser Owls Renamed')
@@ -206,7 +217,7 @@ async function main(): Promise<void> {
     await fill(publicPage, 'Search by name or city', 'Demo Browser Owls')
     await press(publicPage, 'Open Demo Browser Owls Renamed')
     await press(publicPage, 'Team', 'tab')
-    await text(publicPage, 'Demo Browser City')
+    await text(publicPage, 'Toronto')
     await shot(publicPage, 'public-discovery-after.png')
     // No way into the team's Settings, where its people are added.
     expect(
@@ -236,11 +247,16 @@ async function main(): Promise<void> {
       deviceScaleFactor: 1
     })
     await login(teamAdmin, f, 101)
-    await teamAdmin.goto(f.h.origin + `/groups/team/${f.teamA}/settings`, {
-      waitUntil: 'networkidle0'
-    })
-    await press(teamAdmin, 'Add parent season')
-    await press(teamAdmin, 'Choose Demo Playoffs')
+    await teamAdmin.goto(
+      f.h.origin + `/groups/season/${f.playoffs}?tab=teams`,
+      {
+        waitUntil: 'networkidle0'
+      }
+    )
+    await press(teamAdmin, 'Add team')
+    await press(teamAdmin, 'Team this season manages')
+    await fill(teamAdmin, 'Search by name or city', 'Demo Hawks')
+    await press(teamAdmin, 'Choose Demo Hawks, Demo City, Demo Region, US')
     await text(teamAdmin, 'Sending approves for the group')
     await press(teamAdmin, 'I approve for all affected groups')
     await press(teamAdmin, 'Confirm relationship')
@@ -248,19 +264,17 @@ async function main(): Promise<void> {
     await teamAdmin.goto(f.h.origin + `/groups/team/${f.teamA}/settings`, {
       waitUntil: 'networkidle0'
     })
-    await text(teamAdmin, 'Parent season: Demo Playoffs')
-    await frameText(teamAdmin, 'Parent season: Demo Regular')
+    await text(teamAdmin, 'Demo Playoffs')
+    await frameText(teamAdmin, 'PARENT ORGANIZATIONS')
     await teamAdmin.waitForFunction(() =>
-      ['Parent season: Demo Regular', 'Parent season: Demo Playoffs'].every(
-        label => {
-          const node = [...document.querySelectorAll<HTMLElement>('*')].find(
-            node => node.textContent === label && node.children.length === 0
-          )
-          if (node == null) return false
-          const rect = node.getBoundingClientRect()
-          return rect.top >= 0 && rect.bottom <= window.innerHeight
-        }
-      )
+      ['Demo Regular', 'Demo Playoffs'].every(label => {
+        const node = [...document.querySelectorAll<HTMLElement>('*')].find(
+          node => node.textContent === label && node.children.length === 0
+        )
+        if (node == null) return false
+        const rect = node.getBoundingClientRect()
+        return rect.top >= 0 && rect.bottom <= window.innerHeight
+      })
     )
     await shot(teamAdmin, 'parent-seasons.png')
     await shot(teamAdmin, 'parent-link-flow-after.png')
@@ -271,7 +285,11 @@ async function main(): Promise<void> {
         .where('team_id', '=', f.teamA)
         .execute()
     ).length(2)
-    await press(teamAdmin, 'Add parent season')
+    await teamAdmin.goto(
+      f.h.origin +
+        `/groups/team/${f.teamA}/link?target=season&relationship=parent&direction=parents`,
+      { waitUntil: 'networkidle0' }
+    )
     await fill(teamAdmin, 'Search by name or city', 'Demo Tournament')
     await press(teamAdmin, 'Choose Demo Tournament')
     await text(teamAdmin, 'same league')
@@ -289,7 +307,9 @@ async function main(): Promise<void> {
     await host.goto(f.h.origin + `/groups/season/${f.seasonB}`, {
       waitUntil: 'networkidle0'
     })
-    await press(host, 'Invite Team to Season')
+    await press(host, 'Teams', 'tab')
+    await press(host, 'Add team')
+    await press(host, 'Team that competes')
     await fill(host, 'Search by name or city', 'Demo Hawks')
     await press(host, 'Choose Demo Hawks, Demo City, Demo Region, US')
     await press(host, 'Send invitation')
@@ -351,13 +371,13 @@ async function main(): Promise<void> {
     await teamAdmin.goto(f.h.origin + `/groups/team/${f.teamA}/settings`, {
       waitUntil: 'networkidle0'
     })
-    await press(teamAdmin, 'Break relationship with Demo Regular')
-    await text(teamAdmin, 'Review relationship changes')
-    await frameText(teamAdmin, 'Review relationship changes')
+    await press(teamAdmin, 'Leave Demo Regular')
+    await text(teamAdmin, 'Leave Demo Regular?')
+    await frameText(teamAdmin, 'Leave Demo Regular?')
     await shot(teamAdmin, 'parent-unlink-preview.png')
-    await press(teamAdmin, 'Break relationship')
+    await press(teamAdmin, 'Leave Demo Regular')
     await teamAdmin.waitForFunction(
-      () => !document.body.textContent!.includes('Parent season: Demo Regular')
+      () => document.querySelector('[aria-label="Leave Demo Regular"]') === null
     )
     expect(
       await f.h.db
@@ -375,14 +395,19 @@ async function main(): Promise<void> {
     await host.goto(f.h.origin + `/groups/season/${f.seasonB}`, {
       waitUntil: 'networkidle0'
     })
-    await press(host, 'Create external opponent')
+    await press(host, 'Teams', 'tab')
+    await press(host, 'Create team')
+    await press(host, 'Placeholder team')
     await fill(host, 'Team name', 'Demo Outside Opponent')
     await press(host, 'Continue')
-    await manualLocation(host)
+    await chooseLocation(host, 'Demo City, Demo Region, US')
     await press(host, 'Continue')
     await press(host, 'Use initials')
     await press(host, 'Create Team')
-    await text(host, 'External team — managed by Demo Tournament')
+    await text(host, 'Demo Outside Opponent')
+    await host.goto(f.h.origin + new URL(host.url()).pathname + '/settings', {
+      waitUntil: 'networkidle0'
+    })
     await press(host, 'Invite team administrator')
     await fill(host, 'Administrator email', 'fixture103@example.com')
     await press(host, 'Send administrator invitation')
@@ -410,7 +435,7 @@ async function main(): Promise<void> {
     })
     // An administrator now: the team's Settings let them add people.
     await press(recipient, 'Manage')
-    await text(recipient, 'Add somebody')
+    await text(recipient, 'Add Person to Team')
     expect(
       await f.h.db
         .selectFrom('teams')
@@ -427,7 +452,9 @@ async function main(): Promise<void> {
     await host.goto(f.h.origin + `/groups/season/${f.seasonB}`, {
       waitUntil: 'networkidle0'
     })
-    await press(host, 'Invite Team to Season')
+    await press(host, 'Teams', 'tab')
+    await press(host, 'Add team')
+    await press(host, 'Team that competes')
     await fill(host, 'Search by name or city', 'Demo Visitors')
     await press(host, 'Choose Demo Visitors')
     await press(host, 'Send invitation')
@@ -435,7 +462,7 @@ async function main(): Promise<void> {
     const oldId = new URL(host.url()).pathname.split('/').at(-1)!
     await press(host, 'Withdraw invitation')
     await text(host, 'Cancelled')
-    await press(host, 'Resend invitation')
+    await press(host, 'Submit again')
     await text(host, 'Pending')
     const newId = new URL(host.url()).pathname.split('/').at(-1)!
     expect(newId).not.equals(oldId)
@@ -475,6 +502,7 @@ async function main(): Promise<void> {
   } finally {
     await browser?.close()
     await f.h.close()
+    await provider.close()
   }
 }
 main().catch((error: unknown) => {

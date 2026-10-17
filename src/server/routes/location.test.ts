@@ -42,6 +42,7 @@ describe('locality HTTP boundary', function () {
     expect(response.status).equals(200)
     expect(await response.json()).deep.equals({
       places: [{ id: 'demo', name: 'Demo Park', address: 'Demo, Demo City' }],
+      provider: 'openstreetmap',
       attribution: '© OpenStreetMap contributors'
     })
     const client = new TeamStationClient({

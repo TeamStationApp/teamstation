@@ -13,6 +13,8 @@ import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { requireDirectAdmin } from '../groups/adminGuard'
 import { currentActor } from '../groups/rights'
+import { imageUrl } from '../media/imageUrls'
+import type { SpaceSettings } from '../media/spacesHls'
 
 export async function requireNodeAdmin(
   db: Kysely<Database>,
@@ -38,7 +40,9 @@ async function activeNodeIds(db: Kysely<Database>): Promise<number[]> {
 export async function nodeAccounts(
   db: Kysely<Database>,
   actor: Actor,
-  query = ''
+  query = '',
+  nodeAdmin = false,
+  space?: SpaceSettings
 ): Promise<NodeAccount[]> {
   await requireNodeAdmin(db, actor)
   if (query.length > 120)
@@ -46,9 +50,28 @@ export async function nodeAccounts(
   const nodes = await activeNodeIds(db)
   let rows = db
     .selectFrom('users')
-    .select(['id', 'display_name', 'is_admin', 'disabled_at', 'login_enabled'])
+    .select([
+      'id',
+      'display_name',
+      'is_admin',
+      'disabled_at',
+      'login_enabled',
+      'avatar_path'
+    ])
+    .select(eb =>
+      eb
+        .selectFrom('user_emails')
+        .select('email')
+        .whereRef('user_emails.user_id', '=', 'users.id')
+        .where('verified_at', 'is not', null)
+        .orderBy('is_primary', 'desc')
+        .orderBy('email')
+        .limit(1)
+        .as('email')
+    )
     .where('merged_into', 'is', null)
     .where('login_enabled', '=', true)
+  if (nodeAdmin) rows = rows.where('is_admin', '=', true)
   if (query.trim() !== '')
     rows = rows.where(eb =>
       eb.or([
@@ -70,24 +93,14 @@ export async function nodeAccounts(
         )
       ])
     )
-  const people = await rows
-    .orderBy('display_name')
-    .orderBy('id')
-    .limit(50)
-    .execute()
+  const people = await rows.orderBy('display_name').orderBy('id').execute()
   const result: NodeAccount[] = []
   for (const user of people) {
-    const email = await db
-      .selectFrom('user_emails')
-      .select('email')
-      .where('user_id', '=', user.id)
-      .where('is_primary', '=', true)
-      .where('verified_at', 'is not', null)
-      .executeTakeFirst()
     result.push({
       userId: user.id,
       displayName: user.display_name,
-      email: email?.email ?? null,
+      email: user.email ?? null,
+      avatarUrl: space == null ? null : imageUrl(space, user.avatar_path),
       isNodeAdmin: user.is_admin,
       suspended: user.disabled_at != null,
       loginEnabled: user.login_enabled,

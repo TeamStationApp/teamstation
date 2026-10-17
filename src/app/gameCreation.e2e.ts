@@ -220,7 +220,8 @@ async function main(): Promise<void> {
     await team.goto(f.h.origin + `/groups/team/${f.teamA}`, {
       waitUntil: 'networkidle0'
     })
-    await press(team, 'Create Game')
+    await press(team, 'Schedule', 'tab')
+    await press(team, 'Add Event')
     await text(team, 'always creates a scrimmage/exhibition game')
     await press(team, 'Choose Away Team, Away')
     await fill(team, 'Search all teams', 'Demo Visitors')
@@ -267,7 +268,8 @@ async function main(): Promise<void> {
     await team.goto(f.h.origin + `/groups/team/${f.teamA}`, {
       waitUntil: 'domcontentloaded'
     })
-    await press(team, 'Create Game')
+    await press(team, 'Schedule', 'tab')
+    await press(team, 'Add Event')
     await press(team, 'Choose Away Team, Away')
     await fill(team, 'Search all teams', 'Demo Visitors')
     await press(team, 'Choose Demo Visitors')
@@ -350,7 +352,7 @@ async function main(): Promise<void> {
           .catch(() => undefined)
       } else request.continue().catch(() => undefined)
     })
-    await press(team, 'Resend invitation')
+    await press(team, 'Submit again')
     await team.waitForFunction(
       old => !window.location.pathname.endsWith(old),
       {},

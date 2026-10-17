@@ -1,9 +1,11 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type { PersonProfile, TeamStationClient } from '../../common/api'
-import { SectionHeader } from '../components'
+import { HttpError } from '../../common/errors'
+import { Button, SectionHeader } from '../components'
 import { type RoleRowKind, RoleRows } from '../components/RoleRows'
+import { useLatestRequest } from '../hooks/useLatestRequest'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -30,35 +32,111 @@ export function PlayerTeamRoles(
   const [profile, setProfile] = useState<PersonProfile | undefined>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | undefined>()
+  const [readError, setReadError] = useState<string>()
+  const [savedUnavailable, setSavedUnavailable] = useState(false)
 
+  const begin = useLatestRequest()
+  const beginWrite = useLatestRequest()
+  const writing = useRef(false)
+  const identity = useRef({ client, teamId, userId })
+  identity.current = { client, teamId, userId }
   const load = useCallback(async (): Promise<void> => {
-    setProfile(await client.personProfile('team', teamId, userId))
-  }, [client, teamId, userId])
+    const current = begin()
+    const found = await client.personProfile('team', teamId, userId)
+    if (current()) {
+      setProfile(found)
+      setReadError(undefined)
+      setSavedUnavailable(false)
+    }
+  }, [client, teamId, userId, begin])
   useEffect(() => {
     setProfile(undefined)
+    setBusy(false)
+    setError(undefined)
+    setReadError(undefined)
+    setSavedUnavailable(false)
+    writing.current = false
+    beginWrite()
     load().catch(() => undefined)
-  }, [load])
+  }, [load, beginWrite])
+
+  const refreshSaved = async (current: () => boolean): Promise<void> => {
+    try {
+      await load()
+    } catch (caught) {
+      if (!current()) return
+      setProfile(undefined)
+      if (caught instanceof HttpError && caught.code === 'notFound')
+        setSavedUnavailable(true)
+      else
+        setReadError(
+          caught instanceof Error ? caught.message : 'Something went wrong'
+        )
+    }
+  }
+  if (readError != null || savedUnavailable)
+    return (
+      <View style={styles.section}>
+        <Text style={styles.muted}>
+          Change saved.{' '}
+          {savedUnavailable
+            ? 'These roles are no longer available.'
+            : 'These roles could not be refreshed.'}
+        </Text>
+        {readError != null && (
+          <>
+            <Text accessibilityRole="alert" style={styles.error}>
+              {readError}
+            </Text>
+            <Button
+              label="Retry"
+              onPress={() => {
+                const current = beginWrite()
+                setReadError(undefined)
+                refreshSaved(current).catch(() => undefined)
+              }}
+            />
+          </>
+        )}
+      </View>
+    )
 
   const section = profile?.sections.find(one => one.level === 'team')
   if (profile == null || section == null || !profile.person.canHoldRoles)
     return null
 
-  const change = (role: RoleRowKind, give: boolean): void => {
+  const change = async (
+    role: RoleRowKind,
+    give: boolean,
+    active: () => boolean = () => true
+  ): Promise<void> => {
+    if (writing.current) return
+    writing.current = true
+    const alive = beginWrite()
+    const sameOwner = (): boolean =>
+      alive() &&
+      identity.current.client === client &&
+      identity.current.teamId === teamId &&
+      identity.current.userId === userId
+    const current = (): boolean => active() && sameOwner()
     setBusy(true)
     setError(undefined)
-    ;(give
-      ? client.addRole('team', teamId, userId, role)
-      : client.removeRole('team', teamId, userId, role)
-    )
-      .then(load)
-      .catch((caught: unknown) => {
+    try {
+      if (give) await client.addRole('team', teamId, userId, role)
+      else await client.removeRole('team', teamId, userId, role)
+      if (current()) await refreshSaved(sameOwner)
+    } catch (caught) {
+      if (current())
         setError(
           caught instanceof Error ? caught.message : 'Something went wrong'
         )
-      })
-      .finally(() => {
+      throw caught
+    } finally {
+      if (sameOwner()) {
+        writing.current = false
         setBusy(false)
-      })
+      }
+    }
   }
   return (
     <View style={styles.section} testID="playerTeamRoles">
@@ -70,15 +148,18 @@ export function PlayerTeamRoles(
       )}
       <RoleRows
         section={section}
+        owner={client}
+        ownerLabel={profile.person.fullName ?? profile.person.shortName}
+        ownerIdentity={`team:${teamId}:${userId}`}
         canHoldRoles={profile.person.canHoldRoles}
         viewer={profile.viewer}
         player
         busy={busy}
         onAdd={role => {
-          change(role, true)
+          change(role, true).catch(() => undefined)
         }}
-        onRemove={role => {
-          change(role, false)
+        onRemove={async (role, current) => {
+          await change(role, false, current)
         }}
       />
     </View>
@@ -87,6 +168,11 @@ export function PlayerTeamRoles(
 
 const getStyles = cacheStyles((theme: Theme) => ({
   section: { gap: theme.rem(theme.spaceMdRem) },
+  muted: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.875),
+    color: theme.secondaryTextColor
+  },
   error: {
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.875),

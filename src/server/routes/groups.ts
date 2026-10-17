@@ -80,6 +80,7 @@ import {
 import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { completionNotice } from '../notifications/completionNotice'
 import { followMerges } from '../teams/followMerges'
 import { inviteUrl } from './invites'
 
@@ -193,6 +194,7 @@ async function invitation(
         raw.admin === true,
         clean(asRoleFlags, raw.flags ?? [])
       ),
+      confirmBoth: raw.confirmBoth === true,
       idempotencyKey: raw.idempotencyKey
     }
   }
@@ -234,6 +236,7 @@ async function invitation(
         teamId: raw.teamId,
         recipientUserId
       },
+      confirmBoth: raw.confirmBoth === true,
       idempotencyKey: raw.idempotencyKey
     }
   }
@@ -1012,6 +1015,7 @@ export function groupRoutes(
             terms.kind === 'person' ? terms.recipientEmail : undefined,
           admin: terms.kind === 'person' ? terms.admin : undefined,
           flags: terms.kind === 'person' ? terms.flags : undefined,
+          confirmBoth: true,
           idempotencyKey: req.body?.idempotencyKey
         })
         const replacement = await createRelationshipRequest(
@@ -1030,7 +1034,25 @@ export function groupRoutes(
         return replacement
       })
       await deliverPerson(sent)
-      res.status(201).json({ id: sent.id, status: sent.status })
+      res.status(201).json({
+        id: sent.id,
+        status: sent.status,
+        ...(sent.status === 'accepted'
+          ? {
+              source: {
+                kind: sent.sender_scope_type,
+                id: sent.sender_scope_id
+              },
+              notice: await completionNotice(
+                db,
+                sent.terms as Exclude<
+                  RelationshipInvitation['terms'],
+                  { kind: 'guardian' }
+                >
+              )
+            }
+          : {})
+      })
     })
   )
   router.delete(

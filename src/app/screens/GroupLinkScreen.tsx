@@ -7,6 +7,8 @@ import { localityLabel } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
 import { formatDateRange } from '../../common/seasonTimeFrames'
 import { Button, Card, Screen, TextField } from '../components'
+import { CancelAction } from '../components/CancelAction'
+import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { GroupLinkChoice } from './GroupScreen'
 
@@ -18,7 +20,7 @@ export function GroupLinkScreen({
 }: {
   client: TeamStationClient
   choice: GroupLinkChoice
-  onSent: (id: string) => void
+  onSent: (id: string, result?: { status: string; message: string }) => void
   onCancel: () => void
 }): React.ReactElement {
   const styles = getStyles(useTheme())
@@ -26,7 +28,6 @@ export function GroupLinkScreen({
   const [candidates, setCandidates] = useState<PublicGroup[]>([])
   const [selected, setSelected] = useState<PublicGroup | undefined>()
   const [preview, setPreview] = useState<ParentPreview | undefined>()
-  const [both, setBoth] = useState(false)
   const [mayBoth, setMayBoth] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -45,6 +46,24 @@ export function GroupLinkScreen({
         ? parentKind
         : choice.targetKind
   const attempt = useRef<{ body: string; key: string } | undefined>(undefined)
+  const begin = useLatestRequest()
+  const working = useRef(false)
+  useEffect(() => {
+    begin()
+    setSelected(undefined)
+    setPreview(undefined)
+    setMayBoth(false)
+    setActions([])
+    setBusy(false)
+    setError('')
+  }, [
+    begin,
+    choice.subject.kind,
+    choice.subject.id,
+    choice.targetKind,
+    choice.relationship,
+    choice.direction
+  ])
   useEffect(() => {
     let active = true
     const timer = setTimeout(() => {
@@ -81,9 +100,12 @@ export function GroupLinkScreen({
       clearTimeout(timer)
     }
   }, [client, choice.subject.id, lookupKind, batchStep, query, retry])
-  const review = async (changes: ParentAction[]): Promise<void> => {
+  const review = async (
+    changes: ParentAction[],
+    current = begin()
+  ): Promise<void> => {
     setPreview(undefined)
-    setBoth(false)
+    setMayBoth(false)
     setError('')
     const ordered = [
       ...changes.filter(change => change.operation === 'detach'),
@@ -92,7 +114,7 @@ export function GroupLinkScreen({
     const next = await client.parentPreview(ordered)
     const refs = [
       ...new Map(
-        next.effects
+        [...next.actions, ...next.effects]
           .flatMap(effect => [effect.child, effect.parent])
           .map(ref => [`${ref.kind}:${ref.id}`, ref])
       ).values()
@@ -100,6 +122,7 @@ export function GroupLinkScreen({
     const details = await Promise.all(
       refs.map(async ref => await client.group(ref))
     )
+    if (!current()) return
     setLabels(previous => ({
       ...previous,
       ...Object.fromEntries(
@@ -109,13 +132,26 @@ export function GroupLinkScreen({
         ])
       )
     }))
-    setMayBoth(details.every(detail => detail.canManage))
+    const mayManage = (ref: { kind: string; id: string }): boolean => {
+      const index = refs.findIndex(
+        asked => asked.kind === ref.kind && asked.id === ref.id
+      )
+      return index >= 0 && details[index].canManage
+    }
+    setMayBoth(
+      next.actions.every(action =>
+        action.operation === 'attach'
+          ? mayManage(action.child) && mayManage(action.parent)
+          : mayManage(action.child) || mayManage(action.parent)
+      )
+    )
     setPreview(next)
   }
   const select = async (group: PublicGroup): Promise<void> => {
+    const current = begin()
     setBusy(true)
     setError('')
-    setBoth(false)
+    setMayBoth(false)
     setSelected(group)
     setLabels(previous => ({
       ...previous,
@@ -123,12 +159,14 @@ export function GroupLinkScreen({
     }))
     try {
       const subject = await client.group(choice.subject)
+      if (!current()) return
       setLabels(previous => ({
         ...previous,
         [`${choice.subject.kind}:${choice.subject.id}`]: subject.group.name
       }))
       const detail = await client.group({ kind: group.kind, id: group.id })
-      setMayBoth(detail.canManage)
+      if (!current()) return
+      setMayBoth(subject.canManage && detail.canManage)
       if (choice.relationship === 'parent') {
         const actions: ParentAction[] = [
           {
@@ -144,26 +182,31 @@ export function GroupLinkScreen({
           }
         ]
         setActions(actions)
-        await review(actions)
+        await review(actions, current)
       }
+      if (!current()) return
       setSelected(group)
     } catch (error) {
+      if (!current()) return
       setError(
         error instanceof Error
           ? error.message
           : 'These groups could not be linked. Retry.'
       )
     } finally {
-      setBusy(false)
+      if (current()) setBusy(false)
     }
   }
   const send = async (): Promise<void> => {
     if (
       selected == null ||
+      working.current ||
       busy ||
       (choice.relationship === 'parent' && preview == null)
     )
       return
+    working.current = true
+    const current = begin()
     setBusy(true)
     setError('')
     const terms =
@@ -182,7 +225,7 @@ export function GroupLinkScreen({
             teamId:
               choice.subject.kind === 'team' ? choice.subject.id : selected.id
           }
-    const fields = { ...terms, sender: choice.subject, confirmBoth: both }
+    const fields = { ...terms, sender: choice.subject, confirmBoth: mayBoth }
     const serialized = JSON.stringify(fields)
     if (attempt.current?.body !== serialized)
       attempt.current = {
@@ -190,19 +233,43 @@ export function GroupLinkScreen({
         key: `link-${Date.now()}-${Math.random().toString(36).slice(2)}`
       }
     try {
-      const request = await client.inviteRelationship({
-        ...fields,
-        idempotencyKey: attempt.current.key
-      })
-      onSent(request.id)
+      // A batch containing only removals has no invited side; either endpoint
+      // may authorize each removal through the existing direct parent API.
+      const request =
+        terms.kind === 'parent' &&
+        terms.actions.every(action => action.operation === 'detach')
+          ? await client
+              .changeParents(preview!)
+              .then(() => ({ id: choice.subject.id, status: 'accepted' }))
+          : await client.inviteRelationship({
+              ...fields,
+              idempotencyKey: attempt.current.key
+            })
+      if (!current()) return
+      const nameOf = (ref: { kind: string; id: string }): string =>
+        labels[`${ref.kind}:${ref.id}`] ?? ref.kind
+      const message =
+        choice.relationship === 'parent'
+          ? preview!.effects.length === 0
+            ? 'No management connections changed'
+            : preview!.effects
+                .map(
+                  action =>
+                    `${nameOf(action.parent)} ${action.operation === 'attach' ? 'added as' : 'removed as'} parent of ${nameOf(action.child)}`
+                )
+                .join('; ')
+          : `${nameOf({ kind: 'team', id: terms.kind === 'participation' ? terms.teamId : '' })} season participation added in ${nameOf({ kind: 'season', id: terms.kind === 'participation' ? terms.seasonId : '' })}`
+      onSent(request.id, { status: request.status, message })
     } catch (error) {
+      if (!current()) return
       setError(
         error instanceof Error
           ? error.message
           : 'The invitation could not be sent. Retry.'
       )
     } finally {
-      setBusy(false)
+      working.current = false
+      if (current()) setBusy(false)
     }
   }
   return (
@@ -216,7 +283,7 @@ export function GroupLinkScreen({
         <Text style={styles.hint}>
           {choice.relationship === 'parent'
             ? 'Parent relationships share roles and permissions. Competition memberships and games stay unchanged.'
-            : 'Season participation puts the team in the competition. It does not grant permissions on the team or change its parents.'}
+            : 'Season participation lets the season administrators schedule games between its active participants. It does not grant general team-management permissions or change its parents.'}
         </Text>
         {batchStep != null ? (
           <Card style={styles.card}>
@@ -319,7 +386,7 @@ export function GroupLinkScreen({
                       }
                     ])
                     setPreview(undefined)
-                    setBoth(false)
+                    setMayBoth(false)
                     setBatchStep(undefined)
                     setQuery('')
                   }
@@ -421,7 +488,7 @@ export function GroupLinkScreen({
                           previous.filter((_, row) => row !== index)
                         )
                         setPreview(undefined)
-                        setBoth(false)
+                        setMayBoth(false)
                       }}
                     />
                   </View>
@@ -441,9 +508,11 @@ export function GroupLinkScreen({
                   kind="secondary"
                   disabled={busy || actions.length === 0}
                   onPress={() => {
+                    const current = begin()
                     setBusy(true)
-                    review(actions)
+                    review(actions, current)
                       .catch((error: unknown) => {
+                        if (!current()) return
                         setError(
                           error instanceof Error
                             ? error.message
@@ -451,32 +520,19 @@ export function GroupLinkScreen({
                         )
                       })
                       .finally(() => {
-                        setBusy(false)
+                        if (current()) setBusy(false)
                       })
                   }}
                 />
               </>
             )}
             <Text style={styles.hint}>
-              Sending approves for the group you represent. Each other affected
-              group has seven days to answer.
+              {mayBoth
+                ? 'You can approve every affected group. Save applies these connections immediately.'
+                : 'Sending approves for the group you represent. Each other affected group has seven days to answer.'}
             </Text>
-            {mayBoth &&
-              (choice.relationship !== 'parent' || preview != null) && (
-                <Button
-                  label={
-                    both
-                      ? 'All affected groups approved by me ✓'
-                      : 'I approve for all affected groups'
-                  }
-                  kind={both ? 'primary' : 'secondary'}
-                  onPress={() => {
-                    setBoth(!both)
-                  }}
-                />
-              )}
             <Button
-              label={both ? 'Confirm relationship' : 'Send invitation'}
+              label={mayBoth ? 'Save' : 'Send invitation'}
               busy={busy}
               disabled={choice.relationship === 'parent' && preview == null}
               onPress={() => {
@@ -488,9 +544,10 @@ export function GroupLinkScreen({
               kind="secondary"
               disabled={busy}
               onPress={() => {
+                begin()
                 setSelected(undefined)
                 setPreview(undefined)
-                setBoth(false)
+                setMayBoth(false)
               }}
             />
           </Card>
@@ -500,12 +557,7 @@ export function GroupLinkScreen({
             {error}
           </Text>
         )}
-        <Button
-          label="Cancel"
-          kind="secondary"
-          disabled={busy}
-          onPress={onCancel}
-        />
+        <CancelAction label="Cancel" disabled={busy} onPress={onCancel} />
       </View>
     </Screen>
   )

@@ -33,9 +33,7 @@
     "src/app/native/index.tsx",
     "src/app/native.d.ts",
     "src/app/field/fiberNativeEvents.d.ts",
-    "src/app/scoring/RosterEditor.tsx",
-    "src/app/platform/getRoughLocation.native.ts",
-    "src/test/nativeLocationFailure.ts"
+    "src/app/scoring/RosterEditor.tsx"
   ],
   // The tests run under mocha in Node, not on a phone: they read fixtures off
   // the disk and are type-checked by `tsconfig.app.json`, which has the Node

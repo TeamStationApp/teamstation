@@ -71,6 +71,7 @@ async function mount(
   season: FixtureSeason = 'normal',
   initialTab = 'schedule',
   client: TeamStationClient = fixtureClient(season),
+  onCreateGame?: () => void,
   nonMemberView = false
 ): Promise<Opened[]> {
   const opened: Opened[] = []
@@ -84,6 +85,7 @@ async function mount(
           client={client}
           team={TEAM}
           initialTab={initialTab}
+          onCreateGame={onCreateGame}
           nonMemberView={nonMemberView}
           onOpenGame={(gameId, title, options) => {
             opened.push({ gameId, title, options })
@@ -103,6 +105,55 @@ afterEach(async function () {
   root = undefined
   host?.remove()
   host = undefined
+})
+
+describe('schedule event creation entry', () => {
+  for (const season of ['normal', 'empty'] as const)
+    it(`ends a ${season} schedule with a centered blue Add Event card`, async () => {
+      let creates = 0
+      await mount(season, 'schedule', fixtureClient(season), () => {
+        creates++
+      })
+      const card = document.querySelector<HTMLElement>(
+        '[data-testid="add-event-card"]'
+      )!
+      expect(card).not.equals(null)
+      expect(card.parentElement!.lastElementChild).equals(card)
+      expect(getComputedStyle(card).backgroundColor).equals('rgb(21, 101, 192)')
+      expect(getComputedStyle(card).borderTopStyle).not.equals('dashed')
+      expect(getComputedStyle(card).alignItems).equals('center')
+      expect(getComputedStyle(card).justifyContent).equals('center')
+      await act(async () => {
+        card.click()
+      })
+      expect(creates).equals(1)
+    })
+  it('does not offer creation on a non-member schedule', async () => {
+    await mount('normal', 'schedule', fixtureClient(), undefined, true)
+    expect(document.querySelector('[data-testid="add-event-card"]')).equals(
+      null
+    )
+  })
+  it('offers creation to an authorized placeholder custodian without private membership', async () => {
+    let creates = 0
+    await mount(
+      'normal',
+      'schedule',
+      fixtureClient(),
+      () => {
+        creates++
+      },
+      true
+    )
+    const card = document.querySelector<HTMLElement>(
+      '[data-testid="add-event-card"]'
+    )!
+    expect(card).not.equals(null)
+    await act(async () => {
+      card.click()
+    })
+    expect(creates).equals(1)
+  })
 })
 
 const rows = (): HTMLElement[] => [
@@ -295,6 +346,7 @@ describe('a team’s schedule', function () {
           videoCount: 0
         }
       ]),
+      undefined,
       true
     )
     const practice = rows().find(row => linesOf(row).includes('Practice'))!

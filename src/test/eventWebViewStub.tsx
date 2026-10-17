@@ -3,9 +3,19 @@ import React from 'react'
 export let webViewProps: {
   source?: { html: string; baseUrl: string }
   userAgent?: string
-  onShouldStartLoadWithRequest?: (request: { url: string }) => boolean
+  onShouldStartLoadWithRequest?: (request: {
+    url: string
+    isTopFrame?: boolean
+  }) => boolean
 }
 export function WebView(props: typeof webViewProps): React.ReactElement {
-  webViewProps = props
+  const navigate = props.onShouldStartLoadWithRequest
+  webViewProps = {
+    ...props,
+    onShouldStartLoadWithRequest:
+      navigate == null
+        ? undefined
+        : request => navigate({ isTopFrame: true, ...request })
+  }
   return <div data-testid="native-event-map-test" />
 }

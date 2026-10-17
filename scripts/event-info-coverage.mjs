@@ -35,10 +35,35 @@ const base =
 const untracked = git(['ls-files', '--others', '--exclude-standard'])
   .split('\n')
   .filter(Boolean)
+// Settings, account and scheduling permissions have their own complete gate.
+// This regression gate measures the event-info paths exercised by these suites.
+const ownedPaths = new Set([
+  'src/server/index.ts',
+  'src/server/routes/eventInfo.ts',
+  'src/server/location/googleLookupLimits.ts',
+  'src/server/location/eventGeocoder.ts',
+  'src/server/location/googlePlaces.ts',
+  'src/server/location/coordinateTimezone.ts',
+  'src/app/components/EventVenueFields.tsx',
+  'src/app/components/googleMapDocument.ts',
+  'src/app/components/EventMap.tsx',
+  'src/app/components/EventMap.native.tsx',
+  'src/app/components/EventMap.android.tsx',
+  'src/common/eventPlaces.ts',
+  'src/app/screens/EventSettingsScreen.tsx',
+  'src/app/screens/EventInfoTab.tsx',
+  'src/app/screens/EventDetailsForm.tsx',
+  'src/common/eventInfo.ts',
+  'src/common/eventDetails.ts',
+  'src/server/events/eventInfo.ts',
+  'src/server/events/eventInfoOpenApi.ts',
+  'src/server/events/eventDetails.ts'
+])
 const paths = [
   ...new Set([...git(['diff', '--name-only', base]).split('\n'), ...untracked])
 ].filter(
   path =>
+    ownedPaths.has(path) &&
     /^src\/(app|common|server)\//.test(path) &&
     /\.tsx?$/.test(path) &&
     !/\.(test|e2e|smoke)\./.test(path) &&
@@ -46,6 +71,11 @@ const paths = [
     (phase !== 'server' || !path.startsWith('src/app/'))
 )
 const serverSuites = [
+  'src/server/location/coordinateTimezone.test.ts',
+  'src/server/location/googleCityTimezone.test.ts',
+  'src/server/routes/googleEventLookup.test.ts',
+  'src/server/location/googlePlaces.test.ts',
+  'src/app/components/googleMapDocument.test.ts',
   'src/test/smokeRecorder.test.ts',
   'src/common/eventInfo.test.ts',
   'src/common/eventDetails.test.ts',

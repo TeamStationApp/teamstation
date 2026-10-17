@@ -14,7 +14,7 @@ import {
   speaksForSender,
   type StoredRequest
 } from '../groups/requests'
-import { currentActor } from '../groups/rights'
+import { canScheduleFor, currentActor } from '../groups/rights'
 import { groupName, heldAt } from '../invites/grants'
 import { titleAndDescription } from './requestInformation'
 
@@ -93,7 +93,8 @@ export async function notificationFor(
     if (
       side.scope_type === 'team' &&
       side.approved_by != null &&
-      (request.kind === 'game' || request.kind === 'gameChange')
+      (request.kind === 'game' || request.kind === 'gameChange') &&
+      (await canScheduleFor(db, fresh, { kind: 'team', id: side.scope_id }))
     )
       representedConsent = true
     let valid = false
@@ -290,6 +291,11 @@ export async function inbox(
           )
         ])
       )
+    const schedulingSides = db
+      .selectFrom('group_request_sides')
+      .select('request_id')
+      .where('scope_type', '=', 'team')
+      .where('scope_id', 'in', teamIds.length === 0 ? [''] : teamIds)
     const historyIds = db
       .selectFrom('notification_events')
       .select('source_id')
@@ -310,6 +316,20 @@ export async function inbox(
     rows = rows.where(eb =>
       eb.or([
         eb('id', 'in', candidateSides),
+        eb.and([
+          eb('kind', 'in', ['game', 'gameChange']),
+          eb('id', 'in', schedulingSides)
+        ]),
+        ...(scopes.seasonIds.size === 0
+          ? []
+          : [
+              eb.and([
+                eb('kind', '=', 'game'),
+                eb(sql<string>`terms->'game'->>'seasonId'`, 'in', [
+                  ...scopes.seasonIds
+                ])
+              ])
+            ]),
         eb('id', 'in', historyIds),
         eb('id', 'in', viewedIds),
         eb('sender_id', '=', fresh.userId),
@@ -337,6 +357,13 @@ export async function inbox(
                 )
               ])
             ]),
+        ...teamIds.map(id =>
+          eb.and([
+            eb('kind', 'in', ['game', 'gameChange']),
+            eb('sender_scope_type', '=', 'team'),
+            eb('sender_scope_id', '=', id)
+          ])
+        ),
         ...refs.map(ref =>
           eb.and([
             eb('sender_scope_type', '=', ref.kind),

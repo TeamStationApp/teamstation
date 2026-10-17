@@ -44,6 +44,33 @@ function stubFetch(
 }
 
 describe('api client', function () {
+  it('keeps node access filters on the existing users collection and escapes name/email searches', async () => {
+    const response = stubFetch(200, [
+      {
+        userId: 101,
+        displayName: 'Babe Ruth',
+        email: 'babe@example.com',
+        isNodeAdmin: true,
+        suspended: false,
+        loginEnabled: true,
+        canRemoveNodeRole: false,
+        avatarUrl: 'https://images.example.test/avatar.png'
+      }
+    ])
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: response.fetch
+    })
+    const accounts = await client.nodeAccounts('Aaron & email@example.com')
+    expect(accounts[0].avatarUrl).equals(
+      'https://images.example.test/avatar.png'
+    )
+    await client.nodeAccounts('', true)
+    expect(response.calls.map(call => call.url)).deep.equals([
+      '/api/v1/users?view=administration&query=Aaron%20%26%20email%40example.com',
+      '/api/v1/users?view=administration&query=&nodeAdmin=true'
+    ])
+  })
   it('reads account tag choices and writes escaped event assignments and removals', async () => {
     const choices = stubFetch(200, {
       recent: ['great catch'],

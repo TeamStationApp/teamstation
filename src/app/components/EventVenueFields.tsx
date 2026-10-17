@@ -35,12 +35,15 @@ export function EventVenueFields({
     query: string
   }>()
   const [places, setPlaces] = useState<EventPlace[]>([])
+  const [provider, setProvider] = useState<'google' | 'openstreetmap'>('google')
+  const [attribution, setAttribution] = useState('')
   const [status, setStatus] = useState('')
   const [retry, setRetry] = useState(0)
   const invalidate = (): void => {
     generation.current++
     setRequest(undefined)
     setPlaces([])
+    setAttribution('')
     setStatus('')
   }
   useEffect(() => {
@@ -54,12 +57,14 @@ export function EventVenueFields({
       return
     const timer = setTimeout(() => {
       setStatus('Finding places…')
-      client.eventPlaces(request.query, request.kind).then(
+      client.eventPlaceSuggestions(request.query, request.kind).then(
         found => {
           if (current !== generation.current) return
-          setPlaces(found)
+          setPlaces(found.places)
+          setProvider(found.provider)
+          setAttribution(found.attribution)
           setStatus(
-            found.length === 0
+            found.places.length === 0
               ? 'No suggestions. You can keep the details you enter.'
               : ''
           )
@@ -119,17 +124,19 @@ export function EventVenueFields({
             disabled={disabled}
           />
         )}
-        {(places.length > 0 || status !== '') && (
+        {attribution !== '' && (
           <Text
             accessibilityRole="link"
             style={styles.detail}
             onPress={() => {
-              Linking.openURL('https://www.openstreetmap.org/copyright').catch(
-                () => undefined
-              )
+              Linking.openURL(
+                provider === 'google'
+                  ? 'https://maps.google.com/'
+                  : 'https://www.openstreetmap.org/copyright'
+              ).catch(() => undefined)
             }}
           >
-            © OpenStreetMap contributors
+            {attribution}
           </Text>
         )}
       </View>

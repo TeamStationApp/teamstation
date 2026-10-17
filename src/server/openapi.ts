@@ -222,7 +222,11 @@ const accountResponse = {
               properties: {
                 id: { type: 'string' },
                 email: { type: 'string', format: 'email' },
-                isPrimary: { type: 'boolean' }
+                isPrimary: { type: 'boolean' },
+                isVerified: {
+                  type: 'boolean',
+                  description: 'Whether this account has verified the address.'
+                }
               }
             }
           }
@@ -1994,7 +1998,12 @@ export function openApiDocument(version: string): OpenApiDocument {
           properties: {
             id: { type: 'string' },
             name: { type: 'string' },
-            role: { type: 'string' }
+            role: { type: 'string' },
+            isPlayer: {
+              type: 'boolean',
+              description:
+                'For team memberships, whether this person is on the player roster. Independent of email or login status.'
+            }
           }
         },
         PendingPerson: {
@@ -2319,8 +2328,15 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'Search public city and region reference data',
           description:
-            'Omitting kind keeps the city-reference response. Authenticated venue/address searches return up to five {id,name,address} mapping suggestions and OpenStreetMap attribution. Venue mode suggests named points of interest rather than streets or house numbers. Free text remains valid if lookup fails.',
+            'Omitting kind keeps the city-reference response. Authenticated venue/address searches return up to five {id,name,address} suggestions, provider and attribution. Google Places is primary when configured; unavailable Google uses OpenStreetMap/Photon fallback. Valid empty Google results stay empty. Venue mode suggests named points of interest rather than streets or house numbers. Free text remains valid if lookup fails.',
           parameters: [
+            {
+              name: 'session',
+              in: 'query',
+              schema: { type: 'string', maxLength: 64 },
+              description:
+                'Optional city search session. Omit for the legacy GeoNames response; signed-in sessions use Google when configured.'
+            },
             {
               name: 'query',
               in: 'query',
@@ -2340,10 +2356,44 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description:
-                'Up to fifteen locality suggestions and GeoNames attribution'
+                'Legacy places plus suggestions {id,primary,secondary}, provider and attribution. Google sessions return city-only suggestions.'
             },
             400: errorResponse,
             401: errorResponse,
+            429: errorResponse,
+            503: errorResponse
+          }
+        }
+      },
+      '/locations/{id}': {
+        get: {
+          summary: 'Resolve a city reference',
+          description:
+            'Google IDs require a signed-in caller. GeoNames references are public. The locality retains its time zone without coordinates.',
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' },
+              description: 'google:<placeId> or geonames:<catalogueId>'
+            },
+            {
+              name: 'session',
+              in: 'query',
+              schema: { type: 'string', maxLength: 64 },
+              description: 'Optional autocomplete session token'
+            }
+          ],
+          responses: {
+            200: {
+              description: 'A place: {city,region,country,placeId,timezone}'
+            },
+            400: errorResponse,
+            401: errorResponse,
+            404: errorResponse,
+            422: errorResponse,
+            429: errorResponse,
             503: errorResponse
           }
         }
@@ -4713,6 +4763,13 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', maxLength: 120 },
               description: 'Optional account filter for administration view.'
+            },
+            {
+              name: 'nodeAdmin',
+              in: 'query',
+              schema: { type: 'boolean', default: false },
+              description:
+                'Administration view only: true lists only accounts with node access. Omitted or false includes all matching accounts. All matching accounts are returned.'
             },
             {
               name: 'externalId',

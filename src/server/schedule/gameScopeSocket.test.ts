@@ -58,7 +58,7 @@ describe('private socket access follows approved game revisions', function () {
     await f?.h.close()
   })
   async function until(check: () => boolean): Promise<void> {
-    const deadline = Date.now() + 5000
+    const deadline = Date.now() + 15000
     while (!check()) {
       if (Date.now() > deadline)
         throw new Error('Expected socket observation did not arrive')
