@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import type { Kysely, Selectable } from 'kysely'
+import { type Kysely, type Selectable, sql } from 'kysely'
 
 import { badRequest, conflict, notFound } from '../../common/errors'
 import { withPreviousTagIdentities } from '../../common/eventTags'
@@ -12,6 +12,7 @@ import {
 } from '../../common/scoring/linescore'
 import type { Database, EventsTable } from '../db/database'
 import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
+import { scoringActivitySql } from '../games/scoringActivity'
 import { notifyGameChange } from '../socket/gameChanges'
 import { reconcileEventTags } from './eventTags'
 import {
@@ -57,16 +58,6 @@ export interface PostedPlays {
   priorPlaysDigest: string | null
 }
 
-export interface PostOptions {
-  /**
-   * Whether an at-bat in progress puts a live game under way, as it does by
-   * default. A head coach's lineup saved before the game begins is held in
-   * the at-bat in progress, and passes false, so a scheduled game stays
-   * scheduled until something is played.
-   */
-  startsGame?: boolean
-}
-
 /**
  * Writes a checked post to a game: the plays, the half's outs on each half's
  * last play, the credits' team ids, the line score, the at-bat in progress
@@ -79,10 +70,8 @@ export async function postGamePlays(
   db: Kysely<Database>,
   gameId: string,
   body: PostEventsBody,
-  authorize?: (trx: Trx, game: PostedGame) => Promise<void>,
-  options: PostOptions = {}
+  authorize?: (trx: Trx, game: PostedGame) => Promise<void>
 ): Promise<PostedPlays> {
-  const startsGame = options.startsGame ?? true
   // TeamStation and a person typing name themselves. Every other sender, and
   // a post that names none, is an outside scorer: the least trusted one.
   const sent = body.source?.system
@@ -259,13 +248,18 @@ export async function postGamePlays(
           )
         : {}
       const halves = halfOutcomes(documents)
-      const status = live
-        ? statusAfterLivePost(
-            game.status,
-            stored,
-            startsGame && currentPlay != null
+      const { hasStarted } = await trx
+        .selectFrom('games')
+        .select(
+          scoringActivitySql(sql`${JSON.stringify(currentPlay)}::jsonb`).as(
+            'hasStarted'
           )
-        : statusAfterPost(game.status, posted, stored.length)
+        )
+        .where('games.id', '=', gameId)
+        .executeTakeFirstOrThrow()
+      const status = live
+        ? statusAfterLivePost(game.status, stored, hasStarted)
+        : statusAfterPost(game.status, posted, hasStarted)
       await trx
         .updateTable('games')
         .set({
@@ -468,34 +462,33 @@ function scoresOf(rows: StoredPlay[]): {
 /**
  * A cancelled game stays cancelled, whatever is posted to it: plays with
  * scores must not bring it back as a finished game. Otherwise a post that
- * leaves both teams' scores makes the game final, a scheduled game with plays
- * is under way, and any other status stays.
+ * leaves both teams' scores makes the game final. Otherwise a surviving pitch
+ * or ball in play is required for an unfinished game to be under way.
  */
 export function statusAfterPost(
   status: 'scheduled' | 'inProgress' | 'final' | 'cancelled',
   posted: { away: number | null; home: number | null },
-  playCount: number
+  hasStarted: boolean
 ): 'scheduled' | 'inProgress' | 'final' | 'cancelled' {
   if (status === 'cancelled') return status
   if (posted.away != null && posted.home != null) return 'final'
-  if (status === 'scheduled' && playCount > 0) return 'inProgress'
-  return status
+  if (status === 'final') return status
+  return hasStarted ? 'inProgress' : 'scheduled'
 }
 
 /**
  * After a live post the stored plays decide: a cancelled game stays
- * cancelled, a stored `final_score` makes it final, and plays or an at-bat in
- * progress make it under way. A game with neither keeps its status.
+ * cancelled, a stored `final_score` makes it final, and a surviving pitch or
+ * ball in play makes it under way. Undoing all such activity returns to scheduled.
  */
 export function statusAfterLivePost(
   status: 'scheduled' | 'inProgress' | 'final' | 'cancelled',
   stored: Array<{ eventType: string | null }>,
-  atBat: boolean
+  hasStarted: boolean
 ): 'scheduled' | 'inProgress' | 'final' | 'cancelled' {
   if (status === 'cancelled') return status
   if (stored.some(play => play.eventType === 'final_score')) return 'final'
-  if (stored.length > 0 || atBat) return 'inProgress'
-  return status
+  return hasStarted ? 'inProgress' : 'scheduled'
 }
 
 /** A stored row's document, which the line score is worked out from. */

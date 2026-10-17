@@ -687,9 +687,7 @@ describe('scheduling a team’s games', function () {
           matchup: { batter: { fullName: 'Judge' } },
           playEvents: []
         }
-      }),
-      undefined,
-      { startsGame: false }
+      })
     )
     const before = await game(gameId)
     expect(before.status).equals('scheduled')
