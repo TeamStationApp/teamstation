@@ -35,6 +35,7 @@ import {
   parseRoute,
   type Route,
   routePath,
+  safeNext,
   type When
 } from './navigation/routes'
 import {
@@ -1075,8 +1076,11 @@ function Shell(props: AppProps): React.ReactElement {
    */
   const signedIn = (next: Session): void => {
     rememberSession(next)
-    if (route.name === 'signIn' && route.next != null) {
-      const [path, search = ''] = route.next.split('?')
+    const returnPath = safeNext(
+      route.name === 'signIn' ? (route.next ?? next.next) : next.next
+    )
+    if (returnPath != null) {
+      const [path, search = ''] = returnPath.split('?')
       const destination = parseRoute(path, search)
       goToRoute(destination)
       if (
@@ -1207,7 +1211,7 @@ function Shell(props: AppProps): React.ReactElement {
             client={client}
             token={route.token}
             server={route.server}
-            onSignedIn={rememberSession}
+            onSignedIn={signedIn}
             onSignInAgain={linkSpent => {
               const destination: Route = { name: 'signIn' }
               goToRoute(destination)
@@ -1216,6 +1220,7 @@ function Shell(props: AppProps): React.ReactElement {
           />
         ) : (
           <LoginScreen
+            next={route.name === 'signIn' ? route.next : undefined}
             client={client}
             onSignedIn={signedIn}
             onDiscover={() => {
