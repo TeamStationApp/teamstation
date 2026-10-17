@@ -449,6 +449,39 @@ describe('the home screen', function () {
     expect(text()).not.includes('RECENT GAME')
   })
 
+  it('keeps Home Add and Create available through recent-game refresh failure and recovery', async function () {
+    clock = liveClock()
+    let failed = false
+    await mount({
+      recent: async () => {
+        if (failed) throw new Error('Recent game unavailable')
+        return recentGame()
+      }
+    })
+    failed = true
+    await clock.tick()
+    expect(text()).includes('Recent game unavailable')
+    for (const action of ['Create League', 'Create Season', 'Create Team'])
+      expect(text()).includes(action)
+    failed = false
+    await clock.tick()
+    expect(text()).not.includes('Recent game unavailable')
+    expect(text()).includes('RECENT GAME')
+    expect(text()).includes('Create Team')
+  })
+
+  it('does not clear a group-loading error when the recent-game refresh recovers', async function () {
+    clock = liveClock()
+    await mount({
+      teams: async () => {
+        throw new Error('Teams unavailable')
+      }
+    })
+    await clock.tick()
+    expect(text()).includes('Teams unavailable')
+    expect(text()).not.includes('Create Team')
+  })
+
   it('lists teams above seasons, and opens whichever is tapped', async function () {
     const hawks = team('tem_hawks', 'Alta Hawks', {
       shortName: 'Hawks',

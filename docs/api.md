@@ -42,3 +42,17 @@ So the teams a season holds are `GET /teams?season=…`, not
 Only for a new resource, or for an action that is not a read or a write of an
 existing one. `POST /teams/:teamId/games` takes a whole schedule and answers
 each row, which no write to one game does.
+
+## Game LIVE state
+
+Game detail, schedule rows and public group games return `isGameLive`, computed
+on the server by `gameIsLive`. It requires a surviving scoring action or stored
+play, a game that is neither final nor cancelled, and server time within the
+inclusive window from one hour before start through one hour after end. A
+missing end uses the existing three-hour duration. Non-game events and new
+pending proposals return false.
+
+Clients display this flag directly and refresh it through their normal visible
+screen refresh. They must not derive it from `status`, scoring fields or the
+device clock. Missing flags from older servers are treated as false. The existing
+`isLive` field describes a video stream, not game scoring.

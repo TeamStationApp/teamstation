@@ -108,6 +108,7 @@ export function teamScheduleGames(
       venue: home ? 'Riverside Park' : `${name} Field`,
       status: live ? 'inProgress' : played ? 'final' : 'scheduled',
       hasScoringEvents: live || played,
+      isGameLive: live,
       homeScore: played ? 3 + (index % 4) : null,
       awayScore: played ? 2 + (index % 3) : null,
       ingestStatus: played ? 'done' : 'pending',

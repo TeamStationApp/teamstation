@@ -106,7 +106,7 @@ describe('the word between the two scores', function () {
       gameStatusLine({
         ...live,
         startAt: new Date().toISOString(),
-        hasScoringEvents: true
+        isGameLive: true
       })
     ).equals('LIVE')
     expect(winnerOf(live)).equals(undefined)

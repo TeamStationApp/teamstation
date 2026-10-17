@@ -8,7 +8,6 @@
 
 import { eventName } from '../../common/eventInfo'
 import type { EventTabState } from './eventTabPolicy'
-import { showGameLivePill } from './livePillPolicy'
 
 export interface ScoredGame extends EventTabState {
   startAt: string | null
@@ -114,7 +113,7 @@ export function scheduleDate(iso: string | null): {
  * says the game is still live.
  */
 export function gameStatusLine(game: ScoredGame): string {
-  if (showGameLivePill(game)) return 'LIVE'
+  if (game.isGameLive === true) return 'LIVE'
   if (game.status === 'inProgress') return 'IN PROGRESS'
   if (game.awayScore == null || game.homeScore == null) {
     const time = shortTime(game.startAt)

@@ -30,7 +30,7 @@ for (const Row of [ScheduleRow, RsvpScheduleRow]) {
               first="Demo Owls"
               startAt={new Date().toISOString()}
               status="inProgress"
-              hasScoringEvents
+              isGameLive
               awayScore={null}
               homeScore={null}
               videoCount={0}
@@ -44,35 +44,28 @@ for (const Row of [ScheduleRow, RsvpScheduleRow]) {
     const visible = (): boolean =>
       document.body.textContent?.includes('LIVE') === true
 
-    it('requires remaining scoring and removes LIVE after undo or finalization', async () => {
-      await render({ hasScoringEvents: false })
+    it('renders the server flag and follows refreshed false/true decisions', async () => {
+      await render({ isGameLive: false })
       expect(visible()).equals(false)
       await render()
       expect(visible()).equals(true)
-      await render({ hasScoringEvents: false })
+      await render({ isGameLive: false })
       expect(visible()).equals(false)
       for (const status of ['final', 'cancelled']) {
-        await render({ status })
+        await render({ status, isGameLive: false })
         expect(visible()).equals(false)
       }
     })
 
-    it('hides stale and future in-progress games even with scoring', async () => {
+    it('does not recalculate the flag using the device clock', async () => {
       for (const offset of [-24 * hour, 24 * hour]) {
         await render({ startAt: new Date(Date.now() + offset).toISOString() })
-        expect(visible()).equals(false)
+        expect(visible()).equals(true)
       }
     })
 
-    it('expires while mounted using the explicit end rather than the fallback', async () => {
-      await render({
-        startAt: new Date(Date.now() - 2 * hour).toISOString(),
-        endAt: new Date(Date.now() - hour + 200).toISOString()
-      })
-      expect(visible()).equals(true)
-      await act(async () => {
-        await new Promise(resolve => setTimeout(resolve, 260))
-      })
+    it('hides LIVE when an older server omits the flag', async () => {
+      await render({ isGameLive: undefined })
       expect(visible()).equals(false)
     })
   })
