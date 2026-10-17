@@ -38,9 +38,14 @@ export function gridBox(options: {
   count: number
   /** The tiles' shared aspect. 16/9 until the files say otherwise. */
   aspect: number
+  /**
+   * The arrangement, when it is decided by a larger box than this one: the
+   * screen, of which this is what the scoreboard's band leaves.
+   */
+  shape?: { columns: number; rows: number }
 }): Rect {
   const { width, height, count, aspect } = options
-  const { columns, rows } = gridShape(width, height, count)
+  const { columns, rows } = options.shape ?? gridShape(width, height, count)
   const wanted = (aspect * columns) / rows
 
   let w = width
@@ -67,12 +72,42 @@ export function tileRects(options: {
   aspect?: number
   /** The index, in reading order, of a tile blown up to the whole box. */
   zoomed?: number | null
+  /**
+   * A band this tall across the top that the tiles stay below: the portrait
+   * grid's scoreboard. The tiles are laid out in what is left exactly as
+   * they would be in a screen that size, and the shape is still the whole
+   * screen's, so a band never turns a column into a grid.
+   */
+  top?: number
+  /** The arrangement, when the whole screen decides it rather than the box. */
+  shape?: { columns: number; rows: number }
+  /**
+   * Three angles in two rows of two leave the top-left quadrant to the
+   * scoreboard: they take the other three, in reading order.
+   */
+  boardCell?: boolean
 }): Rect[] {
-  const { width, height, count, aspect = 16 / 9, zoomed = null } = options
+  const {
+    width,
+    height,
+    count,
+    aspect = 16 / 9,
+    zoomed = null,
+    top = 0
+  } = options
   const tiles = Math.max(0, Math.min(MAX_TILES, count))
   if (tiles === 0) return []
+  if (top > 0) {
+    return tileRects({
+      ...options,
+      height: Math.max(0, height - top),
+      top: 0,
+      shape: gridShape(width, height, tiles)
+    }).map(rect => ({ ...rect, y: rect.y + top }))
+  }
 
-  const box = gridBox({ width, height, count: tiles, aspect })
+  const { shape } = options
+  const box = gridBox({ width, height, count: tiles, aspect, shape })
   if (zoomed != null && zoomed >= 0 && zoomed < tiles) {
     // Zoomed, the big tile takes the whole box — and the others keep a
     // rectangle rather than being unmounted or hidden, because a `<video>`
@@ -80,22 +115,85 @@ export function tileRects(options: {
     // does not. Coming back from a zoom has to be instant; re-buffering three
     // tiles would make it anything but.
     const full = gridBox({ width, height, count: 1, aspect })
-    const behind = tileRects({ width, height, count: tiles, aspect })
+    const behind = tileRects({
+      width,
+      height,
+      count: tiles,
+      aspect,
+      shape,
+      boardCell: options.boardCell
+    })
     return behind.map((rect, index) => (index === zoomed ? full : rect))
   }
 
   if (tiles === 1) return [box]
   // Side by side, or one above another, filling the box: two 16:9 pictures
   // across a 32:9 box, or down a 9:32 one.
-  const { columns, rows } = gridShape(width, height, tiles)
+  const { columns, rows } = shape ?? gridShape(width, height, tiles)
   const w = box.w / columns
   const h = box.h / rows
+  const skip =
+    options.boardCell === true && tiles === 3 && columns === 2 && rows === 2
+      ? 1
+      : 0
   return Array.from({ length: tiles }, (unused, index) => ({
-    x: box.x + (index % columns) * w,
-    y: box.y + Math.floor(index / columns) * h,
+    x: box.x + ((index + skip) % columns) * w,
+    y: box.y + Math.floor((index + skip) / columns) * h,
     w,
     h
   }))
+}
+
+/**
+ * The phone's grid edge to edge, each picture at its own shape. Sideways the
+ * pictures have the whole screen, under a notch, the Dynamic Island and the
+ * rounded corners; upright they start below the top of the safe area, below
+ * the board's band when there is one, and run on into the bottom of it, past
+ * the home indicator, to the screen's edge. The controls and the board keep
+ * to `safe`, what the hardware leaves. `top` is where the pictures start.
+ */
+export function edgeToEdge(
+  screen: { width: number; height: number },
+  insets: { top: number; right: number; bottom: number; left: number },
+  /** The board's band, upright; 0 sideways or with no board. */
+  band: number,
+  /** Sideways, as the caller decided it, so the two never disagree. */
+  landscape: boolean
+): { safe: Rect; top: number } {
+  const safe = {
+    x: insets.left,
+    y: insets.top,
+    w: Math.max(0, screen.width - insets.left - insets.right),
+    h: Math.max(0, screen.height - insets.top - insets.bottom)
+  }
+  return { safe, top: landscape ? 0 : safe.y + band }
+}
+
+/**
+ * How far into a tile the safe area starts: what a label at the tile's top
+ * left must come in by to be clear of a notch, the island or a corner.
+ */
+export function clearOf(
+  rect: Rect | undefined,
+  safe: Rect
+): { left: number; top: number } {
+  if (rect == null) return { left: 0, top: 0 }
+  return {
+    left: Math.max(0, safe.x - rect.x),
+    top: Math.max(0, safe.y - rect.y)
+  }
+}
+
+/** The angles' shared shape: the first one whose size is known, else 16:9. */
+export function aspectOf(
+  videos: ReadonlyArray<{ width?: number | null; height?: number | null }>
+): number {
+  for (const video of videos) {
+    if (video.width != null && video.height != null && video.height > 0) {
+      return video.width / video.height
+    }
+  }
+  return 16 / 9
 }
 
 /**

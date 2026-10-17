@@ -1326,6 +1326,36 @@ describe('api client', function () {
     )
     expect(await offline.issuer()).equals(undefined)
   })
+  it('keeps the server’s answer when the body breaks off, and is offline only for a success cut short', async () => {
+    const brokenBody = (status: number): TeamStationClient =>
+      new TeamStationClient({
+        baseUrl: '/api/v1',
+        fetch: async () =>
+          ({
+            ok: status < 400,
+            status,
+            text: async () => {
+              throw new TypeError('Load failed')
+            }
+          }) as unknown as Response
+      })
+    for (const [status, code] of [
+      [401, 'unauthorized'],
+      [403, 'forbidden'],
+      [404, 'notFound'],
+      [503, 'internal'],
+      [200, 'offline']
+    ] as const) {
+      const thrown = await brokenBody(status)
+        .scoreboardOverlay('g1')
+        .then(
+          () => null,
+          (error: unknown) => error
+        )
+      expect(thrown, String(status)).instanceOf(HttpError)
+      expect((thrown as HttpError).code, String(status)).equals(code)
+    }
+  })
   it('asks for team suggestions around a team, a season or both, and keeps search rows', async () => {
     const row = {
       id: 'tem_owls',

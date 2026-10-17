@@ -19,7 +19,7 @@ import { attachHls } from './attachHls'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
 import { ExitButton, exitClearance } from './multiCam/barParts'
 import { TILE_BUFFER } from './multiCam/buffering'
-import type { Rect } from './multiCam/layout'
+import { clearOf, edgeToEdge, type Rect } from './multiCam/layout'
 import {
   type NativeOrientation,
   orientationLock
@@ -33,6 +33,10 @@ import {
   useMultiCam
 } from './multiCam/useMultiCam'
 import { MultiCamBar } from './MultiCamBar'
+import {
+  GridScoreboard,
+  useGridBoard
+} from './scoreboardOverlay/GridScoreboard'
 import type { VideoHandle } from './videoHandle'
 import { VideoView } from './VideoView'
 
@@ -90,6 +94,10 @@ function tileAt(rects: Rect[], x: number, y: number): number | null {
  * on a tile picks the tile up: in a column the others slide out of its way
  * and it is put where it is let go, in a grid it swaps with the one it is
  * dropped on — the browser's rules, through the same calls.
+ *
+ * The game's board is drawn as the browser draws it (`GridScoreboard`): in a
+ * band above the column upright, over the top-left angle sideways, at the
+ * wall time of the master tile's frame.
  */
 export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   const { onClose } = props
@@ -119,17 +127,33 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
   const { onClose } = props
   const theme = useTheme()
   const styles = getStyles(theme)
-  const screen = useWindowDimensions()
+  // Sideways the pictures have the whole screen; upright, all of it below the
+  // top of the safe area. The controls and the board keep to the safe area.
+  const { width, height } = useWindowDimensions()
   const insets = useInsets()
-  const width = Math.max(0, screen.width - insets.left - insets.right)
-  const height = Math.max(0, screen.height - insets.top - insets.bottom)
+  const landscape = width > height
+  // Upright, the board's band is sized for the height below the top of the
+  // safe area, which is all the angles stacked under it have.
+  const boardBox = landscape
+    ? { width, height }
+    : { width, height: Math.max(0, height - insets.top) }
+  const board = useGridBoard(props, boardBox, landscape)
+  const { safe, top } = edgeToEdge(
+    { width, height },
+    insets,
+    board.band,
+    landscape
+  )
   const mc = useMultiCam(props, {
     width,
     height,
+    top,
+    boardCell: board.boardCell,
     // The others slide aside rather than jump when a dragged tile changes
     // the place it would land in.
     beforeShuffle: shuffle
   })
+  board.follow(mc)
   const {
     askAgain,
     attaching,
@@ -250,12 +274,7 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
 
   return (
     <View style={styles.screen}>
-      <View
-        style={[
-          styles.box,
-          { left: insets.left, top: insets.top, width, height }
-        ]}
-      >
+      <View style={[styles.box, { left: 0, top: 0, width, height }]}>
         {mc.chosen.map((video, index) => (
           <Tile
             key={video.id}
@@ -277,8 +296,19 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
             unplaceable={video.startAt == null}
             takeRef={takeElement(video.id)}
             heard={video.id === mc.heardId}
+            nameTop={board.nameTop(index, mc.rects[index], mc.zoomed, safe)}
+            nameClear={clearOf(mc.shownRects[index], safe)}
           />
         ))}
+
+        <GridScoreboard
+          board={board}
+          box={boardBox}
+          landscape={landscape}
+          rects={mc.rects}
+          zoomed={mc.zoomed}
+          safe={safe}
+        />
 
         {/* Every touch on the grid, over the tiles and under the bar. */}
         <View
@@ -291,38 +321,55 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
           onResponderTerminate={onTerminate}
         />
 
-        <SeekFlashView flash={mc.flash} />
-        {/* Top right, clear of the finger holding the crawl on the right,
+        {/* The controls, over the touches, where the hardware leaves room. */}
+        <View
+          style={[
+            styles.controls,
+            { left: safe.x, top: safe.y, width: safe.w, height: safe.h }
+          ]}
+          pointerEvents="box-none"
+        >
+          <SeekFlashView flash={mc.flash} />
+          {/* Top right, clear of the finger holding the crawl on the right,
               and stepped left of the way out while that shows. */}
-        <SlowMoBadge
-          rate={mc.slow}
-          right={
-            mc.controlsShown
-              ? exitClearance(theme) + theme.rem(theme.spaceSmRem)
-              : undefined
-          }
-        />
-        <ExitButton visible={mc.controlsShown} onPress={onClose} />
-
-        {notice != null ? (
-          <View style={styles.notice} pointerEvents="none">
-            <Text style={styles.noticeText}>{notice}</Text>
-          </View>
-        ) : null}
-
-        {mc.take != null && mc.atWallMs != null ? (
-          <MultiCamBar
-            window={mc.take}
-            atMs={mc.atWallMs}
-            playing={mc.playing}
-            angles={mc.barAngles(mc.take)}
-            onTogglePlay={toggle}
-            onSkip={skip}
-            onScrub={goTo}
-            onInteract={showBar}
-            visible={mc.barShown}
+          <SlowMoBadge
+            rate={mc.slow}
+            right={
+              mc.controlsShown
+                ? exitClearance(theme) + theme.rem(theme.spaceSmRem)
+                : undefined
+            }
           />
-        ) : null}
+          <ExitButton visible={mc.controlsShown} onPress={onClose} />
+
+          {/* On the pictures, below the board's band: over the band it would
+            hide the score. */}
+          {notice != null ? (
+            <View
+              style={[
+                styles.notice,
+                { top: board.band + theme.rem(theme.spaceSmRem) }
+              ]}
+              pointerEvents="none"
+            >
+              <Text style={styles.noticeText}>{notice}</Text>
+            </View>
+          ) : null}
+
+          {mc.take != null && mc.atWallMs != null ? (
+            <MultiCamBar
+              window={mc.take}
+              atMs={mc.atWallMs}
+              playing={mc.playing}
+              angles={mc.barAngles(mc.take)}
+              onTogglePlay={toggle}
+              onSkip={skip}
+              onScrub={goTo}
+              onInteract={showBar}
+              visible={mc.barShown}
+            />
+          ) : null}
+        </View>
       </View>
     </View>
   )
@@ -347,6 +394,10 @@ function Tile(props: {
   unplaceable: boolean
   takeRef: (node: TileHandle | null) => void
   heard: boolean
+  /** Where its name goes, below the grid's board; at the top otherwise. */
+  nameTop?: number
+  /** How far its name must come in to be clear of a notch or a corner. */
+  nameClear: { left: number; top: number }
 }): React.ReactElement {
   const {
     videoId,
@@ -361,7 +412,9 @@ function Tile(props: {
     waiting,
     heard,
     muted,
-    takeRef
+    takeRef,
+    nameTop,
+    nameClear
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -449,7 +502,17 @@ function Tile(props: {
         buffer={TILE_BUFFER}
       />
       {armed ? <View style={styles.tileArmed} /> : null}
-      <View style={styles.tileName}>
+      <View
+        style={[
+          styles.tileName,
+          {
+            // Below the board, which is already kept clear; else at the
+            // top, moved in clear of the hardware.
+            top: nameTop ?? theme.rem(theme.spaceXsRem) + nameClear.top,
+            left: theme.rem(theme.spaceSmRem) + nameClear.left
+          }
+        ]}
+      >
         <Text style={styles.tileNameText} numberOfLines={1}>
           {heard ? `🔊 ${name}` : name}
         </Text>
@@ -496,15 +559,18 @@ const getStyles = cacheStyles((theme: Theme) => ({
     left: 0,
     zIndex: 3
   },
+  controls: {
+    position: 'absolute',
+    zIndex: 4
+  },
   tile: {
     position: 'absolute',
     overflow: 'hidden',
     backgroundColor: '#000000'
   },
   tileName: {
+    // At the top left, `top` and `left` set where it is drawn.
     position: 'absolute',
-    top: theme.rem(theme.spaceXsRem),
-    left: theme.rem(theme.spaceSmRem),
     maxWidth: '80%',
     paddingHorizontal: theme.rem(theme.spaceSmRem),
     paddingVertical: theme.rem(0.125),
@@ -546,8 +612,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   notice: {
     position: 'absolute',
+    // Its top is the band's bottom, set where it is drawn.
     zIndex: 6,
-    top: theme.rem(theme.spaceSmRem),
     alignSelf: 'center',
     paddingVertical: theme.rem(theme.spaceXsRem),
     paddingHorizontal: theme.rem(theme.spaceMdRem),

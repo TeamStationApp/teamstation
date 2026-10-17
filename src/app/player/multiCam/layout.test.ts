@@ -2,8 +2,10 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  clearOf,
   dragSlots,
   dropTarget,
+  edgeToEdge,
   gridBox,
   gridShape,
   move,
@@ -124,6 +126,97 @@ describe('the grid on a phone held upright', function () {
     // than half the width a two-by-two grid gave each one.
     expect(first.w).greaterThan(393 / 2)
     expect(first.w / first.h).closeTo(16 / 9, 0.001)
+  })
+})
+
+describe('the grid on a phone, edge to edge', function () {
+  // An iPhone 13 Pro, upright and sideways.
+  const UPRIGHT = { width: 390, height: 844 }
+  const UPRIGHT_INSETS = { top: 47, right: 0, bottom: 34, left: 0 }
+  const SIDEWAYS = { width: 844, height: 390 }
+  const SIDEWAYS_INSETS = { top: 0, right: 47, bottom: 21, left: 47 }
+
+  it('lays the angles out over the whole screen, at their own shape', function () {
+    const { top } = edgeToEdge(SIDEWAYS, SIDEWAYS_INSETS, 0, true)
+    expect(top).equals(0)
+    const rects = tileRects({ ...SIDEWAYS, count: 4, top })
+    // A two-by-two of 16:9 is 16:9: the screen's full height, centred across.
+    const box = gridBox({ ...SIDEWAYS, count: 4, aspect: 16 / 9 })
+    expect(round(box.h)).equals(390)
+    expect(round(box.y)).equals(0)
+    expect(round(rects[0].w / rects[0].h)).equals(round(16 / 9))
+    expect(round(rects[3].y + rects[3].h)).equals(390)
+    // Under the home indicator, which the safe area leaves out.
+    expect(rects[3].y + rects[3].h).greaterThan(390 - 21)
+  })
+
+  it('keeps the controls to what the hardware leaves', function () {
+    expect(edgeToEdge(UPRIGHT, UPRIGHT_INSETS, 0, false).safe).deep.equals({
+      x: 0,
+      y: 47,
+      w: 390,
+      h: 763
+    })
+    expect(edgeToEdge(SIDEWAYS, SIDEWAYS_INSETS, 0, true).safe).deep.equals({
+      x: 47,
+      y: 0,
+      w: 750,
+      h: 369
+    })
+    expect(
+      edgeToEdge({ width: 10, height: 10 }, UPRIGHT_INSETS, 0, false).safe.h
+    ).equals(0)
+  })
+
+  it('takes the caller’s side for a square window, so a band is never laid over an angle', function () {
+    const square = { width: 600, height: 600 }
+    const insets = { top: 24, right: 0, bottom: 20, left: 0 }
+    // Not sideways to the caller, which then keeps a band: the angles start
+    // below it.
+    expect(edgeToEdge(square, insets, 90, false).top).equals(114)
+    expect(edgeToEdge(square, insets, 0, true).top).equals(0)
+  })
+
+  it('upright with no board, starts the angles below the island, not under it', function () {
+    const { top } = edgeToEdge(UPRIGHT, UPRIGHT_INSETS, 0, false)
+    expect(top).equals(47)
+    const rects = tileRects({ ...UPRIGHT, count: 4, top })
+    expect(round(rects[0].y)).equals(47)
+    expect(round(rects[3].y + rects[3].h)).equals(844)
+  })
+
+  it('upright, starts the angles below the board’s band, and the band below the island', function () {
+    const { top } = edgeToEdge(UPRIGHT, UPRIGHT_INSETS, 100, false)
+    expect(top).equals(147)
+    const rects = tileRects({ ...UPRIGHT, count: 4, top })
+    expect(round(rects[0].y)).equals(147)
+    // Four 16:9 rows are taller than what is left, so they take all of it,
+    // down past the home indicator to the bottom edge, at their own shape.
+    expect(round(rects[3].y + rects[3].h)).equals(844)
+    expect(round(rects[0].w / rects[0].h)).equals(round(16 / 9))
+  })
+})
+
+describe('a tile’s name, clear of the hardware', function () {
+  const SAFE = { x: 47, y: 47, w: 700, h: 300 }
+
+  it('comes in only as far as the safe area starts inside the tile', function () {
+    expect(clearOf({ x: 0, y: 0, w: 400, h: 225 }, SAFE)).deep.equals({
+      left: 47,
+      top: 47
+    })
+    expect(clearOf({ x: 20, y: 100, w: 400, h: 225 }, SAFE)).deep.equals({
+      left: 27,
+      top: 0
+    })
+  })
+
+  it('stays where it is in a tile already clear, or with no tile', function () {
+    expect(clearOf({ x: 75, y: 60, w: 400, h: 225 }, SAFE)).deep.equals({
+      left: 0,
+      top: 0
+    })
+    expect(clearOf(undefined, SAFE)).deep.equals({ left: 0, top: 0 })
   })
 })
 

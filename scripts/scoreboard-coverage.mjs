@@ -12,9 +12,9 @@
 // it to `appSuites`. The web bundle never resolves a `.native.tsx` file, so a
 // native component is measured by a suite that imports its `.native` path.
 //
-// Tests, `src/test`, `src/migrate` (migrations are proved by their own tests),
-// `src/server/dev` (development seed scripts, which no suite loads) and
-// `database.ts` (types) are not measured.
+// Type declarations (`.d.ts`), tests, `src/test`, `src/migrate` (migrations
+// are proved by their own tests), `src/server/dev` (development seed scripts,
+// which no suite loads) and `database.ts` (types) are not measured.
 import { spawnSync } from 'node:child_process'
 import {
   mkdirSync,
@@ -36,8 +36,20 @@ import { webSettings } from './web-build-settings.mjs'
 const appSuites = [
   // The scoring screen keeps the server's clock while it is open.
   'src/app/scoring/scoringSession.test.tsx',
+  // The board over the players: drawn and scaled, kept up to date while
+  // live, over the single picture and the grid, and its gradient on a phone.
+  'src/app/player/scoreboardOverlay/ScoreboardOverlay.test.tsx',
+  'src/app/player/scoreboardOverlay/liveBoard.test.tsx',
+  'src/app/player/PlayerSurface.test.tsx',
+  'src/app/player/MultiCamView.test.tsx',
+  'src/app/scoreboard/linearGradient.native.test.tsx',
   // The override dashboard letters its board in the carried Inter.
   'src/app/scoreboard/dashboardTheme.test.tsx',
+  // The phone's grid draws the same board in the same places.
+  'src/app/player/MultiCamView.native.test.tsx',
+  // The board keeps its team bars when the overlay lays it out at its own
+  // size.
+  'src/app/scoreboard/ScoreboardBoard.test.tsx',
   // The node settings a node administrator edits, on the wheel the time
   // picker shares.
   'src/app/screens/NodeSettingsCard.test.tsx',
@@ -131,6 +143,7 @@ function hasExecutableSource(path) {
 }
 const eligible = path =>
   /^src\/.+\.tsx?$/.test(path) &&
+  !path.endsWith('.d.ts') &&
   !/\.(test|e2e)\./.test(path) &&
   !path.startsWith('src/test/') &&
   !path.startsWith('src/migrate/') &&

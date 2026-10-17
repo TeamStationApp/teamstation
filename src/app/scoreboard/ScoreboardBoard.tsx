@@ -1,11 +1,17 @@
 import React from 'react'
-import { StyleSheet, Text, View } from 'react-native'
-import LinearGradient from 'react-native-linear-gradient'
+import {
+  Platform,
+  StyleSheet,
+  Text as NativeText,
+  type TextProps,
+  View
+} from 'react-native'
 
 import {
   SCOREBOARD_BOARD_SIZE,
   type ScoreboardState
 } from '../../common/scoreboard'
+import LinearGradient from './linearGradient'
 import { type ScoreboardTheme, scoreboardTheme } from './scoreboardTheme'
 
 /**
@@ -40,18 +46,28 @@ declare module 'react-native' {
 export interface ScoreboardBoardProps {
   /** What to draw; nothing but the empty root while it is undefined. */
   state?: ScoreboardState
+  /**
+   * The least width the drawn board takes, for a board laid out at its own
+   * size, as the overlay over a video lays it out. On a phone a `flex: 1`
+   * box starts from no width at all, so a board sized by its content gave
+   * its team bars none: they vanished with their names and the scores slid
+   * over the inning. With it the bars start from their names, as a browser
+   * sizes them, and the board is never narrower than this: an empty name
+   * keeps its bar, and a longer one widens the board.
+   */
+  minWidth?: number
 }
 
 export function ScoreboardBoard(
   props: ScoreboardBoardProps
 ): React.ReactElement {
-  const { state } = props
+  const { state, minWidth } = props
   if (state == null) {
     return (
       <View dataSet={{ scoreboard: 'board', drawn: 'false' }} style={empty} />
     )
   }
-  return <Scoreboard scoreState={state} />
+  return <Scoreboard scoreState={state} minWidth={minWidth} />
 }
 
 /**
@@ -67,15 +83,51 @@ const empty = StyleSheet.create({
 
 const theme = scoreboardTheme
 
+/**
+ * The board's lettering, at the sizes its boxes are drawn for. A phone set to
+ * larger text would grow the letters and not the boxes, so a score overflowed
+ * its box and sat low in it; the board is a graphic, scaled only as a whole.
+ */
+function Text(props: TextProps): React.ReactElement {
+  return <NativeText {...props} allowFontScaling={false} />
+}
+
+/**
+ * The score's digits centred in their box on a phone, as a browser centres
+ * them: Android's font padding sits above the text and pushed them down.
+ * Apart from 1.0's style sheet, which the web board keeps as it was.
+ */
+const phoneScoreText =
+  Platform.OS === 'web'
+    ? undefined
+    : ({ includeFontPadding: false, textAlignVertical: 'center' } as const)
+
+/**
+ * A `flex: 1` box that starts from its content, as a browser's does. On a
+ * phone `flex` itself must go: with any positive `flex` Yoga takes the basis
+ * as zero, whatever `flexBasis` says, so it grows and shrinks by its parts.
+ */
+const fromContent = {
+  flex: 0,
+  flexGrow: 1,
+  flexShrink: 1,
+  flexBasis: 'auto'
+} as const
+
 function Scoreboard(props: {
   scoreState: ScoreboardState
+  minWidth?: number
 }): React.ReactElement {
-  const { scoreState } = props
+  const { scoreState, minWidth } = props
   return (
     <View style={styles.scoreboardContainer}>
       <View
         dataSet={{ scoreboard: 'board', drawn: 'true' }}
-        style={styles.scoreboard}
+        style={
+          minWidth == null
+            ? styles.scoreboard
+            : [styles.scoreboard, { minWidth }]
+        }
       >
         {scoreState.batterName.trim() !== '' ||
         scoreState.pitcherName.trim() !== '' ? (
@@ -123,13 +175,23 @@ function Scoreboard(props: {
         {/* Main Content Row */}
         <View style={styles.mainRow}>
           {/* Teams and Scores */}
-          <View style={styles.teamsSection}>
+          <View
+            style={
+              minWidth == null
+                ? styles.teamsSection
+                : [styles.teamsSection, fromContent]
+            }
+          >
             <View style={styles.teamRow}>
               <LinearGradient
                 colors={theme.scoreboardTeamAwayGradient}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                style={styles.teamBox}
+                style={
+                  minWidth == null
+                    ? styles.teamBox
+                    : [styles.teamBox, fromContent]
+                }
               >
                 <Text
                   dataSet={{ scoreboard: 'awayTeam' }}
@@ -141,7 +203,7 @@ function Scoreboard(props: {
               <View style={styles.scoreBox}>
                 <Text
                   dataSet={{ scoreboard: 'awayScore' }}
-                  style={styles.scoreText}
+                  style={[styles.scoreText, phoneScoreText]}
                 >
                   {scoreState.awayScore}
                 </Text>
@@ -152,7 +214,11 @@ function Scoreboard(props: {
                 colors={theme.scoreboardTeamHomeGradient}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                style={styles.teamBox}
+                style={
+                  minWidth == null
+                    ? styles.teamBox
+                    : [styles.teamBox, fromContent]
+                }
               >
                 <Text
                   dataSet={{ scoreboard: 'homeTeam' }}
@@ -164,7 +230,7 @@ function Scoreboard(props: {
               <View style={styles.scoreBox}>
                 <Text
                   dataSet={{ scoreboard: 'homeScore' }}
-                  style={styles.scoreText}
+                  style={[styles.scoreText, phoneScoreText]}
                 >
                   {scoreState.homeScore}
                 </Text>

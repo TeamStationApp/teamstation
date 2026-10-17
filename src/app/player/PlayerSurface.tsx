@@ -12,6 +12,10 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { controlRects, edgeBars, liveRects, type Rect } from './controlGeometry'
 import { playerEngine } from './engine'
 import { SeekFlashView, SlowMoBadge, useFlash } from './GestureFeedback'
+import {
+  PictureScoreboard,
+  type PictureScoreboardProps
+} from './scoreboardOverlay/ScoreboardOverlay'
 import { slowMotion } from './slowMotion'
 import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 import type { VideoHandle } from './videoHandle'
@@ -45,6 +49,12 @@ export interface PlayerSurfaceProps {
    * on screen.
    */
   active?: boolean
+  /**
+   * The game's board over the picture, at the wall time of the frame on
+   * screen: the game and the video it is of, whether it is live, and where
+   * the picture is in this view. Absent, no board.
+   */
+  scoreboard?: Omit<PictureScoreboardProps, 'videoRef'>
   children: React.ReactNode
 }
 
@@ -75,6 +85,7 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
     height,
     controlsVisible = true,
     active = true,
+    scoreboard,
     children
   } = props
   const theme = useTheme()
@@ -161,6 +172,13 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
   return (
     <View style={[styles.surface, { width, height }]}>
       {children}
+      {/* Over the picture and under the squares, and it takes no touches:
+          a tap on the board is a tap on the square beneath it. Not while
+          the grid has the screen: it draws its own board, and this one
+          would only go on asking for steps nobody can see. */}
+      {scoreboard != null && active ? (
+        <PictureScoreboard {...scoreboard} videoRef={videoRef} />
+      ) : null}
       {pieces.map(piece => (
         <GesturePiece
           key={`${piece.x}:${piece.y}:${piece.w}:${piece.h}`}

@@ -42,6 +42,7 @@ import {
   toLeaveOut
 } from './buffering'
 import {
+  aspectOf,
   dragSlots,
   gridShape,
   MAX_TILES,
@@ -57,6 +58,11 @@ export type { TileHandle }
 
 export interface MultiCamProps {
   client: TeamStationClient
+  /**
+   * The game the angles are of, whose scoreboard is drawn over them. Absent,
+   * there is no board.
+   */
+  gameId?: string | null
   /** Every video of the game, for names and for the strips on the bar. */
   videos: VideoSummary[]
   /** The chosen angles, in quadrant order. */
@@ -83,6 +89,17 @@ export interface MultiCamOptions {
   height: number
   /** Draw what each tile is doing (`?debug=1` on the web). */
   debug?: boolean
+  /**
+   * A band this tall across the top of the box that the tiles stay below:
+   * the scoreboard's, in a column. Drags and drops measure against the tiles
+   * where they are, below it.
+   */
+  top?: number
+  /**
+   * Three angles sideways leave the top-left quadrant to the scoreboard
+   * (`tileRects`).
+   */
+  boardCell?: boolean
   /**
    * Called just before the tiles stand aside for a dragged one, so a phone
    * can animate the change it is about to draw.
@@ -169,6 +186,13 @@ export interface MultiCam {
   tiles: Record<string, TileState>
   playing: boolean
   atWallMs: number | null
+  /**
+   * The tile the clock is read from (`masterOf`), as the watchdog last chose
+   * it; null until it has.
+   */
+  masterId: string | null
+  /** The player of one tile, while it has one. */
+  elementOf: (id: string) => TileHandle | undefined
   /** The `debug` lines, when asked for. */
   readout: string[]
   ended: boolean
@@ -178,6 +202,8 @@ export interface MultiCam {
   heardId: string | null
   /** Where each tile rests. */
   rects: Rect[]
+  /** The tile that takes the whole box, by its index in `rects`, or null. */
+  zoomed: number | null
   /**
    * Where each tile is drawn: its resting place, or — while another is being
    * dragged — the place it has slid to, to show where that one would land.
@@ -248,7 +274,14 @@ export function useMultiCam(
 ): MultiCam {
   const { client, videos, order, audioId, zoomedId, atMs, onChange, onMoment } =
     props
-  const { width, height, debug = false, beforeShuffle } = options
+  const {
+    width,
+    height,
+    debug = false,
+    beforeShuffle,
+    top = 0,
+    boardCell = false
+  } = options
 
   const chosen = useMemo(
     () =>
@@ -283,6 +316,7 @@ export function useMultiCam(
   const [tiles, setTiles] = useState<Record<string, TileState>>({})
   const [playing, setPlaying] = useState(true)
   const [atWallMs, setAtWallMs] = useState<number | null>(atMs ?? null)
+  const [masterId, setMasterId] = useState<string | null>(null)
 
   const [readout, setReadout] = useState<string[]>([])
   const [ended, setEnded] = useState(false)
@@ -436,13 +470,17 @@ export function useMultiCam(
     })
   }, [])
 
+  const zoomedAt =
+    zoomedId == null ? -1 : chosen.findIndex(video => video.id === zoomedId)
+  const zoomed = zoomedAt >= 0 ? zoomedAt : null
   const rects = tileRects({
     width,
     height,
+    top,
+    boardCell,
     count: chosen.length,
     aspect: aspectOf(chosen),
-    zoomed:
-      zoomedId == null ? null : chosen.findIndex(video => video.id === zoomedId)
+    zoomed
   })
 
   /**
@@ -1185,6 +1223,7 @@ export function useMultiCam(
       })
 
       const leader = masterOf(showing, heardId)
+      if (leader != null) setMasterId(leader)
       const leaderVideo = chosen.find(video => video.id === leader)
       const leaderElement = leader == null ? null : elements.current.get(leader)
 
@@ -1761,12 +1800,15 @@ export function useMultiCam(
     tiles,
     playing,
     atWallMs,
+    masterId,
+    elementOf: (id: string) => elements.current.get(id),
     readout,
     ended,
     waiting,
     soundBlocked,
     heardId,
     rects,
+    zoomed,
     shownRects,
     take,
     slow,
@@ -1888,13 +1930,4 @@ function bufferAt(
 export function startOf(video: VideoSummary, takeFromMs: number): number {
   const parsed = Date.parse(video.startAt ?? '')
   return Number.isNaN(parsed) ? takeFromMs : parsed
-}
-
-function aspectOf(videos: VideoSummary[]): number {
-  for (const video of videos) {
-    if (video.width != null && video.height != null && video.height > 0) {
-      return video.width / video.height
-    }
-  }
-  return 16 / 9
 }
