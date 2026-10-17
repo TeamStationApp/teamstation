@@ -135,3 +135,15 @@ When a screen cannot offer a choice, say why in a sentence near the action
 it affects, instead of a control that does nothing. A team page's Create
 Game says above Save that its games are always scrimmages or exhibitions,
 and that games counting for standings are created from the season.
+
+## Access warnings
+
+Use `WarningSheet` for a blocked action with a path to gaining access. It is a
+solid yellow bottom sheet in every theme, with dark readable text, rounded top
+corners and a slight shadow. Its single primary action is a content-width blue
+pill centered at the bottom; dismiss through the close control or backdrop.
+Keep available content visible behind the sheet. Game video restrictions keep
+the main poster, camera choices and highlight thumbnails visible. Open the
+warning only on a playback attempt, and never load restricted video sources.
+Signed-out viewers see Log in / Sign up; signed-in nonmembers can request
+membership in one participating team, subject to administrator approval.
