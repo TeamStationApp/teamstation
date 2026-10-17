@@ -4083,8 +4083,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             "not stored. A post whose plays carry both teams' scores sets " +
             'the game `final`, and a final game refuses every later post with ' +
             '409, so a game is posted once it is over. Otherwise a ' +
-            '`scheduled` game with plays becomes `inProgress`, and any other ' +
-            'status, `cancelled` included, is kept. A post that leaves the ' +
+            'game becomes `inProgress` only with a surviving pitch or ball ' +
+            'in play; otherwise it is `scheduled`. Cancelled games stay cancelled. ' +
             "The post that stores a game's first plays, whatever its status, " +
             'fixes its fence at the `fenceDistanceFt` it gives, else the one ' +
             'the game resolves to then, so a later season or league change ' +

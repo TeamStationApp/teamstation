@@ -27,7 +27,7 @@ import {
 } from '../../common/gumboPlay'
 import { shortNames } from '../../common/names'
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
-import { addPlayer, allocatePlayer, begun } from '../../common/scoring/lineup'
+import { addPlayer, allocatePlayer } from '../../common/scoring/lineup'
 import {
   type Lineup,
   NO_DEFAULT_LINEUP,
@@ -400,7 +400,6 @@ async function saveSide(
       }
     })
 
-  let startsGame = true
   let failure: Error | undefined
   // The digest the save left, read in the transaction that wrote it.
   let wrote: string | undefined
@@ -428,8 +427,7 @@ async function saveSide(
               .executeTakeFirstOrThrow()
             if (snapshotOf(now, await readPlays(trx, gameId)) !== read.snapshot)
               throw new GameMoved()
-          },
-          { startsGame }
+          }
         )
         // A live post always keeps one.
         wrote = posted.lineupsDigest ?? read.digest
@@ -472,7 +470,6 @@ async function saveSide(
     const problem = session.apply(action).problems[0]
     if (problem != null) throw refusal(problem)
   }
-  startsGame = begun(session.state)
   await options.beforeSave?.(gameId)
   // A refused store is kept in the session's state, so its error is rethrown
   // here, and its 400, 403 or 409 reaches the caller.
