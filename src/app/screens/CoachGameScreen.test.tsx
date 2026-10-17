@@ -599,7 +599,9 @@ describe('Coach Game (U25)', function () {
     ])
     expect(node('Dictation chat')).not.equals(null)
     const line = document.querySelector('[data-testid="Roster chat line"]')
-    expect(line?.textContent ?? '').includes('runs for')
+    expect(line?.textContent ?? '', document.body.textContent ?? '').includes(
+      'runs for'
+    )
     expect(saveDisabled()).equals(false)
     held.answer = async () => {
       throw new HttpError('conflict', 'Finish the current play first')
@@ -783,6 +785,49 @@ describe('Coach Game (U25)', function () {
       'saved and remounted'
     )
     expect(document.body.textContent).includes('Mookie B')
+  })
+
+  it('edits rostered player settings from coaching and preserves pending lineup changes', async () => {
+    const held = server()
+    const changed = { ...roster('home')[0], jersey: '42' }
+    const writes: unknown[] = []
+    held.client.setPlayerSettings = async (teamId, userId, changes) => {
+      writes.push({ teamId, userId, changes })
+      return changed
+    }
+    await coach(held)
+    const removed = await stageChange()
+    await click('Roster', 'tab')
+    expect(document.body.textContent).not.includes(
+      'Player settings are unavailable'
+    )
+    const player = document.querySelector<HTMLElement>(
+      '[data-testid="Edit roster players"] [aria-label$="edit settings"]'
+    )!
+    await click(player.getAttribute('aria-label')!)
+    await act(async () => {
+      const input = node('Jersey number') as HTMLInputElement
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(input, '42')
+      input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    await click('Save')
+    expect(writes).deep.equals([
+      { teamId: 'home', userId: '201', changes: { jersey: '42' } }
+    ])
+    const cancels = document.querySelectorAll<HTMLElement>(
+      '[aria-label="Cancel"]'
+    )
+    await act(async () => {
+      cancels[cancels.length - 1].click()
+    })
+    await settle()
+    expect(document.body.textContent).includes('#42')
+    await click('Lineup', 'tab')
+    expect(node(removed)).equals(null)
+    expect(saveDisabled()).equals(false)
   })
 
   it('keeps the game writable for a coach: Create Player opens its sheet', async function () {

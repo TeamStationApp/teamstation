@@ -1,6 +1,7 @@
 import type { ScoringAction } from '../../common/scoring/actions'
 import {
   applyRosterCommands,
+  explicitPlaceholders,
   resolveRosterCommands,
   ROSTER_CATEGORY,
   ROSTER_TAB,
@@ -69,7 +70,11 @@ export function dictatedSheet(
   { transcript, commands }: DictatedRoster
 ): RosterEditorDraft | { problem: string } {
   const situation = rosterSituation(game)
-  const found = resolveRosterCommands(game, commands, situation)
+  const found = resolveRosterCommands(
+    game,
+    explicitPlaceholders(commands, transcript),
+    situation
+  )
   if ('problem' in found) return found
   if ('question' in found) {
     const sides = new Set(found.question.options.map(option => option.side))
@@ -84,6 +89,20 @@ export function dictatedSheet(
   }
   const staged = applyRosterCommands(game, found.commands, situation)
   if ('problem' in staged) return staged
+  if (
+    found.commands.some(
+      command => command.type === 'addPlayer' && command.placeholder !== true
+    )
+  ) {
+    return {
+      draft: game,
+      side: staged.side,
+      mode: 'editRoster',
+      base: game,
+      pending: found.commands,
+      chat: [{ key: 0, said: transcript, lines: [] }]
+    }
+  }
   return {
     draft: staged.draft,
     side: staged.side,
