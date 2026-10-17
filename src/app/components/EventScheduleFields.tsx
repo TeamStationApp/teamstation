@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
 
+import type { TeamStationClient } from '../../common/api'
 import {
   changeEventSchedule,
   type EventScheduleDraft,
@@ -8,6 +9,7 @@ import {
 } from '../../common/eventSchedule'
 import { nearestFiveMinutes, viewerTimezone } from '../../common/eventTime'
 import timezones from '../../common/eventTimezones.json'
+import type { CitySuggestion } from '../../common/locality'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
@@ -18,13 +20,17 @@ import { RadioMark } from './RadioMark'
 import { TextField } from './TextField'
 import { Wheel } from './Wheel'
 
+type CityClient = Pick<TeamStationClient, 'citySuggestions' | 'location'>
+
 type Picker = 'date' | 'time' | 'endDate' | 'endTime' | 'timezone'
 
 export function EventScheduleFields({
+  client,
   value,
   onChange,
   disabled = false
 }: {
+  client?: CityClient
   value: EventScheduleDraft
   onChange: (value: EventScheduleDraft) => void
   disabled?: boolean
@@ -121,6 +127,7 @@ export function EventScheduleFields({
           }}
         >
           <TimezonePicker
+            client={client}
             value={value.timezone}
             savedTimezone={value.savedTimezone}
             onChoose={timezone => {
@@ -513,11 +520,13 @@ export function zoneDetail(zone: string, now = new Date()): string {
 }
 
 export function TimezonePicker({
+  client,
   value,
   savedTimezone,
   onChoose,
   onCancel
 }: {
+  client?: CityClient
   value: string
   savedTimezone?: string
   onChoose: (zone: string) => void
@@ -527,6 +536,85 @@ export function TimezonePicker({
   const styles = getStyles(theme)
   const insets = useInsets()
   const [query, setQuery] = useState('')
+  const [cities, setCities] = useState<CitySuggestion[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [attribution, setAttribution] = useState('')
+  const [retry, setRetry] = useState(0)
+  const request = useRef(0)
+  const selecting = useRef(false)
+  const [session] = useState(() =>
+    'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const n = Math.floor(Math.random() * 16)
+      return (c === 'x' ? n : (n & 3) | 8).toString(16)
+    })
+  )
+  const invalidate = (): void => {
+    request.current++
+    selecting.current = false
+  }
+  const chooseZone = (zone: string): void => {
+    invalidate()
+    onChoose(zone)
+  }
+  useEffect(() => {
+    const id = ++request.current
+    setCities([])
+    setError('')
+    setAttribution('')
+    setLoading(client != null && query.trim().length >= 2)
+    if (client == null || query.trim().length < 2) return
+    const timer = setTimeout(() => {
+      client
+        .citySuggestions(query.trim(), session)
+        .then(
+          result => {
+            if (request.current !== id) return
+            setCities(result.suggestions)
+            setAttribution(result.attribution)
+          },
+          () => {
+            if (request.current === id)
+              setError('City lookup is unavailable. Try again.')
+          }
+        )
+        .finally(() => {
+          if (request.current === id) setLoading(false)
+        })
+    }, 250)
+    return () => {
+      clearTimeout(timer)
+      request.current++
+    }
+  }, [client, query, retry, session])
+  useEffect(
+    () => () => {
+      request.current++
+    },
+    []
+  )
+  const chooseCity = async (city: CitySuggestion): Promise<void> => {
+    if (client == null || selecting.current) return
+    selecting.current = true
+    const id = ++request.current
+    setLoading(true)
+    setError('')
+    try {
+      const location = await client.location(city.id, session)
+      if (request.current !== id) return
+      new Intl.DateTimeFormat('en', { timeZone: location.timezone }).format()
+      chooseZone(location.timezone)
+    } catch {
+      if (request.current === id)
+        setError('The city’s time zone could not load. Tap the city to retry.')
+    } finally {
+      if (request.current === id) {
+        selecting.current = false
+        setLoading(false)
+      }
+    }
+  }
+
   let saved: string[] = []
   if (savedTimezone !== undefined) {
     try {
@@ -572,7 +660,10 @@ export function TimezonePicker({
           accessibilityLabel="Cancel time zone picker"
           kind="text"
           textColor={theme.dangerColor}
-          onPress={onCancel}
+          onPress={() => {
+            invalidate()
+            onCancel()
+          }}
         />
       </View>
       <View style={styles.sceneSearch}>
@@ -581,7 +672,12 @@ export function TimezonePicker({
           placeholder="City or time zone"
           autoFocus
           value={query}
-          onChangeText={setQuery}
+          onChangeText={text => {
+            invalidate()
+            setCities([])
+            setError('')
+            setQuery(text)
+          }}
         />
       </View>
       <ScrollView
@@ -589,6 +685,39 @@ export function TimezonePicker({
         contentContainerStyle={styles.zoneListContent}
         keyboardShouldPersistTaps="handled"
       >
+        {loading && <Text style={styles.hint}>Looking up city…</Text>}
+        {error !== '' && (
+          <Text accessibilityRole="alert" style={styles.error}>
+            {error}
+          </Text>
+        )}
+        {error !== '' && cities.length === 0 && (
+          <Button
+            label="Retry city search"
+            kind="text"
+            onPress={() => {
+              invalidate()
+              setRetry(n => n + 1)
+            }}
+          />
+        )}
+        {cities.map(city => (
+          <Pressable
+            key={city.id}
+            accessibilityRole="button"
+            accessibilityLabel={`Use city ${city.primary}, ${city.secondary}`}
+            style={styles.zoneRow}
+            onPress={async () => {
+              await chooseCity(city)
+            }}
+          >
+            <View style={styles.zoneText}>
+              <Text style={styles.zoneName}>{city.primary}</Text>
+              <Text style={styles.hint}>{city.secondary}</Text>
+            </View>
+          </Pressable>
+        ))}
+        {attribution !== '' && <Text style={styles.hint}>{attribution}</Text>}
         {matches.map((zone, index) => (
           <Pressable
             key={zone}
@@ -596,7 +725,7 @@ export function TimezonePicker({
             accessibilityLabel={`Use time zone ${zone}`}
             aria-selected={zone === value}
             onPress={() => {
-              onChoose(zone)
+              chooseZone(zone)
             }}
             style={({ pressed }) => [
               styles.zoneRow,
@@ -615,9 +744,12 @@ export function TimezonePicker({
             <RadioMark on={zone === value} />
           </Pressable>
         ))}
-        {matches.length === 0 && (
-          <Text style={styles.hint}>No matching time zones</Text>
-        )}
+        {matches.length === 0 &&
+          cities.length === 0 &&
+          !loading &&
+          error === '' && (
+            <Text style={styles.hint}>No matching cities or time zones</Text>
+          )}
       </ScrollView>
     </View>
   )
