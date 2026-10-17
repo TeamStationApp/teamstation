@@ -169,6 +169,9 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
      */
     internal var serverClockFollower: Job? = null
         private set
+
+    /** The TeamStation whose clock the stream's offset was measured against. */
+    private var serverClockBase: String? = null
     private var recordingVideo: StreamVideoEncoding? = null
     private var lastError: PhoneStreamError? = null
     private var statusJob: Job? = null
@@ -873,11 +876,16 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
      * stream, whose every frame's wall-clock SEI it puts on TeamStation's clock (TeamStation places
      * each publish by it, the first and every return), and the first to the take, whose upload may
      * come hours later. An unanswered one leaves the last offset, which holds across a drop and a
-     * redial.
+     * redial. A take on another TeamStation starts without one: the last server's offset says nothing
+     * about this one's clock, so its frames carry the phone's own until the first measurement lands.
      */
     private fun followServerClock() {
         val held = take ?: return
         serverClockFollower?.cancel()
+        if (held.request.apiBase != serverClockBase) {
+            stream.serverClockOffsetMs = null
+            serverClockBase = held.request.apiBase
+        }
         val client = LiveStreamClient(held.request.apiBase, held.request.token, environment.http)
         serverClockFollower = scope.launch {
             while (isActive) {
@@ -1164,6 +1172,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     internal suspend fun abandonForTesting() = onEngine {
         statusJob?.cancel()
         storageJob?.cancel()
+        serverClockFollower?.cancel()
+        serverClockFollower = null
         recordingSession.stopHeartbeat()
         streamController.stop()
         source?.stop()

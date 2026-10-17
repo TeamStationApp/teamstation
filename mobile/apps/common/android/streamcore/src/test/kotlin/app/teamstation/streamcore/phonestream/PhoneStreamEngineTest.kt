@@ -871,6 +871,28 @@ class PhoneStreamEngineTest {
     }
 
     @Test
+    fun aTakeOnAnotherServerCarriesNoneOfTheLastServersOffsetAndAnAbandonedEngineStopsMeasuring() {
+        val engine = opened()
+        start(engine)
+        waitFor { streamOutput.serverClockOffsetMs == 3_000 }
+        runBlocking { engine.stopRecording() }
+        // The next take goes to another server, which does not answer yet: until it does, the
+        // frames carry the phone's own clock, not the last server's offset.
+        timeFails = true
+        val before = timeReads()
+        val elsewhere = request.copy(apiBase = server.url("/elsewhere/api/v1").toString())
+        runBlocking { engine.startRecording("rtmp://ingest.example.test/live/key-0001", "s2", "g1", "Home Plate", elsewhere) }
+        assertNull(streamOutput.serverClockOffsetMs)
+        waitFor { timeReads() >= before + ServerClock.TRIPS_PER_SAMPLE }
+        assertNull(streamOutput.serverClockOffsetMs)
+        val follower = engine.serverClockFollower!!
+        // Abandoned as a kill leaves it, the engine measures no more.
+        runBlocking { engine.abandonForTesting() }
+        assertNull(engine.serverClockFollower)
+        assertTrue(follower.isCancelled)
+    }
+
+    @Test
     fun anUploadThatWasCutOffResumesOnceAndBlocksAnotherPart() {
         val first = opened()
         start(first)
