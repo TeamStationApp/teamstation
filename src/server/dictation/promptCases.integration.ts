@@ -358,6 +358,28 @@ const live = keys != null
   function () {
     this.timeout(180_000)
 
+    for (const placeholder of [false, true]) {
+      const phrase = `Create a ${placeholder ? 'placeholder ' : ''}player named Shohei Ohtani, number 17`
+      it(`distinguishes roster creation: ${phrase}`, async function () {
+        const { roster } = decided(
+          await say(
+            'roster',
+            `The game has not begun.\nROSTERS\n${ROSTERS}`,
+            phrase
+          )
+        )
+        expect(roster).length(1)
+        expect(roster[0]).includes({
+          type: 'addPlayer',
+          name: 'Shohei Ohtani',
+          jersey: '17'
+        })
+        expect(
+          roster[0].type === 'addPlayer' && roster[0].placeholder === true
+        ).equals(placeholder)
+      })
+    }
+
     const owlsUp = game({
       half: 'Bottom',
       inning: '2nd',

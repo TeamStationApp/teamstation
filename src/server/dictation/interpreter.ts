@@ -682,7 +682,12 @@ are offered them.
   Never add a name or a number the scorer did not say, and never give a
   tag. Spelling a listed player as ROSTERS spells him is not adding a name.
   A new player joins only through addPlayer, when the scorer says to
-  add him.
+  add or create him. This creates a real team-roster player by default.
+  Set placeholder true only when the scorer explicitly says "placeholder".
+  "Create a player named Shohei Ohtani, number 17" creates a real roster
+  player; "Create a placeholder player named Shohei Ohtani, number 17"
+  creates a game-only placeholder. Never infer placeholder from an unknown
+  name, a missing surname, or the fact that the player is not listed.
   A name off by a sound from exactly one listed player is that player. The
   name in the tool call is the ROSTERS spelling, first and last, not the
   spelling that was heard. "Add Jarrett to the lineup", when Jared Hale is
