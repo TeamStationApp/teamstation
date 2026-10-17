@@ -511,7 +511,6 @@ async function main(): Promise<void> {
     await tap('Create Placeholder Player')
     await shown('Select number of players to create')
     await tap('Create')
-    await tap('Cancel')
     await shown('Save Rosters')
     await tap('Cancel')
     for (const [label, key] of [
