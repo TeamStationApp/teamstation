@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { scheduleDate } from '../screens/format'
@@ -71,13 +71,6 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const dated = scheduleDate(startAt)
-  const [detailsHeight, setDetailsHeight] = useState(0)
-  // The 1.125rem weekday, the 1.5rem month, the 2.4rem day, 1rem separator
-  // spacing and its 3px rule.
-  const calendarHeight =
-    dated.weekday === '' ? theme.rem(1.5) : theme.rem(6.025) + 3
-  const scale =
-    detailsHeight > 0 ? Math.min(1, detailsHeight / calendarHeight) : 1
   const inProgress = status === 'inProgress'
   const scored = awayScore != null && homeScore != null && !inProgress
   const cancelled = status === 'cancelled'
@@ -102,10 +95,7 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
 
   const calendar = (
     <View
-      style={[
-        styles.date,
-        { width: theme.rem(SCHEDULE_DATE_WIDTH_REM) * scale }
-      ]}
+      style={[styles.date, { width: theme.rem(SCHEDULE_DATE_WIDTH_REM) }]}
       testID="schedule-date"
     >
       {dated.weekday !== '' && (
@@ -114,8 +104,8 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
             style={[
               styles.month,
               {
-                fontSize: theme.rem(0.9375) * scale,
-                lineHeight: theme.rem(1.125) * scale
+                fontSize: theme.rem(0.9375),
+                lineHeight: theme.rem(1.125)
               }
             ]}
             numberOfLines={1}
@@ -126,7 +116,7 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
           <View
             style={[
               styles.dateSeparator,
-              { height: 3 * scale, marginVertical: theme.rem(0.5) * scale }
+              { height: 3, marginVertical: theme.rem(0.5) }
             ]}
             testID="schedule-date-separator"
           />
@@ -136,8 +126,8 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
         style={[
           styles.month,
           {
-            fontSize: theme.rem(1.25) * scale,
-            lineHeight: theme.rem(1.5) * scale
+            fontSize: theme.rem(1.25),
+            lineHeight: theme.rem(1.5)
           }
         ]}
         numberOfLines={1}
@@ -149,8 +139,8 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
           style={[
             styles.day,
             {
-              fontSize: theme.rem(2) * scale,
-              lineHeight: theme.rem(2.4) * scale
+              fontSize: theme.rem(2),
+              lineHeight: theme.rem(2.4)
             }
           ]}
           numberOfLines={1}
@@ -163,17 +153,7 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
     </View>
   )
   const details = (
-    <View
-      style={styles.details}
-      testID="schedule-details"
-      onLayout={event => {
-        const height = event.nativeEvent.layout.height
-        if (height > 0)
-          setDetailsHeight(held =>
-            Math.abs(held - height) < 0.1 ? held : height
-          )
-      }}
-    >
+    <View style={styles.details} testID="schedule-details">
       <View style={styles.first}>
         <Text style={[styles.team, styles.firstName]} numberOfLines={1}>
           {first}
@@ -240,7 +220,7 @@ export function ScheduleRow(props: ScheduleRowProps): React.ReactElement {
 const getStyles = cacheStyles((theme: Theme) => ({
   row: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: theme.rem(theme.cardContentInsetRem),
     position: 'relative'
   },
