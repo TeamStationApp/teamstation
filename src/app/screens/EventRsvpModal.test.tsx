@@ -26,7 +26,7 @@ const info = (): EventInfo =>
     longitude: null,
     status: 'scheduled',
     canManage: false,
-    replyUserIds: [101, 103, 104, 115],
+    replyUserIds: [101, 103, 104],
     attendanceTeams: [
       { id: 'home', name: 'Demo Hawks', isParticipant: true },
       { id: 'away', name: 'Demo Eagles', isParticipant: true }
@@ -63,7 +63,7 @@ const info = (): EventInfo =>
         userId: 115,
         name: 'Alex R',
         response: null,
-        canReply: true,
+        canReply: false,
         isPlayer: false,
         isTeamParticipant: false,
         avatarUrl: null

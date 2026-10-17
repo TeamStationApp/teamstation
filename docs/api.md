@@ -81,3 +81,14 @@ idempotencyKey}` from a signed-in user. The server binds the request to that
 user, deduplicates pending requests to the same team, and asks the team's
 administrators through the approval inbox. Acceptance grants only membership,
 never staff roles. Requests for missing, merged or placeholder teams fail.
+
+## RSVP eligibility
+
+Event info's `replyUserIds` and attendee `canReply` are authoritative for the
+Info card, schedule and RSVP modal. Self replies require an explicit membership
+or team admin/coach (including assistant coach) role on a participating team.
+Inherited season/league access, site administration and guardianship alone do
+not qualify. Guardian-linked children must be current players on either game
+team, or the one team for a practice/other event. Canonical merged identities
+are deduplicated and disabled people are excluded. Saves recheck the same
+policy; an old reply cannot keep a removed player eligible.

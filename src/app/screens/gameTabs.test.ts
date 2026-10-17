@@ -128,17 +128,19 @@ describe('the pills across a game', function () {
 
   const onCoachGame = (): void => undefined
 
-  it('puts Coach after Score and Record, for a head coach (U23)', function () {
+  it('orders Score, Coach, DJ, Record by independent capabilities', function () {
     const input = {
       game: gameWith({ canScore: true, canDj: true, coachSides: ['home'] }),
       onRecordGame,
-      onCoachGame
+      onCoachGame,
+      onDjGame: () => undefined
     }
     expect(ids(gameTabs(input))).deep.equals(['info', 'boxScore', 'watch'])
     expect(gameActions(input)).deep.equals([
       { id: 'score', label: 'Score' },
-      { id: 'record', label: 'Record' },
-      { id: 'coach', label: 'Coach' }
+      { id: 'coach', label: 'Coach' },
+      { id: 'dj', label: 'DJ' },
+      { id: 'record', label: 'Record' }
     ])
   })
 
@@ -177,6 +179,38 @@ describe('the pills across a game', function () {
     expect(
       ids(gameActions({ game: gameWith({ coachSides: ['home'] }) }))
     ).not.includes('coach')
+  })
+
+  it('shares scoring availability with Coach and DJ without requiring scoring permission', () => {
+    for (const fields of [
+      { status: 'scheduled' as const },
+      { status: 'inProgress' as const, scoringOwner: 'teamstation' as const },
+      { status: 'final' as const, scoringOwner: 'teamstation' as const },
+      {
+        status: 'final' as const,
+        scoreboard: { open: true, mayOverride: true }
+      },
+      { status: 'final' as const, homeScore: 3, awayScore: 2 },
+      { status: 'cancelled' as const }
+    ]) {
+      const base = gameWith({ ...fields, canDj: true, coachSides: ['home'] })
+      const score = ids(
+        gameActions({ game: { ...base, canScore: true } })
+      ).includes('score')
+      const other = ids(
+        gameActions({ game: base, onCoachGame, onDjGame: () => undefined })
+      )
+      expect(other.includes('coach')).equals(score)
+      expect(other.includes('dj')).equals(score)
+    }
+    expect(
+      ids(
+        gameActions({
+          game: gameWith({ canDj: false }),
+          onDjGame: () => undefined
+        })
+      )
+    ).not.includes('dj')
   })
 
   const startAt = '2027-04-10T18:00:00.000Z'
