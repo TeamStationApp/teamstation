@@ -901,12 +901,18 @@ async function spawnPrepared(
           playlistContinuation(playlist, next, new Date(0)).offsetSec
         if (stoppedDuringRead()) return
         if (deferIfWriterAlive()) return
+        // Both reads yield, and late in a game after this server restarts
+        // they take a while. The wall clock the writer starts at is now, with
+        // nothing awaited between here and the spawn: measured before them,
+        // a return with no frame wall clocks went early by that long.
+        output.continuation = playlistContinuation(playlist, next, new Date())
+        const wallClockSec = output.continuation.offsetSec
         placement = {
           startedAt: Date.now(),
           continuing: true,
           floorSec,
-          offsetSec,
-          wallClockSec: offsetSec,
+          offsetSec: wallClockSec,
+          wallClockSec,
           settled: false,
           stamped: new Set<string>()
         }
