@@ -7,12 +7,14 @@ import DirectorExport
 
 @Suite("A programme hole", .serialized)
 struct BlankProgrammeHoleTests {
-  @Test("The frame before the next part is left blank")
+  @Test("Only the stretch from one part's last picture to the next part's first is blank")
   func frameBeforeTheNextPartIsBlank() {
-    #expect(ArchiveRemux.leavesGapFrameBlank(hasNewPicture: false, hasShownPicture: true, hasLaterPicture: true))
-    #expect(!ArchiveRemux.leavesGapFrameBlank(hasNewPicture: true, hasShownPicture: true, hasLaterPicture: true))
-    #expect(!ArchiveRemux.leavesGapFrameBlank(hasNewPicture: false, hasShownPicture: false, hasLaterPicture: true))
-    #expect(!ArchiveRemux.leavesGapFrameBlank(hasNewPicture: false, hasShownPicture: true, hasLaterPicture: false))
+    #expect(ArchiveRemux.leavesGapFrameBlank(hasNewPicture: false, shownPart: 0, nextPart: 1))
+    #expect(!ArchiveRemux.leavesGapFrameBlank(hasNewPicture: true, shownPart: 0, nextPart: 1))
+    #expect(!ArchiveRemux.leavesGapFrameBlank(hasNewPicture: false, shownPart: nil, nextPart: 1))
+    #expect(!ArchiveRemux.leavesGapFrameBlank(hasNewPicture: false, shownPart: 1, nextPart: nil))
+    // A frame inside a part with no new picture repeats the one before.
+    #expect(!ArchiveRemux.leavesGapFrameBlank(hasNewPicture: false, shownPart: 1, nextPart: 1))
   }
 
   @Test("A hole is black once a second: its first frame, then every second after")
@@ -121,6 +123,48 @@ struct BlankProgrammeHoleTests {
     #expect(try await marked.marker(in: destination, at: 5) == nil)
     #expect(try await marked.marker(in: destination, at: 10.5) == 500_000)
     #expect(try await marked.marker(in: destination, at: 11.9) == 500_014)
+  }
+
+  /// A part that dropped a frame, then a hole, then a part: the dropped frame repeats the picture
+  /// before it, inside the part, and only the stretch between the parts is black.
+  @Test("A frame missing inside a part repeats the picture before it, and only the gap between parts is black")
+  func missingFrameInsideAPartIsNotAHole() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("blank-missing-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let marked = WallClockPlacementTests()
+    let first = root.appendingPathComponent("a.mp4")
+    let second = root.appendingPathComponent("b.mp4")
+    try await marked.markedMovieWithAudio(at: first, firstValue: 1_000, frames: 15, skipping: [7])
+    try await marked.markedMovieWithAudio(at: second, firstValue: 500_000, frames: 15)
+    let destination = root.appendingPathComponent("out.mp4")
+    try await ArchiveRemux.stitch(
+      files: [first, second],
+      fileDurations: [0.5, 0.5],
+      startWalls: [WallClock(seconds: 0), WallClock(seconds: 3.5)],
+      windowStart: WallClock(seconds: 0),
+      length: 4,
+      settings: WallClockPlacementTests.encoding,
+      destination: destination,
+      blankGaps: true
+    )
+
+    // Every frame of the first part is in the file, the missing one included, each one frame long.
+    let samples = try await timing(destination)
+    let part = samples.filter { $0.start < 0.49 }
+    #expect(part.count == 15, "\(part.map(\.start))")
+    #expect(part.allSatisfy { abs($0.duration - 1.0 / 30) < 0.002 }, "\(part.map(\.duration))")
+    #expect(part.dropFirst().allSatisfy { !$0.sync }, "no keyframe is forced inside the part")
+    // The missing frame shows the picture before it.
+    #expect(try await marked.marker(in: destination, at: 7.0 / 30) == 1_006)
+    #expect(try await marked.marker(in: destination, at: 8.0 / 30) == 1_008)
+    // The gap between the parts is three black pictures a second apart.
+    let hole = samples.filter { $0.start > 0.49 && $0.start < 3.49 }
+    #expect(hole.map(\.start).enumerated().allSatisfy { abs($1 - 0.5 - Double($0)) < 0.002 }, "\(hole)")
+    #expect(hole.count == 3)
+    #expect(try await marked.marker(in: destination, at: 2) == nil)
+    #expect(try await marked.marker(in: destination, at: 3.5) == 500_000)
   }
 
   /// Every sample's presentation time, duration and keyframe flag as stored, in the file's own media

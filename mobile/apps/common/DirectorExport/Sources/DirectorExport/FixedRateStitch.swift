@@ -134,11 +134,15 @@ extension ArchiveRemux {
 
   /// Whether an output frame in a blank gap is left blank.
   ///
-  /// The picture already encoded keeps its one frame. Every later frame until the next part is
-  /// left blank, including the one immediately before that part. With no picture still to come, the
-  /// frame is after the last part, and is not a hole.
-  public static func leavesGapFrameBlank(hasNewPicture: Bool, hasShownPicture: Bool, hasLaterPicture: Bool) -> Bool {
-    !hasNewPicture && hasShownPicture && hasLaterPicture
+  /// Only the stretch between a part's last picture and the next part's first is a hole, as
+  /// Android's export has it: `shownPart` is the part of the picture already encoded, which keeps
+  /// its one frame, and `nextPart` the part of the next picture still to come. Every frame between
+  /// is blank, including the one immediately before the next part. A frame inside a part with no
+  /// new picture -- a dropped frame, or an export rate above the part's -- repeats the picture
+  /// before it. With no picture still to come, the frame is after the last part, and is not a hole.
+  public static func leavesGapFrameBlank(hasNewPicture: Bool, shownPart: Int?, nextPart: Int?) -> Bool {
+    guard !hasNewPicture, let shownPart, let nextPart else { return false }
+    return nextPart != shownPart
   }
 
   /// How often, in seconds, a black picture is encoded in a blank gap: each lasts until the next, so
@@ -391,8 +395,10 @@ private final class PictureEncoder: @unchecked Sendable {
     var waiting: PictureFeed.Picture?
     var reported = 0.0
     let timescale = CMTimeScale(rate)
-    // With `blankGaps`, how many frames into a hole this one is, nil outside one.
+    // With `blankGaps`, how many frames into a hole this one is, nil outside one, and the part the
+    // picture shown came from.
     var intoHole: Int?
+    var shownPart: Int?
     do {
       for frame in 0 ..< frames {
         // A free place in the encoder, looking up now and then to see whether to stop waiting.
@@ -419,21 +425,26 @@ private final class PictureEncoder: @unchecked Sendable {
         // Every picture placed by this frame's instant, keeping only the last: a camera faster than
         // the setting has the ones between frames skipped, and only the one shown is fitted.
         var latest: CVPixelBuffer?
+        var latestPart: Int?
         while true {
           if waiting == nil { waiting = feed.next() }
           guard let picture = waiting, picture.seconds <= instant else { break }
           latest = picture.buffer
+          latestPart = picture.part
           waiting = nil
         }
-        if let latest { shown = try fitter.fit(latest) }
+        if let latest {
+          shown = try fitter.fit(latest)
+          shownPart = latestPart
+        }
         var picture = shown ?? black
         // The part after a hole opens on a keyframe, so a reader seeking to it needs nothing from
         // before the hole.
         var properties: CFDictionary?
         if blankGaps, ArchiveRemux.leavesGapFrameBlank(
           hasNewPicture: latest != nil,
-          hasShownPicture: shown != nil,
-          hasLaterPicture: waiting != nil
+          shownPart: shownPart,
+          nextPart: waiting?.part
         ) {
           let into = intoHole.map { $0 + 1 } ?? 0
           intoHole = into
@@ -549,6 +560,8 @@ private final class PictureFeed {
     /// Seconds into the output.
     var seconds: Double
     var buffer: CVPixelBuffer
+    /// The placement it came from: which part of the take.
+    var part: Int
   }
 
   /// How far before a file's kept stretch its pictures are read: a picture just before the window
@@ -561,6 +574,8 @@ private final class PictureFeed {
   private var reader: AVAssetReader?
   private var output: AVAssetReaderTrackOutput?
   private var current: ArchiveRemux.Placement?
+  /// The index of `current` among the placements.
+  private var currentIndex = 0
 
   init(_ placements: [ArchiveRemux.Placement]) {
     self.placements = placements
@@ -575,6 +590,7 @@ private final class PictureFeed {
       guard let output, let placement = current else {
         guard upcoming < placements.count else { return nil }
         open(placements[upcoming])
+        currentIndex = upcoming
         upcoming += 1
         continue
       }
@@ -586,7 +602,7 @@ private final class PictureFeed {
       let time = CMSampleBufferGetPresentationTimeStamp(sample)
       // Past the kept stretch is the next file's business, or past the end of the output.
       guard time.isNumeric, time < placement.end else { continue }
-      return Picture(seconds: placement.outputSeconds(of: time), buffer: buffer)
+      return Picture(seconds: placement.outputSeconds(of: time), buffer: buffer, part: currentIndex)
     }
   }
 
