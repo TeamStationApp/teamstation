@@ -97,6 +97,7 @@ import { SignInLinkScreen } from './screens/SignInLinkScreen'
 import { TeamPage } from './screens/TeamPage'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
+import { useResumePendingUploads } from './stream/useResumePendingUploads'
 import {
   cacheStyles,
   type Theme,
@@ -468,6 +469,7 @@ function Shell(props: AppProps): React.ReactElement {
   }, [signedInAs])
   const isAdmin = session?.user.isAdmin === true
   useSentryUser(signedInAs)
+  useResumePendingUploads(client, signedInAs)
 
   /**
    * The one socket every screen hears a game's changes on, for as long as
@@ -1622,6 +1624,12 @@ function Shell(props: AppProps): React.ReactElement {
         onOpen={id => {
           push({ name: 'notification', id })
         }}
+        onUpload={gameId => {
+          push({ name: 'game', gameId, title: '', tab: 'watch' })
+        }}
+        onDismissed={() => {
+          refreshNotifications().catch(() => undefined)
+        }}
       />
     ) : top.name === 'notification' ? (
       <NotificationDetailScreen
@@ -1639,6 +1647,9 @@ function Shell(props: AppProps): React.ReactElement {
           } else if (replacementId != null)
             replace({ name: 'notification', id: replacementId })
           refreshNotifications().catch(() => undefined)
+        }}
+        onUpload={gameId => {
+          push({ name: 'game', gameId, title: '', tab: 'watch' })
         }}
       />
     ) : top.name === 'account' && session != null ? (

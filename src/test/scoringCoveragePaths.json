@@ -6,6 +6,7 @@
   "src/app/screens/GameScreen.tsx",
   "src/app/screens/BoxScore.tsx",
   "src/app/screens/CoachGameScreen.tsx",
+  "src/app/screens/NotificationsScreen.tsx",
   "src/app/navigation/routes.ts",
   "src/app/navigation/useAddressBar.ts",
   "src/app/components/AppNav.tsx",
@@ -128,5 +129,18 @@
   "src/app/player/controlGeometry.ts",
   "src/app/player/slowMotion.ts",
   "src/app/player/multiCam/useMultiCam.ts",
-  "src/app/player/multiCam/barParts.tsx"
+  "src/app/player/multiCam/barParts.tsx",
+  "src/app/stream/**/*.ts",
+  "src/app/player/multiCam/orientationLock.ts",
+  "src/app/stream/**/*.tsx",
+  "src/app/screens/GameWatchLayout.native.tsx",
+  "src/app/components/streamActions.ts",
+  "src/app/components/TextField.tsx",
+  "src/app/player/attachHls.ts",
+  "src/app/player/liveRejoin.ts",
+  "src/app/player/stillLive.ts",
+  "src/app/player/MultiCamView.tsx",
+  "src/app/player/multiCam/align.ts",
+  "src/app/player/useVideoListRefresh.ts",
+  "src/app/player/playIntent.ts"
 ]

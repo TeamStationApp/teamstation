@@ -21,8 +21,7 @@ public struct RootView: View {
         // The phone draws its own preview layer where a remote screen draws a decoded stream.
         CameraView(model: environment, isShowingSettings: $environment.isShowingSettings) {
           CameraPreview(
-            session: environment.camera.captureSession,
-            position: environment.cameraState.position,
+            camera: environment.camera,
             captureRotation: environment.cameraState.captureRotationAngle
           )
         }

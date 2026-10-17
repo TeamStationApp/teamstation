@@ -1,16 +1,23 @@
 import { rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { asNumber, asObject, asOptional, asString } from 'cleaners'
+import { asBoolean, asNumber, asObject, asOptional, asString } from 'cleaners'
 import express, { Router } from 'express'
-import type { Kysely, Selectable } from 'kysely'
+import type { Kysely, Selectable, Transaction } from 'kysely'
 
-import { badRequest, notFound, unauthorized } from '../../common/errors'
+import {
+  badRequest,
+  conflict,
+  forbidden,
+  notFound,
+  unauthorized
+} from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { canFilm, roleScopes } from '../access'
 import type { Database, DirectorUploadsTable } from '../db/database'
 import {
   assembleParts,
+  covers,
   ensureUploadDir,
   failureToShow,
   isComplete,
@@ -32,6 +39,7 @@ import { spaceConfigured, type SpaceSettings } from '../media/spacesHls'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { settleRecordingReminder } from '../notifications/recordingReminders'
 
 /**
  * Where TS Director sends the recording it made.
@@ -83,7 +91,16 @@ const asNewUpload = asObject({
    * video onto the server's, where the scoring and the scoreboard are. An app
    * that did not measure it leaves it out, and the start stays as it said.
    */
-  serverClockOffsetMs: asOptional(asNumber)
+  serverClockOffsetMs: asOptional(asNumber),
+  /**
+   * The phone stream this recording was made alongside. Counted only for a
+   * stream of the caller's, on this game, that keeps its own recording and
+   * has not been replaced yet; anything else is ignored, so an upload that
+   * would succeed without it still does.
+   */
+  liveStreamId: asOptional(asString),
+  /** The recording ran for every moment that stream published. */
+  wholeStream: asOptional(asBoolean)
 })
 
 /**
@@ -113,6 +130,17 @@ export function clockOffsetOf(value: number | undefined): number | null {
   }
   return Math.round(value)
 }
+
+/** What an upload of an angle that is still on the air is told. */
+export const STOP_STREAMING_FIRST =
+  'Stop streaming this angle before uploading its recording'
+
+/**
+ * A recording of a stream another account owns: a take made on a phone that
+ * somebody else has since signed in on. It is theirs to upload.
+ */
+export const ANOTHER_ACCOUNTS_RECORDING =
+  'This recording was made on another account. Sign in as that account to upload it'
 
 /** The largest single part this will take, with room over `PART_SIZE`. */
 const PART_LIMIT = PART_SIZE + 1024 * 1024
@@ -235,6 +263,46 @@ export function directorUploadRoutes(
       theSpace()
       const game = await gameIRun(body.gameId, actor.userId, actor.isAdmin)
 
+      // Ended and revoked streams still count: a recording made before an
+      // End can still replace its own angle's live copy.
+      const named =
+        body.liveStreamId == null
+          ? undefined
+          : await db
+              .selectFrom('live_streams')
+              .select(['id', 'state'])
+              .where('id', '=', body.liveStreamId)
+              .where('user_id', '=', actor.userId)
+              .where('game_id', '=', game.id)
+              .where('records_locally', '=', true)
+              .where('local_recording', '<>', 'uploaded')
+              .executeTakeFirst()
+      if (named?.state === 'publishing') throw conflict(STOP_STREAMING_FIRST)
+      // Somebody else's stream is refused, not ignored. Opened unnamed, the
+      // take would go down the coverage rule as this account's upload — it
+      // can hide this account's own live copies — and its maker's reminder
+      // would never settle.
+      //
+      // This account's own stream that it may not replace — another game's,
+      // one already replaced, one that keeps no recording — is still kept on
+      // the upload, so the upload replaces nothing: opened unnamed, a phone's
+      // take would go down the coverage rule meant for Director and the
+      // Distributor, and could hide a coach's streaming-software copy or
+      // another account's Director angle. The finish re-checks the stream and
+      // finds nothing to replace.
+      let ownStream: string | undefined
+      if (named == null && body.liveStreamId != null) {
+        const owner = await db
+          .selectFrom('live_streams')
+          .select(['id', 'user_id as userId'])
+          .where('id', '=', body.liveStreamId)
+          .executeTakeFirst()
+        if (owner != null && owner.userId !== actor.userId) {
+          throw forbidden(ANOTHER_ACCOUNTS_RECORDING)
+        }
+        ownStream = owner?.id
+      }
+
       const uploadId = makeId('directorUpload')
       await ensureUploadDir(options.uploadsDir, uploadId)
       await db
@@ -249,7 +317,9 @@ export function directorUploadRoutes(
           size_bytes: String(Math.round(body.sizeBytes)),
           part_size: PART_SIZE,
           started_at: recordingStart(body.startAt),
-          server_clock_offset_ms: serverClockOffsetMs
+          server_clock_offset_ms: serverClockOffsetMs,
+          live_stream_id: named?.id ?? ownStream ?? null,
+          whole_stream: named != null && body.wholeStream === true
         })
         .execute()
       setAudit(res.locals, { entityType: 'directorUpload', entityId: uploadId })
@@ -471,7 +541,7 @@ export function directorUploadRoutes(
         }
       })
 
-      await replaceLiveRecording(db, game.id, ingested.videoId)
+      await replaceLiveRecording(db, game.id, ingested.videoId, namedBy(row))
 
       await db
         .updateTable('director_uploads')
@@ -532,6 +602,19 @@ export function directorUploadRoutes(
 }
 
 /**
+ * The stream an upload names, for `replaceLiveRecording`: none for an upload
+ * from TS Director or the Distributor, which go by the coverage rule.
+ */
+export function namedBy(row: {
+  live_stream_id: string | null
+  whole_stream: boolean
+}): { liveStreamId: string; wholeStream: boolean } | undefined {
+  return row.live_stream_id == null
+    ? undefined
+    : { liveStreamId: row.live_stream_id, wholeStream: row.whole_stream }
+}
+
+/**
  * The live recording of this game steps aside for the upload.
  *
  * Hidden now, and deleted in thirty days on a deployment that has turned the
@@ -539,12 +622,32 @@ export function directorUploadRoutes(
  * is the only thing anybody has checked; the purge is what stops the Space
  * being paid for ever for a copy on no page — and it stays off by default,
  * because a deployment may only delete from a bucket it owns.
+ *
+ * **Unnamed**, from TS Director or the Distributor: the coverage rule picks
+ * which live copies the upload covers, among streams that do not keep their
+ * own recording. A phone's angle is never hidden by somebody else's upload.
+ *
+ * **Named**, from the phone that recorded the angle: only that stream's live
+ * copy, and only while it is not publishing. With `wholeStream` it is hidden
+ * whatever the coverage test says; without, only if the test passes. When it
+ * is hidden, the upload takes its title, the stream is revoked and marked
+ * `uploaded`, and its reminder is settled. When it is not, the upload stands
+ * as a video of its own and the reminder stays. A stream with no live copy at
+ * all — its phone never reached the server, so the placeholder went when it
+ * ended — has nothing to hide: the upload is the angle's only copy, and the
+ * stream is revoked, marked `uploaded` and its reminder settled all the same.
+ * A named stream that is another game's, keeps no recording, or was replaced
+ * already replaces nothing.
  */
 export async function replaceLiveRecording(
   db: Kysely<Database>,
   gameId: string,
-  uploadedId: string
+  uploadedId: string,
+  named?: { liveStreamId: string; wholeStream: boolean }
 ): Promise<string[]> {
+  if (named != null) {
+    return await replaceNamedStream(db, gameId, uploadedId, named)
+  }
   const videos = await db
     .selectFrom('videos')
     .select([
@@ -555,6 +658,17 @@ export async function replaceLiveRecording(
       'duration_sec as durationSec'
     ])
     .where('game_id', '=', gameId)
+    .where(eb =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('live_streams')
+            .select('live_streams.id')
+            .whereRef('live_streams.video_id', '=', 'videos.id')
+            .where('live_streams.records_locally', '=', true)
+        )
+      )
+    )
     .execute()
 
   // Where the upload sits in time, which is what says whether it reaches the
@@ -575,4 +689,107 @@ export async function replaceLiveRecording(
     .where('id', 'in', replaced)
     .execute()
   return replaced
+}
+
+async function replaceNamedStream(
+  db: Kysely<Database>,
+  gameId: string,
+  uploadedId: string,
+  named: { liveStreamId: string; wholeStream: boolean }
+): Promise<string[]> {
+  const stream = await db
+    .selectFrom('live_streams')
+    .select(['id', 'state', 'video_id as videoId', 'local_recording'])
+    .where('id', '=', named.liveStreamId)
+    .where('game_id', '=', gameId)
+    .where('records_locally', '=', true)
+    .executeTakeFirst()
+  // Publishing again since the upload began, or replaced by another upload
+  // already: nothing is replaced, and the upload is a video of its own.
+  if (
+    stream == null ||
+    stream.state === 'publishing' ||
+    stream.local_recording === 'uploaded'
+  ) {
+    return []
+  }
+  if (stream.videoId == null) {
+    // Never on the air, so nothing to hide: the upload is all there is of
+    // this angle, and it settles the angle as a replacement would.
+    const now = new Date()
+    await db.transaction().execute(async trx => {
+      if (await claimAsUploaded(trx, stream.id, now)) {
+        await settleRecordingReminder(trx, stream.id, now)
+      }
+    })
+    return []
+  }
+  const videos = await db
+    .selectFrom('videos')
+    .select([
+      'id',
+      'title',
+      'hidden',
+      'start_at as startAt',
+      'duration_sec as durationSec'
+    ])
+    .where('id', 'in', [stream.videoId, uploadedId])
+    .execute()
+  const live = videos.find(one => one.id === stream.videoId)
+  const uploaded = videos.find(one => one.id === uploadedId)
+  if (live == null || uploaded == null) return []
+  if (!named.wholeStream && (live.hidden || !covers(uploaded, live))) {
+    return []
+  }
+
+  const now = new Date()
+  const replaced = await db.transaction().execute(async trx => {
+    // Revoked, so the next take on this angle asks for a fresh stream and
+    // video rather than this one, whose copy is now the upload. First, and
+    // only while it is still neither publishing nor replaced: the phone may
+    // have dialled it again since it was read above, and a stream that is on
+    // the air keeps its key and its video.
+    if (!(await claimAsUploaded(trx, stream.id, now))) return false
+    await trx
+      .updateTable('videos')
+      .set({
+        hidden: true,
+        replaced_by: uploadedId,
+        purge_after: purgeDateFor(now),
+        updated_at: now
+      })
+      .where('id', '=', live.id)
+      .execute()
+    // The angle strip names a video after its title, so the upload takes
+    // the angle's, whatever the app called it.
+    await trx
+      .updateTable('videos')
+      .set({ title: live.title, updated_at: now })
+      .where('id', '=', uploadedId)
+      .execute()
+    await settleRecordingReminder(trx, stream.id, now)
+    return true
+  })
+  return replaced ? [live.id] : []
+}
+
+/**
+ * Marks a stream `uploaded` and revokes it, so the next take on its angle asks
+ * for a fresh stream and video, and says whether it did: only while it is
+ * neither publishing nor replaced already, since the phone may have dialled it
+ * again since it was read.
+ */
+async function claimAsUploaded(
+  trx: Transaction<Database>,
+  streamId: string,
+  now: Date
+): Promise<boolean> {
+  const claimed = await trx
+    .updateTable('live_streams')
+    .set({ local_recording: 'uploaded', state: 'revoked', updated_at: now })
+    .where('id', '=', streamId)
+    .where('state', '<>', 'publishing')
+    .where('local_recording', '<>', 'uploaded')
+    .executeTakeFirst()
+  return Number(claimed.numUpdatedRows) > 0
 }

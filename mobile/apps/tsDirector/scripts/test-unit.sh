@@ -3,13 +3,15 @@
 #
 # COVERAGE=1 also gathers code coverage and holds the lines this branch changed in TS Director,
 # DirectorCore, DirectorExport and the shared camera discovery (DirectorSources, DirectorNDI,
-# DirectorRTSP, whose suites live here) to 90% with scripts/swift-changed-line-coverage.cjs.
+# DirectorRTSP, whose suites live here), the shared RTMP client (DirectorRTMP) and the shared
+# programme recorder and streamer (DirectorMedia) to 90% with scripts/swift-changed-line-coverage.cjs.
 # DirectorRootView, which only hands the scene's URLs to AppEnvironment, is excluded with the
 # other SwiftUI wiring; signInLink.e2e.ts drives it.
 # EventControl is measured by its own package's tests, never here. The files it
 # excludes are SwiftUI layout and AppEnvironment's one-line wiring, which the maestro-d device tests
 # exercise instead; the package manifests and the Mac tools under tools/, which no iPad test bundle
-# compiles, so they never have a coverage record.
+# compiles, so they never have a coverage record; and two files of declarations alone, the
+# MediaTelemetry protocol and DirectorDVR's re-exports, which hold no line a profile can record.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
@@ -107,8 +109,11 @@ if [ -n "$COVERAGE" ]; then
       --exclude mobile/apps/tsDirector/Packages/DirectorUI/Sources/DirectorUI/DirectorGridView.swift \
       --exclude '**/Package.swift' \
       --exclude 'mobile/apps/tsDirector/tools/**' \
+      --exclude mobile/apps/common/DirectorMedia/Sources/DirectorMedia/MediaTelemetry.swift \
+      --exclude mobile/apps/tsDirector/Packages/DirectorDVR/Sources/DirectorDVR/DirectorExport.swift \
       mobile/apps/tsDirector mobile/apps/common/DirectorCore mobile/apps/common/DirectorExport \
-      mobile/apps/common/DirectorSources mobile/apps/common/DirectorNDI mobile/apps/common/DirectorRTSP
+      mobile/apps/common/DirectorSources mobile/apps/common/DirectorNDI mobile/apps/common/DirectorRTSP \
+      mobile/apps/common/DirectorRTMP mobile/apps/common/DirectorMedia
   ) || COVERED=1
   # TeamStationKit's own suite measures the package, as EventControl's does: its sign-in and
   # account code is shared with Cameraman and Distributor, and no Director test bundle covers it.

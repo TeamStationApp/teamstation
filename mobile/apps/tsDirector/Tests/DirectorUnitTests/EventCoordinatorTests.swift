@@ -1,4 +1,5 @@
 import DirectorCore
+import DirectorMedia
 import Foundation
 import TeamStationKit
 import Testing
@@ -50,10 +51,41 @@ private final class StubEvents: TeamStationEventService {
     return true
   }
 
-  func refreshChosen(cameraName: String) async {
-    asked.append("refresh")
+  /// The stream held was ended on TeamStation: a redial is refused with a 410, and a start gets a
+  /// fresh stream.
+  var ended = false
+  var renamed: [String] = []
+  /// Fresh streams handed out by a start after an end.
+  var made = 0
+
+  func refreshChosen(cameraName: String, reason: LiveStreamRequestReason) async throws {
+    asked.append("refresh \(reason.rawValue)")
     refreshedNames.append(cameraName)
     if dropOnRefresh { chosen = nil }
+    guard ended, let current = chosen else { return }
+    guard reason == .start else { throw TeamStationError.streamEnded }
+    ended = false
+    made += 1
+    chosen = TeamStationAccount.ChosenEvent(
+      gameId: current.gameId,
+      title: current.title,
+      startAt: current.startAt,
+      streamURL: "rtmp://ingest/live/\(current.gameId)-\(made)",
+      streamId: "lst_\(made)"
+    )
+  }
+
+  func renameStream(label: String) async -> Bool {
+    asked.append("rename")
+    renamed.append(label)
+    return true
+  }
+
+  var liveStarts: [Date] = []
+
+  func reportLiveStart(startedAt: Date) async -> Bool {
+    liveStarts.append(startedAt)
+    return true
   }
 
   func forgetChosenEvent() {
@@ -244,7 +276,7 @@ struct EventCoordinatorTests {
     await rig.coordinator.pick(event: event("g1"), destination: .event)
     let url = try await rig.coordinator.streamURLForDial(destination: .event)
     #expect(url == "rtmp://ingest/live/g1")
-    #expect(rig.events.asked == [ "choose+claim g1", "refresh" ])
+    #expect(rig.events.asked == [ "choose+claim g1", "refresh start" ])
   }
 
   @Test func dialsNoEventWithoutOne() async {
@@ -262,7 +294,7 @@ struct EventCoordinatorTests {
     await #expect(throws: EventStreamError.refused("Pick a TeamStation event in Settings first")) {
       _ = try await rig.coordinator.streamURLForDial(destination: .event)
     }
-    #expect(rig.events.asked == [ "choose+claim g1", "refresh" ])
+    #expect(rig.events.asked == [ "choose+claim g1", "refresh start" ])
   }
 
   @Test func aPickThatClaimsPassesTheCameraNameAndOneThatDoesNotDoesNot() async {
@@ -335,3 +367,109 @@ struct EventCoordinatorTests {
   }
 }
 
+
+/// An End pressed on TeamStation, as Director's stream sees it: the coordinator asks with the
+/// controller's reason, and the controller stops on the 410 until the operator starts again.
+@Suite("A stream ended on TeamStation", .serialized)
+@MainActor
+struct StreamEndedTests {
+  private func wire(_ rig: Rig, publisher: FakePublisher, scheduler: ManualScheduler) -> StreamSessionController {
+    StreamSessionController(
+      publisher: publisher,
+      host: .init(
+        requestURL: { reason in
+          try await rig.coordinator.streamURL(for: reason, destination: .event, typed: "")
+        },
+        settings: { StreamSettings(config: .default) }
+      ),
+      scheduler: scheduler
+    )
+  }
+
+  /// Waits, up to five seconds, for the controller's dial to get where the test needs it.
+  /// The dial runs in a task of its own, so how many turns it takes depends on the load.
+  private func until(_ condition: @MainActor () -> Bool) async {
+    let deadline = Date().addingTimeInterval(5)
+    while !condition(), Date() < deadline {
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+  }
+
+  @Test("A redial carries the controller's reason, and an ended stream is StreamEndedError")
+  func redialReason() async throws {
+    let rig = Rig()
+    await rig.coordinator.pick(event: event("g1"), destination: .event)
+    _ = try await rig.coordinator.streamURL(for: .redial, destination: .event, typed: "")
+    #expect(rig.events.asked.last == "refresh redial")
+    rig.events.ended = true
+    await #expect(throws: StreamEndedError.self) {
+      _ = try await rig.coordinator.streamURL(for: .redial, destination: .event, typed: "")
+    }
+    #expect(try await rig.coordinator.streamURL(for: .start, destination: .url, typed: "rtmp://x/live/k") == "rtmp://x/live/k")
+  }
+
+  @Test("End then Start: the redial stays off the air, and Start goes live on a fresh stream")
+  func endThenStart() async {
+    let rig = Rig()
+    await rig.coordinator.pick(event: event("g1"), destination: .event)
+    let publisher = FakePublisher()
+    let scheduler = ManualScheduler()
+    let controller = wire(rig, publisher: publisher, scheduler: scheduler)
+    controller.start()
+    await until { controller.phase == .live }
+    #expect(controller.phase == .live)
+
+    rig.events.ended = true
+    publisher.drop()
+    await until { controller.phase == .retrying }
+    #expect(controller.phase == .retrying)
+    scheduler.fire()
+    await until { controller.phase == .idle }
+    #expect(controller.phase == .idle)
+    #expect(controller.lastError == "ended")
+    #expect(rig.events.made == 0)
+    #expect(publisher.dialled == [ "rtmp://ingest/live/g1" ])
+
+    controller.start()
+    await until { controller.phase == .live }
+    #expect(controller.phase == .live)
+    #expect(rig.events.asked.suffix(2) == [ "refresh redial", "refresh start" ])
+    #expect(rig.events.made == 1)
+    #expect(publisher.dialled.last == "rtmp://ingest/live/g1-1")
+  }
+
+  @Test("A relaunch that resumes streaming redials, and an ended stream creates nothing")
+  func relaunchAfterEnd() async {
+    let rig = Rig()
+    await rig.coordinator.pick(event: event("g1"), destination: .event)
+    rig.events.ended = true
+    let publisher = FakePublisher()
+    let controller = wire(rig, publisher: publisher, scheduler: ManualScheduler())
+    // `applyResumedStream`: the stream was live when the app stopped.
+    controller.start(reason: .redial)
+    await until { controller.phase == .idle }
+    #expect(controller.phase == .idle)
+    #expect(rig.events.asked.last == "refresh redial")
+    #expect(rig.events.made == 0)
+    #expect(publisher.dialled.isEmpty)
+  }
+
+  @Test("A camera rename in Settings renames the held stream")
+  func renameSendsAPatch() async {
+    let rig = Rig()
+    await rig.coordinator.pick(event: event("g1"), destination: .event)
+    await rig.coordinator.cameraRenamed(to: "Left Field")
+    #expect(rig.events.renamed == [ "Left Field" ])
+  }
+
+  @Test("The first picture's capture places the event's live video, and nothing else's")
+  func liveStartGoesToTheEventOnly() async {
+    let rig = Rig()
+    await rig.coordinator.pick(event: event("g1"), destination: .event)
+    let started = Date(timeIntervalSince1970: 1_790_013_600.25)
+    await rig.coordinator.liveStarted(at: started, destination: .url)
+    #expect(rig.events.liveStarts.isEmpty)
+    await rig.coordinator.liveStarted(at: started, destination: .event)
+    #expect(rig.events.liveStarts == [ started ])
+  }
+}

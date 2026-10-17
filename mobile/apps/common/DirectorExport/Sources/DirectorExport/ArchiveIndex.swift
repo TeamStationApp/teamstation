@@ -79,6 +79,8 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
   /// and every later listing returns that, so every file of the take goes up with the same offset
   /// whichever app sends it and however long after. See `ArchiveIndex.recordings()`.
   public var serverClockOffsetMs: Int?
+  /// The live stream this take is the local recording of; see `setLiveStreamId`.
+  public var liveStreamId: String?
 
   /// How long the take is, from what was actually written.
   ///
@@ -105,7 +107,8 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     soundChecks: [ProgramSoundCheck] = [],
     gameId: String? = nil,
     gameTitle: String? = nil,
-    serverClockOffsetMs: Int? = nil
+    serverClockOffsetMs: Int? = nil,
+    liveStreamId: String? = nil
   ) {
     self.id = id
     self.startedAt = startedAt
@@ -119,6 +122,7 @@ public struct RecordingSummary: Sendable, Equatable, Identifiable {
     self.gameId = gameId
     self.gameTitle = gameTitle
     self.serverClockOffsetMs = serverClockOffsetMs
+    self.liveStreamId = liveStreamId
   }
 }
 
@@ -238,6 +242,10 @@ public final class ArchiveIndex: @unchecked Sendable {
     // The take's server clock offset, stored by the first listing after the take ended and read
     // from then on (`recordings()`), so a sample measured later cannot move a take already uploaded.
     try? store.execute("ALTER TABLE recordings ADD COLUMN server_clock_offset_ms INTEGER;")
+    // The live stream a take is the local recording of, which only the phone writes: its upload
+    // names that stream so the server replaces exactly that angle's live copy. Null for every take
+    // TS Director records.
+    try? store.execute("ALTER TABLE recordings ADD COLUMN live_stream_id TEXT;")
     try store.execute("""
       CREATE TABLE IF NOT EXISTS segments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -395,6 +403,14 @@ public final class ArchiveIndex: @unchecked Sendable {
     try store.execute(
       "UPDATE recordings SET ended_at = ? WHERE id = ?;",
       [ .real(wall.seconds), .integer(id) ]
+    )
+  }
+
+  /// Names the live stream a take is the local recording of, or clears it with nil.
+  public func setLiveStreamId(_ streamId: String?, for id: Int64) throws {
+    try store.execute(
+      "UPDATE recordings SET live_stream_id = ? WHERE id = ?;",
+      [ streamId.map { .text($0) } ?? .null, .integer(id) ]
     )
   }
 
@@ -700,7 +716,7 @@ public final class ArchiveIndex: @unchecked Sendable {
         (SELECT MAX(s.start_wall + s.duration) FROM segments s
           WHERE s.recording_id = r.id AND s.is_initialization = 0),
         r.resume_count, r.encoding_json, r.sound_checks_json, r.game_id, r.game_title,
-        r.server_clock_offset_ms
+        r.server_clock_offset_ms, r.live_stream_id
       FROM recordings r
       ORDER BY r.started_at DESC;
       """
@@ -731,7 +747,8 @@ public final class ArchiveIndex: @unchecked Sendable {
           from: started,
           endedAt: ended,
           lastSegment: lastSegment
-        )
+        ),
+        liveStreamId: row.values[11] == .null || row.string(11).isEmpty ? nil : row.string(11)
       )
     }
   }

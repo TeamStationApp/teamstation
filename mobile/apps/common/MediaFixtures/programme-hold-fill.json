@@ -1,0 +1,84 @@
+{
+  "cases" : [
+    {
+      "frameRate" : 30,
+      "lastPictureSeconds" : 599.95,
+      "name" : "picture reached the stop, sound 4 s short",
+      "pictureFillCount" : 1,
+      "pictureFillFrom" : 599.9666666666667,
+      "pictureFillStep" : 0.03333333333333333,
+      "requestedEnd" : 600,
+      "silenceCapped" : false,
+      "silenceSeconds" : 4,
+      "soundFillEnd" : 600,
+      "writtenSoundEnd" : 596
+    },
+    {
+      "frameRate" : 30,
+      "lastPictureSeconds" : 600.02,
+      "name" : "picture a frame past the stop",
+      "pictureFillCount" : 0,
+      "pictureFillFrom" : 600.0333333333333,
+      "pictureFillStep" : 0.03333333333333333,
+      "requestedEnd" : 600,
+      "silenceCapped" : false,
+      "silenceSeconds" : 0.13333333333332575,
+      "soundFillEnd" : 600.0333333333333,
+      "writtenSoundEnd" : 599.9
+    },
+    {
+      "frameRate" : 30,
+      "name" : "no picture at all",
+      "pictureFillCount" : 360,
+      "pictureFillFrom" : 0,
+      "pictureFillStep" : 0.03333333333333333,
+      "requestedEnd" : 12,
+      "silenceCapped" : false,
+      "silenceSeconds" : 12,
+      "soundFillEnd" : 12,
+      "writtenSoundEnd" : 0
+    },
+    {
+      "frameRate" : 30,
+      "lastPictureSeconds" : 10,
+      "name" : "long empty programme fills at 10 fps",
+      "pictureFillCount" : 1100,
+      "pictureFillFrom" : 10.033333333333333,
+      "pictureFillStep" : 0.1,
+      "requestedEnd" : 120,
+      "silenceCapped" : false,
+      "silenceSeconds" : 110,
+      "soundFillEnd" : 120,
+      "writtenSoundEnd" : 10
+    },
+    {
+      "frameRate" : 30,
+      "lastPictureSeconds" : 59.95,
+      "name" : "sound already there",
+      "pictureFillCount" : 1,
+      "pictureFillFrom" : 59.96666666666667,
+      "pictureFillStep" : 0.03333333333333333,
+      "requestedEnd" : 60,
+      "silenceCapped" : false,
+      "silenceSeconds" : 0,
+      "soundFillEnd" : 60,
+      "writtenSoundEnd" : 60
+    },
+    {
+      "frameRate" : 30,
+      "lastPictureSeconds" : 899.9,
+      "name" : "sound adrift past the cap",
+      "pictureFillCount" : 2,
+      "pictureFillFrom" : 899.9333333333333,
+      "pictureFillStep" : 0.03333333333333333,
+      "requestedEnd" : 900,
+      "silenceCapped" : true,
+      "silenceSeconds" : 900,
+      "soundFillEnd" : 900,
+      "writtenSoundEnd" : 0
+    }
+  ],
+  "gridFillSeconds" : 30,
+  "maximumSilenceChunks" : 5600,
+  "silenceChunkSeconds" : 0.021333333333333333
+}

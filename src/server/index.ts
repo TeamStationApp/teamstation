@@ -32,6 +32,7 @@ import {
   startLiveController,
   stopLiveController
 } from './live/controller'
+import { DIRECTOR_CLAIM_LABEL } from './live/streamKeys'
 import { livingWorkers } from './livingWorkers'
 import { eventGeocoder } from './location/eventGeocoder'
 import { googlePlaces } from './location/googlePlaces'
@@ -598,7 +599,7 @@ function runWorker(): void {
       space: serverConfig.space,
       // What a camera claimed by a Director is called, so a coach with an iPad
       // and a laptop pointed at one game can tell which row is which.
-      deviceLabel: 'TS Director'
+      deviceLabel: DIRECTOR_CLAIM_LABEL
     })
   )
   // Its own router because its bodies are not JSON: a part is megabytes of

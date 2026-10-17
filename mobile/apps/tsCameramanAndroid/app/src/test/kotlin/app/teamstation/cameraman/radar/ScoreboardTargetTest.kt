@@ -1,6 +1,6 @@
 package app.teamstation.cameraman.radar
 
-import app.teamstation.cameraman.core.InMemorySettingsStore
+import app.teamstation.streamcore.core.InMemorySettingsStore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test

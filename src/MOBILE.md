@@ -134,9 +134,10 @@ chosen (the machine's `min-release-age`); `expo-modules-core` 58.0.4 asks for
 `react-native-worklets` 0.12: its optional peer range stops at 0.10. The
 worklets integration is not used by expo-gl.
 
-`ios/Podfile` sets **iOS 16.4**, the floor `ExpoModulesCore` and `expo-gl`
-declare; React Native's own is 15.1. The project's deployment target moved
-with it.
+`ios/Podfile` sets **iOS 18.0**, the floor of the TS Director and TS Cameraman
+Swift packages in `mobile/apps/common` that the phone's streaming code shares.
+`ExpoModulesCore` and `expo-gl` declare 16.4; React Native's own floor is 15.1.
+The project's deployment target moved with it.
 
 ### What stands in for the `expo` package
 
@@ -654,8 +655,10 @@ instead` is below the fold, so the flow scrolls to it.
   scroller — and then against `PillTabs` and the manage table too, both of
   which put horizontal scrollers near the screen edge, so the cost is higher
   than it looks.
-- **`minSdkVersion` is 28**, because numeric font weights only resolve from
-  there and the app asks for 500 and 600 in about twenty-five places.
+- **`minSdkVersion` is 30** (Android 11), the floor of the shared phone
+  streaming library (`mobile/apps/common/android/streamcore`). Numeric font
+  weights need 28 on their own, because they only resolve from there and the
+  app asks for 500 and 600 in about twenty-five places.
 - **Text does not scale with the OS.** The web app does not either — that is
   the parity answer — but on a phone it is a real accessibility difference,
   and it is not a one-line fix: React 19 dropped `defaultProps` for function

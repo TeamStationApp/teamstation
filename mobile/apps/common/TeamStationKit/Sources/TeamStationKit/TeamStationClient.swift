@@ -209,6 +209,11 @@ public struct TeamStationClient: Sendable {
   /// server adds to `startedAt` so the video sits on the server's clock with
   /// the game's scoring. Left out when nothing was measured; the server then
   /// takes `startedAt` as it is.
+  ///
+  /// `liveStreamId` names the live stream this recording is the local copy of, and `wholeStream`
+  /// says the recording ran for every moment that stream published: the server then replaces
+  /// exactly that stream's live copy with it. Both are left out unless given, which is every
+  /// upload but a phone's own recording.
   public func openUpload(
     gameId: String,
     title: String,
@@ -216,7 +221,9 @@ public struct TeamStationClient: Sendable {
     filename: String,
     sizeBytes: Int,
     startedAt: Date,
-    serverClockOffsetMs: Int? = nil
+    serverClockOffsetMs: Int? = nil,
+    liveStreamId: String? = nil,
+    wholeStream: Bool? = nil
   ) async throws -> TeamStationUpload {
     var body: [String: any Sendable] = [
       "gameId": gameId,
@@ -227,6 +234,8 @@ public struct TeamStationClient: Sendable {
       "startAt": Self.instant(startedAt)
     ]
     if let serverClockOffsetMs { body["serverClockOffsetMs"] = serverClockOffsetMs }
+    if let liveStreamId { body["liveStreamId"] = liveStreamId }
+    if let wholeStream { body["wholeStream"] = wholeStream }
     return try await send("director/uploads", method: "POST", body: body)
   }
 
@@ -246,15 +255,19 @@ public struct TeamStationClient: Sendable {
     try await send("director/uploads/\(escape(uploadId))", method: "GET")
   }
 
-  /// One part of the recording.
+  /// One part of the recording. `onSent` is told how many of its bytes have gone so far, as the
+  /// system hands them to the network: a part is minutes on a field's uplink, and a bar that moves
+  /// only between parts looks stuck.
   public func sendPart(
     uploadId: String,
     index: Int,
-    bytes: Data
+    bytes: Data,
+    onSent: (@Sendable (Int) -> Void)? = nil
   ) async throws -> TeamStationPartTaken {
     try await sendBytes(
       "director/uploads/\(escape(uploadId))/parts/\(index)",
-      bytes: bytes
+      bytes: bytes,
+      onSent: onSent
     )
   }
 
@@ -292,26 +305,79 @@ public struct TeamStationClient: Sendable {
     _ = try? await session.data(for: request)
   }
 
-  /// Takes a game, and gets the URL to publish it to.
+  /// This device's camera on a game, and the URL to publish it to.
   ///
-  /// `cameraName` is always sent, including when it is empty. The server treats
-  /// an empty name as "leave the stored name alone".
-  public func claim(gameId: String, cameraName: String) async throws -> TeamStationClaim {
-    try await send(
-      "director/events/\(escape(gameId))/claim",
+  /// `POST /games/:gameId/live-streams` with the device's install id: the stream this device
+  /// already has under `label` on the game comes back, or one it may take over, or a new one in the
+  /// caller's lowest free slot. `heldStreamId` names the stream the device holds, which a redial
+  /// sends: if that stream has been ended the server answers 410, thrown as
+  /// `TeamStationError.streamEnded`, and makes nothing — only a request without it can start a
+  /// fresh stream. `recordsLocally` says the device keeps its own recording of the stream to upload
+  /// later, as a phone does; left out, the server takes it that the device does not.
+  public func requestLiveStream(
+    gameId: String,
+    label: String,
+    deviceId: String,
+    deviceModel: String,
+    heldStreamId: String? = nil,
+    recordsLocally: Bool? = nil
+  ) async throws -> TeamStationDeviceStream {
+    var body: [String: any Sendable] = [
+      "label": label,
+      "deviceId": deviceId,
+      "deviceModel": deviceModel
+    ]
+    if let heldStreamId { body["heldStreamId"] = heldStreamId }
+    if let recordsLocally { body["recordsLocally"] = recordsLocally }
+    return try await send(
+      "games/\(escape(gameId))/live-streams",
       method: "POST",
-      body: [ "cameraName": cameraName ]
+      body: body,
+      goneIsEnded: true
     )
   }
 
-  /// What TeamStation says about a game's stream.
+  /// Every camera on a game: this person's own, with their state and why the ingest last refused
+  /// them, and everybody else's.
   ///
-  /// Asked when a publish will not start: the socket says `connection
-  /// refused`, and the server says *why* — the key was rotated, somebody else
-  /// is already streaming this game, the window has not opened yet.
-  /// What this Director's camera on a game is doing, and why it is not.
-  public func liveStream(gameId: String) async throws -> TeamStationLiveStream {
-    try await send("director/events/\(escape(gameId))/stream", method: "GET")
+  /// Asked when a publish will not start: the socket says `connection refused`, and the server
+  /// says *why* — the key was rotated, the window has not opened yet.
+  public func liveStreams(gameId: String) async throws -> TeamStationGameStreams {
+    try await send("games/\(escape(gameId))/live-streams", method: "GET")
+  }
+
+  /// Renames one of this person's cameras, keeping its stream and key.
+  public func updateLiveStream(
+    gameId: String,
+    streamId: String,
+    label: String
+  ) async throws -> TeamStationDeviceStream {
+    try await send(
+      "games/\(escape(gameId))/live-streams/\(escape(streamId))",
+      method: "PATCH",
+      body: [ "label": label ],
+      goneIsEnded: true
+    )
+  }
+
+  /// Says when the first picture of a stream's first publish was captured, on TeamStation's clock
+  /// (`ServerClock`): TeamStation places the stream's live video there, where the angle grid lines it up with
+  /// the game's other cameras, instead of at the moment the publish reached it. The first account
+  /// holds; one of a later publish is ignored.
+  @discardableResult
+  public func reportLiveStart(
+    gameId: String,
+    streamId: String,
+    startedAt: Date
+  ) async throws -> TeamStationDeviceStream {
+    let instant = ISO8601DateFormatter()
+    instant.formatOptions = [ .withInternetDateTime, .withFractionalSeconds ]
+    return try await send(
+      "games/\(escape(gameId))/live-streams/\(escape(streamId))",
+      method: "PATCH",
+      body: [ "liveStartedAt": instant.string(from: startedAt) ],
+      goneIsEnded: true
+    )
   }
 
   // MARK: - The wire
@@ -340,7 +406,8 @@ public struct TeamStationClient: Sendable {
   /// question deserves — a part on a field's uplink is not a question.
   private func sendBytes<Reply: Decodable>(
     _ path: String,
-    bytes: Data
+    bytes: Data,
+    onSent: (@Sendable (Int) -> Void)? = nil
   ) async throws -> Reply {
     var request = URLRequest(url: Self.apiBase(baseURL).appending(path: path))
     request.httpMethod = "PUT"
@@ -354,7 +421,11 @@ public struct TeamStationClient: Sendable {
     let data: Data
     let response: URLResponse
     do {
-      (data, response) = try await session.upload(for: request, from: bytes)
+      (data, response) = try await session.upload(
+        for: request,
+        from: bytes,
+        delegate: onSent.map(BodySentDelegate.init)
+      )
     } catch {
       throw TeamStationError.offline
     }
@@ -377,6 +448,7 @@ public struct TeamStationClient: Sendable {
     query: [URLQueryItem] = [],
     waitingIsNil: Bool = false,
     unavailableStatuses: Set<Int> = [],
+    goneIsEnded: Bool = false,
     timeout: TimeInterval = 20
   ) async throws -> Reply {
     var request = URLRequest(url: Self.url(baseURL, path, query))
@@ -413,6 +485,7 @@ public struct TeamStationClient: Sendable {
     if status == 401 || status == 403, token != nil {
       throw TeamStationError.notSignedIn
     }
+    if status == 410, goneIsEnded { throw TeamStationError.streamEnded }
     if unavailableStatuses.contains(status) {
       throw TeamStationError.unavailable(Self.message(from: data, status: status))
     }
@@ -460,4 +533,23 @@ public struct TeamStationClient: Sendable {
     includingFractionalSeconds: true
   )
   private static let whole = Date.ISO8601FormatStyle()
+}
+
+/// Hands on how much of one request's body has gone, from the task's own delegate.
+final class BodySentDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+  private let onSent: @Sendable (Int) -> Void
+
+  init(_ onSent: @escaping @Sendable (Int) -> Void) {
+    self.onSent = onSent
+  }
+
+  func urlSession(
+    _ session: URLSession,
+    task: URLSessionTask,
+    didSendBodyData bytesSent: Int64,
+    totalBytesSent: Int64,
+    totalBytesExpectedToSend: Int64
+  ) {
+    onSent(Int(totalBytesSent))
+  }
 }

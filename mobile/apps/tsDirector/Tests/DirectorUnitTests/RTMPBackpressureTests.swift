@@ -48,11 +48,43 @@ struct RTMPBackpressureTests {
     }
     #expect(client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 32)) == .sent)
     usleep(400_000)
-    // The newest is always taken; what has been waiting longer than the buffer is what goes.
+    // What has been waiting longer than the buffer goes, and with no picture left this P-frame
+    // could not be decoded either, so it goes too and video waits for a keyframe.
     let before = client.metrics.droppedPackets
-    #expect(client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 32)) == .sent)
+    #expect(client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: false, bytes: 32)) == .droppedAwaitingKeyframe)
     #expect(client.metrics.droppedPackets > before)
     #expect(client.metrics.queuedBytes < 1024 * 1024)
+  }
+
+  @Test("A shed that takes every picture makes video wait for the next keyframe")
+  func shedWaitsForTheNextKeyframe() {
+    let pair = SocketPair()
+    defer { pair.close() }
+    let client = RTMPClient()
+    client.attachForTesting(fd: pair.client, budgetBytes: 8 * 1024 * 1024, bufferSeconds: 0.3)
+    defer { client.stop() }
+
+    client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: true, bytes: 8 * 1024))
+    for frame in 1 ... 8 {
+      client.sendVideo(timestampMs: UInt32(frame * 33), tag: videoTag(keyframe: false, bytes: 8 * 1024))
+    }
+    usleep(400_000)
+    // The oldest has waited past the buffer, so everything but headers goes, the keyframe and this
+    // picture with it: a P-frame now would reference pictures the ingest never got.
+    #expect(client.sendVideo(timestampMs: 300, tag: videoTag(keyframe: false, bytes: 32)) == .droppedAwaitingKeyframe)
+
+    // The link comes back; pictures still wait for the keyframe, and are counted as dropped.
+    pair.drain(untilQueuedFallsBelow: 1, of: client)
+    let dropped = client.metrics.droppedPackets
+    #expect(client.sendVideo(timestampMs: 333, tag: videoTag(keyframe: false, bytes: 32)) == .droppedAwaitingKeyframe)
+    #expect(client.metrics.droppedPackets == dropped + 1)
+    // Sound and sequence headers are not held back for it.
+    #expect(client.sendAudio(timestampMs: 333, tag: FLVTag.audio(packetType: 1, payload: Data(repeating: 3, count: 64))) == .sent)
+    let record = FLVTag.video(keyframe: true, packetType: 0, payload: Data(repeating: 9, count: 64))
+    #expect(client.sendVideo(timestampMs: 366, tag: record) == .sent)
+    // The keyframe ends the wait, and the pictures after it go again.
+    #expect(client.sendVideo(timestampMs: 366, tag: videoTag(keyframe: true, bytes: 32)) == .sent)
+    #expect(client.sendVideo(timestampMs: 400, tag: videoTag(keyframe: false, bytes: 32)) == .sent)
   }
 
   @Test("What survives a shed starts on a keyframe")
@@ -81,6 +113,31 @@ struct RTMPBackpressureTests {
     // A P-frame whose group has been thrown away cannot be decoded, so the first picture still
     // queued has to be a keyframe.
     #expect(client.firstQueuedVideoIsKeyframeForTesting)
+  }
+
+  @Test("A shed keeps the write in flight at the head of the queue delay")
+  func shedKeepsTheWriteInFlight() {
+    let pair = SocketPair()
+    defer { pair.close() }
+    let client = RTMPClient()
+    client.attachForTesting(fd: pair.client, budgetBytes: 400_000)
+    defer { client.stop() }
+
+    // A picture far larger than the pair holds goes in flight and stays there.
+    client.sendVideo(timestampMs: 0, tag: videoTag(keyframe: true, bytes: 300_000))
+    usleep(300_000)
+    // Three more cross the budget, so the oldest waiting goes: the ledger is rebuilt from what is
+    // left, and the write in flight is still the oldest the socket has not taken.
+    for frame in 1 ... 3 {
+      client.sendVideo(timestampMs: UInt32(frame * 33), tag: videoTag(keyframe: true, bytes: 50_000))
+    }
+    #expect(client.metrics.droppedPackets > 0)
+    #expect(client.congestionSample(at: RTMPClient.monotonicNow()).queueDelay >= 0.25)
+
+    // The peer reads everything: the ledger drains with the socket, not ahead of it.
+    pair.drain(untilQueuedFallsBelow: 1, of: client)
+    #expect(client.metrics.queuedBytes == 0)
+    #expect(client.congestionSample(at: RTMPClient.monotonicNow()).queueDelay == 0)
   }
 
   @Test("Sequence headers are never shed")

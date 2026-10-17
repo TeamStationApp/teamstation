@@ -38,6 +38,7 @@ import {
 } from './controller'
 import { replaceAnchorsFromRecording } from './finishVideo'
 import { sealSecret } from './secrets'
+import { placeSegmentOnTimeline } from './segmentClock'
 import { configureIngest, resetForTest } from './splitter'
 import {
   resumeScan,
@@ -447,6 +448,74 @@ describe('the controller and the wall clock (U25, U26)', function () {
     expect(
       recording.map(([mediaMs, wall]) => [mediaMs, wall - START])
     ).deep.equals(live12.map(([mediaMs, wall]) => [mediaMs, wall - START]))
+  })
+
+  it('maps a phone’s return, moved onto the wall clock behind its discontinuity, to its frames’ wall clock, live and once it is a recording with the hole', async function () {
+    // A phone stamps every frame. Its publish runs 3 s, it is away for 2 s,
+    // and it comes back behind a discontinuity with its timestamps from zero;
+    // the splitter moves each new segment to where its pictures sit on the
+    // wall clock, 5 s from the playlist's start (placeSegmentOnTimeline).
+    const videoId = await stream('phoneReturn')
+    const live = liveVideoDir(mediaRoot, videoId)
+    await mkdir(live, { recursive: true })
+    await writeLive(stamped, live, { seconds: 3 })
+    await sync(options)
+    await writeLive(stamped, live, { fromSec: 5, startNumber: 3 })
+    const init = await readFile(join(live, 'init.mp4'))
+    const listed = parseMediaPlaylist(
+      await readFile(join(live, 'master.m3u8'), 'utf8')
+    )
+    expect(listed.segments[3].discontinuity).equals(true)
+    for (const segment of listed.segments.slice(3)) {
+      const path = join(live, segment.uri)
+      const placed = placeSegmentOnTimeline(init, await readFile(path), 5)
+      expect(placed, segment.uri).not.equals(undefined)
+      await writeFile(path, placed!)
+    }
+    await sync(options)
+    // Live, the return sits where a player puts it, after the media before
+    // the discontinuity, and every point says the wall clock its frame
+    // carries: the board at a position is the board when that frame was
+    // taken.
+    expect(
+      (await anchors(videoId)).map(([mediaMs, wall]) => [mediaMs, wall - START])
+    ).deep.equals([
+      [0, 0],
+      [500, 500],
+      [1000, 1000],
+      [1500, 1500],
+      [2000, 2000],
+      [2500, 2500],
+      [3000, 5000],
+      [3500, 5500],
+      [4000, 6000],
+      [4500, 6500],
+      [5000, 7000],
+      [5500, 7500]
+    ])
+
+    // Ended, the recording keeps the hole, and its points move with it: the
+    // return's frames are as far into the video as they are into the game.
+    await finishStream(options, 'liv_phoneReturn', 'the stream was ended')
+    await settleLiveWork()
+    const recording = await anchors(videoId)
+    expect(recording.every(([, , source]) => source === 'sei')).equals(true)
+    expect(
+      recording.map(([mediaMs, wall]) => [mediaMs, wall - START])
+    ).deep.equals([
+      [0, 0],
+      [500, 500],
+      [1000, 1000],
+      [1500, 1500],
+      [2000, 2000],
+      [2500, 2500],
+      [5000, 5000],
+      [5500, 5500],
+      [6000, 6000],
+      [6500, 6500],
+      [7000, 7000],
+      [7500, 7500]
+    ])
   })
 
   it('keeps an unstamped stream’s arrival points through its end, where the recording’s segments start', async function () {

@@ -13,16 +13,16 @@ import android.os.Build
 import android.os.PowerManager
 import android.util.Log
 import android.view.Surface
-import app.teamstation.cameraman.capture.CameraSession
-import app.teamstation.cameraman.capture.FormatCatalogue
-import app.teamstation.cameraman.capture.MicrophoneSource
-import app.teamstation.cameraman.capture.SilenceSource
-import app.teamstation.cameraman.core.BatteryStatus
-import app.teamstation.cameraman.core.CameraLens
+import app.teamstation.streamcore.capture.CameraSession
+import app.teamstation.streamcore.capture.FormatCatalogue
+import app.teamstation.streamcore.capture.MicrophoneSource
+import app.teamstation.streamcore.capture.SilenceSource
+import app.teamstation.streamcore.core.BatteryStatus
+import app.teamstation.streamcore.core.CameraLens
 import app.teamstation.cameraman.core.CameraParameters
-import app.teamstation.cameraman.core.CameraPosition
+import app.teamstation.streamcore.core.CameraPosition
 import app.teamstation.cameraman.core.CameraSnapshot
-import app.teamstation.cameraman.core.CaptureFormatDescriptor
+import app.teamstation.streamcore.core.CaptureFormatDescriptor
 import app.teamstation.cameraman.core.DeviceIdentity
 import app.teamstation.cameraman.core.DeviceIdentityProvider
 import app.teamstation.cameraman.core.FrameDelivery
@@ -30,32 +30,32 @@ import app.teamstation.cameraman.core.FrameDeliveryThrottle
 import app.teamstation.cameraman.core.StruggleInjector
 import app.teamstation.cameraman.core.IdentityStore
 import app.teamstation.cameraman.core.InMemoryIdentityStore
-import app.teamstation.cameraman.core.LensSelection
+import app.teamstation.streamcore.core.LensSelection
 import app.teamstation.cameraman.core.ParameterOutcome
 import app.teamstation.cameraman.core.PreferencesIdentityStore
 import app.teamstation.cameraman.core.BroadcastPolicy
 import app.teamstation.cameraman.core.BroadcastPreference
 import app.teamstation.cameraman.core.PreferencesSettingsStore
-import app.teamstation.cameraman.core.SettingsStore
-import app.teamstation.cameraman.core.StreamSettingsStore
-import app.teamstation.cameraman.core.ProcessLoad
-import app.teamstation.cameraman.core.StreamCodec
-import app.teamstation.cameraman.core.StreamSettings
-import app.teamstation.cameraman.radar.PreferencesRadarPairingStore
-import app.teamstation.cameraman.radar.RadarCommand
-import app.teamstation.cameraman.radar.RadarLink
-import app.teamstation.cameraman.radar.RadarPhase
-import app.teamstation.cameraman.radar.RadarSnapshot
-import app.teamstation.cameraman.radar.systemRadarRadio
+import app.teamstation.streamcore.core.SettingsStore
+import app.teamstation.streamcore.core.StreamSettingsStore
+import app.teamstation.streamcore.core.ProcessLoad
+import app.teamstation.streamcore.core.StreamCodec
+import app.teamstation.streamcore.core.StreamSettings
+import app.teamstation.streamcore.radar.PreferencesRadarFleetStore
+import app.teamstation.streamcore.radar.RadarCommand
+import app.teamstation.streamcore.radar.RadarFleet
+import app.teamstation.streamcore.radar.RadarPhase
+import app.teamstation.streamcore.radar.RadarSnapshot
+import app.teamstation.streamcore.radar.systemRadarRadio
 import app.teamstation.cameraman.eventcontrol.EventControlHost
 import app.teamstation.cameraman.eventcontrol.EventControlKeyStore
 import app.teamstation.cameraman.eventcontrol.EventControlListenerState
 import app.teamstation.cameraman.scoreboard.OkHttpScoreboardAccount
 import app.teamstation.cameraman.scoreboard.ScoreboardDesk
 import app.teamstation.cameraman.scoreboard.eventControlKeyFetcher
-import app.teamstation.cameraman.core.ThermalBadgeLevel
-import app.teamstation.cameraman.encode.AudioEncoder
-import app.teamstation.cameraman.encode.VideoEncoder
+import app.teamstation.streamcore.core.ThermalBadgeLevel
+import app.teamstation.streamcore.encode.AudioEncoder
+import app.teamstation.streamcore.encode.VideoEncoder
 import androidx.core.content.ContextCompat
 import app.teamstation.cameraman.harness.AudioStreamRecorder
 import app.teamstation.cameraman.harness.ControlChannel
@@ -111,7 +111,7 @@ class AppEnvironment(
      * Lowers the encoder's rate while the link to a client backs up. Null until the server exists,
      * since the server is where the link is measured.
      */
-    private var adaptiveBitrate: app.teamstation.cameraman.rtsp.AdaptiveBitrateLoop? = null
+    private var adaptiveBitrate: app.teamstation.streamcore.bitrate.AdaptiveBitrateLoop? = null
     private var controlServer: ControlServer? = null
     private var synthetic: SyntheticCamera? = null
     private var recorder: ElementaryStreamRecorder? = null
@@ -146,9 +146,10 @@ class AppEnvironment(
         microphone.keepsSound = { time, duration -> injector.keepsSound(time, duration) }
     }
 
-    private val radarLink = RadarLink(
-        store = PreferencesRadarPairingStore(context),
-        radio = systemRadarRadio(context),
+    /** Cameraman's one radar, through the fleet with a limit of one under its existing keys. */
+    private val radarFleet = RadarFleet(
+        store = PreferencesRadarFleetStore.cameraman(context),
+        newRadio = { systemRadarRadio(context) },
         bluetoothOn = {
             val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             manager?.adapter?.isEnabled == true
@@ -165,16 +166,26 @@ class AppEnvironment(
                 ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
             }
         },
-        log = { Log.i("CameramanRadar", it) }
+        log = { Log.i("CameramanRadar", it) },
+        limit = 1
     )
-    val radarState = radarLink.state
+    val radarState = radarFleet.cameramanState
 
-    fun openRadarPicker() = radarLink.openPicker()
-    fun dismissRadarPicker() = radarLink.dismissPicker()
-    fun pairRadar(serial: String) = radarLink.pair(serial)
-    fun unpairRadar() = radarLink.unpair()
-    fun setRadarStep(step: Int) = radarLink.setStep(step)
-    fun setRadarEnabled(enabled: Boolean) = radarLink.setEnabled(enabled)
+    fun openRadarPicker() = radarFleet.scan()
+    fun dismissRadarPicker() = radarFleet.stopScan()
+
+    /** Choosing a radar closes the picker, as it always has. */
+    fun pairRadar(serial: String) {
+        if (radarFleet.pair(serial)) radarFleet.stopScan()
+    }
+
+    fun unpairRadar() {
+        radarFleet.unpairAll()
+        radarFleet.stopScan()
+    }
+
+    fun setRadarStep(step: Int) = radarFleet.setStep(step)
+    fun setRadarEnabled(enabled: Boolean) = radarFleet.setEnabled(enabled)
 
     internal lateinit var scoreboard: ScoreboardDesk
         private set
@@ -343,7 +354,7 @@ class AppEnvironment(
             main = kotlinx.coroutines.Dispatchers.Main.immediate
         )
         scoreboard = ScoreboardDesk(backing, scope, account = account, eventControl = eventControl)
-        radarLink.onSpeeds = { pitch, exit -> scoreboard.publishSpeeds(pitch, exit) }
+        radarFleet.onSpeeds = { _, pitch, exit -> scoreboard.publishSpeeds(pitch, exit) }
     }
 
     /**
@@ -491,7 +502,7 @@ class AppEnvironment(
         observeThermalState()
         observeBattery()
         statusState.value = "starting"
-        radarLink.start()
+        radarFleet.start()
         // Runs with the service, whatever the broadcast: a Director may set the event of a camera
         // that only sends radar speeds.
         scoreboard.start()
@@ -699,7 +710,7 @@ class AppEnvironment(
         videoEncoder.configure(settings) { surface ->
             // The encoder's input surface is new after every reconfigure, so the renderer has to be
             // repointed or the camera would keep drawing into a released one.
-            camera.attachEncoder(surface)
+            camera.attachEncoder(ENCODER_KEY, surface)
             if (launch.useSyntheticCamera || !permissionState.value.camera) {
                 startSynthetic(surface, settings)
             }
@@ -818,7 +829,7 @@ class AppEnvironment(
         this.server = server
 
         val settings = stateLock.withLock { publishedSettings }
-        adaptiveBitrate = app.teamstation.cameraman.rtsp.AdaptiveBitrateLoop(
+        adaptiveBitrate = app.teamstation.streamcore.bitrate.AdaptiveBitrateLoop(
             ceiling = settings.bitrate,
             floor = settings.bitrateFloor,
             sample = { server.sampleCongestion() },
@@ -1102,17 +1113,17 @@ class AppEnvironment(
         }
 
         is ControlCommand.RadarShow -> {
-            radarLink.show(RadarCommand.Show(command.serial, command.phase, command.step))
+            radarFleet.show(RadarCommand.Show(command.serial, command.phase, command.step))
             ok()
         }
 
         is ControlCommand.RadarFeed -> {
-            radarLink.feed(RadarCommand.Feed(command.pitch, command.exit, command.now))
+            radarFleet.feed(RadarCommand.Feed(command.pitch, command.exit, command.now))
             ok()
         }
 
         ControlCommand.RadarUnpair -> {
-            radarLink.unpair()
+            unpairRadar()
             ok()
         }
     }
@@ -1214,7 +1225,7 @@ class AppEnvironment(
             put("wifiLockHeld", wifiLock?.isHeld == true)
             put("ignoringBatteryOptimizations", isIgnoringBatteryOptimizations())
             put("frameDelivery", frameDeliveryJSON())
-            RadarSnapshot.putInto(this, radarLink.state.value)
+            RadarSnapshot.putInto(this, radarFleet.cameramanState.value)
             put("eventControl", eventControlJSON())
         }
     }
@@ -1261,7 +1272,7 @@ class AppEnvironment(
     }
 
     /** The iOS build's `AdaptiveBitrateLoop.Status` keys, so one script reads both. */
-    private fun adaptiveBitrateJSON(status: app.teamstation.cameraman.rtsp.AdaptiveBitrateLoop.Status): JSONObject {
+    private fun adaptiveBitrateJSON(status: app.teamstation.streamcore.bitrate.AdaptiveBitrateLoop.Status): JSONObject {
         val controller = status.controller
         return JSONObject().apply {
             put("enabled", status.enabled)
@@ -1362,5 +1373,8 @@ class AppEnvironment(
 
     companion object {
         const val tag = "TSCameraman"
+
+        /** The one encoder this app draws to: the RTSP stream's. */
+        private const val ENCODER_KEY = "rtsp"
     }
 }

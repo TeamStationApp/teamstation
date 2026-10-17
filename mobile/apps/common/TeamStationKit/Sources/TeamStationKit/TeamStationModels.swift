@@ -55,14 +55,6 @@ public struct TeamStationEvent: Sendable, Codable, Identifiable, Equatable {
   }
 }
 
-/// Taking a game: where to publish it, which the operator never sees.
-public struct TeamStationClaim: Sendable, Codable, Equatable {
-  public let gameId: String
-  public let url: String
-  public let opensAt: Date?
-  public let closesAt: Date?
-}
-
 public struct TeamStationUser: Sendable, Codable, Equatable {
   public let id: String
   public let displayName: String
@@ -117,11 +109,66 @@ public struct TeamStationSession: Sendable, Codable, Equatable {
   public let user: TeamStationUser
 }
 
-/// This Director's own camera on a game, and why it is not publishing.
-public struct TeamStationLiveStream: Sendable, Codable, Equatable {
+/// One camera on a game, as `…/games/:gameId/live-streams` describes it.
+///
+/// `url`, the address to publish to with its key, comes only to the person the camera belongs to,
+/// and only from a request for one; a list leaves it out. `deviceId` is in the caller's own rows
+/// only.
+public struct TeamStationDeviceStream: Sendable, Codable, Equatable {
+  public let id: String
   public let gameId: String
+  public let label: String?
+  /// `idle`, `publishing`, `ended` or `revoked`.
   public let state: String?
+  /// Why the ingest last refused it, in its own words. Only for the person it belongs to.
   public let lastError: String?
+  public let url: String?
+  public let deviceId: String?
+  public let deviceModel: String?
+  /// When the ingest starts taking this stream, and when it stops (nil: when the game's window
+  /// does).
+  public let opensAt: Date?
+  public let closesAt: Date?
+
+  public init(
+    id: String,
+    gameId: String,
+    label: String? = nil,
+    state: String? = nil,
+    lastError: String? = nil,
+    url: String? = nil,
+    deviceId: String? = nil,
+    deviceModel: String? = nil,
+    opensAt: Date? = nil,
+    closesAt: Date? = nil
+  ) {
+    self.id = id
+    self.gameId = gameId
+    self.label = label
+    self.state = state
+    self.lastError = lastError
+    self.url = url
+    self.deviceId = deviceId
+    self.deviceModel = deviceModel
+    self.opensAt = opensAt
+    self.closesAt = closesAt
+  }
+}
+
+/// Every camera on a game: the caller's own, and everybody else's.
+public struct TeamStationGameStreams: Sendable, Codable, Equatable {
+  public let gameId: String
+  public let mine: [TeamStationDeviceStream]
+  public let others: [TeamStationDeviceStream]
+}
+
+/// Why a device asks for its stream, which decides what the server may hand back.
+public enum LiveStreamRequestReason: String, Sendable, Equatable {
+  /// Somebody pressed start: the stream this device holds, or a fresh one if it was ended.
+  case start
+  /// Putting a dropped stream back: only the stream this device holds. If that was ended the
+  /// server says so (`TeamStationError.streamEnded`) and makes nothing.
+  case redial
 }
 
 /// What went wrong, in words fit for a screen at a ball field.
@@ -136,6 +183,9 @@ public enum TeamStationError: Error, LocalizedError, Equatable {
   case unavailable(String)
   /// The token changed while the request was on its way, so its answer is for another session.
   case accountChanged
+  /// The stream this device holds was ended on TeamStation (a 410). Only starting again makes a
+  /// new one; a redial never does.
+  case streamEnded
 
   public var errorDescription: String? {
     switch self {
@@ -147,6 +197,8 @@ public enum TeamStationError: Error, LocalizedError, Equatable {
       return message
     case .accountChanged:
       return "The TeamStation account changed. Try again."
+    case .streamEnded:
+      return "This camera was ended. Start streaming again to go live."
     }
   }
 }

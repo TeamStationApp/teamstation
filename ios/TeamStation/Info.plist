@@ -51,7 +51,11 @@
 		<true/>
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>TeamStation uses the microphone to score a game from what you say.</string>
+	<string>TeamStation uses the microphone to score a game from what you say, and for the sound of the video you record.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>TeamStation records and streams video of the game from this phone's camera.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>TeamStation connects to your radar to show pitch and exit speeds on the scoreboard.</string>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>TeamStation searches Apple Music and your library for walk-up songs, and plays each player's clip when they come up to bat.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

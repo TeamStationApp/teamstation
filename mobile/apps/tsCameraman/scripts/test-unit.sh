@@ -79,14 +79,20 @@ if [ -n "$COVERAGE" ]; then
     # override receiver among them). SettingsView and SignInLinkToast are SwiftUI layout; the
     # decisions they show are made in ScoreboardSnapshot, ScoreboardDesk and AppEnvironment, which
     # are measured. EventControl is measured
-    # by its own package tests, never here.
+    # by its own package tests, never here. CameramanCapture, shared with the TeamStation app, is
+    # measured here too, except CameraSession, which drives a real AVCaptureSession, and the radar's
+    # CoreBluetooth delegate callbacks in CoreBluetoothRadarRadio, which need a radar in range; both
+    # are covered on the device. The radar sessions and fleet those callbacks feed are measured.
     node "$TOP/scripts/swift-changed-line-coverage.cjs" \
       --xcresult "$CAMERAMAN_DERIVED_DATA/TestResults.xcresult" \
       --derived-data "$CAMERAMAN_DERIVED_DATA" \
       --exclude mobile/apps/common/CameramanControlUI/Sources/CameramanControlUI/SettingsView.swift \
       --exclude mobile/apps/tsCameraman/Packages/CameramanUI/Sources/CameramanUI/SignInLinkToast.swift \
+      --exclude mobile/apps/common/CameramanCapture/Sources/CameramanCapture/CameraSession.swift \
+      --exclude mobile/apps/common/CameramanCapture/Sources/CameramanCapture/CoreBluetoothRadarRadio.swift \
       mobile/apps/common/CameramanCore \
       mobile/apps/common/CameramanControlUI \
+      mobile/apps/common/CameramanCapture \
       mobile/apps/tsCameraman/Packages/CameramanUI
   ) || COVERED=1
 fi

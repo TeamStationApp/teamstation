@@ -39,6 +39,18 @@ export interface PlayIntent {
     /** Called with the control once the player exists, and null when it goes. */
     onControl?: (control: BufferControl | null) => void
   }
+  /**
+   * Whether the server still lists this video as live, asked when its
+   * playlist turns out to have been closed.
+   *
+   * Supplied for a video that was live when it was opened. The server closes
+   * a live playlist when its publisher has been away for eight minutes, and a
+   * player that reads the close stops for good; while the game still lists
+   * the video as live, the web player waits for the playlist to open again
+   * and rejoins it (`liveRejoin.ts`). Left out, an ended playlist ends the
+   * video, as it always has.
+   */
+  isLive?: () => boolean | Promise<boolean>
 }
 
 /** Moves a running player's limit on how far ahead it loads. */

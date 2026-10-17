@@ -589,6 +589,14 @@ public enum ArchiveRemux {
   /// `offset` is how far into the part the window starts; `length` is how long the window is, nil to
   /// run to the end of the part. Only for a master `ProgrammeExport.plan` found unbroken: nothing
   /// here places, fills or retimes anything.
+  ///
+  /// A window that starts inside the part starts between two key frames, so the pictures from the
+  /// key frame before it have to stay in the file for the first one to decode, and an edit list
+  /// hides them. The sound keeps the same stretch under the same edit (see `copyFromPicture`): cut
+  /// at the window instead, as a passthrough export session cuts it, a reader that does not apply
+  /// the edit list (FFmpeg's copy into HLS, which TeamStation's upload makes) found that second of
+  /// picture with no sound under it, and every phone take uploaded with its sound starting 0.96 s
+  /// after its picture.
   public static func copyProgramme(
     part: URL,
     offset: TimeInterval,
@@ -598,12 +606,203 @@ public enum ArchiveRemux {
   ) async throws {
     progress?(0)
     let start = CMTime(seconds: max(0, offset), preferredTimescale: 600)
-    let duration = length.map { CMTime(seconds: max(0, $0), preferredTimescale: 600) } ?? .positiveInfinity
-    let range: CMTimeRange? = start.seconds > 0.0005 || length != nil
-      ? CMTimeRange(start: start, duration: duration)
-      : nil
-    try await writePassthrough(AVURLAsset(url: part), timeRange: range, to: destination)
+    if start.seconds > 0.0005 {
+      try await copyFromPicture(
+        AVURLAsset(url: part),
+        start: start,
+        end: length.map { CMTimeAdd(start, CMTime(seconds: max(0, $0), preferredTimescale: 600)) },
+        to: destination
+      )
+    } else {
+      let duration = length.map { CMTime(seconds: max(0, $0), preferredTimescale: 600) } ?? .positiveInfinity
+      let range: CMTimeRange? = length != nil ? CMTimeRange(start: start, duration: duration) : nil
+      try await writePassthrough(AVURLAsset(url: part), timeRange: range, to: destination)
+    }
     progress?(1)
+  }
+
+  /// Copies `asset` from `start` to `end` (nil: to its end), every sample as it is, with the
+  /// pictures from the key frame at or before `start` and the sound from that same moment kept ahead
+  /// of the window and hidden by the edit list, on both tracks alike.
+  ///
+  /// A player that applies the edit list presents the window and nothing else; one that does not
+  /// sees both tracks start together, in sync, a moment before it. Past `end` the pictures run on
+  /// only as far as a frame decoded before it, and the edit list hides those too.
+  /// AAC's encoder delay, 2112 samples at 48 kHz: how far before the head the sound reaches back.
+  static let soundPrimingSeconds = 2_112.0 / 48_000
+
+  static func copyFromPicture(_ asset: AVURLAsset, start: CMTime, end: CMTime?, to destination: URL) async throws {
+    try? FileManager.default.removeItem(at: destination)
+    guard let video = try await asset.loadTracks(withMediaType: .video).first else {
+      throw Error.exportFailed("no pictures to copy")
+    }
+    let audio = try await asset.loadTracks(withMediaType: .audio).first
+    let head = try await keyFrame(of: asset, video: video, atOrBefore: start)
+
+    let reader = try AVAssetReader(asset: asset)
+    let pictures = AVAssetReaderTrackOutput(track: video, outputSettings: nil)
+    pictures.alwaysCopiesSampleData = false
+    reader.add(pictures)
+    var sound: AVAssetReaderTrackOutput?
+    if let audio {
+      let output = AVAssetReaderTrackOutput(track: audio, outputSettings: nil)
+      output.alwaysCopiesSampleData = false
+      reader.add(output)
+      sound = output
+    }
+
+    let writer = try AVAssetWriter(outputURL: destination, fileType: .mp4)
+    let pictureInput = AVAssetWriterInput(
+      mediaType: .video,
+      outputSettings: nil,
+      sourceFormatHint: try await video.load(.formatDescriptions).first
+    )
+    pictureInput.transform = try await video.load(.preferredTransform)
+    pictureInput.expectsMediaDataInRealTime = false
+    writer.add(pictureInput)
+    var soundInput: AVAssetWriterInput?
+    if let audio {
+      let input = AVAssetWriterInput(
+        mediaType: .audio,
+        outputSettings: nil,
+        sourceFormatHint: try await audio.load(.formatDescriptions).first
+      )
+      input.expectsMediaDataInRealTime = false
+      writer.add(input)
+      soundInput = input
+    }
+
+    guard reader.startReading() else {
+      throw Error.exportFailed("cannot read the programme: \(describe(reader.error))")
+    }
+    guard writer.startWriting() else {
+      reader.cancelReading()
+      throw Error.exportFailed("cannot write the copy: \(describe(writer.error))")
+    }
+    writer.startSession(atSourceTime: start)
+
+    // Pictures in decode order from the head's key frame, until one decodes at or after the end:
+    // every picture presented before the end decodes before it. Sound from the head to the end,
+    // with the packets the decoder primes on just before the head, as the part has them at its start.
+    let soundFrom = CMTimeSubtract(head.time, CMTime(seconds: soundPrimingSeconds, preferredTimescale: 48_000))
+    var pictureIndex = 0
+    var picturesDone = false
+    var soundDone = soundInput == nil
+    func fail(_ reason: String) -> Swift.Error {
+      reader.cancelReading()
+      writer.cancelWriting()
+      try? FileManager.default.removeItem(at: destination)
+      return Error.exportFailed(reason)
+    }
+    while !(picturesDone && soundDone) {
+      if Task.isCancelled {
+        _ = fail("cancelled")
+        throw CancellationError()
+      }
+      var moved = false
+      if !picturesDone, pictureInput.isReadyForMoreMediaData {
+        if let sample = pictures.copyNextSampleBuffer() {
+          defer { pictureIndex += 1 }
+          let decode = CMSampleBufferGetDecodeTimeStamp(sample)
+          let at = decode.isNumeric ? decode : CMSampleBufferGetPresentationTimeStamp(sample)
+          if let end, at.isNumeric, at >= end {
+            picturesDone = true
+            pictureInput.markAsFinished()
+          } else if pictureIndex >= head.index, !pictureInput.append(sample) {
+            throw fail("picture copy refused: \(describe(writer.error))")
+          }
+        } else {
+          picturesDone = true
+          pictureInput.markAsFinished()
+        }
+        moved = true
+      }
+      if !soundDone, let soundInput, let sound, soundInput.isReadyForMoreMediaData {
+        if let read = sound.copyNextSampleBuffer() {
+          let at = CMSampleBufferGetPresentationTimeStamp(read)
+          if let end, at.isNumeric, at >= end {
+            soundDone = true
+            soundInput.markAsFinished()
+          } else if let sample = Self.packets(of: read, from: soundFrom), !soundInput.append(sample) {
+            throw fail("sound copy refused: \(describe(writer.error))")
+          }
+        } else {
+          soundDone = true
+          soundInput.markAsFinished()
+        }
+        moved = true
+      }
+      if !moved { try? await Task.sleep(nanoseconds: 2_000_000) }
+    }
+    reader.cancelReading()
+    if let end { writer.endSession(atSourceTime: end) }
+    await writer.finishWriting()
+    guard writer.status == .completed else {
+      try? FileManager.default.removeItem(at: destination)
+      throw Error.exportFailed("copy did not complete: \(describe(writer.error))")
+    }
+  }
+
+  /// The key frame a copy from `start` has to begin with: its index in decode order and when it is
+  /// presented. The first picture when nothing before `start` is marked as one.
+  static func keyFrame(
+    of asset: AVURLAsset,
+    video: AVAssetTrack,
+    atOrBefore start: CMTime
+  ) async throws -> (index: Int, time: CMTime) {
+    let reader = try AVAssetReader(asset: asset)
+    let output = AVAssetReaderTrackOutput(track: video, outputSettings: nil)
+    output.alwaysCopiesSampleData = false
+    reader.add(output)
+    guard reader.startReading() else {
+      throw Error.exportFailed("cannot read the programme: \(describe(reader.error))")
+    }
+    defer { reader.cancelReading() }
+    var found: (index: Int, time: CMTime)?
+    var index = 0
+    while let sample = output.copyNextSampleBuffer() {
+      defer { index += 1 }
+      let at = CMSampleBufferGetPresentationTimeStamp(sample)
+      guard at.isNumeric else { continue }
+      let decode = CMSampleBufferGetDecodeTimeStamp(sample)
+      if (decode.isNumeric ? decode : at) > start { break }
+      if at <= start, isKeyFrame(sample) { found = (index, at) }
+      if found == nil { found = (index, at) }
+    }
+    return found ?? (0, .zero)
+  }
+
+  /// The packets of `sample` that end after `from`; nil when none does. A reader hands compressed
+  /// sound over several packets to a buffer, so a buffer can straddle the head.
+  static func packets(of sample: CMSampleBuffer, from: CMTime) -> CMSampleBuffer? {
+    let at = CMSampleBufferGetPresentationTimeStamp(sample)
+    let span = CMSampleBufferGetDuration(sample)
+    guard at.isNumeric, span.isNumeric, span > .zero else { return sample }
+    guard CMTimeAdd(at, span) > from else { return nil }
+    let count = CMSampleBufferGetNumSamples(sample)
+    guard at < from, count > 1 else { return sample }
+    let each = span.seconds / Double(count)
+    let skip = min(count - 1, Int(((from.seconds - at.seconds) / each).rounded(.down)))
+    guard skip > 0 else { return sample }
+    var tail: CMSampleBuffer?
+    let status = CMSampleBufferCopySampleBufferForRange(
+      allocator: kCFAllocatorDefault,
+      sampleBuffer: sample,
+      sampleRange: CFRange(location: skip, length: count - skip),
+      sampleBufferOut: &tail
+    )
+    return status == noErr ? tail : sample
+  }
+
+  private static func isKeyFrame(_ sample: CMSampleBuffer) -> Bool {
+    guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false)
+      as? [[CFString: Any]], let first = attachments.first
+    else { return true }
+    return !((first[kCMSampleAttachmentKey_NotSync] as? Bool) ?? false)
+  }
+
+  private static func describe(_ error: Swift.Error?) -> String {
+    error.map { ($0 as NSError).localizedDescription } ?? "unknown"
   }
 
   // MARK: - Durations

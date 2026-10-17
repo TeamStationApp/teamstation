@@ -1,80 +1,58 @@
 import AVFoundation
 import CameramanCapture
-import CameramanCore
 import SwiftUI
 import UIKit
 
 /// Hosts the `AVCaptureVideoPreviewLayer`.
 ///
-/// The layer is attached on the main thread to a session that runs on the capture queue, which is the
-/// arrangement AVFoundation is built for. `resizeAspect` shows the whole encoded frame: a 16:9
+/// The layer is attached, turned and detached through `CameraSession.showPreview` and `hidePreview`,
+/// so every change to it is made on the capture queue, in order with `start` and `stop`. A layer's
+/// session and its connection's angle are the capture session's configuration: set on the main
+/// thread while the queue starts or stops the session, `startRunning` or `stopRunning` lands inside
+/// that configuration and raises an exception. `resizeAspect` shows the whole encoded frame: a 16:9
 /// stream on a wider phone is letterboxed against the black view, so the operator frames exactly
 /// what the client receives and the bars either side are where the chrome sits.
 public struct CameraPreview: UIViewRepresentable {
-  private let session: AVCaptureSession
-  /// Included so a camera flip (same session, different input) still refreshes rotation.
-  private let position: CameraPosition
+  private let camera: CameraSession
   /// Same 0°/180° the encoder is using. Driving preview from UI orientation independently is what
   /// left the front camera inverted: capture had followed the coordinator to 0° while preview
   /// stayed at 180°.
   private let captureRotation: Double
 
-  public init(
-    session: AVCaptureSession,
-    position: CameraPosition = .back,
-    captureRotation: Double = 180
-  ) {
-    self.session = session
-    self.position = position
+  public init(camera: CameraSession, captureRotation: Double = 180) {
+    self.camera = camera
     self.captureRotation = captureRotation
   }
 
   public func makeUIView(context: Context) -> PreviewView {
     let view = PreviewView()
-    view.position = position
-    view.captureRotation = captureRotation
-    view.previewLayer.session = session
     view.previewLayer.videoGravity = .resizeAspect
-    view.syncRotation()
+    view.show(camera, captureRotation: captureRotation)
     return view
   }
 
   public func updateUIView(_ uiView: PreviewView, context: Context) {
-    if uiView.previewLayer.session !== session {
-      uiView.previewLayer.session = session
-    }
-    uiView.position = position
-    uiView.captureRotation = captureRotation
-    uiView.syncRotation()
+    uiView.show(camera, captureRotation: captureRotation)
+  }
+
+  public static func dismantleUIView(_ uiView: PreviewView, coordinator: ()) {
+    uiView.hide()
   }
 
   public final class PreviewView: UIView {
     public let previewLayer = AVCaptureVideoPreviewLayer()
-    var position: CameraPosition = .back
-    var captureRotation: Double = 180
-    nonisolated(unsafe) private var orientationObserver: (any NSObjectProtocol)?
-    nonisolated(unsafe) private var runningObserver: (any NSObjectProtocol)?
-    private var rotationAttempts = 0
+    /// The camera the layer is to draw.
+    private var camera: CameraSession?
+    /// Whether `camera` has been asked to draw the layer.
+    private var shown = false
+    /// Whether the camera before still has the layer.
+    private var releasing = false
+    private var rotationAngle: CGFloat = 180
 
     override public init(frame: CGRect) {
       super.init(frame: frame)
       backgroundColor = .black
       layer.addSublayer(previewLayer)
-      UIDevice.current.beginGeneratingDeviceOrientationNotifications()
-      orientationObserver = NotificationCenter.default.addObserver(
-        forName: UIDevice.orientationDidChangeNotification,
-        object: nil,
-        queue: .main
-      ) { [weak self] _ in
-        self?.syncRotation()
-      }
-      runningObserver = NotificationCenter.default.addObserver(
-        forName: .AVCaptureSessionDidStartRunning,
-        object: nil,
-        queue: .main
-      ) { [weak self] _ in
-        self?.syncRotation()
-      }
     }
 
     @available(*, unavailable)
@@ -82,60 +60,55 @@ public struct CameraPreview: UIViewRepresentable {
       fatalError("not used")
     }
 
-    deinit {
-      if let orientationObserver {
-        NotificationCenter.default.removeObserver(orientationObserver)
-      }
-      if let runningObserver {
-        NotificationCenter.default.removeObserver(runningObserver)
-      }
-    }
-
     override public func layoutSubviews() {
       super.layoutSubviews()
       previewLayer.frame = bounds
-      applyRotation()
-      scheduleRotationRetriesIfNeeded()
     }
 
-    /// The connection does not exist until the session has an input and is running, so rotation is
-    /// applied from layout and from session-start rather than once in `makeUIView`. Pinning it to 0
-    /// there is what put the picture on its side: the connection was still nil, the default 90°
-    /// stuck, and landscape UI showed a portrait buffer.
-    func syncRotation() {
-      applyRotation()
-      scheduleRotationRetriesIfNeeded()
+    /// Draws `camera` here at the encoder's angle. Only a change goes to the camera, which applies
+    /// the angle on its queue and again whenever the connection is rebuilt: when the session starts
+    /// and after a flip. The front preview is not mirrored: this is a camera pointed at a scene, and
+    /// the operator sees the same picture Producer gets.
+    public func show(_ camera: CameraSession, captureRotation: Double) {
+      let angle: CGFloat = captureRotation == 180 ? 180 : 0
+      if let current = self.camera, current === camera {
+        guard angle != rotationAngle else { return }
+        rotationAngle = angle
+        if shown { camera.showPreview(in: previewLayer, rotationAngle: angle, mirrored: false) }
+        return
+      }
+      release()
+      self.camera = camera
+      rotationAngle = angle
+      showIfReady()
     }
 
-    private func scheduleRotationRetriesIfNeeded() {
-      guard rotationAttempts == 0 else { return }
-      rotationAttempts = 1
-      for step in 1...20 {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1 * Double(step)) { [weak self] in
-          self?.applyRotation()
-        }
+    /// Stops drawing the camera. The camera detaches the layer on its queue.
+    public func hide() {
+      release()
+      camera = nil
+    }
+
+    /// The layer goes to another camera only once the camera before has let it go: setting a layer's
+    /// session detaches it from the one it had on the calling thread.
+    private func release() {
+      guard shown, let camera else { return }
+      shown = false
+      releasing = true
+      camera.hidePreview(in: previewLayer) { [weak self] in
+        Task { @MainActor in self?.released() }
       }
     }
 
-    private func applyRotation() {
-      guard let connection = previewLayer.connection else { return }
-      // Front preview is not mirrored: this is a camera pointed at a scene, and the operator
-      // should see the same picture Producer gets.
-      if connection.isVideoMirroringSupported {
-        connection.automaticallyAdjustsVideoMirroring = false
-        if connection.isVideoMirrored {
-          connection.isVideoMirrored = false
-        }
-      }
-      let preferred = CGFloat(captureRotation == 180 ? 180 : 0)
-      for angle in [preferred, 0, 180] {
-        if connection.isVideoRotationAngleSupported(angle) {
-          if connection.videoRotationAngle != angle {
-            connection.videoRotationAngle = angle
-          }
-          return
-        }
-      }
+    private func released() {
+      releasing = false
+      showIfReady()
+    }
+
+    private func showIfReady() {
+      guard !releasing, !shown, let camera else { return }
+      shown = true
+      camera.showPreview(in: previewLayer, rotationAngle: rotationAngle, mirrored: false)
     }
   }
 }

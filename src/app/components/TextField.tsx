@@ -24,6 +24,16 @@ export interface TextFieldProps {
   maxLength?: number
   leadingIcon?: IconName
   inputRef?: React.Ref<React.ComponentRef<typeof TextInput>>
+  /**
+   * Android: edit in the field itself, never in the keyboard's full-screen
+   * editor, which a phone held sideways opens over the whole screen.
+   */
+  disableFullscreenUI?: boolean
+  /**
+   * How the keyboard capitalizes. Sign-in fields leave this off. A name
+   * field passes `words` so each word starts with a capital.
+   */
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters'
 }
 
 /**
@@ -50,7 +60,9 @@ export function TextField(props: TextFieldProps): React.ReactElement {
     autoComplete = 'off',
     action,
     error,
-    onSubmitEditing
+    onSubmitEditing,
+    disableFullscreenUI,
+    autoCapitalize = 'none'
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -89,7 +101,7 @@ export function TextField(props: TextFieldProps): React.ReactElement {
           placeholderTextColor={theme.placeholderTextColor}
           secureTextEntry={secure}
           autoFocus={autoFocus}
-          autoCapitalize="none"
+          autoCapitalize={autoCapitalize}
           autoCorrect={false}
           keyboardType={keyboardType}
           // `one-time-code` is iOS's name for it and Android's is `sms-otp`;
@@ -109,6 +121,7 @@ export function TextField(props: TextFieldProps): React.ReactElement {
           // will add a line to a single-line field.
           returnKeyType={onSubmitEditing == null ? 'done' : 'go'}
           onSubmitEditing={onSubmitEditing}
+          disableFullscreenUI={disableFullscreenUI}
           onFocus={() => {
             setFocused(true)
             props.onFocus?.()

@@ -1,0 +1,75 @@
+package app.teamstation.streamcore.stream
+
+import android.view.Surface
+import app.teamstation.streamcore.core.EncodedVideoFrame
+import app.teamstation.streamcore.core.StreamCodec
+
+/** What a stream encoder session is opened with. */
+data class StreamEncoderConfig(
+    val codec: StreamCodec,
+    val width: Int,
+    val height: Int,
+    val frameRate: Int,
+    val bitrate: Int,
+    val gopSeconds: Double,
+    /**
+     * A live stream's session, which re-encodes its last picture when no new one comes and holds
+     * itself to the frame rate. False for a recording's session: the recording is drawn on its own
+     * frame grid, and a picture it did not draw must not reach its file.
+     */
+    val live: Boolean = true
+)
+
+/**
+ * The stream's video encoder: MediaCodec ([MediaCodecStreamEncoder]) on a device, a fake in tests.
+ * Pictures arrive through the session's input surface, so the interface is about the output side.
+ */
+interface StreamVideoEncoding {
+    interface Output {
+        /** A coded picture: elementary NAL units, with the parameter sets on a keyframe. */
+        fun onFrame(frame: EncodedVideoFrame)
+
+        /** The encoder reported a failure. */
+        fun onError(code: Int, message: String)
+    }
+
+    /** Opens a session. Answers the surface pictures are drawn into, null where there is none. */
+    fun open(config: StreamEncoderConfig, output: Output): Surface?
+
+    /** The next picture is an IDR: `REQUEST_SYNC_FRAME`. */
+    fun requestSyncFrame()
+
+    /** The rate for the next pictures, on the running session. */
+    fun setBitrate(bitrate: Int)
+
+    /**
+     * No more pictures: whatever the session still holds comes out through [Output.onFrame] before
+     * this returns, or within [timeoutMillis]. A recording's last pictures are its end.
+     */
+    fun finishInput(timeoutMillis: Long) = Unit
+
+    fun close()
+}
+
+/**
+ * The stream's AAC encoder, synchronous like TS Director's `AACPacketizer`: PCM in, whatever packets
+ * the encoder has finished out.
+ */
+interface StreamAudioEncoding {
+    /** The two-byte AudioSpecificConfig the FLV sequence header carries. */
+    val audioSpecificConfig: ByteArray
+
+    /** The encoder's priming: packet N decodes to the input from this many samples before N × 1024. */
+    val primingSamples: Int
+
+    /** Encodes interleaved stereo 48 kHz PCM, answering every packet that came out. */
+    fun encode(samples: ShortArray): List<ByteArray>
+
+    /** Starts again: the next packet is packet zero. */
+    fun reset()
+
+    /** Whatever the encoder still holds, once there is no more sound: the end of a recording. */
+    fun finish(): List<ByteArray> = emptyList()
+
+    fun close()
+}

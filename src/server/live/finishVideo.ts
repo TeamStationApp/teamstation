@@ -1,4 +1,11 @@
-import { mkdir, readdir, rename, rm } from 'node:fs/promises'
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { type Kysely, sql } from 'kysely'
@@ -15,6 +22,13 @@ import {
 } from '../media/ffmpeg'
 import { isStampedAt, readRecordingStamps } from '../media/wallClockScan'
 import { storeWallPoints } from '../media/wallTimeline'
+import { fillHoles } from './holeFiller'
+import {
+  FRAME_SLACK_SEC,
+  listedSegments,
+  readLeadingBoxes,
+  timelineStartSec
+} from './segmentClock'
 import { LIVE_PLAYLIST_NAME } from './splitter'
 
 /**
@@ -55,19 +69,45 @@ export interface VodResult {
  * The remux writes into a subdirectory first and the files are moved up only
  * once it has finished, so a crash in the middle leaves the live playlist
  * standing rather than a half-written recording where a game used to be.
+ *
+ * A playlist whose holes were filled that then fails to remux is logged and
+ * remuxed again with its holes unfilled, as it packed before the filler
+ * existed, so a fault only the filler causes never leaves a game unpacked.
  */
 export async function toRecording(
   ffmpegPath: string,
-  dir: string
+  dir: string,
+  log: (message: string) => void = console.log
 ): Promise<VodResult> {
   const staging = join(dir, '.vod')
   await rm(staging, { recursive: true, force: true })
   await mkdir(staging, { recursive: true })
 
-  await remuxToHls(ffmpegPath, {
-    input: join(dir, LIVE_PLAYLIST_NAME),
-    outDir: staging
-  })
+  const playlistPath = join(dir, LIVE_PLAYLIST_NAME)
+  try {
+    const { source, unfilled } = await remuxSources(dir, ffmpegPath, log)
+    try {
+      await remuxToHls(ffmpegPath, {
+        input: source,
+        outDir: staging,
+        concatList: source !== playlistPath
+      })
+    } catch (error) {
+      if (unfilled == null) throw error
+      log(
+        `live: ${dir}: remux of the filled holes failed, remuxing them unfilled: ${String(error)}`
+      )
+      await rm(staging, { recursive: true, force: true })
+      await mkdir(staging, { recursive: true })
+      await remuxToHls(ffmpegPath, {
+        input: unfilled,
+        outDir: staging,
+        concatList: true
+      })
+    }
+  } finally {
+    await rm(join(dir, '.holes'), { recursive: true, force: true })
+  }
 
   const probe = await probeVideoStream(
     ffprobeFor(ffmpegPath),
@@ -103,6 +143,120 @@ export async function toRecording(
     codecTag: probe.codecTag,
     files: files.sort()
   }
+}
+
+/**
+ * Whether the listed segments leave a gap the public file has to keep.
+ *
+ * Continuous segments sit about a frame past the previous `#EXTINF`. A wider
+ * gap is the absence the live timestamps already record, down to about one
+ * frame, and the remux keeps it.
+ */
+export function timelineHole(
+  pieces: ReadonlyArray<{ start: number; duration: number }>
+): boolean {
+  return pieces.some((piece, index) => {
+    if (index === 0) return false
+    const previous = pieces[index - 1]
+    return piece.start - previous.start > previous.duration + FRAME_SLACK_SEC
+  })
+}
+
+/**
+ * The file a live playlist should be remuxed from.
+ *
+ * A playlist whose segments sit apart on the wall clock is assembled first:
+ * each segment keeps the start written in its `sidx`, and the gap between
+ * those starts is the absence. The public file keeps that hole, filled with
+ * black pictures at the stream's frame rate and with silence (see
+ * `holeFiller.ts`), so every picture lasts one frame and the return opens at
+ * its wall time. The list points the concat demuxer at each init-and-segment
+ * pair in place, so the finish does not copy the stream beside itself; only
+ * the init segment is rewritten, to carry the filler's parameter sets. A
+ * stream whose holes cannot be filled is listed as it stands, and the remux
+ * keeps the holes as they are. Continuous segments sit about a frame past the
+ * previous `#EXTINF` and are remuxed as they stand.
+ */
+export async function fileForRemux(
+  dir: string,
+  ffmpegPath: string,
+  log: (message: string) => void = console.log
+): Promise<string> {
+  return (await remuxSources(dir, ffmpegPath, log)).source
+}
+
+/**
+ * `fileForRemux`'s answer, and, when that is a hole-filled list, the same
+ * segments listed unfilled for a remux to fall back on.
+ */
+async function remuxSources(
+  dir: string,
+  ffmpegPath: string,
+  log: (message: string) => void
+): Promise<{ source: string; unfilled?: string }> {
+  const playlistPath = join(dir, LIVE_PLAYLIST_NAME)
+  const asIs = { source: playlistPath }
+  const playlist = await readFile(playlistPath, 'utf8').catch(() => '')
+  const listed = listedSegments(playlist)
+  if (listed.length < 2) return asIs
+  const init = await readFile(join(dir, 'init.mp4')).catch(() => undefined)
+  if (init == null) return asIs
+  const pieces: Array<{
+    name: string
+    duration: number
+    start: number
+    path: string
+  }> = []
+  for (const item of listed) {
+    const path = join(dir, item.name)
+    const bytes = await readLeadingBoxes(path).catch(() => undefined)
+    if (bytes == null) return asIs
+    const start = timelineStartSec(init, bytes)
+    if (start == null) return asIs
+    pieces.push({ name: item.name, duration: item.durationSec, start, path })
+  }
+  if (!timelineHole(pieces)) return asIs
+
+  const scratch = join(dir, '.holes')
+  await rm(scratch, { recursive: true, force: true })
+  await mkdir(scratch, { recursive: true })
+  const initPath = join(dir, 'init.mp4')
+  const isHole = (index: number): boolean =>
+    timelineHole([pieces[index], pieces[index + 1]])
+  let lines: string[] | undefined
+  try {
+    const filled = await fillHoles(
+      ffmpegPath,
+      initPath,
+      pieces,
+      isHole,
+      scratch
+    )
+    if (typeof filled === 'string') {
+      log(`live: ${dir}: holes kept unfilled: ${filled}`)
+    } else {
+      lines = filled.lines
+    }
+  } catch (error) {
+    log(`live: ${dir}: holes kept unfilled: ${String(error)}`)
+  }
+  const plain = ['ffconcat version 1.0']
+  for (let index = 0; index < pieces.length; index++) {
+    const piece = pieces[index]
+    const pair = `concat:${initPath}|${piece.path}`
+    plain.push(`file '${pair.replaceAll("'", "'\\''")}'`)
+    if (index + 1 < pieces.length) {
+      plain.push(
+        `duration ${(pieces[index + 1].start - piece.start).toFixed(6)}`
+      )
+    }
+  }
+  const unfilled = join(scratch, 'unfilled.txt')
+  await writeFile(unfilled, `${plain.join('\n')}\n`)
+  if (lines == null) return { source: unfilled }
+  const list = join(scratch, 'list.txt')
+  await writeFile(list, `${lines.join('\n')}\n`)
+  return { source: list, unfilled }
 }
 
 /** Whether a directory has already been turned into a recording. */

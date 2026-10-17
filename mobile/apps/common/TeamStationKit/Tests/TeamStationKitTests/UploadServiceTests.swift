@@ -315,6 +315,60 @@ struct UploadServiceTests {
     #expect(FlakyServer.opened.map { $0["serverClockOffsetMs"] as? Int } == [ 250, 40, nil ])
   }
 
+  @Test func namesTheLiveStreamItReplacesOnlyWhenTold() async throws {
+    finishesAtOnce()
+    FlakyServer.failuresLeft = [:]
+    FlakyServer.seen = []
+    FlakyServer.opened = []
+    let file = try aFile()
+    defer { try? FileManager.default.removeItem(at: file) }
+
+    _ = try await service().send(
+      file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began
+    )
+    _ = try await service().send(
+      file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began,
+      liveStreamId: "lst_1", wholeStream: true
+    )
+
+    #expect(FlakyServer.opened.count == 2)
+    #expect(FlakyServer.opened[0]["liveStreamId"] == nil)
+    #expect(FlakyServer.opened[0]["wholeStream"] == nil)
+    #expect(FlakyServer.opened[1]["liveStreamId"] as? String == "lst_1")
+    #expect(FlakyServer.opened[1]["wholeStream"] as? Bool == true)
+  }
+
+  @Test func saysWhichUploadItOpenedBeforeSendingAPart() async throws {
+    // A phone keeps the id on its recording's row, so a killed upload resumes from the parts the
+    // server already has instead of opening a second upload.
+    finishesAtOnce()
+    FlakyServer.failuresLeft = [:]
+    FlakyServer.seen = []
+    let file = try aFile()
+    defer { try? FileManager.default.removeItem(at: file) }
+    final class Told: @unchecked Sendable {
+      var ids: [String] = []
+      var partsSeenWhenTold = -1
+    }
+    let told = Told()
+
+    _ = try await service().send(
+      file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began,
+      onOpened: { id in
+        told.ids.append(id)
+        told.partsSeenWhenTold = FlakyServer.seen.filter { $0 == "part" }.count
+      }
+    )
+    _ = try await service().send(
+      file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began,
+      uploadId: "dup_1",
+      onOpened: { told.ids.append($0) }
+    )
+
+    #expect(told.ids == [ "dup_1", "dup_1" ])
+    #expect(told.partsSeenWhenTold == 0)
+  }
+
   @Test func saysSoWhenTheServerCouldNotFinishIt() async throws {
     FlakyServer.failuresLeft = [:]
     FlakyServer.seen = []
@@ -330,5 +384,181 @@ struct UploadServiceTests {
         file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began
       )
     }
+  }
+
+  /// Set once, from another task.
+  private final class Flag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isSet = false
+    var value: Bool { lock.withLock { isSet } }
+    func set() { lock.withLock { isSet = true } }
+  }
+
+  /// A clock the test moves, and what the upload reported, both told from other threads.
+  private final class Recorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var time: TimeInterval = 100
+    private var reports: [UploadService.Progress] = []
+
+    var now: TimeInterval { lock.withLock { time } }
+    var progress: [UploadService.Progress] { lock.withLock { reports } }
+    func advance(_ seconds: TimeInterval) { lock.withLock { time += seconds } }
+    func report(_ progress: UploadService.Progress) { lock.withLock { reports.append(progress) } }
+  }
+
+  private func service(
+    sendingParts send: @escaping UploadService.PartSender,
+    clock: Recorder
+  ) -> UploadService {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [ FlakyServer.self ]
+    return UploadService(
+      client: TeamStationClient(
+        baseURL: URL(string: "https://develop.example")!,
+        token: "tok",
+        session: URLSession(configuration: configuration)
+      ),
+      sendPart: send,
+      now: { clock.now },
+      progressInterval: 0.25
+    )
+  }
+
+  @Test func reportsAPartsBytesAsTheyGoFourTimesASecondAtMost() async throws {
+    // A part is 32 MB, which a field's uplink takes minutes over: reported only as each one
+    // landed, the bar sat still for minutes and then jumped.
+    finishesAtOnce()
+    FlakyServer.failuresLeft = [:]
+    FlakyServer.seen = []
+    let file = try aFile()
+    defer { try? FileManager.default.removeItem(at: file) }
+    let recorder = Recorder()
+    let sends: UploadService.PartSender = { _, _, _, onSent in
+      recorder.advance(0.3)
+      onSent(2)
+      recorder.advance(0.1)
+      onSent(3) // a tenth of a second on: too soon
+      recorder.advance(0.3)
+      onSent(1) // a retried part starting again: never backwards
+      recorder.advance(0.3)
+      onSent(6) // more than the last part holds: only what it holds
+    }
+
+    let videoId = try await service(sendingParts: sends, clock: recorder).send(
+      file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began,
+      onProgress: { recorder.report($0) }
+    )
+
+    #expect(videoId == "vid_1")
+    #expect(recorder.progress.map(\.bytesSent) == [ 0, 2, 6, 8, 10, 12, 12 ])
+    #expect(recorder.progress.map(\.sent) == [ 0, 0, 0, 1, 1, 1, 2 ])
+    #expect(recorder.progress.allSatisfy { $0.bytesTotal == 12 && $0.step == nil })
+  }
+
+  @Test func aResumedUploadReportsWhatTheServerHasThenCarriesOnWithinThePart() async throws {
+    finishesAtOnce()
+    FlakyServer.failuresLeft = [:]
+    FlakyServer.seen = []
+    FlakyServer.stateReply =
+      #"{"uploadId":"dup_1","state":"open","partSize":8,"parts":2,"received":[0],"missing":[1],"receivedBytes":8}"#
+    defer {
+      FlakyServer.stateReply =
+        #"{"uploadId":"dup_1","state":"ready","partSize":8,"parts":2,"received":[0,1],"missing":[],"receivedBytes":12,"videoId":"vid_1"}"#
+    }
+    let file = try aFile()
+    defer { try? FileManager.default.removeItem(at: file) }
+    let recorder = Recorder()
+    let sends: UploadService.PartSender = { _, index, _, onSent in
+      #expect(index == 1)
+      recorder.advance(0.5)
+      onSent(1)
+      recorder.advance(0.5)
+      onSent(3)
+    }
+
+    _ = try await service(sendingParts: sends, clock: recorder).send(
+      file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began,
+      uploadId: "dup_1",
+      onProgress: { recorder.report($0) }
+    )
+
+    #expect(recorder.progress.map(\.bytesSent) == [ 8, 9, 11, 12 ])
+  }
+
+  @Test func aCancelledUploadTriesItsPartNoMore() async throws {
+    // A part's request can still reach the server after its upload is cancelled: three more tries
+    // of it did, a moment after a killed upload had been let go.
+    finishesAtOnce()
+    FlakyServer.failuresLeft = [:]
+    FlakyServer.seen = []
+    let file = try aFile()
+    defer { try? FileManager.default.removeItem(at: file) }
+    let recorder = Recorder()
+    let sends: UploadService.PartSender = { _, _, _, _ in
+      recorder.report(.init(sent: 0, parts: 2, bytesSent: 0, bytesTotal: 12))
+      withUnsafeCurrentTask { $0?.cancel() }
+      throw URLError(.cancelled)
+    }
+    let service = service(sendingParts: sends, clock: recorder)
+    let upload = Task {
+      try await service.send(file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began)
+    }
+    let result = await upload.result
+    #expect(throws: CancellationError.self) { try result.get() }
+    #expect(recorder.progress.count == 1)
+  }
+
+  @Test func aCancelledUploadStopsWatchingTheServerAtOnce() async throws {
+    // Cancelled while the server works the parts into a video: the watch swallowed the cancellation,
+    // so its sleeps and asks returned at once and it spun for a quarter hour, holding its caller.
+    FlakyServer.failuresLeft = [:]
+    FlakyServer.seen = []
+    FlakyServer.finishReply =
+      #"{"videoId":null,"state":"assembling","step":"assembling"}"#
+    FlakyServer.stateReply =
+      #"{"uploadId":"dup_1","state":"processing","partSize":8,"parts":2,"received":[0,1],"missing":[],"receivedBytes":12,"step":"remuxing","videoId":null}"#
+    defer {
+      FlakyServer.stateReply =
+        #"{"uploadId":"dup_1","state":"ready","partSize":8,"parts":2,"received":[0,1],"missing":[],"receivedBytes":12,"videoId":"vid_1"}"#
+    }
+    let file = try aFile()
+    defer { try? FileManager.default.removeItem(at: file) }
+    let service = service()
+    let upload = Task {
+      try await service.send(file: file, gameId: "gam_1", title: "a take", kind: "home", startedAt: Self.began)
+    }
+    let finished = Date().addingTimeInterval(10)
+    while !FlakyServer.seen.contains("finish"), Date() < finished {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(FlakyServer.seen.contains("finish"))
+    upload.cancel()
+    // The answer within a second, standing in for the quarter hour it took.
+    let ended = Flag()
+    Task {
+      _ = await upload.result
+      ended.set()
+    }
+    let deadline = Date().addingTimeInterval(1)
+    while !ended.value, Date() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(ended.value)
+    if ended.value {
+      let result = await upload.result
+      #expect(throws: CancellationError.self) { try result.get() }
+    }
+    #expect(!FlakyServer.seen.contains("state"))
+  }
+
+  @Test func aPartsTaskDelegateHandsOnTheBytesSent() {
+    let recorder = Recorder()
+    let delegate = BodySentDelegate { recorder.report(.init(sent: 0, parts: 1, bytesSent: $0, bytesTotal: 8)) }
+    let session = URLSession(configuration: .ephemeral)
+    let task = session.dataTask(with: URL(string: "https://develop.example")!)
+    delegate.urlSession(session, task: task, didSendBodyData: 5, totalBytesSent: 5, totalBytesExpectedToSend: 8)
+    delegate.urlSession(session, task: task, didSendBodyData: 3, totalBytesSent: 8, totalBytesExpectedToSend: 8)
+    #expect(recorder.progress.map(\.bytesSent) == [ 5, 8 ])
+    session.invalidateAndCancel()
   }
 }

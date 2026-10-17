@@ -582,8 +582,12 @@ describe('Coach Game (U25)', function () {
     const screen = await coach(held, {
       teamId: 'away',
       source: {
-        open: async () =>
-          ScoringSession.start(memoryStore(), 'g1', copyState(gameUnderWay()))
+        open: async () => {
+          // Number 2 is up to bat; the runner comes off the coach's bench.
+          const game = copyState(gameUnderWay())
+          addDevelopmentPlayer(game, 'away', 'Owl 10', '10')
+          return ScoringSession.start(memoryStore(), 'g1', game)
+        }
       },
       dictation: {
         openSocket: fake.openSocket,
@@ -592,8 +596,8 @@ describe('Coach Game (U25)', function () {
         tailMs: 0
       }
     })
-    await say(fake, 'Number 2 runs for the runner on first', [
-      { type: 'pinchRunner', player: { jersey: '2' }, base: '1B' }
+    await say(fake, 'Number 10 runs for the runner on first', [
+      { type: 'pinchRunner', player: { jersey: '10' }, base: '1B' }
     ])
     expect(node('Dictation chat')).not.equals(null)
     const line = document.querySelector('[data-testid="Roster chat line"]')

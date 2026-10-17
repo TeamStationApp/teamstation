@@ -17,7 +17,8 @@ let package = Package(
     .package(path: "../../common/CameramanRemote"),
     .package(path: "../DirectorPipeline"),
     .package(path: "../DirectorDVR"),
-    .package(path: "../DirectorRTMP"),
+    .package(path: "../../../common/DirectorRTMP"),
+    .package(path: "../../../common/DirectorMedia"),
     .package(path: "../DirectorTestHarness"),
     .package(path: "../DirectorLink"),
     .package(path: "../../../common/DistributorWire"),
@@ -39,6 +40,8 @@ let package = Package(
         "DirectorPipeline",
         "DirectorDVR",
         "DirectorRTMP",
+        // The programme recorder and streamer, and the stream and recording controllers.
+        "DirectorMedia",
         "DirectorTestHarness",
         "DirectorLink",
         "DistributorWire",

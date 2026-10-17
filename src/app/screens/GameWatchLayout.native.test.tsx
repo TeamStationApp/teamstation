@@ -164,4 +164,69 @@ describe('native event section and picture pinning', () => {
         !layout.short
       )
     })
+
+  it('lets the list run its full length again once the phone is upright after being held sideways', async () => {
+    // The streaming screen turns an Android phone sideways under the game, and
+    // back. The column's cap while sideways must not outlive it: upright the
+    // list does not scroll, so a cap cut off the cameras' upload rows and
+    // Record video below it, with nothing able to reach them.
+    let setSideways!: (sideways: boolean) => void
+    function Harness(): React.ReactElement {
+      const [sideways, set] = React.useState(true)
+      setSideways = set
+      const width = sideways ? 874 : 402
+      const height = sideways ? 402 : 874
+      const layout = watchLayout({
+        width,
+        height,
+        chromeHeight: 108,
+        aspect: 16 / 9,
+        previous: sideways ? 'sideBySide' : 'stacked'
+      })
+      const pinned = usePinnedHead({
+        headerHeight: 48,
+        ready: true,
+        tab: 'watch',
+        anchorOnRow: false,
+        tail: 80,
+        onScroll: () => {}
+      })
+      return (
+        <GameWatchLayout
+          pinned={pinned}
+          head={<div>Event hero</div>}
+          player={<div data-testid="fixture-player">Picture</div>}
+          description={<div>Description</div>}
+          sections={<div>Event sections</div>}
+          highlightList={<div>Highlights</div>}
+          footer={<div>Stream</div>}
+          layout={layout}
+          short={layout.short}
+          sideBySide={layout.mode === 'sideBySide'}
+          headerHeight={48}
+          tabsHeight={60}
+          height={height}
+        />
+      )
+    }
+    await mount(<Harness />)
+    const list = (): HTMLElement =>
+      document.querySelector('[data-testid="event-pegged-video"]')!
+        .nextElementSibling as HTMLElement
+    await settle(100)
+    expect(parseFloat(getComputedStyle(list()).maxHeight)).lessThanOrEqual(402)
+    await act(async () => {
+      setSideways(false)
+    })
+    // The animated style lands on a frame of its own; a cap that outlived the
+    // turn never goes, so waiting for it costs a passing run nothing.
+    const uncapped = (value: string): boolean =>
+      value === '' || value === 'none' || parseFloat(value) > 874 * 100
+    let upright = getComputedStyle(list()).maxHeight
+    for (let waited = 0; !uncapped(upright) && waited < 2000; waited += 50) {
+      await settle(50)
+      upright = getComputedStyle(list()).maxHeight
+    }
+    expect(uncapped(upright), `max-height ${upright}`).equals(true)
+  })
 })

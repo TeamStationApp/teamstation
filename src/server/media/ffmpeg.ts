@@ -94,6 +94,11 @@ export interface RemuxOptions {
    * declare, in samples, or 0. See `AAC_PRIMING_SAMPLES`.
    */
   soundPrimingSamples?: number
+  /**
+   * `input` is an ffconcat list. The demuxer is told so, and each entry may
+   * be a `concat:` of the init segment and one media segment.
+   */
+  concatList?: boolean
 }
 
 /**
@@ -135,6 +140,27 @@ export const KEEP_STREAM_TIMES = [
 ] as const
 
 /**
+ * A hole that could not be filled keeps the return at its own time.
+ *
+ * A live recording's holes are filled with black pictures and silence at the
+ * stream's own rate (see `holeFiller.ts`), so its concat list has no gaps and
+ * this changes nothing. It is for a stream whose holes could not be filled,
+ * whose concat list jumps across each absence. The HLS muxer cuts a fragment
+ * at the return's keyframe, closes the old one at the last packet's own
+ * duration, and opens the new one where the old one ended, stretching the
+ * return's first picture (and its wall-clock point) back across the hole. A
+ * last packet that already lasts to the return ends its fragment there, so
+ * the return opens at its own time; wall-clock sync comes first, even at the
+ * cost of one long picture. Any packet followed by more than a frame and a
+ * half gets the gap; with reordered pictures the shorter of the decode and
+ * presentation gaps, so no decode time is pushed onto the next one's.
+ */
+const HOLD_ACROSS_HOLE =
+  'setts=pts=PTS:dts=DTS:duration=' +
+  'if(gt(NEXT_DTS-DTS\\,1.5*DURATION)*gt(NEXT_PTS-PTS\\,0)' +
+  '\\,min(NEXT_DTS-DTS\\,NEXT_PTS-PTS)\\,DURATION)'
+
+/**
  * The arguments that turn a recording into HLS without re-encoding it.
  *
  * - `-c copy` is the whole point: no transcode, ever.
@@ -160,22 +186,42 @@ export function remuxToHlsArgs(options: RemuxOptions): string[] {
     outDir,
     segmentSeconds = 6,
     videoTag = 'hvc1',
-    soundPrimingSamples = 0
+    soundPrimingSamples = 0,
+    concatList = false
   } = options
   return [
     '-hide_banner',
     '-loglevel',
     'error',
+    ...(concatList
+      ? [
+          '-f',
+          'concat',
+          '-safe',
+          '0',
+          '-protocol_whitelist',
+          'file,crypto,data,concat'
+        ]
+      : []),
     '-i',
     input,
     '-c',
     'copy',
     ...(videoTag == null ? [] : ['-tag:v', videoTag]),
+    ...(concatList ? ['-bsf:v', HOLD_ACROSS_HOLE] : []),
     // Undeclared priming is stamped before zero, as a declared one would be,
     // so the real sound starts with the picture. `SR * TB` turns samples into
     // the stream's own time base, whatever that is.
-    ...(soundPrimingSamples > 0
-      ? ['-bsf:a', `setts=ts=TS-${soundPrimingSamples}/(SR*TB)`]
+    ...(soundPrimingSamples > 0 || concatList
+      ? [
+          '-bsf:a',
+          [
+            ...(soundPrimingSamples > 0
+              ? [`setts=ts=TS-${soundPrimingSamples}/(SR*TB)`]
+              : []),
+            ...(concatList ? [HOLD_ACROSS_HOLE] : [])
+          ].join(',')
+        ]
       : []),
     '-f',
     'hls',
