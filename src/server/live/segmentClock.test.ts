@@ -11,7 +11,9 @@ import {
   wallClockNal
 } from './frameWallFixture'
 import {
+  firstProgramDateMs,
   LEADING_BOX_BYTES,
+  listedSegments,
   listedTimelineEndSec,
   moveSegmentOnTimeline,
   placedBelowOnDisk,
@@ -360,6 +362,50 @@ describe('placing a returned segment on the programme clock', function () {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('lists each segment with its length and date, and leaves out a name with no length', function () {
+    const playlist = [
+      '#EXTM3U',
+      '#EXT-X-MEDIA-SEQUENCE:0',
+      '#EXT-X-PROGRAM-DATE-TIME:2026-10-14T16:00:00.000Z',
+      '#EXTINF:4.000000,',
+      'seg000000.m4s',
+      '#EXTINF:3.960000,',
+      ' seg000001.m4s ',
+      // No length: not a segment, and the date written for it goes with it.
+      '#EXT-X-PROGRAM-DATE-TIME:2026-10-14T16:00:30.000Z',
+      'seg000002.m4s',
+      // The length may come before the date.
+      '#EXTINF:4.000000,',
+      '#EXT-X-PROGRAM-DATE-TIME:2026-10-14T16:00:40.000Z',
+      'seg000003.m4s',
+      '#EXT-X-PROGRAM-DATE-TIME:not a date',
+      '#EXTINF:2.5,',
+      'seg000004.m4s',
+      'init.mp4',
+      ''
+    ].join('\n')
+    const listed = listedSegments(playlist)
+    expect(listed).deep.equals([
+      {
+        name: 'seg000000.m4s',
+        durationSec: 4,
+        programDateMs: Date.parse('2026-10-14T16:00:00.000Z')
+      },
+      { name: 'seg000001.m4s', durationSec: 3.96 },
+      {
+        name: 'seg000003.m4s',
+        durationSec: 4,
+        programDateMs: Date.parse('2026-10-14T16:00:40.000Z')
+      },
+      { name: 'seg000004.m4s', durationSec: 2.5 }
+    ])
+    expect(firstProgramDateMs(listed)).equals(
+      Date.parse('2026-10-14T16:00:00.000Z')
+    )
+    expect(firstProgramDateMs(listed.slice(1, 2))).equals(undefined)
+    expect(listedSegments('#EXTM3U\nseg000000.m4s\n')).deep.equals([])
   })
 
   it('names segments as the writer does', function () {

@@ -6,7 +6,9 @@ import { readdirSync, readFileSync, watch, writeFileSync } from 'fs'
 import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
 import { segmentPictureSec } from '../media/trackStarts'
 import {
+  firstProgramDateMs,
   type FrameWall,
+  listedSegments,
   listedTimelineEndSec,
   readFrameWall,
   readLeadingBoxesSync,
@@ -14,6 +16,7 @@ import {
   recoverUnstampedSegments,
   restampSegments,
   segmentName,
+  segmentNumber,
   segmentsFrom,
   stampNewSegments
 } from './segmentClock'
@@ -1235,44 +1238,21 @@ export function playlistContinuation(
 ): Continuation {
   if (playlist == null) return { startNumber: nextOnDisk, offsetSec: 0 }
   let mediaSequence = 0
-  let listed = 0
+  for (const raw of playlist.split('\n')) {
+    const sequence = /^#EXT-X-MEDIA-SEQUENCE:(\d+)$/.exec(raw.trim())
+    if (sequence != null) mediaSequence = Number.parseInt(sequence[1], 10)
+  }
+  const segments = listedSegments(playlist)
+  const listed = segments.length
+  const firstPdtMs = firstProgramDateMs(segments)
   let highest = -1
   let mediaSec = 0
-  let firstPdtMs: number | undefined
   let timelineEndMs: number | undefined
-  // The date applies to the segment that follows it. That segment's duration
-  // may be written before the date or after it.
-  let pendingSec: number | undefined
-  let pendingPdt: number | undefined
-  for (const raw of playlist.split('\n')) {
-    const line = raw.trim()
-    const sequence = /^#EXT-X-MEDIA-SEQUENCE:(\d+)$/.exec(line)
-    if (sequence != null) mediaSequence = Number.parseInt(sequence[1], 10)
-    const dated = /^#EXT-X-PROGRAM-DATE-TIME:(.+)$/.exec(line)
-    if (dated != null) {
-      const ms = Date.parse(dated[1])
-      if (Number.isFinite(ms)) {
-        firstPdtMs ??= ms
-        pendingPdt = ms
-      }
-    }
-    const duration = /^#EXTINF:([\d.]+)/.exec(line)
-    if (duration != null) {
-      const seconds = Number.parseFloat(duration[1])
-      mediaSec += seconds
-      pendingSec = seconds
-    }
-    const segment = /^seg(\d+)\.m4s$/.exec(line)
-    if (segment != null) {
-      if (pendingSec != null) {
-        const start = pendingPdt ?? timelineEndMs
-        if (start != null) timelineEndMs = start + pendingSec * 1000
-      }
-      pendingSec = undefined
-      pendingPdt = undefined
-      listed += 1
-      highest = Math.max(highest, Number.parseInt(segment[1], 10))
-    }
+  for (const segment of segments) {
+    mediaSec += segment.durationSec
+    const start = segment.programDateMs ?? timelineEndMs
+    if (start != null) timelineEndMs = start + segment.durationSec * 1000
+    highest = Math.max(highest, segmentNumber(segment.name) ?? -1)
   }
   if (listed === 0) return { startNumber: nextOnDisk, offsetSec: 0 }
   const startNumber = Math.max(mediaSequence, highest + 1 - listed)

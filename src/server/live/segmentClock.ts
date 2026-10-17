@@ -283,49 +283,86 @@ function writeStamped(path: string, bytes: Buffer): void {
   renameSync(temporary, path)
 }
 
-interface ListedSegment {
+/** A segment a media playlist lists. */
+export interface ListedSegment {
+  /** Its file name, as the HLS writer names it (`seg%06d.m4s`). */
+  name: string
+  /** Its `#EXTINF` length, in seconds. */
+  durationSec: number
+  /** The program date written for it, in milliseconds since 1970, if one was. */
+  programDateMs?: number
+}
+
+/**
+ * The segments a media playlist lists, in order: each one's name, length and
+ * program date. Every reader of a live playlist's segments reads them here,
+ * so they agree on which segments there are.
+ *
+ * A date applies to the segment that follows it. That segment's `#EXTINF`
+ * may be written before the date or after it. A name with no `#EXTINF` since
+ * the segment before it is not listed, and a date written for it goes with
+ * it. `#EXTINF` is required of every media segment, so a player does not take
+ * it for one, and FFmpeg's `append_list`, which continues the playlist,
+ * counts only the names an `#EXTINF` comes before: the numbering, the media
+ * listed and the timeline leave it out just as the next writer does.
+ */
+export function listedSegments(playlist: string): ListedSegment[] {
+  const listed: ListedSegment[] = []
+  let pendingSec: number | undefined
+  let pendingPdt: number | undefined
+  for (const raw of playlist.split('\n')) {
+    const line = raw.trim()
+    const dated = /^#EXT-X-PROGRAM-DATE-TIME:(.+)$/.exec(line)
+    if (dated != null) {
+      const ms = Date.parse(dated[1])
+      if (Number.isFinite(ms)) pendingPdt = ms
+    }
+    const duration = /^#EXTINF:([\d.]+)/.exec(line)
+    if (duration != null) pendingSec = Number.parseFloat(duration[1])
+    if (!/^seg\d+\.m4s$/.test(line)) continue
+    if (pendingSec != null) {
+      listed.push({
+        name: line,
+        durationSec: pendingSec,
+        ...(pendingPdt == null ? {} : { programDateMs: pendingPdt })
+      })
+    }
+    pendingSec = undefined
+    pendingPdt = undefined
+  }
+  return listed
+}
+
+/** The program date of the first listed segment that has one. */
+export function firstProgramDateMs(
+  listed: readonly ListedSegment[]
+): number | undefined {
+  return listed.find(segment => segment.programDateMs != null)?.programDateMs
+}
+
+interface ProgrammeSegment {
   start: number
   duration: number
 }
 
 /**
  * Programme position of each listed segment, in seconds from the first
- * program date. The date applies to the segment that follows it. That
- * segment's duration may be written before the date or after it. With no
- * date, the position is the media listed before the segment.
+ * program date. With no date, the position is the media listed before the
+ * segment.
  */
-function listedProgramme(playlist: string): Map<string, ListedSegment> {
-  const listed = new Map<string, ListedSegment>()
-  let firstPdt: number | undefined
+function listedProgramme(playlist: string): Map<string, ProgrammeSegment> {
+  const listed = new Map<string, ProgrammeSegment>()
+  const segments = listedSegments(playlist)
+  const firstPdt = firstProgramDateMs(segments)
   let timelineEnd: number | undefined
-  let pendingSec: number | undefined
-  let pendingPdt: number | undefined
   let mediaBefore = 0
-  for (const raw of playlist.split('\n')) {
-    const line = raw.trim()
-    const dated = /^#EXT-X-PROGRAM-DATE-TIME:(.+)$/.exec(line)
-    if (dated != null) {
-      const ms = Date.parse(dated[1])
-      if (Number.isFinite(ms)) {
-        firstPdt ??= ms
-        pendingPdt = ms
-      }
-    }
-    const duration = /^#EXTINF:([\d.]+)/.exec(line)
-    if (duration != null) pendingSec = Number.parseFloat(duration[1])
-    const segment = /^(seg\d+\.m4s)$/.exec(line)
-    if (segment == null) continue
-    const mark = pendingPdt ?? timelineEnd
+  for (const segment of segments) {
+    const mark = segment.programDateMs ?? timelineEnd
     const start =
       mark != null && firstPdt != null ? (mark - firstPdt) / 1000 : mediaBefore
-    const seconds = pendingSec ?? 0
-    listed.set(segment[1], { start, duration: seconds })
-    if (pendingSec != null) {
-      if (mark != null) timelineEnd = mark + pendingSec * 1000
-      mediaBefore += pendingSec
-    }
-    pendingSec = undefined
-    pendingPdt = undefined
+    listed.set(segment.name, { start, duration: segment.durationSec })
+    if (mark != null) timelineEnd = mark + segment.durationSec * 1000
+    mediaBefore += segment.durationSec
   }
   return listed
 }
@@ -361,24 +398,14 @@ export async function listedTimelineEndSec(
   playlist: string | undefined
 ): Promise<number | undefined> {
   if (playlist == null) return undefined
-  let last: { name: string; duration: number } | undefined
-  let duration: number | undefined
-  for (const raw of playlist.split('\n')) {
-    const line = raw.trim()
-    const listed = /^#EXTINF:([\d.]+)/.exec(line)
-    if (listed != null) duration = Number.parseFloat(listed[1])
-    if (/^seg\d+\.m4s$/.test(line) && duration != null) {
-      last = { name: line, duration }
-      duration = undefined
-    }
-  }
+  const last = listedSegments(playlist).at(-1)
   if (last == null) return undefined
   try {
     const start = timelineStartSec(
       readFileSync(`${directory}/init.mp4`),
       await readLeadingBoxes(`${directory}/${last.name}`)
     )
-    return start == null ? undefined : start + last.duration
+    return start == null ? undefined : start + last.durationSec
   } catch {
     return undefined
   }

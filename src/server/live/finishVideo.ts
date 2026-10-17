@@ -24,6 +24,7 @@ import { isStampedAt, readRecordingStamps } from '../media/wallClockScan'
 import { storeWallPoints } from '../media/wallTimeline'
 import {
   FRAME_SLACK_SEC,
+  listedSegments,
   readLeadingBoxes,
   timelineStartSec
 } from './segmentClock'
@@ -125,17 +126,6 @@ export async function toRecording(
 }
 
 /**
- * Where a segment sits on the playlist's timeline, from its `sidx` in that
- * box's own timescale (`timelineStartSec`). Undefined when it has none.
- */
-export function segmentTimelineStart(
-  init: Buffer,
-  segment: Buffer
-): number | undefined {
-  return timelineStartSec(init, segment)
-}
-
-/**
  * Whether the listed segments leave a gap the public file has to keep.
  *
  * Continuous segments sit about a frame past the previous `#EXTINF`. A wider
@@ -150,23 +140,6 @@ export function timelineHole(
     const previous = pieces[index - 1]
     return piece.start - previous.start > previous.duration + FRAME_SLACK_SEC
   })
-}
-
-function listedSegments(
-  playlist: string
-): Array<{ name: string; duration: number }> {
-  const out: Array<{ name: string; duration: number }> = []
-  let duration = 0
-  for (const raw of playlist.split('\n')) {
-    const line = raw.trim()
-    const inf = /^#EXTINF:([\d.]+)/.exec(line)
-    if (inf != null) {
-      duration = Number.parseFloat(inf[1])
-      continue
-    }
-    if (/^seg\d+\.m4s$/.test(line)) out.push({ name: line, duration })
-  }
-  return out
 }
 
 /**
@@ -193,9 +166,9 @@ export async function fileForRemux(dir: string): Promise<string> {
       () => undefined
     )
     if (bytes == null) return playlistPath
-    const start = segmentTimelineStart(init, bytes)
+    const start = timelineStartSec(init, bytes)
     if (start == null) return playlistPath
-    pieces.push({ name: item.name, duration: item.duration, start })
+    pieces.push({ name: item.name, duration: item.durationSec, start })
   }
   if (!timelineHole(pieces)) return playlistPath
 
