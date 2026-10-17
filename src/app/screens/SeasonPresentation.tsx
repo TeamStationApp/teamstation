@@ -377,7 +377,7 @@ export function SeasonPresentation(
     ].map(team => [team.id, team.locality])
   )
   const teamCards = (list: TeamSummary[]): React.ReactNode => (
-    <ActionList>
+    <ActionList bounded={list.length > 0}>
       {list.map(team => {
         const locality = localities.get(team.id)
         const record =
