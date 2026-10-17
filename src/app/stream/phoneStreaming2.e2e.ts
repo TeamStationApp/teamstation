@@ -251,6 +251,23 @@ async function main(): Promise<void> {
     )
     return bounds
   }
+  // Away from the camera the app stands upright, whichever way the phone is
+  // held. Waits out the turn.
+  const upright = async (what: string): Promise<Bounds> => {
+    let bounds = await screen()
+    for (
+      const until = Date.now() + 5000;
+      bounds.height <= bounds.width && Date.now() < until;
+    ) {
+      await sleep(400)
+      bounds = await screen()
+    }
+    assert(
+      bounds.height > bounds.width,
+      `${what} (${bounds.width}×${bounds.height})`
+    )
+    return bounds
+  }
   const inBand = (bounds: Bounds, frame: Bounds): boolean =>
     bounds.y > frame.height * 0.2 &&
     bounds.y + bounds.height < frame.height * 0.82
@@ -493,9 +510,19 @@ async function main(): Promise<void> {
     }`
   )
 
+  // Closed while the phone is held upright, the app stands up with it.
   note('tapOn camera-close')
   await m.tapOn({ id: 'camera-close' })
   await sleep(1500)
+  const closedUpright = await upright(
+    'leaving the camera stands the app upright'
+  )
+  note(`app bounds after Close ${closedUpright.width}×${closedUpright.height}`)
+  await shot(
+    android
+      ? 'camera-closed-upright-after-pixel.png'
+      : 'camera-closed-upright-after.png'
+  )
   const openedIdle = await myStreams(token)
   assert.equal(
     openedIdle.length,
@@ -659,12 +686,42 @@ async function main(): Promise<void> {
       `$ ffprobe ${playlist}\n${probed.stdout}`
     )
   }
+  // Done while the phone is held upright: the camera takes its landscape
+  // hold back rather than standing up with the sheet.
+  note('setOrientation PORTRAIT')
+  await m.setOrientation('PORTRAIT')
+  await sleep(800)
+  const settingsUpright = await screen()
+  assert(
+    settingsUpright.height > settingsUpright.width,
+    `settings stood upright again (${settingsUpright.width}×${settingsUpright.height})`
+  )
   note('tapOn settings-done')
   await m.tapOn({ id: 'settings-done' })
+  await sleep(1200)
+  const doneUpright = await landscape()
+  note(
+    `camera landscape after Done held upright (${doneUpright.width}×${doneUpright.height})`
+  )
+  await shot(
+    android
+      ? 'camera-landscape-after-done-upright-after-pixel.png'
+      : 'camera-landscape-after-done-upright-after.png'
+  )
+  // Slide to Stop is swiped sideways, as the phone is held to film.
+  note('setOrientation LANDSCAPE_LEFT')
+  await m.setOrientation('LANDSCAPE_LEFT')
   await sleep(800)
   await landscape()
 
   await stopAndClose()
+  // Closed while the phone is held sideways, the app still stands upright.
+  const closedSideways = await upright(
+    'leaving the camera held sideways stands the app upright'
+  )
+  note(
+    `app bounds after Close ${closedSideways.width}×${closedSideways.height}`
+  )
   const afterClose = await onThisPhone()
   assert(afterClose.length === 1, 'closing leaves the one Home stream')
   assert.equal(afterClose[0].id, streamId, 'closing keeps the same stream id')
