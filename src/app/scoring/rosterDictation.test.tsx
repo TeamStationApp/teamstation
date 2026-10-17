@@ -3,13 +3,14 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { TeamStationClient } from '../../common/api'
+import { asRosterEntry, TeamStationClient } from '../../common/api'
 import {
   promptContext,
   type ScoringAction,
   shortName
 } from '../../common/scoring/actions'
 import {
+  type ChosenRosterCommand,
   ONE_CATEGORY_AT_A_TIME,
   rosterPrompt,
   type RosterQuestion,
@@ -95,6 +96,7 @@ async function mount(
     options?: Partial<RosterDictationOptions>
     chat?: ChatTurn[]
     question?: RosterQuestion
+    pending?: ChosenRosterCommand[]
   } = {}
 ): Promise<Mounted> {
   const fake = fakeDictation()
@@ -108,6 +110,21 @@ async function mount(
       <ThemeProvider>
         <RosterEditor
           state={state}
+          onCreatePlayer={async (_teamId, player) =>
+            asRosterEntry({
+              userId: 7001,
+              shortName: player.firstName,
+              jersey: player.jersey,
+              isPlayer: true,
+              role: 'member',
+              section: 'player',
+              staffRoles: [],
+              inheritedFrom: null,
+              positions: [],
+              bats: player.bats,
+              throws: player.throws
+            })
+          }
           audience={more.audience}
           fixedSide={coach ? 'home' : undefined}
           initialDraft={
@@ -118,7 +135,8 @@ async function mount(
                   side: 'away',
                   mode: 'editRoster',
                   ...(more.chat == null ? {} : { chat: more.chat }),
-                  ...(more.question == null ? {} : { question: more.question })
+                  ...(more.question == null ? {} : { question: more.question }),
+                  ...(more.pending == null ? {} : { pending: more.pending })
                 }
           }
           dictate={{
@@ -188,6 +206,38 @@ describe('dictation on the roster screen', function () {
   const said = (id: number): string =>
     shortName(state.session.gameData.players[id])
 
+  it('persists a named creation handed over from the scoring screen exactly once', async () => {
+    const { saved } = await mount(state, {
+      pending: [
+        { type: 'addPlayer', side: 'home', name: 'Ohtani', jersey: '17' }
+      ]
+    })
+    await settle()
+    await act(async () => {
+      node('Save Rosters')!.click()
+    })
+    const named = Object.values(saved[0].draft.gameData.players).filter(
+      player => player.firstName === 'Ohtani'
+    )
+    expect(named).length(1)
+    expect(named[0]).includes({ userId: 7001, local: false })
+  })
+
+  it('keeps an explicitly dictated placeholder game-only', async () => {
+    const { say, saved } = await mount(state)
+    await say('Create a placeholder named Ohtani', [
+      { type: 'addPlayer', side: 'home', name: 'Ohtani', placeholder: true }
+    ])
+    await act(async () => {
+      node('Save Rosters')!.click()
+    })
+    expect(
+      Object.values(saved[0].draft.gameData.players).find(
+        player => player.firstName === 'Ohtani'
+      )
+    ).includes({ userId: null, local: true })
+  })
+
   it('starts on, in the roster scope, telling the model both rosters', async function () {
     const { fake } = await mount(state)
     // Handed over on: no tap was needed.
@@ -215,7 +265,7 @@ describe('dictation on the roster screen', function () {
   })
 
   it('stages a defense on Defense, a lineup on Lineup and a new player on Roster, on the team said', async function () {
-    const { say } = await mount(state)
+    const { say, saved } = await mount(state)
     expect(selected('Roster')).equals(true)
     expect(selected('Away Team')).equals(true)
     expect(saveDisabled()).equals(true)
@@ -276,6 +326,14 @@ describe('dictation on the roster screen', function () {
     expect(chat('Roster chat line').at(-1)).equals(
       'Ohtani #17 added to the roster'
     )
+    await act(async () => {
+      node('Save Rosters')!.click()
+    })
+    expect(
+      Object.values(saved[0].draft.gameData.players).find(
+        player => player.userId === 7001
+      )
+    ).includes({ local: false, firstName: 'Ohtani' })
   })
 
   it('refuses a sentence of two kinds, and a play, staging nothing', async function () {
