@@ -117,6 +117,64 @@ async function choose(label: string): Promise<void> {
   })
 }
 describe('the event page’s automatic and explicit sections', () => {
+  it('keeps hero button dimensions fixed as capabilities change and opens DJ separately', async () => {
+    const { client, game } = fixture()
+    let dj = 0
+    let coach = 0
+    let record = 0
+    const props = {
+      client,
+      gameId: 'g1',
+      onCoachGame: () => {
+        coach++
+      },
+      onDjGame: () => {
+        dj++
+      },
+      recording: {
+        open: () => {
+          record++
+        }
+      }
+    }
+    const dimensions = (label: string): string[] => {
+      const button = document.querySelector<HTMLElement>(
+        `[role="button"][aria-label="${label}"]`
+      )!
+      const shell = button.firstElementChild as HTMLElement
+      return [
+        getComputedStyle(button).width,
+        getComputedStyle(shell).height,
+        shell.style.paddingLeft,
+        shell.style.paddingRight
+      ]
+    }
+    await render(props)
+    const size = dimensions('Score')
+    expect(size[0]).equals('72px')
+    expect(size[1]).equals('24px')
+    expect(dimensions('Record')).deep.equals(size)
+    game.coachSides = ['home']
+    game.canDj = true
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <GestureHandlerRootView>
+            <GameScreen key="all-actions" {...props} />
+          </GestureHandlerRootView>
+        </ThemeProvider>
+      )
+    })
+    for (const label of ['Score', 'Coach', 'DJ', 'Record'])
+      expect(dimensions(label)).deep.equals(size)
+    for (const label of ['DJ', 'Coach', 'Record'])
+      await act(async () => {
+        document
+          .querySelector<HTMLElement>(`[role="button"][aria-label="${label}"]`)!
+          .click()
+      })
+    expect([dj, coach, record]).deep.equals([1, 1, 1])
+  })
   it('updates the game LIVE pill for scoring, undo and finalization through the socket', async () => {
     const { client, game } = fixture()
     game.startAt = new Date(Date.now() - 60000).toISOString()

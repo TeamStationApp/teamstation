@@ -287,14 +287,10 @@ describe('real event info and guardian attendance', function () {
     expect(read.attendees.find(row => row.userId === 101)?.name).equals(
       'Babe R'
     )
-    expect(read.attendees.find(row => row.userId === 115)).includes({
-      name: 'Alex R',
-      canReply: true,
-      isTeamParticipant: false
-    })
+    expect(read.attendees.find(row => row.userId === 115)).equals(undefined)
     expect(
       (await info(gameId, 109)).attendees.find(row => row.userId === 109)
-    ).includes({ canReply: true, isTeamParticipant: false, response: 'yes' })
+    ).equals(undefined)
     const away = await info(gameId, 102)
     expect(away.teamId).equals(f.teamB)
     expect(
@@ -536,11 +532,8 @@ describe('real event info and guardian attendance', function () {
       .execute()
     const privateControls = await info(hosted, 109)
     expect(privateControls.attendanceTeams).deep.equals([])
-    expect(privateControls.attendees.map(row => row.userId)).deep.equals([109])
-    expect(privateControls.attendees[0]).includes({
-      canReply: true,
-      isTeamParticipant: false
-    })
+    expect(privateControls.attendees).deep.equals([])
+    expect(privateControls.replyUserIds).deep.equals([])
     expect(
       (
         await f.h.request(
@@ -558,7 +551,7 @@ describe('real event info and guardian attendance', function () {
       .execute()
     expect((await info(hosted, 109)).teamId).equals(f.teamA)
   })
-  it('defaults to the viewer’s direct team while keeping a guardian control for a non-player elsewhere', async () => {
+  it('defaults to the viewer’s direct team and excludes non-player children elsewhere', async () => {
     await seedEventInfo2People(f, gameId)
     await f.h.db
       .updateTable('memberships')
@@ -587,10 +580,7 @@ describe('real event info and guardian attendance', function () {
       .execute()
     const read = await info(gameId, 109)
     expect(read.teamId).equals(f.teamB)
-    expect(read.attendees.find(row => row.userId === 103)).includes({
-      canReply: true,
-      isTeamParticipant: false
-    })
+    expect(read.attendees.find(row => row.userId === 103)).equals(undefined)
     const home = asEventInfo(
       await (
         await f.h.request(
@@ -768,7 +758,7 @@ describe('real event info and guardian attendance', function () {
         .status
     ).equals(403)
   })
-  it('keeps out-of-team child controls private to their guardians', async () => {
+  it('rejects unrelated children and revoked roster membership, even with an old reply', async () => {
     const id = await create()
     await f.h.db
       .insertInto('user_links')
@@ -780,50 +770,102 @@ describe('real event info and guardian attendance', function () {
         can_manage: false
       })
       .execute()
-    expect((await info(id)).replyUserIds).includes(106)
+    for (const eventId of [id, gameId]) {
+      expect((await info(eventId)).replyUserIds).not.includes(106)
+      expect(
+        (
+          await f.h.request('PUT', `/events/${eventId}/rsvps/106`, {
+            response: 'yes'
+          })
+        ).status
+      ).equals(403)
+      expect(
+        (
+          await f.h.request('PUT', `/events/${eventId}/rsvps/103`, {
+            response: 'yes'
+          })
+        ).status
+      ).equals(200)
+    }
+    await f.h.db
+      .updateTable('memberships')
+      .set({ is_player: false })
+      .where('team_id', '=', f.teamA)
+      .where('user_id', '=', 103)
+      .execute()
+    for (const eventId of [id, gameId]) {
+      expect((await info(eventId)).replyUserIds).not.includes(103)
+      expect(
+        (
+          await f.h.request('PUT', `/events/${eventId}/rsvps/103`, {
+            response: 'no'
+          })
+        ).status
+      ).equals(403)
+    }
+  })
+  it('allows a child on the away roster but not for an unrelated team event', async () => {
+    const id = await create()
+    await f.h.db
+      .updateTable('memberships')
+      .set({ team_id: f.teamB })
+      .where('team_id', '=', f.teamA)
+      .where('user_id', '=', 103)
+      .execute()
+    expect((await info(gameId)).replyUserIds).includes(103)
     expect(
-      (await f.h.request('PUT', `/events/${id}/rsvps/106`, { response: 'yes' }))
-        .status
+      (
+        await f.h.request('PUT', `/events/${gameId}/rsvps/103`, {
+          response: 'yes'
+        })
+      ).status
     ).equals(200)
+    expect((await info(id)).replyUserIds).not.includes(103)
     expect(
-      (await info(id)).attendees.find(row => row.userId === 106)?.response
-    ).equals('yes')
-    expect(
-      (await info(id)).attendees.find(row => row.userId === 106)
-        ?.isTeamParticipant
-    ).equals(false)
-    expect((await info(id, 103)).attendees.map(row => row.userId)).not.includes(
-      106
-    )
-    await f.h.db
-      .insertInto('user_links')
-      .values({
-        id: makeId('userLink'),
-        user_id: 104,
-        related_user_id: 106,
-        kind: 'guardian',
-        can_manage: false
-      })
-      .execute()
-    await f.h.db
-      .deleteFrom('user_links')
-      .where('user_id', '=', 101)
-      .where('related_user_id', '=', 106)
-      .execute()
-    expect(
-      (await info(id, 104)).attendees.find(row => row.userId === 106)?.response
-    ).equals('yes')
-    await f.h.db
-      .deleteFrom('user_links')
-      .where('related_user_id', '=', 106)
-      .execute()
-    expect((await info(id, 103)).attendees.map(row => row.userId)).not.includes(
-      106
-    )
-    expect(
-      (await f.h.request('PUT', `/events/${id}/rsvps/106`, { response: 'no' }))
+      (await f.h.request('PUT', `/events/${id}/rsvps/103`, { response: 'yes' }))
         .status
     ).equals(403)
+  })
+  it('requires direct membership or direct admin/coach roles for the viewer’s own reply', async () => {
+    await seedEventInfo2People(f, gameId)
+    // Inherited season membership, league membership and site admin are insufficient.
+    for (const viewer of [109, 110, 105]) {
+      expect((await info(gameId, viewer)).replyUserIds).not.includes(viewer)
+      expect(
+        (
+          await f.h.request(
+            'PUT',
+            `/events/${gameId}/rsvps/${viewer}`,
+            { response: 'yes' },
+            viewer
+          )
+        ).status
+      ).equals(403)
+    }
+    for (const viewer of [101, 106, 107, 108]) {
+      expect((await info(gameId, viewer)).replyUserIds).includes(viewer)
+      expect(
+        (
+          await f.h.request(
+            'PUT',
+            `/events/${gameId}/rsvps/${viewer}`,
+            { response: 'yes' },
+            viewer
+          )
+        ).status
+      ).equals(200)
+    }
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: makeId('scopeRole'),
+        user_id: 109,
+        scope_type: 'team',
+        scope_id: f.teamB,
+        role: 'admin'
+      })
+      .execute()
+    expect((await info(gameId, 109)).replyUserIds).includes(109)
   })
   it('applies the same RSVP controls to a game and hides inactive or merged roster identities', async () => {
     await f.h.db
@@ -903,10 +945,21 @@ describe('real event info and guardian attendance', function () {
     expect(other.attendees.map(row => row.userId))
       .not.includes(103)
       .and.not.includes(106)
-    expect((await info(gameId, 105)).replyUserIds).deep.equals([105, 104])
+    expect((await info(gameId, 105)).replyUserIds).deep.equals([104])
   })
   it('keeps the latest saved child and guardian responses across account aliases in both RSVP tables', async () => {
     const titled = await create()
+    await f.h.db
+      .insertInto('memberships')
+      .values(
+        [105, 106].map(userId => ({
+          id: makeId('membership'),
+          user_id: userId,
+          team_id: f.teamA,
+          is_player: false
+        }))
+      )
+      .execute()
     await f.h.db
       .insertInto('user_links')
       .values({
