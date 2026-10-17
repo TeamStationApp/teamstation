@@ -118,12 +118,13 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
 }
 
 /**
- * What the iPhone's root controller allows while the camera is up.
+ * What the iPhone's root controller allows, by what is on screen.
  *
- * Portrait is the rest of the app. The camera view, and the settings sheet
- * over it, are landscape either way up: both landscape directions and not
- * portrait. An iPad is the same while the camera is up, and every orientation
- * again once the camera has closed.
+ * `portrait` is the rest of the app. `landscape` is the camera view: both
+ * landscape directions, so the phone can flip upside down, and never
+ * portrait. `any` is the settings sheet over the camera, which may stand
+ * upright or lie sideways either way. An iPad asks for landscape while the
+ * camera is up, and every orientation otherwise.
  */
 enum CameraGeometry {
   enum Mode {
@@ -144,8 +145,6 @@ enum CameraGeometry {
     case .any: return [.portrait, .landscape]
     }
   }
-
-  static var requested: UIInterfaceOrientationMask { mask }
 
   /**
    * The mask iOS intersects with the top controller. Landscape while the
@@ -197,7 +196,7 @@ enum CameraGeometry {
   @MainActor
   static func apply(_ mode: Mode) {
     self.mode = mode
-    let target = requested
+    let target = mask
     let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
     for scene in scenes where scene.session.role != .windowExternalDisplayNonInteractive {
       refresh(scene.windows.first?.rootViewController)
