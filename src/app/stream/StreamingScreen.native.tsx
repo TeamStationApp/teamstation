@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import {
   Modal,
   NativeModules,
@@ -346,17 +353,24 @@ function StreamingOverlay(
     }
   }, [readScale, scale, scaleReads])
 
-  // True while this screen's cleanup has not run. The settings sheet asks
-  // this before it locks landscape again, so a sheet that unmounts after the
-  // screen cannot turn the phone back sideways.
+  // True while this screen is mounted. The settings sheet asks this before it
+  // locks landscape again, so a sheet that unmounts with the screen cannot
+  // turn the phone back sideways. Cleared in a layout cleanup: React runs a
+  // parent's layout cleanups before its children's, and the sheet releases
+  // its hold in a layout cleanup of its own.
   const cameraHeld = useRef(false)
+  useLayoutEffect(() => {
+    cameraHeld.current = true
+    return () => {
+      cameraHeld.current = false
+    }
+  }, [])
   // The engine is open while the screen is up, and the phone held sideways.
   // Opened again after a kill or a crash, within the hour, on the stream
   // whose take was rolling, the take continues as its next part and the
   // stream redials.
   useEffect(() => {
     let live = true
-    cameraHeld.current = true
     rotation.lockLandscape()
     cameraOrientation.landscape()
     const opened = closing.then(async () => {
@@ -375,7 +389,6 @@ function StreamingOverlay(
       })
     return () => {
       live = false
-      cameraHeld.current = false
       // After the open, never before it: a screen gone before the engine
       // finished opening must not leave the camera running behind it.
       closing = opened

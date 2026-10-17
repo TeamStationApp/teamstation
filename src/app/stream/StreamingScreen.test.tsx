@@ -242,8 +242,10 @@ describe('the streaming screen', function () {
       await delay(10)
     })
     root = undefined
-    expect(h.ios.at(-1)).equals('portrait')
-    expect(h.rotations.at(-1)).equals('portrait')
+    // The screen's hold is gone before the sheet's cleanup runs, so the
+    // sheet does not turn the phone sideways again on its way out.
+    expect(h.ios).deep.equals(['landscape', 'any', 'portrait'])
+    expect(h.rotations).deep.equals(['landscape', 'any', 'portrait'])
   })
 
   it('records on the stream URL with the redial’s request, holds Close, and stops with a slide', async function () {
