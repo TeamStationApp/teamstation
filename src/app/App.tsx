@@ -1945,6 +1945,13 @@ function Shell(props: AppProps): React.ReactElement {
         onCoachGame={teamId => {
           push({ name: 'coachGame', gameId: top.gameId, teamId })
         }}
+        onDjGame={
+          walkUpMusic.djSupported
+            ? () => {
+                push({ name: 'djGame', gameId: top.gameId })
+              }
+            : undefined
+        }
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
@@ -2036,6 +2043,13 @@ function Shell(props: AppProps): React.ReactElement {
         onCoachGame={teamId => {
           push({ name: 'coachGame', gameId: top.gameId, teamId })
         }}
+        onDjGame={
+          walkUpMusic.djSupported
+            ? () => {
+                push({ name: 'djGame', gameId: top.gameId })
+              }
+            : undefined
+        }
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
