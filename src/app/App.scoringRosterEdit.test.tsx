@@ -846,6 +846,12 @@ describe('actual App scoring player Settings return', function () {
       expect(document.body.textContent).includes(
         'Tap a player to edit settings.'
       )
+      await waitFor(
+        () =>
+          document.querySelector(
+            '[aria-label^="Mookie Betts, jersey 12, bats right, throws right"]'
+          ) != null
+      )
       expect(
         document.querySelector(
           '[aria-label^="Mookie Betts, jersey 12, bats right, throws right"]'

@@ -97,7 +97,7 @@ async function main(): Promise<void> {
       await m.inputText({ text: value })
     }
     await m.hideKeyboard()
-    await tap('Add Player')
+    await tap('Create Player')
     await m.assertVisible({ text: '^Assign pitcher$' })
     await m.assertVisible({ text: 'Assign P #22 Clayton K' })
     await capture('created-player-return')
@@ -107,13 +107,13 @@ async function main(): Promise<void> {
     await m.hideKeyboard()
     await m.swipe({ start: '25%, 55%', end: '25%, 20%', duration: 400 })
     await m.scrollUntilVisible({
-      element: { text: '^Add Placeholder Players$' },
+      element: { text: '^Create Placeholder Player$' },
       direction: 'DOWN',
       timeout: 15000
     })
-    await tap('Add Placeholder Players')
-    await m.assertVisible({ text: '^Select number of players to add\\.$' })
-    await tap('Add')
+    await tap('Create Placeholder Player')
+    await m.assertVisible({ text: '^Select number of players to create\\.$' })
+    await tap('Create')
     await m.assertVisible({ text: '^Assign pitcher$' })
     await m.assertVisible({ text: 'Assign P Hawks A' })
     await capture('placeholder-return')
