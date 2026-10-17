@@ -1060,6 +1060,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const current = video
     if (player == null || current == null || next.id === current.id) {
       setVideo(next)
+      // Public previews have no player, but their selected camera still belongs
+      // in the address so sign-in can return to it.
+      if (next.id !== current?.id) onMoment?.(next.id, 0)
       return
     }
     // Worked out before the swap, and handed to the effect that attaches the
