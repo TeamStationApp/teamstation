@@ -87,6 +87,7 @@ import { gameActions, gameTabs } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { watchHandoff } from './gameWatchLayoutProps'
 import { showVideoLivePill } from './livePillPolicy'
+import { MembershipAccess } from './MembershipAccess'
 import { openableTeams as teamsWithAPage } from './openableTeams'
 import { VideoMembershipSheet } from './VideoMembershipSheet'
 
@@ -1695,6 +1696,18 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         />
       ) : (
         <BoxScore
+          membershipAccess={
+            <MembershipAccess
+              key={`${game.id}:${props.signedIn === true}`}
+              client={client}
+              signedIn={props.signedIn === true}
+              teams={[
+                { id: game.homeTeamId, name: game.homeTeamName },
+                { id: game.awayTeamId, name: game.awayTeamName }
+              ]}
+              onSignIn={() => props.onSignIn?.()}
+            />
+          }
           game={game}
           box={box}
           theme={theme}
