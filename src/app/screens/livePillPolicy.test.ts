@@ -1,7 +1,66 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { showVideoLivePill } from './livePillPolicy'
+import {
+  gameLiveWindow,
+  showGameLivePill,
+  showVideoLivePill
+} from './livePillPolicy'
+
+describe('the live pill on a game', () => {
+  const game = {
+    startAt: '2027-04-10T18:00:00Z',
+    endAt: '2027-04-10T20:00:00Z',
+    status: 'inProgress',
+    hasScoringEvents: true
+  }
+  const start = Date.parse('2027-04-10T17:00:00Z')
+  const end = Date.parse('2027-04-10T21:00:00Z')
+
+  it('requires the inclusive hour before start through hour after end', () => {
+    expect(gameLiveWindow(game)).deep.equals([start, end])
+    for (const now of [start, start + 1, end - 1, end])
+      expect(showGameLivePill(game, now)).equals(true)
+    for (const now of [start - 1, end + 1])
+      expect(showGameLivePill(game, now)).equals(false)
+  })
+
+  it('requires a remaining event, not a stale in-progress status', () => {
+    for (const hasScoringEvents of [false, undefined])
+      expect(showGameLivePill({ ...game, hasScoringEvents }, start)).equals(
+        false
+      )
+    expect(showGameLivePill({ ...game, status: 'scheduled' }, start)).equals(
+      true
+    )
+  })
+
+  it('never shows a finalized or cancelled game', () => {
+    for (const status of ['final', 'cancelled'])
+      expect(showGameLivePill({ ...game, status }, start)).equals(false)
+  })
+
+  it('uses the three-hour game duration when no end is set', () => {
+    const noEnd = { ...game, endAt: null }
+    const fallbackEnd = Date.parse('2027-04-10T22:00:00Z')
+    expect(showGameLivePill(noEnd, fallbackEnd)).equals(true)
+    expect(showGameLivePill(noEnd, fallbackEnd + 1)).equals(false)
+  })
+
+  it('hides games without a valid range and non-game events', () => {
+    for (const startAt of [null, 'invalid'])
+      expect(showGameLivePill({ ...game, startAt }, start)).equals(false)
+    expect(
+      showGameLivePill(
+        { ...game, endAt: game.startAt.replace('18:', '16:') },
+        start
+      )
+    ).equals(false)
+    expect(showGameLivePill({ ...game, eventKind: 'event' }, start)).equals(
+      false
+    )
+  })
+})
 
 describe('the live pill on a video', () => {
   const startAt = '2027-04-10T18:00:00Z'

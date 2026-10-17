@@ -117,6 +117,66 @@ async function choose(label: string): Promise<void> {
   })
 }
 describe('the event page’s automatic and explicit sections', () => {
+  it('updates the game LIVE pill for scoring, undo and finalization through the socket', async () => {
+    const { client, game } = fixture()
+    game.startAt = new Date(Date.now() - 60000).toISOString()
+    game.endAt = new Date(Date.now() + 60000).toISOString()
+    game.status = 'inProgress'
+    let listener: ((event: GameSocketEvent) => void) | undefined
+    await render({
+      client,
+      gameId: 'g1',
+      socket: {
+        subscribe: (_id, receive) => {
+          listener = receive
+          return () => undefined
+        }
+      }
+    })
+    const visible = (): boolean =>
+      document.querySelector('[aria-label="Live now"]') != null
+    expect(visible()).equals(false)
+    for (const hasScoringEvents of [true, false, true]) {
+      await act(async () => {
+        game.hasScoringEvents = hasScoringEvents
+        listener!({ type: 'resync', gameId: 'g1' })
+      })
+      expect(visible()).equals(hasScoringEvents)
+    }
+    await act(async () => {
+      game.status = 'final'
+      listener!({ type: 'resync', gameId: 'g1' })
+    })
+    expect(visible()).equals(false)
+  })
+
+  it('shows and expires the game LIVE pill at its time boundaries while mounted', async () => {
+    const { client, game } = fixture()
+    const hour = 60 * 60 * 1000
+    const now = Date.now()
+    game.startAt = new Date(now + hour + 200).toISOString()
+    game.endAt = new Date(now + 2 * hour).toISOString()
+    game.hasScoringEvents = true
+    await render({ client, gameId: 'g1' })
+    const visible = (): boolean =>
+      document.querySelector('[aria-label="Live now"]') != null
+    expect(visible()).equals(false)
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 260))
+    })
+    expect(visible()).equals(true)
+    game.startAt = new Date(Date.now() - 2 * hour).toISOString()
+    game.endAt = new Date(Date.now() - hour + 200).toISOString()
+    await act(async () => {
+      window.dispatchEvent(new window.Event('focus'))
+    })
+    expect(visible()).equals(true)
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 260))
+    })
+    expect(visible()).equals(false)
+  })
+
   it('catches a start crossed during the game request while its end is still future', async () => {
     const { client, game } = fixture()
     const originalNow = Date.now
