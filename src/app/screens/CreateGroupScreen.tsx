@@ -11,7 +11,7 @@ import type { ParentAction } from '../../common/groupLinks'
 import type { Locality } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
 import {
-  formatDateRange,
+  seasonPeriodLabel,
   seasonTimeFrames
 } from '../../common/seasonTimeFrames'
 import { Button, Card, ListCard, Screen, TextField } from '../components'
@@ -355,7 +355,7 @@ export function CreateGroupScreen({
               />
               {range != null && (
                 <Text style={styles.hint}>
-                  {formatDateRange(range.startsOn, range.endsOn)}
+                  {seasonPeriodLabel(range.startsOn, range.endsOn)}
                 </Text>
               )}
             </View>

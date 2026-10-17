@@ -11,7 +11,7 @@ function frame(ordinal: number): SeasonTimeFrame {
     return {
       label: `Winter ${year}`,
       startsOn: `${year}-12-01`,
-      endsOn: `${year + 1}-02-${new Date(Date.UTC(year + 1, 2, 0)).getUTCDate()}`
+      endsOn: `${year + 1}-02-28`
     }
   return {
     label: `${['Spring', 'Summer', 'Fall'][season]} ${year}`,
@@ -48,7 +48,7 @@ export function formatDateRange(
 /**
  * How a season names its time frame on a list: `Spring 2026` when its dates
  * are exactly one of the time frames creation offers, and the dates
- * themselves only when somebody chose them by hand.
+ * themselves for custom ranges, regardless of how they were entered.
  *
  * A season stores only its dates, so the choice is read back from them.
  */

@@ -5,7 +5,7 @@ import type { TeamStationClient } from '../../common/api'
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
 import { localityLabel } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
-import { formatDateRange } from '../../common/seasonTimeFrames'
+import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import {
   Button,
   Card,
@@ -226,7 +226,7 @@ export function DiscoverScreen({
                   </Text>
                   {group.kind === 'season' && (
                     <Text style={styles.hint}>
-                      {formatDateRange(group.startsOn, group.endsOn)}
+                      {seasonPeriodLabel(group.startsOn, group.endsOn)}
                     </Text>
                   )}
                   {group.external && (

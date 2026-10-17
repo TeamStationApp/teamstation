@@ -5,7 +5,7 @@ import type { TeamStationClient } from '../../common/api'
 import type { ParentAction, ParentPreview } from '../../common/groupLinks'
 import { localityLabel } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
-import { formatDateRange } from '../../common/seasonTimeFrames'
+import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { Button, Card, Screen, TextField } from '../components'
 import { CancelAction } from '../components/CancelAction'
 import { useLatestRequest } from '../hooks/useLatestRequest'
@@ -428,7 +428,7 @@ export function GroupLinkScreen({
                   <Text style={styles.name}>{group.name}</Text>
                   <Text style={styles.hint}>
                     {group.kind === 'season'
-                      ? formatDateRange(group.startsOn, group.endsOn)
+                      ? seasonPeriodLabel(group.startsOn, group.endsOn)
                       : group.locality == null
                         ? 'Location not set'
                         : localityLabel(group.locality)}
