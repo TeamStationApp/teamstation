@@ -109,17 +109,17 @@ afterEach(async function () {
 
 describe('schedule event creation entry', () => {
   for (const season of ['normal', 'empty'] as const)
-    it(`ends a ${season} schedule with a centered blue Add Event card`, async () => {
+    it(`ends a ${season} schedule with a centered blue Add Game pill`, async () => {
       let creates = 0
       await mount(season, 'schedule', fixtureClient(season), () => {
         creates++
       })
       const card = document.querySelector<HTMLElement>(
-        '[data-testid="add-event-card"]'
+        '[data-testid="add-game-button"]'
       )!
       expect(card).not.equals(null)
       expect(card.parentElement!.lastElementChild).equals(card)
-      expect(getComputedStyle(card).backgroundColor).equals('rgb(21, 101, 192)')
+      expect(getComputedStyle(card).backgroundColor).equals('rgb(29, 78, 216)')
       expect(getComputedStyle(card).borderTopStyle).not.equals('dashed')
       expect(getComputedStyle(card).alignItems).equals('center')
       expect(getComputedStyle(card).justifyContent).equals('center')
@@ -130,7 +130,7 @@ describe('schedule event creation entry', () => {
     })
   it('does not offer creation on a non-member schedule', async () => {
     await mount('normal', 'schedule', fixtureClient(), undefined, true)
-    expect(document.querySelector('[data-testid="add-event-card"]')).equals(
+    expect(document.querySelector('[data-testid="add-game-button"]')).equals(
       null
     )
   })
@@ -146,7 +146,7 @@ describe('schedule event creation entry', () => {
       true
     )
     const card = document.querySelector<HTMLElement>(
-      '[data-testid="add-event-card"]'
+      '[data-testid="add-game-button"]'
     )!
     expect(card).not.equals(null)
     await act(async () => {
