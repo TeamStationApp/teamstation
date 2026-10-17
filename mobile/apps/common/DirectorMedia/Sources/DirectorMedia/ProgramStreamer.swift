@@ -390,9 +390,9 @@ public final class ProgramStreamer: @unchecked Sendable {
     return true
   }
 
-  /// `captureWall` is when the on-air camera captured this picture, for a live picture the stream
-  /// has not had before. Nil for a replay, a repeat or a source that does not know, whose frame
-  /// borrows the last live picture's lag; see `ProgrammeContentWall`.
+  /// `captureWall` is when the on-air camera captured this picture, moved on by the time it has been
+  /// on air for a repeat (`ProgrammeHeldPictureWall`). Nil for a replay or a source that does not
+  /// know, whose frame borrows the last live picture's lag; see `ProgrammeContentWall`.
   public func append(_ pixelBuffer: CVPixelBuffer, presentationTime: CMTime, captureWall: WallClock? = nil) {
     lock.lock()
     let admitted = pacer.admit(now: absoluteNow())
