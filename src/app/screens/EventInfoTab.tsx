@@ -28,7 +28,11 @@ import {
 } from '../platform/eventDirections'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attendanceSections, attendanceSubtitle } from './eventAttendance'
-import { EventRsvpModal, type RsvpEvent } from './EventRsvpModal'
+import {
+  eventReplyRows,
+  EventRsvpModal,
+  type RsvpEvent
+} from './EventRsvpModal'
 
 /** How a reply reads, and its colour on the RSVP capsule. */
 export function replyLabel(response: Rsvp | null): {
@@ -171,9 +175,7 @@ export function EventInfoTab({
         )}
       </View>
     )
-  const own = info.replyUserIds.flatMap(id =>
-    info.attendees.filter(row => row.userId === id && row.canReply)
-  )
+  const own = eventReplyRows([info])
   const teams = (info.attendanceTeams ?? []).filter(
     team => team.isParticipant === true
   )
