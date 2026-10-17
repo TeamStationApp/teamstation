@@ -368,7 +368,7 @@ async function startScoring(page: Page): Promise<void> {
 async function openPlaceholderSheet(page: Page): Promise<void> {
   if ((await page.$('[aria-label="First Name"]')) == null)
     await click(page, 'Create Player')
-  await click(page, 'Add Placeholder Players')
+  await click(page, 'Create Placeholder Player')
 }
 async function addPlaceholders(page: Page, count: 1 | 16): Promise<void> {
   await openPlaceholderSheet(page)
@@ -385,7 +385,7 @@ async function addPlaceholders(page: Page, count: 1 | 16): Promise<void> {
   await page.waitForSelector(
     `[aria-label="Player count ${count}"][aria-selected="true"]`
   )
-  await click(page, 'Add')
+  await click(page, 'Create')
   await page.waitForSelector('[aria-label="Number of placeholder players"]', {
     hidden: true
   })
@@ -415,6 +415,7 @@ async function click(page: Page, label: string): Promise<void> {
   }
   if (opening) await page.waitForSelector('[aria-label="First Name"]')
 }
+
 async function chooseHit(page: Page, outcome: string): Promise<void> {
   await click(page, 'Swing in Play')
   if (outcome === 'Batter Interference') await click(page, 'Batter Out')
@@ -1869,7 +1870,7 @@ describe('scoring browser', function () {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       expect(await page.$$('[aria-label="Cancel"]')).length(1)
-      expect(await page.$('[aria-label="Add Placeholder Players"]')).equals(
+      expect(await page.$('[aria-label="Create Placeholder Player"]')).equals(
         null
       )
       await click(page, 'Defense')
@@ -1922,9 +1923,9 @@ describe('scoring browser', function () {
         () =>
           document.activeElement!.getAttribute('aria-label') !== 'Jersey Number'
       )
-      expect(await page.$('[aria-label="Add Placeholder Players"]')).not.equals(
-        null
-      )
+      expect(
+        await page.$('[aria-label="Create Placeholder Player"]')
+      ).not.equals(null)
       expect(unexpected).deep.equals([])
     } finally {
       await page.close()
@@ -2006,7 +2007,7 @@ describe('scoring browser', function () {
       await click(page, 'Bats S')
       await click(page, 'Player position P')
       await click(page, 'Player position DH')
-      await click(page, 'Save and Add Another Player')
+      await click(page, 'Save and Create Another Player')
       await page.waitForFunction(
         () =>
           document.activeElement!.getAttribute('aria-label') === 'First Name' &&
@@ -2787,7 +2788,7 @@ describe('scoring browser', function () {
       await click(page, 'Create Player')
       await page.locator('[aria-label="First Name"]').fill('Mike')
       await page.locator('[aria-label="Last Name"]').fill('Trout')
-      await click(page, 'Add Player')
+      await click(page, 'Create Player')
       await click(page, 'Add Mike T to Lineup')
       await click(page, 'Next batter Mike T')
       await click(page, 'Save Rosters')
@@ -5185,7 +5186,7 @@ describe('scoring browser', function () {
         await page.locator('[aria-label="Last Name"]').fill(last)
         if (jersey !== '')
           await page.locator('[aria-label="Jersey Number"]').fill(jersey)
-        await click(page, 'Add Player')
+        await click(page, 'Create Player')
         await page.waitForSelector('[aria-label="First Name"]', {
           hidden: true
         })
@@ -5204,7 +5205,7 @@ describe('scoring browser', function () {
       await page.waitForSelector(
         '[aria-label="Player count 5"][aria-selected="true"]'
       )
-      await click(page, 'Add')
+      await click(page, 'Create')
       await page.waitForSelector(
         '[aria-label="Number of placeholder players"]',
         { hidden: true }

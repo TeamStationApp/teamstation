@@ -151,6 +151,7 @@ async function click(page: Page, label: string): Promise<void> {
   }
   if (opening) await page.waitForSelector('[aria-label="First Name"]')
 }
+
 async function waitReady(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
@@ -1214,7 +1215,7 @@ describe('scoring into the server', function () {
           response.request().method() === 'POST' &&
           new URL(response.url()).pathname.endsWith('/roster-players')
       )
-      await click(page, 'Add Player')
+      await click(page, 'Create Player')
       await page.waitForSelector('[aria-label="First Name"]', { hidden: true })
       const created = await response
       expect(created.status()).equals(201)

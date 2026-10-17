@@ -23,10 +23,12 @@ let root: Root | undefined
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
 async function click(label: string): Promise<void> {
-  const node = document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
+  const node = document
+    .querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)
+    .item(document.querySelectorAll(`[aria-label="${label}"]`).length - 1)
   expect(node, label).not.equals(null)
   await act(async () => {
-    node!.click()
+    node.click()
   })
 }
 async function keys(label: string, keys: string[]): Promise<void> {
@@ -224,10 +226,10 @@ describe('scoring slide-up sheets', function () {
     )
     expect(document.querySelectorAll('[aria-label="Cancel"]')).length(1)
     expect(
-      document.querySelector('[aria-label="Add Placeholder Players"]')
+      document.querySelector('[aria-label="Create Placeholder Player"]')
     ).equals(null)
     const footer = document.querySelector('[data-testid="Roster footer"]')!
-    expect(footer.textContent).includes('Add PlayerSave RostersCancel')
+    expect(footer.textContent).includes('Create PlayerSave RostersCancel')
     await click('Defense')
     expect(document.body.textContent).includes(
       'Drag player into position. On touch, hold briefly first.'
@@ -289,15 +291,15 @@ describe('scoring slide-up sheets', function () {
     await menu('Set Team Rosters')
     await click('Create Player')
     const more = document.querySelector(
-      '[aria-label="Save and Add Another Player"]'
+      '[aria-label="Save and Create Another Player"]'
     )!
     const placeholders = document.querySelector(
-      '[aria-label="Add Placeholder Players"]'
+      '[aria-label="Create Placeholder Player"]'
     )!
     expect(more.compareDocumentPosition(placeholders) & 4).equals(4)
-    await click('Add Placeholder Players')
+    await click('Create Placeholder Player')
     await click('Player count 3')
-    await click('Add')
+    await click('Create')
     expect(document.querySelector('[aria-label="First Name"]')).not.equals(null)
     await act(async () => {
       const cancels = document.querySelectorAll<HTMLElement>(
@@ -329,7 +331,7 @@ describe('scoring slide-up sheets', function () {
         await input('First Name', first)
         await input('Last Name', last)
         if (jersey !== '') await input('Jersey Number', jersey)
-        await click('Add Player')
+        await click('Create Player')
       }
       const roster = (): string[] =>
         Array.from(
@@ -400,7 +402,7 @@ describe('scoring slide-up sheets', function () {
     await click('Create Player')
     await input('First Name', 'Alex')
     await input('Last Name', 'Local')
-    await click('Add Player')
+    await click('Create Player')
     await click('Add Alex Local to Lineup')
     await click('Defense')
     await click('Clear P')
