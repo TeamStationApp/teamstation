@@ -110,6 +110,7 @@ function cutOff(
     ...RECORDING,
     liveStreamId,
     gameId: GAME,
+    endedAt: RECORDING.startedAt + 60_000,
     uploadTitle: `${liveStreamId} upload`,
     ...patch
   }
@@ -287,6 +288,62 @@ describe('resuming recording uploads', function () {
     expect(listed).deep.equals([GAME])
     await appState.turn('active')
     expect(reported).deep.equals([...once, ...once])
+  })
+
+  it('says nothing of the take still being filmed when the app comes back mid-take', async function () {
+    // Control Center pulled down while recording: the take has not ended, so
+    // its upload reminder would come before the phone has stopped filming.
+    let filming = true
+    const take = (): NativePhoneRecording =>
+      cutOff('liv_filming', {
+        uploadTitle: undefined,
+        endedAt: filming ? undefined : RECORDING.startedAt + 60_000
+      })
+    const native = fakePhoneStreamModule({
+      capabilities: SUPPORTED,
+      recordings: [take()]
+    })
+    const listed: string[] = []
+    const reported: unknown[] = []
+    const signedIn = {
+      baseUrl: API,
+      token: 'token-0000',
+      liveStreams: async (gameId: string): Promise<GameLiveStreams> => {
+        listed.push(gameId)
+        return {
+          gameId,
+          mine: [{ id: 'liv_filming', localRecording: 'none' }],
+          others: [],
+          canAdd: 4,
+          maxCameras: 4
+        } as unknown as GameLiveStreams
+      },
+      updateLiveStream: async (
+        gameId: string,
+        streamId: string,
+        change: unknown
+      ): Promise<unknown> => {
+        reported.push([gameId, streamId, change])
+        return {}
+      }
+    } as unknown as TeamStationClient
+    const appState = fakeAppState()
+    await mount({
+      client: signedIn,
+      signedInAs: 7,
+      phone: makePhoneStream(native),
+      appState
+    })
+    await appState.turn('active')
+    expect(reported).deep.equals([])
+    expect(listed).deep.equals([])
+    // Once the take has ended, a failed report is said again.
+    filming = false
+    native.answers.recordings = [take()]
+    await appState.turn('active')
+    expect(reported).deep.equals([
+      [GAME, 'liv_filming', { localRecording: 'recorded' }]
+    ])
   })
 
   it('does nothing signed out, without a token, or on a phone that cannot record', async function () {

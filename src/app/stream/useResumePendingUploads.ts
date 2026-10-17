@@ -34,8 +34,8 @@ export interface AppStateLike {
  * left waiting for them. Opened under the wrong account it would land as that
  * account's upload, and its maker's reminder would never settle.
  *
- * It also tells the server about every take of this account's it has not
- * heard of. The streaming screen says so when a part ends, and a failed
+ * It also tells the server about every ended take of this account's it has
+ * not heard of. The streaming screen says so when a part ends, and a failed
  * report is said again only when another part ends: after a take's last
  * part, a slide to stop on a weak signal and then Close, nothing would say
  * it again, and the take would never get its upload reminder. So any take
@@ -63,10 +63,15 @@ export function useResumePendingUploads(
           !recording.uploadRunning &&
           recording.uploadedAt == null
       )
-      // Takes the server has not opened an upload for: what it knows of them
-      // is only what the streaming screen managed to tell it.
+      // Ended takes the server has not opened an upload for: what it knows of
+      // them is only what the streaming screen managed to tell it. A take
+      // with no end is still being filmed, or waits to be resumed, and the
+      // app coming back mid-take must not remind anyone to upload it yet.
       const unopened = recordings.filter(
-        recording => recording.uploadedAt == null && recording.uploadId == null
+        recording =>
+          recording.endedAt != null &&
+          recording.uploadedAt == null &&
+          recording.uploadId == null
       )
       const games = new Map<
         string,
