@@ -7,6 +7,7 @@ import { createSession } from '../server/auth/sessions'
 import { posterSecond } from '../server/media/posters'
 import { stillKey } from '../server/media/stills'
 import { mediaRoutes } from '../server/routes/media'
+import type { MountExtra } from './accountHarness'
 import { demoLocality, type GroupFixture, groupFixture } from './groupFixtures'
 
 /**
@@ -107,10 +108,12 @@ export const guardianPlayers: GuardianPlayer[] = [
 
 export async function guardianFixture(
   webRoot?: string,
-  bindHost?: string
+  bindHost?: string,
+  mountExtra?: MountExtra
 ): Promise<GuardianFixture> {
   const f = await groupFixture(webRoot, bindHost, (app, { db, media }) => {
     app.use('/api/v1', mediaRoutes(db, media))
+    mountExtra?.(app, { db, media })
   })
   try {
     return await seed(f)
