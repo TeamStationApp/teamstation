@@ -4,7 +4,7 @@ import { Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import type { GroupRef } from '../../common/groupCreation'
 import type { GroupDetail } from '../../common/publicGroups'
-import { formatDateRange } from '../../common/seasonTimeFrames'
+import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import {
   Button,
   HeroCard,
@@ -137,7 +137,10 @@ export function GroupSettingsScreen({
   const title = settingsTitle(detail?.group.kind ?? kind)
   const handoff = useTitleHandoff(title)
   const group = detail?.group
-  const dates = formatDateRange(group?.startsOn ?? null, group?.endsOn ?? null)
+  const dates = seasonPeriodLabel(
+    group?.startsOn ?? null,
+    group?.endsOn ?? null
+  )
   return (
     <Screen onScroll={handoff.handleScroll}>
       <View style={styles.page}>
