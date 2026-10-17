@@ -33,6 +33,7 @@ import { teamEventDetail } from '../events/eventInfo'
 import { teamPlayerRsvps } from '../events/playerRsvps'
 import { whyEmpty } from '../events/whyEmpty'
 import { resolvedFenceDistance } from '../games/fenceDistance'
+import { gameIsLive } from '../games/gameLive'
 import { hasScoringEventsSql } from '../games/scoringActivity'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
@@ -590,6 +591,12 @@ export function teamRoutes(
         latitude: game.latitude,
         longitude: game.longitude,
         hasScoringEvents: game.hasScoringEvents,
+        isGameLive: gameIsLive({
+          startAt: toIso(game.start_at),
+          endAt: toIso(game.end_at),
+          status: game.status,
+          hasScoringEvents: game.hasScoringEvents
+        }),
         exhibition: game.exhibition,
         timezone: game.timezone,
         cancellationReason: game.cancellation_reason,

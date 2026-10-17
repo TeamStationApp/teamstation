@@ -184,7 +184,8 @@ describe('event information contracts', () => {
         address: null,
         latitude: 0,
         longitude: 0,
-        hasScoringEvents: false
+        hasScoringEvents: false,
+        isGameLive: false
       })
     ).deep.equals({
       id: 'g',
@@ -194,9 +195,15 @@ describe('event information contracts', () => {
       address: null,
       latitude: 0,
       longitude: 0,
-      hasScoringEvents: false
+      hasScoringEvents: false,
+      isGameLive: false
     })
     expect(() => decode({ id: 'g', eventKind: 'practice' })).throws()
+    expect(decode({ id: 'g', isGameLive: true })).deep.equals({
+      id: 'g',
+      isGameLive: true
+    })
+    expect(() => decode({ id: 'g', isGameLive: 'true' })).throws()
     expect(
       asEventLocation({
         latitude: null,

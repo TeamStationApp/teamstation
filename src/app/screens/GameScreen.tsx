@@ -88,7 +88,6 @@ import { GameWatchLayout } from './GameWatchLayout'
 import { watchHandoff } from './gameWatchLayoutProps'
 import { showVideoLivePill } from './livePillPolicy'
 import { openableTeams as teamsWithAPage } from './openableTeams'
-import { useGameLivePill } from './useGameLivePill'
 
 export interface GamePlaybackReturn {
   videoId: string
@@ -345,7 +344,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }, [requestedTab, gameId])
 
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
-  const gameLive = useGameLivePill(game)
   const [clockNow, setClockNow] = useState(Date.now)
   const [localTimezone, setLocalTimezone] = useState(viewerTimezone)
   const live = useRef(true)
@@ -1300,7 +1298,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         awayScore={game.awayScore}
         homeScore={game.homeScore}
         status={game.status === 'scheduled' ? '' : gameStatusLine(game)}
-        live={gameLive}
+        live={game.isGameLive === true}
         winner={winnerOf(game)}
         compact
         awayRecord={game.awayRecord}
