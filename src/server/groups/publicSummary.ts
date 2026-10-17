@@ -22,6 +22,7 @@ import {
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
+import { gameIsLive } from '../games/gameLive'
 import { hasScoringEventsSql } from '../games/scoringActivity'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -254,6 +255,12 @@ export async function publicGames(
     startAt: row.start_at.toISOString(),
     endAt: row.end_at?.toISOString() ?? null,
     hasScoringEvents: row.hasScoringEvents,
+    isGameLive: gameIsLive({
+      startAt: row.start_at.toISOString(),
+      endAt: row.end_at?.toISOString(),
+      status: row.status,
+      hasScoringEvents: row.hasScoringEvents
+    }),
     venue: row.venue,
     exhibition: row.exhibition,
     timezone: row.timezone,
@@ -295,6 +302,7 @@ export async function publicGames(
     .map(row => ({
       id: row.id,
       videoCount: 0,
+      isGameLive: false,
       homeTeam: { id: row.homeTeamId, name: row.homeTeamName },
       awayTeam: { id: row.awayTeamId, name: row.awayTeamName },
       homeTeamExternal: row.homeTeamExternal,

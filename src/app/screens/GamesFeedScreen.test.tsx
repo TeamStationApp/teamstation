@@ -227,6 +227,7 @@ describe('the games feed', function () {
           awayTeamName: 'Comets',
           homeTeamName: 'Hawks',
           status: 'inProgress',
+          isGameLive: true,
           awayScore: 2,
           homeScore: 1,
           videoCount: 0

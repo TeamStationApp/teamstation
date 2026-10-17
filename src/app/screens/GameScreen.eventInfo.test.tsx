@@ -139,40 +139,30 @@ describe('the event page’s automatic and explicit sections', () => {
     for (const hasScoringEvents of [true, false, true]) {
       await act(async () => {
         game.hasScoringEvents = hasScoringEvents
+        game.isGameLive = hasScoringEvents
         listener!({ type: 'resync', gameId: 'g1' })
       })
       expect(visible()).equals(hasScoringEvents)
     }
     await act(async () => {
       game.status = 'final'
+      game.isGameLive = false
       listener!({ type: 'resync', gameId: 'g1' })
     })
     expect(visible()).equals(false)
   })
 
-  it('shows and expires the game LIVE pill at its time boundaries while mounted', async () => {
+  it('uses the backend LIVE flag and refreshes its decision on foreground', async () => {
     const { client, game } = fixture()
-    const hour = 60 * 60 * 1000
-    const now = Date.now()
-    game.startAt = new Date(now + hour + 200).toISOString()
-    game.endAt = new Date(now + 2 * hour).toISOString()
-    game.hasScoringEvents = true
+    // Deliberately inconsistent local dates/scoring: the UI must trust the flag.
+    game.isGameLive = true
     await render({ client, gameId: 'g1' })
     const visible = (): boolean =>
       document.querySelector('[aria-label="Live now"]') != null
-    expect(visible()).equals(false)
-    await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 260))
-    })
     expect(visible()).equals(true)
-    game.startAt = new Date(Date.now() - 2 * hour).toISOString()
-    game.endAt = new Date(Date.now() - hour + 200).toISOString()
+    game.isGameLive = false
     await act(async () => {
       window.dispatchEvent(new window.Event('focus'))
-    })
-    expect(visible()).equals(true)
-    await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 260))
     })
     expect(visible()).equals(false)
   })

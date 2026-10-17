@@ -97,7 +97,7 @@ describe('ScheduleRow', function () {
       row({
         status: 'inProgress',
         startAt: new Date().toISOString(),
-        hasScoringEvents: true,
+        isGameLive: true,
         awayScore: 2,
         homeScore: 1
       })
@@ -165,7 +165,7 @@ describe('ScheduleRow', function () {
       row({
         status: 'inProgress',
         startAt: new Date().toISOString(),
-        hasScoringEvents: true,
+        isGameLive: true,
         result: { label: 'W 5\u20132', tone: 'win' }
       })
     )

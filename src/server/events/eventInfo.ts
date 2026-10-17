@@ -678,6 +678,7 @@ export async function teamEventDetail(
   const event = await resolveEvent(db, actor, id)
   return asGameDetail({
     ...event,
+    isGameLive: false,
     nonMemberView: false,
     homeTeamId: event.teamId,
     homeTeamName: event.teamName,
@@ -736,6 +737,7 @@ export function teamEventSchedule(
     durationSec: null,
     posterUrl: null,
     isLive: false,
+    isGameLive: false,
     externalIds: []
   }
 }
