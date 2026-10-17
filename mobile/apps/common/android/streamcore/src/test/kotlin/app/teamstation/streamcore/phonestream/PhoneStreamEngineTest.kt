@@ -77,6 +77,10 @@ class PhoneStreamEngineTest {
     @Volatile
     private var clockSkew = 3.0
 
+    /** When set, the server's clock is not answered. */
+    @Volatile
+    private var timeFails = false
+
     /** What the next `PATCH …/live-streams/:id` are answered, in turn; then 200. */
     private val patchAnswers = ConcurrentLinkedQueue<MockResponse>()
     private val parts = mutableMapOf<Int, ByteArray>()
@@ -127,6 +131,7 @@ class PhoneStreamEngineTest {
                 requests += request
                 val path = request.path ?: ""
                 return when {
+                    path.endsWith("/api/v1/time") && timeFails -> MockResponse().setResponseCode(503)
                     path.endsWith("/api/v1/time") -> json("""{"now":${Math.round((wall + clockSkew) * 1000)}}""")
                     request.method == "PATCH" && path.contains("/live-streams/") -> patchAnswers.poll() ?: json("{}")
                     path.contains("/live-streams") -> liveStreamAnswer
@@ -316,6 +321,7 @@ class PhoneStreamEngineTest {
         var settings: StreamSettings? = null
         override var running = false
         override var liveTimelineStart: Double? = null
+        override var serverClockOffsetMs: Int? = null
         override val metrics = ProgramStreamer.Metrics(rate = app.teamstation.streamcore.stream.StreamRateTelemetry(bitrate = 2_000_000))
 
         override suspend fun start(urlString: String, settings: StreamSettings, onFailure: ((String) -> Unit)?) {
@@ -404,6 +410,7 @@ class PhoneStreamEngineTest {
     /** Each open gets a camera of its own, as the app's does, rather than the one fake. */
     private var newDeviceEachOpen = false
     private var storageCheckSeconds = 3_600.0
+    private var serverClockSeconds = 3_600.0
     private var cameraReopenSeconds = 3_600.0
 
     private fun engine(): PhoneStreamEngine {
@@ -437,6 +444,7 @@ class PhoneStreamEngineTest {
             heartbeatSeconds = 3_600.0,
             statusIntervalSeconds = 3_600.0,
             storageCheckSeconds = storageCheckSeconds,
+            serverClockIntervalSeconds = serverClockSeconds,
             cameraReopenSeconds = cameraReopenSeconds,
             stopTailSeconds = 0.0,
             deviceStatus = FakeStatus(),
@@ -808,6 +816,80 @@ class PhoneStreamEngineTest {
         assertEquals(1, requests.count { it.method == "PATCH" && it.path!!.endsWith("/s2") })
         runBlocking { engine.stopRecording() }
         assertEquals(PhoneStreamEngine.uploadStart(emptyList(), 12.5), 12.5, 0.0)
+    }
+
+    @Test
+    fun theStreamsFramesCarryTheServersClockMeasuredAsItStarts() {
+        val engine = opened()
+        start(engine)
+        // Measured as the session starts streaming, on the server's clock 3 s ahead of the phone's.
+        waitFor { streamOutput.serverClockOffsetMs != null }
+        assertEquals(3_000, streamOutput.serverClockOffsetMs)
+        val reads = requests.count { it.path!!.endsWith("/api/v1/time") }
+        assertEquals(ServerClock.TRIPS_PER_SAMPLE, reads)
+        assertTrue(engine.serverClockFollower!!.isActive)
+        // The live start uses the same measurement.
+        streamOutput.liveTimelineStart = wall - 0.15
+        on { engine.publishStatus() }
+        runBlocking { engine.liveStartReport!!.join() }
+        assertEquals(reads, requests.count { it.path!!.endsWith("/api/v1/time") })
+        // Stopped, it is measured no more, and the stream keeps the offset for the next publish.
+        runBlocking { engine.stopRecording() }
+        assertNull(engine.serverClockFollower)
+        assertEquals(3_000, streamOutput.serverClockOffsetMs)
+    }
+
+    private fun timeReads() = requests.count { it.path!!.endsWith("/api/v1/time") }
+
+    @Test
+    fun theServersClockIsMeasuredAgainEachIntervalAndHeldThroughAMissAndARedial() {
+        serverClockSeconds = 0.1
+        val engine = opened()
+        start(engine)
+        waitFor { streamOutput.serverClockOffsetMs == 3_000 }
+        // An interval on, it is measured again, and the frames follow the new offset.
+        clockSkew = 4.5
+        waitFor { streamOutput.serverClockOffsetMs == 4_500 }
+        assertTrue(timeReads() >= 2 * ServerClock.TRIPS_PER_SAMPLE)
+        // An unanswered measurement keeps the last offset, so the frames stay on the server's clock.
+        timeFails = true
+        val missed = timeReads()
+        waitFor { timeReads() >= missed + 2 * ServerClock.TRIPS_PER_SAMPLE }
+        assertEquals(4_500, streamOutput.serverClockOffsetMs)
+        // The stream drops and redials: the offset holds, and the follower carries on.
+        on { streamOutput.drop!!("peer went away") }
+        assertEquals(4_500, streamOutput.serverClockOffsetMs)
+        on { scheduler.pending!!() }
+        waitFor { streamOutput.starts.size == 2 }
+        assertEquals(4_500, streamOutput.serverClockOffsetMs)
+        assertTrue(engine.serverClockFollower!!.isActive)
+        timeFails = false
+        clockSkew = 2.0
+        waitFor { streamOutput.serverClockOffsetMs == 2_000 }
+        runBlocking { engine.stopRecording() }
+        assertNull(engine.serverClockFollower)
+    }
+
+    @Test
+    fun aTakeOnAnotherServerCarriesNoneOfTheLastServersOffsetAndAnAbandonedEngineStopsMeasuring() {
+        val engine = opened()
+        start(engine)
+        waitFor { streamOutput.serverClockOffsetMs == 3_000 }
+        runBlocking { engine.stopRecording() }
+        // The next take goes to another server, which does not answer yet: until it does, the
+        // frames carry the phone's own clock, not the last server's offset.
+        timeFails = true
+        val before = timeReads()
+        val elsewhere = request.copy(apiBase = server.url("/elsewhere/api/v1").toString())
+        runBlocking { engine.startRecording("rtmp://ingest.example.test/live/key-0001", "s2", "g1", "Home Plate", elsewhere) }
+        assertNull(streamOutput.serverClockOffsetMs)
+        waitFor { timeReads() >= before + ServerClock.TRIPS_PER_SAMPLE }
+        assertNull(streamOutput.serverClockOffsetMs)
+        val follower = engine.serverClockFollower!!
+        // Abandoned as a kill leaves it, the engine measures no more.
+        runBlocking { engine.abandonForTesting() }
+        assertNull(engine.serverClockFollower)
+        assertTrue(follower.isCancelled)
     }
 
     @Test

@@ -1,6 +1,8 @@
 import { expect } from 'chai'
+import type { ChildProcess, spawn } from 'child_process'
 import { execFileSync } from 'child_process'
 import {
+  appendFileSync,
   chmodSync,
   mkdirSync,
   readdirSync,
@@ -13,15 +15,28 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 
 import { remuxToHls, VIDEO_FILE } from '../media/ffmpeg'
-import { fileForRemux, segmentTimelineStart, timelineHole } from './finishVideo'
-import { stampNewSegments } from './segmentClock'
+import { fileForRemux, timelineHole } from './finishVideo'
+import {
+  hevcInit,
+  hevcSegment,
+  IDR_SLICE,
+  wallClockNal
+} from './frameWallFixture'
+import {
+  segmentsFrom,
+  stampNewSegments,
+  timelineStartSec
+} from './segmentClock'
 import {
   attachSessionForTest,
+  CAPTURE_LAG_MAX_MS,
+  CAPTURE_LEAD_MAX_MS,
   clearLive,
   clearLiveSettled,
   codecName,
   codecRefusal,
   configureIngest,
+  continuationFromCapture,
   forcePublishForTest,
   hideKey,
   isPublishableKey,
@@ -38,7 +53,8 @@ import {
   settleLastSegment,
   statusFor,
   type TestSession,
-  tickSamplerForTest
+  tickSamplerForTest,
+  writerZeroCapturedAt
 } from './splitter'
 
 /**
@@ -1005,15 +1021,30 @@ describe('a live playlist through a reconnect', function () {
     setLive(KEY, spec())
     forcePublishForTest(KEY, true)
     await writerArgs()
+    // The stamper runs on every watch event and progress line for the rest
+    // of the game, so it never lists the whole directory.
+    // The module object itself: the splitter reads `readdirSync` off it.
+    const fs = require('fs') as { readdirSync: typeof readdirSync }
+    const readdir = fs.readdirSync
+    const listings: string[] = []
+    fs.readdirSync = ((path: string, ...rest: unknown[]) => {
+      listings.push(String(path))
+      return (readdir as (...args: unknown[]) => unknown)(path, ...rest)
+    }) as typeof readdir
     writeFileSync(join(dir, 'seg000001.m4s'), segment(0))
     const placed = async (name: string): Promise<number | undefined> =>
-      segmentTimelineStart(init, readFileSync(join(dir, name)))
+      timelineStartSec(init, readFileSync(join(dir, name)))
     let moved = await placed('seg000001.m4s')
-    for (let i = 0; i < 50 && !(moved != null && moved > 10); i++) {
-      await new Promise(resolve => setTimeout(resolve, 40))
-      moved = await placed('seg000001.m4s')
+    try {
+      for (let i = 0; i < 50 && !(moved != null && moved > 10); i++) {
+        await new Promise(resolve => setTimeout(resolve, 40))
+        moved = await placed('seg000001.m4s')
+      }
+    } finally {
+      fs.readdirSync = readdir
     }
     expect(moved ?? 0).closeTo(30, 2)
+    expect(listings.filter(path => path.startsWith(dir))).deep.equals([])
     expect(readFileSync(join(dir, 'seg000000.m4s')).equals(prior)).equals(true)
     writeFileSync(join(dir, 'seg000002.m4s'), segment(0))
     await clearLiveSettled(KEY, 'ended')
@@ -1028,6 +1059,336 @@ describe('a live playlist through a reconnect', function () {
     expect(
       readFileSync(join(dir, 'seg000001.m4s')).readUInt32BE(tfdt + 8)
     ).greaterThan(10_000)
+  })
+
+  /**
+   * A first publish of three segments (11.96 s) on the disk, stamped from
+   * nought, with the program dates an HLS writer gives them: `pdtLagMs` after
+   * the video's start, which is how far the writer trailed the capture.
+   */
+  function firstPublishOnDisk(
+    videoStartMs: number,
+    pdtLagMs = 1400
+  ): {
+    init: Buffer
+    listed: Buffer[]
+  } {
+    const init = hevcInit()
+    writeFileSync(join(dir, 'init.mp4'), init)
+    const listed = [0, 4, 8].map(at =>
+      hevcSegment(at, [wallClockNal(videoStartMs + at * 1000), IDR_SLICE])
+    )
+    listed.forEach((bytes, at) => {
+      writeFileSync(join(dir, `seg00000${at}.m4s`), bytes)
+    })
+    writeFileSync(
+      join(dir, 'master.m3u8'),
+      [
+        '#EXTM3U',
+        '#EXT-X-VERSION:7',
+        '#EXT-X-TARGETDURATION:4',
+        '#EXT-X-MEDIA-SEQUENCE:0',
+        '#EXT-X-PLAYLIST-TYPE:EVENT',
+        '#EXT-X-MAP:URI="init.mp4"',
+        `#EXT-X-PROGRAM-DATE-TIME:${new Date(videoStartMs + pdtLagMs).toISOString()}`,
+        '#EXTINF:4.000000,',
+        'seg000000.m4s',
+        '#EXTINF:4.000000,',
+        'seg000001.m4s',
+        '#EXTINF:3.960000,',
+        'seg000002.m4s',
+        ''
+      ].join('\n')
+    )
+    return { init, listed }
+  }
+
+  /** Where a segment sits on the timeline, once something has stamped it. */
+  async function placedAt(
+    init: Buffer,
+    name: string,
+    beyond = 1
+  ): Promise<number | undefined> {
+    let at: number | undefined
+    for (let i = 0; i < 100; i++) {
+      try {
+        at = timelineStartSec(init, readFileSync(join(dir, name)))
+      } catch {
+        at = undefined
+      }
+      if (at != null && at > beyond) return at
+      await new Promise(resolve => setTimeout(resolve, 30))
+    }
+    return at
+  }
+
+  it('places a returning publish where its frame wall clocks say, so the hole is the absence', async function () {
+    // The publisher was away for 30 s, and its first picture back was
+    // captured 0.3 s ago. The writer's program date trailed the first
+    // publish's capture by 1.4 s, so the wall clock would put it 1.1 s early.
+    const back = Date.now() - 300
+    const videoStartMs = back - 41_960
+    const { init, listed } = firstPublishOnDisk(videoStartMs)
+    const initBefore = readFileSync(join(dir, 'init.mp4'))
+    setLive(KEY, { ...spec(), videoStartMs })
+    forcePublishForTest(KEY, true)
+    await writerArgs()
+    writeFileSync(
+      join(dir, 'seg000003.m4s'),
+      hevcSegment(0, [wallClockNal(back), IDR_SLICE])
+    )
+    const start = await placedAt(init, 'seg000003.m4s')
+    expect(start ?? 0).closeTo(41.96, 0.001)
+    expect((start ?? 0) - 11.96).closeTo(30, 0.001)
+    // The init segment and everything listed before the return are as they were.
+    expect(readFileSync(join(dir, 'init.mp4')).equals(initBefore)).equals(true)
+    listed.forEach((bytes, at) => {
+      expect(readFileSync(join(dir, `seg00000${at}.m4s`)).equals(bytes)).equals(
+        true
+      )
+    })
+    expect(logs.join('\n')).contains('by its frame wall clocks')
+  })
+
+  it('leaves a return its frame wall clocks placed where it is when this server restarts', async function () {
+    // The return's writer started 3 s after its first picture was captured,
+    // the first publish's 1.4 s after, so the program date listed for the
+    // return is 1.6 s past where its pictures were placed.
+    const back = Date.now() - 300
+    const videoStartMs = back - 41_960
+    const { init } = firstPublishOnDisk(videoStartMs)
+    setLive(KEY, { ...spec(), videoStartMs })
+    forcePublishForTest(KEY, true)
+    await writerArgs()
+    writeFileSync(
+      join(dir, 'seg000003.m4s'),
+      hevcSegment(0, [wallClockNal(back), IDR_SLICE])
+    )
+    expect((await placedAt(init, 'seg000003.m4s')) ?? 0).closeTo(41.96, 0.001)
+    appendFileSync(
+      join(dir, 'master.m3u8'),
+      [
+        '#EXT-X-DISCONTINUITY',
+        `#EXT-X-PROGRAM-DATE-TIME:${new Date(back + 3000).toISOString()}`,
+        '#EXTINF:4.000000,',
+        'seg000003.m4s',
+        ''
+      ].join('\n')
+    )
+    const placed = readFileSync(join(dir, 'seg000003.m4s'))
+    // A deploy mid-game, and the publisher returns once more: the new
+    // process remembers nothing of the writers before it.
+    resetForTest()
+    configure()
+    rmSync(argsFile, { force: true })
+    setLive(KEY, { ...spec(), videoStartMs })
+    forcePublishForTest(KEY, true)
+    await writerArgs()
+    expect(
+      timelineStartSec(init, readFileSync(join(dir, 'seg000003.m4s')))
+    ).closeTo(41.96, 0.001)
+    expect(readFileSync(join(dir, 'seg000003.m4s')).equals(placed)).equals(true)
+  })
+
+  it('moves the segments it stamped at the wall clock once a later one carries the server’s clock', async function () {
+    const back = Date.now() - 300
+    const videoStartMs = back - 41_960
+    const { init } = firstPublishOnDisk(videoStartMs)
+    setLive(KEY, { ...spec(), videoStartMs })
+    forcePublishForTest(KEY, true)
+    await writerArgs()
+    // The publisher had not measured the server's clock for its first segment,
+    // whose pictures carry its own.
+    writeFileSync(
+      join(dir, 'seg000003.m4s'),
+      hevcSegment(0, [wallClockNal(back - 5000, false), IDR_SLICE])
+    )
+    const wall = await placedAt(init, 'seg000003.m4s')
+    expect(wall ?? 0).closeTo(40.86, 0.25)
+    writeFileSync(
+      join(dir, 'seg000004.m4s'),
+      hevcSegment(4, [wallClockNal(back + 4000), IDR_SLICE])
+    )
+    expect((await placedAt(init, 'seg000004.m4s', 10)) ?? 0).closeTo(
+      45.96,
+      0.001
+    )
+    expect(
+      timelineStartSec(init, readFileSync(join(dir, 'seg000003.m4s')))
+    ).closeTo(41.96, 0.001)
+  })
+
+  it('keeps the wall clock for a publisher that sends no frame wall clocks, or an unbelievable one', async function () {
+    const back = Date.now() - 300
+    const videoStartMs = back - 41_960
+    const { init } = firstPublishOnDisk(videoStartMs)
+    setLive(KEY, { ...spec(), videoStartMs })
+    forcePublishForTest(KEY, true)
+    await writerArgs()
+    // An hour out: a clock nobody set, not a capture.
+    writeFileSync(
+      join(dir, 'seg000003.m4s'),
+      hevcSegment(0, [wallClockNal(back - 3_600_000), IDR_SLICE])
+    )
+    expect((await placedAt(init, 'seg000003.m4s')) ?? 0).closeTo(40.86, 0.25)
+    writeFileSync(join(dir, 'seg000004.m4s'), hevcSegment(4, [IDR_SLICE]))
+    expect((await placedAt(init, 'seg000004.m4s', 10)) ?? 0).closeTo(
+      44.86,
+      0.25
+    )
+    expect(events.some(event => event.type === 'publisherPlaced')).equals(false)
+  })
+
+  it('places a return with no frame wall clocks by the wall clock its writer starts at, however long the recovery took', async function () {
+    const videoStartMs = Date.now() - 41_960
+    const { init } = firstPublishOnDisk(videoStartMs)
+    const firstDateMs = videoStartMs + 1400
+    // Each segment the recovery and the timeline's end read takes 0.3 s:
+    // a long game's worth of them after this server restarts.
+    const promises = require('fs/promises') as {
+      open: (...args: unknown[]) => Promise<unknown>
+    }
+    const open = promises.open
+    promises.open = async (...args: unknown[]) => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+      return await open(...args)
+    }
+    let startedAt = 0
+    try {
+      setLive(KEY, { ...spec(), videoStartMs })
+      forcePublishForTest(KEY, true)
+      await writerArgs()
+      startedAt = Date.now()
+    } finally {
+      promises.open = open
+    }
+    writeFileSync(join(dir, 'seg000003.m4s'), hevcSegment(0, [IDR_SLICE]))
+    expect((await placedAt(init, 'seg000003.m4s')) ?? 0).closeTo(
+      (startedAt - firstDateMs) / 1000,
+      0.25
+    )
+  })
+
+  it('never puts a return on top of the pictures before it', async function () {
+    const back = Date.now() - 300
+    // A frame wall clock 0.3 s inside the listed media goes at its end; one
+    // 5 s inside is not of this publish at all.
+    const videoStartMs = back - 11_960 + 300
+    const { init } = firstPublishOnDisk(videoStartMs, 0)
+    setLive(KEY, { ...spec(), videoStartMs })
+    forcePublishForTest(KEY, true)
+    await writerArgs()
+    writeFileSync(
+      join(dir, 'seg000003.m4s'),
+      hevcSegment(0, [wallClockNal(back), IDR_SLICE])
+    )
+    expect((await placedAt(init, 'seg000003.m4s')) ?? 0).closeTo(11.96, 0.001)
+    expect(
+      continuationFromCapture(11.96, videoStartMs + 6_960, videoStartMs)
+    ).equals(undefined)
+    expect(
+      continuationFromCapture(11.96, videoStartMs + 20_000, undefined)
+    ).equals(undefined)
+  })
+
+  it('never puts a return the wall clock places on top of the pictures before it', async function () {
+    // The first writer trailed its capture by 1.4 s, so the program-date
+    // clock runs 1.4 s behind the timeline. The part after it was placed at
+    // its capture time, 10 s, by its frame wall clocks, and its writer
+    // trailed by only 0.2 s: its date says 8.8 s and its pictures end at 14 s.
+    // A return 0.5 s after that date's end has a wall clock of 13.3 s.
+    const firstDateMs = Date.now() - 13_300
+    const videoStartMs = firstDateMs - 1400
+    const init = hevcInit()
+    writeFileSync(join(dir, 'init.mp4'), init)
+    writeFileSync(
+      join(dir, 'seg000000.m4s'),
+      hevcSegment(0, [wallClockNal(videoStartMs), IDR_SLICE])
+    )
+    writeFileSync(
+      join(dir, 'seg000001.m4s'),
+      hevcSegment(10, [wallClockNal(videoStartMs + 10_000), IDR_SLICE])
+    )
+    writeFileSync(
+      join(dir, 'master.m3u8'),
+      [
+        '#EXTM3U',
+        '#EXT-X-VERSION:7',
+        '#EXT-X-TARGETDURATION:4',
+        '#EXT-X-MEDIA-SEQUENCE:0',
+        '#EXT-X-PLAYLIST-TYPE:EVENT',
+        '#EXT-X-MAP:URI="init.mp4"',
+        `#EXT-X-PROGRAM-DATE-TIME:${new Date(firstDateMs).toISOString()}`,
+        '#EXTINF:4.000000,',
+        'seg000000.m4s',
+        `#EXT-X-PROGRAM-DATE-TIME:${new Date(firstDateMs + 8800).toISOString()}`,
+        '#EXTINF:4.000000,',
+        'seg000001.m4s',
+        ''
+      ].join('\n')
+    )
+    setLive(KEY, { ...spec(), videoStartMs })
+    forcePublishForTest(KEY, true)
+    await writerArgs()
+    // Streaming software: no frame wall clocks, so the wall clock settles it.
+    writeFileSync(join(dir, 'seg000002.m4s'), hevcSegment(0, [IDR_SLICE]))
+    expect((await placedAt(init, 'seg000002.m4s')) ?? 0).closeTo(14, 0.001)
+  })
+
+  it('tells the controller where a first publish starts, from its first picture’s wall clock', async function () {
+    setLive(KEY, spec())
+    forcePublishForTest(KEY, true)
+    await writerArgs()
+    const captured = Date.now() - 900
+    writeFileSync(join(dir, 'init.mp4'), hevcInit())
+    writeFileSync(
+      join(dir, 'seg000000.m4s'),
+      hevcSegment(0.2, [wallClockNal(captured), IDR_SLICE])
+    )
+    let placed: LiveEvent | undefined
+    for (let i = 0; i < 100 && placed == null; i++) {
+      await new Promise(resolve => setTimeout(resolve, 30))
+      placed = events.find(event => event.type === 'publisherPlaced')
+    }
+    expect(
+      placed?.type === 'publisherPlaced' ? placed.startedAt.getTime() : 0
+    ).closeTo(captured - 200, 0.001)
+    // Said once.
+    writeFileSync(
+      join(dir, 'seg000001.m4s'),
+      hevcSegment(4.2, [wallClockNal(captured + 4000), IDR_SLICE])
+    )
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(events.filter(event => event.type === 'publisherPlaced')).length(1)
+    // A first writer stamps nothing.
+    expect(
+      timelineStartSec(hevcInit(), readFileSync(join(dir, 'seg000001.m4s')))
+    ).closeTo(4.2, 1e-9)
+  })
+
+  it('believes a writer’s zero only near when the writer started', function () {
+    const started = 1_790_000_000_000
+    expect(
+      writerZeroCapturedAt(
+        { capturedAtMs: started + 3000, pictureSec: 4 },
+        started
+      )
+    ).equals(started - 1000)
+    expect(
+      writerZeroCapturedAt(
+        { capturedAtMs: started - CAPTURE_LEAD_MAX_MS - 1, pictureSec: 0 },
+        started
+      )
+    ).equals(undefined)
+    expect(
+      writerZeroCapturedAt(
+        { capturedAtMs: started + CAPTURE_LAG_MAX_MS + 1, pictureSec: 0 },
+        started
+      )
+    ).equals(undefined)
+    expect(
+      writerZeroCapturedAt({ capturedAtMs: Number.NaN, pictureSec: 0 }, started)
+    ).equals(undefined)
   })
 
   /** A playlist whose one segment ended half a minute ago, so a restart reads it. */
@@ -1148,6 +1509,131 @@ describe('a live playlist through a reconnect', function () {
     expect(spawnCount()).equals(2)
   })
 
+  it('finishes a phantom exit once the writer Node called gone is killed', async function () {
+    countSpawns()
+    // The module object itself: the splitter reads `spawn` off it.
+    const processes = require('child_process') as { spawn: typeof spawn }
+    const spawnReal = processes.spawn
+    const children: ChildProcess[] = []
+    processes.spawn = ((...args: Parameters<typeof spawn>) => {
+      const child = spawnReal(...args)
+      children.push(child)
+      return child
+    }) as typeof spawn
+    try {
+      setLive(KEY, spec())
+      forcePublishForTest(KEY, true)
+      await writerArgs()
+    } finally {
+      processes.spawn = spawnReal
+    }
+    const writer = children[0]
+    const pid = writer.pid ?? 0
+    // Node says the writer exited while the OS still has it. Node emits
+    // `exit` once per child, so the real one never arrives.
+    const emit = writer.emit.bind(writer)
+    writer.emit = ((event: string, ...args: unknown[]) =>
+      event === 'exit' ? false : emit(event, ...args)) as typeof writer.emit
+    emit('exit', 1, null)
+    expect(logs.join('\n')).contains(`phantom exit pid=${String(pid)}`)
+    for (let i = 0; i < 60 && spawnCount() < 2; i++) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    expect(() => process.kill(pid, 0)).throws()
+    // The writer is off the books and the restart was armed.
+    expect(spawnCount()).equals(2)
+    expect(statusFor(KEY)?.outputs[0].restartCount).equals(1)
+  })
+
+  /**
+   * A continuing writer whose last segment is closed but not yet stamped,
+   * and a phantom exit for it that Node has finished with: the SIGKILL has
+   * landed and the real `exit` was swallowed, so only the PID poll is left
+   * to finish the exit. The stamper sees no watch events, so the segment is
+   * stamped only when that exit handling stops it.
+   */
+  async function phantomWithSegmentUnstamped(): Promise<{
+    init: Buffer
+    expectedSec: number
+  }> {
+    countSpawns()
+    const videoStartMs = Date.now() - 41_960
+    const { init } = firstPublishOnDisk(videoStartMs)
+    const firstDateMs = videoStartMs + 1400
+    const processes = require('child_process') as { spawn: typeof spawn }
+    const files = require('fs') as { watch: (...args: unknown[]) => unknown }
+    const spawnReal = processes.spawn
+    const watchReal = files.watch
+    const children: ChildProcess[] = []
+    processes.spawn = ((...args: Parameters<typeof spawn>) => {
+      const child = spawnReal(...args)
+      children.push(child)
+      return child
+    }) as typeof spawn
+    files.watch = () => {
+      throw new Error('no watching in this test')
+    }
+    let startedAt = 0
+    try {
+      setLive(KEY, { ...spec(), videoStartMs })
+      forcePublishForTest(KEY, true)
+      await writerArgs()
+      startedAt = Date.now()
+    } finally {
+      processes.spawn = spawnReal
+      files.watch = watchReal
+    }
+    // The writer closes a segment on its own clock and lists it.
+    writeFileSync(join(dir, 'seg000003.m4s'), hevcSegment(0, [IDR_SLICE]))
+    appendFileSync(
+      join(dir, 'master.m3u8'),
+      [
+        `#EXT-X-PROGRAM-DATE-TIME:${new Date(startedAt).toISOString()}`,
+        '#EXTINF:4.000000,',
+        'seg000003.m4s',
+        ''
+      ].join('\n')
+    )
+    const writer = children[0]
+    const emit = writer.emit.bind(writer)
+    writer.emit = ((event: string, ...args: unknown[]) =>
+      event === 'exit' ? false : emit(event, ...args)) as typeof writer.emit
+    emit('exit', 1, null)
+    expect(logs.join('\n')).contains('phantom exit')
+    for (let i = 0; i < 500 && writer.signalCode == null; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1))
+    }
+    expect(writer.signalCode).equals('SIGKILL')
+    expect(
+      timelineStartSec(init, readFileSync(join(dir, 'seg000003.m4s')))
+    ).closeTo(0, 1e-9)
+    return { init, expectedSec: (startedAt - firstDateMs) / 1000 }
+  }
+
+  it('starts a return during a phantom exit only after the old writer’s last segment is stamped, once', async function () {
+    const { init, expectedSec } = await phantomWithSegmentUnstamped()
+    forcePublishForTest(KEY, false)
+    forcePublishForTest(KEY, true)
+    for (let i = 0; i < 100 && spawnCount() < 2; i++) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    expect(spawnCount()).equals(2)
+    await new Promise(resolve => setTimeout(resolve, 200))
+    // Stamped by the writer that made it, and not moved again by the
+    // return's recovery.
+    expect(
+      timelineStartSec(init, readFileSync(join(dir, 'seg000003.m4s')))
+    ).closeTo(expectedSec, 0.25)
+  })
+
+  it('closes a stream only after a phantom exit has stamped the writer’s last segment', async function () {
+    const { init, expectedSec } = await phantomWithSegmentUnstamped()
+    await clearLiveSettled(KEY, 'ended')
+    expect(
+      timelineStartSec(init, readFileSync(join(dir, 'seg000003.m4s')))
+    ).closeTo(expectedSec, 0.25)
+  })
+
   it('works out where a playlist carries on from', function () {
     expect(playlistContinuation(undefined, 7)).deep.equals({
       startNumber: 7,
@@ -1177,6 +1663,11 @@ describe('a live playlist through a reconnect', function () {
     ).equals(454)
     // Where keeping it would overwrite one, it moves just far enough.
     expect(playlistContinuation(listed(0, [5, 6, 7]), 8).startNumber).equals(5)
+    // A name with no length is not listed, as the writer that continues the
+    // playlist counts it: it numbers the new segments after the one listed.
+    expect(
+      playlistContinuation(`${listed(0, [5])}\nseg000009.m4s\n`, 10)
+    ).deep.equals({ startNumber: 5, offsetSec: 4 })
   })
 
   it('adds the wall-clock absence to the timestamp offset', function () {
@@ -1407,14 +1898,14 @@ describe('a live playlist through a reconnect', function () {
     const firstPath = join(dir, 'seg000000.m4s')
     const initBefore = readFileSync(initPath)
     const firstBefore = readFileSync(firstPath)
-    stampNewSegments(dir, 31, new Set(['seg000000.m4s']))
+    stampNewSegments(dir, 31, segmentsFrom(dir, 1))
     const init = readFileSync(initPath)
     const first = readFileSync(firstPath)
     const second = readFileSync(join(dir, 'seg000001.m4s'))
     expect(init.equals(initBefore)).equals(true)
     expect(first.equals(firstBefore)).equals(true)
-    expect(segmentTimelineStart(init, first)).closeTo(0, 0.2)
-    expect(segmentTimelineStart(init, second)).closeTo(31, 0.1)
+    expect(timelineStartSec(init, first)).closeTo(0, 0.2)
+    expect(timelineStartSec(init, second)).closeTo(31, 0.1)
     const ffprobe = ffmpeg.replace(/ffmpeg$/, 'ffprobe')
     const range = (bytes: Buffer): { min: number; max: number } => {
       const file = join(dir, 'probe.mp4')

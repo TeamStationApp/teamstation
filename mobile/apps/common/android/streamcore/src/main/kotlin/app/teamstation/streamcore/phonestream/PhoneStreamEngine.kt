@@ -162,6 +162,16 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     /** The report of the live start, while it is being sent. */
     internal var liveStartReport: Job? = null
         private set
+
+    /**
+     * Measuring TeamStation's clock while the stream is up: as a session starts streaming and every
+     * [SERVER_CLOCK_INTERVAL_MILLIS] after, as TS Director does ([followServerClock]).
+     */
+    internal var serverClockFollower: Job? = null
+        private set
+
+    /** The TeamStation whose clock the stream's offset was measured against. */
+    private var serverClockBase: String? = null
     private var recordingVideo: StreamVideoEncoding? = null
     private var lastError: PhoneStreamError? = null
     private var statusJob: Job? = null
@@ -423,6 +433,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         recordingTakeID = recordingID
         encoderRecoveries = 0
         liveStartWanted = true
+        followServerClock()
         beginLiveSession(recordingID)
         streamController.start(StreamSessionController.DialReason.START)
         startStorageLoop()
@@ -444,6 +455,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         val endedAt = environment.clock.now()
         take = null
         liveStartWanted = false
+        serverClockFollower?.cancel()
+        serverClockFollower = null
         streamController.stop()
         // A low-storage stop the loop is in the middle of carries on: its finish is its own job.
         storageJob?.cancel()
@@ -722,6 +735,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         }
         beginLiveSession(recordingTakeID)
         liveStartWanted = true
+        followServerClock()
         streamController.start(StreamSessionController.DialReason.REDIAL)
         startStorageLoop()
         environment.foreground.recordingStarted(live.angleName)
@@ -835,8 +849,9 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
         liveStartWanted = false
         val client = LiveStreamClient(held.request.apiBase, held.request.token, environment.http)
         liveStartReport = scope.launch {
-            // On the server's clock: this phone's can be a second out ([ServerClock]).
-            var offsetMs: Int? = null
+            // On the server's clock: this phone's can be a second out ([ServerClock]). The offset the
+            // stream's frames carry, once it is measured.
+            var offsetMs: Int? = stream.serverClockOffsetMs
             for (attempt in 1..LIVE_START_ATTEMPTS) {
                 try {
                     val known = offsetMs ?: client.measureServerClock(now = environment.clock::now).offsetMs.also { measured ->
@@ -851,6 +866,39 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                 } catch (error: LiveStreamClient.Error) {
                     if (attempt < LIVE_START_ATTEMPTS) delay(LIVE_START_RETRY_MILLIS)
                 }
+            }
+        }
+    }
+
+    /**
+     * Measures TeamStation's clock now and every [PhoneStreamEnvironment.serverClockIntervalSeconds]
+     * (a minute, [SERVER_CLOCK_INTERVAL_MILLIS]) while the take streams. Each measurement goes to the
+     * stream, whose every frame's wall-clock SEI it puts on TeamStation's clock (TeamStation places
+     * each publish by it, the first and every return), and the first to the take, whose upload may
+     * come hours later. An unanswered one leaves the last offset, which holds across a drop and a
+     * redial. A take on another TeamStation starts without one: the last server's offset says nothing
+     * about this one's clock, so its frames carry the phone's own until the first measurement lands.
+     */
+    private fun followServerClock() {
+        val held = take ?: return
+        serverClockFollower?.cancel()
+        if (held.request.apiBase != serverClockBase) {
+            stream.serverClockOffsetMs = null
+            serverClockBase = held.request.apiBase
+        }
+        val client = LiveStreamClient(held.request.apiBase, held.request.token, environment.http)
+        serverClockFollower = scope.launch {
+            while (isActive) {
+                val sample = try {
+                    client.measureServerClock(now = environment.clock::now)
+                } catch (error: LiveStreamClient.Error) {
+                    null
+                }
+                if (sample != null) {
+                    stream.serverClockOffsetMs = sample.offsetMs
+                    held.recordingID?.let { onEngine { catalog.setServerClockOffset(sample.offsetMs / 1000.0, it) } }
+                }
+                delay((environment.serverClockIntervalSeconds * 1000).toLong())
             }
         }
     }
@@ -1124,6 +1172,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     internal suspend fun abandonForTesting() = onEngine {
         statusJob?.cancel()
         storageJob?.cancel()
+        serverClockFollower?.cancel()
+        serverClockFollower = null
         recordingSession.stopHeartbeat()
         streamController.stop()
         source?.stop()
@@ -1159,6 +1209,9 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
          */
         const val LIVE_START_ATTEMPTS = 3
         const val LIVE_START_RETRY_MILLIS = 2_000L
+
+        /** The wait between measurements of TeamStation's clock while streaming, TS Director's. */
+        const val SERVER_CLOCK_INTERVAL_MILLIS = 60_000L
 
         /**
          * Where an upload of the take with [anchors] starts on the wall clock: when part 1's first

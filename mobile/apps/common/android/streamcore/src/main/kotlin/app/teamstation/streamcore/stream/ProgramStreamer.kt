@@ -6,6 +6,7 @@ import app.teamstation.streamcore.bitrate.AdaptiveBitrateLoop
 import app.teamstation.streamcore.core.EncodedVideoFrame
 import app.teamstation.streamcore.core.StreamCodec
 import app.teamstation.streamcore.rtmp.FLVTag
+import app.teamstation.streamcore.rtmp.FrameWallClock
 import app.teamstation.streamcore.rtmp.HEVCDecoderConfiguration
 import app.teamstation.streamcore.rtmp.RTMPClient
 import app.teamstation.streamcore.rtmp.RTMPClientError
@@ -123,6 +124,17 @@ class ProgramStreamer(
     @Volatile
     var liveTimelineStart: Double? = null
         private set
+
+    /**
+     * TeamStation's clock less the wall clock, in milliseconds, or null while the host has not
+     * measured it; read for every frame sent. Every frame carries its wall clock in an SEI
+     * ([FrameWallClock]), the one TS Director's programme carries: its stamp on the wall clock, which
+     * is when its picture was captured, plus this offset with the corrected bit set, or the phone's own
+     * wall clock with it clear. It holds across publishes: the clocks do not move apart between a drop
+     * and a redial.
+     */
+    @Volatile
+    var serverClockOffsetMs: Int? = null
 
     /** The surface the stream's pictures are drawn into; a new one after the watchdog rebuilds the session. */
     val inputSurface: Surface? get() = lock.withLock { surface }
@@ -519,6 +531,7 @@ class ProgramStreamer(
         val now = wallClock()
         val keyframe: Boolean
         val time: MediaTime
+        val frameWall: Double
         lock.withLock {
             if (encoder !== session) return
             pendingEncodes = maxOf(0, pendingEncodes - 1)
@@ -534,6 +547,7 @@ class ProgramStreamer(
             keyframe = frame.isKeyframe || payloadContainsIDR(frame.nalUnits, settings.codec)
             val captured = pictureWall?.invoke(frame.presentationTime) ?: now
             time = clock.nextPresentationTime(MediaTime.seconds(frame.presentationTime, 1_000_000), captured)
+            frameWall = clock.startWall + time.seconds
             if (keyframe) {
                 clock.noteKeyframe(time, now)
                 syncRequested = false
@@ -556,7 +570,7 @@ class ProgramStreamer(
                 val record = if (keyframe) decoderConfigurationRecord(parameterSets, codec) else null
                 if (record == null) return
                 sentVideoConfig = true
-                if (liveTimelineStart == null) liveTimelineStart = clock.startWall + time.seconds
+                if (liveTimelineStart == null) liveTimelineStart = frameWall
                 header = FLVTag.videoSequenceHeader(codec, record)
             }
             Triple(client, metadata, header)
@@ -564,7 +578,8 @@ class ProgramStreamer(
         if (metadata != null) client.sendMetadata(metadata.width, metadata.height, metadata.frameRate, metadata.bitrateHigh)
         val timestamp = milliseconds(time)
         if (header != null) client.sendVideo(timestamp, header)
-        val outcome = client.sendVideo(timestamp, FLVTag.videoFrame(codec, keyframe, lengthPrefixed(frame.nalUnits)))
+        val units = FrameWallClock(Math.round(frameWall * 1000), serverClockOffsetMs).inserted(frame.nalUnits, codec)
+        val outcome = client.sendVideo(timestamp, FLVTag.videoFrame(codec, keyframe, lengthPrefixed(units)))
         // Only when the client waits for a keyframe to resume on, and at most once a second; asking
         // on every over-budget drop, or on every drop of the wait, forces an IDR per frame while the
         // link is still saturated.

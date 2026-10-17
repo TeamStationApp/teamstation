@@ -17,8 +17,9 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
-import { beganPublishing } from '../live/controller'
+import { beganPublishing, handleLiveEventForTest } from '../live/controller'
 import {
+  placeByFrameWall,
   placeByPublisher,
   PUBLISHER_LAG_MAX_MS,
   PUBLISHER_LEAD_MAX_MS,
@@ -990,6 +991,67 @@ describe('phones and Directors asking for their streams by device', function () 
       expect(await placeByPublisher(db, 'liv_missing', new Date())).equals(
         false
       )
+    })
+
+    it('lets the wall clock in the first picture place the video, over a reported start', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      const heard = new Date(Date.now() - 10_000)
+      await publish(made.body.id, heard)
+      const reported = new Date(heard.getTime() - 1600)
+      expect(
+        (await report(gameId, made.body.id, reported.toISOString())).status
+      ).equals(200)
+      const inBand = new Date(heard.getTime() - 1450)
+      await handleLiveEventForTest(
+        {
+          type: 'publisherPlaced',
+          key: 'ts_unused',
+          liveStreamId: made.body.id,
+          startedAt: inBand
+        },
+        ingest()
+      )
+      expect(await video(made.body.id)).deep.equals({
+        startAt: inBand,
+        source: 'publisher'
+      })
+      // The PATCH an older server needed arrives afterwards and changes
+      // nothing.
+      expect(
+        (await report(gameId, made.body.id, reported.toISOString())).status
+      ).equals(200)
+      expect((await video(made.body.id)).startAt).deep.equals(inBand)
+    })
+
+    it('leaves a start set by hand, and ignores reports too far from the publish', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      const made = await ask(gameId, phone('Home Plate'))
+      const heard = new Date(Date.now() - 10_000)
+      await publish(made.body.id, heard)
+      const far = new Date(heard.getTime() - PUBLISHER_LEAD_MAX_MS - 1000)
+      expect(await placeByFrameWall(db, made.body.id, far)).equals(false)
+      const late = new Date(heard.getTime() + PUBLISHER_LAG_MAX_MS + 1000)
+      expect(await placeByFrameWall(db, made.body.id, late)).equals(false)
+      const { videoId } = await stream(made.body.id)
+      await db
+        .updateTable('videos')
+        .set({ start_at_source: 'manual' })
+        .where('id', '=', videoId!)
+        .execute()
+      expect(
+        await placeByFrameWall(
+          db,
+          made.body.id,
+          new Date(heard.getTime() - 900)
+        )
+      ).equals(false)
+      expect(await video(made.body.id)).deep.equals({
+        startAt: heard,
+        source: 'manual'
+      })
     })
   })
 
