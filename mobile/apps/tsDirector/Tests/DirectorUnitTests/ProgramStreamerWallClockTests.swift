@@ -7,6 +7,7 @@ import Testing
 @testable import DirectorMedia
 import DirectorPipeline
 @testable import DirectorRTMP
+import DirectorSources
 
 /// The programme stream's wall clock, read off the wire: the streamer is put on air over a socket
 /// pair with no encoder, handed encoded frames the way VideoToolbox hands them over, and every RTMP
@@ -148,6 +149,66 @@ struct ProgramStreamerWallClockTests {
     #expect(wire.streamer.liveTimelineStart == first)
   }
 
+  // MARK: - A stream started on a cut
+
+  /// A cut keeps the old camera's last picture on air until the new camera's first is due, the live
+  /// delay after it was captured. A stream started in that instant stamped the held picture as of
+  /// now, a whole live delay late, and TeamStation placed the publish by its first frame.
+  @Test("A stream started on a cut stamps the held picture at its capture time plus the time it has been on air")
+  func streamStartedOnACut() async throws {
+    let wire = try WireHarness(codec: .hevc, offsetMs: 0, now: Self.now, encoder: true, live: false)
+    defer { wire.close() }
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("held-wall-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let telemetry = PipelineTelemetry(clock: wire.clock)
+    let converter = PixelConverter()
+    let router = TileRouter(
+      telemetry: telemetry,
+      converter: converter,
+      compositor: nil,
+      programEncoder: ProgramEncoder(telemetry: telemetry, converter: converter, config: AppConfig(programResolution: .hd720), directory: root),
+      programStreamer: wire.streamer,
+      clock: wire.clock
+    )
+    router.setStreamRate(30)
+    let cameras = [ PushFrameSource(id: "cam-a"), PushFrameSource(id: "cam-b") ]
+    for (index, camera) in cameras.enumerated() {
+      let pipe = SourcePipeline(sourceID: camera.sourceID, sourceIndex: index, source: camera, converter: PixelConverter(), telemetry: telemetry)
+      router.add(pipe)
+      try pipe.start()
+    }
+    router.selectProgram(sourceIndex: 0)
+
+    // Camera A's picture, captured the live delay ago: it comes due at once and goes on air.
+    let capture = Self.now - AudioMixer.defaultLiveReadLagSeconds
+    cameras[0].push(PixelFrame(
+      sourceID: cameras[0].sourceID,
+      pixelBuffer: try #require(WireHarness.picture(width: 1280, height: 720)),
+      presentationTime: .zero,
+      wallClock: WallClock(seconds: Self.now),
+      captureWallClock: WallClock(seconds: capture),
+      frameID: 0
+    ))
+    try await Task.sleep(for: .milliseconds(300))
+
+    // Half a second later the operator cuts to camera B, whose first picture is not due yet, and
+    // presses Stream in the same instant.
+    wire.clock.set(Self.now + 0.5)
+    router.selectProgram(sourceIndex: 1)
+    try wire.goLive()
+
+    let tags = try wire.videoTags(2)
+    #expect(FLVTag.isVideoSequenceHeader(tags[0]))
+    let found = try units(tags[1].dropFirst(8))
+    // On air for half a second: it stands for its capture time plus that, not for now.
+    let held = WallClockSEI.encode(.hevc, wallMs: Int64(((capture + 0.5) * 1000).rounded()), corrected: true)
+    let asOfNow = WallClockSEI.encode(.hevc, wallMs: Int64(((Self.now + 0.5) * 1000).rounded()), corrected: true)
+    #expect(!found.contains(asOfNow), "the held picture was stamped as of now, a live delay late")
+    #expect(found.contains(held))
+  }
+
   // MARK: - S6: no sample, no correction
 
   @Test("Without a measured offset the SEI carries Director's own wall, with bit 0 clear")
@@ -268,6 +329,26 @@ struct ProgrammeContentWallTests {
   }
 }
 
+@Suite("Programme held picture wall")
+struct ProgrammeHeldPictureWallTests {
+  @Test("A new picture carries its capture time, and a repeat that plus the time it has been on air")
+  func repeatsMoveOn() {
+    var held = ProgrammeHeldPictureWall()
+    #expect(held.capture(sequence: 1, capture: WallClock(seconds: 99), at: 100) == WallClock(seconds: 99))
+    #expect(held.capture(sequence: 1, capture: WallClock(seconds: 99), at: 100.5) == WallClock(seconds: 99.5))
+    // The next picture starts again from its own capture time.
+    #expect(held.capture(sequence: 2, capture: WallClock(seconds: 100.25), at: 101.25) == WallClock(seconds: 100.25))
+    #expect(held.capture(sequence: 2, capture: WallClock(seconds: 100.25), at: 102.25) == WallClock(seconds: 101.25))
+  }
+
+  @Test("A picture with no capture time, a replay's, carries none")
+  func replay() {
+    var held = ProgrammeHeldPictureWall()
+    #expect(held.capture(sequence: 1, capture: nil, at: 100) == nil)
+    #expect(held.capture(sequence: 1, capture: nil, at: 101) == nil)
+  }
+}
+
 @Suite("Stream frame walls")
 struct StreamFrameWallsTests {
   @Test("A frame's wall comes back with it, and frames the encoder dropped before it go")
@@ -300,7 +381,8 @@ private final class WireHarness {
 
   /// `offsetMs` nil leaves the streamer's offset unset; `.some(nil)` sets one that has not measured.
   /// `encoder` gives the streamer a real VideoToolbox session at 720p.
-  init(codec: RTMPVideoCodec, offsetMs: Int??, now: Double, encoder: Bool = false) throws {
+  /// `live` false leaves the streamer stopped until `goLive`.
+  init(codec: RTMPVideoCodec, offsetMs: Int??, now: Double, encoder: Bool = false, live: Bool = true) throws {
     var fds: [Int32] = [ 0, 0 ]
     _ = socketpair(AF_UNIX, SOCK_STREAM, 0, &fds)
     ends = fds
@@ -313,7 +395,17 @@ private final class WireHarness {
     var config = AppConfig.default
     config.streamCodec = codec == .hevc ? .hevc : .h264
     config.streamResolution = .hd720
-    try streamer.goLiveForTesting(client: client, settings: StreamSettings(config: config), encoder: encoder)
+    settings = StreamSettings(config: config)
+    self.encoder = encoder
+    if live { try goLive() }
+  }
+
+  private let settings: StreamSettings
+  private let encoder: Bool
+
+  /// Puts the streamer on air, as a press of Stream does.
+  func goLive() throws {
+    try streamer.goLiveForTesting(client: client, settings: settings, encoder: encoder)
   }
 
   /// Waits, for up to two seconds, until the encoder has handed back everything it was given.

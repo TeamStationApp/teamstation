@@ -670,11 +670,10 @@ public final class TileRouter: @unchecked Sendable {
   /// ticks it has missed, for the take's telemetry.
   private var tickLatenessMax: Double = 0
   private var missedTicks: UInt64 = 0
-  /// The picture the recording last took, so a repeat can be told from a new one.
-  private var lastRecordedSequence: UInt64?
-  /// The picture the stream last took, for the same reason: only a new picture's capture time says
-  /// when a stream frame was; a repeat borrows the lag, as the recording's does.
-  private var lastStreamedSequence: UInt64?
+  /// The capture time each recording frame and each stream frame carries: a new picture's own, and
+  /// a repeat's from the picture it repeats; see `ProgrammeHeldPictureWall`.
+  private var recordedCapture = ProgrammeHeldPictureWall()
+  private var streamedCapture = ProgrammeHeldPictureWall()
   /// Programme pictures left out because the compositor could not make one.
   private var composeMisses: UInt64 = 0
 
@@ -772,15 +771,13 @@ public final class TileRouter: @unchecked Sendable {
     let picture = entry.picture
     let streamRate = programmeClock.streamRate
     let recordingRate = programmeClock.recordingRate
-    var freshForRecording = false
+    var recordingCapture: WallClock?
     if tick.recordingFrame != nil {
-      freshForRecording = entry.sequence != lastRecordedSequence
-      lastRecordedSequence = entry.sequence
+      recordingCapture = recordedCapture.capture(sequence: entry.sequence, capture: picture.captureWall, at: wallNow)
     }
-    var freshForStream = false
+    var streamCapture: WallClock?
     if tick.streamFrame != nil {
-      freshForStream = entry.sequence != lastStreamedSequence
-      lastStreamedSequence = entry.sequence
+      streamCapture = streamedCapture.capture(sequence: entry.sequence, capture: picture.captureWall, at: wallNow)
     }
     lock.unlock()
 
@@ -798,22 +795,24 @@ public final class TileRouter: @unchecked Sendable {
           onClockGrid: true
         )
       }
-      // A repeat carries no capture time, so the encoder's anchors borrow the delay it last measured
-      // rather than reading a stall as the programme slipping further and further behind.
+      // A repeat carries its picture's capture time plus the time since that picture came on air, so
+      // a stall is never read as the programme slipping further and further behind, and a take
+      // started on a held picture is placed by it.
       programEncoder.append(
         picture.buffer,
         presentationTime: CMTime(value: frame, timescale: CMTimeScale(recordingRate)),
-        captureWall: freshForRecording ? picture.captureWall : nil,
+        captureWall: recordingCapture,
         onClockGrid: true
       )
     }
     if let frame = tick.streamFrame, programStreamer.running {
-      // A new picture's capture time is when the frame was: its wall-clock SEI carries it, and the
-      // first one sent places the live video on TeamStation (`liveTimelineStart`).
+      // The picture's capture time is when the frame was, a repeat's moved on by the time it has
+      // been on air: its wall-clock SEI carries it, and the first one sent places the live video on
+      // TeamStation (`liveTimelineStart`), even when the stream starts on a picture held after a cut.
       programStreamer.append(
         picture.buffer,
         presentationTime: CMTime(value: frame, timescale: CMTimeScale(streamRate)),
-        captureWall: freshForStream ? picture.captureWall : nil
+        captureWall: streamCapture
       )
     }
   }

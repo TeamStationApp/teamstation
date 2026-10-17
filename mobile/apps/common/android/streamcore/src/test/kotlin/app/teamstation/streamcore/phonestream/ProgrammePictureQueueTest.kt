@@ -122,8 +122,10 @@ class ProgrammePictureQueueTest {
     private class Recording : ProgrammeRecordingTarget {
         override var running = true
         val placed = mutableListOf<Pair<Double, Double?>>()
-        override fun place(presentationTime: Double, captureWall: Double?): Double {
+        val repeats = mutableListOf<Boolean>()
+        override fun place(presentationTime: Double, captureWall: Double?, repeat: Boolean): Double {
             placed += presentationTime to captureWall
+            repeats += repeat
             return presentationTime
         }
 
@@ -206,10 +208,16 @@ class ProgrammePictureQueueTest {
             val age = 100.0 + at - PhoneStreamProfile.pictureDelaySeconds - nanos!! / 1e9
             assertTrue("age $age", age >= -0.002 && age < 0.04 + 1e-6)
         }
-        // A fresh picture gives the recording its capture time, a repeat gives none.
-        val fresh = recording.placed.filter { it.second != null }
+        // A fresh picture gives the recording its capture time, a repeat that plus its time on air.
+        val fresh = recording.placed.filterIndexed { index, _ -> !recording.repeats[index] }
         assertEquals(fresh.size, fresh.map { it.second }.toSet().size)
         assertTrue(recording.placed.size > fresh.size)
+        for (index in 1 until recording.placed.size) {
+            if (!recording.repeats[index]) continue
+            val (at, capture) = recording.placed[index]
+            val (before, previous) = recording.placed[index - 1]
+            assertEquals(previous!! + (at - before), capture!!, 1e-6)
+        }
         assertEquals(0L, programme.latePictures)
         assertEquals(0L, programme.skippedPictures)
         // A start forgets what was queued.

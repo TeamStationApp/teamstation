@@ -478,10 +478,10 @@ public final class ProgramEncoder: @unchecked Sendable {
   }
 
   /// `pixelBuffer` may be BGRA straight out of the compositor; it is converted once here.
-  /// `captureWall` is when the on-air camera captured this picture, for a live frame. Nil for a
-  /// replay frame or a source that does not know. `onClockGrid` says `presentationTime` is the
-  /// programme clock's own frame number, which is trusted as it stands; any other time is checked
-  /// against real time first.
+  /// `captureWall` is when the on-air camera captured this picture, moved on by the time it has been
+  /// on air for a repeat (`ProgrammeHeldPictureWall`). Nil for a replay frame or a source that does
+  /// not know. `onClockGrid` says `presentationTime` is the programme clock's own frame number,
+  /// which is trusted as it stands; any other time is checked against real time first.
   public func append(
     _ pixelBuffer: CVPixelBuffer,
     presentationTime: CMTime,

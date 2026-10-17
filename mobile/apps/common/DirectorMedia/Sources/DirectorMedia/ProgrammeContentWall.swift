@@ -5,9 +5,9 @@ import Foundation
 ///
 /// The programme is built from pictures the delay line has already held for half a second, so
 /// stamping composition time placed rec-401's programme master about 0.55 s behind the camera files
-/// it was cut from. A live frame says exactly how old it is; a replay frame or a repeat does not, so
-/// it borrows the lag the last live frame measured, which keeps the timeline continuous and never
-/// reads a stall as the programme slipping further and further behind.
+/// it was cut from. A live frame says exactly how old it is, a repeat included
+/// (`ProgrammeHeldPictureWall`); a replay frame does not, so it borrows the lag the last live frame
+/// measured, which keeps the timeline continuous.
 ///
 /// The recording's anchors (`program_anchors`) and the stream's wall-clock SEI both read it, so a
 /// frame is put at the same moment whether it is watched live or in the take.
@@ -21,7 +21,7 @@ struct ProgrammeContentWall: Sendable, Equatable {
   private(set) var lagSeconds: Double?
 
   /// The content wall of a frame stamped at `now` (seconds since 1970 on the steady wall clock),
-  /// whose picture was captured at `captureWall`, or nil for a replay or a repeat.
+  /// whose picture was captured at `captureWall`, or nil for a replay.
   mutating func wall(at now: Double, captureWall: WallClock?) -> WallClock {
     if let captureWall, now - captureWall.seconds >= 0, now - captureWall.seconds < Self.maximumLagSeconds {
       lagSeconds = now - captureWall.seconds

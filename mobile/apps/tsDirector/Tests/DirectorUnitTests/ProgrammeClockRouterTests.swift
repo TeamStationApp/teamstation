@@ -148,9 +148,14 @@ struct ProgrammeClockRouterTests {
 }
 
 /// A source whose pictures the test hands it one at a time.
-private final class PushFrameSource: FrameSource, @unchecked Sendable {
-  let sourceID = SourceID("push-cam")
+final class PushFrameSource: FrameSource, @unchecked Sendable {
+  let sourceID: SourceID
   let displayName = "PUSH"
+
+  init(id: String = "push-cam") {
+    sourceID = SourceID(id)
+  }
+
   private(set) var isRunning = false
   var format: SourceFormat? { nil }
   private let lock = NSLock()

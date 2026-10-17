@@ -271,10 +271,11 @@ class ProgramEncoder(
      * Where the next picture goes on the part's timeline, in seconds, or null when it is left out (a
      * second picture in one slot, or nothing running). [presentationTime] is the picture's own time;
      * [captureWall] when it was captured; [onClockGrid] says the time is the programme clock's own
-     * frame number, trusted as it stands. Anchors and the sound's origin are taken here, where the
+     * frame number, trusted as it stands; [repeat] says it shows the picture the frame before showed,
+     * which the sound's origin leaves out. Anchors and the sound's origin are taken here, where the
      * timeline is decided.
      */
-    fun append(presentationTime: Double, captureWall: Double? = null, onClockGrid: Boolean = false): Double? {
+    fun append(presentationTime: Double, captureWall: Double? = null, onClockGrid: Boolean = false, repeat: Boolean = false): Double? {
         val anchor: Triple<Long, Int, Pair<Double, Double>>?
         val sink: AnchorSink?
         val time: Double
@@ -314,10 +315,11 @@ class ProgramEncoder(
                 contentLagSeconds = nowWall - captureWall
             }
             val contentWall = nowWall - (contentLagSeconds ?: 0.0)
-            // A picture on the programme clock's grid that is a repeat (no capture time) says
-            // nothing new about the content's age. Below 30 fps the repeats follow the freshest
-            // pictures, so offering them would tilt the median toward those and put the sound early.
-            if (captureWall != null || !onClockGrid) soundOrigin.offer(contentWall - time, time)
+            // A picture on the programme clock's grid that is a repeat says nothing new about the
+            // content's age, whether or not it carries its held capture time. Below 30 fps the
+            // repeats follow the freshest pictures, so offering them would tilt the median toward
+            // those and put the sound early.
+            if ((captureWall != null && !repeat) || !onClockGrid) soundOrigin.offer(contentWall - time, time)
             val recording = anchorRecordingID
             anchor = if (recording != null && time - lastAnchorSeconds >= anchorIntervalSeconds) {
                 lastAnchorSeconds = time

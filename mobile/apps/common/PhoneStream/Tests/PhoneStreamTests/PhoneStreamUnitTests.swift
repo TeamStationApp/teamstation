@@ -185,12 +185,14 @@ extension PhoneStreamTests {
       #expect(sent.map { $0.streamFrame } == (1 ... 30).map { Int64($0) })
       #expect(recording.frames.map { $0.value } == (1 ... 30).map { Int64($0) })
       #expect(stream.frames.map { $0.value } == (1 ... 30).map { Int64($0) })
-      // The first recording frame of a picture carries its capture time; its repeats do not. So
-      // does the stream's, which places the live video by it.
-      #expect(recording.captures.first == WallClock(seconds: 999))
-      #expect(recording.captures.dropFirst().allSatisfy { $0 == nil })
-      #expect(stream.captures.first == WallClock(seconds: 999))
-      #expect(stream.captures.dropFirst().allSatisfy { $0 == nil })
+      // The first recording frame of a picture carries its capture time, and each repeat that plus
+      // the time the picture has been on air. So does the stream's, which places the live video by it.
+      for captures in [ recording.captures, stream.captures ] {
+        #expect(captures.first == WallClock(seconds: 999))
+        for (index, capture) in captures.enumerated() {
+          #expect(abs((capture?.seconds ?? 0) - (999 + Double(index) / 30)) < 1e-6)
+        }
+      }
       #expect(recording.onGrid.allSatisfy { $0 })
       // A late timer: the recording frames it skipped are written as repeats.
       let late = try #require(programme.tick(at: 10 + 34.0 / 30, wallNow: 1_002))
@@ -214,6 +216,51 @@ extension PhoneStreamTests {
       #expect(programme.liveMix.currentContributors.isEmpty)
       programme.setSoundEnabled(true)
       #expect(programme.recordingMix.currentContributors == [ PhoneCameraSource.id ])
+      programme.stop()
+    }
+
+    /// After the background the camera takes a moment to come back, and its first picture is due a
+    /// picture delay after that, so the picture from before the background stays on air while the
+    /// stream redials and the take's next part opens. Both had already taken it, so it went out as a
+    /// repeat with no capture time and borrowed a lag the new publish and part had not measured: it
+    /// was stamped as of now, a whole picture delay late, and TeamStation places a publish by its
+    /// first frame.
+    @Test("A stream or a part started on a held picture carries its capture time plus the time it has been on air")
+    func startedOnAHeldPicture() throws {
+      let recording = FakeRecording()
+      let stream = FakeStream()
+      let programme = PhoneProgramme(recording: recording, stream: stream, clock: FixedClock(1_000), runsMixTimers: false)
+      programme.start(runsTimer: false)
+      recording.isRunning = false
+      stream.isRunning = false
+      // Captured at 999, on air at 1,000; then the camera stops, and the picture is held.
+      programme.add(picture: PixelFrame(
+        sourceID: PhoneCameraSource.id,
+        pixelBuffer: CMSampleBufferGetImageBuffer(videoSample(at: 0))!,
+        presentationTime: .zero,
+        wallClock: WallClock(seconds: 999),
+        captureWallClock: WallClock(seconds: 999),
+        frameID: 0
+      ))
+      for tick in 0 ... 15 {
+        try #require(programme.tick(at: 10 + Double(tick) / 30, wallNow: 1_000 + Double(tick) / 30))
+      }
+      #expect(recording.frames.isEmpty)
+      #expect(stream.frames.isEmpty)
+      // Half a second on air, the stream and the part start on it.
+      recording.isRunning = true
+      stream.isRunning = true
+      try #require(programme.tick(at: 10 + 16.0 / 30, wallNow: 1_000 + 16.0 / 30))
+      try #require(programme.tick(at: 10 + 17.0 / 30, wallNow: 1_000 + 17.0 / 30))
+      // Stamped as of now, a frame would say 1,000.53: a picture delay late.
+      let held = [ 999 + 16.0 / 30, 999 + 17.0 / 30 ]
+      for captures in [ stream.captures, recording.captures ] {
+        #expect(captures.count == 2)
+        for (sent, expected) in zip(captures, held) {
+          let seconds = try #require(sent?.seconds, "the held picture went out with no capture time")
+          #expect(abs(seconds - expected) < 1e-6)
+        }
+      }
       programme.stop()
     }
 
