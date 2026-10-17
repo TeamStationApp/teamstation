@@ -199,7 +199,7 @@ describe('the Search tab', () => {
       expect(control('Follow Demo Hawks')).not.equals(undefined)
       await press('Stats')
       expect(document.body.textContent).includes(
-        'You need to be a member of one of the teams to see this.'
+        'You need to be a member of this team to see individual player stats.'
       )
       expect(asked).deep.equals([])
     } finally {

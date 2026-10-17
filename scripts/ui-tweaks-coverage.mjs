@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { transformSync } from 'esbuild'
 
 const serverOnly = false
+const combinedMinimum = 95
 const base = process.env.TS_COVERAGE_BASE
 if (base == null)
   throw new Error('Supply TS_COVERAGE_BASE for the UI tweaks commits')
@@ -21,13 +22,17 @@ const report = resolve('coverage/uiTweaks')
 rmSync(report, { recursive: true, force: true })
 const temp = resolve(report, 'tmp')
 mkdirSync(temp, { recursive: true })
-function run(command, args, env = {}) {
+const failedSuites = []
+function run(command, args, env = {}, collectFailure = false) {
   console.log('$', command, ...args)
   const result = spawnSync(command, args, {
     stdio: 'inherit',
     env: { ...process.env, ...env }
   })
-  if (result.status !== 0) process.exit(result.status ?? 1)
+  if (result.status !== 0) {
+    if (!collectFailure) process.exit(result.status ?? 1)
+    failedSuites.push(`${command} ${args.join(' ')}`)
+  }
 }
 function git(args) {
   const result = spawnSync('git', args, { encoding: 'utf8' })
@@ -71,9 +76,10 @@ if (!serverOnly) {
       '60000',
       'lib/scoring-tests.cjs',
       '--grep',
-      'roster|Roster|scoring sheet|player entry|placeholder|the coach|coach game|the Coach Game pill|automatic and explicit sections|title event creation and event detail editing|game page|game screen|game hero|game sections|game tabs|game watch|game card|relationship list|shared relationship Leave row|confirmed season participation departure|group settings identity|the league page|the season screen|settings people flows|creation and organization interface behavior|settings cleanup shared presentation|calendar, five-minute|timezone city selection|ScheduleRow|team presentation|minimal public team|team schedule|schedule event creation entry|season time|season page|group link|discovery'
+      'roster|Roster|scoring sheet|player entry|placeholder|the coach|coach game|the Coach Game pill|automatic and explicit sections|title event creation and event detail editing|game page|game screen|game hero|game sections|game tabs|game watch|game card|relationship list|shared relationship Leave row|confirmed season participation departure|group settings identity|the league page|the season screen|settings people flows|creation and organization interface behavior|settings cleanup shared presentation|calendar, five-minute|timezone city selection|ScheduleRow|team presentation|minimal public team|team schedule|schedule event creation entry|season time|season page|group link|discovery|membership|Membership|warning|Warning|poster|Poster|sign.in|login|Login|event Info|event RSVP|schedule RSVP|recording|streaming screen|actual app|actual App|the app at launch|team route frames|Search tab|non-member|member’s game Videos|team card’s right|expanded statistics|the games feed|direct action app completion|applyCoverCrop|Coach Game|Score Game|the game Record button|Home Add and Create|GameHeroCard|game actions|actual game scoring entry|the box score|player’s settings form'
     ],
-    { NODE_V8_COVERAGE: temp }
+    { NODE_V8_COVERAGE: temp },
+    true
   )
 }
 run(
@@ -85,6 +91,22 @@ run(
     '60000',
     'src/common/seasonTimeFrames.test.ts',
     'src/common/playerSettings.test.ts',
+    'src/common/api.test.ts',
+    'src/common/eventInfo.test.ts',
+    'src/common/scoring/rosterCommands.test.ts',
+    'src/app/navigation/routes.test.ts',
+    'src/app/scoring/createDictatedPlayers.test.ts',
+    'src/app/scoring/dictatedRoster.test.ts',
+    'src/server/events/eventInfo.test.ts',
+    'src/server/games/gameLive.test.ts',
+    'src/server/games/scoringActivity.test.ts',
+    'src/server/dictation/interpreter.test.ts',
+    'src/server/routes/membershipRequests.test.ts',
+    'src/server/routes/appSignIn.test.ts',
+    'src/server/routes/events.test.ts',
+    'src/server/routes/seasons.test.ts',
+    'src/server/routes/seasonReaders.test.ts',
+    'src/server/notifications/requestInformation.test.ts',
     'src/app/scoring/playerDraft.test.ts',
     'src/app/scoring/currentSetup.test.ts',
     'src/app/screens/gameTabs.test.ts',
@@ -103,7 +125,8 @@ run(
       .filter(name => name === 'publicGameAccess.test.ts')
       .map(name => 'src/server/routes/' + name)
   ],
-  { NODE_V8_COVERAGE: temp }
+  { NODE_V8_COVERAGE: temp },
+  true
 )
 for (const name of readdirSync(temp)) {
   const file = resolve(temp, name)
@@ -117,6 +140,7 @@ for (const name of readdirSync(temp)) {
 }
 run('node_modules/.bin/c8', [
   'report',
+  '--all',
   '--temp-directory',
   temp,
   '--reporter=text',
@@ -158,8 +182,11 @@ const counts = {}
 for (const path of paths)
   if (map.files().includes(resolve(path)))
     counts[path] = istanbulCounts(map.fileCoverageFor(resolve(path)).toJSON())
-const result = lineReportFromCounts(changedLines(diff), counts, path =>
-  paths.includes(path)
+const result = lineReportFromCounts(
+  changedLines(diff),
+  counts,
+  path => paths.includes(path),
+  { min: combinedMinimum }
 )
 writeFileSync(
   resolve(report, 'changed-lines.json'),
@@ -173,12 +200,19 @@ for (const [path, lines] of Object.entries(result.files)) {
   console.log(
     `${path}: ${percent.toFixed(2)}% (${lines.covered.length}/${total})${lines.uncovered.length ? ' uncovered ' + lines.uncovered.join(',') : ''}`
   )
-  if (percent < 90) failures.push(path)
+  if (percent < combinedMinimum) failures.push(path)
 }
 console.log(
   `UI tweaks changed runtime coverage: ${result.percent.toFixed(2)}% (${result.covered}/${result.total})`
 )
-if (failures.length || !result.pass || result.total === 0)
+if (failedSuites.length)
+  console.error('Test suites failed:', failedSuites.join('\n'))
+if (
+  failedSuites.length ||
+  failures.length ||
+  !result.pass ||
+  result.total === 0
+)
   throw new Error(
-    `At least 90% changed runtime coverage required: ${failures.join(', ')}; missing: ${result.missing.join(', ')}`
+    `At least ${combinedMinimum}% combined changed runtime coverage required: ${failures.join(', ')}; missing: ${result.missing.join(', ')}`
   )

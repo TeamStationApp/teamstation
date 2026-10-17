@@ -278,7 +278,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
     '/relationship-requests': {
       post: {
         summary:
-          'Send a seven-day relationship invitation, guardian request or team membership request',
+          'Send a seven-day relationship or guardian invitation, guardian request or team membership request',
         security: [{ bearer: [] }],
         description:
           'Membership requests use kind=membership and teamId, without sender. The server binds them to the signed-in user, deduplicates pending requests, and requires a team administrator to accept before granting member access, never staff roles. Missing, merged and placeholder teams are refused. ' +

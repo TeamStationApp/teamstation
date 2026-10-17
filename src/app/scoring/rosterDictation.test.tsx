@@ -97,6 +97,7 @@ async function mount(
     chat?: ChatTurn[]
     question?: RosterQuestion
     pending?: ChosenRosterCommand[]
+    createFailure?: unknown
   } = {}
 ): Promise<Mounted> {
   const fake = fakeDictation()
@@ -110,8 +111,10 @@ async function mount(
       <ThemeProvider>
         <RosterEditor
           state={state}
-          onCreatePlayer={async (_teamId, player) =>
-            asRosterEntry({
+          onCreatePlayer={async (_teamId, player) => {
+            // eslint-disable-next-line @typescript-eslint/only-throw-error -- Exercise an untyped transport rejection.
+            if (more.createFailure != null) throw more.createFailure
+            return asRosterEntry({
               userId: 7001,
               shortName: player.firstName,
               jersey: player.jersey,
@@ -124,7 +127,7 @@ async function mount(
               bats: player.bats,
               throws: player.throws
             })
-          }
+          }}
           audience={more.audience}
           fixedSide={coach ? 'home' : undefined}
           initialDraft={
@@ -237,6 +240,23 @@ describe('dictation on the roster screen', function () {
       )
     ).includes({ userId: null, local: true })
   })
+
+  for (const failure of [new Error('Roster save refused'), 'offline'])
+    it(`reports a failed dictated roster creation without staging a player (${typeof failure})`, async () => {
+      const { say, saved } = await mount(state, { createFailure: failure })
+      await say('Create Ohtani', [
+        { type: 'addPlayer', side: 'home', name: 'Ohtani' }
+      ])
+      expect(document.body.textContent).includes(
+        failure instanceof Error
+          ? failure.message
+          : 'Unable to create the player. Please try again.'
+      )
+      expect(saved).length(0)
+      expect(node('Dictation')!.getAttribute('aria-disabled')).not.equals(
+        'true'
+      )
+    })
 
   it('starts on, in the roster scope, telling the model both rosters', async function () {
     const { fake } = await mount(state)

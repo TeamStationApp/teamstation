@@ -93,6 +93,8 @@ describe('a player’s settings', function () {
   })
 
   it('requires a name and the roster fields when creating a player', function () {
+    for (const invalid of [null, [], 'player', 7])
+      expect(() => asNewRosterPlayer(invalid)).throws('Expected an object')
     expect(
       asNewRosterPlayer({
         firstName: ' Cliff ',

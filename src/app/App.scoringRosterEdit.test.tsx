@@ -141,7 +141,7 @@ describe('actual App scoring player Settings return', function () {
         fixture.trace.some(line => line.startsWith('Pending settings PUT'))
       )
       await press('Stats')
-      await press('Settings')
+      await press('Player settings')
       fixture.pauseSettings(false, false)
       fixture.pauseSettingsResponses(true)
       await type('Jersey number', '15')
@@ -318,7 +318,7 @@ describe('actual App scoring player Settings return', function () {
         fixture.trace.some(line => line.startsWith('Captured settings PUT'))
       )
       await press('Stats')
-      await press('Settings')
+      await press('Player settings')
       fixture.pauseSettingsResponses(false, false)
       await type('Jersey number', '15')
       await press('Save')
@@ -546,7 +546,7 @@ describe('actual App scoring player Settings return', function () {
             )
           } else {
             await press('Stats')
-            await press('Settings')
+            await press('Player settings')
           }
           pauseSave(false, false)
           if (back) await press('Mookie Betts,')
@@ -611,8 +611,11 @@ describe('actual App scoring player Settings return', function () {
         () => document.querySelector('[aria-label="Discard and Exit"]') != null
       )
       await press('Discard and Exit')
-      await waitFor(() => currentRoute().name === 'game')
-      expect(currentRoute()).includes({ name: 'game', gameId: fixture.gameId })
+      await waitFor(() => currentRoute().name === 'scoreOptions')
+      expect(currentRoute()).includes({
+        name: 'scoreOptions',
+        gameId: fixture.gameId
+      })
     })
   })
   it('keeps names hidden when Save finishes during a revoked-role recheck', async function () {
