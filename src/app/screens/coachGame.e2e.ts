@@ -499,7 +499,7 @@ describe('Coach Game', function () {
     const tabs = await coach.page.$$eval('[role="tab"]', nodes =>
       nodes.map(node => String(node.getAttribute('aria-label')))
     )
-    expect(tabs).deep.equals(['Box Score', 'Roster', 'Lineup', 'Defense'])
+    expect(tabs).deep.equals(['Box', 'Roster', 'Lineup', 'Defense'])
     // The bar, as the scorekeeper's: green Create Player text, the round mic
     // in the middle and taller than Save, Cancel under them.
     const bar = await coach.box('[data-testid="Roster footer bar"]')
@@ -528,7 +528,7 @@ describe('Coach Game', function () {
     ])
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
-    await coach.tabOn('Box Score')
+    await coach.tabOn('Box')
     await coach.page.waitForFunction(
       () => String(document.body.textContent).includes('Pitching — Visitors'),
       { timeout: 30000 }
@@ -568,7 +568,7 @@ describe('Coach Game', function () {
     const fixture = lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
-    await coach.tabOn('Box Score')
+    await coach.tabOn('Box')
     const boxText = async (has: string): Promise<string> => {
       await coach.page.waitForFunction(
         has =>
@@ -651,7 +651,7 @@ describe('Coach Game', function () {
     // The visitors' head coach: Judge bats first for them.
     await coach.as(fixture, 'awayCoach')
     await coach.coachGame(fixture.gameId)
-    await coach.tabOn('Box Score')
+    await coach.tabOn('Box')
     const mic = await coach.box(ROSTER_MIC)
     await coach.page.mouse.click(mic.x + mic.width / 2, mic.y + mic.height / 2)
     const status = async (text: string): Promise<void> => {
