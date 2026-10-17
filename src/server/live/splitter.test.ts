@@ -20,7 +20,7 @@ import {
   IDR_SLICE,
   wallClockNal
 } from './frameWallFixture'
-import { stampNewSegments } from './segmentClock'
+import { segmentsFrom, stampNewSegments } from './segmentClock'
 import {
   attachSessionForTest,
   CAPTURE_LAG_MAX_MS,
@@ -1015,15 +1015,30 @@ describe('a live playlist through a reconnect', function () {
     setLive(KEY, spec())
     forcePublishForTest(KEY, true)
     await writerArgs()
+    // The stamper runs on every watch event and progress line for the rest
+    // of the game, so it never lists the whole directory.
+    // The module object itself: the splitter reads `readdirSync` off it.
+    const fs = require('fs') as { readdirSync: typeof readdirSync }
+    const readdir = fs.readdirSync
+    const listings: string[] = []
+    fs.readdirSync = ((path: string, ...rest: unknown[]) => {
+      listings.push(String(path))
+      return (readdir as (...args: unknown[]) => unknown)(path, ...rest)
+    }) as typeof readdir
     writeFileSync(join(dir, 'seg000001.m4s'), segment(0))
     const placed = async (name: string): Promise<number | undefined> =>
       segmentTimelineStart(init, readFileSync(join(dir, name)))
     let moved = await placed('seg000001.m4s')
-    for (let i = 0; i < 50 && !(moved != null && moved > 10); i++) {
-      await new Promise(resolve => setTimeout(resolve, 40))
-      moved = await placed('seg000001.m4s')
+    try {
+      for (let i = 0; i < 50 && !(moved != null && moved > 10); i++) {
+        await new Promise(resolve => setTimeout(resolve, 40))
+        moved = await placed('seg000001.m4s')
+      }
+    } finally {
+      fs.readdirSync = readdir
     }
     expect(moved ?? 0).closeTo(30, 2)
+    expect(listings.filter(path => path.startsWith(dir))).deep.equals([])
     expect(readFileSync(join(dir, 'seg000000.m4s')).equals(prior)).equals(true)
     writeFileSync(join(dir, 'seg000002.m4s'), segment(0))
     await clearLiveSettled(KEY, 'ended')
@@ -1633,7 +1648,7 @@ describe('a live playlist through a reconnect', function () {
     const firstPath = join(dir, 'seg000000.m4s')
     const initBefore = readFileSync(initPath)
     const firstBefore = readFileSync(firstPath)
-    stampNewSegments(dir, 31, new Set(['seg000000.m4s']))
+    stampNewSegments(dir, 31, segmentsFrom(dir, 1))
     const init = readFileSync(initPath)
     const first = readFileSync(firstPath)
     const second = readFileSync(join(dir, 'seg000001.m4s'))

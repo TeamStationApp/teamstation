@@ -1,7 +1,7 @@
 import {
   closeSync,
+  existsSync,
   openSync,
-  readdirSync,
   readFileSync,
   readSync,
   renameSync,
@@ -404,23 +404,19 @@ const yieldTurn = async (): Promise<void> => {
  * its opening boxes, and the turn is handed back between them, so the rest
  * of the ingest keeps running. A segment still before the last discontinuity
  * is included: a later writer may already have marked its own join, and
- * leaving that file at zero would be permanent. Returns the names moved.
+ * leaving that file at zero would be permanent. Segments numbered below
+ * `from` are known to be on the programme clock already, as the writers
+ * before stamped them, and are not read: late in a long game that is a
+ * thousand files or more ahead of every reconnect. Returns the names moved.
  */
 export async function recoverUnstampedSegments(
   directory: string,
   playlist: string | undefined,
-  offsetSec: number
+  offsetSec: number,
+  from = 0
 ): Promise<string[]> {
   if (!(offsetSec > 0) || playlist == null) return []
   const listed = listedProgramme(playlist)
-  let names: string[]
-  try {
-    names = readdirSync(directory)
-      .filter(name => /^seg\d+\.m4s$/.test(name))
-      .sort()
-  } catch {
-    return []
-  }
   let init: Buffer
   try {
     init = readFileSync(`${directory}/init.mp4`)
@@ -429,10 +425,14 @@ export async function recoverUnstampedSegments(
   }
   const moved: string[] = []
   let placedEnd = 0
-  for (const name of names) {
-    await yieldTurn()
+  for (const name of [...listed.keys()].sort()) {
     const programme = listed.get(name)
     if (programme == null) continue
+    if ((segmentNumber(name) ?? 0) < from) {
+      placedEnd = Math.max(placedEnd, programme.start + programme.duration)
+      continue
+    }
+    await yieldTurn()
     let actual: number | undefined
     try {
       actual = timelineStartSec(
@@ -478,28 +478,50 @@ function stampFile(
   }
 }
 
+/** A segment's file name, as the HLS writer names it (`seg%06d.m4s`). */
+export function segmentName(segment: number): string {
+  return `seg${String(segment).padStart(6, '0')}.m4s`
+}
+
+/** The number in a segment's file name; undefined for any other file. */
+export function segmentNumber(name: string): number | undefined {
+  const match = /^seg(\d+)\.m4s$/.exec(name)
+  return match == null ? undefined : Number.parseInt(match[1], 10)
+}
+
 /**
- * Moves each segment ffmpeg has closed since the restart onto the programme
- * clock. Segments in `skip` — the ones already on the programme clock, and
- * the ones already moved — are left as they were written. Returns the names
- * it moved.
+ * The segments in the directory numbered `from` on, up to the first number
+ * with no file. The writer closes its segments in order, each under its
+ * final name only once it is whole (`temp_file`), so these are every one it
+ * has closed since `from`. One look per name, rather than a listing of the
+ * whole directory, which late in a game holds a thousand names or more.
+ */
+export function segmentsFrom(directory: string, from: number): string[] {
+  const names: string[] = []
+  for (
+    let segment = from;
+    existsSync(`${directory}/${segmentName(segment)}`);
+    segment += 1
+  ) {
+    names.push(segmentName(segment))
+  }
+  return names
+}
+
+/**
+ * Moves each of these segments, ones ffmpeg has closed since the restart,
+ * onto the programme clock. Returns the names it moved; one it cannot move
+ * yet is left as it was.
  */
 export function stampNewSegments(
   directory: string,
   offsetSec: number,
-  skip: ReadonlySet<string>
+  names: readonly string[]
 ): string[] {
   if (!(offsetSec > 0)) return []
-  let names: string[]
-  try {
-    names = readdirSync(directory)
-  } catch {
-    return []
-  }
   const moved: string[] = []
   let init: Buffer | undefined
   for (const name of names) {
-    if (!/^seg\d+\.m4s$/.test(name) || skip.has(name)) continue
     try {
       init ??= readFileSync(`${directory}/init.mp4`)
     } catch {

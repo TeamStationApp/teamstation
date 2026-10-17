@@ -12,6 +12,8 @@ import {
   readLeadingBoxesSync,
   recoverUnstampedSegments,
   restampSegments,
+  segmentName,
+  segmentsFrom,
   stampNewSegments
 } from './segmentClock'
 
@@ -243,6 +245,14 @@ interface OutputRuntime {
   stampSegments?: () => void
   /** Where the current writer's segments go; see `WriterPlacement`. */
   placement?: WriterPlacement
+  /**
+   * Every segment numbered below this is on the programme clock: a
+   * continuing writer's once stamped, and every one a first writer closes,
+   * which needs no stamp. The next continuation recovers only the segments
+   * from here on. Unknown after this process restarts, when it reads them
+   * all.
+   */
+  placedBelow?: number
   /** Stops watching for those segments, after moving the last one. */
   stopStamp?: () => void
 }
@@ -877,7 +887,6 @@ async function spawnPrepared(
   if (output.kind === 'hls') {
     const next = nextSegmentNumber(entry.hlsDir)
     let placement: WriterPlacement | undefined
-    let skip = new Set<string>()
     if (next > 0) {
       output.hlsRestarted = true
       reopenPlaylist(entry.hlsDir)
@@ -889,12 +898,14 @@ async function spawnPrepared(
         // A segment closed before the last stamp is still on the publisher's
         // clock. Move it onto its programme date; every name already in the
         // directory is then on that clock and stays there.
-        await recoverUnstampedSegments(entry.hlsDir, playlist, offsetSec)
+        await recoverUnstampedSegments(
+          entry.hlsDir,
+          playlist,
+          offsetSec,
+          output.placedBelow ?? 0
+        )
         if (stoppedDuringRead()) return
         if (deferIfWriterAlive()) return
-        skip = new Set(
-          readdirSync(entry.hlsDir).filter(name => /^seg\d+\.m4s$/.test(name))
-        )
         // The end of what is listed, read off the last segment's own stamp;
         // failing that, where a return with no absence would carry on.
         const floorSec =
@@ -925,29 +936,36 @@ async function spawnPrepared(
     }
     if (placement != null) {
       const held = placement
-      const known = skip
       installStamp = () => {
         held.startedAt = Date.now()
+        // Every segment on disk now is placed, or recovered above. This
+        // writer's are numbered from `next` on, closed in order, so the
+        // stamper looks only past the lowest one it has not handled yet:
+        // it runs on every watch event and every progress line for the rest
+        // of the game.
+        let cursor = next
+        const handled = new Set<string>()
+        const unhandled = (): string[] =>
+          segmentsFrom(entry.hlsDir, cursor).filter(name => !handled.has(name))
+        const handle = (name: string): void => {
+          handled.add(name)
+          while (handled.delete(segmentName(cursor))) cursor += 1
+          if (held.continuing) output.placedBelow = cursor
+        }
+        output.placedBelow = held.continuing ? cursor : Number.POSITIVE_INFINITY
         const stamp = (): void => {
           if (!held.settled) {
-            let fresh: string[]
-            try {
-              fresh = readdirSync(entry.hlsDir)
-                .filter(name => /^seg\d+\.m4s$/.test(name) && !known.has(name))
-                .sort()
-            } catch {
-              return
-            }
+            const fresh = unhandled()
             placeFromFrameWalls(entry, held, fresh)
-            if (held.offsetSec <= 0) for (const name of fresh) known.add(name)
+            if (held.offsetSec <= 0) for (const name of fresh) handle(name)
           }
           if (held.offsetSec <= 0) return
           for (const name of stampNewSegments(
             entry.hlsDir,
             held.offsetSec,
-            known
+            unhandled()
           )) {
-            known.add(name)
+            handle(name)
             held.stamped.add(name)
           }
         }
