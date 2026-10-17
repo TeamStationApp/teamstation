@@ -47,6 +47,7 @@ function videoOf(
     numCameras: 1,
     kind: 'live',
     status,
+    receiving: status === 'live',
     storage: 'local',
     startAt,
     durationSec: null,
