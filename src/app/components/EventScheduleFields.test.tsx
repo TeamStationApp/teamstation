@@ -199,7 +199,9 @@ describe('shared calendar, five-minute wheels and timezone autocomplete', () => 
     await render()
     await pressSchedule('[data-testid="event-schedule-timezone"]')
     await typeSchedule('Find time zone', 'not a zone')
-    expect(document.body.textContent).includes('No matching time zones')
+    expect(document.body.textContent).includes(
+      'No matching cities or time zones'
+    )
     expect(draft.timezone).equals('UTC')
     await pressSchedule('Cancel time zone picker')
     await chooseSchedule('Time zone', 'America/Los_Angeles')

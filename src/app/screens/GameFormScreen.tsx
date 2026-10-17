@@ -518,6 +518,7 @@ export function GameFormScreen({
             <Card style={styles.card}>
               <Text style={styles.section}>Details</Text>
               <EventScheduleFields
+                client={client}
                 value={draft.schedule}
                 onChange={schedule => {
                   change({ schedule })
