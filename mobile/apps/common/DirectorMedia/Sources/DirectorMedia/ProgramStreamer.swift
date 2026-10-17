@@ -444,6 +444,11 @@ public final class ProgramStreamer: @unchecked Sendable {
     _ = clock.nextPresentationTime(source: .zero, now: startWall)
   }
 
+  /// What the stall watchdog does to an encoder that has stopped handing frames back.
+  func resetWedgedSessionForTesting() {
+    resetWedgedSession()
+  }
+
   var pendingEncodesForTesting: Int {
     lock.lock()
     defer { lock.unlock() }
@@ -1000,7 +1005,9 @@ public final class ProgramStreamer: @unchecked Sendable {
         return
       }
       sentVideoConfig = true
-      firstSentWall = contentWall
+      // The first only: a wedged-encoder reset sends the configuration again mid-publish, and the
+      // server's copy still began with the first picture.
+      if firstSentWall == nil { firstSentWall = contentWall }
       lock.unlock()
       client.sendVideo(timestampMs: timestamp, tag: FLVTag.videoSequenceHeader(codec: codec, record: record))
     } else {
