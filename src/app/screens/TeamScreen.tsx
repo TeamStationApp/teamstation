@@ -496,7 +496,9 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                   </View>
                 ))
               )}
-              {onCreateGame != null && <AddEventCard onPress={onCreateGame} />}
+              {onCreateGame != null && (
+                <AddEventCard variant="game" onPress={onCreateGame} />
+              )}
             </View>
           )}
 
