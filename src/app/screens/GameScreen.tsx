@@ -86,7 +86,11 @@ import { gameStatusLine, winnerOf } from './format'
 import { gameActions, gameTabs } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { watchHandoff } from './gameWatchLayoutProps'
-import { showVideoLivePill } from './livePillPolicy'
+import {
+  gameLiveWindow,
+  showGameLivePill,
+  showVideoLivePill
+} from './livePillPolicy'
 import { openableTeams as teamsWithAPage } from './openableTeams'
 
 export interface GamePlaybackReturn {
@@ -400,7 +404,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   useEffect(() => {
     if (game == null) return
     const start = game.startAt == null ? NaN : Date.parse(game.startAt)
-    const marks = [eventEndTime(game), Number.isFinite(start) ? start : null]
+    const liveWindow = gameLiveWindow(game)
+    const marks = [
+      eventEndTime(game),
+      Number.isFinite(start) ? start : null,
+      ...(liveWindow == null ? [] : [liveWindow[0], liveWindow[1] + 1])
+    ]
     const now = Date.now()
     if (marks.some(mark => mark != null && mark <= now && clockNow < mark)) {
       setClockNow(now)
@@ -1298,7 +1307,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         awayScore={game.awayScore}
         homeScore={game.homeScore}
         status={game.status === 'scheduled' ? '' : gameStatusLine(game)}
-        live={game.status === 'inProgress'}
+        live={showGameLivePill(game, clockNow)}
         winner={winnerOf(game)}
         compact
         awayRecord={game.awayRecord}

@@ -1,4 +1,29 @@
-import { eventEnded, type EventTabState } from './eventTabPolicy'
+import { eventEnded, eventEndTime, type EventTabState } from './eventTabPolicy'
+
+const GAME_LIVE_MARGIN_MS = 60 * 60 * 1000
+
+/** Inclusive window around the scheduled range, using the usual fallback end. */
+export function gameLiveWindow(event: EventTabState): [number, number] | null {
+  const start = event.startAt == null ? NaN : Date.parse(event.startAt)
+  const end = eventEndTime(event)
+  if (!Number.isFinite(start) || end == null || end < start) return null
+  return [start - GAME_LIVE_MARGIN_MS, end + GAME_LIVE_MARGIN_MS]
+}
+
+/** Scoring setup and events that have all been undone do not mean live play. */
+export function showGameLivePill(
+  event: EventTabState,
+  now = Date.now()
+): boolean {
+  if (
+    event.status === 'final' ||
+    event.status === 'cancelled' ||
+    event.hasScoringEvents !== true
+  )
+    return false
+  const window = gameLiveWindow(event)
+  return window != null && now >= window[0] && now <= window[1]
+}
 
 export interface VideoLivePillInput {
   status: string
