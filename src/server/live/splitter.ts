@@ -5,7 +5,15 @@ import { readdirSync, readFileSync, watch, writeFileSync } from 'fs'
 
 import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
 import { segmentPictureSec } from '../media/trackStarts'
-import { recoverUnstampedSegments, stampNewSegments } from './segmentClock'
+import {
+  type FrameWall,
+  listedTimelineEndSec,
+  readFrameWall,
+  readLeadingBoxesSync,
+  recoverUnstampedSegments,
+  restampSegments,
+  stampNewSegments
+} from './segmentClock'
 
 /**
  * The RTMP ingest, and the split.
@@ -115,12 +123,29 @@ export interface LiveSpec {
   hlsDir: string
   /** Onward RTMP destinations, keys and all. Never logged, never shown. */
   destinations: string[]
+  /**
+   * The video's `start_at`, in milliseconds: the moment its timeline's zero
+   * stands for, which a returning publish's frame wall clocks are measured
+   * from. Absent until the video has a start.
+   */
+  videoStartMs?: number
 }
 
 export type LiveEvent =
   | { type: 'publishStarted'; key: string; liveStreamId: string }
   | { type: 'publishEnded'; key: string; liveStreamId: string; reason: string }
   | { type: 'rejected'; key: string; reason: string }
+  /**
+   * A first writer's frame wall clocks say when the picture at its
+   * timeline's zero was captured, on the server's clock: where the video
+   * starts.
+   */
+  | {
+      type: 'publisherPlaced'
+      key: string
+      liveStreamId: string
+      startedAt: Date
+    }
   | { type: 'status'; key: string; status: LiveStatus }
 
 export interface IngestConfig {
@@ -216,8 +241,51 @@ interface OutputRuntime {
   stopGeneration: number
   /** Moves segments this writer has closed onto the programme clock. */
   stampSegments?: () => void
+  /** Where the current writer's segments go; see `WriterPlacement`. */
+  placement?: WriterPlacement
   /** Stops watching for those segments, after moving the last one. */
   stopStamp?: () => void
+}
+
+/**
+ * Where one writer's segments go on the video's timeline, from the wall clock
+ * its pictures carry (`FrameWall`, the wall-clock SEI on every frame).
+ *
+ * The wall anchors (`wallAnchors.ts`) map the playlist's time to the wall
+ * clock for the scoreboard, but take the playlist as written: where a return's
+ * segments sit on the video's timeline, the hole for the absence, and where
+ * the video starts are decided here, and the multi-camera view lines a game's
+ * angles up by that start and that timeline.
+ *
+ * The first segment whose picture carries one places the writer. A first writer, on an
+ * empty playlist, says where the video starts. A writer continuing a playlist
+ * — a publisher that came back, or this server restarted — is moved to where
+ * its pictures were captured, and the segments it already stamped at the wall
+ * clock move with it. The wall clock trails the capture by the publisher's
+ * picture queue, the network and the writer's own start, which put every
+ * return earlier than the first publish and than the publisher's recording.
+ *
+ * A publisher that sends none on the server's clock, an older build or one
+ * that has not measured that clock, is placed as before: the first publish by
+ * the time its publisher reports (`placeByPublisher`), a return by the
+ * server's wall clock. They are looked for until `FRAME_WALL_WAIT_MS` after
+ * the writer started.
+ */
+interface WriterPlacement {
+  /** When the writer started, in milliseconds. */
+  startedAt: number
+  /** Continuing a playlist, rather than starting one. */
+  continuing: boolean
+  /** The end of the timeline already listed. A continuation never starts before it. */
+  floorSec: number
+  /** Where this writer's segments are stamped now. Nought for a first writer. */
+  offsetSec: number
+  /** Where the wall clock put them. */
+  wallClockSec: number
+  /** Placed by a frame wall clock, or no longer looking. */
+  settled: boolean
+  /** The segments this writer has stamped, all at `offsetSec`. */
+  stamped: Set<string>
 }
 
 interface IngressRuntime {
@@ -251,6 +319,7 @@ interface LiveEntry {
   liveStreamId: string
   hlsDir: string
   destinations: string[]
+  videoStartMs?: number
   ingress: IngressRuntime
   outputs: OutputRuntime[]
 }
@@ -472,6 +541,7 @@ export function setLive(key: string, spec: LiveSpec): void {
     }
     entries.set(key, entry)
   }
+  entry.videoStartMs = spec.videoStartMs
   const unchanged =
     entry.outputs.length > 0 &&
     entry.hlsDir === spec.hlsDir &&
@@ -806,6 +876,8 @@ async function spawnPrepared(
   let installStamp: (() => void) | undefined
   if (output.kind === 'hls') {
     const next = nextSegmentNumber(entry.hlsDir)
+    let placement: WriterPlacement | undefined
+    let skip = new Set<string>()
     if (next > 0) {
       output.hlsRestarted = true
       reopenPlaylist(entry.hlsDir)
@@ -820,36 +892,83 @@ async function spawnPrepared(
         await recoverUnstampedSegments(entry.hlsDir, playlist, offsetSec)
         if (stoppedDuringRead()) return
         if (deferIfWriterAlive()) return
-        const skip = new Set(
+        skip = new Set(
           readdirSync(entry.hlsDir).filter(name => /^seg\d+\.m4s$/.test(name))
         )
-        installStamp = () => {
-          const stamp = (): void => {
-            for (const name of stampNewSegments(
-              entry.hlsDir,
-              offsetSec,
-              skip
-            )) {
-              skip.add(name)
-            }
-          }
-          let watcher: FSWatcher | undefined
-          try {
-            watcher = watch(entry.hlsDir, stamp)
-            watcher.on('error', () => {
-              // The progress lines stamp the same files.
-            })
-          } catch {
-            watcher = undefined
-          }
-          output.stopStamp = () => {
-            watcher?.close()
-            stamp()
-            output.stampSegments = undefined
-            output.stopStamp = undefined
-          }
-          output.stampSegments = stamp
+        // The end of what is listed, read off the last segment's own stamp;
+        // failing that, where a return with no absence would carry on.
+        const floorSec =
+          (await listedTimelineEndSec(entry.hlsDir, playlist)) ??
+          playlistContinuation(playlist, next, new Date(0)).offsetSec
+        if (stoppedDuringRead()) return
+        if (deferIfWriterAlive()) return
+        placement = {
+          startedAt: Date.now(),
+          continuing: true,
+          floorSec,
+          offsetSec,
+          wallClockSec: offsetSec,
+          settled: false,
+          stamped: new Set<string>()
         }
+      }
+    } else {
+      placement = {
+        startedAt: Date.now(),
+        continuing: false,
+        floorSec: 0,
+        offsetSec: 0,
+        wallClockSec: 0,
+        settled: false,
+        stamped: new Set<string>()
+      }
+    }
+    if (placement != null) {
+      const held = placement
+      const known = skip
+      installStamp = () => {
+        held.startedAt = Date.now()
+        const stamp = (): void => {
+          if (!held.settled) {
+            let fresh: string[]
+            try {
+              fresh = readdirSync(entry.hlsDir)
+                .filter(name => /^seg\d+\.m4s$/.test(name) && !known.has(name))
+                .sort()
+            } catch {
+              return
+            }
+            placeFromFrameWalls(entry, held, fresh)
+            if (held.offsetSec <= 0) for (const name of fresh) known.add(name)
+          }
+          if (held.offsetSec <= 0) return
+          for (const name of stampNewSegments(
+            entry.hlsDir,
+            held.offsetSec,
+            known
+          )) {
+            known.add(name)
+            held.stamped.add(name)
+          }
+        }
+        let watcher: FSWatcher | undefined
+        try {
+          watcher = watch(entry.hlsDir, stamp)
+          watcher.on('error', () => {
+            // The progress lines stamp the same files.
+          })
+        } catch {
+          watcher = undefined
+        }
+        output.stopStamp = () => {
+          watcher?.close()
+          stamp()
+          output.stampSegments = undefined
+          output.stopStamp = undefined
+          output.placement = undefined
+        }
+        output.stampSegments = stamp
+        output.placement = held
       }
     }
   }
@@ -1138,6 +1257,139 @@ export function playlistContinuation(
       ? (now.getTime() - firstPdtMs) / 1000
       : (wallEndMs - firstPdtMs) / 1000
   return { startNumber, offsetSec: round(offsetSec) }
+}
+
+/**
+ * How long after a writer starts its segments are looked at for a frame wall
+ * clock on the server's clock. A publisher that sends them stamps every
+ * frame, so the first segment has one unless the publisher had not yet
+ * measured the server's clock; past this, the publisher sends none.
+ */
+export const FRAME_WALL_WAIT_MS = 20_000
+/**
+ * How long before its writer started the picture at a writer's zero may have
+ * been captured: the pictures a publisher holds while it dials, half a minute
+ * of them at most.
+ */
+export const CAPTURE_LEAD_MAX_MS = 30_000
+/**
+ * How long after: a publisher whose first picture follows the publish by a
+ * moment, and the two clocks' disagreement.
+ */
+export const CAPTURE_LAG_MAX_MS = 2_000
+/**
+ * How far before the end of what is already listed a frame wall clock may
+ * place a continuation, the clocks' disagreement: it then goes at that end, never on
+ * top of the pictures before it. Further back, it is not believed.
+ */
+export const CONTINUATION_OVERLAP_MAX_SEC = 0.5
+
+/**
+ * When the picture at a writer's zero was captured, from one of its segments'
+ * frame wall clocks, or undefined for a time that cannot be that picture's:
+ * too long before the writer started, or after it.
+ */
+export function writerZeroCapturedAt(
+  wall: FrameWall,
+  writerStartedAt: number
+): number | undefined {
+  const zero = wall.capturedAtMs - wall.pictureSec * 1000
+  if (!Number.isFinite(zero)) return undefined
+  const lead = writerStartedAt - zero
+  if (lead > CAPTURE_LEAD_MAX_MS || lead < -CAPTURE_LAG_MAX_MS) return undefined
+  return zero
+}
+
+/**
+ * Where a continuing writer's segments start, in seconds from the video's
+ * start, from when the picture at the writer's zero was captured: never
+ * before the end of the timeline already listed. Undefined with no video
+ * start, or for a time well inside what is already listed.
+ */
+export function continuationFromCapture(
+  floorSec: number,
+  zeroCapturedAtMs: number,
+  videoStartMs: number | undefined
+): number | undefined {
+  if (videoStartMs == null || !Number.isFinite(videoStartMs)) return undefined
+  const offsetSec = (zeroCapturedAtMs - videoStartMs) / 1000
+  if (!(offsetSec > floorSec - CONTINUATION_OVERLAP_MAX_SEC)) return undefined
+  return Math.round(Math.max(offsetSec, floorSec) * 1_000_000) / 1_000_000
+}
+
+/**
+ * Places a writer by the first of `fresh`, its newly closed segments, whose
+ * first picture carries a believable wall clock on the server's clock. A first writer tells the controller
+ * where the video starts. A continuing one moves to where its pictures were
+ * captured, and so do the segments it already stamped.
+ */
+function placeFromFrameWalls(
+  entry: LiveEntry,
+  placement: WriterPlacement,
+  fresh: string[]
+): void {
+  const { log, onEvent } = requireConfig()
+  if (Date.now() - placement.startedAt > FRAME_WALL_WAIT_MS) {
+    placement.settled = true
+    if (placement.continuing) {
+      log(
+        `[live:${entry.liveStreamId}] continuation placed at ${placement.offsetSec.toFixed(3)} s by the wall clock: no frame wall clocks`
+      )
+    }
+    return
+  }
+  if (fresh.length === 0) return
+  let init: Buffer
+  try {
+    init = readFileSync(`${entry.hlsDir}/init.mp4`)
+  } catch {
+    return
+  }
+  for (const name of fresh) {
+    let wall
+    try {
+      wall = readFrameWall(
+        init,
+        readLeadingBoxesSync(`${entry.hlsDir}/${name}`)
+      )
+    } catch {
+      continue
+    }
+    if (wall == null) continue
+    const zero = writerZeroCapturedAt(wall, placement.startedAt)
+    if (zero == null) continue
+    if (!placement.continuing) {
+      placement.settled = true
+      log(
+        `[live:${entry.liveStreamId}] placed by its frame wall clocks: starts ${new Date(zero).toISOString()}`
+      )
+      onEvent({
+        type: 'publisherPlaced',
+        key: entry.key,
+        liveStreamId: entry.liveStreamId,
+        startedAt: new Date(zero)
+      })
+      return
+    }
+    const offsetSec = continuationFromCapture(
+      placement.floorSec,
+      zero,
+      entry.videoStartMs
+    )
+    if (offsetSec == null) continue
+    placement.settled = true
+    const moved = restampSegments(
+      entry.hlsDir,
+      placement.stamped,
+      placement.offsetSec,
+      offsetSec
+    )
+    placement.offsetSec = offsetSec
+    log(
+      `[live:${entry.liveStreamId}] continuation placed at ${offsetSec.toFixed(3)} s by its frame wall clocks (wall clock ${placement.wallClockSec.toFixed(3)} s, ${String(moved.length)} segments moved)`
+    )
+    return
+  }
 }
 
 /**

@@ -316,6 +316,7 @@ class PhoneStreamEngineTest {
         var settings: StreamSettings? = null
         override var running = false
         override var liveTimelineStart: Double? = null
+        override var serverClockOffsetMs: Int? = null
         override val metrics = ProgramStreamer.Metrics(rate = app.teamstation.streamcore.stream.StreamRateTelemetry(bitrate = 2_000_000))
 
         override suspend fun start(urlString: String, settings: StreamSettings, onFailure: ((String) -> Unit)?) {
@@ -808,6 +809,27 @@ class PhoneStreamEngineTest {
         assertEquals(1, requests.count { it.method == "PATCH" && it.path!!.endsWith("/s2") })
         runBlocking { engine.stopRecording() }
         assertEquals(PhoneStreamEngine.uploadStart(emptyList(), 12.5), 12.5, 0.0)
+    }
+
+    @Test
+    fun theStreamsFramesCarryTheServersClockMeasuredAsItStarts() {
+        val engine = opened()
+        start(engine)
+        // Measured as the session starts streaming, on the server's clock 3 s ahead of the phone's.
+        waitFor { streamOutput.serverClockOffsetMs != null }
+        assertEquals(3_000, streamOutput.serverClockOffsetMs)
+        val reads = requests.count { it.path!!.endsWith("/api/v1/time") }
+        assertEquals(ServerClock.TRIPS_PER_SAMPLE, reads)
+        assertTrue(engine.serverClockFollower!!.isActive)
+        // The live start uses the same measurement.
+        streamOutput.liveTimelineStart = wall - 0.15
+        on { engine.publishStatus() }
+        runBlocking { engine.liveStartReport!!.join() }
+        assertEquals(reads, requests.count { it.path!!.endsWith("/api/v1/time") })
+        // Stopped, it is measured no more, and the stream keeps the offset for the next publish.
+        runBlocking { engine.stopRecording() }
+        assertNull(engine.serverClockFollower)
+        assertEquals(3_000, streamOutput.serverClockOffsetMs)
     }
 
     @Test

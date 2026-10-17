@@ -29,6 +29,12 @@ interface PhoneStreamOutput : StreamPublishing, ProgrammeStreamTarget {
 
     /** When the first picture this publish sent was captured, in wall seconds; null before one has gone. */
     val liveTimelineStart: Double?
+
+    /**
+     * TeamStation's clock less the wall clock, in milliseconds: while it is set, every frame's
+     * wall-clock SEI is on that clock ([ProgramStreamer.serverClockOffsetMs]).
+     */
+    var serverClockOffsetMs: Int?
 }
 
 /** [ProgramStreamer] as the phone's stream. */
@@ -37,6 +43,11 @@ class ProgramStreamerOutput(val streamer: ProgramStreamer) : PhoneStreamOutput, 
     override fun append(audio: AudioFrame) = streamer.append(audio)
     override fun onInputSurface(listener: ((Surface?) -> Unit)?) = streamer.onInputSurface(listener)
     override val liveTimelineStart: Double? get() = streamer.liveTimelineStart
+    override var serverClockOffsetMs: Int?
+        get() = streamer.serverClockOffsetMs
+        set(value) {
+            streamer.serverClockOffsetMs = value
+        }
 }
 
 /**

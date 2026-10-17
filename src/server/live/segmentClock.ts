@@ -1,7 +1,21 @@
-import { readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import {
+  closeSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  renameSync,
+  writeFileSync
+} from 'fs'
 import { open } from 'fs/promises'
 
 import { readTracks } from '../media/trackStarts'
+import {
+  fragmentSamples,
+  readBoxes,
+  stampOfSample,
+  videoTrackOf
+} from '../media/wallClockScan'
 
 interface LocatedBox {
   type: string
@@ -58,15 +72,31 @@ function addTicks(
   version: number,
   ticks: bigint
 ): void {
+  const sum =
+    (version === 1
+      ? buffer.readBigUInt64BE(at)
+      : BigInt(buffer.readUInt32BE(at))) + ticks
+  if (sum < 0n) throw new Error('timeline offset moves this box before zero')
   if (version === 1) {
-    buffer.writeBigUInt64BE(buffer.readBigUInt64BE(at) + ticks, at)
+    buffer.writeBigUInt64BE(sum, at)
     return
   }
-  const sum = BigInt(buffer.readUInt32BE(at)) + ticks
   if (sum > 0xffffffffn) {
     throw new Error('timeline offset does not fit this box')
   }
   buffer.writeUInt32BE(Number(sum), at)
+}
+
+/** Ticks between two timeline positions, each rounded as a stamp rounds it. */
+function ticksBetween(
+  fromSec: number,
+  toSec: number,
+  timescale: number
+): bigint {
+  return (
+    BigInt(Math.round(toSec * timescale)) -
+    BigInt(Math.round(fromSec * timescale))
+  )
 }
 
 /**
@@ -86,6 +116,22 @@ export function placeSegmentOnTimeline(
   offsetSec: number
 ): Buffer | undefined {
   if (!(offsetSec > 0)) return Buffer.from(segment)
+  return moveSegmentOnTimeline(init, segment, 0, offsetSec)
+}
+
+/**
+ * Moves a segment already placed `fromSec` along the timeline to `toSec`
+ * instead, in each box's own timescale, so it reads exactly as if it had been
+ * placed at `toSec` in the first place. Undefined when the segment is not a
+ * complete run of boxes yet; throws when a stamp would not fit its box or
+ * would fall before zero.
+ */
+export function moveSegmentOnTimeline(
+  init: Buffer,
+  segment: Buffer,
+  fromSec: number,
+  toSec: number
+): Buffer | undefined {
   const out = Buffer.from(segment)
   const top = locatedBoxes(out, 0, out.length)
   if (top.end !== out.length) return undefined
@@ -108,7 +154,7 @@ export function placeSegmentOnTimeline(
           out,
           box.payload + 12,
           version,
-          BigInt(Math.round(offsetSec * timescale))
+          ticksBetween(fromSec, toSec, timescale)
         )
       }
     }
@@ -126,13 +172,65 @@ export function placeSegmentOnTimeline(
         if (field.type === 'tfdt') stamps.push(field)
       }
       if (timescale <= 0) continue
-      const ticks = BigInt(Math.round(offsetSec * timescale))
+      const ticks = ticksBetween(fromSec, toSec, timescale)
       for (const stamp of stamps) {
         addTicks(out, stamp.payload + 4, out[stamp.payload], ticks)
       }
     }
   }
   return out
+}
+
+/**
+ * When a segment's first picture was captured, from the wall clock it
+ * carries: the wall-clock SEI (`src/common/wallClockSei.ts`) TS Director and
+ * the phones put on every frame. The SEI travels with the picture through the
+ * ingest, the copy into HLS and the recording, so the server reads it off the
+ * segment it is about to stamp, against that picture's own place in the
+ * segment, with nothing to correlate in between.
+ */
+export interface FrameWall {
+  /** When the picture was captured, in milliseconds since 1970 on the server's clock. */
+  capturedAtMs: number
+  /** Where the picture sits on the segment's timeline as the segment stands, in seconds. */
+  pictureSec: number
+}
+
+/**
+ * The wall clock the segment's first picture carries, read from the
+ * segment's opening bytes: its first `moof`, the video track's first sample,
+ * and the SEI ahead of the picture in it. Undefined when that picture carries
+ * none, which is every segment from a publisher that sends none, or one on
+ * the publisher's own clock (the corrected bit clear): a publisher that has
+ * not measured the server's clock says nothing the server's arrival does not.
+ */
+export function readFrameWall(
+  init: Buffer,
+  segment: Buffer
+): FrameWall | undefined {
+  const track = videoTrackOf(init)
+  if (track == null) return undefined
+  const moof = readBoxes(segment, 0, segment.length).find(
+    box => box.type === 'moof'
+  )
+  if (moof == null) return undefined
+  const first = fragmentSamples(segment, moof, track)[0]
+  if (first == null) return undefined
+  const stamp = stampOfSample(segment, first, track)
+  if (stamp?.corrected !== true) return undefined
+  return { capturedAtMs: stamp.wallMs, pictureSec: first.pts / track.timescale }
+}
+
+/** {@link readLeadingBoxes}, for a caller that cannot wait. */
+export function readLeadingBoxesSync(path: string): Buffer {
+  const handle = openSync(path, 'r')
+  try {
+    const buffer = Buffer.alloc(LEADING_BOX_BYTES)
+    const bytesRead = readSync(handle, buffer, 0, LEADING_BOX_BYTES, 0)
+    return buffer.subarray(0, bytesRead)
+  } finally {
+    closeSync(handle)
+  }
 }
 
 /**
@@ -241,6 +339,39 @@ export async function readLeadingBoxes(path: string): Promise<Buffer> {
     return buffer.subarray(0, bytesRead)
   } finally {
     await handle.close()
+  }
+}
+
+/**
+ * Where the timeline already listed ends: the last listed segment's own
+ * stamped start plus its listed length. Undefined when the playlist lists
+ * nothing or that segment cannot be read.
+ */
+export async function listedTimelineEndSec(
+  directory: string,
+  playlist: string | undefined
+): Promise<number | undefined> {
+  if (playlist == null) return undefined
+  let last: { name: string; duration: number } | undefined
+  let duration: number | undefined
+  for (const raw of playlist.split('\n')) {
+    const line = raw.trim()
+    const listed = /^#EXTINF:([\d.]+)/.exec(line)
+    if (listed != null) duration = Number.parseFloat(listed[1])
+    if (/^seg\d+\.m4s$/.test(line) && duration != null) {
+      last = { name: line, duration }
+      duration = undefined
+    }
+  }
+  if (last == null) return undefined
+  try {
+    const start = timelineStartSec(
+      readFileSync(`${directory}/init.mp4`),
+      await readLeadingBoxes(`${directory}/${last.name}`)
+    )
+    return start == null ? undefined : start + last.duration
+  } catch {
+    return undefined
   }
 }
 
@@ -366,6 +497,47 @@ export function stampNewSegments(
       return moved
     }
     if (stampFile(directory, name, init, offsetSec)) moved.push(name)
+  }
+  return moved
+}
+
+/**
+ * Moves segments this writer already stamped at `fromSec` to `toSec`: a
+ * returning publish whose publisher said where its first picture belongs
+ * after its first segments were closed. Only the names given are touched, so
+ * the init segment and everything listed before the return stay exactly as
+ * they were. Returns the names it moved.
+ */
+export function restampSegments(
+  directory: string,
+  names: Iterable<string>,
+  fromSec: number,
+  toSec: number
+): string[] {
+  if (!(toSec > 0) || fromSec === toSec) return []
+  let init: Buffer
+  try {
+    init = readFileSync(`${directory}/init.mp4`)
+  } catch {
+    return []
+  }
+  const moved: string[] = []
+  for (const name of names) {
+    if (!/^seg\d+\.m4s$/.test(name)) continue
+    try {
+      const path = `${directory}/${name}`
+      const next = moveSegmentOnTimeline(
+        init,
+        readFileSync(path),
+        fromSec,
+        toSec
+      )
+      if (next == null) continue
+      writeStamped(path, next)
+      moved.push(name)
+    } catch {
+      // Gone, or not movable: left where it was.
+    }
   }
   return moved
 }

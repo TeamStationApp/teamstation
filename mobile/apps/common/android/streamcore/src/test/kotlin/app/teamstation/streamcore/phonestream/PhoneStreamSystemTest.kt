@@ -196,6 +196,10 @@ class PhoneStreamSystemTest {
         output.append(AudioFrame(ShortArray(1920), 0.0))
         output.onInputSurface(null)
         assertFalse(output.running)
+        // The offset to TeamStation's clock is the streamer's own, for its frames' wall clocks.
+        output.serverClockOffsetMs = 2_500
+        assertEquals(2_500, output.streamer.serverClockOffsetMs)
+        assertEquals(2_500, output.serverClockOffsetMs)
         assertTrue(live.makeUploadClient("https://teamstation.example.test", "token-0000") is UploadClient)
         assertTrue(live.makeRadar().state.devices.isEmpty())
         // A host with no foreground service is told nothing.
