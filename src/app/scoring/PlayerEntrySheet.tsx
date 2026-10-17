@@ -101,7 +101,7 @@ export function PlayerEntrySheet({
       textCancel
       scrollReset={scrollReset}
       onClose={onCancel}
-      onShow={focus}
+      onShow={editing ? focus : undefined}
     >
       <View style={{ gap: 16 }}>
         <View
@@ -133,7 +133,7 @@ export function PlayerEntrySheet({
                         else if (key === 'lastName') jersey.current?.focus()
                         else jersey.current?.blur()
                       }}
-                      autoFocus={key === 'firstName'}
+                      autoFocus={editing && key === 'firstName'}
                       accessibilityLabel={label}
                       value={draft[key]}
                       keyboardType={
@@ -265,7 +265,10 @@ export function PlayerEntrySheet({
           onClose={() => {
             setPlaceholders(false)
           }}
-          onAdd={onAddPlaceholders}
+          onAdd={async count => {
+            await onAddPlaceholders(count)
+            if (mounted.current) onClose()
+          }}
         />
       )}
     </ScoringSheet>
