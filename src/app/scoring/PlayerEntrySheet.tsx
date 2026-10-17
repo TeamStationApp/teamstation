@@ -88,7 +88,7 @@ export function PlayerEntrySheet({
       setProblem(
         editing
           ? 'Unable to save the player. Please try again.'
-          : 'Unable to add the player. Please try again.'
+          : 'Unable to create the player. Please try again.'
       )
     } finally {
       if (another || !added) saving.current = false
@@ -202,8 +202,8 @@ export function PlayerEntrySheet({
         <Button
           color={theme.scoringMenuActiveBackground}
           textColor={theme.scoringMenuActiveText}
-          accessibilityLabel={editing ? 'Save Player' : 'Add Player'}
-          label={editing ? 'Save Player' : 'Add Player'}
+          accessibilityLabel={editing ? 'Save Player' : 'Create Player'}
+          label={editing ? 'Save Player' : 'Create Player'}
           disabled={busy}
           onPress={() => {
             add(false).catch(() => undefined)
@@ -212,7 +212,7 @@ export function PlayerEntrySheet({
         {!editing && (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Save and Add Another Player"
+            accessibilityLabel="Save and Create Another Player"
             disabled={busy}
             onPress={() => {
               add(true).catch(() => undefined)
@@ -230,14 +230,14 @@ export function PlayerEntrySheet({
                 fontFamily: theme.semiBoldTextFont
               }}
             >
-              Save and Add Another Player
+              Save and Create Another Player
             </Text>
           </Pressable>
         )}
         {!editing && onAddPlaceholders != null && (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Add Placeholder Players"
+            accessibilityLabel="Create Placeholder Player"
             disabled={busy}
             onPress={() => {
               setPlaceholders(true)
@@ -255,7 +255,7 @@ export function PlayerEntrySheet({
                 fontFamily: theme.semiBoldTextFont
               }}
             >
-              Add Placeholder Players
+              Create Placeholder Player
             </Text>
           </Pressable>
         )}

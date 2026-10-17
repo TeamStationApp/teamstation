@@ -740,7 +740,7 @@ export function RosterEditor({
           }}
           onAdd={async player => {
             if (onCreatePlayer == null) {
-              throw new Error('Unable to add the player.')
+              throw new Error('Unable to create the player.')
             }
             const teamId = draft.gameData.teams[side].id
             const entry = await onCreatePlayer(teamId, player)
@@ -790,7 +790,7 @@ export function RosterEditor({
                 paddingHorizontal: 4
               }}
             >
-              {/* The sheet's green text action, as Add Placeholder Players. */}
+              {/* The sheet's green text action, as Create Placeholder Player. */}
               <Text
                 numberOfLines={1}
                 style={{
@@ -799,7 +799,7 @@ export function RosterEditor({
                   fontSize: 16
                 }}
               >
-                Add Player
+                Create Player
               </Text>
             </Pressable>
           </View>

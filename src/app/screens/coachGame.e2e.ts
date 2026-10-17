@@ -500,14 +500,14 @@ describe('Coach Game', function () {
       nodes.map(node => String(node.getAttribute('aria-label')))
     )
     expect(tabs).deep.equals(['Box Score', 'Roster', 'Lineup', 'Defense'])
-    // The bar, as the scorekeeper's: green Add Player text, the round mic
+    // The bar, as the scorekeeper's: green Create Player text, the round mic
     // in the middle and taller than Save, Cancel under them.
     const bar = await coach.box('[data-testid="Roster footer bar"]')
     const add = await coach.box('[aria-label="Create Player"]')
     const mic = await coach.box('[data-testid="Roster mic"]')
     const save = await coach.box('[aria-label="Save Rosters"]')
     const cancel = await coach.box('[aria-label="Cancel"]')
-    expect(await coach.text()).includes('Add Player')
+    expect(await coach.text()).includes('Create Player')
     expect(add.x).lessThan(mic.x)
     expect(mic.x + mic.width).lessThan(save.x + 1)
     expect(mic.x + mic.width / 2).closeTo(bar.x + bar.width / 2, 1)

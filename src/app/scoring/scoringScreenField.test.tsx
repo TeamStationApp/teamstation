@@ -279,7 +279,10 @@ describe('scoring screen field wiring', function () {
       const press = async (label: string): Promise<void> => {
         await step(() => {
           document
-            .querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+            .querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)
+            .item(
+              document.querySelectorAll(`[aria-label="${label}"]`).length - 1
+            )
             .click()
         })
       }
@@ -503,7 +506,10 @@ describe('scoring screen field wiring', function () {
     await mount()
     const press = async (label: string): Promise<void> => {
       await step(() => {
-        document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.click()
+        document
+          .querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)
+          .item(document.querySelectorAll(`[aria-label="${label}"]`).length - 1)
+          .click()
       })
     }
     await press('More')
@@ -777,8 +783,8 @@ describe('scoring screen field wiring', function () {
           document.querySelector('[aria-label="Defensive roster"]')
         ).not.equals(null)
         await click('Create Player')
-        await click('Add Placeholder Players')
-        await click('Add')
+        await click('Create Placeholder Player')
+        await click('Create')
         expect(
           document.querySelector('[aria-label="Defensive roster"]')
         ).not.equals(null)
@@ -1072,13 +1078,17 @@ describe('scoring screen field wiring', function () {
       } else {
         await step(() => {
           document
-            .querySelector<HTMLElement>('[aria-label="Create Player"]')!
+            .querySelectorAll<HTMLElement>('[aria-label="Create Player"]')
+            .item(
+              document.querySelectorAll('[aria-label="Create Player"]').length -
+                1
+            )
             .click()
         })
         await step(() => {
           document
             .querySelector<HTMLElement>(
-              '[aria-label="Add Placeholder Players"]'
+              '[aria-label="Create Placeholder Player"]'
             )!
             .click()
         })
@@ -1088,7 +1098,7 @@ describe('scoring screen field wiring', function () {
             .click()
         })
         await step(() => {
-          document.querySelector<HTMLElement>('[aria-label="Add"]')!.click()
+          document.querySelector<HTMLElement>('[aria-label="Create"]')!.click()
         })
       }
       await step(() => undefined)
@@ -2087,13 +2097,16 @@ describe('scoring screen field wiring', function () {
     expect(document.body.textContent).includes('Create Player')
     const click = async (label: string): Promise<void> => {
       await step(() => {
-        document.querySelector<HTMLElement>(`[aria-label="${label}"]`)!.click()
+        document
+          .querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)
+          .item(document.querySelectorAll(`[aria-label="${label}"]`).length - 1)
+          .click()
       })
     }
     await click('Create Player')
-    await click('Add Placeholder Players')
+    await click('Create Placeholder Player')
     await click('Player count 2')
-    await click('Add')
+    await click('Create')
     expect(document.querySelectorAll('[aria-label^="Assign P "]')).has.length(
       10
     )
@@ -2229,7 +2242,10 @@ describe('scoring screen field wiring', function () {
       const press = async (label: string): Promise<void> => {
         await step(() => {
           document
-            .querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+            .querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)
+            .item(
+              document.querySelectorAll(`[aria-label="${label}"]`).length - 1
+            )
             .click()
         })
       }
@@ -2318,7 +2334,10 @@ describe('scoring screen field wiring', function () {
       const click = async (label: string): Promise<void> => {
         await step(() => {
           document
-            .querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+            .querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)
+            .item(
+              document.querySelectorAll(`[aria-label="${label}"]`).length - 1
+            )
             .click()
         })
       }
@@ -2337,18 +2356,18 @@ describe('scoring screen field wiring', function () {
       await input('First Name', 'Mookie')
       await input('Last Name', 'Betts')
       await input('Jersey Number', '0')
-      await click('Save and Add Another Player')
+      await click('Save and Create Another Player')
       await input('First Name', 'Mike')
       await input('Last Name', 'Trout')
-      await click('Add Player')
+      await click('Create Player')
       expect(document.body.textContent).includes('Assign pitcher')
       expect(document.body.textContent).includes('Mookie B #0')
       expect(document.body.textContent).includes('Mike T')
       expect(document.querySelector('[aria-label="First Name"]')).equals(null)
       await click('Create Player')
-      await click('Add Placeholder Players')
+      await click('Create Placeholder Player')
       await click('Player count 2')
-      await click('Add')
+      await click('Create')
       expect(document.body.textContent).includes('Hawks A')
       expect(document.querySelector('[aria-label="First Name"]')).equals(null)
       expect(live.state.liveData.boxscore.teams.home.players).has.length(13)
@@ -2416,7 +2435,10 @@ describe('scoring screen field wiring', function () {
     )
     await step(() => {
       document
-        .querySelector<HTMLElement>('[aria-label="Create Player"]')!
+        .querySelectorAll<HTMLElement>('[aria-label="Create Player"]')
+        .item(
+          document.querySelectorAll('[aria-label="Create Player"]').length - 1
+        )
         .click()
     })
     await step(() => {
@@ -2429,15 +2451,25 @@ describe('scoring screen field wiring', function () {
     })
     fail = true
     await step(() => {
-      document.querySelector<HTMLElement>('[aria-label="Add Player"]')!.click()
+      document
+        .querySelectorAll<HTMLElement>('[aria-label="Create Player"]')
+        .item(
+          document.querySelectorAll('[aria-label="Create Player"]').length - 1
+        )
+        .click()
     })
     expect(document.body.textContent).includes(
-      'Unable to add the player. Please try again.'
+      'Unable to create the player. Please try again.'
     )
     expect(live.state.liveData.boxscore.teams.home.players).has.length(9)
     fail = false
     await step(() => {
-      document.querySelector<HTMLElement>('[aria-label="Add Player"]')!.click()
+      document
+        .querySelectorAll<HTMLElement>('[aria-label="Create Player"]')
+        .item(
+          document.querySelectorAll('[aria-label="Create Player"]').length - 1
+        )
+        .click()
     })
     expect(live.state.liveData.boxscore.teams.home.players).has.length(10)
     expect(document.querySelector('[aria-label="First Name"]')).equals(null)
@@ -2480,7 +2512,10 @@ describe('scoring screen field wiring', function () {
       )
       await step(() => {
         document
-          .querySelector<HTMLElement>('[aria-label="Create Player"]')!
+          .querySelectorAll<HTMLElement>('[aria-label="Create Player"]')
+          .item(
+            document.querySelectorAll('[aria-label="Create Player"]').length - 1
+          )
           .click()
       })
       await step(() => {
@@ -2512,7 +2547,10 @@ describe('scoring screen field wiring', function () {
       }
       await step(() => {
         document
-          .querySelector<HTMLElement>('[aria-label="Add Player"]')!
+          .querySelectorAll<HTMLElement>('[aria-label="Create Player"]')
+          .item(
+            document.querySelectorAll('[aria-label="Create Player"]').length - 1
+          )
           .click()
       })
       expect(live.state.liveData.boxscore.teams.home.players).has.length(9)

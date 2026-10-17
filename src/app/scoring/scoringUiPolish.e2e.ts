@@ -142,7 +142,7 @@ async function main(): Promise<void> {
         assert.fail('Native More menu must open after its transition settles')
       }
       if (
-        !['Cancel', 'Add Player', 'More'].includes(text) &&
+        !['Cancel', 'Create Player', 'More'].includes(text) &&
         !text.startsWith('Tag event:')
       ) {
         await m.tapOn({
@@ -491,9 +491,9 @@ async function main(): Promise<void> {
       'EH'
     ])
       await tap('Player position ' + position)
-    await reach('Add Placeholder Players')
-    await tap('Add Placeholder Players')
-    await shown('Select number of players to add')
+    await reach('Create Placeholder Player')
+    await tap('Create Placeholder Player')
+    await shown('Select number of players to create')
     await capture('placeholder')
     await tap('Cancel')
     await input('First Name', 'Jose')
@@ -502,15 +502,15 @@ async function main(): Promise<void> {
     await m.pressKey('Enter')
     await input('Jersey Number', '11')
     await finishKeyboard()
-    await reach('Add Player')
-    await tap('Add Player')
+    await reach('Create Player')
+    await tap('Create Player')
     await shown('Jose Ramirez')
     await tap('Create Player')
     await finishKeyboard()
-    await reach('Add Placeholder Players')
-    await tap('Add Placeholder Players')
-    await shown('Select number of players to add')
-    await tap('Add')
+    await reach('Create Placeholder Player')
+    await tap('Create Placeholder Player')
+    await shown('Select number of players to create')
+    await tap('Create')
     await tap('Cancel')
     await shown('Save Rosters')
     await tap('Cancel')

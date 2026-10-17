@@ -391,23 +391,23 @@ async function main(): Promise<void> {
       )
     await shot('player')
     await m.scrollUntilVisible({
-      element: { text: '^Add Placeholder Players$' },
+      element: { text: '^Create Placeholder Player$' },
       direction: 'DOWN',
       timeout: 15000
     })
-    await m.assertVisible({ text: '^Add Placeholder Players$' })
+    await m.assertVisible({ text: '^Create Placeholder Player$' })
     log('PASS sequential keyboard entry and placeholder action available')
-    await tap('Add Placeholder Players')
-    await m.assertVisible({ text: '^Select number of players to add.$' })
-    await tap('Add')
+    await tap('Create Placeholder Player')
+    await m.assertVisible({ text: '^Select number of players to create.$' })
+    await tap('Create')
     await m.assertVisible({ text: '^First Name$' })
     log('PASS placeholder addition returns to player entry')
     await m.scrollUntilVisible({
-      element: { text: '^Save and Add Another Player$' },
+      element: { text: '^Save and Create Another Player$' },
       direction: 'DOWN',
       timeout: 15000
     })
-    await tap('Save and Add Another Player')
+    await tap('Save and Create Another Player')
     await m.assertVisible({ text: '^First Name$' })
     if (readValues != null)
       assert(
@@ -415,7 +415,7 @@ async function main(): Promise<void> {
         'First name resets after adding another'
       )
     await shot('player-reset')
-    log('PASS Save and Add Another resets and refocuses form')
+    log('PASS Save and Create Another resets and refocuses form')
   } finally {
     await writeFile(
       join(artifacts, `${prefix}-field-acceptance.log`),
