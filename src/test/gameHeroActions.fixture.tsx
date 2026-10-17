@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Text } from 'react-native'
 
+import { ScoreGameScreen } from '../app/scoreboard/ScoreGameScreen'
 import { GameScreen } from '../app/screens/GameScreen'
 import { ThemeProvider } from '../app/theme/ThemeContext'
 import { asGameDetail, TeamStationClient } from '../common/api'
@@ -39,19 +40,31 @@ function Fixture(): React.ReactElement {
   return (
     <ThemeProvider>
       <Text accessibilityRole="status">Action: {action}</Text>
-      <GameScreen
-        client={client}
-        gameId={game.id}
-        initialTab="watch"
-        recording={{
-          open: () => {
-            setAction('Record')
-          }
-        }}
-        onCoachGame={() => {
-          setAction('Coach')
-        }}
-      />
+      {action === 'Score' ? (
+        <ScoreGameScreen
+          client={client}
+          gameId={game.id}
+          onFullScoring={() => {}}
+          onScoreboard={() => {}}
+        />
+      ) : (
+        <GameScreen
+          client={client}
+          gameId={game.id}
+          initialTab="watch"
+          onScoreGame={() => {
+            setAction('Score')
+          }}
+          recording={{
+            open: () => {
+              setAction('Record')
+            }
+          }}
+          onCoachGame={() => {
+            setAction('Coach')
+          }}
+        />
+      )}
     </ThemeProvider>
   )
 }

@@ -177,9 +177,8 @@ describe('scoring shell and exit', function () {
     await render(<App />)
     await click('Score')
     expect(currentRoute()).deep.equals({
-      name: 'game',
-      gameId: 'g1',
-      tab: 'score'
+      name: 'scoreOptions',
+      gameId: 'g1'
     })
     await click('Full game scoring')
     expect(currentRoute()).deep.equals({ name: 'scoreGame', gameId: 'g1' })
@@ -254,7 +253,7 @@ describe('scoring shell and exit', function () {
     await click('Open scoring menu')
     await click('Exit Current Game')
     await clickTab('Schedule')
-    expect(currentRoute()).include({ name: 'game', gameId: 'g1', tab: 'score' })
+    expect(currentRoute()).include({ name: 'scoreOptions', gameId: 'g1' })
     await clickTab('Videos')
     expect(currentRoute().name).equals('videos')
     expect(document.querySelector('[aria-label="Open scoring menu"]')).equals(

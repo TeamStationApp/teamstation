@@ -60,6 +60,7 @@ import {
 } from './navigation/useAddressBar'
 import { passwordKdf } from './platform/passwordKdf'
 import { ScoreboardOverrideScreen } from './scoreboard/ScoreboardOverrideScreen'
+import { ScoreGameScreen } from './scoreboard/ScoreGameScreen'
 import { ScoringPlayerSettingsFlow } from './scoring/ScoringPlayerSettingsFlow'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
@@ -142,6 +143,7 @@ type ScoringSettingsRefresh = () => void
 type Pushed =
   | CreationRoute
   | { name: 'scoreGame'; gameId: string }
+  | { name: 'scoreOptions'; gameId: string }
   /** Coach Game: a head coach's own team in a game, full screen. */
   | { name: 'coachGame'; gameId: string; teamId: string }
   /**
@@ -601,6 +603,8 @@ function Shell(props: AppProps): React.ReactElement {
 
   const stack = stacks[tab]
   const top = stack[stack.length - 1]
+  const navigationRef = useRef({ tab, top })
+  navigationRef.current = { tab, top }
 
   // Somebody else's grant reaches this person in the inbox with nothing to
   // accept, so what they may do is read again whenever the inbox, or one of
@@ -712,9 +716,25 @@ function Shell(props: AppProps): React.ReactElement {
       setSettingsVisit(++settingsVisitId.current)
       setRoute(route)
       setJoining(route.name === 'join' ? route.code : undefined)
-      const next = visit?.tab ?? tabOf(route)
+      const previous = navigationRef.current
+      const returningFromScoreOptions =
+        previous.top?.name === 'scoreOptions' &&
+        route.name === 'game' &&
+        route.tab !== 'score' &&
+        route.gameId === previous.top.gameId
+      const next = returningFromScoreOptions
+        ? previous.tab
+        : (visit?.tab ?? tabOf(route))
+      if (returningFromScoreOptions) inPlace.current = true
       setTab(next)
       setStacks(current => {
+        if (returningFromScoreOptions && route.name === 'game') {
+          const held = current[next]
+          const at = held.findLastIndex(
+            item => item.name === 'game' && item.gameId === route.gameId
+          )
+          if (at >= 0) return { ...current, [next]: held.slice(0, at + 1) }
+        }
         if (visit != null && isScoringPlayerReturn(route, visit))
           return { ...current, [next]: visit.frames }
         if (
@@ -1883,11 +1903,8 @@ function Shell(props: AppProps): React.ReactElement {
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}
-        onFullScoring={() => {
-          push({ name: 'scoreGame', gameId: top.gameId })
-        }}
-        onScoreboard={() => {
-          push({ name: 'scoreboardOverride', gameId: top.gameId })
+        onScoreGame={() => {
+          push({ name: 'scoreOptions', gameId: top.gameId })
         }}
         onCoachGame={teamId => {
           push({ name: 'coachGame', gameId: top.gameId, teamId })
@@ -1895,6 +1912,18 @@ function Shell(props: AppProps): React.ReactElement {
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
+        }}
+      />
+    ) : top.name === 'scoreOptions' ? (
+      <ScoreGameScreen
+        key={top.gameId}
+        client={client}
+        gameId={top.gameId}
+        onFullScoring={() => {
+          push({ name: 'scoreGame', gameId: top.gameId })
+        }}
+        onScoreboard={() => {
+          push({ name: 'scoreboardOverride', gameId: top.gameId })
         }}
       />
     ) : top.name === 'scoreboardOverride' ? (
@@ -1942,11 +1971,22 @@ function Shell(props: AppProps): React.ReactElement {
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}
-        onFullScoring={() => {
-          push({ name: 'scoreGame', gameId: top.gameId })
-        }}
-        onScoreboard={() => {
-          push({ name: 'scoreboardOverride', gameId: top.gameId })
+        onScoreGame={resume => {
+          setStacks(current => {
+            const held = current[tab]
+            const last = held.at(-1)
+            const frames =
+              last?.name === 'game' && resume != null
+                ? [
+                    ...held.slice(0, -1),
+                    { ...last, ...resume, tab: 'watch' as const }
+                  ]
+                : held
+            return {
+              ...current,
+              [tab]: [...frames, { name: 'scoreOptions', gameId: top.gameId }]
+            }
+          })
         }}
         onCoachGame={teamId => {
           push({ name: 'coachGame', gameId: top.gameId, teamId })
@@ -1955,7 +1995,7 @@ function Shell(props: AppProps): React.ReactElement {
         onOpenTeam={team => {
           push({ name: 'team', team })
         }}
-        initialTab={top.tab}
+        initialTab={top.tab === 'score' ? undefined : top.tab}
         autoPlay={top.autoPlay}
         initialVideoId={top.videoId}
         startAtSec={top.at}
@@ -2198,15 +2238,28 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   }
   if (isCreationRoute(route)) return { [tab]: [route] }
   if (route.name === 'scoreGame') return { [tab]: [route] }
+  if (
+    route.name === 'scoreOptions' ||
+    (route.name === 'game' && route.tab === 'score')
+  )
+    return {
+      [tab]: [
+        gameUnder(route.gameId),
+        { name: 'scoreOptions', gameId: route.gameId }
+      ]
+    }
   if (route.name === 'djGame') return { [tab]: [route] }
   // Over the game's Box score, where the coach's Back returns.
   if (route.name === 'coachGame')
     return { [tab]: [gameUnder(route.gameId, 'boxScore'), route] }
-  // The dashboard sits on the game's Score Game section, so Back returns to
-  // the hero and the three pills with Score Game still selected.
+  // Back from a directly opened dashboard returns through the scoring choices.
   if (route.name === 'scoreboardOverride') {
     return {
-      [tab]: [gameUnder(route.gameId, 'score'), route]
+      [tab]: [
+        gameUnder(route.gameId),
+        { name: 'scoreOptions', gameId: route.gameId },
+        route
+      ]
     }
   }
   if (route.name === 'game') {
@@ -2284,6 +2337,7 @@ function routeOf(
     if (top.name === 'djGame') return { name: 'djGame', gameId: top.gameId }
     if (
       top.name === 'scoreGame' ||
+      top.name === 'scoreOptions' ||
       top.name === 'coachGame' ||
       top.name === 'scoreboardOverride'
     ) {
@@ -2374,6 +2428,7 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
     if (top.name === 'scoreboardOverride') {
       return lstrings.game_override_scoreboard
     }
+    if (top.name === 'scoreOptions') return lstrings.game_score_game
     if (top.name === 'person') return top.title
     return undefined
   }
