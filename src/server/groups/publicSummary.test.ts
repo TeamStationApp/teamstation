@@ -200,7 +200,13 @@ describe('limited public organization profiles', function () {
     try {
       const detail = (await (
         await f.h.request('GET', `/teams/${f.teamA}`, undefined, null)
-      ).json()) as { staff: Array<{ name: string; roles: string[] }> }
+      ).json()) as {
+        staff: Array<{
+          name: string
+          roles: string[]
+          inheritedFrom: { level: string; role: string } | null
+        }>
+      }
       const byName = Object.fromEntries(
         detail.staff.map(person => [person.name, person.roles])
       )
@@ -209,6 +215,18 @@ describe('limited public organization profiles', function () {
       expect(byName['Babe R.']).deep.equals(['admin'])
       expect(byName['Tim R.']).deep.equals(['scorekeeper'])
       expect(byName['Mike T.']).deep.equals(['assistant'])
+      const inherited = Object.fromEntries(
+        detail.staff.map(person => [person.name, person.inheritedFrom])
+      )
+      expect(inherited['Babe R.']).deep.equals({
+        level: 'league',
+        role: 'admin'
+      })
+      expect(inherited['Mike T.']).deep.equals({
+        level: 'season',
+        role: 'assistant'
+      })
+      expect(inherited['Tim R.']).equals(null)
     } finally {
       await f.h.db
         .deleteFrom('scope_roles')

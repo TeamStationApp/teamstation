@@ -14,13 +14,14 @@ import type {
 } from '../../common/publicGroups'
 import { publicStaffName } from '../../common/publicStaffName'
 import {
-  givenRolesOnTeam,
+  givenRoleLevelsOnTeam,
   nonMemberTeam,
   seesPeopleOf,
   visibleScopes
 } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
+import { isRealVideo } from '../db/realVideos'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
@@ -225,8 +226,25 @@ export async function publicGames(
     .orderBy('games.start_at', 'asc')
     .orderBy('games.id')
     .execute()
+  const videoRows =
+    rows.length === 0
+      ? []
+      : await db
+          .selectFrom('videos')
+          .select(['game_id', sql<number>`count(*)::int`.as('count')])
+          .where(
+            'game_id',
+            'in',
+            rows.map(row => row.id)
+          )
+          .where('hidden', '=', false)
+          .where(isRealVideo)
+          .groupBy('game_id')
+          .execute()
+  const counts = new Map(videoRows.map(row => [row.game_id, row.count]))
   const published = rows.map(row => ({
     id: row.id,
+    videoCount: counts.get(row.id) ?? 0,
     homeTeam: { id: row.home_team_id, name: row.homeName },
     awayTeam: { id: row.away_team_id, name: row.awayName },
     seasonId: row.season_id,
@@ -271,6 +289,7 @@ export async function publicGames(
     )
     .map(row => ({
       id: row.id,
+      videoCount: 0,
       homeTeam: { id: row.homeTeamId, name: row.homeTeamName },
       awayTeam: { id: row.awayTeamId, name: row.awayTeamName },
       homeTeamExternal: row.homeTeamExternal,
@@ -430,7 +449,7 @@ export async function groupDetail(
   if (ref.kind === 'team') {
     // The roles each was given, never the ones implied: an administrator is
     // listed as admin alone, a scorekeeper as scorekeeper alone.
-    const given = await givenRolesOnTeam(db, ref.id)
+    const given = await givenRoleLevelsOnTeam(db, ref.id)
     const ids = [...given.keys()]
     const users =
       ids.length === 0
@@ -442,11 +461,16 @@ export async function groupDetail(
               'first_name',
               'last_name',
               'display_name',
-              'onboarding_step'
+              'onboarding_step',
+              'avatar_path'
             ])
             .where('id', 'in', ids)
             .execute()
     for (const user of users) {
+      const held = given.get(user.id)!
+      const roles = [...held.keys()]
+      const placing = roles[0]
+      const level = held.get(placing)
       staff.push({
         name:
           user.onboarding_step === 'name'
@@ -456,7 +480,12 @@ export async function groupDetail(
                 lastName: user.last_name,
                 displayName: user.display_name
               }),
-        roles: given.get(user.id) ?? []
+        roles,
+        inheritedFrom:
+          level === 'season' || level === 'league'
+            ? { level, role: placing }
+            : null,
+        avatarUrl: imageUrl(space, user.avatar_path, PROFILE_SIZE)
       })
     }
   }

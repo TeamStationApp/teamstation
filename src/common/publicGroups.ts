@@ -9,6 +9,7 @@ import {
 
 import { asLiteral } from './asLiteral'
 import { asLocality } from './locality'
+import { asRole } from './roles'
 
 const nullable =
   <T>(clean: (raw: unknown) => T) =>
@@ -52,6 +53,7 @@ export const asPublicGame = asObject({
   venue: nullable(asString),
   exhibition: asOptional(asBoolean, false),
   timezone: asOptional(asString, 'UTC'),
+  videoCount: asOptional(asNumber, 0),
   pendingApproval: asOptional(asBoolean, false),
   pendingRequestId: asOptional(nullable(asString), null),
   homeTeamExternal: asOptional(asBoolean, false),
@@ -70,7 +72,21 @@ export const asGroupDetail = asObject({
   children: asArray(asPublicGroup),
   participatingSeasons: asArray(asPublicGroup),
   competingTeams: asArray(asPublicGroup),
-  staff: asArray(asObject({ name: asString, roles: asArray(asString) })),
+  staff: asArray(
+    asObject({
+      name: asString,
+      roles: asArray(asString),
+      avatarUrl: asOptional(nullable(asString), null),
+      inheritedFrom: asOptional(
+        nullable(
+          asObject({
+            level: asLiteral('season', 'league'),
+            role: asRole
+          })
+        )
+      )
+    })
+  ),
   games: asArray(asPublicGame),
   custodian: asOptional(nullable(asPublicGroup), null),
   /** Placeholder teams this group keeps; a league's only. */
