@@ -43,6 +43,25 @@ describe('team membership requests', function () {
     expect(response.status, await response.clone().text()).equals(201)
     const first = await response.json()
     expect(first.status).equals('pending')
+    const sent = await (
+      await f.h.request('GET', '/me/notifications?sent=1', undefined, 103)
+    ).json()
+    expect(
+      sent.items.find(
+        (item: { requestId: string }) => item.requestId === first.id
+      ).canResend
+    ).equals(false)
+    expect(
+      (
+        await f.h.request(
+          'POST',
+          `/relationship-requests/${first.id}/resend`,
+          { idempotencyKey: 'membership-resend' },
+          103
+        )
+      ).status
+    ).equals(409)
+
     const duplicate = await (await request('membership-again')).json()
     expect(duplicate.id).equals(first.id)
     expect((await (await request('membership-first')).json()).id).equals(

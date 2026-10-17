@@ -193,7 +193,10 @@ export async function notificationFor(
       status === 'pending' &&
       (senderAdmin || request.sender_id === fresh.userId || representedConsent),
     canResend:
-      status !== 'accepted' && senderAdmin && request.kind !== 'guardian',
+      status !== 'accepted' &&
+      senderAdmin &&
+      request.kind !== 'guardian' &&
+      request.kind !== 'membership',
     viewed: receipt != null,
     leave: null
   }
