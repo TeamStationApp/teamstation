@@ -1234,6 +1234,36 @@ describe('a live playlist through a reconnect', function () {
     expect(events.some(event => event.type === 'publisherPlaced')).equals(false)
   })
 
+  it('places a return with no frame wall clocks by the wall clock its writer starts at, however long the recovery took', async function () {
+    const videoStartMs = Date.now() - 41_960
+    const { init } = firstPublishOnDisk(videoStartMs)
+    const firstDateMs = videoStartMs + 1400
+    // Each segment the recovery and the timeline's end read takes 0.3 s:
+    // a long game's worth of them after this server restarts.
+    const promises = require('fs/promises') as {
+      open: (...args: unknown[]) => Promise<unknown>
+    }
+    const open = promises.open
+    promises.open = async (...args: unknown[]) => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+      return await open(...args)
+    }
+    let startedAt = 0
+    try {
+      setLive(KEY, { ...spec(), videoStartMs })
+      forcePublishForTest(KEY, true)
+      await writerArgs()
+      startedAt = Date.now()
+    } finally {
+      promises.open = open
+    }
+    writeFileSync(join(dir, 'seg000003.m4s'), hevcSegment(0, [IDR_SLICE]))
+    expect((await placedAt(init, 'seg000003.m4s')) ?? 0).closeTo(
+      (startedAt - firstDateMs) / 1000,
+      0.25
+    )
+  })
+
   it('never puts a return on top of the pictures before it', async function () {
     const back = Date.now() - 300
     // A frame wall clock 0.3 s inside the listed media goes at its end; one
