@@ -44,6 +44,24 @@ describe('062 keys streams by device and keeps a phone’s recording', function 
           'hash_before', 'ts_before', 'cipher', now())`,
       [filmer.userId]
     )
+    // One the old claim route handed to an installed Director, which has
+    // published on it: the audit log holds that claim. A website stream's
+    // edit does not count.
+    await pool.query(
+      `insert into live_streams (id, game_id, team_id, user_id, slot, label,
+          key_hash, key_prefix, key_cipher, opens_at, first_published_at)
+        values ('liv_claimed', 'gam_one', 'tem_home', $1, 4, 'TS Director',
+          'hash_claimed', 'ts_claimed', 'cipher', now(), now())`,
+      [filmer.userId]
+    )
+    await pool.query(
+      `insert into audit_log (id, method, path, entity_type, entity_id)
+        values
+          ('aud_claim', 'POST', '/api/v1/director/events/gam_one/claim',
+            'liveStream', 'liv_claimed'),
+          ('aud_edit', 'PATCH', '/api/v1/games/gam_one/live-streams/liv_before',
+            'liveStream', 'liv_before')`
+    )
   })
 
   after(async function () {
@@ -82,13 +100,13 @@ describe('062 keys streams by device and keeps a phone’s recording', function 
     return String(refused)
   }
 
-  it('leaves every stream it finds as it was, with no device', async () => {
+  it('leaves every stream it finds with no device, and marks the ones a Director claimed', async () => {
     expect((await migrateUp(pool, migrations)).applied).includes(
       '062phoneStreams'
     )
     const { rows } = await pool.query(
       `select device_id, device_model, local_recording, records_locally,
-          director_claimed, label, slot from live_streams`
+          director_claimed, label, slot from live_streams order by slot`
     )
     expect(rows).deep.equals([
       {
@@ -99,6 +117,15 @@ describe('062 keys streams by device and keeps a phone’s recording', function 
         director_claimed: false,
         label: 'Backstop',
         slot: 1
+      },
+      {
+        device_id: null,
+        device_model: null,
+        local_recording: 'none',
+        records_locally: false,
+        director_claimed: true,
+        label: 'TS Director',
+        slot: 4
       }
     ])
   })

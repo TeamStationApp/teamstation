@@ -20,7 +20,11 @@ import type { Migration } from '../runner'
  * **Which streams a Director build claimed.** `director_claimed` is set by the
  * legacy claim route, so a device that updates mid-game adopts the stream the
  * old build held, and never a stream made on the website for streaming
- * software.
+ * software. The streams that route returned before this are marked too: each
+ * claim left an audit row naming its stream. Unmarked, a stream an installed
+ * Director had published on would be passed over by its next claim, which
+ * would make a new stream, splitting a game live during the deploy across two
+ * keys and two videos.
  *
  * **Uploads that name their stream.** `director_uploads.live_stream_id` is the
  * angle an upload replaces, and `whole_stream` says the recording ran for every
@@ -48,6 +52,14 @@ alter table live_streams add constraint live_streams_local_recording_check
   check (local_recording in ('none', 'recorded', 'uploaded'));
 alter table live_streams add column records_locally boolean not null default false;
 alter table live_streams add column director_claimed boolean not null default false;
+update live_streams set director_claimed = true
+  where device_id is null
+    and id in (
+      select entity_id from audit_log
+        where entity_type = 'liveStream'
+          and method = 'POST'
+          and path like '%/director/events/%/claim'
+    );
 
 create unique index live_streams_one_per_device_label
   on live_streams (game_id, user_id, device_id, lower(label))
