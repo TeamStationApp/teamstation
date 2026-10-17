@@ -25,7 +25,7 @@ describe('remaining scoring on game detail and schedules', function () {
     await f?.h.close()
   })
 
-  async function check(expected: boolean): Promise<void> {
+  async function check(expected: boolean, live = expected): Promise<void> {
     for (const user of [101, null]) {
       for (const path of [
         `/games/${id}`,
@@ -42,6 +42,7 @@ describe('remaining scoring on game detail and schedules', function () {
                 (g: { id: string }) => g.id === id
               )
         expect(game.hasScoringEvents, path).equals(expected)
+        expect(game.isGameLive, path).equals(live)
       }
     }
   }
@@ -82,5 +83,40 @@ describe('remaining scoring on game detail and schedules', function () {
     await check(true)
     await f.h.db.deleteFrom('events').where('gameId', '=', id).execute()
     await check(false)
+  })
+
+  it('applies server time and finalization consistently to every projection', async () => {
+    const hour = 3600000
+    await f.h.db
+      .updateTable('games')
+      .set({
+        currentPlay: {
+          teamStation: { actions: [{ type: 'pitch', kind: 'ball' }] }
+        }
+      })
+      .where('id', '=', id)
+      .execute()
+    for (const offset of [-24 * hour, 24 * hour]) {
+      await f.h.db
+        .updateTable('games')
+        .set({ start_at: new Date(Date.now() + offset) })
+        .where('id', '=', id)
+        .execute()
+      await check(true, false)
+    }
+    await f.h.db
+      .updateTable('games')
+      .set({ start_at: new Date() })
+      .where('id', '=', id)
+      .execute()
+    await check(true, true)
+    for (const status of ['final', 'cancelled']) {
+      await f.h.db
+        .updateTable('games')
+        .set({ status })
+        .where('id', '=', id)
+        .execute()
+      await check(true, false)
+    }
   })
 })

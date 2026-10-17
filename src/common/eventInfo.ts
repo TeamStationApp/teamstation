@@ -104,6 +104,8 @@ export interface EventMetadata {
   latitude?: number | null
   longitude?: number | null
   hasScoringEvents?: boolean
+  /** Server-authoritative game LIVE eligibility; distinct from a live camera. */
+  isGameLive?: boolean
 }
 
 /** Preserve older answer shapes while decoding event fields when supplied. */
@@ -132,6 +134,8 @@ export function withEventMetadata<T>(
         fields.longitude = nullableNumber(raw.longitude)
       if (raw.hasScoringEvents !== undefined)
         fields.hasScoringEvents = asBoolean(raw.hasScoringEvents)
+      if (raw.isGameLive !== undefined)
+        fields.isGameLive = asBoolean(raw.isGameLive)
     }
     return { ...answer, ...fields }
   }
