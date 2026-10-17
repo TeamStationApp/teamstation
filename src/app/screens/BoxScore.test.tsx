@@ -174,6 +174,25 @@ async function nonMemberBoxScore(): Promise<{
 }
 
 describe('a non-member’s box score', function () {
+  it('keeps the membership explanation when no custom access action is provided', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <BoxScore
+          game={{ ...gameFixture, nonMemberView: true }}
+          box={undefined}
+          theme={tsBallpark}
+          sideBySide={false}
+        />
+      )
+    })
+    expect(host.querySelector('[role="alert"]')?.textContent).equals(
+      'You need to be a member of one of these teams to see individual player stats.'
+    )
+    expect(host.textContent).not.includes('Batting —')
+  })
   it('shows the line score by inning, then the members-only message, readably, and asks for no tables', async function () {
     this.timeout(10000)
     const { container, asked } = await nonMemberBoxScore()

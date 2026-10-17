@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
+import { completionNotice } from '../notifications/completionNotice'
 
 describe('team membership requests', function () {
   this.timeout(60000)
@@ -137,5 +138,17 @@ describe('team membership requests', function () {
       .where('user_id', '=', 103)
       .executeTakeFirstOrThrow()
     expect(membership).deep.equals({ role: 'member', is_player: false })
+    const team = await f.h.db
+      .selectFrom('teams')
+      .select('name')
+      .where('id', '=', f.teamA)
+      .executeTakeFirstOrThrow()
+    expect(
+      await completionNotice(f.h.db, {
+        kind: 'membership',
+        teamId: f.teamA,
+        userId: 103
+      })
+    ).equals(`${team.name}: membership approved`)
   })
 })

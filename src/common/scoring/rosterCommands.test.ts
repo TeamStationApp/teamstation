@@ -573,6 +573,7 @@ function example(schema: JsonSchema, key?: string): unknown {
   if (schema.anyOf != null) return example(schema.anyOf[0])
   if (schema.enum != null) return schema.enum[0]
   if (schema.type === 'integer') return schema.minimum ?? 1
+  if (schema.type === 'boolean') return false
   if (schema.type === 'string') return key === 'jersey' ? '17' : 'Ohtani'
   if (schema.type === 'array') return [example(schema.items!)]
   return Object.fromEntries(

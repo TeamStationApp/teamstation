@@ -43,6 +43,30 @@ describe('changed executable line coverage gate', function () {
 })
 
 describe('changed-line counts from every report', function () {
+  it('keeps unit coverage at 90 while requiring 95 for combined coverage', () => {
+    const lines = new Set(Array.from({ length: 100 }, (_, i) => i + 1))
+    const counts = (
+      covered: number
+    ): Record<string, Record<number, number>> => ({
+      'source.ts': Object.fromEntries(
+        [...lines].map(line => [line, line <= covered ? 1 : 0])
+      )
+    })
+    expect(
+      lineReportFromCounts({ 'source.ts': lines }, counts(90), () => true).pass
+    ).equals(true)
+    expect(
+      lineReportFromCounts({ 'source.ts': lines }, counts(94), () => true, {
+        min: 95
+      }).pass
+    ).equals(false)
+    expect(
+      lineReportFromCounts({ 'source.ts': lines }, counts(95), () => true, {
+        min: 95
+      }).pass
+    ).equals(true)
+  })
+
   const fixture = (name: string): string =>
     readFileSync(`src/test/fixtures/coverage/${name}`, 'utf8')
 
