@@ -93,6 +93,8 @@ class PhoneStreamEnvironment(
     val heartbeatSeconds: Double = 5.0,
     val statusIntervalSeconds: Double = 0.25,
     val storageCheckSeconds: Double = 5.0,
+    /** How often TeamStation's clock is measured again while a take streams. */
+    val serverClockIntervalSeconds: Double = PhoneStreamEngine.SERVER_CLOCK_INTERVAL_MILLIS / 1000.0,
     /** The first wait before a lost camera is asked to open again; each try after waits twice as long. */
     val cameraReopenSeconds: Double = 1.0,
     /** How long a stop waits for the recording's mix to hand over the sound up to the stop. */

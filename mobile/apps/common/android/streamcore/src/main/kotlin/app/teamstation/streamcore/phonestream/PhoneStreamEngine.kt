@@ -868,11 +868,12 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     }
 
     /**
-     * Measures TeamStation's clock now and every [SERVER_CLOCK_INTERVAL_MILLIS] while the take
-     * streams. Each measurement goes to the stream, whose every frame's wall-clock SEI it puts on
-     * TeamStation's clock (TeamStation places each publish by it, the first and every return), and the
-     * first to the take, whose upload may come hours later. An unanswered one leaves the last offset,
-     * which holds across a drop and a redial.
+     * Measures TeamStation's clock now and every [PhoneStreamEnvironment.serverClockIntervalSeconds]
+     * (a minute, [SERVER_CLOCK_INTERVAL_MILLIS]) while the take streams. Each measurement goes to the
+     * stream, whose every frame's wall-clock SEI it puts on TeamStation's clock (TeamStation places
+     * each publish by it, the first and every return), and the first to the take, whose upload may
+     * come hours later. An unanswered one leaves the last offset, which holds across a drop and a
+     * redial.
      */
     private fun followServerClock() {
         val held = take ?: return
@@ -889,7 +890,7 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                     stream.serverClockOffsetMs = sample.offsetMs
                     held.recordingID?.let { onEngine { catalog.setServerClockOffset(sample.offsetMs / 1000.0, it) } }
                 }
-                delay(SERVER_CLOCK_INTERVAL_MILLIS)
+                delay((environment.serverClockIntervalSeconds * 1000).toLong())
             }
         }
     }
