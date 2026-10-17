@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type {
@@ -27,10 +27,11 @@ import {
   VideoPoster
 } from '../components'
 import { CreationCard } from '../components/CreationCard'
+import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 import type { GameListOpenOptions } from './gameListOptions'
-import { useGameLivePill } from './useGameLivePill'
 
 export interface HomeScreenProps {
   client: TeamStationClient
@@ -70,14 +71,37 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const [followed, setFollowed] = useState<PublicGroup[]>([])
   const [seasons, setSeasons] = useState<SeasonSummary[]>([])
   const [recent, setRecent] = useState<SeasonGame | undefined>(undefined)
-  const recentLive = useGameLivePill(recent)
   const [live, setLive] = useState<LiveNow[]>([])
   const [liveUrl, setLiveUrl] = useState<string | undefined>(undefined)
   /** Which game `liveUrl` belongs to, so it is not asked for twice. */
   const playing = useRef<string | undefined>(undefined)
   const [recentUrl, setRecentUrl] = useState<string | undefined>(undefined)
+  const recentPlaying = useRef<
+    | {
+        client: TeamStationClient
+        gameId: string
+        videoId: string
+      }
+    | undefined
+  >(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
+  const [recentError, setRecentError] = useState<string | undefined>(undefined)
+  const beginRecent = useLatestRequest()
+  const refreshRecent = useCallback(async (): Promise<void> => {
+    const current = beginRecent()
+    try {
+      const newest = await client.recentGame()
+      if (current()) {
+        setRecent(newest ?? undefined)
+        setRecentError(undefined)
+      }
+    } catch (caught) {
+      if (current())
+        setRecentError(caught instanceof Error ? caught.message : 'Cannot load')
+    }
+  }, [client, beginRecent])
+  useForegroundRefresh(refreshRecent)
 
   /**
    * The recent game's own video, so the card moves rather than sitting there.
@@ -88,16 +112,40 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
    * on screen and never delays it.
    */
   useEffect(() => {
-    if (recent == null || recent.videoCount < 1) return
+    const clear = (): void => {
+      recentPlaying.current = undefined
+      setRecentUrl(undefined)
+    }
+    if (
+      recentPlaying.current?.client !== client ||
+      recentPlaying.current?.gameId !== recent?.id
+    )
+      clear()
+    if (recent == null || recent.videoCount < 1) {
+      clear()
+      return
+    }
     let cancelled = false
     const find = async (): Promise<void> => {
       const detail = await client.game(recent.id)
       const playable = detail.videos.find(
         item => item.status === 'ready' || item.status === 'live'
       )
-      if (cancelled || playable == null) return
+      if (cancelled) return
+      if (playable == null) {
+        clear()
+        return
+      }
+      // Refresh LIVE metadata without replacing the same video's signed URL.
+      if (recentPlaying.current?.videoId === playable.id) return
+      clear()
       const playback = await client.playback(playable.id)
       if (cancelled || playback.url == null) return
+      recentPlaying.current = {
+        client,
+        gameId: recent.id,
+        videoId: playable.id
+      }
       setRecentUrl(playback.url)
     }
     // A card that does not move is the whole of the failure, and the poster
@@ -178,13 +226,6 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       setSeasons(loadedSeasons)
       setGroups(ownGroups)
       setFollowed(follows)
-
-      // The most recently played game anywhere this person can see. It used
-      // to look inside the first season it was handed, which showed a game
-      // from June while there were games in September.
-      const newest = await client.recentGame()
-      if (cancelled) return
-      setRecent(newest ?? undefined)
     }
     load()
       .catch((caught: unknown) => {
@@ -316,6 +357,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   return (
     <Screen>
       {error != null && <Text style={styles.error}>{error}</Text>}
+      {recentError != null && <Text style={styles.error}>{recentError}</Text>}
       {showEmptyHero && creationCards(missingKinds)}
       {live.length > 0 && (
         <View style={styles.section}>
@@ -406,7 +448,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               homeScore={recent.homeScore}
               status={gameStatusLine(recent)}
               pendingApproval={recent.pendingApproval}
-              live={recentLive}
+              live={recent.isGameLive === true}
               date={shortDate(recent.startAt)}
               venue={recent.venue ?? undefined}
               winner={winnerOf(recent)}

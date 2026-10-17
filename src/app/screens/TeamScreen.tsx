@@ -628,9 +628,7 @@ function GameCard(props: {
         <ScheduleRow
           first={eventName(game) ?? lines.second}
           startAt={game.startAt}
-          endAt={game.endAt}
-          eventKind={game.eventKind}
-          hasScoringEvents={game.hasScoringEvents}
+          isGameLive={game.isGameLive}
           venue={game.venue}
           status={game.status}
           awayScore={game.awayScore}
@@ -722,9 +720,7 @@ function ScheduleCard(props: {
   const rowProps = {
     first: eventName(game) ?? lines.second,
     startAt: game.startAt,
-    endAt: game.endAt,
-    eventKind: game.eventKind,
-    hasScoringEvents: game.hasScoringEvents,
+    isGameLive: game.isGameLive,
     venue: game.venue,
     status: game.status,
     awayScore: game.awayScore,

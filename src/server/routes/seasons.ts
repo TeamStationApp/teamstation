@@ -14,6 +14,7 @@ import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamEventSchedule } from '../events/eventInfo'
+import { gameIsLive } from '../games/gameLive'
 import { hasScoringEventsSql } from '../games/scoringActivity'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
@@ -487,6 +488,15 @@ export async function scheduleOf(
       venue: game.venue,
       endAt: toIso(game.endAt),
       hasScoringEvents: game.hasScoringEvents,
+      isGameLive: gameIsLive(
+        {
+          startAt: toIso(game.startAt),
+          endAt: toIso(game.endAt),
+          status: game.status,
+          hasScoringEvents: game.hasScoringEvents
+        },
+        now
+      ),
       address: game.address,
       notes: game.notes,
       arrivalTimeDelta: game.arrivalTimeDelta,
@@ -567,6 +577,7 @@ export async function scheduleOf(
               ...row,
               // A proposal is always for a game.
               eventType: 'game',
+              isGameLive: false,
               pendingApproval: true,
               status: 'scheduled',
               cancellationReason: null,
