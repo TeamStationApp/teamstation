@@ -74,7 +74,6 @@ import {
 import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
-import { ScoreGameOptions } from '../scoreboard/ScoreGameScreen'
 import type { GameRecording } from '../stream/gameRecording'
 import { StreamFooter } from '../stream/StreamFooter'
 import { useGameRecording } from '../stream/useGameRecording'
@@ -90,14 +89,18 @@ import { watchHandoff } from './gameWatchLayoutProps'
 import { showVideoLivePill } from './livePillPolicy'
 import { openableTeams as teamsWithAPage } from './openableTeams'
 
+export interface GamePlaybackReturn {
+  videoId: string
+  at: number
+  autoPlay: boolean
+}
+
 export interface GameScreenProps {
   client: TeamStationClient
   gameId: string
   socket?: Pick<GameSocket, 'subscribe'>
-  /** Opens the full scorer from the Score Game tab. */
-  onFullScoring?: () => void
-  /** Opens the simplified scoreboard from the Score Game tab. */
-  onScoreboard?: () => void
+  /** Opens the scoring choices as a separate page, retaining the watched moment. */
+  onScoreGame?: (resume?: GamePlaybackReturn) => void
   /** An embedded recording controller; otherwise use this device's camera. */
   recording?: GameRecording
   /**
@@ -170,7 +173,7 @@ export interface GameScreenProps {
   ) => void
 }
 
-type Tab = 'info' | 'boxScore' | 'watch' | 'score'
+type Tab = 'info' | 'boxScore' | 'watch'
 
 /**
  * What each of a game's videos is called on the strip under the picture.
@@ -897,8 +900,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   resumeAtRef.current = resumeAt
   const startAtSecRef = useRef(startAtSec)
   startAtSecRef.current = startAtSec
-  const autoPlayRef = useRef(autoPlay)
-  autoPlayRef.current = autoPlay
+  const autoPlayRef = useRef(props.autoPlay)
+  autoPlayRef.current = props.autoPlay
   const placeFor = useRef<{
     videoId?: string
     playbackFor?: string
@@ -1013,20 +1016,21 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
 
     // A link to a moment: start there, and start playing, because that is
-    // what the person who sent the link meant by sending it.
+    // what the person who sent the link meant by sending it. An explicit
+    // paused return from another page keeps that intent instead.
     const linkAt = startAtSecRef.current
     if (linkAt != null && linkAt > 0 && !startedFromLink.current) {
       startedFromLink.current = true
       const jump = (): void => {
         element.currentTime = linkAt
-        element.play().catch(() => undefined)
+        if (autoPlayRef.current !== false) element.play().catch(() => undefined)
       }
       if (element.readyState >= HAVE_METADATA) jump()
       else element.addEventListener('loadedmetadata', jump, { once: true })
       return detach
     }
 
-    if (autoPlayRef.current) {
+    if (autoPlayRef.current === true) {
       // The tap that opened this screen is a gesture the browser counts, so an
       // unmuted start is allowed. If it refuses anyway the controls are right
       // there, and saying so would be noise.
@@ -1201,7 +1205,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             style={styles.heroAction}
             onPress={() => {
               if (action.id === 'score') {
-                selectSection('score')
+                const player = playerRef.current
+                props.onScoreGame?.(
+                  player != null && video != null
+                    ? {
+                        videoId: video.id,
+                        at: player.currentTime,
+                        autoPlay: !player.paused
+                      }
+                    : undefined
+                )
                 return
               }
               if (action.id === 'record') {
@@ -1667,12 +1680,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           client={client}
           eventId={gameId}
           event={game}
-        />
-      ) : tab === 'score' ? (
-        <ScoreGameOptions
-          game={game}
-          onFullScoring={props.onFullScoring}
-          onScoreboard={props.onScoreboard}
         />
       ) : (
         <BoxScore

@@ -137,22 +137,22 @@ describe('addresses', function () {
     expect(parseRoute('')).deep.equals({ name: 'home' })
   })
 
-  it('reads and writes the Score Game section, and leaves the scorer alone', function () {
+  it('reads and writes the scoring choices page, retaining old links and the scorer address', function () {
     expect(parseRoute('/games/g1/score-game')).deep.equals({
-      name: 'game',
-      gameId: 'g1',
-      tab: 'score'
+      name: 'scoreOptions',
+      gameId: 'g1'
+    })
+    expect(parseRoute('/games/g1', 'tab=score')).deep.equals({
+      name: 'scoreOptions',
+      gameId: 'g1'
     })
     expect(routePath({ name: 'game', gameId: 'g1', tab: 'score' })).equals(
       '/games/g1/score-game'
     )
-    expect(roundTrip({ name: 'game', gameId: 'g1', tab: 'score' })).deep.equals(
-      {
-        name: 'game',
-        gameId: 'g1',
-        tab: 'score'
-      }
-    )
+    expect(roundTrip({ name: 'scoreOptions', gameId: 'g1' })).deep.equals({
+      name: 'scoreOptions',
+      gameId: 'g1'
+    })
     expect(parseRoute('/games/g1/score')).deep.equals({
       name: 'scoreGame',
       gameId: 'g1'

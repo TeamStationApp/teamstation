@@ -35,11 +35,20 @@ afterEach(async function () {
   root = undefined
 })
 describe('actual game scoring entry', function () {
-  it('renders Score on the hero and shows its choices under the pills', async function () {
+  it('renders Score on the hero and opens its separate scoring page', async function () {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => ({ ...gameFixture, canScore: true })
     client.teams = async () => []
-    await render(<GameScreen client={client} gameId="g1" />)
+    let opened = 0
+    await render(
+      <GameScreen
+        client={client}
+        gameId="g1"
+        onScoreGame={() => {
+          opened++
+        }}
+      />
+    )
     expect(button('Score')?.getAttribute('role')).equals('button')
     const text = document.body.textContent ?? ''
     expect(text.indexOf('Box score')).lessThan(text.indexOf('Videos'))
@@ -50,8 +59,8 @@ describe('actual game scoring entry', function () {
     })
     const next = document.body.textContent ?? ''
     expect(next).includes('Owls')
-    expect(next).includes('Full game scoring')
-    expect(next.indexOf('Owls')).lessThan(next.indexOf('Full game scoring'))
+    expect(opened).equals(1)
+    expect(next).not.includes('Full game scoring')
     expect(button('Videos')).not.equals(null)
     expect(button('Box score')).not.equals(null)
   })
@@ -137,7 +146,7 @@ describe('actual game scoring entry', function () {
 })
 
 describe('scoring entry on the phones', function () {
-  // Score Game is a tab of the game page on every platform, for the same
+  // Score is an action on the game page on every platform, for the same
   // people, and sits immediately before DJ Game where there is one.
   const web = Platform.OS
   afterEach(function () {
