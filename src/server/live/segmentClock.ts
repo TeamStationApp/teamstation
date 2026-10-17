@@ -234,38 +234,47 @@ export function readLeadingBoxesSync(path: string): Buffer {
 }
 
 /**
- * Where a segment sits on the playlist's timeline, from its `sidx` and the
- * init segment's timescale. Undefined when either box is missing.
+ * Where a segment sits on the playlist's timeline: its first `sidx`'s
+ * earliest presentation time, in that box's own timescale, as
+ * `moveSegmentOnTimeline` writes it. The init segment's first track need not
+ * be the one that `sidx` describes: the track order follows the ingest's
+ * first packet, and a fragment with no samples of a track has no `sidx` for
+ * it. A `sidx` with no timescale is read in that of the track it references.
+ * Both files are read box by box. Undefined when the segment's leading boxes
+ * hold no `sidx`.
  */
 export function timelineStartSec(
   init: Buffer,
   segment: Buffer
 ): number | undefined {
-  const timescale = movieTimescale(init)
-  const earliest = earliestPresentation(segment)
-  if (timescale == null || earliest == null || timescale <= 0) return undefined
+  const box = locatedBoxes(segment, 0, segment.length).boxes.find(
+    item => item.type === 'sidx'
+  )
+  if (box == null) return undefined
+  const version = segment[box.payload]
+  const end = box.start + box.size
+  const earliestAt = box.payload + 12
+  if (earliestAt + (version === 1 ? 8 : 4) > end) return undefined
+  const earliest =
+    version === 1
+      ? segment.readBigUInt64BE(earliestAt)
+      : BigInt(segment.readUInt32BE(earliestAt))
+  const own = segment.readUInt32BE(box.payload + 8)
+  const timescale =
+    own > 0 ? own : trackTimescale(init, segment.readUInt32BE(box.payload + 4))
+  if (timescale == null || timescale <= 0) return undefined
   return Number(earliest) / timescale
 }
 
-function movieTimescale(init: Buffer): number | undefined {
-  const at = init.indexOf('mdhd')
-  if (at < 0) return undefined
-  const version = init[at + 4]
-  const offset = version === 1 ? at + 24 : at + 16
-  if (offset + 4 > init.length) return undefined
-  return init.readUInt32BE(offset)
-}
-
-function earliestPresentation(segment: Buffer): bigint | undefined {
-  const at = segment.indexOf('sidx')
-  if (at < 0) return undefined
-  const version = segment[at + 4]
-  if (version === 1) {
-    if (at + 24 > segment.length) return undefined
-    return segment.readBigUInt64BE(at + 16)
-  }
-  if (at + 20 > segment.length) return undefined
-  return BigInt(segment.readUInt32BE(at + 16))
+/** The timescale of one track of the init segment, by its id. */
+function trackTimescale(init: Buffer, trackId: number): number | undefined {
+  const moov = locatedBoxes(init, 0, init.length).boxes.find(
+    box => box.type === 'moov'
+  )
+  if (moov == null) return undefined
+  return readTracks(init.subarray(moov.payload, moov.start + moov.size)).get(
+    trackId
+  )?.timescale
 }
 
 function writeStamped(path: string, bytes: Buffer): void {

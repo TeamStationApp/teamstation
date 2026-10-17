@@ -146,6 +146,54 @@ describe('placing a returned segment on the programme clock', function () {
     }
   })
 
+  it('reads a segment start in its own sidx timescale, whichever track comes first', function () {
+    // The FLV demuxer's first packet decides the track order, so the sound
+    // can be the init segment's first track while the sidx is the picture's.
+    const soundFirst = Buffer.concat([
+      box('ftyp', Buffer.alloc(8)),
+      // A stray 'mdhd' in the bytes ahead of the tracks is not a box.
+      box(
+        'free',
+        Buffer.from('mdhd\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\x01', 'latin1')
+      ),
+      box(
+        'moov',
+        Buffer.concat([track(1, 48000, 'soun'), track(2, 90000, 'vide')])
+      )
+    ])
+    expect(
+      timelineStartSec(
+        soundFirst,
+        Buffer.concat([sidx(0, 90000, 360_000n), fragment(2, 0, 360_000n)])
+      )
+    ).closeTo(4, 1e-9)
+    expect(
+      timelineStartSec(
+        soundFirst,
+        Buffer.concat([
+          box('styp', Buffer.alloc(8)),
+          sidx(1, 48000, 192_000n),
+          fragment(1, 1, 192_000n)
+        ])
+      )
+    ).closeTo(4, 1e-9)
+    // A 'sidx' that is only bytes inside another box is not read.
+    expect(
+      timelineStartSec(
+        soundFirst,
+        Buffer.concat([
+          box('free', Buffer.from('sidx', 'latin1')),
+          fragment(2, 0, 0n)
+        ])
+      )
+    ).equals(undefined)
+    // With no timescale of its own, the sidx is read in its track's.
+    const bare = sidx(0, 0, 180_000n)
+    bare.writeUInt32BE(2, 12)
+    expect(timelineStartSec(soundFirst, bare)).closeTo(2, 1e-9)
+    expect(timelineStartSec(soundFirst, sidx(0, 0, 180_000n))).equals(undefined)
+  })
+
   it('stamps a segment left at the publisher zero when the continuation is past the media', async function () {
     const dir = mkdtempSync(join(tmpdir(), 'ts-segment-clock-'))
     try {
