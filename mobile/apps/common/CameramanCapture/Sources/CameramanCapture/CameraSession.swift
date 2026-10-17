@@ -89,9 +89,8 @@ public final class CameraSession: @unchecked Sendable {
     sessionObservers.forEach { NotificationCenter.default.removeObserver($0) }
   }
 
-  /// The session itself, for a preview layer attached once and kept for the session's life. A
-  /// preview that comes and goes while the session starts and stops uses `showPreview` and
-  /// `hidePreview` instead.
+  /// The session itself, to tell which session a layer draws. A preview layer is attached, turned
+  /// and detached only through `showPreview` and `hidePreview`, never by setting its session.
   public var captureSession: AVCaptureSession { session }
 
   /// Draws this session in a preview layer, turned by `rotationAngle` and mirrored when asked. Called
