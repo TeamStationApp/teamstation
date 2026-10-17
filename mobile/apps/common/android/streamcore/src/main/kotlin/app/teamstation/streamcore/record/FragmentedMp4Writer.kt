@@ -21,9 +21,11 @@ import kotlin.math.roundToLong
  * Times are seconds on the part's own timeline. A picture's duration is not known until the next one
  * arrives, so the newest picture is held back to the next fragment; [finish] gives the last one its
  * duration, which is how the hold at Stop is written as one picture lasting out the take. A gap of
- * about one frame is the next picture, jitter included, and that picture is held out to it. A gap
- * past one and a half of the cap is a hole: the outgoing picture keeps one frame and the next
- * picture opens the following fragment at its own time. Sound is contiguous: every AAC packet lasts
+ * about one frame is the next picture, jitter included, and that picture is held out to it. A
+ * picture written with a hold cap may open a hole: a gap past one and a half of the cap is the
+ * absence, the outgoing picture keeps the cap and the next picture opens the following fragment at
+ * its own time. The owner offers the cap only where a hole can be, at a change of part, so dropped
+ * frames inside a part never cut a picture short or end a fragment early. Sound is contiguous: every AAC packet lasts
  * 1024 samples from where the last one ended.
  */
 class FragmentedMp4Writer(

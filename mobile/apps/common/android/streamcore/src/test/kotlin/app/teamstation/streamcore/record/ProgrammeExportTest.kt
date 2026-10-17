@@ -61,7 +61,8 @@ class ProgrammeExportTest {
         seconds: Int,
         priming: Int = 0,
         keyframeEvery: Int = 60,
-        video: FragmentedMp4Writer.VideoTrack = FragmentedMp4WriterTest.videoTrack
+        video: FragmentedMp4Writer.VideoTrack = FragmentedMp4WriterTest.videoTrack,
+        dropped: Set<Int> = emptySet()
     ): File {
         val file = folder.newFile(name)
         val audio = FragmentedMp4Writer.AudioTrack(byteArrayOf(0x11, 0x90.toByte()), primingSamples = priming)
@@ -69,6 +70,7 @@ class ProgrammeExportTest {
         repeat(priming / 1024) { writer.writeAudio(primingPacket) }
         var packets = 0
         for (frame in 0 until seconds * 30) {
+            if (frame in dropped) continue
             writer.writeVideo(byteArrayOf(0, 0, 0, 3, 0x26, 1, frame.toByte()), frame / 30.0, frame % keyframeEvery == 0)
             while (packets * 1024.0 / 48_000 < (frame + 1) / 30.0) {
                 writer.writeAudio(byteArrayOf(0x21, 0x55))
@@ -278,5 +280,28 @@ class ProgrammeExportTest {
         // The pictures go out in 3 s fragments: one per part, cut at the hole, plus the sound that
         // runs through it. A fragment per picture would be over a hundred.
         assertTrue("${reader.fragments} fragments", reader.fragments <= 2 + (30 / 3))
+    }
+
+    @Test
+    fun aDroppedFrameInsideAPartIsNotAHole() {
+        // A loaded phone dropping every other frame for a second: each picture before a drop lasts
+        // across it, and the fragments keep their 3 s cadence.
+        val dropped = (31 until 61 step 2).toSet()
+        val first = part("program-20261012-100000.mp4", 4, dropped = dropped)
+        val second = part("program-20261012-100000-2.mp4", 2)
+        val anchors = anchors(count = 2) + anchors(part = 2, start = 1_010.0, count = 2)
+        val output = File(folder.root, "dropped.mp4")
+        ProgrammeExport.export(listOf(first, second), anchors, 1, 1_000.0, 1_012.0, 30, silent, output, blankHoles = true)
+        val reader = FragmentedMp4Reader.read(output)!!
+        val video = reader.video!!
+        val frame = 1.0 / 30
+        assertEquals(120 - dropped.size + 60, video.samples.size)
+        val beforeDrop = video.samples.first { it.ticks == 30L * 3_000 }
+        assertEquals(2 * frame, beforeDrop.duration.toDouble() / video.timescale, 1e-4)
+        // The part change is still a hole: part 1's last picture keeps one frame.
+        val last = video.samples.last { it.ticks < 10L * 90_000 }
+        assertEquals(frame, last.duration.toDouble() / video.timescale, 1e-4)
+        assertEquals(10.0, video.samples.first { it.ticks >= 10L * 90_000 }.ticks / 90_000.0, 1e-6)
+        assertTrue("${reader.fragments} fragments", reader.fragments <= 6)
     }
 }

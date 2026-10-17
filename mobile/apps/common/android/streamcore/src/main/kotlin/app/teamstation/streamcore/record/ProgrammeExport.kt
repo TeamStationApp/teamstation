@@ -195,8 +195,9 @@ object ProgrammeExport {
      * as a copied part's do. A picture lasts until the next one, so across a hole the last picture
      * before it is held as one sample; the sound is contiguous, with [silentPacket]s across every hole
      * and out to the end. [blankHoles] leaves that picture at one frame of [frameRate] instead, and the
-     * next part's timestamp is the absence. The last picture and the sound both run to [windowEnd], or
-     * to where the last part ends.
+     * next part's timestamp is the absence. Only a change of part can be a hole: a gap inside a part
+     * is dropped frames, and the picture before it lasts across them. The last picture and the sound
+     * both run to [windowEnd], or to where the last part ends.
      *
      * Each part's pictures and sound are written interleaved by time, so the writer holds about one
      * fragment's samples at a time however long the part is. Where parts overlap, a picture at or
@@ -272,6 +273,9 @@ object ProgrammeExport {
                 var leadIn = audio != null
                 // Nothing of the part is written before a keyframe: its pictures depend on one.
                 var awaitingKeyframe = true
+                // A hole is only ever between parts: within one, the recording ran unbroken, and a
+                // gap is a dropped frame that the picture before it lasts across.
+                var opensPart = true
                 // One sample in memory at a time, read from the part as it is written out.
                 reader.samples().use { source ->
                     while (true) {
@@ -287,11 +291,14 @@ object ProgrammeExport {
                             }
                             if (awaitingKeyframe && !sample.sync) continue
                             awaitingKeyframe = false
-                            // One frame is the hold across a hole. The writer
-                            // treats a gap within one and a half of that as the
-                            // next picture, so timestamp jitter is not a hole.
-                            val held = if (blankHoles) 1.0 / maxOf(1, frameRate) else Double.POSITIVE_INFINITY
-                            if (writer.writeVideo(source.read(sample), pictureAt, sample.sync, held)) lastPicture = pictureAt
+                            // One frame is the hold across a hole, offered only for the part's
+                            // first picture. The writer treats a gap within one and a half of
+                            // that as the next picture, so parts that meet are not a hole.
+                            val held = if (blankHoles && opensPart) 1.0 / maxOf(1, frameRate) else Double.POSITIVE_INFINITY
+                            if (writer.writeVideo(source.read(sample), pictureAt, sample.sync, held)) {
+                                lastPicture = pictureAt
+                                opensPart = false
+                            }
                             pictureEnd = maxOf(pictureEnd, pictureAt + sample.duration.toDouble() / video!!.timescale)
                         } else if (leadIn) {
                             if (soundEnd + packet / 2 < soundAt) {
