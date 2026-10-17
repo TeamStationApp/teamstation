@@ -366,6 +366,8 @@ export function restartDelay(
  * allow one publisher per key.
  */
 const SIGKILL_GRACE_MS = 3000
+/** How often a child Node reported gone, but the OS still has, is looked at again. */
+const PHANTOM_POLL_MS = 100
 /**
  * How long the HLS writer gets to finish by itself after the stream ends.
  * Long enough to flush a segment and close the playlist, short enough that a
@@ -1096,16 +1098,28 @@ async function spawnPrepared(
       `[live:${entry.liveStreamId}] ffmpeg for ${output.label} exited code=${String(code)} signal=${String(signal)}`
     )
 
-    // Node says it died; the OS says otherwise. Kill it, and hear the exit
-    // that follows. Dropping that exit left the writer on the books, and a
-    // publisher that came back had nothing to replace.
+    // Node says it died; the OS says otherwise. Kill it, and finish the exit
+    // once the OS agrees. Node has had its say and emits no second `exit`,
+    // so the PID is watched instead. Until it goes, the writer stays on the
+    // books, and a publisher that comes back waits for it rather than
+    // starting a second writer on the same playlist.
     if (isPidAlive(pid)) {
       log(`[live:${entry.liveStreamId}] phantom exit pid=${String(pid)}`)
-      exitHandled = false
       killByPid(pid, 'SIGKILL')
       report(entry)
+      const whenGone = (): void => {
+        if (isPidAlive(pid)) {
+          setTimeout(whenGone, PHANTOM_POLL_MS)
+          return
+        }
+        exited(code)
+      }
+      whenGone()
       return
     }
+    exited(code)
+  })
+  const exited = (code: number | null): void => {
     output.spawned.delete(child)
     // An older child's exit, arriving after a newer one took over. Stop
     // tracking it, but leave the state machine to the current child.
@@ -1161,7 +1175,7 @@ async function spawnPrepared(
     output.restartTimer = setTimeout(() => {
       spawnOutput(entry, output)
     }, again.delayMs)
-  })
+  }
   child.on('error', error => {
     output.state = 'error'
     output.lastError = `spawn error: ${String(error)}`

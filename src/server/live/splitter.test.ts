@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import type { ChildProcess, spawn } from 'child_process'
 import { execFileSync } from 'child_process'
 import {
   appendFileSync,
@@ -1458,6 +1459,42 @@ describe('a live playlist through a reconnect', function () {
       await new Promise(resolve => setTimeout(resolve, 200))
     }
     expect(spawnCount()).equals(2)
+  })
+
+  it('finishes a phantom exit once the writer Node called gone is killed', async function () {
+    countSpawns()
+    // The module object itself: the splitter reads `spawn` off it.
+    const processes = require('child_process') as { spawn: typeof spawn }
+    const spawnReal = processes.spawn
+    const children: ChildProcess[] = []
+    processes.spawn = ((...args: Parameters<typeof spawn>) => {
+      const child = spawnReal(...args)
+      children.push(child)
+      return child
+    }) as typeof spawn
+    try {
+      setLive(KEY, spec())
+      forcePublishForTest(KEY, true)
+      await writerArgs()
+    } finally {
+      processes.spawn = spawnReal
+    }
+    const writer = children[0]
+    const pid = writer.pid ?? 0
+    // Node says the writer exited while the OS still has it. Node emits
+    // `exit` once per child, so the real one never arrives.
+    const emit = writer.emit.bind(writer)
+    writer.emit = ((event: string, ...args: unknown[]) =>
+      event === 'exit' ? false : emit(event, ...args)) as typeof writer.emit
+    emit('exit', 1, null)
+    expect(logs.join('\n')).contains(`phantom exit pid=${String(pid)}`)
+    for (let i = 0; i < 60 && spawnCount() < 2; i++) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    expect(() => process.kill(pid, 0)).throws()
+    // The writer is off the books and the restart was armed.
+    expect(spawnCount()).equals(2)
+    expect(statusFor(KEY)?.outputs[0].restartCount).equals(1)
   })
 
   it('works out where a playlist carries on from', function () {
