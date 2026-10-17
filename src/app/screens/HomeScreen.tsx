@@ -30,6 +30,7 @@ import { CreationCard } from '../components/CreationCard'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 import type { GameListOpenOptions } from './gameListOptions'
+import { useGameLivePill } from './useGameLivePill'
 
 export interface HomeScreenProps {
   client: TeamStationClient
@@ -69,6 +70,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const [followed, setFollowed] = useState<PublicGroup[]>([])
   const [seasons, setSeasons] = useState<SeasonSummary[]>([])
   const [recent, setRecent] = useState<SeasonGame | undefined>(undefined)
+  const recentLive = useGameLivePill(recent)
   const [live, setLive] = useState<LiveNow[]>([])
   const [liveUrl, setLiveUrl] = useState<string | undefined>(undefined)
   /** Which game `liveUrl` belongs to, so it is not asked for twice. */
@@ -404,7 +406,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               homeScore={recent.homeScore}
               status={gameStatusLine(recent)}
               pendingApproval={recent.pendingApproval}
-              live={recent.status === 'inProgress'}
+              live={recentLive}
               date={shortDate(recent.startAt)}
               venue={recent.venue ?? undefined}
               winner={winnerOf(recent)}

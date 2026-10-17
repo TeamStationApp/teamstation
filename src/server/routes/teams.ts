@@ -32,7 +32,8 @@ import { creditsForHighlight } from '../events/credits'
 import { teamEventDetail } from '../events/eventInfo'
 import { teamPlayerRsvps } from '../events/playerRsvps'
 import { whyEmpty } from '../events/whyEmpty'
-import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
+import { resolvedFenceDistance } from '../games/fenceDistance'
+import { hasScoringEventsSql } from '../games/scoringActivity'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
   highlightEvent,
@@ -461,6 +462,7 @@ export function teamRoutes(
         .selectFrom('games')
         .selectAll()
         .select(resolvedFenceDistance.as('resolved_fence_distance_ft'))
+        .select(hasScoringEventsSql.as('hasScoringEvents'))
         .where('id', '=', gameId)
         .executeTakeFirst()
       if (game == null) throw notFound()
@@ -587,9 +589,7 @@ export function teamRoutes(
         eventType: 'game',
         latitude: game.latitude,
         longitude: game.longitude,
-        hasScoringEvents:
-          (await gameHasPlays(db, game.id)) ||
-          hasCurrentScoring(game.currentPlay),
+        hasScoringEvents: game.hasScoringEvents,
         exhibition: game.exhibition,
         timezone: game.timezone,
         cancellationReason: game.cancellation_reason,
@@ -1018,11 +1018,4 @@ async function averagesToDate(
     if (line.ab > 0) out.set(line.userId, line.h / line.ab)
   }
   return out
-}
-
-function hasCurrentScoring(raw: unknown): boolean {
-  if (raw == null || typeof raw !== 'object') return false
-  const teamStation = (raw as { teamStation?: { actions?: unknown[] } })
-    .teamStation
-  return (teamStation?.actions?.length ?? 0) > 0
 }

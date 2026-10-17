@@ -1,7 +1,9 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import type { EventTabState } from '../screens/eventTabPolicy'
 import { scheduleDate } from '../screens/format'
+import { useGameLivePill } from '../screens/useGameLivePill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
 import { SideCamera } from './SideCamera'
@@ -9,7 +11,7 @@ import { SideCamera } from './SideCamera'
 /** Wide enough for the widest month and two-digit day, with iOS's wider digits. */
 export const SCHEDULE_DATE_WIDTH_REM = 3.25
 
-export interface RsvpScheduleRowProps {
+export interface RsvpScheduleRowProps extends EventTabState {
   /**
    * The away team, or the team whose page this is. On that team's own page
    * it is the only line, and it is the opponent: `@ Bay Stars`.
@@ -81,13 +83,14 @@ export function RsvpScheduleRow(
   const styles = getStyles(theme)
   const dated = scheduleDate(startAt)
   const inProgress = status === 'inProgress'
+  const live = useGameLivePill(props)
   const scored = awayScore != null && homeScore != null && !inProgress
   const cancelled = status === 'cancelled'
   const badgeLabel = pendingApproval
     ? 'Pending approval'
     : cancelled
       ? 'Canceled'
-      : inProgress
+      : live
         ? 'LIVE'
         : result != null
           ? result.label
@@ -97,7 +100,7 @@ export function RsvpScheduleRow(
   const badgeTone: BadgeTone =
     pendingApproval || cancelled
       ? 'neutral'
-      : inProgress
+      : live
         ? 'live'
         : (result?.tone ?? 'neutral')
   const teams = second == null ? first : `${first} ${second}`
