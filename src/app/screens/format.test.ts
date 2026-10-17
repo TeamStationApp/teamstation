@@ -101,7 +101,14 @@ describe('the word between the two scores', function () {
 
   it('does not call a game final while it is still being played', function () {
     const live = { ...played, status: 'inProgress' as const }
-    expect(gameStatusLine(live)).equals('LIVE')
+    expect(gameStatusLine(live)).equals('IN PROGRESS')
+    expect(
+      gameStatusLine({
+        ...live,
+        startAt: new Date().toISOString(),
+        hasScoringEvents: true
+      })
+    ).equals('LIVE')
     expect(winnerOf(live)).equals(undefined)
     expect(
       resultFor(

@@ -89,6 +89,8 @@ export function PublicTeamContent({
               first={game.awayTeam.name}
               second={`at ${game.homeTeam.name}`}
               startAt={game.startAt}
+              endAt={game.endAt}
+              hasScoringEvents={game.hasScoringEvents}
               venue={game.venue}
               status={game.status}
               pendingApproval={game.pendingApproval}
