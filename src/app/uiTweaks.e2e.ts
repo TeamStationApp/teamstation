@@ -200,12 +200,15 @@ async function main(): Promise<void> {
           css: '[role="button"][aria-label*="Orchard Owls"]',
           timeout: 10000
         })
+        await s.page.waitForSelector('[data-testid="gameVideoPreview"]')
+        await s.m.tapOn({ css: '[data-testid="gameVideoPreview"]' })
         await contains(
           s.page,
           "You need to be a member of one of the teams to watch this game's videos."
         )
         expect(await s.page.$('video[src]')).equals(null)
-        if (id == null) await shot('public-video-unavailable')
+        if (id == null) await shot('public-video-warning')
+        await s.m.tapOn({ text: 'Close warning', role: 'button', index: 1 })
         await open(`/teams/${f.teamA}?tab=schedule`, 'Schedule')
         await s.m.tapOn({
           css: '[data-testid="schedule-display-row"]',

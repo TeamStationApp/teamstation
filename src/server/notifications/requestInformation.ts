@@ -190,6 +190,13 @@ export async function titleAndDescription(
       description: `${sender} from ${organization} proposed ${away} at ${home} ${competition}, ${await when(terms.game.startAt, terms.game.seasonId, terms.game.timezone)}${terms.game.venue == null ? '' : ' at ' + terms.game.venue}, ${terms.game.status}, ${exhibition(terms.game.exhibition)}.${prior} This changes neither management parents nor season participation.${eventDetails(terms)}${await scheduleDetails(db, terms)}`
     }
   }
+  if (terms.kind === 'membership') {
+    const team = await name({ kind: 'team', id: terms.teamId })
+    return {
+      title: `${sender} requests membership in ${team}`,
+      description: `Approving gives ${sender} member access to ${team}, including game videos. It does not grant staff roles.`
+    }
+  }
   if (terms.kind === 'person') {
     const group = await name(terms.scope)
     const roles = [...(terms.admin ? ['administrator'] : []), ...terms.flags]

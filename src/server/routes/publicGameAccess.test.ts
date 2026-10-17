@@ -122,6 +122,27 @@ describe('public game access', function () {
       expect(game.canScore).equals(false)
       expect(game.canDj).equals(false)
       expect(game.coachSides).deep.equals([])
+      expect(
+        (
+          await f.h.request(
+            'GET',
+            '/videos/vid_public/highlights',
+            undefined,
+            user
+          )
+        ).status
+      ).equals(200)
+      expect(
+        (
+          await f.h.request(
+            'GET',
+            '/videos/vid_hidden/highlights',
+            undefined,
+            user
+          )
+        ).status
+      ).equals(404)
+
       expect(game.videos.map((video: { id: string }) => video.id)).deep.equals([
         'vid_public'
       ])

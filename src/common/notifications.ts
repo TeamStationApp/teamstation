@@ -19,11 +19,12 @@ export type GuardianInput = { userId: number } | { email: string }
 
 /**
  * The body of `POST /relationship-requests`. A guardian invitation comes from
- * a team its sender coaches; a guardian request, which a person sends for
+ * a team its sender coaches; a guardian or membership request, which a person sends for
  * themselves, has no sender.
  */
 export type RelationshipRequestInput =
   | GroupRequestInput
+  | { kind: 'membership'; teamId: string; idempotencyKey: string }
   | {
       kind: 'guardian'
       playerUserId: number
@@ -57,6 +58,7 @@ type GroupRequestInput = {
 
 export type RequestTerms =
   | GameRequestTerms
+  | { kind: 'membership'; teamId: string; userId: number }
   | { kind: 'parent'; preview: ParentPreview }
   | {
       kind: 'participation'
@@ -91,7 +93,7 @@ export interface GuardianTerms {
 }
 
 export interface RelationshipInvitation {
-  /** Absent only for a guardian request, which a person sends for themselves. */
+  /** Absent for a guardian or membership request sent on one’s own behalf. */
   sender?: GroupRef
   terms: RequestTerms
   confirmBoth?: boolean

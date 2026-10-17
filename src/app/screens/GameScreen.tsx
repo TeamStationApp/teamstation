@@ -88,6 +88,7 @@ import { GameWatchLayout } from './GameWatchLayout'
 import { watchHandoff } from './gameWatchLayoutProps'
 import { showVideoLivePill } from './livePillPolicy'
 import { openableTeams as teamsWithAPage } from './openableTeams'
+import { VideoMembershipSheet } from './VideoMembershipSheet'
 
 export interface GamePlaybackReturn {
   videoId: string
@@ -98,6 +99,8 @@ export interface GamePlaybackReturn {
 export interface GameScreenProps {
   client: TeamStationClient
   gameId: string
+  signedIn?: boolean
+  onSignIn?: () => void
   socket?: Pick<GameSocket, 'subscribe'>
   /** Opens the scoring choices as a separate page, retaining the watched moment. */
   onScoreGame?: (resume?: GamePlaybackReturn) => void
@@ -464,6 +467,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [client, gameId, game])
   const [video, setVideo] = useState<VideoSummary | undefined>(undefined)
+  const [membershipWarning, setMembershipWarning] = useState(false)
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [withheld, setWithheld] = useState<string | null>(null)
   const [dropped, setDropped] = useState(0)
@@ -529,7 +533,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const anglesOffered = useMemo(() => multiAngleSupported(playerEngine()), [])
   /**
-   * Somebody signed in who is a member of neither team: the score, the line
+   * A guest or somebody who is a member of neither team: the score, the line
    * score and the highlights' pictures, and not the video, the box score's
    * tables or the summary under the card, which are kept for members.
    * Nothing kept is asked for, so the page never meets the server's refusal.
@@ -1076,11 +1080,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }
 
   const jumpTo = (highlight: Highlight): void => {
+    if (nonMemberView) {
+      setMembershipWarning(true)
+      return
+    }
     setActiveEventId(highlight.eventId)
     setChosen(highlight)
-    // There is no video to seek for a non-member, and no moment to link to:
-    // the notice in the player's place says why.
-    if (nonMemberView) return
     // The address follows, so the moment somebody is looking at is the moment
     // they can send to somebody else.
     if (video != null)
@@ -1340,8 +1345,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     />
   )
 
-  // A non-member's tap gets no play's account: the members-only message is
-  // repeated under the tapped highlight instead (see `highlightList`).
+  // Detailed play accounts remain available only to members.
   const description =
     chosen == null ||
     nonMemberView ||
@@ -1375,18 +1379,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ? undefined
       : (game.videos.find(item => item.id === video.id) ?? video)
   const isLive = showVideoLivePill(playing, game, clockNow)
-  /**
-   * What stands in the player's place when there is nothing to play: a game
-   * nothing was recorded of, or a non-member, whose video is kept for
-   * members. Words on the page, not a black box with nothing in it. Painted
-   * the page's own colour, since the highlights scroll up under it.
-   */
-  const notice =
-    video == null
-      ? lstrings.game_no_video
-      : nonMemberView
-        ? lstrings.game_videos_members_only
-        : undefined
+  const notice = video == null ? lstrings.game_no_video : undefined
   // The game's board over the picture, at the wall time of the frame on
   // screen, where the node's single-camera setting puts it on the picture:
   // the box less any black bars.
@@ -1412,6 +1405,34 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             {notice}
           </Text>
         </View>
+      ) : nonMemberView ? (
+        <Pressable
+          testID="gameVideoPreview"
+          accessibilityRole="button"
+          accessibilityLabel="Play game video"
+          onPress={() => {
+            setMembershipWarning(true)
+          }}
+          style={{
+            width: layout.videoWidth,
+            height: layout.videoHeight,
+            overflow: 'hidden'
+          }}
+        >
+          <View pointerEvents="none">
+            <VideoPoster
+              uri={playing?.posterUrl}
+              size="hero"
+              showPlay
+              time={
+                playing?.durationSec == null
+                  ? undefined
+                  : timecode(playing.durationSec)
+              }
+            />
+          </View>
+          {isLive && <LivePill />}
+        </Pressable>
       ) : (
         <PlayerSurface
           videoRef={playerRef}
@@ -1522,6 +1543,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           {highlights.map(highlight => (
             <Pressable
               key={highlight.eventId}
+              accessibilityRole="button"
+              accessibilityLabel={`Play highlight: ${highlight.title}`}
               style={[
                 styles.highlight,
                 { width: `${100 / columns}%` },
@@ -1547,20 +1570,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                   highlight.isScoringPlay ? styles.scoring : undefined
                 ]}
               />
-              {/*
-                The message in the player's place may be scrolled out of
-                sight by now, so a non-member's tap is answered where they
-                tapped, too.
-              */}
-              {nonMemberView && highlight.eventId === activeEventId ? (
-                <Text
-                  testID="highlightMembersOnly"
-                  accessibilityRole="alert"
-                  style={[styles.notice, styles.highlightNotice]}
-                >
-                  {lstrings.game_videos_members_only}
-                </Text>
-              ) : null}
             </Pressable>
           ))}
         </View>
@@ -1752,6 +1761,22 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           )}
         </View>
       </View>
+      {membershipWarning && (
+        <VideoMembershipSheet
+          client={client}
+          signedIn={props.signedIn === true}
+          teams={[
+            { id: game.homeTeamId, name: game.homeTeamName },
+            { id: game.awayTeamId, name: game.awayTeamName }
+          ]}
+          onSignIn={() => {
+            props.onSignIn?.()
+          }}
+          onClose={() => {
+            setMembershipWarning(false)
+          }}
+        />
+      )}
       {anglePicker}
       {multiCam}
       {recording.screen}
@@ -2077,7 +2102,6 @@ const getStyles = cacheStyles((theme: Theme) =>
       lineHeight: theme.rem(1.4),
       textAlign: 'center'
     },
-    highlightNotice: { width: '100%', paddingTop: theme.rem(0.25) },
     videoNotice: {
       alignItems: 'center',
       backgroundColor: theme.backgroundColor,
