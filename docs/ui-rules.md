@@ -147,3 +147,8 @@ the main poster, camera choices and highlight thumbnails visible. Open the
 warning only on a playback attempt, and never load restricted video sources.
 Signed-out viewers see Log in / Sign up; signed-in nonmembers can request
 membership in one participating team, subject to administrator approval.
+
+Stats restrictions use the same message and blue login/membership action inline
+under the public stats (the inning box score or team season performance). Do not
+open a warning modal for stats. Keep team selection, request errors and pending
+confirmation inline too; signing in returns to the same stats tab.
