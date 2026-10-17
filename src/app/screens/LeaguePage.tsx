@@ -218,7 +218,7 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
               <Text style={styles.muted}>No seasons in this league yet.</Text>
             </Card>
           )}
-          <ActionList>
+          <ActionList bounded={seasons.length > 0}>
             {seasons.map(season => (
               <GroupRelationshipRow
                 key={season.id}

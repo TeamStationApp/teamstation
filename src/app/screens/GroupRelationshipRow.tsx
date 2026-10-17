@@ -46,6 +46,7 @@ export function GroupRelationshipRow({
         )
       }
       onOpen={onOpen}
+      separateEndAction={onOpen != null && onLeave != null}
       extra={
         links == null || links.length === 0 ? undefined : (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
