@@ -59,6 +59,29 @@ describe('placeholder count sheet and platform adapters', function () {
       (node('Create Placeholder Player').firstChild as HTMLElement).style.color
     ).equals('rgb(52, 211, 153)')
   })
+  it('returns to player entry on cancellation and to the roster after creating placeholders', async function () {
+    await mount(
+      <RosterEditor
+        state={initialScoringState(
+          createDevelopmentSession(gameFixture, [], [])
+        )}
+        onSave={() => undefined}
+      />
+    )
+    await click('Create Player')
+    expect(document.activeElement).not.equals(node('First Name'))
+    await click('Create Placeholder Player')
+    await click('Cancel')
+    expect(node('First Name')).not.equals(null)
+    await click('Create Placeholder Player')
+    await click('Player count 3')
+    await click('Create')
+    expect(node('First Name')).equals(null)
+    expect(node('Number of placeholder players')).equals(null)
+    expect(node('Save Rosters')).not.equals(null)
+    await click('Create Player')
+    expect(document.activeElement).not.equals(node('First Name'))
+  })
   it('retries a failed asynchronous add and prevents duplicate submissions while saving', async function () {
     let attempts = 0
     let closes = 0
