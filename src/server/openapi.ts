@@ -4734,10 +4734,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             're-synced video fixes them all at once. A highlight is a ' +
             'timestamp into the full video, never a separate clip. When the ' +
             "game's plays did not add up to its imported line score, " +
-            '`withheld` is `scoreMismatch` and the list is empty. Anybody ' +
-            'signed in who is a member of neither team reads the list and ' +
-            'its stills too.',
-          security: [{ bearer: [] }],
+            '`withheld` is `scoreMismatch` and the list is empty. Guests and ' +
+            'nonmembers may read the list and signed stills; playback remains members-only.',
+          security: [],
           parameters: [
             {
               name: 'videoId',

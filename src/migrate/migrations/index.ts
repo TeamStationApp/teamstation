@@ -63,6 +63,7 @@ import { migration060ScoreboardLog } from './060scoreboardLog'
 import { migration061VideoWallTimeline } from './061videoWallTimeline'
 import { migration062PhoneStreams } from './062phoneStreams'
 import { migration063GameStarted } from './063gameStarted'
+import { migration064MembershipRequests } from './064membershipRequests'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -129,5 +130,6 @@ export const migrations: Migration[] = [
   migration060ScoreboardLog,
   migration061VideoWallTimeline,
   migration062PhoneStreams,
-  migration063GameStarted
+  migration063GameStarted,
+  migration064MembershipRequests
 ]

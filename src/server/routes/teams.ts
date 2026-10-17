@@ -676,10 +676,7 @@ export function teamRoutes(
 
   router.get(
     '/videos/:videoId/highlights',
-    requireActor,
     withAsync(async (req, res) => {
-      const actor = req.actor
-      if (actor == null) throw unauthorized()
       const videoId = pathParam(req.params.videoId)
 
       const video = await db
@@ -697,7 +694,7 @@ export function teamRoutes(
         ])
         .where('videos.id', '=', videoId)
         .executeTakeFirst()
-      // Anybody signed in reads any game's highlights and their stills, a
+      // Anybody reads a game's highlights and their stills, a
       // member as part of the game and anybody else in the non-member view;
       // the video they seek into is for members. A video that is not there,
       // or hidden, is 404, as it is for playback.
