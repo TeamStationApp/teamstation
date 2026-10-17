@@ -532,22 +532,44 @@ public enum ArchiveRemux {
   /// range cut short of the file's end takes the priming off that end -- measured, a 4 s cut came
   /// out 47.9 ms short at 44.1 kHz. The render runs past the take (see `renderSound`), so the extra
   /// is there to take, and what is written is exactly the take.
-  static func join(pictures: URL, sound: URL, length: CMTime, to destination: URL) async throws {
+  ///
+  /// With `runs` the pictures are back to back in their file, and each run goes in at its own place
+  /// in the output with an empty edit for every stretch between two, so no sample is held across a
+  /// hole. Without `sound` the file has the pictures alone.
+  static func join(
+    pictures: URL,
+    sound: URL?,
+    length: CMTime,
+    runs: [PictureRun]? = nil,
+    to destination: URL
+  ) async throws {
     let composition = AVMutableComposition()
     let pictureAsset = AVURLAsset(url: pictures)
     guard let source = try await pictureAsset.loadTracks(withMediaType: .video).first,
           let video = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
     else { throw Error.exportFailed("no pictures to join") }
     let pictureRange = try await source.load(.timeRange)
-    try video.insertTimeRange(
-      CMTimeRange(start: pictureRange.start, duration: CMTimeMinimum(pictureRange.duration, length)),
-      of: source,
-      at: .zero
-    )
+    if let runs {
+      for run in runs {
+        try video.insertTimeRange(
+          CMTimeRange(start: pictureRange.start + run.encoded, duration: run.output.duration),
+          of: source,
+          at: run.output.start
+        )
+      }
+    } else {
+      try video.insertTimeRange(
+        CMTimeRange(start: pictureRange.start, duration: CMTimeMinimum(pictureRange.duration, length)),
+        of: source,
+        at: .zero
+      )
+    }
     video.preferredTransform = try await source.load(.preferredTransform)
 
-    let soundAsset = AVURLAsset(url: sound)
-    if let rendered = try await soundAsset.loadTracks(withMediaType: .audio).first,
+    // Held while the composition reads its track: a track whose asset has gone cannot be read.
+    let soundAsset = sound.map { AVURLAsset(url: $0) }
+    if let soundAsset,
+       let rendered = try await soundAsset.loadTracks(withMediaType: .audio).first,
        let audio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
       let range = try await rendered.load(.timeRange)
       let priming = try await rendered.load(.segments).first?.timeMapping.source.start ?? .zero
