@@ -37,6 +37,7 @@ export interface BoxScoreProps {
   theme: Theme
   /** Away and home side by side, rather than one at a time. */
   sideBySide: boolean
+  membershipAccess?: React.ReactNode
   /**
    * A coach's side, which comes first in one column: its batters, then its
    * pitchers, then the opponent's batters and pitchers.
@@ -101,9 +102,11 @@ export function BoxScore(props: BoxScoreProps): React.ReactElement {
     return (
       <View style={styles.boxScore}>
         <LineScore game={game} theme={theme} />
-        <Text accessibilityRole="alert" style={styles.notice}>
-          {lstrings.box_score_members_only}
-        </Text>
+        {props.membershipAccess ?? (
+          <Text accessibilityRole="alert" style={styles.notice}>
+            {lstrings.box_score_members_only}
+          </Text>
+        )}
       </View>
     )
   }
