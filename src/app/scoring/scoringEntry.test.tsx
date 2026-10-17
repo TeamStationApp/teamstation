@@ -355,6 +355,7 @@ describe('game actions preserve box score and videos', function () {
     window.HTMLMediaElement.prototype.pause = () => undefined
     window.HTMLMediaElement.prototype.load = () => undefined
     const moments: Array<[string, number]> = []
+    const scoringReturns: unknown[] = []
     try {
       await render(
         <GameScreen
@@ -362,6 +363,9 @@ describe('game actions preserve box score and videos', function () {
           gameId="g1"
           autoPlay
           startAtSec={7}
+          onScoreGame={resume => {
+            scoringReturns.push(resume)
+          }}
           onMoment={(id, sec) => {
             moments.push([id, sec])
           }}
@@ -398,6 +402,12 @@ describe('game actions preserve box score and videos', function () {
         restored?.dispatchEvent(new window.Event('loadedmetadata'))
       })
       expect(restored?.currentTime).equals(20)
+      await act(async () => {
+        button('Score')?.click()
+      })
+      expect(scoringReturns).deep.equals([
+        { videoId: 'v2', at: 20, autoPlay: false }
+      ])
     } finally {
       await act(async () => {
         root?.unmount()
