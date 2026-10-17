@@ -83,6 +83,8 @@ export interface StreamingScreenProps {
   deviceId: string
   deviceModel: string
   onClose: () => void
+  /** The game hero's Start/Record action starts this take after opening the camera. */
+  startOnOpen?: boolean
   /** The engine; a test hands in one over a stand-in module. */
   phone?: PhoneStream
   /**
@@ -262,7 +264,7 @@ function StreamingOverlay(
   const [front, setFront] = useState(false)
   const [recordingHere, setRecordingHere] = useState(false)
   const [confirmStop, setConfirmStop] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState(props.startOnOpen === true)
   const [problem, setProblem] = useState<string | undefined>(undefined)
   /** The angle's name: Record video's, until the settings sheet renames it. */
   const [angleName, setAngleName] = useState(session.angleName)
@@ -360,18 +362,35 @@ function StreamingOverlay(
     rotation.lockLandscape()
     cameraOrientation.landscape()
     const opened = closing.then(async () => {
+      if (!live) return
       await phone.open(session.angleName)
+      if (!live) return
+      readScale()
+      const interrupted = await phone.interruptedSession()
+      if (!live) return
+      if (
+        interrupted?.liveStreamId === session.streamId &&
+        (await phone.resumeInterrupted(redialRequest))
+      ) {
+        if (live) setRecordingHere(true)
+        return
+      }
+      if (!live || props.startOnOpen !== true) return
+      await phone.startRecording({
+        rtmpUrl: session.url,
+        liveStreamId: session.streamId,
+        gameId: session.gameId,
+        angleName: session.angleName,
+        request: redialRequest
+      })
+      if (live) setRecordingHere(true)
     })
     opened
-      .then(async () => {
-        if (!live) return
-        readScale()
-        const interrupted = await phone.interruptedSession()
-        if (!live || interrupted?.liveStreamId !== session.streamId) return
-        if (await phone.resumeInterrupted(redialRequest)) setRecordingHere(true)
-      })
       .catch((error: unknown) => {
         if (live) setProblem(describeRefusal(error, session.angleName))
+      })
+      .finally(() => {
+        if (live) setBusy(false)
       })
     return () => {
       live = false
