@@ -501,9 +501,7 @@ describe('approved games and shared schedule ownership', function () {
           matchup: { batter: { fullName: 'Judge' } },
           playEvents: []
         }
-      }),
-      undefined,
-      { startsGame: false }
+      })
     )
     await setScopeRoles(
       f.h.db,
