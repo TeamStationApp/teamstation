@@ -10,6 +10,7 @@ export interface LoginScreenProps {
   client: TeamStationClient
   onSignedIn: (session: Session) => void
   onDiscover?: () => void
+  next?: string
 }
 
 /** Which of the two ways in the form is currently offering. */
@@ -70,7 +71,10 @@ export function LoginScreen(props: LoginScreenProps): React.ReactElement {
 
   const sendCode = (): void => {
     run(async () => {
-      const wait = await client.requestEmailCode(email.trim(), signInRequest)
+      const wait = await client.requestEmailCode(email.trim(), {
+        ...signInRequest,
+        next: props.next
+      })
       waiting.current = wait
       setCodeSent(true)
     })

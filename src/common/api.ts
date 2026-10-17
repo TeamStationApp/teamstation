@@ -1061,12 +1061,17 @@ export type SessionUser = Omit<
 > & { onboarding?: Onboarding }
 export const asSessionUser: Cleaner<SessionUser> = cleanSessionUser
 
-export const asSession = asObject({
+const cleanSession = asObject({
+  /** Original local destination, carried by email-link sign-in across app restarts. */
+  next: asOptional(asString),
   token: asString,
   expiresAt: asString,
   user: asSessionUser
 })
-export type Session = ReturnType<typeof asSession>
+export type Session = Omit<ReturnType<typeof cleanSession>, 'next'> & {
+  next?: string
+}
+export const asSession: Cleaner<Session> = cleanSession
 
 /** The sign-in a client is waiting on, and the secret that makes it its own. */
 export const asSignInWait = asObject({

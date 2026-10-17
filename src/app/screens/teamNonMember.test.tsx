@@ -21,8 +21,8 @@ import { TeamScreen } from './TeamScreen'
  * Somebody signed in who is not a member of a team, following it or not: the
  * members' page, less what the server keeps for members. Every name and no
  * photo; how the team is doing and not how each player is; the schedule with
- * its thumbnails and no video library; and on a game, the pictures of the
- * highlights and never the video, nor a player box with nothing in it.
+ * its thumbnails and public video library; and on a game, the pictures of the
+ * highlights without playback, nor a player box with nothing in it.
  */
 let root: Root | undefined
 
@@ -271,12 +271,13 @@ describe('a non-member’s team page', function () {
     expect(asked).deep.equals([])
   })
 
-  it('keeps the video library for members, and says so readably', async function () {
-    await team('videos')
-    const notice = document.querySelector('[role="alert"]')
-    expect(notice?.textContent).equals(MEMBERS_ONLY)
-    readable(notice)
-    expect(text()).not.includes('GAME VIDEO LIBRARY')
+  it('shows the public video library without starting playback', async function () {
+    const { opened } = await team('videos')
+    expect(document.querySelector('[role="alert"]')).equals(null)
+    expect(text()).includes('GAME VIDEO LIBRARY')
+    expect(document.body.innerHTML).includes(POSTER)
+    expect(opened).deep.equals([])
+    noPlayerBox()
   })
 
   it('marks recorded schedule rows and opens a game without playing it', async function () {

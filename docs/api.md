@@ -70,6 +70,12 @@ Game metadata and `/videos/:videoId/highlights` expose posters and signed stills
 to guests and nonmembers. Hidden videos remain unavailable and playback keeps
 its membership check. These previews never grant a media playback token.
 
+Sign-in requests carry a local `next` path, including the selected game, tab
+and video. Email-link verification and approved-request claims return it in
+the session so opening an email link can restore the same screen after an app
+restart. External destinations are discarded. Signing in alone does not grant
+video access: a nonmember's next playback attempt offers a membership request.
+
 `POST /relationship-requests` accepts `{kind: "membership", teamId,
 idempotencyKey}` from a signed-in user. The server binds the request to that
 user, deduplicates pending requests to the same team, and asks the team's
