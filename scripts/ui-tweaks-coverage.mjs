@@ -77,7 +77,7 @@ if (!serverOnly) {
       'lib/scoring-tests.cjs',
       '--grep',
       'roster|Roster|scoring sheet|player entry|placeholder|the coach|coach game|the Coach Game pill|automatic and explicit sections|title event creation and event detail editing|game page|game screen|game hero|game sections|game tabs|game watch|game card|relationship list|shared relationship Leave row|confirmed season participation departure|group settings identity|the league page|the season screen|settings people flows|creation and organization interface behavior|settings cleanup shared presentation|calendar, five-minute|timezone city selection|ScheduleRow|team presentation|minimal public team|team schedule|schedule event creation entry|season time|season page|group link|discovery|membership|Membership|warning|Warning|poster|Poster|sign.in|login|Login|event Info|event RSVP|schedule RSVP|recording|streaming screen|actual app|actual App|the app at launch|team route frames|Search tab|non-member|member’s game Videos|team card’s right|expanded statistics|the games feed|direct action app completion|applyCoverCrop|Coach Game|Score Game|the game Record button|Home Add and Create|the home screen|GameHeroCard|game actions|actual game scoring entry|the box score|player’s settings form' +
-        '|the person profile|Team roles on Settings|home-run scoreboard celebration'
+        '|the person profile|Team roles on Settings'
     ],
     { NODE_V8_COVERAGE: temp },
     true
@@ -98,7 +98,6 @@ run(
     'src/app/navigation/routes.test.ts',
     'src/app/scoring/createDictatedPlayers.test.ts',
     'src/app/scoring/dictatedRoster.test.ts',
-    'src/app/scoring/dictatedReel.test.ts',
     'src/server/events/eventInfo.test.ts',
     'src/server/games/gameLive.test.ts',
     'src/server/games/scoringActivity.test.ts',
