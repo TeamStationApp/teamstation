@@ -85,9 +85,12 @@ async function main(): Promise<void> {
     buildSync({
       stdin: {
         contents: `import { attachHls } from './src/app/player/attachHls';
+          import { seekTo } from './src/app/player/explicitSeek';
           const video = document.querySelector('video');
-          window.detachPlayer = attachHls(video, '/master.m3u8', undefined,
+          window.seekTo = seconds => seekTo(video, seconds);
+          window.attachPlayer = () => attachHls(video, '/master.m3u8', undefined,
             {isLive: () => true, wantsToPlay: () => !video.paused});
+          window.detachPlayer = window.attachPlayer();
           video.play().catch(() => {});`,
         resolveDir: process.cwd(),
         loader: 'ts'
@@ -137,10 +140,30 @@ async function main(): Promise<void> {
       if (!v.paused || Math.abs(v.currentTime - window.pausedAt) > 0.01)
         throw new Error('Stall recovery moved a paused viewer');
       window.detachPlayer();
+      v.autoplay = false;
+      window.detachPlayer = window.attachPlayer();
+    `
+    })
+    await new Promise(resolve => setTimeout(resolve, 3000))
+    await browser.evalBrowserScript({
+      script: `
+      const v = document.querySelector('video');
+      if (!v.paused) throw new Error('The second viewer should await Play');
+      window.seekTo(10);
+      await v.play();
+    `
+    })
+    await new Promise(resolve => setTimeout(resolve, 3000))
+    await browser.evalBrowserScript({
+      script: `
+      const v = document.querySelector('video');
+      if (v.paused || v.currentTime < 11 || v.currentTime > 20)
+        throw new Error('A highlight chosen before first Play was overridden');
+      window.detachPlayer();
     `
     })
     console.log(
-      'PASS: real HLS live cushion, playing after rewind, and pause beyond stall timeout'
+      'PASS: real HLS live cushion, rewind, pause, and a highlight before first Play'
     )
   } finally {
     await browser?.detach()
