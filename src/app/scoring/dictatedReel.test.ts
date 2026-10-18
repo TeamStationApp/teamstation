@@ -422,8 +422,8 @@ describe('a dictated sentence on the field', function () {
     expect(atRest(state)).equals(true)
   })
 
-  it('celebrates a home run and sends it out of the park', function () {
-    const state = say(
+  it('celebrates a home run only until its runners finish and the next batter is ready', function () {
+    let state = say(
       game(),
       {
         type: 'ballInPlay',
@@ -435,6 +435,10 @@ describe('a dictated sentence on the field', function () {
     )
     expect((state.presentation as HitSequence).outOfPark).equals(true)
     expect(state.celebration?.kind).equals('out-of-park')
+    state = playOut(state)
+    expect(state.phase).equals('ready')
+    expect(state.session.liveData.linescore.offense.batter?.id).equals(2)
+    expect(state.celebration).equals(null)
   })
 
   it('stores what the LLM said, not the geometry made up for the picture', function () {

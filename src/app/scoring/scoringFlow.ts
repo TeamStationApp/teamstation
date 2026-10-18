@@ -235,6 +235,8 @@ export function settleRunners(state: ScoringState): void {
   state.pendingPlay = null
   state.correctionWindow = null
   state.phase = decision === 'awaitingBatter' ? 'awaitingBatter' : 'ready'
+  // The runners (including a dictated reel) have finished; show the next at-bat.
+  state.celebration = null
 }
 
 /** The throw starts from whoever holds the ball, or the scorer picks him. */

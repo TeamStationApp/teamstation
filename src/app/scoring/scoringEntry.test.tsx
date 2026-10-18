@@ -172,7 +172,8 @@ describe('scoring entry on the phones', function () {
       client.game = async () => ({
         ...gameFixture,
         canScore: true,
-        canDj: true
+        canDj: true,
+        assignedRoles: { away: [], home: ['scorekeeper', 'videographer'] }
       })
       client.teams = async () => []
       await renderOn(
