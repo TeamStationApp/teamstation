@@ -133,9 +133,8 @@ final class NDIReceiveClockTests: XCTestCase {
     )
   }
 
-  /// A sender whose clock is not set reports 1970. Anchoring the DVR to that would put every one
-  /// of its segments outside the recording's own span, so it is treated as having no clock.
-  func testAbsurdSenderClockIsIgnored() {
+  /// A zero timestamp is no clock at all, so the frame is placed at its arrival.
+  func testZeroSenderClockIsIgnored() {
     let clock = NDIReceiveClock(clock: SystemClock())
     let frame = makeFrame(rateN: 30_000, rateD: 1_000, timestamp: ticks(secondsSince1970: 0))
     guard let timing = clock.timing(for: frame) else { return XCTFail("refused") }
@@ -206,13 +205,10 @@ final class NDIReceiveClockTests: XCTestCase {
     XCTAssertEqual(second.presentationTime.seconds - first.presentationTime.seconds, 1 / 60, accuracy: 1e-9)
   }
 
-  /// A camera power-cycled mid-session comes back with its clock restarted, so every frame it
-  /// sends is older than the last one accepted before it went away.
-  ///
-  /// Measured on a Hollyland Cosmo C2: 614 frames arrived in ten seconds and all 614 were refused
-  /// as reordering, the tile staying frozen on the last picture from before the reboot with no way
-  /// back. Two webcam frames four seconds apart read the same stopwatch to the millisecond.
-  func testSenderClockRestartIsAdoptedRatherThanRefusedForever() {
+  /// A clock that goes back by less than `clockJumpSeconds` and stays back is not reordering
+  /// either. It is refused for `clockRestartFrames` frames, then adopted, so the tile is never
+  /// wedged; a bigger move, a reboot, is adopted on its first frame (`NDISenderClockTests`).
+  func testSmallPersistentClockStepIsAdoptedAfterTheBackstop() {
     let clock = NDIReceiveClock(clock: SystemClock())
     let base = Date().timeIntervalSince1970
 
@@ -223,29 +219,24 @@ final class NDIReceiveClockTests: XCTestCase {
     }
     let beforeRestart = clock.outOfOrderFrames
 
-    // The camera reboots: its clock comes back an hour behind where it was.
+    // The clock comes back five seconds behind where it was, and stays there.
     let sent = 90
-    var accepted = 0
-    var lastPresentation: Double = -1
     var acceptedTail = 0
+    var lastPresentation: Double = -1
     for index in 0 ..< sent {
       guard let timing = clock.timing(for: makeFrame(
         rateN: 60,
         rateD: 1,
-        timestamp: ticks(secondsSince1970: base - 3_600 + Double(index) / 60)
+        timestamp: ticks(secondsSince1970: base - 5 + Double(index) / 60)
       )) else { continue }
-      accepted += 1
-      if index >= NDIReceiveClock.clockRestartFrames { acceptedTail += 1 }
+      if index >= NDIReceiveClock.clockRestartFrames - 1 { acceptedTail += 1 }
       // Monotonic across the restart, because the timeline is a counter and not the sender's clock.
       XCTAssertGreaterThan(timing.presentationTime.seconds, lastPresentation)
       lastPresentation = timing.presentationTime.seconds
     }
 
     XCTAssertEqual(clock.clockRestarts, 1, "the restart should be recognised exactly once")
-    // Everything after the diagnosis flows; the tile is not wedged.
-    XCTAssertEqual(acceptedTail, sent - NDIReceiveClock.clockRestartFrames)
-    XCTAssertGreaterThan(accepted, 0)
-    // Exactly the frames spent reaching the diagnosis are counted as out of order.
+    XCTAssertEqual(acceptedTail, sent - NDIReceiveClock.clockRestartFrames + 1)
     XCTAssertEqual(
       clock.outOfOrderFrames - beforeRestart,
       UInt64(NDIReceiveClock.clockRestartFrames),

@@ -46,6 +46,9 @@ public enum DirectorPaths {
   /// SQLite wall-clock index shared by the archive and the proxy store.
   public static var indexDatabase: URL { applicationSupport.appendingPathComponent("index.sqlite") }
 
+  /// Debug builds' CSVs of what each NDI sender stamps on its pictures, one per receiver.
+  public static var ndiTimestamps: URL { documents.appendingPathComponent("NDITimestamps", isDirectory: true) }
+
   /// Telemetry JSON written by `tsdirector://test/dump-state`, read by scripts/verifyArchive.js.
   public static var telemetryDump: URL { documents.appendingPathComponent("telemetry.json") }
 

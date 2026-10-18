@@ -330,6 +330,13 @@ public struct ReceiveStats: Sendable, Equatable {
   /// a fraction of its live rate because the encoder could not sustain the full one — a continuous
   /// half-rate angle rather than a full-rate one full of holes.
   public var archiveStride: Int = 1
+  /// What the archive's own clock did with an NDI camera's pictures: ticks that encoded a picture
+  /// again, pictures passed over for a newer one on the same tick, and pictures dropped for arriving
+  /// after a newer one had been taken. Repeats and skips in pairs are a recording that holds and
+  /// jumps; see `ArchiveTicker`.
+  public var archiveRepeatedTicks: UInt64 = 0
+  public var archiveSkippedPictures: UInt64 = 0
+  public var archiveLatePictures: UInt64 = 0
   /// The widest gap between two arriving frames during the last complete second, in milliseconds,
   /// and whether that gap ended on a keyframe.
   ///
@@ -400,6 +407,10 @@ public struct ReceiveStats: Sendable, Equatable {
   /// which needs the absolute delay these filtered values deliberately discard.
   public var correctedCaptureTime: Double = 0
   public var correctedCaptureAgeMilliseconds: Double = 0
+  /// Frames whose capture time came from the sender's own stamp, and frames placed at their arrival
+  /// because the sender gave none. Only NDI reports these.
+  public var captureFromSenderFrames: UInt64 = 0
+  public var captureFromArrivalFrames: UInt64 = 0
   /// Decoders this source currently holds. Only network sources decode anything; a generated or
   /// file-backed source reports zero.
   public var decodeSessions = 0

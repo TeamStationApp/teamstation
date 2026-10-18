@@ -232,6 +232,16 @@ public final class WireVideoEncoder: @unchecked Sendable {
   /// Order matters. The handler goes first so nothing is published from a session being retired,
   /// then the pending frames are drained, then the session is invalidated — which is the point
   /// VideoToolbox guarantees no further callbacks — and only then may this object be released.
+  /// Hands over every frame given to `encode` so far, through the handler, before returning. The
+  /// session stays open.
+  public func completeFrames() {
+    lock.lock()
+    let session = self.session
+    lock.unlock()
+    guard let session else { return }
+    VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
+  }
+
   public func finish() {
     setHandler(nil)
     lock.lock()

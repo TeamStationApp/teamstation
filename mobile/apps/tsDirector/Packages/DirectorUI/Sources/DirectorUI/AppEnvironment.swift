@@ -4825,6 +4825,9 @@ public final class AppEnvironment {
         tile.archiveDropped = receive.archiveDropped
         tile.archiveBacklog = receive.archiveBacklog
         tile.archiveStride = receive.archiveStride
+        tile.archiveRepeatedTicks = receive.archiveRepeatedTicks
+        tile.archiveSkippedPictures = receive.archiveSkippedPictures
+        tile.archiveLatePictures = receive.archiveLatePictures
         tile.arrivalGapMaxMilliseconds = receive.arrivalGapMaxMilliseconds
         tile.arrivalGapWasKeyframe = receive.arrivalGapWasKeyframe
         tile.deliverMaxMilliseconds = receive.deliverMaxMilliseconds
@@ -4849,6 +4852,8 @@ public final class AppEnvironment {
         tile.soundAwaitingClock = receive.soundAwaitingClock
         tile.correctedCaptureTime = receive.correctedCaptureTime
         tile.correctedCaptureAgeMilliseconds = receive.correctedCaptureAgeMilliseconds
+        tile.captureFromSenderFrames = receive.captureFromSenderFrames
+        tile.captureFromArrivalFrames = receive.captureFromArrivalFrames
       }
 
 
