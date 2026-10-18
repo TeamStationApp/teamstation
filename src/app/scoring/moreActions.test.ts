@@ -119,7 +119,7 @@ describe('More local scoring actions', function () {
     }
   })
   for (const reason of ['Wild Pitch', 'Passed Ball'])
-    it(`${reason} advances just the chosen runner without a pitch or RBI`, () => {
+    it(`${reason} asks whether to add a ball or use the existing pitch without an RBI`, () => {
       for (const from of [1, 2, 3])
         for (const pitch of [false, true]) {
           let start = initial(1 << (from - 1))
@@ -140,14 +140,19 @@ describe('More local scoring actions', function () {
             scoringReducer(draft, { type: 'RUNNER_CANCEL' }).session
           ).deep.equals(start.session)
           const final = completeMotions(
-            scoringReducer(draft, { type: 'RUNNER_REASON', reason })
+            scoringReducer(
+              scoringReducer(draft, { type: 'RUNNER_REASON', reason }),
+              reason === 'Passed Ball' && !pitch
+                ? { type: 'RUNNER_PITCH_KIND', kind: 'ball' }
+                : { type: 'RUNNER_PITCH', addBall: !pitch }
+            )
           )
           expect(final.phase).equals('ready')
           expect(final.session.liveData.linescore.offense.batter?.id).equals(1)
-          expect(final.session.liveData.linescore.balls).equals(pitch ? 1 : 0)
+          expect(final.session.liveData.linescore.balls).equals(1)
           expect(
             final.session.liveData.boxscore.teams.home.pitchCounts[10] ?? 0
-          ).equals(count)
+          ).equals(count + (pitch ? 0 : 1))
           expect(final.session.liveData.linescore.teams.away.runs).equals(
             from === 3 ? 1 : 0
           )
@@ -159,7 +164,7 @@ describe('More local scoring actions', function () {
           expect(play.playEvents.at(-1)!.isPitch).equals(false)
           expect(
             play.source.teamstation.runnerActions!.at(-1)!.pitchReference
-          ).deep.equals(pitch ? start.session.recentPitch : undefined)
+          ).deep.equals(final.session.recentPitch)
           expect(scoringReducer(final, { type: 'UNDO' }).session).deep.equals(
             start.session
           )
@@ -190,7 +195,7 @@ describe('More local scoring actions', function () {
     )
   })
   for (const action of ['Wild Pitch', 'Passed Ball'] as const)
-    it(`${action} links the recent pitch across an appearance boundary and cancels completely`, function () {
+    it(`${action} handles an appearance boundary and cancels completely`, function () {
       let state = initial()
       for (let n = 0; n < 4; n++)
         state = scoringReducer(state, { type: 'PITCH', kind: 'ball' })
@@ -208,18 +213,28 @@ describe('More local scoring actions', function () {
         decision: 'safe',
         generation: state.generation
       })
+      state = scoringReducer(
+        state,
+        action === 'Passed Ball'
+          ? { type: 'RUNNER_PITCH_KIND', kind: 'ball' }
+          : { type: 'RUNNER_PITCH', addBall: false }
+      )
       state = completeMotions(state)
       expect(state.phase).equals('ready')
       expect(state.moreDraft).equals(undefined)
       expect(state.session.liveData.boxscore.teams.home.pitchCounts[10]).equals(
-        4
+        action === 'Passed Ball' ? 5 : 4
       )
       const record =
         state.session.liveData.plays.currentPlay!.source.teamstation.runnerActions!.at(
           -1
         )!
       expect(record.reason).equals(action)
-      expect(record.pitchReference).deep.equals({ atBatIndex: 0, index: 3 })
+      expect(record.pitchReference).deep.equals(
+        action === 'Passed Ball'
+          ? { atBatIndex: 1, index: 0 }
+          : { atBatIndex: 0, index: 3 }
+      )
       const dead = scoringReducer(state, { type: 'PITCH', kind: 'foul' })
       expect(moreEligibility(dead, action)).equals(
         'Record an eligible pitch first'

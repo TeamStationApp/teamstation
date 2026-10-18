@@ -201,6 +201,132 @@ async function mount(
 }
 
 describe('scoring screen field wiring', function () {
+  for (const previous of [false, true])
+    it(`limits passed-ball pitch entry to three controls, previous pitch ${previous}`, async () => {
+      const initial = createDevelopmentSession(gameFixture, [], [])
+      const live = ScoringSession.start(memoryStore(), 'g1', initial, {
+        requireCurrentSetup: true
+      })
+      live.apply({
+        type: 'gameFlow',
+        kind: 'placeRunner',
+        runner: 2,
+        base: '1B'
+      })
+      if (previous) live.apply({ type: 'pitch', call: 'B' })
+      await mount({ persistent: false, open: async () => live })
+      await step(() =>
+        field().onRunnerDrop?.(
+          'offense-2',
+          2,
+          'safe',
+          field().interaction!.generation
+        )
+      )
+      const click = async (label: string): Promise<void> => {
+        await step(() => {
+          document
+            .querySelector<HTMLElement>(`[aria-label="${label}"]`)!
+            .click()
+        })
+      }
+      await click('Passed Ball')
+      if (previous) {
+        expect(document.body.textContent).includes(
+          'Was the passed ball the previous pitch?'
+        )
+        await click('NO')
+      }
+      expect(props().instruction).includes('Tap Ball')
+      expect(props().enabledPitchKinds).deep.equals(['ball', 'called', 'swing'])
+      expect(props().canPitch).equals(true)
+      for (const label of ['Ball', 'Called Strike', 'Swing and Miss'])
+        expect(
+          document
+            .querySelector(`[aria-label="${label}"]`)
+            ?.getAttribute('aria-disabled')
+        ).not.equals('true')
+      for (const label of ['Foul Ball', 'Swing in Play', 'Bunt in Play']) {
+        const control = document.querySelector(`[aria-label="${label}"]`)!
+        expect(
+          control.hasAttribute('disabled') ||
+            control.getAttribute('aria-disabled') === 'true',
+          label
+        ).equals(true)
+      }
+      const count = live.state.liveData.linescore.balls
+      await step(() => {
+        props().onPitch('foul')
+      })
+      expect(live.state.liveData.linescore.balls).equals(count)
+      await step(() => {
+        props().onPitch('called')
+      })
+      await settle()
+      expect(baseIds(live.state)).deep.equals([null, 2, null])
+      expect(live.state.liveData.linescore.strikes).equals(1)
+      expect(props().enabledPitchKinds).equals(undefined)
+      await step(() => {
+        props().onUndo()
+      })
+      expect(baseIds(live.state)).deep.equals([2, null, null])
+    })
+  for (const reason of ['Throwing Error', 'Fielding Error'])
+    it(`requires tapping a defender on the field for ${reason}`, async () => {
+      const initial = createDevelopmentSession(gameFixture, [], [])
+      const live = ScoringSession.start(memoryStore(), 'g1', initial, {
+        requireCurrentSetup: true
+      })
+      expect(
+        live.apply({
+          type: 'gameFlow',
+          kind: 'placeRunner',
+          runner: 2,
+          base: '1B'
+        }).problems
+      ).deep.equals([])
+      expect(live.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+      await mount({ persistent: false, open: async () => live })
+      await step(() =>
+        field().onRunnerDrop?.(
+          'offense-2',
+          2,
+          'safe',
+          field().interaction!.generation
+        )
+      )
+      await step(() => {
+        document.querySelector<HTMLElement>(`[aria-label="${reason}"]`)!.click()
+      })
+      expect(props().instruction).equals(
+        `Tap the defender who made the ${reason.toLowerCase()}.`
+      )
+      expect(field().acceptDefenderTap).equals(true)
+      const pitcher = players().find(
+        player =>
+          player.playerId === initial.liveData.linescore.defense.P!.id &&
+          player.team === 'defense'
+      )!
+      expect(field().interaction!.selectableIds).includes(pitcher.id)
+      await step(() =>
+        field().onFieldPlacement?.({
+          ...placement(pitcher.id),
+          generation: field().interaction!.generation
+        })
+      )
+      await settle()
+      expect(baseIds(live.state)).deep.equals([null, 2, null])
+      expect(live.state.liveData.linescore.teams.home.errors).equals(1)
+      expect(
+        live.state.liveData.plays.currentPlay!.runners.at(-1)!.credits[0].player
+          .id
+      ).equals(pitcher.playerId)
+      await step(() => {
+        props().onUndo?.()
+      })
+      expect(baseIds(live.state)).deep.equals([2, null, null])
+      expect(live.state.liveData.linescore.teams.home.errors).equals(0)
+    })
   it('does not overwrite a defensive choice when cancelled roster player creation finishes', async () => {
     const initial = createDevelopmentSession(gameFixture, [], [])
     initial.liveData.boxscore.teams.home.defense.P = null
@@ -2135,6 +2261,10 @@ describe('scoring screen field wiring', function () {
   })
   for (const [cover, title] of [
     [
+      'runner error reuse',
+      'holds the walk-up songs notice until the runner error choice closes'
+    ],
+    [
       'hidden scorer',
       'holds the walk-up songs notice while the scorer is retained behind Settings'
     ],
@@ -2164,8 +2294,9 @@ describe('scoring screen field wiring', function () {
       // that is slow, not wrong.
       this.timeout(30000)
       const session = createDevelopmentSession(gameFixture, [], [])
-      for (const slot of POSITIONS)
-        session.liveData.boxscore.teams.home.defense[slot] = null
+      if (cover !== 'runner error reuse')
+        for (const slot of POSITIONS)
+          session.liveData.boxscore.teams.home.defense[slot] = null
       const prepared = freshGame(
         session.gamePk,
         session.gameData.teams,
@@ -2182,6 +2313,30 @@ describe('scoring screen field wiring', function () {
           songs: ids.map(providerId => ({ providerId, state: 'pending' }))
         })
       }
+      const live = ScoringSession.start(
+        memoryStore(),
+        'g1',
+        cover === 'runner error reuse' ? session : prepared
+      )
+      if (cover === 'runner error reuse') {
+        live.apply({
+          type: 'gameFlow',
+          kind: 'placeRunner',
+          runner: 2,
+          base: '1B'
+        })
+        live.apply({ type: 'pitch', call: 'B' })
+        expect(
+          live.apply({
+            type: 'runnerMovement',
+            runner: 2,
+            to: '2B',
+            reason: 'Throwing Error',
+            error: session.liveData.linescore.defense.P!.id,
+            fielders: [session.liveData.linescore.defense.P!.id]
+          }).problems
+        ).deep.equals([])
+      }
       // The tag history needs a source that saves tags, and a pitch to show.
       const tagging = new DevelopmentScoringSource()
       if (cover === 'tag history') {
@@ -2195,8 +2350,7 @@ describe('scoring screen field wiring', function () {
           cover === 'tiebreaker runner'
           ? tagging
           : {
-              open: async () =>
-                ScoringSession.start(memoryStore(), 'g1', prepared)
+              open: async () => live
             },
         {
           [gameFixture.awayTeamId]: [
@@ -2248,6 +2402,37 @@ describe('scoring screen field wiring', function () {
             )
             .click()
         })
+      }
+      if (cover === 'runner error reuse') {
+        await step(() =>
+          field().onRunnerDrop?.(
+            'offense-2',
+            3,
+            'safe',
+            field().interaction!.generation
+          )
+        )
+        await press('Throwing Error')
+        const pitcher = players().find(
+          player =>
+            player.playerId === session.liveData.linescore.defense.P!.id &&
+            player.team === 'defense'
+        )!
+        await step(() =>
+          field().onFieldPlacement?.({
+            ...placement(pitcher.id),
+            generation: field().interaction!.generation
+          })
+        )
+        expect(document.body.textContent, props().instruction).includes(
+          'Was this the same error?'
+        )
+        await settle()
+        expect(document.body.textContent).not.includes(notice)
+        await press('Cancel')
+        await settle()
+        expect(document.body.textContent).includes(notice)
+        return
       }
       if (cover === 'hidden scorer') {
         await rerender({ active: false })

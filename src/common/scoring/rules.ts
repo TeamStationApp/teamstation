@@ -55,6 +55,38 @@ export {
 }
 export type { HomeRunKind, Override, RosterPlayer }
 
+/** The latest runner error may move more runners before another pitch. */
+export function previousRunnerError(
+  state: GameState,
+  reason: string | undefined,
+  defender: number | undefined
+): number | undefined {
+  const play = state.liveData.plays.currentPlay
+  if (play == null || defender == null) return
+  const lastPitch = play.playEvents.findLastIndex(event => event.isPitch)
+  const prior = [...play.runners]
+    .reverse()
+    .find(runner =>
+      runner.credits.some(credit =>
+        ['f_throwing_error', 'f_fielding_error'].includes(credit.credit)
+      )
+    )
+  const kind =
+    reason === 'Throwing Error'
+      ? 'f_throwing_error'
+      : reason === 'Fielding Error'
+        ? 'f_fielding_error'
+        : undefined
+  if (
+    prior?.details.playIndex != null &&
+    prior.details.playIndex > lastPitch &&
+    prior.credits.some(
+      credit => credit.player.id === defender && credit.credit === kind
+    )
+  )
+    return prior.details.playIndex
+}
+
 /** Exact current order identity for transient lineup acceptance. */
 export function battingLineupKey(state: GameState): string {
   const side = battingSide(state)

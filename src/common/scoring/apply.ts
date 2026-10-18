@@ -60,6 +60,7 @@ import {
   inPlay,
   moreEligibility,
   nextDecision,
+  previousRunnerError,
   runnerDecisionError,
   tiebreakerSetupError,
   trajectoryLabel,
@@ -240,6 +241,18 @@ function recordRunner(ctx: Ctx, movement: Movement, record: Recorded): void {
 /** A runner's movement as an event of its own, after its runner entry. */
 function actionEvent(ctx: Ctx, id: number, reason: string): void {
   const play = current(ctx)
+  const ref = ctx.state.recentPitch
+  const pitchPlay =
+    ref == null
+      ? undefined
+      : play.about.atBatIndex === ref.atBatIndex
+        ? play
+        : ctx.state.liveData.plays.allPlays.find(
+            p => p.about.atBatIndex === ref.atBatIndex
+          )
+  const previousPitch =
+    ref == null ? undefined : pitchPlay?.playEvents[ref.index]
+  const catcher = previousPitch?.catcher ?? line(ctx).defense.C
   const event: PlayEvent = {
     index: play.playEvents.length,
     isPitch: false,
@@ -256,7 +269,10 @@ function actionEvent(ctx: Ctx, id: number, reason: string): void {
     },
     count: count(ctx),
     player: playerRef(ctx.state, id),
-    pitcher: play.matchup.pitcher
+    ...(reason === 'Passed Ball' && catcher != null ? { catcher } : {}),
+    pitcher: ['Passed Ball', 'Wild Pitch'].includes(reason)
+      ? (previousPitch?.player ?? play.matchup.pitcher)
+      : play.matchup.pitcher
   }
   play.playEvents.push(event)
 }
@@ -288,6 +304,7 @@ function pitchEvent(
       isInPlay: code === 'X'
     },
     count: left,
+    ...(line(ctx).defense.C == null ? {} : { catcher: line(ctx).defense.C! }),
     player: play.matchup.pitcher
   }
   play.playEvents.push(event)
@@ -1259,6 +1276,25 @@ function runnerMovement(
   joining?: number
 ): void {
   const state = ctx.state
+  if (action.error != null) {
+    if (
+      action.out === true ||
+      !['Throwing Error', 'Fielding Error'].includes(action.reason ?? '')
+    )
+      refuse('illegal', 'Charge a defender only for an advance on an error')
+    if (!isFielder(ctx, action.error))
+      refuse('unknownPlayer', 'That player is not in the field')
+  }
+  if (action.errorEvent != null) {
+    if (
+      !Number.isInteger(action.errorEvent) ||
+      action.errorEvent < 0 ||
+      action.errorEvent !==
+        previousRunnerError(state, action.reason, action.error)
+    )
+      refuse('illegal', 'That error is no longer available for this advance')
+    joining = action.errorEvent
+  }
   const pending = state.pending
   const to = destinationBase(action.to)
   let where = locate(ctx, action.runner)
@@ -1397,6 +1433,23 @@ function commitSafe(
       : pending == null && from === to
         ? 'Safe from Pickoff'
         : 'Advance')
+  // Several runners advanced on the same missed pitch are one WP/PB event.
+  if (
+    joining == null &&
+    ['Wild Pitch', 'Passed Ball'].includes(reason) &&
+    hasEligiblePitch(ctx.state)
+  ) {
+    const play = current(ctx)
+    const ref = ctx.state.recentPitch!
+    const index =
+      play.source.teamstation.runnerActions?.findIndex(
+        record =>
+          record.reason === reason &&
+          record.pitchReference?.atBatIndex === ref.atBatIndex &&
+          record.pitchReference.index === ref.index
+      ) ?? -1
+    if (index >= 0) joining = play.runners[index].details.playIndex
+  }
   setBase(ctx, action.runner, to)
   const rbi = to === 4 && earnsRbi(pending?.outcome, reason)
   if (to === 4 && from !== 4) scoreRun(ctx, action.runner, rbi)
@@ -1411,7 +1464,38 @@ function commitSafe(
     // still send the trailer back when the lead is waved home → third.
     if (hitOffer) old.resolved = false
   } else pending?.movements.push(movement)
-  recordRunner(ctx, movement, { reason, rbi, playIndex: joining })
+  // A failed pickoff records the throw, without any putout or assist credit.
+  const locations = action.locations
+  const route =
+    from === to &&
+    reason === 'Safe from Pickoff' &&
+    locations != null &&
+    locations.length === action.fielders?.length
+      ? action.fielders.map((id, i) => ({
+          id,
+          point: locations[i]
+        }))
+      : undefined
+  recordRunner(ctx, movement, {
+    reason,
+    rbi,
+    credits:
+      action.error == null || action.errorEvent != null
+        ? undefined
+        : [
+            errorCredit(
+              ctx.state,
+              action.error,
+              reason === 'Throwing Error' ? 'throwing' : 'fielding'
+            )
+          ],
+    playIndex: joining,
+    route,
+    thrower: route?.[0]?.point,
+    defender: route?.at(-1)?.point
+  })
+  if (action.error != null && action.errorEvent == null)
+    line(ctx).teams[fieldingSide(ctx.state)].errors++
   // A hit-offer advance belongs on the in-play pitch, not a new action event.
   if (joining == null && !hitOffer) actionEvent(ctx, action.runner, reason)
   moved(ctx, movement)
@@ -1596,9 +1680,10 @@ function batteryEvent(ctx: Ctx, action: BatteryEventAction): void {
         baseIds(ctx.state).indexOf(a.runner)
     )
     // One pitch the catcher did not hold is one event, however many runners
-    // it moved: the lead runner's movement writes it, and the rest join it.
-    const event = current(ctx).playEvents.length
-    lead.forEach((advance, i) => {
+    // it moved: the lead runner writes or reuses it, and the rest join that
+    // actual event, which may have been recorded by an earlier runner drag.
+    let event: number | undefined
+    lead.forEach(advance => {
       runnerMovement(
         ctx,
         {
@@ -1607,8 +1692,9 @@ function batteryEvent(ctx: Ctx, action: BatteryEventAction): void {
           to: advance.to,
           reason: action.kind === 'wild_pitch' ? 'Wild Pitch' : 'Passed Ball'
         },
-        i === 0 ? undefined : event
+        event
       )
+      event = current(ctx).runners.at(-1)!.details.playIndex
     })
     return
   }

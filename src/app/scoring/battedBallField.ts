@@ -6,6 +6,10 @@ import { allowedAngle } from './battedBall'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 
 export function fieldStageInstruction(state: ScoringState): string | undefined {
+  if (state.phase === 'runnerPitchType')
+    return 'Tap Ball, Called Strike, or Swing and Miss for the passed ball.'
+  if (state.phase === 'runnerError')
+    return `Tap the defender who made the ${state.runnerAction!.reason!.toLowerCase()}.`
   if (state.phase === 'locateLanding') return 'Drag where the ball was hit'
   if (state.phase === 'locateFielder' || state.phase === 'chooseThrower')
     return 'Tap or drag a player to where the ball was fielded.'
@@ -55,6 +59,7 @@ export function battedBallField(
     acceptDefenderTap:
       state.phase === 'locateFielder' ||
       state.phase === 'chooseThrower' ||
+      state.phase === 'runnerError' ||
       state.phase === 'chooseDefender',
     constrainPlacement:
       state.phase === 'locateFielder'

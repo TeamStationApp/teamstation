@@ -20,7 +20,7 @@ import { gumboViolations } from '../gumbo/validate'
 import type { GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import { applyAction } from './apply'
-import { documentOf } from './document'
+import { currentDocumentOf, documentOf } from './document'
 import { homeBackProposal } from './rules'
 import type { GameState } from './state'
 import { setupOf } from './state'
@@ -776,6 +776,55 @@ describe('runners between pitches', function () {
       }).problems[0].message
     ).equals('Say where each runner went')
   })
+
+  for (const [kind, reason] of [
+    ['wild_pitch', 'Wild Pitch'],
+    ['passed_ball', 'Passed Ball']
+  ] as const)
+    it(`joins a ${kind} batch to the event already used by a dragged runner`, () => {
+      const before = after(walk(walk(walk(game()))), ball)
+      const actions: ScoringAction[] = [
+        move(1, 'home', { reason }),
+        {
+          type: 'batteryEvent',
+          kind,
+          advances: [
+            { runner: 3, to: '2B' },
+            { runner: 2, to: '3B' }
+          ]
+        }
+      ]
+      const state = after(before, ...actions)
+      const current = state.liveData.plays.currentPlay!
+      expect(current.playEvents.map(event => event.details.code)).deep.equals([
+        'B',
+        kind
+      ])
+      expect(
+        current.runners.map(runner => runner.details.playIndex)
+      ).deep.equals([1, 1, 1])
+      expect(bases(state)).deep.equals([null, 3, 2])
+      expect(runs(state)).equals(1)
+      const saved = currentDocumentOf(state, current, {
+        setupBefore: setupOf(before),
+        actions
+      }) as unknown as {
+        runners: Array<{ details: { playIndex: number } }>
+        playEvents: Array<{ details: { description: string } }>
+      }
+      expect(saved.runners.map(runner => runner.details.playIndex)).deep.equals(
+        [1, 1, 1]
+      )
+      for (const id of [1, 2, 3])
+        expect(saved.playEvents[1].details.description).includes(
+          state.gameData.players[id].fullName
+        )
+      const next = after(state, ball).liveData.plays.currentPlay!
+      expect(
+        next.runners.every(runner => runner.details.playIndex === 1)
+      ).equals(true)
+      expect(next.playEvents[2].isPitch).equals(true)
+    })
 
   it('moves every runner up a base on a balk without ending the appearance', function () {
     let state = after(walk(walk(walk(game()))), ball)

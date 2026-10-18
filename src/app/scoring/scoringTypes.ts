@@ -46,6 +46,10 @@ export type ScoringPhase =
   | 'chooseDefender'
   | 'runnerDecision'
   | 'runnerReason'
+  | 'runnerError'
+  | 'runnerErrorReuse'
+  | 'runnerPitch'
+  | 'runnerPitchType'
   | 'correctionWindow'
 /**
  * The ball in play as the screen draws it: the outcome the scorer chose, where
@@ -96,6 +100,8 @@ export interface RunnerAction {
   returnPhase: ScoringPhase
   decision?: 'safe' | 'out'
   reason?: string
+  error?: number
+  errorEvent?: number
   thrower?: number
   throwerPoint?: GroundPoint
   defender?: number
@@ -265,6 +271,11 @@ export type ScoringEvent =
   | { type: 'RUNNER_PROPOSE'; id: number; to: number }
   | { type: 'RUNNER_DECIDE'; decision: 'safe' | 'out' }
   | { type: 'RUNNER_REASON'; reason: string }
+  | { type: 'RUNNER_ERROR'; id: number; generation: number }
+  | { type: 'RUNNER_ERROR_REUSE'; reuse: boolean }
+  | { type: 'RUNNER_PITCH'; addBall: boolean }
+  | { type: 'RUNNER_PITCH_NEW' }
+  | { type: 'RUNNER_PITCH_KIND'; kind: 'ball' | 'called' | 'swing' }
   | { type: 'CANCEL_RUNNER' }
   | { type: 'RUNNER_CANCEL' }
   | { type: 'THROWER'; id: number; point: GroundPoint; generation: number }

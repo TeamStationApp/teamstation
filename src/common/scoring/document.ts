@@ -421,7 +421,10 @@ function leadOf(
     }
   if (eventType === 'passed_ball')
     return {
-      credit: { eventType, label: title, credit: null },
+      credit:
+        event.catcher == null
+          ? { eventType, label: title, credit: null }
+          : credit(name(event.catcher), 'catcher', title),
       player: null
     }
   if (BATTER_ACTIONS.has(eventType)) {

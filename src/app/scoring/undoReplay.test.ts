@@ -587,6 +587,7 @@ describe('undo by replaying the log (U34)', function () {
         decision: 'safe',
         generation: state.generation
       })
+      state = scoringReducer(state, { type: 'RUNNER_PITCH', addBall: false })
       expect(state.log.length).greaterThan(before.log.length)
       expect(state.past).has.length(before.past.length + 1)
       state = undo(state)

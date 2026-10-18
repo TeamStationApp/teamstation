@@ -449,6 +449,10 @@ function runnerTransition(
     [
       'runnerDecision',
       'runnerReason',
+      'runnerError',
+      'runnerErrorReuse',
+      'runnerPitch',
+      'runnerPitchType',
       'chooseThrower',
       'chooseDefender'
     ].includes(result.phase)

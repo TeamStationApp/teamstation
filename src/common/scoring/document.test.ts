@@ -950,7 +950,7 @@ describe('action events (U12)', function () {
         name: 'passed ball',
         state: after(onFirst, ball, batteryEvent('passed_ball')),
         eventType: 'passed_ball',
-        description: 'Passed ball. Away 1 to 2nd.',
+        description: 'Passed ball by Home 2. Away 1 to 2nd.',
         isBaseRunningPlay: true
       },
       {
@@ -1110,7 +1110,9 @@ describe('action events (U12)', function () {
         })
       )
       const lead =
-        kind === 'wild_pitch' ? 'Wild pitch by Home 1.' : 'Passed ball.'
+        kind === 'wild_pitch'
+          ? 'Wild pitch by Home 1.'
+          : 'Passed ball by Home 2.'
       expect(
         eventsOf(play)
           .filter(event => !event.isPitch)
@@ -1176,6 +1178,41 @@ describe('action events (U12)', function () {
     expect(play.matchup).not.deep.include({
       pitcher: { id: 201, fullName: 'Home 1' }
     })
+  })
+
+  it('keeps a passed ball with its original catcher and does not invent one for old records', () => {
+    const state = after(
+      walk(rostered()),
+      ball,
+      {
+        type: 'batteryEvent',
+        kind: 'passed_ball',
+        advances: [{ runner: 1, to: '2B' }]
+      },
+      {
+        type: 'lineup',
+        kind: 'position',
+        side: 'home',
+        position: 'C',
+        player: F.SS
+      },
+      {
+        type: 'lineup',
+        kind: 'position',
+        side: 'home',
+        position: 'SS',
+        player: F.C
+      }
+    )
+    const description = (): unknown =>
+      eventsOf(stored(state)).find(
+        event => event.details.eventType === 'passed_ball'
+      )!.details.description
+    expect(description()).equals('Passed ball by Home 2. Away 1 to 2nd.')
+    delete state.liveData.plays.currentPlay!.playEvents.find(
+      event => event.details.code === 'passed_ball'
+    )!.catcher
+    expect(description()).equals('Passed ball. Away 1 to 2nd.')
   })
 
   it('writes no action for a runner the ball in play moved: his entry is on the in-play pitch', function () {

@@ -65,6 +65,7 @@ export interface BaseballScreenProps {
   /** The last play in two lines, shown in place of the label and the hint. */
   historyDetail?: { primary: string; secondary?: string }
   canPitch: boolean
+  enabledPitchKinds?: ReadonlyArray<(typeof PITCH_CONTROLS)[number]['kind']>
   remainingMs?: number
   instruction?: string
   instructionStatus?: string
@@ -444,7 +445,11 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                       key={control.kind}
                       accessibilityRole="button"
                       accessibilityLabel={control.label}
-                      disabled={!props.canPitch}
+                      disabled={
+                        !props.canPitch ||
+                        (props.enabledPitchKinds != null &&
+                          !props.enabledPitchKinds.includes(control.kind))
+                      }
                       onPress={() => {
                         props.onPitch(control.kind)
                       }}
@@ -452,7 +457,12 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                         ...button,
                         backgroundColor: CONTROL_COLORS[control.kind].bottom,
                         borderColor: CONTROL_COLORS[control.kind].border,
-                        opacity: props.canPitch ? 1 : 0.5
+                        opacity:
+                          props.canPitch &&
+                          (props.enabledPitchKinds == null ||
+                            props.enabledPitchKinds.includes(control.kind))
+                            ? 1
+                            : 0.5
                       }}
                     >
                       <ControlBackdrop kind={control.kind} />

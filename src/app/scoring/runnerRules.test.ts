@@ -279,9 +279,14 @@ describe('runner progression and correction deadline', function () {
       state = scoringReducer(state, { type: 'RUNNER_PROPOSE', id: 2, to: 2 })
       state = scoringReducer(state, { type: 'RUNNER_DECIDE', decision: 'safe' })
       expect(runnerReasons(state)).includes(reason)
-      state = completeMotions(
-        scoringReducer(state, { type: 'RUNNER_REASON', reason })
-      )
+      state = scoringReducer(state, { type: 'RUNNER_REASON', reason })
+      if (state.phase === 'runnerError')
+        state = scoringReducer(state, {
+          type: 'RUNNER_ERROR',
+          id: 10,
+          generation: state.generation
+        })
+      state = completeMotions(state)
       expect(state.phase).equals('ready')
       expect(baseIds(state.session)).deep.equals([null, 2, null])
       expect(state.session.liveData.linescore.balls).equals(1)

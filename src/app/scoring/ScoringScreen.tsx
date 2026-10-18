@@ -933,6 +933,12 @@ function ScoringPanel(props: {
     state.pendingPlay != null ||
     awaitingResult(session)
   const setupReady = hasActivePlay || (missing.length === 0 && lineupAccepted)
+  const choosingRunnerPitch =
+    props.active &&
+    state.phase === 'runnerPitchType' &&
+    !status.readOnly &&
+    !rosterLoading &&
+    setupReady
   const actionsAllowed =
     props.active &&
     bottomActionsAllowed(state) &&
@@ -965,6 +971,8 @@ function ScoringPanel(props: {
     typeof tiebreaker.mode === 'number' ||
     state.dictationQuestion != null ||
     state.phase === 'runnerReason' ||
+    state.phase === 'runnerPitch' ||
+    state.phase === 'runnerErrorReuse' ||
     state.phase === 'errorCredit'
   const { onOverlay } = props
   useEffect(() => {
@@ -2096,15 +2104,19 @@ function ScoringPanel(props: {
             tiebreaker.active ||
             state.presentation != null
               ? []
-              : ['locateFielder', 'chooseThrower', 'chooseDefender'].includes(
-                    state.phase
-                  )
+              : [
+                    'locateFielder',
+                    'chooseThrower',
+                    'chooseDefender',
+                    'runnerError'
+                  ].includes(state.phase)
                 ? [
                     ...players
                       .filter(
                         player =>
                           player.team !== 'runner' &&
-                          player.hasBall !== true &&
+                          (state.phase === 'runnerError' ||
+                            player.hasBall !== true) &&
                           player.emptyPosition !== true
                       )
                       .map(player => player.id),
@@ -2150,6 +2162,12 @@ function ScoringPanel(props: {
           const id = players.find(
             player => player.id === event.entityId
           )?.playerId
+          if (id != null && state.phase === 'runnerError')
+            dispatchRunner({
+              type: 'RUNNER_ERROR',
+              id,
+              generation: event.generation
+            })
           if (
             id != null &&
             (state.phase === 'chooseThrower' ||
@@ -2312,6 +2330,19 @@ function ScoringPanel(props: {
       }}
       onPitch={kind => {
         if (
+          choosingRunnerPitch &&
+          !menu &&
+          sheet == null &&
+          !outcomeMenu &&
+          !moreOpen &&
+          !tiebreaker.active &&
+          (kind === 'ball' || kind === 'called' || kind === 'swing')
+        ) {
+          scoringAudio.unlock()
+          dispatch({ type: 'RUNNER_PITCH_KIND', kind })
+          return
+        }
+        if (
           !actionsAllowed ||
           menu ||
           sheet != null ||
@@ -2336,7 +2367,7 @@ function ScoringPanel(props: {
         setupInstruction ??
         (status.readOnly
           ? undefined
-          : state.moreDraft != null
+          : state.moreDraft != null && !choosingRunnerPitch
             ? `Drag a runner for ${state.moreDraft.action}`
             : (instruction ??
               (state.phase === 'awaitingBatter'
@@ -2415,15 +2446,18 @@ function ScoringPanel(props: {
             }
       }
       onCameraGesture={setGesture}
+      enabledPitchKinds={
+        choosingRunnerPitch ? ['ball', 'called', 'swing'] : undefined
+      }
       canPitch={
-        actionsAllowed &&
+        (actionsAllowed || choosingRunnerPitch) &&
         !menu &&
         sheet == null &&
         !defensiveOpen &&
         !outcomeMenu &&
         !moreOpen &&
         !tiebreaker.active &&
-        state.moreDraft == null &&
+        (state.moreDraft == null || choosingRunnerPitch) &&
         state.presentation == null
       }
       summary={summary}
