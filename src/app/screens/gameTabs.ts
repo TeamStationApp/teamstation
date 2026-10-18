@@ -83,15 +83,15 @@ export function gameActions(input: GameTabsInput): GameAction[] {
   // Preserve Score's existing availability, including reopening our own games.
   const scoringAvailable =
     scoringEntry(game) != null || game.scoreboard?.open === true
+  if (scoringAvailable && game.canScore && assigned.includes('scorekeeper'))
+    actions.push({ id: 'score', label: lstrings.game_hero_score })
+  if (onRecordGame != null && assigned.includes('videographer'))
+    actions.push({ id: 'record', label: lstrings.game_hero_record })
   if (scoringAvailable) {
-    if (game.canScore && assigned.includes('scorekeeper'))
-      actions.push({ id: 'score', label: lstrings.game_hero_score })
     if (heroCoachSides(game).length > 0 && onCoachGame != null)
       actions.push({ id: 'coach', label: lstrings.game_hero_coach })
     if (game.canDj && assigned.includes('songkeeper') && onDjGame != null)
       actions.push({ id: 'dj', label: 'DJ' })
   }
-  if (onRecordGame != null && assigned.includes('videographer'))
-    actions.push({ id: 'record', label: lstrings.game_hero_record })
   return actions
 }

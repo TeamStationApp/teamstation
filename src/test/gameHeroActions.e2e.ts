@@ -74,7 +74,7 @@ async function main(): Promise<void> {
   const results: Record<string, Measurement> = {}
   try {
     for (const [role, labels] of [
-      ['all', ['Score', 'Coach', 'DJ', 'Record']],
+      ['all', ['Score', 'Record', 'Coach', 'DJ']],
       ['admin', []],
       ['none', []],
       ['coach', ['Coach']],

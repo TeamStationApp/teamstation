@@ -75,8 +75,8 @@ that a location has not been set.
 
 ### Game hero actions stay compact
 
-Order hero actions Score, Coach, DJ, Record, filtering each by its capability
-and assigned scorekeeper, coach, songkeeper, or videographer role respectively.
+Order hero actions Score, Record, Coach, DJ, filtering each by its capability
+and assigned scorekeeper, videographer, coach, or songkeeper role respectively.
 Inherited season/league assignments count; admin privileges and roles implied
 by another role do not. This presentation rule does not change authorization.
 Coach and DJ use Score's existing scoring availability; DJ also needs device

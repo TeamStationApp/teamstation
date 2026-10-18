@@ -172,7 +172,7 @@ describe('the pills across a game', function () {
 
   const onCoachGame = (): void => undefined
 
-  it('orders Score, Coach, DJ, Record by independent capabilities', function () {
+  it('orders Score, Record, Coach, DJ by independent capabilities', function () {
     const input = {
       game: gameWith({ canScore: true, canDj: true, coachSides: ['home'] }),
       onRecordGame,
@@ -182,9 +182,9 @@ describe('the pills across a game', function () {
     expect(ids(gameTabs(input))).deep.equals(['info', 'boxScore', 'watch'])
     expect(gameActions(input)).deep.equals([
       { id: 'score', label: 'Score' },
+      { id: 'record', label: 'Record' },
       { id: 'coach', label: 'Coach' },
-      { id: 'dj', label: 'DJ' },
-      { id: 'record', label: 'Record' }
+      { id: 'dj', label: 'DJ' }
     ])
   })
 

@@ -172,7 +172,15 @@ describe('the event page’s automatic and explicit sections', () => {
         </ThemeProvider>
       )
     })
-    for (const label of ['Score', 'Coach', 'DJ', 'Record'])
+    expect(
+      Array.from(
+        document.querySelectorAll(
+          '[data-testid="game-hero-actions"] [role="button"]'
+        ),
+        button => button.getAttribute('aria-label')
+      )
+    ).deep.equals(['Score', 'Record', 'Coach', 'DJ'])
+    for (const label of ['Score', 'Record', 'Coach', 'DJ'])
       expect(dimensions(label)).deep.equals(size)
     const djShell = document.querySelector(
       '[aria-label="DJ"][role="button"]'
