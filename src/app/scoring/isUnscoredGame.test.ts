@@ -21,6 +21,7 @@ export const gameFixture = asGameDetail({
   ingestMessage: null,
   // Seen by a scorekeeper, so the Score Game tab is on offer.
   canScore: true,
+  assignedRoles: { away: [], home: ['scorekeeper'] },
   videos: []
 })
 describe('unscored entry', function () {

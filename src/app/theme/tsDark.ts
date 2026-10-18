@@ -31,6 +31,7 @@ const palette = {
   amber: '#ffa500',
   gold: '#DAA520',
   scoreBlue: '#1D4ED8',
+  djPurple: '#5B21B6',
 
   blackOp30: 'rgba(0, 0, 0, .3)',
   blackOp35: 'rgba(0, 0, 0, .35)',
@@ -87,6 +88,7 @@ export const tsDark: Theme = {
   clearIconColor: palette.white,
   buttonTextColor: palette.tsBeige,
   scoreActionColor: palette.scoreBlue,
+  djActionColor: palette.djPurple,
 
   inputBackgroundColor: palette.white,
   inputBorderColor: palette.tsMediumOlive,

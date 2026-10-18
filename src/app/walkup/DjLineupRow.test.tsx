@@ -200,7 +200,13 @@ describe('the game Record button', function () {
   ): TeamStationClient {
     const made = new TeamStationClient({ baseUrl: '/api/v1' })
     made.game = async () =>
-      asGameDetail({ ...gameFixture, canDj, canScore: true, status })
+      asGameDetail({
+        ...gameFixture,
+        canDj,
+        canScore: true,
+        status,
+        assignedRoles: { away: [], home: ['scorekeeper', 'videographer'] }
+      })
     made.teams = async () => []
     return made
   }

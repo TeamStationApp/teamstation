@@ -3785,6 +3785,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`coachSides` is the sides whose team the caller head-coaches ' +
             '(the coach flag, which every admin of the team holds; not an ' +
             'assistant), and so whose lineup they may save. ' +
+            '`assignedRoles` lists the caller’s roles by `away` and `home`, ' +
+            'including season/league inheritance but excluding implied privileges. ' +
+            'It filters hero actions only; authorization flags remain unchanged. ' +
             '`scoreboard` is `{ open, mayOverride }`: ' +
             "whether the game's scoreboard is open, and whether the caller " +
             'runs the game and so may override it; null when the ' +

@@ -29,6 +29,7 @@ const game = asGameDetail({
   canScore: true,
   canDj: false,
   coachSides: ['home'],
+  assignedRoles: { away: [], home: ['coach', 'scorekeeper', 'videographer'] },
   nonMemberView: false
 })
 let streams: LiveStream[] = []

@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asGameDetail, type GameDetail } from '../../common/api'
-import { gameActions, gameTabs } from './gameTabs'
+import { gameActions, gameTabs, heroCoachSides } from './gameTabs'
 
 function gameWith(fields: Partial<GameDetail>): GameDetail {
   return {
@@ -23,6 +23,10 @@ function gameWith(fields: Partial<GameDetail>): GameDetail {
       ingestMessage: null,
       videos: []
     }),
+    assignedRoles: {
+      away: ['coach'],
+      home: ['coach', 'scorekeeper', 'songkeeper', 'videographer']
+    },
     ...fields
   }
 }
@@ -34,6 +38,46 @@ function ids(pills: Array<{ id: string }>): string[] {
 }
 
 describe('the pills across a game', function () {
+  it('filters hero actions by assigned roles, never implied admin or coaching powers', () => {
+    const callbacks = {
+      onRecordGame,
+      onCoachGame: () => undefined,
+      onDjGame: () => undefined
+    }
+    const game = gameWith({
+      canScore: true,
+      canDj: true,
+      coachSides: ['away', 'home']
+    })
+    for (const [roles, expected] of [
+      [[], []],
+      [['admin'], []],
+      [['coach'], ['coach']],
+      [['scorekeeper'], ['score']],
+      [['songkeeper'], ['dj']],
+      [['videographer'], ['record']],
+      [
+        ['admin', 'coach', 'scorekeeper'],
+        ['score', 'coach']
+      ]
+    ] as Array<[GameDetail['assignedRoles']['home'], string[]]>) {
+      for (const side of ['away', 'home'] as const) {
+        const assignedRoles = { away: [], home: [], [side]: roles }
+        expect(
+          ids(gameActions({ ...callbacks, game: { ...game, assignedRoles } }))
+        ).deep.equals(expected)
+      }
+    }
+    expect(
+      heroCoachSides({
+        ...game,
+        assignedRoles: { away: ['admin'], home: ['coach'] }
+      })
+    ).deep.equals(['home'])
+    expect(
+      gameActions({ ...callbacks, game: { ...game, eventKind: 'event' } })
+    ).deep.equals([])
+  })
   it('keeps Settings outside the content pills', () => {
     expect(
       ids(
@@ -128,7 +172,7 @@ describe('the pills across a game', function () {
 
   const onCoachGame = (): void => undefined
 
-  it('orders Score, Coach, DJ, Record by independent capabilities', function () {
+  it('orders Score, Record, Coach, DJ by independent capabilities', function () {
     const input = {
       game: gameWith({ canScore: true, canDj: true, coachSides: ['home'] }),
       onRecordGame,
@@ -138,9 +182,9 @@ describe('the pills across a game', function () {
     expect(ids(gameTabs(input))).deep.equals(['info', 'boxScore', 'watch'])
     expect(gameActions(input)).deep.equals([
       { id: 'score', label: 'Score' },
+      { id: 'record', label: 'Record' },
       { id: 'coach', label: 'Coach' },
-      { id: 'dj', label: 'DJ' },
-      { id: 'record', label: 'Record' }
+      { id: 'dj', label: 'DJ' }
     ])
   })
 

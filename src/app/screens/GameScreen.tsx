@@ -83,7 +83,7 @@ import { BoxScore } from './BoxScore'
 import { EventInfoTab } from './EventInfoTab'
 import { defaultEventTab, eventEndTime } from './eventTabPolicy'
 import { gameStatusLine, winnerOf } from './format'
-import { gameActions, gameTabs } from './gameTabs'
+import { gameActions, gameTabs, heroCoachSides } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { watchHandoff } from './gameWatchLayoutProps'
 import { showVideoLivePill } from './livePillPolicy'
@@ -1162,7 +1162,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // Straight to the one team a head coach coaches; a head coach of both
   // picks one.
   const openCoach = (): void => {
-    const [only, other] = game.coachSides
+    const [only, other] = heroCoachSides(game)
     if (other == null) props.onCoachGame?.(teamOf(only))
     else setChoosingCoach(true)
   }
@@ -1178,7 +1178,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ? theme.scoreActionColor
       : id === 'record'
         ? theme.liveColor
-        : theme.pillActiveBackground
+        : id === 'dj'
+          ? theme.djActionColor
+          : theme.pillActiveBackground
 
   const selectSection = (next: Tab): void => {
     // Leaving the video unmounts it, so where it had got to is written
@@ -1202,7 +1204,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const actionShellHeight = theme.rem(1.5)
   const actionButtons =
     heroActions.length === 0 ? undefined : (
-      <View style={styles.heroActions}>
+      <View testID="game-hero-actions" style={styles.heroActions}>
         {heroActions.map(action => (
           <Pressable
             key={action.id}
@@ -1253,6 +1255,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               >
                 <Text
                   numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.75}
                   style={{
                     color: theme.buttonTextColor,
                     fontFamily: theme.semiBoldTextFont,
@@ -1265,6 +1269,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               </View>
             )}
           </Pressable>
+        ))}
+        {Array.from({ length: 4 - heroActions.length }, (_, index) => (
+          <View key={`space-${index}`} style={styles.heroAction} />
         ))}
       </View>
     )
@@ -1812,7 +1819,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       {choosingCoach && (
         <ChoiceSheet
           title={lstrings.game_coach_which}
-          choices={(['away', 'home'] as const).map(side => ({
+          choices={heroCoachSides(game).map(side => ({
             label: side === 'away' ? game.awayTeamName : game.homeTeamName,
             onPress: () => {
               props.onCoachGame?.(teamOf(side))
@@ -1850,13 +1857,13 @@ const getStyles = cacheStyles((theme: Theme) =>
     heroActions: {
       flexDirection: 'row',
       alignItems: 'center',
-      flexWrap: 'wrap',
       gap: theme.rem(theme.spaceSmRem),
       paddingHorizontal: theme.rem(theme.cardContentInsetRem),
       paddingBottom: theme.rem(theme.cardContentInsetRem)
     },
     heroAction: {
-      width: theme.rem(4.5),
+      flex: 1,
+      minWidth: 0,
       minHeight: theme.rem(3),
       justifyContent: 'center'
     },
