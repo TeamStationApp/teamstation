@@ -7,7 +7,12 @@ import { applyAction } from '../../common/scoring/session'
 import { BASES } from '../field/fieldModel'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
-import { initialScoringState, scoringReducer } from './scoringMachine'
+import {
+  initialScoringState,
+  resumedScoringState,
+  scoringReducer
+} from './scoringMachine'
+import { scoringFieldPlayers } from './scoringMotion'
 import { playerRef } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
 
@@ -107,6 +112,18 @@ describe('safe pickoff from a runner drag', () => {
           expect(state.log).has.length(before.log.length + 1)
         } else expect(state.presentation).equals(null)
         expect(state.phase).equals('ready')
+        const defensivePositions = (value: ScoringState): unknown =>
+          scoringFieldPlayers(value)
+            .filter(player => player.team === 'defense')
+            .map(player => ({ id: player.id, position: player.position }))
+        expect(defensivePositions(state)).deep.equals(
+          defensivePositions(before)
+        )
+        expect(
+          defensivePositions(
+            resumedScoringState(state.session, state.log, animate)
+          )
+        ).deep.equals(defensivePositions(before))
         expect(state.runnerAction).equals(null)
         expect(state.runnerDraft).equals(undefined)
         expect(state.past).has.length(before.past.length + 1)
