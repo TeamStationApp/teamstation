@@ -255,7 +255,10 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   ])
 
   const gesturePolicyKey = props.interaction?.gestures.join()
-  const selectablePolicyKey = props.interaction?.selectableIds.join()
+  // Locking tap-only defender editing during a grab must not cancel that drag.
+  const selectablePolicyKey = props.interaction?.selectableIds
+    .filter(id => props.tapIds?.includes(id) !== true)
+    .join()
   useEffect(() => {
     setPreview(null)
     return () => {
