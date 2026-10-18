@@ -1002,7 +1002,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       },
       {
         wantsToPlay: () => !suspended.current && viewerWants.current,
-        isLive: placeFor.current.isLive
+        isLive: placeFor.current.isLive,
+        startAtLiveEdge:
+          !(resumeAtRef.current?.videoId === placeFor.current.videoId) &&
+          !(startAtSecRef.current != null && startAtSecRef.current > 0)
       }
     )
 

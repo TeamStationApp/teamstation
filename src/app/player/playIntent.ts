@@ -51,6 +51,8 @@ export interface PlayIntent {
    * video, as it always has.
    */
   isLive?: () => boolean | Promise<boolean>
+  /** False for a highlight link or an explicitly restored playback position. */
+  startAtLiveEdge?: boolean
 }
 
 /** Moves a running player's limit on how far ahead it loads. */

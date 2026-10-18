@@ -2,6 +2,7 @@ import Hls from 'hls.js'
 
 import { liveRejoin } from './liveRejoin'
 import { recoverLiveStalls } from './liveStallRecovery'
+import { joinLiveOnFirstPlay, LIVE_DELAY_SEC } from './liveStart'
 import { BEHIND_SEC } from './multiCam/buffering'
 import type { BufferControl, PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
@@ -66,7 +67,14 @@ export function attachHls(
     intent?.isLive != null && intent.buffer == null
       ? recoverLiveStalls(video, intent.wantsToPlay)
       : undefined
+  const stopJoining =
+    intent?.isLive != null &&
+    intent.buffer == null &&
+    intent.startAtLiveEdge !== false
+      ? joinLiveOnFirstPlay(video)
+      : undefined
   return () => {
+    stopJoining?.()
     stopRecovery?.()
     detach()
   }
@@ -290,7 +298,7 @@ function attachHlsJs(
     maxBufferLength: limit?.aheadSec ?? (singleLive ? 60 : 30),
     // Keep room for delayed playlist updates. A time-based live position
     // avoids letting one unusually long segment choose the viewer's delay.
-    ...(singleLive ? { liveSyncDuration: 60 } : {}),
+    ...(singleLive ? { liveSyncDuration: LIVE_DELAY_SEC } : {}),
     ...(limit == null ? {} : { maxMaxBufferLength: limit.aheadSec }),
     // Left to itself hls.js keeps every second already played, and a long
     // game fills the browser's quota with the past until it refuses the

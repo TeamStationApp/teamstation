@@ -107,6 +107,7 @@ class FakeVideo {
   paused = true
   ended = false
   currentTime = 0
+  seekable = { length: 0, start: () => 0, end: () => 0 }
   readyState = 0
   loads = 0
   plays = 0
@@ -368,6 +369,54 @@ describe('attaching in a browser', function () {
       detach()
     })
     expect(video.attached()).equals(0)
+  })
+
+  it('joins the latest native HLS footage only on the first play', function () {
+    withMediaSource()
+    const video = new FakeVideo()
+    video.seekable = { length: 1, start: () => 0, end: () => 7200 }
+    video.paused = false
+    asBrowser(APPLE_VENDOR, () => {
+      const detach = attachHls(
+        video as unknown as VideoHandle,
+        url,
+        undefined,
+        {
+          wantsToPlay: () => true,
+          isLive: () => true
+        }
+      )
+      video.emit('play')
+      expect(video.currentTime).equals(7140)
+      video.currentTime = 300
+      video.emit('play')
+      expect(video.currentTime).equals(300)
+      detach()
+    })
+    expect(video.attached()).equals(0)
+  })
+
+  it('preserves an explicit highlight or restored position on first play', function () {
+    withMediaSource()
+    const video = new FakeVideo()
+    video.seekable = { length: 1, start: () => 0, end: () => 7200 }
+    video.paused = false
+    video.currentTime = 300
+    asBrowser(APPLE_VENDOR, () => {
+      const detach = attachHls(
+        video as unknown as VideoHandle,
+        url,
+        undefined,
+        {
+          wantsToPlay: () => true,
+          isLive: () => true,
+          startAtLiveEdge: false
+        }
+      )
+      video.emit('play')
+      expect(video.currentTime).equals(300)
+      detach()
+    })
   })
 
   it('uses hls.js in Chrome and destroys it on teardown', function () {
