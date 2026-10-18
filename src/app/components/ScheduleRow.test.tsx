@@ -94,7 +94,13 @@ describe('ScheduleRow', function () {
 
   it('says LIVE instead of the score while the game is being scored', async function () {
     const container = await render(
-      row({ status: 'inProgress', awayScore: 2, homeScore: 1 })
+      row({
+        status: 'inProgress',
+        startAt: new Date().toISOString(),
+        isGameLive: true,
+        awayScore: 2,
+        homeScore: 1
+      })
     )
     expect(text(container)).includes('LIVE')
     expect(text(container)).not.includes('2–1')
@@ -158,6 +164,8 @@ describe('ScheduleRow', function () {
     const container = await render(
       row({
         status: 'inProgress',
+        startAt: new Date().toISOString(),
+        isGameLive: true,
         result: { label: 'W 5\u20132', tone: 'win' }
       })
     )

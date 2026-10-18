@@ -3,13 +3,28 @@ import { Pressable, Text } from 'react-native'
 
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { Button } from './Button'
 
 export function AddEventCard({
-  onPress
+  onPress,
+  variant = 'event'
 }: {
   onPress: () => void
+  variant?: 'event' | 'game'
 }): React.ReactElement {
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
+  if (variant === 'game')
+    return (
+      <Button
+        label="Add Game"
+        accessibilityLabel="Add Game"
+        testID="add-game-button"
+        color={theme.scoreActionColor}
+        style={{ alignSelf: 'center' }}
+        onPress={onPress}
+      />
+    )
   return (
     <Pressable
       accessibilityRole="button"

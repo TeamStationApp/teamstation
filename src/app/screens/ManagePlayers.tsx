@@ -57,7 +57,7 @@ export function ManagePlayers({
       {players.length === 0 && (
         <Text style={styles.hint}>No players on the roster yet.</Text>
       )}
-      <ActionList>
+      <ActionList bounded={players.length > 0}>
         {players.map(person => (
           <ActionRow
             key={person.userId}

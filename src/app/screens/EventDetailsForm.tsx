@@ -202,6 +202,7 @@ export function EventDetailsForm({
           />
         )}
         <EventScheduleFields
+          client={client}
           value={schedule}
           onChange={schedule => {
             changeDraft({ ...draft, schedule })

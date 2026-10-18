@@ -53,6 +53,7 @@ const palette = {
   winPale: '#E6F4E2',
   winInk: '#385E26',
   crimson: '#BA1A1A',
+  scoreBlue: '#1D4ED8',
   crimsonPale: '#FFDAD6',
   blue: '#1565C0',
 
@@ -113,6 +114,7 @@ export const tsBallpark: Theme = {
   clearIconBackgroundColor: palette.ash,
   clearIconColor: palette.white,
   buttonTextColor: palette.white,
+  scoreActionColor: palette.scoreBlue,
 
   // Inputs
   inputBackgroundColor: palette.white,
