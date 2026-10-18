@@ -23,6 +23,7 @@ export interface RsvpScheduleRowProps {
   startAt: string | null
   venue?: string | null
   status: string
+  isGameLive?: boolean
   pendingApproval?: boolean
   cancellationReason?: string | null
   withdrawnByTeamName?: string | null
@@ -81,13 +82,14 @@ export function RsvpScheduleRow(
   const styles = getStyles(theme)
   const dated = scheduleDate(startAt)
   const inProgress = status === 'inProgress'
+  const live = props.isGameLive === true
   const scored = awayScore != null && homeScore != null && !inProgress
   const cancelled = status === 'cancelled'
   const badgeLabel = pendingApproval
     ? 'Pending approval'
     : cancelled
       ? 'Canceled'
-      : inProgress
+      : live
         ? 'LIVE'
         : result != null
           ? result.label
@@ -97,7 +99,7 @@ export function RsvpScheduleRow(
   const badgeTone: BadgeTone =
     pendingApproval || cancelled
       ? 'neutral'
-      : inProgress
+      : live
         ? 'live'
         : (result?.tone ?? 'neutral')
   const teams = second == null ? first : `${first} ${second}`

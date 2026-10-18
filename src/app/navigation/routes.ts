@@ -1,3 +1,5 @@
+import { safeNext } from '../../common/signInReturn'
+export { safeNext } from '../../common/signInReturn'
 /**
  * Every screen has an address.
  *
@@ -88,6 +90,7 @@ export type Route =
   | { name: 'oauthApprove'; uid: string }
   | { name: 'oauthNative'; handle: string }
   | { name: 'scoreGame'; gameId: string }
+  | { name: 'scoreOptions'; gameId: string }
   /**
    * Coach Game: a head coach's own team in a game, its box score, roster,
    * lineup and defence, which he saves for it.
@@ -439,10 +442,12 @@ export function parseRoute(path: string, search = ''): Route {
       if (parts[2] === 'dj') return { name: 'djGame', gameId: id }
       if (parts[2] === 'coach' && parts[3] != null)
         return { name: 'coachGame', gameId: id, teamId: parts[3] }
-      // The Score Game section of the game page. The same address it had as
-      // its own screen, so a link to it still opens, with the hero above it.
-      if (parts[2] === 'score-game') {
-        return { name: 'game', gameId: id, tab: 'score' }
+      // Keep existing scoring-choice links opening the standalone page.
+      if (
+        parts[2] === 'score-game' ||
+        (parts[2] == null && query.get('tab') === 'score')
+      ) {
+        return { name: 'scoreOptions', gameId: id }
       }
       if (parts[2] === 'scoreboard-override') {
         return { name: 'scoreboardOverride', gameId: id }
@@ -567,6 +572,8 @@ export function routePath(route: Route): string {
       return '/'
     case 'scoreGame':
       return `/games/${route.gameId}/score`
+    case 'scoreOptions':
+      return `/games/${route.gameId}/score-game`
     case 'djGame':
       return `/games/${route.gameId}/dj`
     case 'coachGame':
@@ -663,19 +670,4 @@ export function routePath(route: Route): string {
         ? '/sign-in'
         : `/sign-in?next=${encodeURIComponent(route.next)}`
   }
-}
-
-/**
- * A `next` is a path on this site and nothing else.
- *
- * Without this it is an open redirect: `/sign-in?next=//evil.example` reads as
- * a protocol-relative URL and sends somebody who has just typed their password
- * to another site. One leading slash, and never two.
- */
-export function safeNext(raw: string | null | undefined): string | undefined {
-  if (raw == null || raw === '') return undefined
-  if (!raw.startsWith('/')) return undefined
-  if (raw.startsWith('//')) return undefined
-  if (raw.includes('\\')) return undefined
-  return raw
 }

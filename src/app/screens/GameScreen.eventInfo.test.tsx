@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
   asGameDetail,
+  asVideoSummary,
   type GameDetail,
   TeamStationClient
 } from '../../common/api'
@@ -116,6 +117,155 @@ async function choose(label: string): Promise<void> {
   })
 }
 describe('the event page’s automatic and explicit sections', () => {
+  it('keeps hero button dimensions fixed as capabilities change and opens DJ separately', async () => {
+    const { client, game } = fixture()
+    let dj = 0
+    let coach = 0
+    let record = 0
+    const props = {
+      client,
+      gameId: 'g1',
+      onCoachGame: () => {
+        coach++
+      },
+      onDjGame: () => {
+        dj++
+      },
+      recording: {
+        open: () => {
+          record++
+        }
+      }
+    }
+    const dimensions = (label: string): string[] => {
+      const button = document.querySelector<HTMLElement>(
+        `[role="button"][aria-label="${label}"]`
+      )!
+      const shell = button.firstElementChild as HTMLElement
+      return [
+        getComputedStyle(button).width,
+        getComputedStyle(shell).height,
+        shell.style.paddingLeft,
+        shell.style.paddingRight
+      ]
+    }
+    await render(props)
+    const size = dimensions('Score')
+    expect(size[0]).equals('72px')
+    expect(size[1]).equals('24px')
+    expect(dimensions('Record')).deep.equals(size)
+    game.coachSides = ['home']
+    game.canDj = true
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <GestureHandlerRootView>
+            <GameScreen key="all-actions" {...props} />
+          </GestureHandlerRootView>
+        </ThemeProvider>
+      )
+    })
+    for (const label of ['Score', 'Coach', 'DJ', 'Record'])
+      expect(dimensions(label)).deep.equals(size)
+    for (const label of ['DJ', 'Coach', 'Record'])
+      await act(async () => {
+        document
+          .querySelector<HTMLElement>(`[role="button"][aria-label="${label}"]`)!
+          .click()
+      })
+    expect([dj, coach, record]).deep.equals([1, 1, 1])
+  })
+  it('updates the game LIVE pill for scoring, undo and finalization through the socket', async () => {
+    const { client, game } = fixture()
+    game.startAt = new Date(Date.now() - 60000).toISOString()
+    game.endAt = new Date(Date.now() + 60000).toISOString()
+    game.status = 'inProgress'
+    let listener: ((event: GameSocketEvent) => void) | undefined
+    await render({
+      client,
+      gameId: 'g1',
+      socket: {
+        subscribe: (_id, receive) => {
+          listener = receive
+          return () => undefined
+        }
+      }
+    })
+    const visible = (): boolean =>
+      document.querySelector('[aria-label="Live now"]') != null
+    expect(visible()).equals(false)
+    for (const hasScoringEvents of [true, false, true]) {
+      await act(async () => {
+        game.hasScoringEvents = hasScoringEvents
+        game.isGameLive = hasScoringEvents
+        listener!({ type: 'resync', gameId: 'g1' })
+      })
+      expect(visible()).equals(hasScoringEvents)
+    }
+    await act(async () => {
+      game.status = 'final'
+      game.isGameLive = false
+      listener!({ type: 'resync', gameId: 'g1' })
+    })
+    expect(visible()).equals(false)
+  })
+
+  it('uses the backend LIVE flag and refreshes its decision on foreground', async () => {
+    const { client, game } = fixture()
+    // Deliberately inconsistent local dates/scoring: the UI must trust the flag.
+    game.isGameLive = true
+    await render({ client, gameId: 'g1' })
+    const visible = (): boolean =>
+      document.querySelector('[aria-label="Live now"]') != null
+    expect(visible()).equals(true)
+    game.isGameLive = false
+    await act(async () => {
+      window.dispatchEvent(new window.Event('focus'))
+    })
+    expect(visible()).equals(false)
+  })
+
+  it('catches a start crossed during the game request while its end is still future', async () => {
+    const { client, game } = fixture()
+    const originalNow = Date.now
+    let now = Date.parse('2027-04-10T17:59:59Z')
+    Date.now = () => now
+    game.videos = [
+      asVideoSummary({
+        id: 'v1',
+        kind: 'program',
+        title: 'Live',
+        status: 'live',
+        storage: 'local',
+        startAt: null,
+        durationSec: null,
+        width: null,
+        height: null,
+        codecs: null
+      })
+    ]
+    client.game = async () => {
+      now = Date.parse('2027-04-10T18:00:01Z')
+      return { ...game }
+    }
+    client.highlights = async () => ({
+      highlights: [],
+      withheld: null,
+      droppedCount: 0
+    })
+    client.playback = async () => {
+      throw new Error('No recording')
+    }
+    try {
+      await render({ client, gameId: 'g1' })
+      expect(selected()).equals('Videos')
+      expect(document.querySelector('[role="tab"]')?.textContent).equals(
+        'Videos'
+      )
+    } finally {
+      Date.now = originalNow
+    }
+  })
   it('reapplies the default when Back clears an explicit section without another game refresh', async () => {
     const { client, game } = fixture()
     game.status = 'final'

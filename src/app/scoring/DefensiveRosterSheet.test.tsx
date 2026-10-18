@@ -177,9 +177,9 @@ describe('defensive roster sheet', function () {
       }
     })
     await click('Create Player')
-    await click('Add Placeholder Players')
+    await click('Create Placeholder Player')
     await click('Player count 3')
-    await click('Add')
+    await click('Create')
     expect(counts).deep.equals([3])
     expect(node('First Name')).equals(null)
     expect(document.body.textContent).includes('Assign pitcher')

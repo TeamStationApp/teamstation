@@ -91,7 +91,11 @@ import {
   describeLastPlay,
   describePlay
 } from './playDescription'
-import { addPlayerDraft, type PlayerDraft } from './playerDraft'
+import {
+  addRosteredPlayer,
+  type PlayerDraft,
+  rosterPlayerBody
+} from './playerDraft'
 import { useDictationHandover } from './rosterDictation'
 import { sameValue } from './rosterDirty'
 import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
@@ -1589,9 +1593,24 @@ function ScoringPanel(props: {
   }
   const editableSetup = (fresh: GameState): boolean =>
     setupEditable(resumedScoringState(fresh, [], state.presentationEnabled))
+  const creatingDefender = useRef(false)
+  const defensiveCreation = useRef(0)
+  const defensiveSlotRef = useRef(defensiveSlot)
+  defensiveSlotRef.current = defensiveSlot
+  const cancelDefensiveCreation = (): void => {
+    defensiveCreation.current++
+    creatingDefender.current = false
+  }
+  useEffect(
+    () => () => {
+      defensiveCreation.current++
+    },
+    []
+  )
   const chooseDefender = (id: number): void => {
     const slot = defensiveSlot
     if (slot == null || rosterLoading) return
+    cancelDefensiveCreation()
     refreshSetup()
       .then(fresh => {
         if (fresh == null) return
@@ -1615,14 +1634,17 @@ function ScoringPanel(props: {
         setRosterProblem('Unable to refresh the game. Please try again.')
       })
   }
-  const creatingDefender = useRef(false)
   const createDefensivePlayers = async (
-    add: (draft: GameState, side: Side) => void
+    prepare: (
+      fresh: GameState,
+      side: Side
+    ) => ((draft: GameState) => void) | Promise<(draft: GameState) => void>
   ): Promise<void> => {
     const slot = defensiveSlot
     if (slot == null || creatingDefender.current || rosterLoading)
       throw new Error('The game is refreshing.')
     creatingDefender.current = true
+    const attempt = ++defensiveCreation.current
     try {
       const fresh = await refreshSetup()
       if (fresh == null) throw new Error('Unable to refresh the game.')
@@ -1630,21 +1652,51 @@ function ScoringPanel(props: {
         setDefensiveSlot(undefined)
         throw new Error('The current defense has changed.')
       }
-      const draft = copyState(fresh)
-      add(draft, slot.side)
+      if (
+        attempt !== defensiveCreation.current ||
+        defensiveSlotRef.current !== slot
+      )
+        return
+      const add = await prepare(fresh, slot.side)
+      if (
+        attempt !== defensiveCreation.current ||
+        defensiveSlotRef.current !== slot
+      )
+        return
+      const current = await refreshSetup()
+      if (
+        attempt !== defensiveCreation.current ||
+        defensiveSlotRef.current !== slot
+      )
+        return
+      if (
+        current == null ||
+        fieldingSide(current) !== slot.side ||
+        !editableSetup(current)
+      )
+        throw new Error('The current defense has changed.')
+      const draft = copyState(current)
+      add(draft)
       currentSetup.current = draft
       dispatch({ type: 'ROSTER', draft })
     } finally {
-      creatingDefender.current = false
+      if (attempt === defensiveCreation.current)
+        creatingDefender.current = false
     }
   }
   const createDefensivePlayer = async (player: PlayerDraft): Promise<void> => {
-    await createDefensivePlayers((draft, side) => {
-      addPlayerDraft(draft, side, player)
+    await createDefensivePlayers(async (draft, side) => {
+      const entry = await props.client.createRosterPlayer(
+        draft.gameData.teams[side].id,
+        rosterPlayerBody(player)
+      )
+      return current => {
+        addRosteredPlayer(current, side, entry, player)
+      }
     })
   }
   const createDefensivePlaceholders = async (count: number): Promise<void> => {
-    await createDefensivePlayers((draft, side) => {
+    await createDefensivePlayers((_fresh, side) => draft => {
       addPlaceholderPlayers(draft, side, count)
     })
   }
@@ -2413,10 +2465,12 @@ function ScoringPanel(props: {
           busy={rosterLoading}
           problem={rosterProblem}
           onClose={() => {
+            cancelDefensiveCreation()
             setDefensiveSlot(undefined)
           }}
           onChoose={chooseDefender}
           onAddPlayer={createDefensivePlayer}
+          onCancelCreate={cancelDefensiveCreation}
           onAddPlaceholders={createDefensivePlaceholders}
           onRefresh={refreshDefensiveRoster}
         />
@@ -2621,6 +2675,12 @@ function ScoringPanel(props: {
                 conflict={rosterLive.conflict}
                 onDirtyChange={setRosterChanged}
                 onEditPlayer={props.onEditPlayer}
+                onCreatePlayer={async (teamId, player) =>
+                  await props.client.createRosterPlayer(
+                    teamId,
+                    rosterPlayerBody(player)
+                  )
+                }
                 canEditTeams={props.rosterRights}
                 rosterLoading={props.detailsLoading}
                 rosterError={props.detailsProblem}

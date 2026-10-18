@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 
-import { asEither, asObject } from 'cleaners'
+import { asEither, asObject, asString } from 'cleaners'
 import { type Request, Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
@@ -108,6 +108,17 @@ async function invitation(
     raw.idempotencyKey.length > 120
   )
     throw badRequest('Sending needs a retry key')
+  if (raw.kind === 'membership') {
+    if (userId == null) throw unauthorized()
+    return {
+      terms: {
+        kind: 'membership',
+        teamId: clean(asString, raw.teamId),
+        userId
+      },
+      idempotencyKey: raw.idempotencyKey
+    }
+  }
   if (raw.kind === 'guardian')
     return {
       sender: raw.sender == null ? undefined : clean(asGroupRef, raw.sender),
@@ -836,7 +847,7 @@ export function groupRoutes(
     requireActor,
     withAsync(async (req, res) => {
       // Guardian kinds are authorized when the request is made.
-      if (req.body?.kind !== 'guardian')
+      if (req.body?.kind !== 'guardian' && req.body?.kind !== 'membership')
         await requireGroupAdmin(
           db,
           actorOf(req),
@@ -952,8 +963,8 @@ export function groupRoutes(
           .selectAll()
           .where('id', '=', id)
           .executeTakeFirstOrThrow()
-        if (original.kind === 'guardian')
-          throw conflict('A guardian request is not resent. Send a new one.')
+        if (original.kind === 'guardian' || original.kind === 'membership')
+          throw conflict('A personal request is not resent. Send a new one.')
         await requireGroupAdmin(trx, actor, {
           kind: original.sender_scope_type!,
           id: original.sender_scope_id!

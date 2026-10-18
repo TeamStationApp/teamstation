@@ -328,7 +328,7 @@ async function main(): Promise<void> {
     // The team's own Schedule section, not the tab bar's Schedule.
     await tap('Schedule', 2500, false, TAB_BAR_TOP)
     await tap(game, 4000, true)
-    await tap('DJ Game', 5000)
+    await tap('Record', 5000)
   }
   const leave = async (): Promise<void> => {
     await tap('Back', 1500)
@@ -412,7 +412,7 @@ async function main(): Promise<void> {
       await tap('Ignore')
       assert(!(await notice()), 'Ignore closed it')
       await leave()
-      await tap('DJ Game', 5000)
+      await tap('Record', 5000)
       assert(!(await awaitNotice(60000)), 'once per device')
       console.log('E6 passed')
     },

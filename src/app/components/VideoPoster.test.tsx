@@ -29,8 +29,7 @@ afterEach(async function () {
 })
 
 function frameOf(container: HTMLElement): HTMLElement {
-  const marked = container.querySelector('[aria-label="Play"]')
-  const frame = marked?.parentElement
+  const frame = container.firstElementChild as HTMLElement | null
   if (frame == null) throw new Error('no poster frame')
   return frame
 }
@@ -65,10 +64,28 @@ describe('applyCoverCrop', function () {
 })
 
 describe('VideoPoster', function () {
+  it('keeps a separate play control when a playback callback is supplied', async function () {
+    let plays = 0
+    const container = await render(
+      <VideoPoster
+        showPlay
+        onPlay={() => {
+          plays += 1
+        }}
+      />
+    )
+    await act(async () => {
+      container.querySelector<HTMLElement>('[aria-label="Play"]')!.click()
+    })
+    expect(plays).equals(1)
+  })
+
   it('keeps a hero at 16:9', async function () {
     const container = await render(
       <VideoPoster size="hero" uri="https://example.com/hero.jpg" showPlay />
     )
+    // With its entire parent acting as the button, the icon is decorative.
+    expect(container.querySelector('[role="button"]')).equals(null)
     const frame = frameOf(container)
     expect(ratioOf(getComputedStyle(frame).aspectRatio)).closeTo(16 / 9, 0.01)
     expect(getComputedStyle(frame).height).not.equals('100%')

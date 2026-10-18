@@ -175,11 +175,10 @@ describe('scoring shell and exit', function () {
     fixtureFetch()
     showRoute({ name: 'game', gameId: 'g1' }, true)
     await render(<App />)
-    await click('Score Game')
+    await click('Score')
     expect(currentRoute()).deep.equals({
-      name: 'game',
-      gameId: 'g1',
-      tab: 'score'
+      name: 'scoreOptions',
+      gameId: 'g1'
     })
     await click('Full game scoring')
     expect(currentRoute()).deep.equals({ name: 'scoreGame', gameId: 'g1' })
@@ -218,7 +217,7 @@ describe('scoring shell and exit', function () {
       await render(<App />)
       for (let cycle = 0; cycle < 2; cycle++) {
         await openListedGame()
-        await click('Score Game')
+        await click('Score')
         await click('Full game scoring')
         await click('Open scoring menu')
         await click('Exit Current Game')
@@ -246,15 +245,15 @@ describe('scoring shell and exit', function () {
     showRoute({ name: 'schedule', when: 'upcoming' }, true)
     await render(<App />)
     await openListedGame()
-    await click('Score Game')
+    await click('Score')
     await clickTab('Videos')
     await openListedGame()
-    await click('Score Game')
+    await click('Score')
     await click('Full game scoring')
     await click('Open scoring menu')
     await click('Exit Current Game')
     await clickTab('Schedule')
-    expect(currentRoute()).include({ name: 'game', gameId: 'g1', tab: 'score' })
+    expect(currentRoute()).include({ name: 'scoreOptions', gameId: 'g1' })
     await clickTab('Videos')
     expect(currentRoute().name).equals('videos')
     expect(document.querySelector('[aria-label="Open scoring menu"]')).equals(

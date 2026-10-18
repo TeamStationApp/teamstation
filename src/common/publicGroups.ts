@@ -8,7 +8,9 @@ import {
 } from 'cleaners'
 
 import { asLiteral } from './asLiteral'
+import { withEventMetadata } from './eventInfo'
 import { asLocality } from './locality'
+import { asRole } from './roles'
 
 const nullable =
   <T>(clean: (raw: unknown) => T) =>
@@ -43,26 +45,29 @@ export type SearchRow = PublicGroup & {
   seasonNames?: string[]
   staffNames?: string[]
 }
-export const asPublicGame = asObject({
-  id: asString,
-  homeTeam: asObject({ id: asString, name: asString }),
-  awayTeam: asObject({ id: asString, name: asString }),
-  seasonId: nullable(asString),
-  startAt: asString,
-  venue: nullable(asString),
-  exhibition: asOptional(asBoolean, false),
-  timezone: asOptional(asString, 'UTC'),
-  pendingApproval: asOptional(asBoolean, false),
-  pendingRequestId: asOptional(nullable(asString), null),
-  homeTeamExternal: asOptional(asBoolean, false),
-  awayTeamExternal: asOptional(asBoolean, false),
-  status: asString,
-  homeScore: nullable(asNumber),
-  awayScore: nullable(asNumber),
-  cancellationReason: nullable(asString),
-  withdrawnByTeamId: nullable(asString),
-  withdrawnByTeamName: asOptional(nullable(asString), null)
-})
+export const asPublicGame = withEventMetadata(
+  asObject({
+    id: asString,
+    homeTeam: asObject({ id: asString, name: asString }),
+    awayTeam: asObject({ id: asString, name: asString }),
+    seasonId: nullable(asString),
+    startAt: asString,
+    venue: nullable(asString),
+    exhibition: asOptional(asBoolean, false),
+    timezone: asOptional(asString, 'UTC'),
+    videoCount: asOptional(asNumber, 0),
+    pendingApproval: asOptional(asBoolean, false),
+    pendingRequestId: asOptional(nullable(asString), null),
+    homeTeamExternal: asOptional(asBoolean, false),
+    awayTeamExternal: asOptional(asBoolean, false),
+    status: asString,
+    homeScore: nullable(asNumber),
+    awayScore: nullable(asNumber),
+    cancellationReason: nullable(asString),
+    withdrawnByTeamId: nullable(asString),
+    withdrawnByTeamName: asOptional(nullable(asString), null)
+  })
+)
 export type PublicGame = ReturnType<typeof asPublicGame>
 export const asGroupDetail = asObject({
   group: asPublicGroup,
@@ -70,7 +75,21 @@ export const asGroupDetail = asObject({
   children: asArray(asPublicGroup),
   participatingSeasons: asArray(asPublicGroup),
   competingTeams: asArray(asPublicGroup),
-  staff: asArray(asObject({ name: asString, roles: asArray(asString) })),
+  staff: asArray(
+    asObject({
+      name: asString,
+      roles: asArray(asString),
+      avatarUrl: asOptional(nullable(asString), null),
+      inheritedFrom: asOptional(
+        nullable(
+          asObject({
+            level: asLiteral('season', 'league'),
+            role: asRole
+          })
+        )
+      )
+    })
+  ),
   games: asArray(asPublicGame),
   custodian: asOptional(nullable(asPublicGroup), null),
   /** Placeholder teams this group keeps; a league's only. */

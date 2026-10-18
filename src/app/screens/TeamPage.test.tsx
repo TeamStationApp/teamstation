@@ -83,10 +83,10 @@ describe('restored access-aware team presentation', () => {
         />
       )
       expect(
-        document.querySelector('[data-testid="add-event-card"]') != null
+        document.querySelector('[data-testid="add-game-button"]') != null
       ).equals(allowed)
       if (allowed) {
-        await press('Add Event')
+        await press('Add Game')
         expect(created).equals('canonical')
       }
     })
@@ -235,7 +235,7 @@ describe('restored access-aware team presentation', () => {
       [...document.querySelectorAll('[role="tab"]')].map(n => n.textContent)
     ).deep.equals(['Videos', 'Schedule', 'Team', 'Stats'])
     expect(document.body.textContent).includes(
-      'Team membership is required to view videos.'
+      'No game has a video attached yet.'
     )
     await press('Schedule')
     expect(document.body.textContent).includes('No games scheduled.')
@@ -243,7 +243,7 @@ describe('restored access-aware team presentation', () => {
     expect(document.body.textContent).includes('Standalone team')
     await press('Stats')
     expect(document.body.textContent).includes(
-      'Team membership is required to view statistics.'
+      'You need to be a member of this team to see individual player stats.'
     )
     expect(document.body.textContent).not.includes('Create Game')
     expect(privateReads).equals(0)
@@ -298,12 +298,14 @@ describe('restored access-aware team presentation', () => {
       // The members' roster, not the public page's staff list.
       expect(document.body.textContent).includes('Avery S')
       expect(document.body.textContent).not.includes('Standalone team')
-      expect(document.body.textContent).not.includes('membership is required')
+      expect(document.body.textContent).not.includes(
+        'No game has a video attached yet.'
+      )
       expect(document.querySelector('[aria-label^="Avery S"]')).equals(null)
       await press('Stats')
       expect(document.body.textContent).includes('SEASON PERFORMANCE')
       expect(document.body.textContent).includes(
-        'You need to be a member of one of the teams to see this.'
+        'You need to be a member of this team to see individual player stats.'
       )
       expect(asked).deep.equals(['teamGames canonical', 'roster canonical'])
       // Following it or not changes the button on the card, and nothing else.
@@ -394,11 +396,15 @@ describe('restored access-aware team presentation', () => {
       window.dispatchEvent(new window.Event('focus'))
       await new Promise(resolve => setTimeout(resolve, 20))
     })
-    expect(document.body.textContent).includes('membership is required')
+    expect(document.body.textContent).includes(
+      'No game has a video attached yet.'
+    )
     await act(async () => {
       first(detail({ canViewPrivate: true }))
     })
-    expect(document.body.textContent).includes('membership is required')
+    expect(document.body.textContent).includes(
+      'No game has a video attached yet.'
+    )
     expect(privateReads).equals(1)
   })
   it('follows changed tab addresses while preserving the mounted private team', async () => {
@@ -464,7 +470,9 @@ describe('restored access-aware team presentation', () => {
     )
     await press('Team settings')
     expect(settings).equals('canonical')
-    expect(document.body.textContent).includes('membership is required')
+    expect(document.body.textContent).includes(
+      'No game has a video attached yet.'
+    )
   })
 })
 describe('gear-only team actions', () => {

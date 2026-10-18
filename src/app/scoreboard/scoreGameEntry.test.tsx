@@ -51,13 +51,16 @@ async function click(label: string): Promise<void> {
 
 const runnable = { open: true, mayOverride: true }
 
-async function gameScreen(patch: Partial<GameDetail>): Promise<void> {
+async function gameScreen(
+  patch: Partial<GameDetail>,
+  onScoreGame?: () => void
+): Promise<void> {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => ({ ...gameFixture, ...patch })
   client.teams = async () => []
   await render(
     <GestureHandlerRootView>
-      <GameScreen client={client} gameId="g1" />
+      <GameScreen client={client} gameId="g1" onScoreGame={onScoreGame} />
     </GestureHandlerRootView>
   )
 }
@@ -66,7 +69,7 @@ async function gameScreen(patch: Partial<GameDetail>): Promise<void> {
 function pills(): string[] {
   return Array.from(document.querySelectorAll<HTMLElement>('[aria-label]'))
     .map(node => node.getAttribute('aria-label') ?? '')
-    .filter(label => ['Videos', 'Score Game', 'Box score'].includes(label))
+    .filter(label => ['Videos', 'Score', 'Box score'].includes(label))
 }
 
 const finalGame = { status: 'final' as const, homeScore: 3, awayScore: 2 }
@@ -79,23 +82,16 @@ const { canScore: _canScore, ...unsaid } = gameFixture
 const silent = asGameDetail({ ...unsaid, scoreboard: runnable })
 
 describe('the Score Game pill', function () {
-  it('is the one scoring pill, after Box score and Videos, and opens its choices on this page', async function () {
-    await gameScreen({ canScore: true, scoreboard: runnable })
-    expect(pills()).deep.equals(['Box score', 'Videos', 'Score Game'])
-    expect(button('Score Game')?.getAttribute('role')).equals('tab')
-    expect(button('Override Scoreboard')).equals(null)
-    expect(button('Continue Scoring')).equals(null)
-    expect(document.body.textContent).includes('Owls')
-    await click('Score Game')
-    const text = document.body.textContent ?? ''
-    expect(text).includes('Owls')
-    expect(text).includes('Full game scoring')
-    expect(text.indexOf('Owls')).lessThan(text.indexOf('Box score'))
-    expect(text.indexOf('Box score')).lessThan(
-      text.indexOf('Full game scoring')
-    )
-    expect(button('Videos')?.getAttribute('aria-selected')).not.equals('true')
-    expect(button('Score Game')?.getAttribute('aria-selected')).equals('true')
+  it('opens the separate scoring page through its hero action', async function () {
+    let opened = 0
+    await gameScreen({ canScore: true, scoreboard: runnable }, () => {
+      opened++
+    })
+    expect(pills()).deep.equals(['Score', 'Box score', 'Videos'])
+    expect(button('Score')?.getAttribute('role')).equals('button')
+    await click('Score')
+    expect(opened).equals(1)
+    expect(document.body.textContent).not.includes('Full game scoring')
   })
 
   for (const [label, patch] of [
@@ -111,7 +107,7 @@ describe('the Score Game pill', function () {
   ] as const) {
     it(`shows, labelled Score Game, for ${label}`, async function () {
       await gameScreen(patch)
-      expect(pills()).deep.equals(['Box score', 'Videos', 'Score Game'])
+      expect(pills()).deep.equals(['Score', 'Box score', 'Videos'])
     })
   }
 
@@ -133,17 +129,17 @@ describe('the Score Game pill', function () {
     it(`is hidden for ${label}`, async function () {
       await gameScreen(patch)
       expect(button('Box score')).not.equals(null)
-      expect(button('Score Game')).equals(null)
+      expect(button('Score')).equals(null)
     })
   }
 
   it('stays on the game page, with the hero, when there is no separate screen to open', async function () {
     await gameScreen({ canScore: true, scoreboard: runnable })
     expect(button('Box score')).not.equals(null)
-    expect(button('Score Game')).not.equals(null)
-    await click('Score Game')
+    expect(button('Score')).not.equals(null)
+    await click('Score')
     expect(document.body.textContent).includes('Owls')
-    expect(document.body.textContent).includes('Web Widget Scoreboard Link')
+    expect(document.body.textContent).not.includes('Web Widget Scoreboard Link')
   })
 
   it('shows on a phone too, after Box score and Videos', async function () {
@@ -151,7 +147,7 @@ describe('the Score Game pill', function () {
     Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true })
     try {
       await gameScreen({ canScore: true, scoreboard: runnable })
-      expect(pills()).deep.equals(['Box score', 'Videos', 'Score Game'])
+      expect(pills()).deep.equals(['Score', 'Box score', 'Videos'])
     } finally {
       Object.defineProperty(Platform, 'OS', { value: os, configurable: true })
     }
@@ -220,18 +216,17 @@ describe('the app, the Score Game screen and the dashboard', function () {
     fixtureFetch({ value: true })
     showRoute({ name: 'game', gameId: 'g1' }, true)
     await render(<App />)
-    await click('Score Game')
+    await click('Score')
     expect(currentRoute()).deep.equals({
-      name: 'game',
-      gameId: 'g1',
-      tab: 'score'
+      name: 'scoreOptions',
+      gameId: 'g1'
     })
     const text = document.body.textContent ?? ''
-    expect(text).includes('Owls')
-    expect(text).includes('Score Game')
+    expect(text).not.includes('Owls')
+    expect(button('Score')).equals(null)
+    expect(button('Game sections')).equals(null)
     expect(text).includes('Web Widget Scoreboard Link')
     expect(text).includes('http://localhost/scoreboard/g1')
-    expect(text.indexOf('Owls')).lessThan(text.indexOf('Full game scoring'))
     await click('Scoreboard')
     expect(currentRoute()).deep.equals({
       name: 'scoreboardOverride',
@@ -253,29 +248,30 @@ describe('the app, the Score Game screen and the dashboard', function () {
       })
     })
     expect(button('Reset Game State')).not.equals(null)
-    // Back returns to the game, still on Score Game, hero included.
+    // Back returns to the full scoring-choice page, then to the game.
     await click('Back')
     expect(currentRoute()).deep.equals({
-      name: 'game',
-      gameId: 'g1',
-      tab: 'score'
+      name: 'scoreOptions',
+      gameId: 'g1'
     })
-    expect(document.body.textContent).includes('Owls')
+    expect(document.body.textContent).not.includes('Owls')
     expect(document.body.textContent).includes('Full game scoring')
     await click('Back')
-    expect(currentRoute()).deep.equals({ name: 'home' })
+    expect(currentRoute()).includes({ name: 'game', gameId: 'g1' })
+    expect(button('Game sections')).not.equals(null)
   })
 
   it('opens a link to the Score Game screen or the dashboard with the game beneath it', async function () {
     const sockets = fakeSockets()
     globalThis.WebSocket = sockets.Impl as unknown as typeof WebSocket
     fixtureFetch({ value: true })
-    showRoute({ name: 'game', gameId: 'g1', tab: 'score' }, true)
+    showRoute({ name: 'scoreOptions', gameId: 'g1' }, true)
     await render(<App />)
-    expect(document.body.textContent).includes('Owls')
+    expect(document.body.textContent).not.includes('Owls')
     expect(document.body.textContent).includes('Full game scoring')
     await click('Back')
-    expect(currentRoute()).deep.equals({ name: 'home' })
+    expect(currentRoute()).includes({ name: 'game', gameId: 'g1' })
+    expect(button('Game sections')).not.equals(null)
     await act(async () => {
       root?.unmount()
     })
@@ -283,9 +279,8 @@ describe('the app, the Score Game screen and the dashboard', function () {
     await render(<App />)
     await click('Back')
     expect(currentRoute()).deep.equals({
-      name: 'game',
-      gameId: 'g1',
-      tab: 'score'
+      name: 'scoreOptions',
+      gameId: 'g1'
     })
     await click('Full game scoring')
     expect(currentRoute()).deep.equals({ name: 'scoreGame', gameId: 'g1' })

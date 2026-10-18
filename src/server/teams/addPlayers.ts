@@ -2,6 +2,7 @@ import type { Kysely, Transaction } from 'kysely'
 
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
+import type { NewRosterPlayer } from '../../common/playerSettings'
 import type {
   TeamMemberError,
   TeamMemberExternalId,
@@ -116,6 +117,11 @@ export interface NewUser {
   loginEnabled: boolean
   bats?: TeamPlayerRow['bats']
   throws?: TeamPlayerRow['throws']
+  /**
+   * Where the hands came from. A hand written without one is an import.
+   * A roster manager's create writes `manual`, so a later import leaves it.
+   */
+  batsSource?: 'import' | 'manual'
 }
 
 /** A row's answer when its external id turned out to be held after all. */
@@ -167,7 +173,7 @@ async function insertUser(
       is_admin: false,
       bats: values.bats ?? null,
       throws: values.throws ?? null,
-      bats_source: handed ? 'import' : null,
+      bats_source: handed ? (values.batsSource ?? 'import') : null,
       created_at: now,
       updated_at: now
     })
@@ -290,7 +296,8 @@ async function makePlayer(
   trx: Transaction<Database>,
   teamId: string,
   userId: number,
-  jersey: string | null
+  jersey: string | null,
+  positions?: readonly string[]
 ): Promise<boolean> {
   const membership = await trx
     .selectFrom('memberships')
@@ -308,6 +315,7 @@ async function makePlayer(
         role: 'member',
         is_player: true,
         jersey,
+        ...(positions == null ? {} : { positions: [...positions] }),
         joined_at: new Date()
       })
       .execute()
@@ -321,4 +329,38 @@ async function makePlayer(
     .where('id', '=', membership.id)
     .execute()
   return !membership.is_player
+}
+
+/**
+ * A person created by a roster manager: a user who cannot sign in, with no
+ * e-mail, and a player membership on the team. Hands are `manual`, so a
+ * later roster import does not overwrite them. The user id is what a future
+ * merge follows.
+ */
+export async function createRosterPlayer(
+  db: Kysely<Database>,
+  teamId: string,
+  player: NewRosterPlayer
+): Promise<number> {
+  return await db.transaction().execute(async trx => {
+    const minted = await mintFreeUserId(trx)
+    const handed = player.bats != null || player.throws != null
+    await insertUser(trx, minted, {
+      displayName: displayNameOf(player.firstName, player.lastName, 'Player'),
+      firstName: player.firstName,
+      lastName: player.lastName,
+      loginEnabled: false,
+      ...(player.bats == null ? {} : { bats: player.bats }),
+      ...(player.throws == null ? {} : { throws: player.throws }),
+      ...(handed ? { batsSource: 'manual' as const } : {})
+    })
+    await makePlayer(
+      trx,
+      teamId,
+      minted.userId,
+      player.jersey,
+      player.positions
+    )
+    return minted.userId
+  })
 }

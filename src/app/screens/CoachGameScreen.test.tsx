@@ -353,11 +353,9 @@ describe('Coach Game (U25)', function () {
     )!
     expect(header.textContent).equals('Hawks')
     expect(getComputedStyle(header).textAlign).equals('right')
-    for (const tab of ['Box Score', 'Roster', 'Lineup', 'Defense'])
+    for (const tab of ['Box', 'Roster', 'Lineup', 'Defense'])
       expect(node(tab, 'tab'), tab).not.equals(null)
-    expect(node('Box Score', 'tab')!.getAttribute('aria-selected')).equals(
-      'true'
-    )
+    expect(node('Box', 'tab')!.getAttribute('aria-selected')).equals('true')
     // His own team alone.
     expect(node('Away Team')).equals(null)
     expect(node('Home Team')).equals(null)
@@ -601,7 +599,9 @@ describe('Coach Game (U25)', function () {
     ])
     expect(node('Dictation chat')).not.equals(null)
     const line = document.querySelector('[data-testid="Roster chat line"]')
-    expect(line?.textContent ?? '').includes('runs for')
+    expect(line?.textContent ?? '', document.body.textContent ?? '').includes(
+      'runs for'
+    )
     expect(saveDisabled()).equals(false)
     held.answer = async () => {
       throw new HttpError('conflict', 'Finish the current play first')
@@ -744,7 +744,93 @@ describe('Coach Game (U25)', function () {
     })
   })
 
-  it('keeps the game writable for a coach: Add Player opens its sheet', async function () {
+  it('creates a team roster player from the coach form', async () => {
+    const held = server()
+    const sent: unknown[] = []
+    held.client.createRosterPlayer = async (teamId, player) => {
+      sent.push({ teamId, player })
+      return { ...roster('home')[0], userId: 300, shortName: 'Mookie B' }
+    }
+    await coach(held)
+    await click('Create Player')
+    for (const [label, value] of [
+      ['First Name', 'Mookie'],
+      ['Last Name', 'Betts']
+    ])
+      await act(async () => {
+        const input = node(label) as HTMLInputElement
+        Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value'
+        )!.set!.call(input, value)
+        input.dispatchEvent(new window.Event('input', { bubbles: true }))
+      })
+    await act(async () => {
+      const buttons = document.querySelectorAll<HTMLElement>(
+        '[aria-label="Add Player"], [aria-label="Create Player"]'
+      )
+      buttons[buttons.length - 1].click()
+    })
+    await settle()
+    expect(sent).has.length(1)
+    expect(
+      (sent[0] as { player: { firstName: string } }).player.firstName
+    ).equals('Mookie')
+    expect(node('First Name')).equals(null)
+    await click('Roster', 'tab')
+    held.client.gameLineups = async () => lineups('mine', true)
+    await click('Save Rosters')
+    await waitFor(
+      () => held.saved.length === 1 && saveDisabled(),
+      'saved and remounted'
+    )
+    expect(document.body.textContent).includes('Mookie B')
+  })
+
+  it('edits rostered player settings from coaching and preserves pending lineup changes', async () => {
+    const held = server()
+    const changed = { ...roster('home')[0], jersey: '42' }
+    const writes: unknown[] = []
+    held.client.setPlayerSettings = async (teamId, userId, changes) => {
+      writes.push({ teamId, userId, changes })
+      return changed
+    }
+    await coach(held)
+    const removed = await stageChange()
+    await click('Roster', 'tab')
+    expect(document.body.textContent).not.includes(
+      'Player settings are unavailable'
+    )
+    const player = document.querySelector<HTMLElement>(
+      '[data-testid="Edit roster players"] [aria-label$="edit settings"]'
+    )!
+    await click(player.getAttribute('aria-label')!)
+    await act(async () => {
+      const input = node('Jersey number') as HTMLInputElement
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(input, '42')
+      input.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+    await click('Save')
+    expect(writes).deep.equals([
+      { teamId: 'home', userId: '201', changes: { jersey: '42' } }
+    ])
+    const cancels = document.querySelectorAll<HTMLElement>(
+      '[aria-label="Cancel"]'
+    )
+    await act(async () => {
+      cancels[cancels.length - 1].click()
+    })
+    await settle()
+    expect(document.body.textContent).includes('#42')
+    await click('Lineup', 'tab')
+    expect(node(removed)).equals(null)
+    expect(saveDisabled()).equals(false)
+  })
+
+  it('keeps the game writable for a coach: Create Player opens its sheet', async function () {
     const held = server()
     await coach(held)
     await click('Create Player')
@@ -962,13 +1048,13 @@ describe('the Coach Game pill', function () {
 
   it('opens a head coach’s one team straight away', async function () {
     const opened = await gameScreen(['away'])
-    await click('Coach Game')
+    await click('Coach')
     expect(opened).deep.equals(['away'])
   })
 
   it('asks a head coach of both teams which to coach', async function () {
     const opened = await gameScreen(['away', 'home'])
-    await click('Coach Game')
+    await click('Coach')
     expect(opened).deep.equals([])
     expect(document.body.textContent).includes('Coach which team?')
     await click('Hawks')
@@ -1018,8 +1104,8 @@ describe('Coach Game in the app', function () {
     fixtureFetch()
     showRoute({ name: 'game', gameId: 'g1' }, true)
     await render(<App />)
-    await waitFor(() => node('Coach Game') != null, 'the pill')
-    await click('Coach Game')
+    await waitFor(() => node('Coach') != null, 'the button')
+    await click('Coach')
     expect(currentRoute()).include({
       name: 'coachGame',
       gameId: 'g1',

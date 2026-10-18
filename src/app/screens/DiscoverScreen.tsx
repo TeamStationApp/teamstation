@@ -1,20 +1,12 @@
 import React, { useEffect, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
 import { localityLabel } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
-import { formatDateRange } from '../../common/seasonTimeFrames'
-import {
-  Button,
-  Card,
-  Emblem,
-  initialsOf,
-  Screen,
-  TeamEmblem,
-  TextField
-} from '../components'
+import { Button, Screen, TextField } from '../components'
+import { GroupSearchCard } from '../components/GroupSearchCard'
 import { useTitleHandoff } from '../components/useTitleHandoff'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -194,59 +186,28 @@ export function DiscoverScreen({
           const key = `${group.kind}:${group.id}`
           const isFollowed = followed.has(key)
           return (
-            <Card key={group.id} style={styles.result}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Open ${group.name}${groups.filter(candidate => candidate.name === group.name).length < 2 ? '' : ', ' + (group.locality == null ? 'Location not set' : localityLabel(group.locality))}`}
-                onPress={() => {
-                  onOpen({ kind: group.kind, id: group.id })
-                }}
-                style={styles.open}
-              >
-                {group.kind === 'team' ? (
-                  <TeamEmblem name={group.name} uri={group.imageUrl} size={3} />
-                ) : (
-                  <Emblem
-                    uri={group.imageUrl}
-                    fallback={initialsOf(group.name)}
-                    size={3}
+            <GroupSearchCard
+              key={key}
+              group={group}
+              accessibilityLabel={`Open ${group.name}${groups.filter(candidate => candidate.name === group.name).length < 2 || group.locality == null ? '' : ', ' + localityLabel(group.locality)}`}
+              onPress={() => {
+                onOpen({ kind: group.kind, id: group.id })
+              }}
+              action={
+                follow && own != null && !own.has(key) ? (
+                  <Button
+                    label={isFollowed ? 'Following' : 'Follow'}
+                    accessibilityLabel={`${isFollowed ? 'Unfollow' : 'Follow'} ${group.name}`}
+                    compact
+                    kind={isFollowed ? 'secondary' : 'primary'}
+                    busy={following === key}
+                    onPress={() => {
+                      toggle(group)
+                    }}
                   />
-                )}
-                <View style={styles.details}>
-                  <Text style={styles.name}>{group.name}</Text>
-                  {group.parentNames.length > 0 && (
-                    <Text style={styles.hint}>
-                      Parents: {group.parentNames.join(', ')}
-                    </Text>
-                  )}
-                  <Text style={styles.hint}>
-                    {group.locality == null
-                      ? 'Location not set'
-                      : localityLabel(group.locality)}
-                  </Text>
-                  {group.kind === 'season' && (
-                    <Text style={styles.hint}>
-                      {formatDateRange(group.startsOn, group.endsOn)}
-                    </Text>
-                  )}
-                  {group.external && (
-                    <Text style={styles.hint}>Placeholder team</Text>
-                  )}
-                </View>
-              </Pressable>
-              {follow && own != null && !own.has(key) && (
-                <Button
-                  label={isFollowed ? 'Following' : 'Follow'}
-                  accessibilityLabel={`${isFollowed ? 'Unfollow' : 'Follow'} ${group.name}`}
-                  compact
-                  kind={isFollowed ? 'secondary' : 'primary'}
-                  busy={following === key}
-                  onPress={() => {
-                    toggle(group)
-                  }}
-                />
-              )}
-            </Card>
+                ) : undefined
+              }
+            />
           )
         })}
       </View>
@@ -261,11 +222,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor,
     fontFamily: theme.semiBoldTextFont
   },
-  name: {
-    fontSize: theme.rem(1.125),
-    color: theme.primaryTextColor,
-    fontFamily: theme.semiBoldTextFont
-  },
   hint: {
     fontSize: theme.rem(0.875),
     lineHeight: theme.rem(1.35),
@@ -276,17 +232,5 @@ const getStyles = cacheStyles((theme: Theme) => ({
     flexDirection: 'row' as const,
     flexWrap: 'wrap' as const,
     gap: theme.rem(0.5)
-  },
-  result: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: theme.rem(1)
-  },
-  open: {
-    flex: 1,
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: theme.rem(1)
-  },
-  details: { flex: 1, gap: theme.rem(0.25) }
+  }
 }))

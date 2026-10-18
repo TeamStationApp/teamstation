@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { ParentAction, ParentPreview } from '../../common/groupLinks'
 import { localityLabel } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
-import { formatDateRange } from '../../common/seasonTimeFrames'
 import { Button, Card, Screen, TextField } from '../components'
 import { CancelAction } from '../components/CancelAction'
+import { GroupSearchCard } from '../components/GroupSearchCard'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { GroupLinkChoice } from './GroupScreen'
@@ -286,7 +286,7 @@ export function GroupLinkScreen({
             : 'Season participation lets the season administrators schedule games between its active participants. It does not grant general team-management permissions or change its parents.'}
         </Text>
         {batchStep != null ? (
-          <Card style={styles.card}>
+          <View style={styles.card}>
             <Text style={styles.name}>Add an explicit parent change</Text>
             <Button
               label={
@@ -362,10 +362,10 @@ export function GroupLinkScreen({
               placeholder="Name or city"
             />
             {candidates.map(group => (
-              <Button
+              <GroupSearchCard
                 key={group.id}
-                label={`Choose change ${group.name}`}
-                kind="secondary"
+                group={group}
+                accessibilityLabel={`Choose change ${group.name}`}
                 onPress={() => {
                   setLabels(previous => ({
                     ...previous,
@@ -401,7 +401,7 @@ export function GroupLinkScreen({
                 setQuery('')
               }}
             />
-          </Card>
+          </View>
         ) : selected == null ? (
           <>
             <TextField
@@ -415,31 +415,15 @@ export function GroupLinkScreen({
                 : 'Choose the group to invite.'}
             </Text>
             {candidates.map(group => (
-              <Pressable
+              <GroupSearchCard
                 key={group.id}
-                accessibilityRole="button"
-                accessibilityLabel={`Choose ${group.name}${candidates.filter(candidate => candidate.name === group.name).length < 2 ? '' : ', ' + (group.locality == null ? 'Location not set' : localityLabel(group.locality))}`}
+                group={group}
+                accessibilityLabel={`Choose ${group.name}${candidates.filter(candidate => candidate.name === group.name).length < 2 || group.locality == null ? '' : ', ' + localityLabel(group.locality)}`}
                 disabled={busy}
                 onPress={() => {
                   select(group).catch(() => undefined)
                 }}
-              >
-                <Card style={styles.card}>
-                  <Text style={styles.name}>{group.name}</Text>
-                  <Text style={styles.hint}>
-                    {group.kind === 'season'
-                      ? formatDateRange(group.startsOn, group.endsOn)
-                      : group.locality == null
-                        ? 'Location not set'
-                        : localityLabel(group.locality)}
-                  </Text>
-                  {group.parentNames.length > 0 && (
-                    <Text style={styles.hint}>
-                      Parents: {group.parentNames.join(', ')}
-                    </Text>
-                  )}
-                </Card>
-              </Pressable>
+              />
             ))}
             <Button
               label="Retry candidates"

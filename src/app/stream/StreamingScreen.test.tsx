@@ -66,7 +66,8 @@ interface Harness {
 
 async function mount(
   session: StreamingSession = SESSION,
-  answers: Record<string, unknown> = {}
+  answers: Record<string, unknown> = {},
+  startOnOpen = false
 ): Promise<Harness> {
   const native = fakePhoneStreamModule({
     zoomScale: SCALE,
@@ -101,6 +102,7 @@ async function mount(
     root!.render(
       <ThemeProvider>
         <StreamingScreen
+          startOnOpen={startOnOpen}
           client={client}
           session={session}
           deviceId="00000000-0000-4000-8000-000000000001"
@@ -178,6 +180,35 @@ describe('the streaming screen', function () {
       await delay(10)
     })
     root = undefined
+  })
+
+  it('starts recording after the hero opens the camera', async function () {
+    const h = await mount(SESSION, {}, true)
+    expect(calls(h.native, 'startRecording')).has.length(1)
+    const names = h.native.calls.map(call => call.name)
+    expect(names.indexOf('open')).lessThan(names.indexOf('startRecording'))
+    expect(byTestId('camera-close')?.getAttribute('aria-disabled')).equals(
+      'true'
+    )
+  })
+
+  it('does not start a second recording when the hero resumes an interrupted take', async function () {
+    const h = await mount(
+      SESSION,
+      {
+        interruptedSession: {
+          liveStreamId: SESSION.streamId,
+          gameId: SESSION.gameId,
+          angleName: SESSION.angleName,
+          streaming: true,
+          downtimeSeconds: 10
+        },
+        resumeInterrupted: true
+      },
+      true
+    )
+    expect(calls(h.native, 'resumeInterrupted')).has.length(1)
+    expect(calls(h.native, 'startRecording')).has.length(0)
   })
 
   it('opens the engine sideways under the Cameraman overlay, and closes it after', async function () {

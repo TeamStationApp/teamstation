@@ -35,12 +35,12 @@ export interface ScoreGameScreenProps {
 
 /**
  * Everything the people running a game do to its score, behind the game
- * page's one Score Game pill: full scoring, the simplified scoreboard (1.0's
+ * page's Score button: full scoring, the simplified scoreboard (1.0's
  * override dashboard), and the scoreboard's web widget link to paste into OBS
  * or TS Director.
  *
  * Each option says why when it is not on offer, because the screen can be
- * reached by its address as well as by the pill. The link is always shown: a
+ * reached by its address as well as by the button. The link is always shown: a
  * closed scoreboard answers it with the branded 404, which is still the right
  * thing to have pasted.
  */
@@ -109,12 +109,8 @@ export interface ScoreGameOptionsProps {
 }
 
 /**
- * The three choices under the Score Game pill: full scoring, the simplified
- * scoreboard, and the widget link.
- *
- * Drawn on the game page, under the same hero and pills as Videos and Box
- * score. It does not bring its own screen padding: the page already has the
- * one the hero uses, and a second inset is what made the hero jump.
+ * The standalone scoring page’s choices: full scoring, the simplified
+ * scoreboard, and the widget link. Screen supplies the page margins.
  */
 export function ScoreGameOptions(
   props: ScoreGameOptionsProps
@@ -135,8 +131,8 @@ export function ScoreGameOptions(
   }, [copied])
 
   // Full scoring is for the people the server lets write plays: the same
-  // `canScore` that decides whether the pill shows. Somebody who reaches this
-  // tab by its address is told why not.
+  // `canScore` that decides whether the action shows. Somebody who reaches this
+  // page by its address is told why not.
   const fullReason = !game.canScore
     ? lstrings.score_game_full_not_scorer
     : scoringEntry(game) == null

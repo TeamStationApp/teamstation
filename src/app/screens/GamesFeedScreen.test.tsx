@@ -60,11 +60,12 @@ async function mount(
   mode: 'videos' | 'schedule',
   games: SeasonGame[],
   initialWhen?: When,
-  onWhen?: (when: When) => void
+  onWhen?: (when: When) => void,
+  load?: TeamStationClient['games']
 ): Promise<Opened[]> {
   const opened: Opened[] = []
   const client = {
-    games: async () => games
+    games: load ?? (async () => games)
   } as unknown as TeamStationClient
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -125,6 +126,17 @@ async function setWidth(width: number): Promise<void> {
 }
 
 describe('the games feed', function () {
+  for (const failure of [new Error('Schedule unavailable'), 'offline'])
+    it(`shows a useful schedule load error (${typeof failure})`, async () => {
+      await mount('schedule', [], 'all', undefined, async () => {
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- Exercise an untyped transport rejection.
+        throw failure
+      })
+      expect(text()).includes(
+        failure instanceof Error ? failure.message : 'Cannot load'
+      )
+      expect(host?.querySelector('[data-testid="schedule-date"]')).equals(null)
+    })
   it('shows a pending schedule status instead of the score and opens its authorized request', async function () {
     const opened = await mount(
       'schedule',
@@ -227,6 +239,7 @@ describe('the games feed', function () {
           awayTeamName: 'Comets',
           homeTeamName: 'Hawks',
           status: 'inProgress',
+          isGameLive: true,
           awayScore: 2,
           homeScore: 1,
           videoCount: 0

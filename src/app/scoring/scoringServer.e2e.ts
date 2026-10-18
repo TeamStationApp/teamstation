@@ -9,7 +9,7 @@ import puppeteer, {
   type Page
 } from 'puppeteer'
 
-import type { GameDetail } from '../../common/api'
+import type { GameDetail, RosterEntry } from '../../common/api'
 import {
   dictatedAction,
   type ScoringAction
@@ -130,17 +130,28 @@ async function openAs(
   return page
 }
 async function click(page: Page, label: string): Promise<void> {
-  const selector = `[aria-label="${label}"]`
+  const selector = `[aria-label="${label}"]:not([aria-disabled="true"]):not(:disabled)`
+  const opening =
+    label === 'Create Player' &&
+    (await page.$('[aria-label="First Name"]')) == null
   await page.waitForFunction(
-    selector => {
-      const node = document.querySelector(selector)
-      return node != null && node.getAttribute('aria-disabled') !== 'true'
-    },
+    selector =>
+      Array.from(document.querySelectorAll(selector)).some(node =>
+        node.checkVisibility()
+      ),
     {},
     selector
   )
-  await page.locator(selector).click()
+  for (const match of (await page.$$(selector)).reverse()) {
+    if (!(await match.isVisible())) continue
+    await match.click()
+    // Let the sheet transition finish before targeting its next control.
+    await new Promise(resolve => setTimeout(resolve, 350))
+    break
+  }
+  if (opening) await page.waitForSelector('[aria-label="First Name"]')
 }
+
 async function waitReady(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
@@ -314,11 +325,11 @@ async function reachOnError(page: Page): Promise<void> {
   await click(page, credits.at(-1)!)
 }
 /**
- * The game page's one Score Game pill, whether the game is new or being
- * continued, then the Score Game screen's Full game scoring.
+ * The game page's one Score pill, whether the game is new or being
+ * continued, then the Score screen's Full game scoring.
  */
 async function openScoring(page: Page): Promise<void> {
-  await click(page, 'Score Game')
+  await click(page, 'Score')
   await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
   await click(page, 'Full game scoring')
   await page.waitForFunction(() => location.pathname.endsWith('/score'))
@@ -713,7 +724,7 @@ describe('scoring into the server', function () {
       const before = await summary(page)
       await page.close()
       page = await openAs(scorer, `/games/${gameId}`)
-      await page.waitForSelector('[aria-label="Score Game"]')
+      await page.waitForSelector('[aria-label="Score"]')
       expect(await page.$('[aria-label="Continue Scoring"]')).equals(null)
       await page.reload()
       await openScoring(page)
@@ -787,11 +798,11 @@ describe('scoring into the server', function () {
       ).equals('1')
 
       // Somebody who can see the game and scores for neither team: the game
-      // page offers them no Score Game pill, and the scorer's own address
+      // page offers them no Score pill, and the scorer's own address
       // opens read-only.
       const viewing = await openAs(viewer, `/games/${gameId}`, context)
       await viewing.waitForSelector('[aria-label="Box score"]')
-      expect(await viewing.$('[aria-label="Score Game"]')).equals(null)
+      expect(await viewing.$('[aria-label="Score"]')).equals(null)
       await viewing.close()
       const refused = await openAs(viewer, `/games/${gameId}/score`, context)
       await refused.waitForSelector('canvas[data-field-ready="true"]', {
@@ -1184,8 +1195,11 @@ describe('scoring into the server', function () {
     const fixture = scoringGame()
     const gameId = fixture.games[0]
     const page = await openAs(scorer, `/games/${gameId}`)
-    /** A player made up in the roster sheet, on the side it shows. */
-    const createPlayer = async (first: string, last: string): Promise<void> => {
+    /** A persisted team player created on the side the roster sheet shows. */
+    const createPlayer = async (
+      first: string,
+      last: string
+    ): Promise<RosterEntry> => {
       await click(page, 'Create Player')
       // Asked for directly: waitForSelector never saw the sheet's fields.
       for (let i = 0; i < 50; i++) {
@@ -1196,8 +1210,16 @@ describe('scoring into the server', function () {
       await new Promise(resolve => setTimeout(resolve, 500))
       await page.locator('[aria-label="First Name"]').fill(first)
       await page.locator('[aria-label="Last Name"]').fill(last)
-      await click(page, 'Add Player')
+      const response = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname.endsWith('/roster-players')
+      )
+      await click(page, 'Create Player')
       await page.waitForSelector('[aria-label="First Name"]', { hidden: true })
+      const created = await response
+      expect(created.status()).equals(201)
+      return (await created.json()) as RosterEntry
     }
     const menuItemDisabled = async (label: string): Promise<boolean> =>
       await page.$eval(
@@ -1206,6 +1228,8 @@ describe('scoring into the server', function () {
       )
     let starter = ''
     let dueBatter = ''
+    let pinchPlayer!: RosterEntry
+    let reliefPlayer!: RosterEntry
     try {
       await openScoring(page)
       await click(page, 'Open scoring menu')
@@ -1220,28 +1244,34 @@ describe('scoring into the server', function () {
       // A pinch hitter for him, and a new pitcher, saved together.
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      await createPlayer('Pinch', 'Hitter')
-      await click(page, 'Add Pinch Hitter to Lineup')
+      pinchPlayer = await createPlayer('Mookie', 'Betts')
+      await click(page, `Add ${pinchPlayer.shortName} to Lineup`)
       const order = await page.$$('[aria-label^="Reorder "]')
-      await page.focus('[aria-label="Reorder Pinch Hitter"]')
+      await page.focus(`[aria-label="Reorder ${pinchPlayer.shortName}"]`)
       await page.keyboard.press('Enter')
       for (let i = 1; i < order.length; i++)
         await page.keyboard.press('ArrowUp')
       await page.keyboard.press('Enter')
       // In the browser, so no optional chaining: the test's compiler would
       // call a helper the page does not have.
-      await page.waitForFunction(() => {
-        const first = document.querySelector('[aria-label^="Reorder "]')
-        return first === null
-          ? false
-          : first.getAttribute('aria-label') === 'Reorder Pinch Hitter'
-      })
+      await page.waitForFunction(
+        label => {
+          const first = document.querySelector('[aria-label^="Reorder "]')
+          return first === null
+            ? false
+            : first.getAttribute('aria-label') === `Reorder ${label}`
+        },
+        {},
+        pinchPlayer.shortName
+      )
       await click(page, `Remove ${dueBatter}`)
       await click(page, 'Home Team')
       await click(page, 'Defense')
-      await createPlayer('Relief', 'Pitcher')
+      reliefPlayer = await createPlayer('Mariano', 'Rivera')
       // Held, then dragged onto the mound.
-      const from = await page.waitForSelector('[aria-label="Relief Pitcher"]')
+      const from = await page.waitForSelector(
+        `[aria-label="${reliefPlayer.shortName}"]`
+      )
       await from!.scrollIntoView()
       const start = (await from!.boundingBox())!
       const mound = (await (await page.$(
@@ -1263,21 +1293,19 @@ describe('scoring into the server', function () {
         const mound = document.querySelector('[data-roster-target="defense-P"]')
         return mound === null
           ? false
-          : String(mound.textContent).includes('Relief')
+          : String(mound.textContent).includes('Mariano')
       })
       await click(page, 'Save Rosters')
       await waitReady(page)
       const changed = await summary(page)
-      expect(changed).includes('Batter Pinch Hitter')
-      expect(changed).includes('Pitcher Relief Pitcher')
+      expect(changed).includes(`Batter ${pinchPlayer.shortName}`)
+      expect(changed).includes(`Pitcher ${reliefPlayer.shortName}`)
       // He walks, in the count his man left.
       for (let i = 0; i < 3; i++) await pitch(page, 'Ball')
       await finishAtBat(page)
       await waitReady(page)
-      // A fresh plate appearance: the runner steals before a pitch, and the
-      // game cannot end.
-      await dropRunnerWithKeyboard(page, 'Safe', true)
-      await click(page, 'Steal')
+      // A pitch in the next appearance holds the game open; substitutions do not.
+      await pitch(page, 'Ball')
       await waitReady(page)
       await click(page, 'Open scoring menu')
       expect(await menuItemDisabled('End Game')).equals(true)
@@ -1338,7 +1366,7 @@ describe('scoring into the server', function () {
     const [pitching, pinch] = play.playEvents.slice(1, 3)
     expect(pitching).deep.include({
       isSubstitution: true,
-      player: { fullName: 'Relief Pitcher' },
+      player: { id: reliefPlayer.userId, fullName: reliefPlayer.shortName },
       position: {
         code: '1',
         name: 'Pitcher',
@@ -1350,11 +1378,11 @@ describe('scoring into the server', function () {
     expect(pitching).not.have.property('replacedPlayer')
     expect(pitching.details).deep.include({
       event: 'Pitching Substitution',
-      description: `Pitching Change: Relief Pitcher replaces ${starter}.`
+      description: `Pitching Change: ${reliefPlayer.shortName} replaces ${starter}.`
     })
     expect(pinch).deep.include({
       isSubstitution: true,
-      player: { fullName: 'Pinch Hitter' },
+      player: { id: pinchPlayer.userId, fullName: pinchPlayer.shortName },
       battingOrder: '101'
     })
     expect(pinch.position).deep.include({ code: '11', abbreviation: 'PH' })
@@ -1362,12 +1390,12 @@ describe('scoring into the server', function () {
     expect(pinch.replacedPlayer!.id).equals(fixture.away[0])
     expect(pinch.details).deep.include({
       event: 'Offensive Substitution',
-      description: `Offensive Substitution: Pinch-hitter Pinch Hitter replaces ${dueBatter}.`
+      description: `Offensive Substitution: Pinch-hitter ${pinchPlayer.shortName} replaces ${dueBatter}.`
     })
-    // The reliever was made up with a right arm, so the hand is known.
+    // The reliever was created with a right arm, so the hand is known.
     expect(play.matchup).deep.include({
-      batter: { fullName: 'Pinch Hitter' },
-      pitcher: { fullName: 'Relief Pitcher' },
+      batter: { id: pinchPlayer.userId, fullName: pinchPlayer.shortName },
+      pitcher: { id: reliefPlayer.userId, fullName: reliefPlayer.shortName },
       pitchHand: { code: 'R', description: 'Right' }
     })
     console.log(`      pitching: ${String(pitching.details.description)}`)

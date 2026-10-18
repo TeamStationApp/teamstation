@@ -139,9 +139,6 @@ describe('GameHeroCard', function () {
     )
   })
 
-  /** How many rules a card with a summary draws, counted below. */
-  let ruled = 0
-
   /** The rule above the summary: a top border on the card's last block. */
   function separators(container: HTMLElement): HTMLElement[] {
     return Array.from(container.querySelectorAll<HTMLElement>('div')).filter(
@@ -161,7 +158,6 @@ describe('GameHeroCard', function () {
         (node.textContent ?? '').startsWith('Badgers (Ripken)7 H')
       )
     ).equals(true)
-    ruled = separators(container).length
   })
 
   for (const [why, teamStats] of [
@@ -169,6 +165,18 @@ describe('GameHeroCard', function () {
     ['a game whose plays were never counted', { away: null, home: null }]
   ] as const)
     it(`leaves out the summary and its rule for ${why}`, async function () {
+      const withSummary = await render(
+        <GameHeroCard
+          {...oct4}
+          teamStats={{
+            away: { h: 7, bb: 2, k: 3, hr: 1, e: 0, kDef: 4 },
+            home: null
+          }}
+        />
+      )
+      const ruled = separators(withSummary).length
+      await act(async () => root?.unmount())
+      host?.remove()
       const container = await render(
         <GameHeroCard
           {...oct4}

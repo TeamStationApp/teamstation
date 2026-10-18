@@ -35,6 +35,7 @@ import {
   parseRoute,
   type Route,
   routePath,
+  safeNext,
   type When
 } from './navigation/routes'
 import {
@@ -60,6 +61,7 @@ import {
 } from './navigation/useAddressBar'
 import { passwordKdf } from './platform/passwordKdf'
 import { ScoreboardOverrideScreen } from './scoreboard/ScoreboardOverrideScreen'
+import { ScoreGameScreen } from './scoreboard/ScoreGameScreen'
 import { ScoringPlayerSettingsFlow } from './scoring/ScoringPlayerSettingsFlow'
 import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
@@ -142,6 +144,7 @@ type ScoringSettingsRefresh = () => void
 type Pushed =
   | CreationRoute
   | { name: 'scoreGame'; gameId: string }
+  | { name: 'scoreOptions'; gameId: string }
   /** Coach Game: a head coach's own team in a game, full screen. */
   | { name: 'coachGame'; gameId: string; teamId: string }
   /**
@@ -601,6 +604,8 @@ function Shell(props: AppProps): React.ReactElement {
 
   const stack = stacks[tab]
   const top = stack[stack.length - 1]
+  const navigationRef = useRef({ tab, top })
+  navigationRef.current = { tab, top }
 
   // Somebody else's grant reaches this person in the inbox with nothing to
   // accept, so what they may do is read again whenever the inbox, or one of
@@ -662,7 +667,8 @@ function Shell(props: AppProps): React.ReactElement {
       !(tab === 'search' && top == null) &&
       top?.name !== 'discover' &&
       top?.name !== 'group' &&
-      top?.name !== 'team'
+      top?.name !== 'team' &&
+      top?.name !== 'game'
     )
       return
     // Nor while an invitation is open, for the same reason.
@@ -711,9 +717,34 @@ function Shell(props: AppProps): React.ReactElement {
       setSettingsVisit(++settingsVisitId.current)
       setRoute(route)
       setJoining(route.name === 'join' ? route.code : undefined)
-      const next = visit?.tab ?? tabOf(route)
+      const previous = navigationRef.current
+      const returningFromScoreOptions =
+        previous.top?.name === 'scoreOptions' &&
+        route.name === 'game' &&
+        route.tab !== 'score' &&
+        route.gameId === previous.top.gameId
+      const returningToScoreOptions =
+        (previous.top?.name === 'scoreboardOverride' ||
+          previous.top?.name === 'scoreGame') &&
+        route.name === 'scoreOptions' &&
+        route.gameId === previous.top.gameId
+      const returnFrame = returningFromScoreOptions
+        ? 'game'
+        : returningToScoreOptions
+          ? 'scoreOptions'
+          : undefined
+      const next =
+        returnFrame != null ? previous.tab : (visit?.tab ?? tabOf(route))
+      if (returnFrame != null) inPlace.current = true
       setTab(next)
       setStacks(current => {
+        if (returnFrame != null && 'gameId' in route) {
+          const held = current[next]
+          const at = held.findLastIndex(
+            item => item.name === returnFrame && item.gameId === route.gameId
+          )
+          if (at >= 0) return { ...current, [next]: held.slice(0, at + 1) }
+        }
         if (visit != null && isScoringPlayerReturn(route, visit))
           return { ...current, [next]: visit.frames }
         if (
@@ -1054,8 +1085,11 @@ function Shell(props: AppProps): React.ReactElement {
    */
   const signedIn = (next: Session): void => {
     rememberSession(next)
-    if (route.name === 'signIn' && route.next != null) {
-      const [path, search = ''] = route.next.split('?')
+    const returnPath = safeNext(
+      route.name === 'signIn' ? (route.next ?? next.next) : next.next
+    )
+    if (returnPath != null) {
+      const [path, search = ''] = returnPath.split('?')
       const destination = parseRoute(path, search)
       goToRoute(destination)
       if (
@@ -1064,6 +1098,15 @@ function Shell(props: AppProps): React.ReactElement {
       )
         showRoute(destination, true)
     }
+  }
+
+  const signInHere = (): void => {
+    const destination: Route = {
+      name: 'signIn',
+      next: routePath(routeOf(tab, top, filters))
+    }
+    goToRoute(destination)
+    showRoute(destination)
   }
 
   if (
@@ -1125,7 +1168,8 @@ function Shell(props: AppProps): React.ReactElement {
     (tab === 'search' && top == null) ||
     top?.name === 'discover' ||
     top?.name === 'group' ||
-    top?.name === 'team'
+    top?.name === 'team' ||
+    top?.name === 'game'
   if (session == null && props.fieldPreview !== true && !publicSurface) {
     // The sign-in screen must not be drawn until the question is answered: a
     // flash of it is how a link to a game becomes a link to the sign-in
@@ -1185,7 +1229,7 @@ function Shell(props: AppProps): React.ReactElement {
             client={client}
             token={route.token}
             server={route.server}
-            onSignedIn={rememberSession}
+            onSignedIn={signedIn}
             onSignInAgain={linkSpent => {
               const destination: Route = { name: 'signIn' }
               goToRoute(destination)
@@ -1194,6 +1238,7 @@ function Shell(props: AppProps): React.ReactElement {
           />
         ) : (
           <LoginScreen
+            next={route.name === 'signIn' ? route.next : undefined}
             client={client}
             onSignedIn={signedIn}
             onDiscover={() => {
@@ -1414,6 +1459,8 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'group' ? (
       <GroupScreen
+        signedIn={session != null}
+        onSignIn={signInHere}
         client={client}
         groupRef={{ kind: top.kind, id: top.id }}
         initialTab={top.tab}
@@ -1767,6 +1814,8 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'team' ? (
       <TeamPage
+        signedIn={session != null}
+        onSignIn={signInHere}
         client={client}
         id={top.team.id}
         team={top.team}
@@ -1875,28 +1924,35 @@ function Shell(props: AppProps): React.ReactElement {
       // DJ Game is an iPhone's: on the web and Android its address shows
       // the game.
       <GameScreen
+        signedIn={session != null}
+        onSignIn={signInHere}
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}
+        onScoreGame={() => {
+          push({ name: 'scoreOptions', gameId: top.gameId })
+        }}
+        onCoachGame={teamId => {
+          push({ name: 'coachGame', gameId: top.gameId, teamId })
+        }}
+        onOpenPlayer={openPlayer}
+        onOpenTeam={team => {
+          push({ name: 'team', team })
+        }}
+      />
+    ) : top.name === 'scoreOptions' ? (
+      <ScoreGameScreen
+        key={top.gameId}
+        client={client}
+        gameId={top.gameId}
         onFullScoring={() => {
           push({ name: 'scoreGame', gameId: top.gameId })
         }}
         onScoreboard={() => {
           push({ name: 'scoreboardOverride', gameId: top.gameId })
-        }}
-        onDjGame={() => {
-          push({ name: 'djGame', gameId: top.gameId })
-        }}
-        onCoachGame={teamId => {
-          push({ name: 'coachGame', gameId: top.gameId, teamId })
-        }}
-        music={walkUpMusic}
-        onOpenPlayer={openPlayer}
-        onOpenTeam={team => {
-          push({ name: 'team', team })
         }}
       />
     ) : top.name === 'scoreboardOverride' ? (
@@ -1938,30 +1994,46 @@ function Shell(props: AppProps): React.ReactElement {
       />
     ) : top.name === 'scoreGame' ? null : top.name === 'game' ? (
       <GameScreen
+        signedIn={session != null}
+        onSignIn={signInHere}
         socket={gameSocket}
         client={client}
         gameId={top.gameId}
         onSettings={() => {
           push({ name: 'gameSettings', gameId: top.gameId })
         }}
-        onFullScoring={() => {
-          push({ name: 'scoreGame', gameId: top.gameId })
-        }}
-        onScoreboard={() => {
-          push({ name: 'scoreboardOverride', gameId: top.gameId })
-        }}
-        onDjGame={() => {
-          push({ name: 'djGame', gameId: top.gameId })
+        onScoreGame={resume => {
+          setStacks(current => {
+            const held = current[tab]
+            const last = held.at(-1)
+            const frames =
+              last?.name === 'game' && resume != null
+                ? [
+                    ...held.slice(0, -1),
+                    { ...last, ...resume, tab: 'watch' as const }
+                  ]
+                : held
+            return {
+              ...current,
+              [tab]: [...frames, { name: 'scoreOptions', gameId: top.gameId }]
+            }
+          })
         }}
         onCoachGame={teamId => {
           push({ name: 'coachGame', gameId: top.gameId, teamId })
         }}
-        music={walkUpMusic}
+        onDjGame={
+          walkUpMusic.djSupported
+            ? () => {
+                push({ name: 'djGame', gameId: top.gameId })
+              }
+            : undefined
+        }
         onOpenPlayer={openPlayer}
         onOpenTeam={team => {
           push({ name: 'team', team })
         }}
-        initialTab={top.tab}
+        initialTab={top.tab === 'score' ? undefined : top.tab}
         autoPlay={top.autoPlay}
         initialVideoId={top.videoId}
         startAtSec={top.at}
@@ -2204,15 +2276,28 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
   }
   if (isCreationRoute(route)) return { [tab]: [route] }
   if (route.name === 'scoreGame') return { [tab]: [route] }
+  if (
+    route.name === 'scoreOptions' ||
+    (route.name === 'game' && route.tab === 'score')
+  )
+    return {
+      [tab]: [
+        gameUnder(route.gameId),
+        { name: 'scoreOptions', gameId: route.gameId }
+      ]
+    }
   if (route.name === 'djGame') return { [tab]: [route] }
   // Over the game's Box score, where the coach's Back returns.
   if (route.name === 'coachGame')
     return { [tab]: [gameUnder(route.gameId, 'boxScore'), route] }
-  // The dashboard sits on the game's Score Game section, so Back returns to
-  // the hero and the three pills with Score Game still selected.
+  // Back from a directly opened dashboard returns through the scoring choices.
   if (route.name === 'scoreboardOverride') {
     return {
-      [tab]: [gameUnder(route.gameId, 'score'), route]
+      [tab]: [
+        gameUnder(route.gameId),
+        { name: 'scoreOptions', gameId: route.gameId },
+        route
+      ]
     }
   }
   if (route.name === 'game') {
@@ -2290,6 +2375,7 @@ function routeOf(
     if (top.name === 'djGame') return { name: 'djGame', gameId: top.gameId }
     if (
       top.name === 'scoreGame' ||
+      top.name === 'scoreOptions' ||
       top.name === 'coachGame' ||
       top.name === 'scoreboardOverride'
     ) {
@@ -2380,6 +2466,7 @@ function titleFor(tab: NavTabId, top: Pushed | undefined): string | undefined {
     if (top.name === 'scoreboardOverride') {
       return lstrings.game_override_scoreboard
     }
+    if (top.name === 'scoreOptions') return lstrings.game_score_game
     if (top.name === 'person') return top.title
     return undefined
   }

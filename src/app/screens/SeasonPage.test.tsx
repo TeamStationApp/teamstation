@@ -201,8 +201,7 @@ describe('the season page', () => {
     await press('Open Demo Eagles')
     expect(opened.at(-1)).deep.equals({ kind: 'team', id: 'team_eagles' })
     expect(button('More for Demo Eagles')).equals(undefined)
-    await press('More for Demo Hawks')
-    await press('Break parent relationship')
+    await press('Leave Demo Hawks from Demo Spring')
     expect(asked.at(-1)).deep.equals([
       {
         operation: 'detach',
@@ -213,7 +212,7 @@ describe('the season page', () => {
     expect(document.body.textContent).includes(
       'Remove Demo Spring as parent of Demo Hawks'
     )
-    await press('Keep relationship')
+    await press('Cancel')
     expect(applied).equals(0)
     expect(document.body.textContent).not.includes(
       'Review relationship changes'

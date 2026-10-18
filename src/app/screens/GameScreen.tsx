@@ -74,44 +74,48 @@ import {
 import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { windowOf } from '../player/wallClock'
-import { ScoreGameOptions } from '../scoreboard/ScoreGameScreen'
+import type { GameRecording } from '../stream/gameRecording'
 import { StreamFooter } from '../stream/StreamFooter'
+import { useGameRecording } from '../stream/useGameRecording'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { BoxScore } from './BoxScore'
 import { EventInfoTab } from './EventInfoTab'
 import { defaultEventTab, eventEndTime } from './eventTabPolicy'
 import { gameStatusLine, winnerOf } from './format'
-import { gameTabs } from './gameTabs'
+import { gameActions, gameTabs } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { watchHandoff } from './gameWatchLayoutProps'
+import { showVideoLivePill } from './livePillPolicy'
+import { MembershipAccess } from './MembershipAccess'
 import { openableTeams as teamsWithAPage } from './openableTeams'
+import { VideoMembershipSheet } from './VideoMembershipSheet'
+
+export interface GamePlaybackReturn {
+  videoId: string
+  at: number
+  autoPlay: boolean
+}
 
 export interface GameScreenProps {
   client: TeamStationClient
   gameId: string
+  signedIn?: boolean
+  onSignIn?: () => void
   socket?: Pick<GameSocket, 'subscribe'>
-  /** Opens the full scorer from the Score Game tab. */
-  onFullScoring?: () => void
-  /** Opens the simplified scoreboard from the Score Game tab. */
-  onScoreboard?: () => void
-  /**
-   * An explicit section. Bare addresses use the event's current default.
-   */
-  /** Opens DJ Game, for a songkeeper of either team. */
-  onDjGame?: () => void
+  /** Opens the scoring choices as a separate page, retaining the watched moment. */
+  onScoreGame?: (resume?: GamePlaybackReturn) => void
+  /** An embedded recording controller; otherwise use this device's camera. */
+  recording?: GameRecording
   /**
    * Opens Coach Game on a team the viewer head-coaches. A head coach of both
    * teams picks one first.
    */
   onCoachGame?: (teamId: string) => void
+  onDjGame?: () => void
   /** Opens a separate scheduling settings screen for a participating team admin. */
   onSettings?: () => void
-  /**
-   * The phone's music. DJ Game plays songs, and is offered only on an
-   * iPhone: never on the web or Android.
-   */
-  music?: { djSupported: boolean }
+  /** An explicit section. Bare addresses use the event's current default. */
   initialTab?: Tab
   /** Start the video. Arriving here by pressing `Watch Replay` is a gesture a
    * browser accepts, which is what makes an unmuted autoplay legal. */
@@ -174,7 +178,7 @@ export interface GameScreenProps {
   ) => void
 }
 
-type Tab = 'info' | 'boxScore' | 'watch' | 'score'
+type Tab = 'info' | 'boxScore' | 'watch'
 
 /**
  * What each of a game's videos is called on the strip under the picture.
@@ -304,6 +308,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     onOpenTeam,
     onOpenPlayer
   } = props
+  const deviceRecording = useGameRecording(client, gameId)
+  const recording = props.recording ?? deviceRecording
   const theme = useTheme()
   const styles = getStyles(theme)
   const { height, width } = useWindowDimensions()
@@ -398,17 +404,23 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }, [game, clockNow, requestedTab])
   useEffect(() => {
     if (game == null) return
-    const end = eventEndTime(game)
-    if (end == null) return
-    if (end <= Date.now()) {
-      if (clockNow < end) setClockNow(Date.now())
+    const start = game.startAt == null ? NaN : Date.parse(game.startAt)
+    const marks = [eventEndTime(game), Number.isFinite(start) ? start : null]
+    const now = Date.now()
+    if (marks.some(mark => mark != null && mark <= now && clockNow < mark)) {
+      setClockNow(now)
       return
     }
+    const pending = marks.filter(
+      (mark): mark is number => mark != null && mark > now
+    )
+    if (pending.length === 0) return
+    const next = Math.min(...pending)
     const timer = setTimeout(
       () => {
         setClockNow(Date.now())
       },
-      Math.min(2147483647, end - Date.now() + 1)
+      Math.min(2147483647, next - now + 1)
     )
     return () => {
       clearTimeout(timer)
@@ -457,6 +469,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [client, gameId, game])
   const [video, setVideo] = useState<VideoSummary | undefined>(undefined)
+  const [membershipWarning, setMembershipWarning] = useState(false)
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [withheld, setWithheld] = useState<string | null>(null)
   const [dropped, setDropped] = useState(0)
@@ -522,7 +535,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const anglesOffered = useMemo(() => multiAngleSupported(playerEngine()), [])
   /**
-   * Somebody signed in who is a member of neither team: the score, the line
+   * A guest or somebody who is a member of neither team: the score, the line
    * score and the highlights' pictures, and not the video, the box score's
    * tables or the summary under the card, which are kept for members.
    * Nothing kept is asked for, so the page never meets the server's refusal.
@@ -544,6 +557,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * highlight column leaves the same room in portrait and landscape.
    */
   const [tabsHeight, setTabsHeight] = useState(0)
+  const [sectionPillsHeight, setSectionPillsHeight] = useState(0)
   /**
    * How tall the camera-angle buttons are, so the picture can leave room.
    *
@@ -613,6 +627,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     height,
     // The picture leaves room for the section pills pinned below the header.
     chromeHeight: headerHeight + tabsHeight,
+    // Conditional actions must not feed back into the decision to show them.
+    shortChromeHeight: headerHeight + sectionPillsHeight,
     // The camera-angle buttons are pegged with the picture and have to stay
     // on the screen with it. Twice the small space as well: `onLayout`
     // measures the card and not the margin above it, and the second keeps the
@@ -890,8 +906,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   resumeAtRef.current = resumeAt
   const startAtSecRef = useRef(startAtSec)
   startAtSecRef.current = startAtSec
-  const autoPlayRef = useRef(autoPlay)
-  autoPlayRef.current = autoPlay
+  const autoPlayRef = useRef(props.autoPlay)
+  autoPlayRef.current = props.autoPlay
   const placeFor = useRef<{
     videoId?: string
     playbackFor?: string
@@ -1006,20 +1022,21 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
 
     // A link to a moment: start there, and start playing, because that is
-    // what the person who sent the link meant by sending it.
+    // what the person who sent the link meant by sending it. An explicit
+    // paused return from another page keeps that intent instead.
     const linkAt = startAtSecRef.current
     if (linkAt != null && linkAt > 0 && !startedFromLink.current) {
       startedFromLink.current = true
       const jump = (): void => {
         element.currentTime = linkAt
-        element.play().catch(() => undefined)
+        if (autoPlayRef.current !== false) element.play().catch(() => undefined)
       }
       if (element.readyState >= HAVE_METADATA) jump()
       else element.addEventListener('loadedmetadata', jump, { once: true })
       return detach
     }
 
-    if (autoPlayRef.current) {
+    if (autoPlayRef.current === true) {
       // The tap that opened this screen is a gesture the browser counts, so an
       // unmuted start is allowed. If it refuses anyway the controls are right
       // there, and saying so would be noise.
@@ -1045,6 +1062,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const current = video
     if (player == null || current == null || next.id === current.id) {
       setVideo(next)
+      // Public previews have no player, but their selected camera still belongs
+      // in the address so sign-in can return to it.
+      if (next.id !== current?.id) onMoment?.(next.id, 0)
       return
     }
     // Worked out before the swap, and handed to the effect that attaches the
@@ -1065,11 +1085,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }
 
   const jumpTo = (highlight: Highlight): void => {
+    if (nonMemberView) {
+      setMembershipWarning(true)
+      return
+    }
     setActiveEventId(highlight.eventId)
     setChosen(highlight)
-    // There is no video to seek for a non-member, and no moment to link to:
-    // the notice in the player's place says why.
-    if (nonMemberView) return
     // The address follows, so the moment somebody is looking at is the moment
     // they can send to somebody else.
     if (video != null)
@@ -1136,6 +1157,117 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       onOpenTeam(team)
     }
   }
+  const teamOf = (side: Side): string =>
+    side === 'home' ? game.homeTeamId : game.awayTeamId
+  // Straight to the one team a head coach coaches; a head coach of both
+  // picks one.
+  const openCoach = (): void => {
+    const [only, other] = game.coachSides
+    if (other == null) props.onCoachGame?.(teamOf(only))
+    else setChoosingCoach(true)
+  }
+  const heroActions = gameActions({
+    game,
+    now: clockNow,
+    onRecordGame: recording.open,
+    onDjGame: props.onDjGame,
+    onCoachGame: props.onCoachGame == null ? undefined : openCoach
+  })
+  const actionColor = (id: (typeof heroActions)[number]['id']): string =>
+    id === 'score'
+      ? theme.scoreActionColor
+      : id === 'record'
+        ? theme.liveColor
+        : theme.pillActiveBackground
+
+  const selectSection = (next: Tab): void => {
+    // Leaving the video unmounts it, so where it had got to is written
+    // down here and picked up by the attach that follows the remount.
+    // Without this you came back to the start of the game, which is a
+    // poor reward for having looked at the box score.
+    const player = playerRef.current
+    if (next !== 'watch' && player != null && video != null) {
+      setResumeAt({
+        videoId: video.id,
+        sec: player.currentTime,
+        playing: !player.paused
+      })
+    }
+    explicitSelection.current = true
+    selectTab(next)
+    setTab(next)
+    onTab?.(next)
+  }
+
+  const actionShellHeight = theme.rem(1.5)
+  const actionButtons =
+    heroActions.length === 0 ? undefined : (
+      <View style={styles.heroActions}>
+        {heroActions.map(action => (
+          <Pressable
+            key={action.id}
+            accessibilityRole="button"
+            accessibilityLabel={action.label}
+            disabled={action.id === 'record' && recording.busy === true}
+            accessibilityState={{
+              disabled: action.id === 'record' && recording.busy === true
+            }}
+            style={styles.heroAction}
+            onPress={() => {
+              if (action.id === 'score') {
+                const player = playerRef.current
+                props.onScoreGame?.(
+                  player != null && video != null
+                    ? {
+                        videoId: video.id,
+                        at: player.currentTime,
+                        autoPlay: !player.paused
+                      }
+                    : undefined
+                )
+                return
+              }
+              if (action.id === 'dj') {
+                props.onDjGame?.()
+                return
+              }
+              if (action.id === 'record') {
+                recording.open?.()
+                return
+              }
+              openCoach()
+            }}
+          >
+            {({ pressed }) => (
+              <View
+                style={[
+                  styles.heroActionShell,
+                  {
+                    height: actionShellHeight,
+                    borderRadius: actionShellHeight / 2,
+                    paddingHorizontal: actionShellHeight / 2,
+                    backgroundColor: actionColor(action.id),
+                    opacity: pressed ? 0.85 : 1
+                  }
+                ]}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={{
+                    color: theme.buttonTextColor,
+                    fontFamily: theme.semiBoldTextFont,
+                    fontSize: theme.rem(0.875),
+                    fontWeight: '600'
+                  }}
+                >
+                  {action.label}
+                </Text>
+              </View>
+            )}
+          </Pressable>
+        ))}
+      </View>
+    )
 
   const scoreboard =
     game.eventKind === 'event' ? (
@@ -1180,7 +1312,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         awayScore={game.awayScore}
         homeScore={game.homeScore}
         status={game.status === 'scheduled' ? '' : gameStatusLine(game)}
-        live={game.status === 'inProgress'}
+        live={game.isGameLive === true}
         winner={winnerOf(game)}
         compact
         awayRecord={game.awayRecord}
@@ -1202,61 +1334,27 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         teamStats={nonMemberView ? null : teamStatsOf(game.linescore)}
         onOpenAwayTeam={openSide(game.awayTeamId)}
         onOpenHomeTeam={openSide(game.homeTeamId)}
+        actions={actionButtons}
       />
     )
 
-  const teamOf = (side: Side): string =>
-    side === 'home' ? game.homeTeamId : game.awayTeamId
-  // Straight to the one team a head coach coaches; a head coach of both
-  // picks one.
-  const openCoach = (): void => {
-    const [only, other] = game.coachSides
-    if (other == null) props.onCoachGame?.(teamOf(only))
-    else setChoosingCoach(true)
-  }
   const tabs = (
     <PillTabs
       tabs={gameTabs({
         game,
-        now: clockNow,
-        music: props.music,
-        onDjGame: props.onDjGame,
-        onCoachGame: props.onCoachGame == null ? undefined : openCoach
+        now: clockNow
       })}
       selected={tab}
       onSelect={next => {
-        if (next === 'dj') {
-          props.onDjGame?.()
-          return
-        }
-        if (next === 'coach') {
-          openCoach()
-          return
-        }
-        // Leaving the video unmounts it, so where it had got to is written
-        // down here and picked up by the attach that follows the remount.
-        // Without this you came back to the start of the game, which is a
-        // poor reward for having looked at the box score.
-        const player = playerRef.current
-        if (next !== 'watch' && player != null && video != null) {
-          setResumeAt({
-            videoId: video.id,
-            sec: player.currentTime,
-            playing: !player.paused
-          })
-        }
-        explicitSelection.current = true
-        selectTab(next)
-        setTab(next)
-        onTab?.(next)
+        if (next !== 'info' && next !== 'boxScore' && next !== 'watch') return
+        selectSection(next)
       }}
       size="compact"
       accessibilityLabel="Game sections"
     />
   )
 
-  // A non-member's tap gets no play's account: the members-only message is
-  // repeated under the tapped highlight instead (see `highlightList`).
+  // Detailed play accounts remain available only to members.
   const description =
     chosen == null ||
     nonMemberView ||
@@ -1282,19 +1380,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       </GlassView>
     )
 
-  const isLive = video?.status === 'live'
-  /**
-   * What stands in the player's place when there is nothing to play: a game
-   * nothing was recorded of, or a non-member, whose video is kept for
-   * members. Words on the page, not a black box with nothing in it. Painted
-   * the page's own colour, since the highlights scroll up under it.
-   */
-  const notice =
+  // The selected video object is kept across refreshes so playback is not
+  // reset. Whether it is live is read from the game just fetched: that copy
+  // carries whether bytes are still arriving.
+  const playing =
     video == null
-      ? lstrings.game_no_video
-      : nonMemberView
-        ? lstrings.game_videos_members_only
-        : undefined
+      ? undefined
+      : (game.videos.find(item => item.id === video.id) ?? video)
+  const isLive = showVideoLivePill(playing, game, clockNow)
+  const notice = video == null ? lstrings.game_no_video : undefined
   // The game's board over the picture, at the wall time of the frame on
   // screen, where the node's single-camera setting puts it on the picture:
   // the box less any black bars.
@@ -1320,6 +1414,34 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             {notice}
           </Text>
         </View>
+      ) : nonMemberView ? (
+        <Pressable
+          testID="gameVideoPreview"
+          accessibilityRole="button"
+          accessibilityLabel="Play game video"
+          onPress={() => {
+            setMembershipWarning(true)
+          }}
+          style={{
+            width: layout.videoWidth,
+            height: layout.videoHeight,
+            overflow: 'hidden'
+          }}
+        >
+          <View pointerEvents="none">
+            <VideoPoster
+              uri={playing?.posterUrl}
+              size="hero"
+              showPlay
+              time={
+                playing?.durationSec == null
+                  ? undefined
+                  : timecode(playing.durationSec)
+              }
+            />
+          </View>
+          {isLive && <LivePill />}
+        </Pressable>
       ) : (
         <PlayerSurface
           videoRef={playerRef}
@@ -1430,6 +1552,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           {highlights.map(highlight => (
             <Pressable
               key={highlight.eventId}
+              accessibilityRole="button"
+              accessibilityLabel={`Play highlight: ${highlight.title}`}
               style={[
                 styles.highlight,
                 { width: `${100 / columns}%` },
@@ -1455,20 +1579,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                   highlight.isScoringPlay ? styles.scoring : undefined
                 ]}
               />
-              {/*
-                The message in the player's place may be scrolled out of
-                sight by now, so a non-member's tap is answered where they
-                tapped, too.
-              */}
-              {nonMemberView && highlight.eventId === activeEventId ? (
-                <Text
-                  testID="highlightMembersOnly"
-                  accessibilityRole="alert"
-                  style={[styles.notice, styles.highlightNotice]}
-                >
-                  {lstrings.game_videos_members_only}
-                </Text>
-              ) : null}
             </Pressable>
           ))}
         </View>
@@ -1488,7 +1598,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       <ContentInsetContext.Provider
         value={short ? NO_INSET : { left: headInset, right: headInset }}
       >
-        {tabs}
+        {short && tab === 'watch' ? actionButtons : null}
+        <View
+          onLayout={event => {
+            setSectionPillsHeight(event.nativeEvent.layout.height)
+          }}
+        >
+          {tabs}
+        </View>
       </ContentInsetContext.Provider>
     </View>
   )
@@ -1582,14 +1699,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           eventId={gameId}
           event={game}
         />
-      ) : tab === 'score' ? (
-        <ScoreGameOptions
-          game={game}
-          onFullScoring={props.onFullScoring}
-          onScoreboard={props.onScoreboard}
-        />
       ) : (
         <BoxScore
+          membershipAccess={
+            <MembershipAccess
+              key={`${game.id}:${props.signedIn === true}`}
+              client={client}
+              signedIn={props.signedIn === true}
+              teams={[
+                { id: game.homeTeamId, name: game.homeTeamName },
+                { id: game.awayTeamId, name: game.awayTeamName }
+              ]}
+              onSignIn={() => props.onSignIn?.()}
+            />
+          }
           game={game}
           box={box}
           theme={theme}
@@ -1659,8 +1782,33 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           )}
         </View>
       </View>
+      {membershipWarning && (
+        <VideoMembershipSheet
+          client={client}
+          signedIn={props.signedIn === true}
+          teams={[
+            { id: game.homeTeamId, name: game.homeTeamName },
+            { id: game.awayTeamId, name: game.awayTeamName }
+          ]}
+          onSignIn={() => {
+            props.onSignIn?.()
+          }}
+          onClose={() => {
+            setMembershipWarning(false)
+          }}
+        />
+      )}
       {anglePicker}
       {multiCam}
+      {recording.screen}
+      {recording.error != null && (
+        <Text
+          accessibilityRole="alert"
+          style={{ color: theme.primaryTextColor }}
+        >
+          {recording.error}
+        </Text>
+      )}
       {choosingCoach && (
         <ChoiceSheet
           title={lstrings.game_coach_which}
@@ -1698,6 +1846,28 @@ const getStyles = cacheStyles((theme: Theme) =>
       justifyContent: 'center',
       backgroundColor: theme.backgroundColor,
       padding: theme.rem(1)
+    },
+    heroActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: theme.rem(theme.spaceSmRem),
+      paddingHorizontal: theme.rem(theme.cardContentInsetRem),
+      paddingBottom: theme.rem(theme.cardContentInsetRem)
+    },
+    heroAction: {
+      width: theme.rem(4.5),
+      minHeight: theme.rem(3),
+      justifyContent: 'center'
+    },
+    heroActionShell: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: theme.buttonShadowColor,
+      shadowOpacity: 1,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
+      elevation: 3
     },
     scoreboard: {
       flexDirection: 'row',
@@ -1954,7 +2124,6 @@ const getStyles = cacheStyles((theme: Theme) =>
       lineHeight: theme.rem(1.4),
       textAlign: 'center'
     },
-    highlightNotice: { width: '100%', paddingTop: theme.rem(0.25) },
     videoNotice: {
       alignItems: 'center',
       backgroundColor: theme.backgroundColor,

@@ -2211,6 +2211,11 @@ export function openApiDocument(version: string): OpenApiDocument {
           type: 'object',
           required: ['token', 'expiresAt', 'user'],
           properties: {
+            next: {
+              type: 'string',
+              description:
+                'Optional local return path from the original sign-in request, including its query string. Returned when claiming an email link or its approved request.'
+            },
             token: {
               type: 'string',
               description: 'Shown once. Only its hash is stored.'
@@ -3784,13 +3789,16 @@ export function openApiDocument(version: string): OpenApiDocument {
             "whether the game's scoreboard is open, and whether the caller " +
             'runs the game and so may override it; null when the ' +
             'scoreboard store cannot be asked. `nonMemberView` is true for ' +
-            'anybody signed in who is a member of neither team: ' +
+            'anonymous callers and signed-in callers who are members of neither team: ' +
             'that caller reads the game, its records, logos and videos with ' +
             'their posters, but each `linescore` side carries `runs` and `r` ' +
             'alone (`h`, `e`, `bb`, `k`, `hr` and `hbp` are null), and ' +
             '`canScore` and `canDj` are false and `coachSides` empty. ' +
+            'Private notes, arrival timing, ingest details, scoring ownership and ' +
+            'scoreboard access are null in this public projection. Playback ' +
+            'and detailed statistics still require team membership. ' +
             'False for members.',
-          security: [{ bearer: [] }],
+          security: [{}, { bearer: [] }],
           parameters: [gameIdParam],
           responses: {
             200: { description: 'The game, its score and its videos' },
@@ -4080,8 +4088,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             "not stored. A post whose plays carry both teams' scores sets " +
             'the game `final`, and a final game refuses every later post with ' +
             '409, so a game is posted once it is over. Otherwise a ' +
-            '`scheduled` game with plays becomes `inProgress`, and any other ' +
-            'status, `cancelled` included, is kept. A post that leaves the ' +
+            'game becomes `inProgress` only with a surviving pitch or ball ' +
+            'in play; otherwise it is `scheduled`. Cancelled games stay cancelled. ' +
             "The post that stores a game's first plays, whatever its status, " +
             'fixes its fence at the `fenceDistanceFt` it gives, else the one ' +
             'the game resolves to then, so a later season or league change ' +
@@ -4731,10 +4739,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             're-synced video fixes them all at once. A highlight is a ' +
             'timestamp into the full video, never a separate clip. When the ' +
             "game's plays did not add up to its imported line score, " +
-            '`withheld` is `scoreMismatch` and the list is empty. Anybody ' +
-            'signed in who is a member of neither team reads the list and ' +
-            'its stills too.',
-          security: [{ bearer: [] }],
+            '`withheld` is `scoreMismatch` and the list is empty. Guests and ' +
+            'nonmembers may read the list and signed stills; playback remains members-only.',
+          security: [],
           parameters: [
             {
               name: 'videoId',
@@ -5283,6 +5290,91 @@ export function openApiDocument(version: string): OpenApiDocument {
               }
             },
             400: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/teams/{teamId}/roster-players': {
+        post: {
+          summary: 'Create a player on a team',
+          description:
+            'Makes a user who cannot sign in, with no e-mail address, and a ' +
+            'player membership on the team. A coach, assistant or scorekeeper ' +
+            'of the team — the flag set on the team, its season or its league ' +
+            '— an admin of any of those, or a site admin. Anybody else, and a ' +
+            'team that does not exist, gets 404. At least one name part is ' +
+            'required. `jersey` and `positions` are this membership. `bats` ' +
+            'and `throws` are the player\u2019s own and are marked set by ' +
+            'hand, so a roster import does not overwrite them. The person ' +
+            'can be merged later because they are a real user. Audited. ' +
+            "Answers with the player's authorized roster entry, including " +
+            'the whole name, as GET /teams/{teamId}/roster lists it for a ' +
+            'roster manager.',
+          security: [{ bearer: [] }],
+          parameters: [teamIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: [
+                    'firstName',
+                    'lastName',
+                    'jersey',
+                    'positions',
+                    'bats',
+                    'throws'
+                  ],
+                  properties: {
+                    firstName: {
+                      type: 'string',
+                      maxLength: PLAYER_NAME_MAX_LENGTH
+                    },
+                    lastName: {
+                      type: 'string',
+                      maxLength: PLAYER_NAME_MAX_LENGTH
+                    },
+                    jersey: {
+                      type: 'string',
+                      nullable: true,
+                      maxLength: JERSEY_MAX_LENGTH,
+                      description: 'Trimmed; empty or null is no number.'
+                    },
+                    positions: {
+                      type: 'array',
+                      items: {
+                        type: 'string',
+                        enum: [...PLAYER_POSITIONS]
+                      }
+                    },
+                    bats: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right', 'switch']
+                    },
+                    throws: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right']
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description:
+                "The new player's roster entry, as GET /teams/{teamId}/roster lists it",
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/RosterEntry' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
             404: errorResponse
           }
         }

@@ -38,6 +38,7 @@ import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
+import { rosterPlayerBody } from '../scoring/playerDraft'
 import type { RosterDictationOptions } from '../scoring/rosterDictation'
 import { sameValue } from '../scoring/rosterDirty'
 import { RosterEditor, type RosterEditorDraft } from '../scoring/RosterEditor'
@@ -45,7 +46,11 @@ import { type GameChanges, listen, useRosterLive } from '../scoring/rosterLive'
 import { resumedScoringState } from '../scoring/scoringMachine'
 import { scoringPreferences } from '../scoring/scoringPreferences'
 import { withoutPrivateNames } from '../scoring/scoringRosterCache'
-import { ScoringError, ScoringSheetHeight } from '../scoring/ScoringSheet'
+import {
+  ScoringError,
+  ScoringSheet,
+  ScoringSheetHeight
+} from '../scoring/ScoringSheet'
 import { useScoringSheetTheme } from '../scoring/scoringSheetTheme'
 import {
   type ScoringSource,
@@ -56,6 +61,7 @@ import { dictationUrl } from '../scoring/useDictation'
 import { useScoringExit } from '../scoring/useScoringExit'
 import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
 import { BoxScore, type LineupBatter } from './BoxScore'
+import { PlayerSettingsTab } from './PlayerSettingsTab'
 
 /** How often, at most, the box score is read again as plays arrive. */
 export const BOX_SCORE_EVERY_MS = 5000
@@ -213,6 +219,11 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   const fallback = useMemo(() => new ServerScoringSource(client), [client])
   const source = props.source ?? fallback
   const [opened, setOpened] = useState<Opened>()
+  const [editingPlayer, setEditingPlayer] = useState<{
+    userId: number
+    name: string
+    teamId: string
+  }>()
   const [failed, setFailed] = useState<string>()
   const [state, setState] = useState<ScoringState>()
   // The editor is drawn again from the game when the game's lineups change
@@ -587,6 +598,33 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
               initialDraft={held}
               onDraftChange={setHeld}
               rosters={opened.rosters}
+              onEditPlayer={(userId, name, id) => {
+                if (id === teamId)
+                  setEditingPlayer({ userId, name, teamId: id })
+              }}
+              onCreatePlayer={async (id, player) => {
+                const entry = await client.createRosterPlayer(
+                  id,
+                  rosterPlayerBody(player)
+                )
+                setOpened(current =>
+                  current?.game.id !== gameId
+                    ? current
+                    : {
+                        ...current,
+                        rosters: {
+                          ...current.rosters,
+                          [id]: [
+                            ...(current.rosters[id] ?? []).filter(
+                              person => person.userId !== entry.userId
+                            ),
+                            entry
+                          ]
+                        }
+                      }
+                )
+                return entry
+              }}
               unaccepted={unaccepted}
               conflict={live.conflict}
               onDirtyChange={setDirty}
@@ -623,6 +661,37 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
             />
           </ScoringSheetHeight.Provider>
         </View>
+      )}
+      {editingPlayer != null && (
+        <ScoringSheet
+          title={`${editingPlayer.name} — Settings`}
+          onClose={() => {
+            setEditingPlayer(undefined)
+          }}
+        >
+          <PlayerSettingsTab
+            client={client}
+            userId={String(editingPlayer.userId)}
+            teamId={editingPlayer.teamId}
+            onSaved={(_hands, entry) => {
+              if (entry == null) return
+              const id = editingPlayer.teamId
+              setOpened(current =>
+                current == null
+                  ? current
+                  : {
+                      ...current,
+                      rosters: {
+                        ...current.rosters,
+                        [id]: current.rosters[id].map(row =>
+                          row.userId === entry.userId ? entry : row
+                        )
+                      }
+                    }
+              )
+            }}
+          />
+        </ScoringSheet>
       )}
       {asking != null && (
         <Modal

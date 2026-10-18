@@ -83,6 +83,8 @@ export interface WatchLayoutInput {
   height: number
   /** The header the picture pegs under, and anything else above it. */
   chromeHeight: number
+  /** Chrome without controls that are shown only after choosing short mode. */
+  shortChromeHeight?: number
   /**
    * What is pegged under the picture and has to stay on the screen with it —
    * the row of camera-angle buttons. The picture gives up the height rather
@@ -118,6 +120,7 @@ export function watchLayout(input: WatchLayoutInput): WatchLayout {
     width,
     height,
     chromeHeight,
+    shortChromeHeight = chromeHeight,
     belowVideo = 0,
     aspect,
     previous
@@ -172,17 +175,18 @@ export function watchLayout(input: WatchLayoutInput): WatchLayout {
 
   const splitVideoWidth = Math.min(
     row - sideFloor,
-    heightBound,
+    Math.max(MIN_VIDEO_HEIGHT, height - shortChromeHeight - belowVideo) *
+      aspect,
     MAX_VIDEO_WIDTH
   )
   const roomForCard =
-    height - chromeHeight - belowVideo - splitVideoWidth / aspect
+    height - shortChromeHeight - belowVideo - splitVideoWidth / aspect
 
   const short =
     // A window that is actually short. Without this the test below fires on a
     // laptop, where a full-width picture genuinely does crowd the card — but
     // there the right answer is to shrink the picture, not drop the card.
-    height - chromeHeight <= SHORT_WINDOW_MAX &&
+    height - shortChromeHeight <= SHORT_WINDOW_MAX &&
     // Nowhere to put the card, so the card's contents move into the column.
     roomForCard < CARD_MIN_HEIGHT &&
     // And what is left is still a picture worth giving two columns to.

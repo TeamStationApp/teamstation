@@ -193,7 +193,7 @@ describe('a DJ Game row (U30)', function () {
   })
 })
 
-describe('the DJ Game button (U30)', function () {
+describe('the game Record button', function () {
   function client(
     canDj: boolean,
     status = gameFixture.status
@@ -205,63 +205,49 @@ describe('the DJ Game button (U30)', function () {
     return made
   }
 
-  it('comes after Score Game, for a songkeeper with music', async function () {
+  it('comes after Score and opens the recording controller', async function () {
     let opened = 0
     await render(
       <GameScreen
         client={client(true)}
         gameId="g1"
-        onDjGame={() => {
-          opened++
+        recording={{
+          open: () => {
+            opened++
+          }
         }}
-        music={{ djSupported: true }}
       />
     )
-    const dj = labelled('DJ Game')
+    const dj = labelled('Record')
     expect(dj?.getAttribute('role')).equals('button')
+    const score = labelled('Score')
+    expect(score?.getAttribute('role')).equals('button')
     const all = text()
-    const score = Math.max(
-      all.indexOf('Score Game'),
-      all.indexOf('Continue Scoring')
-    )
-    expect(score).greaterThan(-1)
+    expect(all.indexOf('Score')).lessThan(all.indexOf('Record'))
     expect(all.indexOf('Box score')).lessThan(all.indexOf('Videos'))
-    expect(all.indexOf('Videos')).lessThan(score)
-    expect(score).lessThan(all.indexOf('DJ Game'))
     await act(async () => {
       dj?.click()
     })
     expect(opened).equals(1)
   })
 
-  it('shows for any status, and never without canDj or music', async function () {
+  it('shows for any status with a recording controller, independently of DJ permissions', async function () {
     for (const status of ['scheduled', 'inProgress', 'final']) {
       await render(
         <GameScreen
-          client={client(true, status)}
+          client={client(false, status)}
           gameId="g1"
-          onDjGame={() => undefined}
-          music={{ djSupported: true }}
+          recording={{ open: () => undefined }}
         />
       )
-      expect(labelled('DJ Game'), status).not.equals(null)
+      expect(labelled('Record'), status).not.equals(null)
       await act(async () => {
         root?.unmount()
       })
     }
-    for (const [canDj, djSupported] of [
-      [false, true],
-      [true, false]
-    ]) {
-      await render(
-        <GameScreen
-          client={client(canDj)}
-          gameId="g1"
-          onDjGame={() => undefined}
-          music={{ djSupported }}
-        />
-      )
-      expect(labelled('DJ Game'), `${canDj} ${djSupported}`).equals(null)
+    for (const canDj of [false, true]) {
+      await render(<GameScreen client={client(canDj)} gameId="g1" />)
+      expect(labelled('Record'), `${canDj}`).equals(null)
       await act(async () => {
         root?.unmount()
       })

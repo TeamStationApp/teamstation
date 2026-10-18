@@ -449,6 +449,39 @@ describe('the home screen', function () {
     expect(text()).not.includes('RECENT GAME')
   })
 
+  it('keeps Home Add and Create available through recent-game refresh failure and recovery', async function () {
+    clock = liveClock()
+    let failed = false
+    await mount({
+      recent: async () => {
+        if (failed) throw new Error('Recent game unavailable')
+        return recentGame()
+      }
+    })
+    failed = true
+    await clock.tick()
+    expect(text()).includes('Recent game unavailable')
+    for (const action of ['Create League', 'Create Season', 'Create Team'])
+      expect(text()).includes(action)
+    failed = false
+    await clock.tick()
+    expect(text()).not.includes('Recent game unavailable')
+    expect(text()).includes('RECENT GAME')
+    expect(text()).includes('Create Team')
+  })
+
+  it('does not clear a group-loading error when the recent-game refresh recovers', async function () {
+    clock = liveClock()
+    await mount({
+      teams: async () => {
+        throw new Error('Teams unavailable')
+      }
+    })
+    await clock.tick()
+    expect(text()).includes('Teams unavailable')
+    expect(text()).not.includes('Create Team')
+  })
+
   it('lists teams above seasons, and opens whichever is tapped', async function () {
     const hawks = team('tem_hawks', 'Alta Hawks', {
       shortName: 'Hawks',
@@ -527,6 +560,50 @@ describe('the home screen', function () {
         options: { tab: 'boxScore' }
       }
     ])
+  })
+
+  it('keeps the Home Add and Create preview source stable while refreshing LIVE metadata', async function () {
+    clock = liveClock()
+    restoreVideo = playableVideo()
+    let recent = recentGame({ posterUrl: 'https://video.example/poster.jpg' })
+    const setup: Setup = {
+      teams: async () => [team('tem_hawks', 'Alta Hawks')],
+      recent: async () => ({ ...recent }),
+      videos: [{ id: 'vid_ready', status: 'ready' }] as GameDetail['videos'],
+      playbackUrl: id => `https://video.example/${id}.m3u8?token=${Date.now()}`
+    }
+    const calls = await mount(setup)
+    const source = document.querySelector('video')?.getAttribute('src')
+    expect(source).includes('vid_ready')
+    recent = { ...recent, isGameLive: true }
+    await clock.tick()
+    expect(text()).includes('LIVE')
+    expect(calls.playbacks).deep.equals(['vid_ready'])
+    expect(document.querySelector('video')?.getAttribute('src')).equals(source)
+
+    setup.videos = [{ id: 'vid_next', status: 'ready' }] as GameDetail['videos']
+    await clock.tick()
+    expect(calls.playbacks).deep.equals(['vid_ready', 'vid_next'])
+    expect(document.querySelector('video')?.getAttribute('src')).includes(
+      'vid_next'
+    )
+
+    recent = { ...recent, id: 'gam_other' }
+    await clock.tick()
+    expect(calls.playbacks).deep.equals(['vid_ready', 'vid_next', 'vid_next'])
+    setup.videos = []
+    await clock.tick()
+    expect(document.querySelector('video')).equals(null)
+    setup.videos = [
+      { id: 'vid_again', status: 'ready' }
+    ] as GameDetail['videos']
+    await clock.tick()
+    expect(document.querySelector('video')?.getAttribute('src')).includes(
+      'vid_again'
+    )
+    recent = { ...recent, videoCount: 0 }
+    await clock.tick()
+    expect(document.querySelector('video')).equals(null)
   })
 
   it('offers only the box score for a recent game nobody filmed', async function () {
@@ -617,8 +694,9 @@ describe('the home screen', function () {
       { gameId: 'gam_c', title: 'Cubs @ Reds', options: { autoPlay: true } }
     ])
 
+    // Live listings and recent-game metadata each refresh on their own timer.
+    expect(clock.running()).equals(2)
     // The same game still playing keeps the address it has.
-    expect(clock.running()).equals(1)
     await clock.tick()
     expect(calls.playbacks).deep.equals(['vid_a'])
 

@@ -78,7 +78,7 @@ describe('the roster screen for a coach', function () {
     })
     expect(node('Away Team')).equals(null)
     expect(node('Home Team')).equals(null)
-    expect(node('Box Score')!.getAttribute('aria-selected')).equals('true')
+    expect(node('Box')!.getAttribute('aria-selected')).equals('true')
     expect(host.textContent).includes('Line score here')
     expect(host.querySelector('[aria-label="Batting lineup"]')).not.equals(null)
     // The box score has no instruction and no lineup of its own on show.

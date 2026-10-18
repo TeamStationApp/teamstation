@@ -81,7 +81,7 @@ describe('roster screen bottom bar and slider', function () {
       'defense'
     ])
     expect(ROSTER_MODE_LABELS).deep.equals({
-      boxScore: 'Box Score',
+      boxScore: 'Box',
       editRoster: 'Roster',
       lineup: 'Lineup',
       defense: 'Defense'
@@ -111,14 +111,14 @@ describe('roster screen bottom bar and slider', function () {
         onSave={() => undefined}
       />
     )
-    expect(tabs()).deep.equals(['Box Score', 'Roster', 'Lineup', 'Defense'])
+    expect(tabs()).deep.equals(['Box', 'Roster', 'Lineup', 'Defense'])
   })
 
-  it('draws Add Player as green text with no outline, labelled Create Player, opening the player sheet', async function () {
+  it('draws Create Player as green text with no outline, labelled Create Player, opening the player sheet', async function () {
     await render(<RosterEditor state={fresh()} onSave={() => undefined} />)
     const add = node('Create Player')!
     expect(add.getAttribute('role')).equals('button')
-    expect(add.textContent).equals('Add Player')
+    expect(add.textContent).equals('Create Player')
     expect(add.style.borderWidth).equals('')
     expect(add.style.backgroundColor).equals('')
     const words = add.querySelector<HTMLElement>('div[dir], div')!
@@ -142,7 +142,7 @@ describe('roster screen bottom bar and slider', function () {
   it('hides the microphone when the server does not dictate', async function () {
     await render(<RosterEditor state={fresh()} onSave={() => undefined} />)
     expect(testId('Roster mic')).equals(null)
-    // Add Player and Save Rosters each keep half of the bar.
+    // Create Player and Save Rosters each keep half of the bar.
     const bar = testId('Roster footer bar')!
     expect(bar.children).length(2)
   })

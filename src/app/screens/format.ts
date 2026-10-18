@@ -7,8 +7,9 @@
  */
 
 import { eventName } from '../../common/eventInfo'
+import type { EventTabState } from './eventTabPolicy'
 
-export interface ScoredGame {
+export interface ScoredGame extends EventTabState {
   startAt: string | null
   status: string
   homeScore: number | null
@@ -112,7 +113,8 @@ export function scheduleDate(iso: string | null): {
  * says the game is still live.
  */
 export function gameStatusLine(game: ScoredGame): string {
-  if (game.status === 'inProgress') return 'LIVE'
+  if (game.isGameLive === true) return 'LIVE'
+  if (game.status === 'inProgress') return 'IN PROGRESS'
   if (game.awayScore == null || game.homeScore == null) {
     const time = shortTime(game.startAt)
     return time === '' ? game.status.toUpperCase() : time.toUpperCase()
