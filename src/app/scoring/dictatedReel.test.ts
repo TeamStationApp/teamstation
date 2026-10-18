@@ -117,6 +117,140 @@ const single: ScoringAction[] = [
 ]
 
 describe('a dictated sentence on the field', function () {
+  for (const reversed of [false, true])
+    it(`keeps each batter's receiver and animation within his words (${reversed})`, function () {
+      const plays = [
+        { words: 'Grounds out to short.', fielder: F.SS, receiver: F.B1 },
+        {
+          words:
+            'Grounds out, fielded by the first baseman and thrown to the pitcher for the out.',
+          fielder: F.B1,
+          receiver: F.P
+        }
+      ]
+      if (reversed) plays.reverse()
+      let state = scoringReducer(game(), {
+        type: 'DICTATED',
+        transcript: plays.map(play => play.words).join(' Next batter '),
+        actions: plays.flatMap(
+          play =>
+            [
+              {
+                type: 'ballInPlay',
+                contact: 'swing',
+                trajectory: 'ground_ball',
+                fielder: play.fielder
+              },
+              { type: 'result', eventType: 'field_out', outBy: 'throw' }
+            ] as ScoringAction[]
+        )
+      })
+      expect(state.dictationQuestion).equals(undefined)
+      const throws: string[] = []
+      for (let i = 0; i < 50 && !atRest(state); i++) {
+        if (state.presentation != null) {
+          if (state.presentation.kind === 'throw')
+            throws.push(
+              `${state.presentation.thrower}>${state.presentation.receiver}`
+            )
+          state = finishPicture(state)
+        } else {
+          const motion = state.motions.find(m => !m.complete && m.held !== true)
+          if (motion == null) break
+          state = finishMotion(state, motion.playerId)
+        }
+      }
+      expect(throws).deep.equals(
+        plays.map(play => `${play.fielder}>${play.receiver}`)
+      )
+      expect(state.session.liveData.linescore.outs).equals(2)
+      expect(
+        state.session.liveData.plays.allPlays.map(play =>
+          play.runners.flatMap(runner =>
+            runner.credits.map(credit => [credit.player.id, credit.credit])
+          )
+        )
+      ).deep.equals(
+        plays.map(play => [
+          [play.fielder, 'f_assist'],
+          [play.receiver, 'f_putout']
+        ])
+      )
+    })
+
+  for (const example of [
+    {
+      transcript: '6-4-3 double play',
+      bases: { first: 5 },
+      fielder: F.SS,
+      throws: [`${F.SS}>${F.B2}`, `${F.B2}>${F.B1}`],
+      credits: [
+        [5, F.SS, 'f_assist'],
+        [5, F.B2, 'f_putout'],
+        [1, F.B2, 'f_assist'],
+        [1, F.B1, 'f_putout']
+      ],
+      outs: 2
+    },
+    {
+      transcript:
+        'Grounder fielded by the first baseman and thrown to the pitcher for the out',
+      bases: {},
+      fielder: F.B1,
+      throws: [`${F.B1}>${F.P}`],
+      credits: [
+        [1, F.B1, 'f_assist'],
+        [1, F.P, 'f_putout']
+      ],
+      outs: 1
+    }
+  ])
+    it(`animates and credits the entire dictated route: ${example.transcript}`, function () {
+      const before = game(example.bases)
+      let state = scoringReducer(before, {
+        type: 'DICTATED',
+        transcript: example.transcript,
+        actions: [
+          {
+            type: 'ballInPlay',
+            contact: 'swing',
+            trajectory: 'ground_ball',
+            fielder: example.fielder
+          },
+          { type: 'result', eventType: 'field_out', outBy: 'throw' }
+        ]
+      })
+      expect(state.dictationQuestion).equals(undefined)
+      const throws: string[] = []
+      for (let i = 0; i < 40 && !atRest(state); i++) {
+        if (state.presentation != null) {
+          if (state.presentation.kind === 'throw')
+            throws.push(
+              `${state.presentation.thrower}>${state.presentation.receiver}`
+            )
+          state = finishPicture(state)
+        } else {
+          const motion = state.motions.find(m => !m.complete && m.held !== true)
+          if (motion == null) break
+          state = finishMotion(state, motion.playerId)
+        }
+      }
+      expect(throws).deep.equals(example.throws)
+      expect(state.session.liveData.linescore.outs).equals(example.outs)
+      const play = state.session.liveData.plays.allPlays.at(-1)!
+      expect(
+        play.runners.flatMap(r =>
+          (r.credits ?? []).map(c => [
+            r.details.runner.id,
+            c.player.id,
+            c.credit
+          ])
+        )
+      ).deep.equals(example.credits)
+      const undone = scoringReducer(playOut(state), { type: 'UNDO' })
+      expect(undone.session.liveData.linescore.outs).equals(0)
+    })
+
   it('plays each pitch in turn, with the game already holding both', function () {
     const before = game()
     let state = say(

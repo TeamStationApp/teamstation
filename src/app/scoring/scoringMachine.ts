@@ -1019,7 +1019,8 @@ function dictated(
         playDefaults(state.session, event.actions, transcript),
         transcript
       )
-    )
+    ),
+    transcript
   )
   const { actions } = between
   const { dictation: _last, dictationQuestion: _asked, ...current } = state
@@ -1101,7 +1102,7 @@ function dictated(
     game = applied.state
   }
   // Whatever the play is left waiting on is finished, or asked.
-  const done = completeSentence(state.session, prefix)
+  const done = completeSentence(state.session, prefix, transcript)
   if ('question' in done)
     return {
       ...current,
