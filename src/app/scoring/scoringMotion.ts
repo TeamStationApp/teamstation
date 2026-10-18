@@ -359,12 +359,16 @@ export function scoringFieldPlayers(
     }
     if (player.team === 'defense') {
       for (const record of session.liveData.plays.currentPlay?.source
-        .teamstation.runnerActions ?? [])
+        .teamstation.runnerActions ?? []) {
+        // The throw presentation owns a failed pickoff's temporary positions.
+        // Its saved route must not leave the defender overlapping the runner.
+        if (record.reason === 'Safe from Pickoff') continue
         for (const hop of record.defensiveRoute ?? [])
           if (hop.player.id === player.playerId) {
             player.position = { ...hop.location }
             player.target = { ...hop.location }
           }
+      }
       for (const hop of state.runnerAction?.defensiveRoute ?? [])
         if (hop.id === player.playerId) {
           player.position = { ...hop.point }
