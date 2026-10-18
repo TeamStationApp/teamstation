@@ -406,6 +406,7 @@ export function closePlay(state: ScoringState): ScoringState {
   next.correctionWindow = null
   next.pendingPlay = null
   next.phase = next.session.awaitingBatter == null ? 'ready' : 'awaitingBatter'
+  next.celebration = null
   return next
 }
 function cancelRunnerDraft(state: ScoringState): ScoringState {

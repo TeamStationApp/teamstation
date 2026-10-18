@@ -13,6 +13,7 @@ import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import type { ScoringClock } from './scoringClock'
 import { initialScoringState, scoringReducer } from './scoringMachine'
+import { playerRef } from './scoringSelectors'
 import type {
   HomeRunCelebration,
   ScoringEvent,
@@ -21,11 +22,21 @@ import type {
 import { useHomeRunCelebration } from './useHomeRunCelebration'
 import { useHomeRunCelebration as nativeCelebration } from './useHomeRunCelebration.native'
 
-function acceptedHomeRun(outside: boolean, animate = false): ScoringState {
+function acceptedHomeRun(
+  outside: boolean,
+  animate = false,
+  loaded = false
+): ScoringState {
   let state = initialScoringState(
     createDevelopmentSession(gameFixture, [], []),
     animate
   )
+  if (loaded) {
+    const offense = state.session.liveData.linescore.offense
+    offense.first = playerRef(state.session, 3)
+    offense.second = playerRef(state.session, 4)
+    offense.third = playerRef(state.session, 5)
+  }
   state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Home Run' })
   state = scoringReducer(state, {
     type: 'LANDING',
@@ -36,10 +47,33 @@ function acceptedHomeRun(outside: boolean, animate = false): ScoringState {
   return scoringReducer(state, { type: 'TRAJECTORY', angle: 45, generation: 0 })
 }
 describe('home-run scoreboard celebration', () => {
+  it('keeps celebrating a grand slam until the last runner finishes', () => {
+    for (const outside of [false, true]) {
+      let state = acceptedHomeRun(outside, false, true)
+      const token = state.celebration
+      const motions = state.motions.filter(motion => !motion.complete)
+      expect(motions).has.length(4)
+      for (const [index, motion] of motions.entries()) {
+        state = scoringReducer(state, {
+          type: 'MOTION_DONE',
+          id: motion.id,
+          generation: motion.generation
+        })
+        if (index < motions.length - 1) {
+          expect(state.celebration).deep.equals(token)
+          expect(state.phase).equals('runnerMovement')
+        }
+      }
+      expect(state.phase).equals('ready')
+      expect(state.celebration).equals(null)
+      expect(state.session.liveData.linescore.offense.batter?.id).equals(2)
+      expect(state.session.liveData.linescore.teams.away.runs).equals(4)
+    }
+  })
   it('keeps the unavailable native renderer inert', () => {
     nativeCelebration()
   })
-  it('owns a transient token, survives automatic completion and clears on expiry, action or Undo', () => {
+  it('celebrates while runners move and restores the scoreboard for the next batter', () => {
     for (const outside of [false, true])
       for (const animate of [false, true]) {
         let state = acceptedHomeRun(outside, animate)
@@ -52,6 +86,14 @@ describe('home-run scoreboard celebration', () => {
             generation: 0
           })
         ).equals(state)
+        const expired = scoringReducer(state, {
+          type: 'CELEBRATION_DONE',
+          id: token.id,
+          generation: 0
+        })
+        expect(expired.celebration).equals(null)
+        expect(expired.past).equals(state.past)
+        expect(expired.session).equals(state.session)
         expect(
           scoringReducer(state, {
             type: 'CELEBRATION_DONE',
@@ -73,17 +115,19 @@ describe('home-run scoreboard celebration', () => {
             stage: 'flight'
           })
         }
+        expect(state.motions.some(motion => !motion.complete)).equals(true)
+        expect(state.celebration).deep.equals(token)
         state = completeMotions(state)
         expect(state.phase).equals('ready')
-        expect(state.celebration).deep.equals(token)
-        const expired = scoringReducer(state, {
-          type: 'CELEBRATION_DONE',
-          id: token.id,
-          generation: 0
-        })
-        expect(expired.celebration).equals(null)
-        expect(expired.past).equals(state.past)
-        expect(expired.session).equals(state.session)
+        expect(state.session.liveData.linescore.offense.batter?.id).equals(2)
+        expect(state.celebration).equals(null)
+        expect(
+          scoringReducer(state, {
+            type: 'CELEBRATION_DONE',
+            id: token.id,
+            generation: 0
+          })
+        ).equals(state)
         expect(
           scoringReducer(state, { type: 'PITCH', kind: 'ball' }).celebration
         ).equals(null)
