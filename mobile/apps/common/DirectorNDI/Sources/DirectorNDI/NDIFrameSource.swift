@@ -74,6 +74,8 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   private let videoConverter = NDIVideoFrameConverter()
   private let audioConverter = NDIAudioFrameConverter()
   private let receiveClock: NDIReceiveClock
+  /// What the sender stamps on each picture, for a debug build to write down. Nil in Release.
+  private lazy var timestampLog: NDITimestampLog? = NDITimestampLog(sourceID: sourceID)
 
   private let lock = NSLock()
   private var receiver: NDIlib_recv_instance_t?
@@ -752,6 +754,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     failedAttempts = 0
     lock.unlock()
 
+    timestampLog?.note(frame, arrivalSeconds: clock.now.seconds)
     guard let timing = receiveClock.timing(for: frame) else { return }
 
     let width = Int(frame.xres)
