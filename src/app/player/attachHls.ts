@@ -1,6 +1,7 @@
 import Hls from 'hls.js'
 
 import { liveRejoin } from './liveRejoin'
+import { recoverLiveStalls } from './liveStallRecovery'
 import { BEHIND_SEC } from './multiCam/buffering'
 import type { BufferControl, PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
@@ -55,8 +56,20 @@ export function attachHls(
   // Neither Media Source nor native HLS. The element is left alone rather
   // than handed a URL it cannot read.
   if (engine === 'none') return () => undefined
-  if (engine === 'native') return attachNativeHls(video, url, onGiveUp, intent)
-  return attachHlsJs(handle, video, url, onGiveUp, intent)
+  const detach =
+    engine === 'native'
+      ? attachNativeHls(video, url, onGiveUp, intent)
+      : attachHlsJs(handle, video, url, onGiveUp, intent)
+  // A grid owns its tiles' positions and buffering; only the single live
+  // viewer may step across a missing stretch on its own.
+  const stopRecovery =
+    intent?.isLive != null && intent.buffer == null
+      ? recoverLiveStalls(video, intent.wantsToPlay)
+      : undefined
+  return () => {
+    stopRecovery?.()
+    detach()
+  }
 }
 
 /** What a browser that plays HLS itself answers `canPlayType` for. */
@@ -270,10 +283,14 @@ function attachHlsJs(
   // as bandwidth allows, up to `maxMaxBufferLength`. A ceiling is the two set
   // to the same number.
   const limit = intent?.buffer
+  const singleLive = intent?.isLive != null && limit == null
   const hls = new Hls({
     // A game is watched by seeking around it, not straight through, so there
     // is no point buffering minutes ahead of a position about to change.
-    maxBufferLength: limit?.aheadSec ?? 30,
+    maxBufferLength: limit?.aheadSec ?? (singleLive ? 60 : 30),
+    // Keep room for delayed playlist updates. A time-based live position
+    // avoids letting one unusually long segment choose the viewer's delay.
+    ...(singleLive ? { liveSyncDuration: 60 } : {}),
     ...(limit == null ? {} : { maxMaxBufferLength: limit.aheadSec }),
     // Left to itself hls.js keeps every second already played, and a long
     // game fills the browser's quota with the past until it refuses the
@@ -430,7 +447,8 @@ function attachHlsJs(
         video.currentTime,
         closedAt.edgeSec,
         closedAt.targetSec,
-        hls.config.liveSyncDurationCount
+        hls.config.liveSyncDurationCount,
+        hls.config.liveSyncDuration
       ))
   let rejoining = false
   const isLive = intent?.isLive
@@ -487,9 +505,10 @@ export function atLiveEdge(
   currentSec: number,
   edgeSec: number,
   targetSec: number,
-  syncCount: number
+  syncCount: number,
+  syncSec?: number
 ): boolean {
-  return edgeSec - currentSec <= (syncCount + 1) * targetSec
+  return edgeSec - currentSec <= (syncSec ?? syncCount * targetSec) + targetSec
 }
 
 /**

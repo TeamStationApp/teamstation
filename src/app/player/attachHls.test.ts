@@ -71,6 +71,10 @@ describe('coming back from a stumble', function () {
 })
 
 describe('how far ahead a grid tile loads', function () {
+  it('recognizes the configured time-based live position after an outage', function () {
+    expect(atLiveEdge(540, 600, 4, 3, 60)).equals(true)
+    expect(atLiveEdge(500, 600, 4, 3, 60)).equals(false)
+  })
   it('moves both of hls.js’s limits together', function () {
     const config = { maxBufferLength: 10, maxMaxBufferLength: 10 }
     const control = aheadControl(config, 10)
@@ -258,6 +262,7 @@ describe('attaching in a browser', function () {
   type Stubbed = Record<string, unknown>
   let saved: Stubbed = {}
   let calls: string[] = []
+  let config: Hls['config']
 
   /** hls.js as if Media Source were here, recording what it was asked. */
   function withMediaSource(): void {
@@ -270,7 +275,8 @@ describe('attaching in a browser', function () {
     }
     calls = []
     Hls.isSupported = () => true
-    proto.loadSource = (source: string) => {
+    proto.loadSource = function (this: Hls, source: string) {
+      config = this.config
       calls.push(`loadSource ${source}`)
     }
     proto.attachMedia = () => {
@@ -303,6 +309,64 @@ describe('attaching in a browser', function () {
     expect(video.src).equals('')
     expect(video.removed).deep.equals(['src'])
     expect(video.loads).equals(1)
+    expect(video.attached()).equals(0)
+  })
+
+  it('gives a single live viewer a minute of buffer and live delay', function () {
+    withMediaSource()
+    const video = new FakeVideo()
+    asBrowser('Google Inc.', () => {
+      const detach = attachHls(
+        video as unknown as VideoHandle,
+        url,
+        undefined,
+        {
+          wantsToPlay: () => true,
+          isLive: () => true
+        }
+      )
+      expect(config.maxBufferLength).equals(60)
+      expect(config.liveSyncDuration).equals(60)
+      expect(config.backBufferLength).equals(30)
+      detach()
+    })
+  })
+
+  it('keeps recording buffers and coordinated live grid limits', function () {
+    withMediaSource()
+    const video = new FakeVideo()
+    asBrowser('Google Inc.', () => {
+      attachHls(video as unknown as VideoHandle, url)()
+      expect(config.maxBufferLength).equals(30)
+      expect(config.liveSyncDuration).equals(undefined)
+      attachHls(video as unknown as VideoHandle, url, undefined, {
+        wantsToPlay: () => true,
+        isLive: () => true,
+        buffer: { aheadSec: 10 }
+      })()
+      expect(config.maxBufferLength).equals(10)
+      expect(config.maxMaxBufferLength).equals(10)
+      expect(config.liveSyncDuration).equals(undefined)
+    })
+  })
+
+  it('attaches live stall recovery to Safari without replacing its engine', function () {
+    withMediaSource()
+    const video = new FakeVideo()
+    asBrowser(APPLE_VENDOR, () => {
+      const detach = attachHls(
+        video as unknown as VideoHandle,
+        url,
+        undefined,
+        {
+          wantsToPlay: () => false,
+          isLive: () => true
+        }
+      )
+      expect(video.src).equals(url)
+      expect(calls).deep.equals([])
+      detach()
+    })
     expect(video.attached()).equals(0)
   })
 
