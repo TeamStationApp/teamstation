@@ -160,6 +160,7 @@ interface Displaced {
   /** Each displaced action written out, as `sync` compares them. */
   keys: string[]
   times: Array<string | undefined>
+  playbackTimes: Array<string | undefined>
   /** When each displaced action was cut off. */
   cutAt: string[]
   /** How many of the first displaced actions this cut took off. */
@@ -191,6 +192,7 @@ export class ScoringSession {
    * carried times. Each play's own times are kept apart, in `times`.
    */
   private actionTimes: Array<string | undefined> = []
+  private playbackTimes: Array<string | undefined> = []
   /** What the last cut displaced, while the actions after it are matched. */
   private displaced: Displaced | null = null
   /** Set while `sync` applies a run of actions, which it matches once. */
@@ -201,6 +203,7 @@ export class ScoringSession {
   /** The log as far as the server has acknowledged it. */
   private savedLog: ScoringAction[] = []
   private savedTimes: Array<string | undefined> = []
+  private savedPlaybackTimes: Array<string | undefined> = []
   private game: GameState
   private completed: Completed[] = []
   private segment: Segment
@@ -354,9 +357,13 @@ export class ScoringSession {
     session.actionTimes = replayed.segments.flatMap(
       segment => segment.actionTimes
     )
+    session.playbackTimes = replayed.segments.flatMap(
+      segment => segment.playbackTimes ?? segment.actionTimes
+    )
     session.rebuild()
     session.savedLog = [...session.log]
     session.savedTimes = [...session.actionTimes]
+    session.savedPlaybackTimes = [...session.playbackTimes]
     for (const play of loaded.plays)
       if (!session.derivedIndexes.has(play.about.atBatIndex))
         session.stored.add(play.about.atBatIndex)
@@ -624,6 +631,7 @@ export class ScoringSession {
     const now = this.now().toISOString()
     this.log.push(action)
     this.actionTimes.push(now)
+    this.playbackTimes.push(now)
     this.displaced?.stamped.push(now)
     this.record(action, applied, now)
     if (!this.holding) this.align()
@@ -763,9 +771,11 @@ export class ScoringSession {
     this.base = fresh.base
     this.log = fresh.log
     this.actionTimes = fresh.actionTimes
+    this.playbackTimes = fresh.playbackTimes
     this.displaced = null
     this.savedLog = fresh.savedLog
     this.savedTimes = fresh.savedTimes
+    this.savedPlaybackTimes = fresh.savedPlaybackTimes
     this.game = fresh.game
     this.completed = fresh.completed
     // Its plays carry the times the server holds.
@@ -830,11 +840,17 @@ export class ScoringSession {
     // Each action put back keeps the time it was taken, not the rebase's.
     const ourTimes = this.actionTimes.slice(same)
     const theirTimes = fresh.actionTimes.slice(kept)
+    const ourPlaybackTimes = this.playbackTimes.slice(same)
+    const theirPlaybackTimes = fresh.playbackTimes.slice(kept)
     const times = new Map(this.times)
     this.adopt(fresh)
     // An action of this session's undone before the server's came after it.
     const replay = same < kept ? [...theirs, ...ours] : ours
     const replayTimes = same < kept ? [...theirTimes, ...ourTimes] : ourTimes
+    const replayPlaybackTimes =
+      same < kept
+        ? [...theirPlaybackTimes, ...ourPlaybackTimes]
+        : ourPlaybackTimes
     if (same < kept) {
       this.log = this.log.slice(0, same)
       this.rebuild()
@@ -863,6 +879,7 @@ export class ScoringSession {
       const time = replayTimes[index]
       this.log.push(roster)
       this.actionTimes.push(time)
+      this.playbackTimes.push(replayPlaybackTimes[index])
       this.record(roster, applied, time ?? this.now().toISOString())
     }
     this.dropped =
@@ -948,6 +965,10 @@ export class ScoringSession {
         ...this.actionTimes.slice(length),
         ...(held?.times.slice(rest) ?? [])
       ],
+      playbackTimes: [
+        ...this.playbackTimes.slice(length),
+        ...(held?.playbackTimes.slice(rest) ?? [])
+      ],
       cutAt: [...removed.map(() => now), ...(held?.cutAt.slice(rest) ?? [])],
       cut: removed.length,
       stamped: [],
@@ -956,6 +977,7 @@ export class ScoringSession {
     }
     this.log = this.log.slice(0, length)
     this.actionTimes = this.actionTimes.slice(0, length)
+    this.playbackTimes = this.playbackTimes.slice(0, length)
     return this.displaced
   }
 
@@ -972,11 +994,20 @@ export class ScoringSession {
     if (this.displaced !== cut) return
     const left = cut.keys.flatMap((key, j) => {
       const time = cut.times[j]
+      const ageTime = cut.playbackTimes[j] ?? time
       return j < cut.consumed ||
-        (time != null &&
-          Date.parse(cut.cutAt[j]) - Date.parse(time) <= REPLACED_KEEPS_TIME_MS)
+        (ageTime != null &&
+          Date.parse(cut.cutAt[j]) - Date.parse(ageTime) <=
+            REPLACED_KEEPS_TIME_MS)
         ? []
-        : [{ key, time, cutAt: cut.cutAt[j] }]
+        : [
+            {
+              key,
+              time,
+              playbackTime: cut.playbackTimes[j],
+              cutAt: cut.cutAt[j]
+            }
+          ]
     })
     this.displaced =
       left.length === 0
@@ -985,6 +1016,7 @@ export class ScoringSession {
             at: cut.at + cut.stamped.length,
             keys: left.map(each => each.key),
             times: left.map(each => each.time),
+            playbackTimes: left.map(each => each.playbackTime),
             cutAt: left.map(each => each.cutAt),
             cut: 0,
             stamped: [],
@@ -1005,15 +1037,28 @@ export class ScoringSession {
     const matched = matchTimes(
       this.log.slice(held.at).map(keyOf),
       held.stamped,
-      held,
+      { ...held, ageTimes: held.playbackTimes },
       this.actionTimes[held.at - 1],
       held.replayed
+    )
+    const playback = matchTimes(
+      this.log.slice(held.at).map(keyOf),
+      held.stamped,
+      { ...held, times: held.playbackTimes },
+      this.playbackTimes[held.at - 1],
+      held.replayed,
+      'playback'
     )
     let first = -1
     for (const [k, time] of matched.times.entries())
       if (this.actionTimes[held.at + k] !== time) {
         this.actionTimes[held.at + k] = time
         if (first < 0) first = held.at + k
+      }
+    for (const [k, time] of playback.times.entries())
+      if (this.playbackTimes[held.at + k] !== time) {
+        this.playbackTimes[held.at + k] = time
+        if (first < 0 || held.at + k < first) first = held.at + k
       }
     held.consumed = matched.consumed
     if (matched.past) this.displaced = null
@@ -1055,6 +1100,7 @@ export class ScoringSession {
     }
     this.log = kept
     this.actionTimes.length = kept.length
+    this.playbackTimes.length = kept.length
     this.game = game
     this.completed = completed
     this.segment = segment
@@ -1135,6 +1181,7 @@ export class ScoringSession {
         folder.play(play, {
           ...segment,
           actionTimes: this.actionTimes.slice(offset, end),
+          playbackTimes: this.playbackTimes.slice(offset, end),
           ...time(play.about.atBatIndex)
         })
       )
@@ -1152,7 +1199,8 @@ export class ScoringSession {
     }
     const stamp = {
       ...this.segment,
-      actionTimes: this.actionTimes.slice(offset)
+      actionTimes: this.actionTimes.slice(offset),
+      playbackTimes: this.playbackTimes.slice(offset)
     }
     if (this.game.final) {
       plays.set(
@@ -1226,6 +1274,7 @@ export class ScoringSession {
       if (this.refusal != null || this.blocked) return
       const covering = [...this.log]
       const coveringTimes = [...this.actionTimes]
+      const coveringPlaybackTimes = [...this.playbackTimes]
       const change = this.change()
       if (
         change.plays.length === 0 &&
@@ -1280,6 +1329,7 @@ export class ScoringSession {
         this.postedCurrent = JSON.stringify(change.currentPlay)
       this.savedLog = covering
       this.savedTimes = coveringTimes
+      this.savedPlaybackTimes = coveringPlaybackTimes
       this.isOffline = false
       this.failure = null
       this.retryMs = FIRST_RETRY_MS
@@ -1314,6 +1364,7 @@ export class ScoringSession {
       this.isOffline = false
       this.log = [...this.savedLog]
       this.actionTimes = [...this.savedTimes]
+      this.playbackTimes = [...this.savedPlaybackTimes]
       this.displaced = null
       this.marks = []
       this.rebuild()

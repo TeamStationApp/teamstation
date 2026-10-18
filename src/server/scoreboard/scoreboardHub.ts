@@ -15,11 +15,16 @@ import {
   SCOREBOARD_CLOSE,
   scoreboardOpen
 } from '../../common/scoreboard'
+import {
+  radarPacket,
+  type RadarReading
+} from '../../common/scoring/radarSpeeds'
 import { adminScopes, canSeeGame, visibleScopes } from '../access'
 import { actorForToken } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { mayRunGame } from '../director/runGames'
+import { refreshRadarSpeeds } from '../events/radarSpeeds'
 import { speedHoldMs as nodeSpeedHoldMs } from '../nodeSettings'
 import { type GameRecord, gameRecord, mayBeGameId } from './gameRecord'
 import { logScoreboard, type ScoreboardLogCause } from './scoreboardLog'
@@ -202,7 +207,8 @@ export function makeScoreboardHub(
     gameId: string,
     result: WriteResult,
     cause: ScoreboardLogCause,
-    actorId: number | null
+    actorId: number | null,
+    radar?: Pick<RadarReading, 'pitchSpeed' | 'exitVelocity'>
   ): Promise<void> {
     if (result.kind !== 'written') return
     try {
@@ -211,10 +217,12 @@ export function makeScoreboardHub(
         version: result.message.version,
         at: result.now,
         cause,
+        radar,
         actorId,
         publisher: result.message.watcher,
         overrides: result.message.overrides ?? NO_OVERRIDES
       })
+      if (radar != null) await refreshRadarSpeeds(db, gameId)
     } catch (error) {
       log(`scoreboard ${gameId}: scoreboard log: ${describe(error)}`)
       captureException(error)
@@ -625,9 +633,11 @@ export function makeScoreboardHub(
     let write: () => Promise<WriteResult>
     let cause: ScoreboardLogCause
     let pitchSpeed: number | undefined
+    let radar: Pick<RadarReading, 'pitchSpeed' | 'exitVelocity'> | undefined
     try {
       if (member.kind === 'publisher') {
         const update = asScoreboardUpdate(raw)
+        radar = radarPacket(update)
         if (typeof update.pitchSpeed === 'number')
           pitchSpeed = update.pitchSpeed
         cause = 'publisher'
@@ -664,7 +674,7 @@ export function makeScoreboardHub(
       }
       // Logged before this socket's next message is written, so one socket's
       // rows arrive in the order of its writes.
-      await logWrite(room.gameId, result, cause, member.userId ?? null)
+      await logWrite(room.gameId, result, cause, member.userId ?? null, radar)
     } catch (error) {
       if (!(error instanceof ScoreboardUnavailable)) {
         log(`scoreboard ${room.gameId}: write: ${describe(error)}`)

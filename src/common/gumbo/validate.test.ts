@@ -377,10 +377,17 @@ describe('the reference validator (U22)', function () {
       'trajectory playEvents[0].hitData.trajectory',
       'location playEvents[0].hitData.location',
       'hitData playEvents[0].hitData.coordinates',
-      'hitData playEvents[0].hitData.launchSpeed',
       'hitData playEvents[0].hitData.hardness'
     ])
     inPlay.hitData = { location: '8', launchAngle: 22.5, totalDistance: 183 }
+    expect(named(hit)).deep.equals([])
+    for (const launchSpeed of [-1, 0, Infinity, NaN, '90']) {
+      inPlay.hitData = { launchSpeed }
+      expect(named(hit)).deep.equals([
+        'hitData playEvents[0].hitData.launchSpeed'
+      ])
+    }
+    inPlay.hitData = { launchSpeed: 90 }
     expect(named(hit)).deep.equals([])
     for (const totalDistance of [-4, '183', Number.NaN])
       expect(

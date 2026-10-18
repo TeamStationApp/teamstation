@@ -9,6 +9,7 @@ import { keyOf, matchTimes, REPLACED_KEEPS_TIME_MS } from './actionTimes'
 import { applyAction } from './apply'
 import { comparablePlay } from './comparable'
 import { recordOf } from './gumbo'
+import { forPlayback } from './playbackTimes'
 import {
   type EventStore,
   type SaveChange,
@@ -68,6 +69,39 @@ const strike = pitch('C')
 const foul = pitch('F')
 const single: ScoringAction = { type: 'result', eventType: 'single' }
 
+describe('canonical radar timing categories', () => {
+  const dropped: ScoringAction = { type: 'result', eventType: 'strikeout' }
+  const inPlay: ScoringAction = { type: 'ballInPlay', contact: 'swing' }
+  const oldTime = new Date(START).toISOString()
+  const newTime = new Date(START + 30000).toISOString()
+  for (const [from, to, retained] of [
+    [dropped, pitch('S'), true],
+    [pitch('S'), dropped, true],
+    [dropped, single, false],
+    [single, dropped, false],
+    [single, inPlay, true],
+    [inPlay, single, true],
+    [single, { type: 'result', eventType: 'double' }, true],
+    [dropped, { type: 'result', eventType: 'hit_by_pitch' }, false]
+  ] as Array<[ScoringAction, ScoringAction, boolean]>)
+    it(`${keyOf(from)} to ${keyOf(to)} ${retained ? 'retains' : 'replaces'} its time`, () => {
+      expect(
+        matchTimes(
+          [keyOf(to)],
+          [newTime],
+          {
+            keys: [keyOf(from)],
+            times: [oldTime],
+            cutAt: [newTime],
+            cut: 1
+          },
+          undefined,
+          1
+        ).times
+      ).deep.equals([retained ? oldTime : newTime])
+    })
+})
+
 async function open(
   store = new Store(),
   clock = new Clock()
@@ -75,6 +109,93 @@ async function open(
   const session = await ScoringSession.open(store, 'g1', context, clock.options)
   return { session, store, clock }
 }
+
+describe('separate scoring and radar clocks', () => {
+  it('persists the original completed-play clock when a subscriber caches a correction', async () => {
+    const { session, store, clock } = await open()
+    session.subscribe(() => session.picture())
+    const times: string[] = []
+    for (const action of [strike, strike, strike, ball]) {
+      times.push(clock.iso())
+      session.apply(action)
+      clock.pass(20)
+    }
+    await session.flush()
+    const corrected = clock.pass(600)
+    expect(session.sync([strike, strike, single, ball])).deep.equals([])
+    const completed = [...session.picture().plays.values()][0]
+    expect(recordOf(completed)!.actionTimes).deep.equals([
+      ...times.slice(0, 2),
+      corrected
+    ])
+    expect(recordOf(forPlayback(completed))!.actionTimes).deep.equals(
+      times.slice(0, 3)
+    )
+    await session.flush()
+    expect(recordOf(forPlayback(store.plays.get(0)))!.actionTimes).deep.equals(
+      times.slice(0, 3)
+    )
+    const reopened = (await open(store, clock)).session
+    expect(
+      recordOf(forPlayback([...reopened.picture().plays.values()][0]))!
+        .actionTimes
+    ).deep.equals(times.slice(0, 3))
+  })
+
+  for (const call of ['B', 'C', 'F'] as const)
+    for (const delay of [20, 180])
+      it(`keeps a new ${call} pitch time after an unsaved quick Undo and ${delay}s delay`, async () => {
+        const { session, store, clock } = await open()
+        session.apply(ball)
+        await session.flush()
+        clock.pass(10)
+        session.undo()
+        const entered = clock.pass(delay)
+        session.apply(pitch(call))
+        await session.flush()
+        expect(recordOf(store.current)!.actionTimes).deep.equals([entered])
+        expect(recordOf(forPlayback(store.current))!.actionTimes).deep.equals([
+          entered
+        ])
+      })
+
+  for (const saveFirst of [false, true])
+    it(`preserves corrections through buffering, reload and rejected saves, initial save ${saveFirst}`, async () => {
+      const { session, store, clock } = await open()
+      const times: string[] = []
+      for (const action of [ball, strike, foul]) {
+        times.push(clock.iso())
+        session.apply(action)
+        clock.pass(20)
+      }
+      if (saveFirst) await session.flush()
+      const corrected = clock.pass(600)
+      expect(session.sync([foul, strike, foul])).deep.equals([])
+      await session.flush()
+      expect(recordOf(store.current)!.actionTimes).deep.equals([
+        corrected,
+        ...times.slice(1)
+      ])
+      expect(recordOf(forPlayback(store.current))!.actionTimes).deep.equals(
+        times
+      )
+      const reopened = (await open(store, clock)).session
+      expect(
+        recordOf(forPlayback(reopened.picture().current))!.actionTimes
+      ).deep.equals(times)
+      clock.pass(120)
+      reopened.apply(ball)
+      store.fail = new HttpError('conflict', 'Scoring changed elsewhere')
+      await reopened.flush()
+      expect(
+        recordOf(forPlayback(reopened.picture().current))!.actionTimes
+      ).deep.equals(times)
+      expect(recordOf(reopened.picture().current)!.actionTimes).deep.equals([
+        corrected,
+        ...times.slice(1)
+      ])
+    })
+})
 
 /** The documents the session would store, in game order. */
 function documents(session: ScoringSession): GumboPlay[] {
@@ -303,14 +424,14 @@ describe('the time each scoring action was taken', function () {
     const now = clock.iso()
     expect(session.sync([ball, strike, foul])).deep.equals([])
     expect(timesOf(session)).deep.equals([times[0], now, now])
-    // A cut keeps what it cut itself at any age, the first pitch changed
-    // from a ball to a foul included; the foul an Undo took off at once was
+    // Unchanged history keeps its time, but ball-to-foul uses the correction
+    // time and radar window; the foul an Undo took off at once was
     // let go, so entered again it is a new pitch.
     session.undo()
     clock.pass(5)
     const later = clock.iso()
     expect(session.sync([foul, strike, foul])).deep.equals([])
-    expect(timesOf(session)).deep.equals([times[0], now, later])
+    expect(timesOf(session)).deep.equals([later, now, later])
   })
 
   it('stamps a pitch recorded within a minute of the one an Undo took off now, whatever its call (U41)', async function () {
@@ -473,10 +594,11 @@ describe('the time each scoring action was taken', function () {
     session.undo()
     // The strike becomes a foul. Alone, the foul is the foul it equals, and
     // the strike was deleted ...
-    score(session, clock, [foul])
+    const [correction] = score(session, clock, [foul])
     expect(timesOf(session)).deep.equals([times[0], times[2]])
     // ... until the foul after it shows it took the strike's place.
     score(session, clock, [foul])
+    times[1] = correction
     expect(timesOf(session)).deep.equals(times.slice(0, 3))
     // Undo again, part way: what it took joins what is still displaced.
     session.undo()
@@ -507,10 +629,10 @@ describe('the time each scoring action was taken', function () {
       clock.pass(120)
       expect([...takeBack(session), ...takeBack(session)]).deep.equals([])
       expect(timesOf(session)).deep.equals(times.slice(0, 4))
-      // The second pitch was a foul. The screen applies its history again,
-      // and its pitches stay where they happened rather than shifting onto
-      // the two still held.
+      // Changing strike to foul selects a new radar window. Every unchanged
+      // pitch keeps its old time rather than shifting onto the held pitches.
       expect(session.sync([foul, foul, strike, foul])).deep.equals([])
+      times[1] = clock.iso()
       expect(timesOf(session)).deep.equals(times.slice(0, 4))
       // The pitches still held are there for a later correction.
       score(session, clock, [strike, foul])

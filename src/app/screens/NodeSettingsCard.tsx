@@ -68,6 +68,7 @@ function shownPlacement(placement: BoardPlacement): BoardPlacement {
 export function shownSettings(settings: NodeSettings): NodeSettings {
   const { scoreboard: s, highlights: h } = settings
   return {
+    radar: { ...settings.radar },
     scoreboard: {
       ...s,
       single: shownPlacement(s.single),
@@ -204,7 +205,7 @@ export function NodeSettingsCard({
     }
   }
 
-  const { scoreboard, highlights } = settings
+  const { scoreboard, highlights, radar } = settings
   // The account screen's settings row: the whole row is the target, its
   // value at the right in the colour that says it can be tapped.
   const row = (
@@ -365,6 +366,36 @@ export function NodeSettingsCard({
             option => ({
               ...settings,
               scoreboard: { ...scoreboard, speedHoldSec: option }
+            })
+          )}
+        </ListCard>
+      </View>
+      <View style={styles.section}>
+        <SectionHeader title="Radar matching" />
+        <Text style={styles.hint}>
+          Match recorded speeds to the scorekeeper’s pitch entry.
+        </Text>
+        <ListCard>
+          {wheelRow(
+            'Pitch window (before and after)',
+            'Radar pitch window',
+            range(1, 60),
+            seconds,
+            radar.pitchWindowSec,
+            option => ({
+              ...settings,
+              radar: { ...radar, pitchWindowSec: option }
+            })
+          )}
+          {wheelRow(
+            'In-play lookback',
+            'Radar in-play window',
+            range(1, 60),
+            seconds,
+            radar.inPlayWindowSec,
+            option => ({
+              ...settings,
+              radar: { ...radar, inPlayWindowSec: option }
             })
           )}
         </ListCard>

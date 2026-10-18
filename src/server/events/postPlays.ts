@@ -10,9 +10,11 @@ import {
   lineScore,
   withHalfOuts
 } from '../../common/scoring/linescore'
+import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
 import type { Database, EventsTable } from '../db/database'
 import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
 import { scoringActivitySql } from '../games/scoringActivity'
+import { radarSettings } from '../nodeSettings'
 import { notifyGameChange } from '../socket/gameChanges'
 import { reconcileEventTags } from './eventTags'
 import {
@@ -22,6 +24,7 @@ import {
   teamIdsOnCredits,
   upsertGameEvents
 } from './eventWrite'
+import { radarReadings, scheduleRadarRefresh } from './radarSpeeds'
 import {
   keepLineups,
   storedLineupGame,
@@ -89,6 +92,7 @@ export async function postGamePlays(
       `Play ${unread.about.atBatIndex}: teamStation.version must be 1`
     )
   const prepared = withHalfOuts(body.plays)
+  let refreshDelay: number | undefined
 
   return await db
     .transaction()
@@ -184,7 +188,7 @@ export async function postGamePlays(
             )
         }
       }
-      const plays: PlayWrite[] = prepared.map(play => ({
+      let plays: PlayWrite[] = prepared.map(play => ({
         gumbo: {
           ...withPreviousTagIdentities(play, priorCurrent, true),
           credits:
@@ -198,6 +202,55 @@ export async function postGamePlays(
       }))
 
       if (system === 'teamstation') {
+        const settings = await radarSettings(trx)
+        const priorRows = await readPlays(trx, gameId)
+        const priorByIndex = new Map(
+          priorRows.map(row => [row.atBatIndex, row.gumbo])
+        )
+        if (priorCurrent != null)
+          priorByIndex.set(priorCurrent.about?.atBatIndex ?? -1, priorCurrent)
+        const incoming = [...plays.map(p => p.gumbo), currentPlay]
+        // History corrections can move an unchanged pitch across at-bats.
+        // Keep the full old/new ordering for equal-time batched pitches too.
+        const nextByIndex = new Map(live ? priorByIndex : [])
+        for (const index of body.remove ?? []) nextByIndex.delete(index)
+        if (priorCurrent?.about?.atBatIndex != null)
+          nextByIndex.delete(priorCurrent.about.atBatIndex)
+        for (const play of incoming)
+          if (play != null && typeof play === 'object') {
+            const index = (play as Partial<GumboPlay>).about?.atBatIndex
+            if (index != null) nextByIndex.set(index, play)
+          }
+        const ordered = (map: Map<number, unknown>): unknown[] =>
+          [...map].sort(([a], [b]) => a - b).map(([, play]) => play)
+        const priorHistory = ordered(priorByIndex)
+        const nextHistory = ordered(nextByIndex)
+        const readings = await radarReadings(trx, gameId, incoming, settings)
+        plays = plays.map(p => ({
+          ...p,
+          gumbo: withRadarSpeeds(
+            p.gumbo,
+            readings,
+            settings,
+            priorHistory,
+            nextHistory
+          )
+        }))
+        currentPlay = withRadarSpeeds(
+          currentPlay,
+          readings,
+          settings,
+          priorHistory,
+          nextHistory
+        )
+        const future = incoming
+          .flatMap(radarTargets)
+          .filter(t => !t.inPlay)
+          .map(t => t.at + settings.pitchWindowSec * 1000 - Date.now())
+        const remaining = Math.max(...future)
+        if (remaining >= 0)
+          refreshDelay =
+            Math.min(remaining, settings.pitchWindowSec * 1000) + 50
         await trx
           .updateTable('games')
           .set({ scoringOwner: 'teamstation' })
@@ -309,6 +362,10 @@ export async function postGamePlays(
         playsDigest: playsDigest(taggedStored, taggedGame.currentPlay),
         priorPlaysDigest: prior
       }
+    })
+    .then(result => {
+      if (refreshDelay != null) scheduleRadarRefresh(db, gameId, refreshDelay)
+      return result
     })
     .catch((error: unknown) => {
       throw unknownUser(error, prepared) ?? error

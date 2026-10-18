@@ -73,6 +73,19 @@ async function pick(name: string, option: string): Promise<void> {
 }
 
 describe('NodeSettingsCard', function () {
+  it('edits and saves both radar windows using the existing settings form', async () => {
+    const api = fake()
+    await render(api.client)
+    expect(shown('Radar pitch window')).equals('3 s')
+    expect(shown('Radar in-play window')).equals('15 s')
+    await pick('Radar pitch window', 'Pitch window (before and after) 4 s')
+    await pick('Radar in-play window', 'In-play lookback 20 s')
+    await press('Save')
+    expect(api.saved.at(-1)?.radar).deep.equals({
+      pitchWindowSec: 4,
+      inPlayWindowSec: 20
+    })
+  })
   function fake(fail?: Error): {
     client: TeamStationClient
     saved: NodeSettings[]
@@ -109,6 +122,7 @@ describe('NodeSettingsCard', function () {
     const server = fake()
     // Stored off the wheels' stops, as the server allows.
     server.store({
+      radar: defaultNodeSettings.radar,
       scoreboard: {
         ...defaultNodeSettings.scoreboard,
         single: { x: 0.005, y: 0.005, height: 0.15 }

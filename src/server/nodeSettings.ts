@@ -5,9 +5,12 @@ import {
   asHeight,
   asHoldSeconds,
   asPlacement,
+  asRadarSettings,
   type BoardPlacement,
+  defaultRadarSettings,
   defaultScoreboardSettings,
   type NodeSettings,
+  type RadarSettings,
   type ScoreboardOverlay,
   type ScoreboardSettings,
   utcStartOf
@@ -97,6 +100,7 @@ export async function nodeSettings(
   return {
     // Past this worker's cache: another may have taken the last save.
     scoreboard: await scoreboardSettings(db, Date.now(), true),
+    radar: await radarSettings(db),
     highlights: await highlightSettings(db, true)
   }
 }
@@ -112,8 +116,10 @@ export async function setNodeSettings(
     actor,
     'Only a node administrator can change the node settings'
   )
-  const { scoreboard, highlights } = settings
+  const { scoreboard, highlights, radar } = settings
   const rows: Array<[string, unknown]> = [
+    ['radar.pitchWindowSec', radar.pitchWindowSec],
+    ['radar.inPlayWindowSec', radar.inPlayWindowSec],
     ['scoreboard.overlayStartDate', scoreboard.overlayStartDate],
     ['scoreboard.single', placement(scoreboard.single)],
     ['scoreboard.landscape', placement(scoreboard.landscape)],
@@ -145,6 +151,29 @@ export async function setNodeSettings(
   })
   forgetScoreboardSettings()
   forgetSettings()
+}
+
+/** Read fresh so workers use the same matching windows after an admin edit. */
+export async function radarSettings(
+  db: Kysely<Database>
+): Promise<RadarSettings> {
+  const rows = await db
+    .selectFrom('system_settings')
+    .select(['key', 'value'])
+    .where('key', 'like', 'radar.%')
+    .execute()
+  const settings = { ...defaultRadarSettings }
+  for (const row of rows) {
+    const key = row.key.slice('radar.'.length)
+    if (key === 'pitchWindowSec' || key === 'inPlayWindowSec') {
+      try {
+        settings[key] = asHoldSeconds(row.value, row.key)
+      } catch {
+        /* Keep the default for malformed stored settings. */
+      }
+    }
+  }
+  return asRadarSettings(settings)
 }
 
 function placement(value: BoardPlacement): BoardPlacement {

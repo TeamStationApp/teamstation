@@ -21,7 +21,23 @@ export function comparablePlay<T>(play: T): T {
     delete about.halfOuts
   }
   const record = copy.teamStation as Record<string, unknown> | undefined
-  if (record != null) delete record.actionTimes
+  if (record != null) {
+    delete record.actionTimes
+    delete record.playbackTimes
+    delete record.radarMeasurements
+  }
+  if (Array.isArray(copy.playEvents))
+    for (const event of copy.playEvents as Array<Record<string, unknown>>)
+      for (const [section, key] of [
+        ['pitchData', 'startSpeed'],
+        ['hitData', 'launchSpeed']
+      ]) {
+        const data = event[section] as Record<string, unknown> | undefined
+        if (data == null) continue
+        Reflect.deleteProperty(data, key)
+        if (Object.keys(data).length === 0)
+          Reflect.deleteProperty(event, section)
+      }
   if (Array.isArray(copy.credits))
     for (const credit of copy.credits as Array<Record<string, unknown>>)
       delete credit.teamId
