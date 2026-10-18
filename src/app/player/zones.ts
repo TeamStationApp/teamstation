@@ -1,4 +1,5 @@
 /** What a press does, by where it lands in the picture. */
+import { seekTo } from './explicitSeek'
 import type { VideoHandle } from './videoHandle'
 
 export type Zone = 'seekBack' | 'seekForward' | 'toggle'
@@ -60,7 +61,7 @@ export function seekBy(video: VideoHandle, delta: number): void {
     ? video.duration
     : video.currentTime + Math.max(0, delta)
   const next = video.currentTime + delta
-  video.currentTime = Math.min(Math.max(0, next), duration)
+  seekTo(video, Math.min(Math.max(0, next), duration))
 }
 
 /** What a press does on the multi-camera view, which has no bar of its own to cut round. */

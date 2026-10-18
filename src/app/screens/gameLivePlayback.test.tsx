@@ -73,7 +73,9 @@ const there: Playback = {
 /** The game page on a game whose one video has `status`. */
 async function page(
   status: string,
-  answers: Array<Playback | Error>
+  answers: Array<Playback | Error>,
+  startAtSec?: number,
+  withHighlight = false
 ): Promise<{ asked: () => number }> {
   let asked = 0
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
@@ -83,7 +85,25 @@ async function page(
     videos: [videoOf(status)]
   })
   client.highlights = async () =>
-    asHighlightsResponse({ withheld: null, droppedCount: 0, highlights: [] })
+    asHighlightsResponse({
+      withheld: null,
+      droppedCount: 0,
+      highlights: withHighlight
+        ? [
+            {
+              eventId: 'e1',
+              atBatIndex: 1,
+              title: 'Selected single',
+              startOffsetSec: 300,
+              playOffsetSec: 303,
+              eventType: 'single',
+              isScoringPlay: true,
+              stillUrl: '',
+              description: 'The batter reaches first.'
+            }
+          ]
+        : []
+    })
   client.teams = async () => []
   client.gameScheduling = async () => {
     throw new Error('not a scheduler')
@@ -101,7 +121,12 @@ async function page(
     root!.render(
       <ThemeProvider>
         <GestureHandlerRootView>
-          <GameScreen client={client} gameId="g1" initialTab="watch" />
+          <GameScreen
+            client={client}
+            gameId="g1"
+            initialTab="watch"
+            startAtSec={startAtSec}
+          />
         </GestureHandlerRootView>
       </ThemeProvider>
     )
@@ -155,5 +180,80 @@ describe('a live video whose first segment is not written yet', function () {
     await wait(2200)
     expect(asked()).equals(1)
     expect(text()).includes(UNAVAILABLE)
+  })
+})
+
+describe('starting a live game at the latest footage', function () {
+  it('plays a highlight selected before the first Play at that highlight', async function () {
+    const prototype = window.HTMLMediaElement.prototype
+    const original = Object.getOwnPropertyDescriptor(prototype, 'canPlayType')!
+    prototype.canPlayType = () => 'maybe'
+    try {
+      await page('live', [there], undefined, true)
+      const video = document.querySelector('video')!
+      let paused = true
+      video.play = async () => {
+        paused = false
+        video.dispatchEvent(new window.Event('play'))
+      }
+      video.load = () => undefined
+      Object.defineProperty(video, 'paused', { get: () => paused })
+      Object.defineProperty(video, 'seekable', {
+        value: { length: 1, start: () => 0, end: () => 7200 }
+      })
+      await act(async () => {
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      })
+      const highlight = document.querySelector<HTMLElement>(
+        '[aria-label="Play highlight: Selected single"]'
+      )
+      expect(highlight, 'the highlight is available').not.equals(null)
+      await act(async () => {
+        highlight!.click()
+      })
+      expect(video.paused).equals(false)
+      expect(video.currentTime).equals(300)
+    } finally {
+      Object.defineProperty(prototype, 'canPlayType', original)
+    }
+  })
+
+  it('joins on first play while leaving a timestamp link at its selected moment', async function () {
+    const prototype = window.HTMLMediaElement.prototype
+    const original = Object.getOwnPropertyDescriptor(prototype, 'canPlayType')!
+    prototype.canPlayType = () => 'maybe'
+    try {
+      for (const startAt of [undefined, 300]) {
+        await page('live', [there], startAt)
+        const video = document.querySelector('video')!
+        video.play = async () => undefined
+        video.load = () => undefined
+        Object.defineProperty(video, 'paused', {
+          configurable: true,
+          value: false
+        })
+        Object.defineProperty(video, 'seekable', {
+          configurable: true,
+          value: { length: 1, start: () => 0, end: () => 7200 }
+        })
+        await act(async () => {
+          video.dispatchEvent(new window.Event('loadedmetadata'))
+          video.dispatchEvent(new window.Event('play'))
+        })
+        expect(video.currentTime).equals(startAt ?? 7140)
+        video.currentTime = 200
+        await act(async () => {
+          video.dispatchEvent(new window.Event('play'))
+        })
+        expect(video.currentTime).equals(200)
+        await act(async () => {
+          root?.unmount()
+        })
+        root = undefined
+        document.body.replaceChildren()
+      }
+    } finally {
+      Object.defineProperty(prototype, 'canPlayType', original)
+    }
   })
 })

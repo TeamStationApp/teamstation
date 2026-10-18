@@ -58,6 +58,7 @@ import { useInsets } from '../platform/safeArea'
 import { sameMoment } from '../player/angleSwitch'
 import { attachHls } from '../player/attachHls'
 import { playerEngine } from '../player/engine'
+import { seekTo } from '../player/explicitSeek'
 import { livePlaybackRetryDelay } from '../player/liveRejoin'
 import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
@@ -1002,7 +1003,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       },
       {
         wantsToPlay: () => !suspended.current && viewerWants.current,
-        isLive: placeFor.current.isLive
+        isLive: placeFor.current.isLive,
+        startAtLiveEdge:
+          !(resumeAtRef.current?.videoId === placeFor.current.videoId) &&
+          !(startAtSecRef.current != null && startAtSecRef.current > 0)
       }
     )
 
@@ -1099,7 +1103,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     if (player == null) return
     // Seek and keep playing: the point is to watch on from here, not to show
     // a clip.
-    player.currentTime = highlight.startOffsetSec
+    seekTo(player, highlight.startOffsetSec)
     // A browser may refuse to start playing without a gesture it recognises;
     // the seek has already happened, so that refusal is not worth reporting.
     player.play().catch(() => undefined)
