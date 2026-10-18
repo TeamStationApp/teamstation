@@ -127,7 +127,7 @@ function play(input: {
       homeScore: input.homeScore,
       description: 'Single'
     },
-    ...(input.playEvents == null ? {} : { playEvents: input.playEvents }),
+    playEvents: input.playEvents ?? [{ isPitch: true }],
     ...(input.credits == null ? {} : { credits: input.credits })
   }
 }
@@ -1167,7 +1167,7 @@ describe('posting and reading plays', function () {
       source: { system: 'manual' }
     })
     expect(started.status).equals(200)
-    expect(await statusOf(pendingId)).equals('inProgress')
+    expect(await statusOf(pendingId)).equals('scheduled')
   })
 
   it('keeps an attributed withdrawal cancelled when a delayed score update arrives', async function () {
@@ -3205,14 +3205,23 @@ describe('posting and reading plays', function () {
 })
 
 describe('the status a live post leaves', function () {
-  it('is final with a final score, under way with plays or an at-bat, and cancelled stays', function () {
+  it('requires a pitch or ball in play, with final and cancelled taking priority', function () {
     const final = [{ eventType: 'single' }, { eventType: 'final_score' }]
     expect(statusAfterLivePost('inProgress', final, false)).equals('final')
     expect(
-      statusAfterLivePost('final', [{ eventType: 'single' }], false)
+      statusAfterLivePost('final', [{ eventType: 'single' }], true)
     ).equals('inProgress')
     expect(statusAfterLivePost('scheduled', [], true)).equals('inProgress')
     expect(statusAfterLivePost('scheduled', [], false)).equals('scheduled')
+    expect(statusAfterLivePost('inProgress', [], false)).equals('scheduled')
+    expect(statusAfterLivePost('final', [], false)).equals('scheduled')
+    expect(
+      statusAfterLivePost(
+        'inProgress',
+        [{ eventType: 'defensive_switch' }],
+        false
+      )
+    ).equals('scheduled')
     expect(statusAfterLivePost('cancelled', final, true)).equals('cancelled')
   })
 })
@@ -3221,23 +3230,24 @@ describe('the status a post leaves', function () {
   it('finishes a game only when both scores are known', function () {
     const both = { away: 3, home: 2 }
     const one = { away: 3, home: null }
-    expect(statusAfterPost('scheduled', both, 4)).equals('final')
-    expect(statusAfterPost('inProgress', both, 4)).equals('final')
-    expect(statusAfterPost('scheduled', one, 4)).equals('inProgress')
-    expect(statusAfterPost('scheduled', one, 0)).equals('scheduled')
-    expect(statusAfterPost('inProgress', one, 0)).equals('inProgress')
+    expect(statusAfterPost('scheduled', both, true)).equals('final')
+    expect(statusAfterPost('inProgress', both, true)).equals('final')
+    expect(statusAfterPost('scheduled', one, true)).equals('inProgress')
+    expect(statusAfterPost('scheduled', one, false)).equals('scheduled')
+    expect(statusAfterPost('inProgress', one, false)).equals('scheduled')
+    expect(statusAfterPost('final', one, false)).equals('final')
   })
 
   it('leaves a cancelled game cancelled', function () {
-    expect(statusAfterPost('cancelled', { away: 3, home: 2 }, 4)).equals(
+    expect(statusAfterPost('cancelled', { away: 3, home: 2 }, true)).equals(
       'cancelled'
     )
-    expect(statusAfterPost('cancelled', { away: 3, home: null }, 4)).equals(
+    expect(statusAfterPost('cancelled', { away: 3, home: null }, true)).equals(
       'cancelled'
     )
-    expect(statusAfterPost('cancelled', { away: null, home: null }, 0)).equals(
-      'cancelled'
-    )
+    expect(
+      statusAfterPost('cancelled', { away: null, home: null }, false)
+    ).equals('cancelled')
   })
 })
 

@@ -8,6 +8,7 @@ import {
   type DjBatter,
   type DjGame,
   type DjSide,
+  type RosterEntry,
   type SaveLineupsBody
 } from '../../common/api'
 import { atBatFromCurrentPlay } from '../../common/djAtBat'
@@ -26,7 +27,7 @@ import {
 } from '../../common/gumboPlay'
 import { shortNames } from '../../common/names'
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
-import { addPlayer, begun } from '../../common/scoring/lineup'
+import { addPlayer, allocatePlayer } from '../../common/scoring/lineup'
 import {
   type Lineup,
   NO_DEFAULT_LINEUP,
@@ -389,12 +390,16 @@ async function saveSide(
       return {
         stored,
         context,
+        roster: sees(context.teams[body.side].id)
+          ? (
+              await teamRoster(trx, undefined, context.teams[body.side].id)
+            ).filter(person => person.isPlayer)
+          : [],
         snapshot: snapshotOf(game, rows),
         digest: await storedLineupsDigest(trx, { id: gameId, ...game })
       }
     })
 
-  let startsGame = true
   let failure: Error | undefined
   // The digest the save left, read in the transaction that wrote it.
   let wrote: string | undefined
@@ -422,8 +427,7 @@ async function saveSide(
               .executeTakeFirstOrThrow()
             if (snapshotOf(now, await readPlays(trx, gameId)) !== read.snapshot)
               throw new GameMoved()
-          },
-          { startsGame }
+          }
         )
         // A live post always keeps one.
         wrote = posted.lineupsDigest ?? read.digest
@@ -448,7 +452,7 @@ async function saveSide(
   const held =
     session.actions.length > 0 ||
     session.state.liveData.plays.allPlays.length > 0
-  const actions = sideActions(session.state, body, held)
+  const actions = sideActions(session.state, body, held, read.roster)
   markRosterVisibility(
     actions,
     session.actions,
@@ -466,7 +470,6 @@ async function saveSide(
     const problem = session.apply(action).problems[0]
     if (problem != null) throw refusal(problem)
   }
-  startsGame = begun(session.state)
   await options.beforeSave?.(gameId)
   // A refused store is kept in the session's state, so its error is rethrown
   // here, and its 400, 403 or 409 reaches the caller.
@@ -569,7 +572,8 @@ function markRosterVisibility(
 function sideActions(
   state: GameState,
   body: SaveLineupsBody,
-  held = true
+  held = true,
+  roster: readonly RosterEntry[] = []
 ): ScoringAction[] {
   const side = body.side
   const setup: GameSetup = setupOf(state)
@@ -581,7 +585,7 @@ function sideActions(
   }
   const ids: number[] = []
   for (const player of body.players) {
-    const known = team.players.find(id => {
+    let known = team.players.find(id => {
       const existing = setup.players[id]
       return player.userId != null
         ? existing.userId === player.userId
@@ -590,8 +594,28 @@ function sideActions(
             existing.fullName === player.fullName.trim() &&
             existing.jersey === player.jersey
     })
-    if (known == null && player.userId != null)
-      throw badRequest(`${player.fullName} is not on this team's roster`)
+    if (known == null && player.userId != null) {
+      const entry = roster.find(person => person.userId === player.userId)
+      if (entry == null)
+        throw badRequest(`${player.fullName} is not on this team's roster`)
+      const id = allocatePlayer(setup.identities, entry.userId)
+      const existing = setup.players[id]
+      if (existing != null && existing.teamId !== state.gameData.teams[side].id)
+        throw badRequest(`${player.fullName} is already on the other team`)
+      // Use current roster data, never caller-provided identity/name details.
+      setup.players[id] = existing ?? {
+        id,
+        userId: entry.userId,
+        teamId: state.gameData.teams[side].id,
+        fullName: entry.shortName,
+        jersey: entry.jersey ?? '',
+        bats: entry.bats ?? 'right',
+        throws: entry.throws ?? null,
+        positions: [...entry.positions],
+        local: false
+      }
+      known = id
+    }
     const id = known ?? addPlayer(draft, side, player.fullName, player.jersey)
     if (ids.includes(id))
       throw badRequest(`${player.fullName} is named more than once`)

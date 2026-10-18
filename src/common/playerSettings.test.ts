@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import {
   asJersey,
+  asNewRosterPlayer,
   asPlayerPositions,
   asPlayerSettings,
   PLAYER_POSITIONS
@@ -89,5 +90,47 @@ describe('a player’s settings', function () {
     expect(() => asPlayerSettings({ jersey: '1234' })).throws('jersey: ')
     expect(() => asPlayerSettings({ bats: 'both' })).throws()
     expect(() => asPlayerSettings({ throws: 'switch' })).throws()
+  })
+
+  it('requires a name and the roster fields when creating a player', function () {
+    for (const invalid of [null, [], 'player', 7])
+      expect(() => asNewRosterPlayer(invalid)).throws('Expected an object')
+    expect(
+      asNewRosterPlayer({
+        firstName: ' Cliff ',
+        lastName: ' Lee ',
+        jersey: ' 7 ',
+        positions: ['SS', 'SS', 'DH'],
+        bats: 'switch',
+        throws: 'left'
+      })
+    ).deep.equals({
+      firstName: 'Cliff',
+      lastName: 'Lee',
+      jersey: '7',
+      positions: ['SS', 'DH'],
+      bats: 'switch',
+      throws: 'left'
+    })
+    expect(() =>
+      asNewRosterPlayer({
+        firstName: ' ',
+        lastName: '',
+        jersey: null,
+        positions: [],
+        bats: null,
+        throws: null
+      })
+    ).throws('Enter a player name.')
+    expect(() =>
+      asNewRosterPlayer({
+        firstName: 'Cliff',
+        lastName: 'Lee',
+        jersey: null,
+        positions: ['EH'],
+        bats: 'right',
+        throws: 'right'
+      })
+    ).throws('positions:')
   })
 })

@@ -235,25 +235,54 @@ async function eventPeople(
     .where('kind', '=', 'guardian')
     .where('user_id', 'in', parent.userIds)
     .execute()
-  const ownIds = new Set([parent.userId])
-  for (const link of ownLinks)
-    ownIds.add((await identity(link.related_user_id)).userId)
-  const ids = [...new Set([...participants.keys(), ...ownIds])]
-  const users = await db
-    .selectFrom('users')
-    .select([
-      'id',
-      'display_name',
-      'first_name',
-      'last_name',
-      'avatar_path',
-      'bats',
-      'throws'
-    ])
-    .where('id', 'in', ids)
-    .where('disabled_at', 'is', null)
-    .where('merged_into', 'is', null)
+  // RSVP eligibility is explicit on a participating team, never inherited
+  // from a season/league, site administration, or guardianship alone.
+  const eventMembers = await db
+    .selectFrom('memberships')
+    .select(['user_id', 'is_player'])
+    .where('team_id', 'in', event.teamIds)
     .execute()
+  const eventStaff = await db
+    .selectFrom('scope_roles')
+    .select('user_id')
+    .where('scope_type', '=', 'team')
+    .where('scope_id', 'in', event.teamIds)
+    .where('role', 'in', ['admin', 'coach', 'assistant'])
+    .execute()
+  const rostered = new Set<number>()
+  let mayReplySelf = false
+  for (const member of eventMembers) {
+    const id = (await identity(member.user_id)).userId
+    if (member.is_player) rostered.add(id)
+    if (id === parent.userId) mayReplySelf = true
+  }
+  for (const staff of eventStaff)
+    if ((await identity(staff.user_id)).userId === parent.userId)
+      mayReplySelf = true
+  const ownIds = new Set<number>(mayReplySelf ? [parent.userId] : [])
+  for (const link of ownLinks) {
+    const id = (await identity(link.related_user_id)).userId
+    if (rostered.has(id)) ownIds.add(id)
+  }
+  const ids = [...new Set([...participants.keys(), ...ownIds])]
+  const users =
+    ids.length === 0
+      ? []
+      : await db
+          .selectFrom('users')
+          .select([
+            'id',
+            'display_name',
+            'first_name',
+            'last_name',
+            'avatar_path',
+            'bats',
+            'throws'
+          ])
+          .where('id', 'in', ids)
+          .where('disabled_at', 'is', null)
+          .where('merged_into', 'is', null)
+          .execute()
   const names = new Map(
     users.map(user => [
       user.id,
@@ -446,7 +475,9 @@ export async function saveEventRsvp(
     if (!event.canViewAttendance) throw notFound()
     const people = await eventPeople(trx, event, actor)
     if (!people.replyUserIds.includes(userId))
-      throw forbidden('You can RSVP only for yourself or your children')
+      throw forbidden(
+        'RSVP requires explicit team membership or a child on a participating roster'
+      )
     const table = event.eventKind === 'game' ? 'game_rsvps' : 'team_event_rsvps'
     await trx
       .insertInto(table)
@@ -678,6 +709,7 @@ export async function teamEventDetail(
   const event = await resolveEvent(db, actor, id)
   return asGameDetail({
     ...event,
+    isGameLive: false,
     nonMemberView: false,
     homeTeamId: event.teamId,
     homeTeamName: event.teamName,
@@ -736,6 +768,7 @@ export function teamEventSchedule(
     durationSec: null,
     posterUrl: null,
     isLive: false,
+    isGameLive: false,
     externalIds: []
   }
 }

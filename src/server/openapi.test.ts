@@ -382,6 +382,18 @@ describe('the API document', function () {
     ).deep.equals({ $ref: '#/components/schemas/RosterEntry' })
   })
 
+  it('documents optional authentication and the public game projection', () => {
+    const paths = openApiDocument('0.0.0').paths as Record<string, any>
+    const game = paths['/games/{gameId}'].get
+    expect(game.security).deep.equals([{}, { bearer: [] }])
+    for (const text of [
+      'anonymous callers',
+      'Private notes',
+      'detailed statistics still require team membership'
+    ])
+      expect(game.description).includes(text)
+  })
+
   it('lists every role flag, the assistant included, wherever roles are named', function () {
     const document = openApiDocument('0.0.0')
     const schemas = (document.components as { schemas: Record<string, any> })

@@ -4,14 +4,20 @@ import type { Kysely } from 'kysely'
 import { notFound, unauthorized } from '../../common/errors'
 import { shortName } from '../../common/names'
 import { outcomeName } from '../../common/outcomes'
-import { asPersonSettings, asPlayerSettings } from '../../common/playerSettings'
+import {
+  asNewRosterPlayer,
+  asPersonSettings,
+  asPlayerSettings
+} from '../../common/playerSettings'
 import { asUserId } from '../../common/userIdNumber'
 import {
+  canManageRoster,
   canSeePerson,
   canSeePlayedFor,
   guardsPerson,
   mayEditName,
   mayManagePlayer,
+  roleScopes,
   teamsPlayedOnNow,
   visibleScopes
 } from '../access'
@@ -36,6 +42,7 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { highlightSettings } from '../settings'
 import { playerFilterOf } from '../stats/rows'
+import { createRosterPlayer } from '../teams/addPlayers'
 import { teamRoster } from '../teams/teamRoster'
 
 /**
@@ -464,6 +471,49 @@ export function playerRoutes(
           () => undefined
         )
       }
+    })
+  )
+
+  /**
+   * Creates a player on the team: a user who cannot sign in, and a player
+   * membership. The named Create Player form uses this. A person made here
+   * can be merged later, because they are a real user rather than a name
+   * that exists only inside one game.
+   *
+   * A coach, assistant or scorekeeper of the team, or a site administrator
+   * (`canManageRoster`). Anybody else is answered 404. The team must exist.
+   * Hands are marked `manual`. The answer is the new player's roster entry,
+   * including the whole name, the same shape `GET /teams/:teamId/roster`
+   * lists for a roster manager.
+   */
+  router.post(
+    '/teams/:teamId/roster-players',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const teamId = pathParam(req.params.teamId)
+      const roles = await roleScopes(db, actor.userId, actor.isAdmin)
+      if (!canManageRoster(roles, teamId)) throw notFound()
+      const team = await db
+        .selectFrom('teams')
+        .select('id')
+        .where('id', '=', teamId)
+        .executeTakeFirst()
+      if (team == null) throw notFound()
+
+      const player = cleanBody(asNewRosterPlayer, req.body)
+      const userId = await createRosterPlayer(db, teamId, player)
+      setAudit(res.locals, {
+        entityType: 'rosterPlayer',
+        entityId: userId,
+        after: { teamId, userId, ...player }
+      })
+
+      const roster = await teamRoster(db, media.space, teamId, true)
+      const entry = roster.find(row => row.userId === userId)
+      if (entry == null) throw notFound()
+      res.status(201).json(entry)
     })
   )
 

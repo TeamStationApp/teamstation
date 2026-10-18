@@ -340,10 +340,10 @@ describe('scoring events', function () {
 
   // U8b: a head coach's lineup saved before the first pitch is an at-bat in
   // progress that starts nothing.
-  it('starts a game with an at-bat in progress, unless the post says it starts nothing', async function () {
-    for (const [options, status] of [
-      [{ startsGame: false }, 'scheduled'],
-      [undefined, 'inProgress']
+  it('starts only after a pitch, not an initialized at-bat', async function () {
+    for (const [pitches, status] of [
+      [[], 'scheduled'],
+      [[{ isPitch: true }], 'inProgress']
     ] as const) {
       const id = makeId('game')
       await db
@@ -370,18 +370,16 @@ describe('scoring events', function () {
               isComplete: false
             },
             matchup: { batter: { id: player.userId, fullName: 'Ada' } },
-            playEvents: []
+            playEvents: pitches
           }
-        }),
-        undefined,
-        options
+        })
       )
       const row = await db
         .selectFrom('games')
         .select(['status', 'currentPlay'])
         .where('id', '=', id)
         .executeTakeFirstOrThrow()
-      expect(row.status, JSON.stringify(options)).equals(status)
+      expect(row.status).equals(status)
       expect(row.currentPlay).not.equals(null)
     }
   })

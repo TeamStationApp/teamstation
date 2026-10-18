@@ -14,6 +14,8 @@ import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamEventSchedule } from '../events/eventInfo'
+import { gameIsLive } from '../games/gameLive'
+import { hasScoringEventsSql } from '../games/scoringActivity'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import {
@@ -346,6 +348,7 @@ export async function scheduleOf(
       'away.logo_path as awayLogoPath'
     ])
     .select(eb => eb.fn.count<number>('videos.id').as('videoCount'))
+    .select(hasScoringEventsSql.as('hasScoringEvents'))
     // The longest video of the game: on a multi-camera game that is the
     // full broadcast rather than whichever clip happens to sort first.
     .select(eb => eb.fn.max('videos.duration_sec').as('durationSec'))
@@ -484,6 +487,16 @@ export async function scheduleOf(
       startAt: toIso(game.startAt),
       venue: game.venue,
       endAt: toIso(game.endAt),
+      hasScoringEvents: game.hasScoringEvents,
+      isGameLive: gameIsLive(
+        {
+          startAt: toIso(game.startAt),
+          endAt: toIso(game.endAt),
+          status: game.status,
+          hasScoringEvents: game.hasScoringEvents
+        },
+        now
+      ),
       address: game.address,
       notes: game.notes,
       arrivalTimeDelta: game.arrivalTimeDelta,
@@ -564,6 +577,7 @@ export async function scheduleOf(
               ...row,
               // A proposal is always for a game.
               eventType: 'game',
+              isGameLive: false,
               pendingApproval: true,
               status: 'scheduled',
               cancellationReason: null,

@@ -83,7 +83,11 @@ import {
   type ResetAuthorization
 } from './passwordProtocol'
 import type { AvailablePicture } from './pictureCatalog'
-import type { PersonSettings, PlayerSettings } from './playerSettings'
+import type {
+  NewRosterPlayer,
+  PersonSettings,
+  PlayerSettings
+} from './playerSettings'
 import {
   asGroupDetail,
   asPublicGroup,
@@ -223,6 +227,14 @@ export const asVideoSummary = asObject({
   kind: asString,
   title: asString,
   status: asString,
+  /**
+   * Bytes are arriving on a stream of this video.
+   *
+   * A video stays `live` after its camera drops, so the recording can resume
+   * on the same row. This says whether anything is sending right now. An
+   * older server omits it, which means nothing is.
+   */
+  receiving: asOptional(asBoolean, false),
   storage: asString,
   startAt: asNullable(asString),
   /** This recording's own clock correction, for switching angle in step. */
@@ -347,7 +359,7 @@ export const asGameDetail = withEventMetadata(
       null
     ),
     /**
-     * Whether this caller is signed in and a member of neither team: `linescore`
+     * Whether this caller is not a member of either team, including signed-out viewers: `linescore`
      * then carries each side's runs alone, `canScore` and `canDj` are false,
      * and the box score and playback answer `membersOnly`. False for members.
      */
@@ -1049,12 +1061,17 @@ export type SessionUser = Omit<
 > & { onboarding?: Onboarding }
 export const asSessionUser: Cleaner<SessionUser> = cleanSessionUser
 
-export const asSession = asObject({
+const cleanSession = asObject({
+  /** Original local destination, carried by email-link sign-in across app restarts. */
+  next: asOptional(asString),
   token: asString,
   expiresAt: asString,
   user: asSessionUser
 })
-export type Session = ReturnType<typeof asSession>
+export type Session = Omit<ReturnType<typeof cleanSession>, 'next'> & {
+  next?: string
+}
+export const asSession: Cleaner<Session> = cleanSession
 
 /** The sign-in a client is waiting on, and the secret that makes it its own. */
 export const asSignInWait = asObject({
@@ -2883,6 +2900,22 @@ export class TeamStationClient {
       'GET',
       `/teams/${encodeURIComponent(teamId)}/roster${options.includeFullNames === true ? '?includeFullNames=true' : ''}`,
       asArray(asRosterEntry)
+    )
+  }
+
+  /**
+   * Creates a player on the team. The answer is their roster entry, whole
+   * name included, as a roster manager reads it.
+   */
+  async createRosterPlayer(
+    teamId: string,
+    player: NewRosterPlayer
+  ): Promise<RosterEntry> {
+    return await this.request(
+      'POST',
+      `/teams/${encodeURIComponent(teamId)}/roster-players`,
+      asRosterEntry,
+      player
     )
   }
 

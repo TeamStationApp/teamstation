@@ -144,3 +144,35 @@ export interface PlayerSettings {
   bats?: 'left' | 'right' | 'switch' | null
   throws?: 'left' | 'right' | null
 }
+
+/**
+ * A player created onto a team: a name, the jersey and positions on that
+ * team, and how they bat and throw. At least one name part is required.
+ * `EH` is a scoring spot, not a roster position, so it is not accepted here.
+ */
+export interface NewRosterPlayer {
+  firstName: string
+  lastName: string
+  jersey: string | null
+  positions: PlayerPosition[]
+  bats: 'left' | 'right' | 'switch' | null
+  throws: 'left' | 'right' | null
+}
+
+export function asNewRosterPlayer(raw: unknown): NewRosterPlayer {
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new TypeError('Expected an object')
+  }
+  const body = raw as Record<string, unknown>
+  const name = asPlayerSettingsName({
+    firstName: body.firstName,
+    lastName: body.lastName
+  })
+  return {
+    ...name,
+    jersey: field('jersey', asJersey, body),
+    positions: field('positions', asPlayerPositions, body),
+    bats: field('bats', asBats, body),
+    throws: field('throws', asThrows, body)
+  }
+}
