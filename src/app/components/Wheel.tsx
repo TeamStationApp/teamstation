@@ -63,6 +63,9 @@ export function Wheel({
       <Text style={styles.label}>{label}</Text>
       <View
         style={[styles.wheelViewport, { width }]}
+        // A modal must focus the wheel, not its first row: focusing row one
+        // scrolls away from the selected value and changes it on scroll end.
+        focusable
         accessibilityRole="adjustable"
         accessibilityLabel={`${label}: ${format(value)}`}
         // Read as the row reads ("12%", "Default"), not as a share of the

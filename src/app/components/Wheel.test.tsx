@@ -112,6 +112,10 @@ describe('the wheel', function () {
     // Its value reads as the row does, not as a share of the range: a phone
     // reads the prop, which React Native Web does not write to the page.
     const viewport = document.querySelector('[aria-label^="Height: "]')!
+    expect(viewport.getAttribute('tabindex')).equals('0')
+    ;(viewport as HTMLElement).focus()
+    expect(document.activeElement).equals(viewport)
+    expect(chosenLabel()).equals('Height: 5%')
     const key = Object.keys(viewport).find(one =>
       one.startsWith('__reactFiber')
     )!
