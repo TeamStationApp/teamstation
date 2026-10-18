@@ -47,10 +47,10 @@ const ROWS: ReadonlyArray<RoleRowKind | 'follower'> = [
  * the Admin row only for an administrator, and turning off Member (which takes
  * every role here with it) not for an administrator's membership unless the
  * viewer is one. Follower is only ever a status: following is the person's
- * own. A role another of theirs brings with it at this level (`impliedRoles`:
- * every staff role with Admin, Songkeeper with Scorekeeper) reads "With Admin"
- * or "With Scorekeeper", with no toggle. Any other level, and any viewer who
- * does not manage, reads the rows only.
+ * own. Editable toggles reflect explicit assignments, even when Admin or
+ * Scorekeeper already grants the permission. Read-only rows still explain
+ * implied permissions. Other levels and viewers who do not manage stay
+ * read-only.
  */
 export function RoleRows(props: RoleRowsProps): React.ReactElement {
   const {
@@ -88,10 +88,9 @@ export function RoleRows(props: RoleRowsProps): React.ReactElement {
           // Member row is the usual one.
           const playerRow = player && row === 'member' && section.member
           const changeable =
-            impliedBy == null &&
-            !playerRow &&
             section.editable &&
             viewer.manages &&
+            !playerRow &&
             (row !== 'admin' || viewer.admin) &&
             (row !== 'member' || !held || !holdsAdmin || viewer.admin) &&
             (row === 'member' || held || canHoldRoles)

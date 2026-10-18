@@ -238,7 +238,7 @@ describe('the person profile', function () {
     expect(buttonIn(rowOf('team', 'admin'))).equals(null)
     expect(rowOf('team', 'admin').textContent).includes('Yes')
     expect(buttonIn(rowOf('team', 'member'))).equals(null)
-    // Every staff role comes with Admin, so none is offered again.
+    // Staff assignments remain editable; only Admin and membership are guarded.
     for (const role of [
       'coach',
       'assistant',
@@ -246,12 +246,14 @@ describe('the person profile', function () {
       'songkeeper',
       'videographer'
     ]) {
-      expect(buttonIn(rowOf('team', role)), role).equals(null)
-      expect(rowOf('team', role).textContent, role).includes('With Admin')
+      expect(
+        buttonIn(rowOf('team', role))?.getAttribute('aria-checked'),
+        role
+      ).equals('false')
     }
   })
 
-  it('reads Songkeeper as with Scorekeeper, and offers it again once Scorekeeper is taken away', async function () {
+  it('offers an explicit Songkeeper assignment while Scorekeeper is held', async function () {
     const calls = await render([
       profile({
         sections: [
@@ -269,8 +271,9 @@ describe('the person profile', function () {
         viewer: { manages: true, admin: false }
       })
     ])
-    expect(buttonIn(rowOf('team', 'songkeeper'))).equals(null)
-    expect(rowOf('team', 'songkeeper').textContent).includes('With Scorekeeper')
+    expect(
+      buttonIn(rowOf('team', 'songkeeper'))?.getAttribute('aria-checked')
+    ).equals('false')
     expect(
       buttonIn(rowOf('team', 'scorekeeper'))?.getAttribute('aria-checked')
     ).equals('true')
@@ -293,6 +296,45 @@ describe('the person profile', function () {
       buttonIn(rowOf('team', 'songkeeper'))?.getAttribute('aria-checked')
     ).equals('false')
   })
+
+  for (const role of [
+    'coach',
+    'assistant',
+    'scorekeeper',
+    'songkeeper',
+    'videographer'
+  ] as const)
+    it(`adds and removes explicit ${role} while preserving Admin`, async () => {
+      const answers = [false, true, false].map(held =>
+        profile({
+          sections: [
+            section('team', {
+              editable: true,
+              member: true,
+              roles: held ? ['admin', role] : ['admin']
+            })
+          ]
+        })
+      )
+      const calls = await render(answers)
+      const toggle = (): HTMLElement => buttonIn(rowOf('team', role))!
+      expect(toggle().getAttribute('aria-checked')).equals('false')
+      await click(toggle())
+      expect(toggle().getAttribute('aria-checked')).equals('true')
+      await click(toggle())
+      expect(calls.changes).has.length(1)
+      await click(
+        document.querySelector<HTMLElement>('[aria-label="Confirm removal"]')!
+      )
+      expect(toggle().getAttribute('aria-checked')).equals('false')
+      expect(
+        buttonIn(rowOf('team', 'admin'))?.getAttribute('aria-checked')
+      ).equals('true')
+      expect(calls.changes).deep.equals([
+        ['add', 'team', 'grp_one', 203, role],
+        ['remove', 'team', 'grp_one', 203, role]
+      ])
+    })
 
   it('keeps a Songkeeper given as well as Scorekeeper once Scorekeeper goes', async function () {
     await render([

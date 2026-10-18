@@ -186,6 +186,26 @@ describe('people at a team, a season and a league', function () {
     )
 
   describe('who may change roles', function () {
+    it('persists explicit staff assignments beside Admin and removes only the selected role', async () => {
+      for (const flag of [
+        'coach',
+        'assistant',
+        'scorekeeper',
+        'songkeeper',
+        'videographer'
+      ]) {
+        const added = await role('PUT', 101, flag, 101)
+        expect(added.status, flag).equals(200)
+        expect(added.body.roles, flag).deep.equals(['admin', flag])
+        const read = await call('GET', `/teams/${f.teamA}/people/101`, 101)
+        expect(read.body.sections[0].roles, flag).deep.equals(['admin', flag])
+        const removed = await role('DELETE', 101, flag, 101)
+        expect(removed.status, flag).equals(200)
+        expect(removed.body.roles, flag).deep.equals(['admin'])
+        expect(removed.body.member, flag).equals(true)
+      }
+    })
+
     it('lets a coach or an assistant add and remove every role but Admin, at once', async () => {
       const added = await role('PUT', MEMBER, 'videographer', COACH)
       expect(added.status).equals(200)
