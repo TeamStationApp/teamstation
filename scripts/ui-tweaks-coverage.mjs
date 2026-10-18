@@ -77,7 +77,7 @@ if (!serverOnly) {
       'lib/scoring-tests.cjs',
       '--grep',
       'roster|Roster|scoring sheet|player entry|placeholder|the coach|coach game|the Coach Game pill|automatic and explicit sections|title event creation and event detail editing|game page|game screen|game hero|game sections|game tabs|game watch|game card|relationship list|shared relationship Leave row|confirmed season participation departure|group settings identity|the league page|the season screen|settings people flows|creation and organization interface behavior|settings cleanup shared presentation|calendar, five-minute|timezone city selection|ScheduleRow|team presentation|minimal public team|team schedule|schedule event creation entry|season time|season page|group link|discovery|membership|Membership|warning|Warning|poster|Poster|sign.in|login|Login|event Info|event RSVP|schedule RSVP|recording|streaming screen|actual app|actual App|the app at launch|team route frames|Search tab|non-member|member’s game Videos|team card’s right|expanded statistics|the games feed|direct action app completion|applyCoverCrop|Coach Game|Score Game|the game Record button|Home Add and Create|the home screen|GameHeroCard|game actions|actual game scoring entry|the box score|player’s settings form' +
-        '|the person profile|Team roles on Settings'
+        '|the person profile|Team roles on Settings|ScoreboardBoard'
     ],
     { NODE_V8_COVERAGE: temp },
     true

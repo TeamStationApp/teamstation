@@ -11,6 +11,7 @@ import {
 } from '../../common/scoreboard'
 import { fonts } from '../theme/fonts'
 import { ScoreboardBoard, styles } from './ScoreboardBoard'
+import { scoreboardTheme } from './scoreboardTheme'
 import v1Styles from './v1ScoreboardStyles.json'
 
 let root: Root | undefined
@@ -140,7 +141,7 @@ describe('ScoreboardBoard', function () {
     expect(SCOREBOARD_BOARD_SIZE).deep.equals({ width: 607, height: 247 })
   })
 
-  it("uses 1.0's styles, style for style", function () {
+  it("keeps 1.0's styles except the pitch-speed font sized to fit two wide digits", function () {
     // Recorded from 1.0's own `getStyles(tsDark)` (`src/client/Scoreboard.tsx` at 25f9496e
     // at v1.0.0) in a 1920 × 1080 window. Only the "waiting for game data"
     // card's styles are gone, with the card, and 1.0's Helvetica Neue is the
@@ -153,7 +154,13 @@ describe('ScoreboardBoard', function () {
     const named = JSON.parse(
       JSON.stringify(drawn).replaceAll('"Inter"', JSON.stringify(fonts.inter))
     ) as typeof drawn
-    expect(JSON.parse(JSON.stringify(styles))).deep.equals(named)
+    expect(JSON.parse(JSON.stringify(styles))).deep.equals({
+      ...named,
+      pitchSpeedNumber: {
+        ...named.pitchSpeedNumber,
+        fontSize: scoreboardTheme.rem(2.125)
+      }
+    })
   })
 
   it('keeps its team bars from their names, never narrower than asked, for the overlay', async function () {
