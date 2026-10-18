@@ -1,6 +1,7 @@
 import Hls from 'hls.js'
 
 import { liveRejoin } from './liveRejoin'
+import { observeLiveStalls } from './liveStallDiagnostics'
 import { recoverLiveStalls } from './liveStallRecovery'
 import { joinLiveOnFirstPlay, LIVE_DELAY_SEC } from './liveStart'
 import { BEHIND_SEC } from './multiCam/buffering'
@@ -73,7 +74,16 @@ export function attachHls(
     intent.startAtLiveEdge !== false
       ? joinLiveOnFirstPlay(video)
       : undefined
+  const stopDiagnostics =
+    intent?.isLive != null && intent.buffer == null
+      ? observeLiveStalls(video, {
+          engine,
+          isLive: intent.isLive,
+          wantsToPlay: intent.wantsToPlay
+        })
+      : undefined
   return () => {
+    stopDiagnostics?.()
     stopJoining?.()
     stopRecovery?.()
     detach()
