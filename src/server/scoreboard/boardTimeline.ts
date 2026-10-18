@@ -13,6 +13,7 @@ import {
   type SourceState
 } from '../../common/scoreboard'
 import { recordOf, replayPlays } from '../../common/scoring/gumbo'
+import { forPlayback } from '../../common/scoring/playbackTimes'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
 import type { Database } from '../db/database'
 import { contextOf } from '../scoring/replayContext'
@@ -106,6 +107,11 @@ export async function computeBoardTimeline(
         .selectFrom('scoreboard_log')
         .select(['at', 'publisher', 'overrides'])
         .where('game_id', '=', gameId)
+        // An older packet accepted only for radar does not replace historical
+        // board snapshots or invalidate the newest-version cache key.
+        .where(
+          sql<boolean>`radar -> 'measurementOnly' is distinct from 'true'::jsonb`
+        )
         .orderBy('version')
         .execute()
       // Everyone an imported board can name: each play's batter and pitcher,
@@ -172,12 +178,19 @@ export async function computeBoardTimeline(
     const boards: Array<{ at: number | undefined; state: GameScoreboard }> = [
       ...imported
     ]
-    const replayed = replayPlays(stored, context, (state, atBatIndex, time) => {
-      boards.push({
-        at: msOf(time) ?? fallback.get(atBatIndex),
-        state: scoreboardOfGame(state)
-      })
-    })
+    const replayed = replayPlays(
+      {
+        plays: stored.plays.map(forPlayback),
+        currentPlay: forPlayback(stored.currentPlay)
+      },
+      context,
+      (state, atBatIndex, time) => {
+        boards.push({
+          at: msOf(time) ?? fallback.get(atBatIndex),
+          state: scoreboardOfGame(state)
+        })
+      }
+    )
     if (replayed.problems.length > 0) {
       log(
         `scoreboard timeline: game ${gameId} replays only to ${replayed.problems[0].message}`

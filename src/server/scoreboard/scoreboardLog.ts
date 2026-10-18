@@ -9,6 +9,10 @@ import {
   type ScoreboardUpdate,
   type SourceState
 } from '../../common/scoreboard'
+import {
+  radarPacket,
+  type RadarReading
+} from '../../common/scoring/radarSpeeds'
 import type { Database, ScoreboardLogTable } from '../db/database'
 
 /**
@@ -22,6 +26,7 @@ import type { Database, ScoreboardLogTable } from '../db/database'
 export type ScoreboardLogCause = ScoreboardLogTable['cause']
 
 export interface ScoreboardLogRow {
+  radar?: Pick<RadarReading, 'pitchSpeed' | 'exitVelocity'>
   gameId: string
   /** The Redis write's version for the game. */
   version: number
@@ -41,7 +46,8 @@ export interface ScoreboardLogRow {
  * Every worker logs the writes it made, so two workers' rows for one game can
  * arrive in either order. They are taken one at a time under a lock on the
  * game, in one transaction, and a row no newer than the newest one logged is
- * skipped: the newer row already holds the whole state after both writes.
+ * skipped unless it contains an explicit radar reading: the newer row holds
+ * the board state, but cannot stand in for an earlier measurement.
  *
  * A row is written when the publisher's state, its `receivedAt` or the
  * overrides changed. A contested packet that repeats the publisher's state
@@ -49,6 +55,7 @@ export interface ScoreboardLogRow {
  * so it is logged. A packet of only uncontested fields that changed nothing,
  * and an override write that set what was already set, are not: a speed of 0
  * on a slot that never had one is what the board showed already (`shown`).
+ * Explicit positive radar packets are always retained, even at the same speed.
  */
 export async function logScoreboard(
   db: Kysely<Database>,
@@ -62,6 +69,7 @@ export async function logScoreboard(
           receivedAt: row.publisher.receivedAt
         })
   const overrides = plain(row.overrides)
+  const radar = row.cause === 'publisher' ? radarPacket(row.radar) : undefined
   return await db.transaction().execute(async trx => {
     await sql`select pg_advisory_xact_lock(hashtext(${`scoreboard_log:${row.gameId}`}))`.execute(
       trx
@@ -74,8 +82,9 @@ export async function logScoreboard(
       .limit(1)
       .executeTakeFirst()
     if (newest != null) {
-      if (newest.version >= row.version) return 'skipped'
+      if (radar == null && newest.version >= row.version) return 'skipped'
       if (
+        radar == null &&
         isDeepStrictEqual(
           // Written by this function, from the slot.
           shown(newest.publisher as SourceState | null),
@@ -94,8 +103,20 @@ export async function logScoreboard(
         cause: row.cause,
         actor_id: row.actorId,
         publisher,
+        radar:
+          radar == null
+            ? null
+            : {
+                ...radar,
+                // These snapshots were historically skipped. Retain their
+                // measurements without changing the cached board timeline.
+                ...(newest != null && newest.version > row.version
+                  ? { measurementOnly: true }
+                  : {})
+              },
         overrides
       })
+      .onConflict(oc => oc.columns(['game_id', 'version']).doNothing())
       .execute()
     return 'inserted'
   })

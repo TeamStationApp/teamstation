@@ -25,6 +25,7 @@ describe('node settings', function () {
   })
 
   const changed: NodeSettings = {
+    radar: { pitchWindowSec: 4, inPlayWindowSec: 20 },
     scoreboard: {
       overlayStartDate: '2026-11-15',
       single: { x: 0.1, y: 0.2, height: 0.25 },
@@ -83,6 +84,8 @@ describe('node settings', function () {
       .selectFrom('system_settings')
       .select(['key', 'updated_by'])
       .where('key', 'in', [
+        'radar.pitchWindowSec',
+        'radar.inPlayWindowSec',
         'scoreboard.overlayStartDate',
         'scoreboard.single',
         'scoreboard.landscape',
@@ -94,10 +97,36 @@ describe('node settings', function () {
         'highlights.mergeWithinSec'
       ])
       .execute()
-    expect(rows).has.length(9)
+    expect(rows).has.length(11)
     expect(new Set(rows.map(row => Number(row.updated_by)))).deep.equals(
       new Set([105])
     )
+  })
+
+  it('rejects invalid radar windows and defaults malformed stored windows independently', async () => {
+    for (const key of ['pitchWindowSec', 'inPlayWindowSec'])
+      for (const value of [0, -1, 601, '3', null]) {
+        const response = await f.h.request(
+          'PUT',
+          '/node/settings',
+          { ...changed, radar: { ...changed.radar, [key]: value } },
+          105
+        )
+        expect(response.status).equals(400)
+      }
+    await f.h.db
+      .insertInto('system_settings')
+      .values([
+        { key: 'radar.pitchWindowSec', value: JSON.stringify(-1) },
+        { key: 'radar.inPlayWindowSec', value: JSON.stringify(12) },
+        { key: 'radar.unknown', value: JSON.stringify(8) }
+      ])
+      .execute()
+    const response = await f.h.request('GET', '/node/settings', undefined, 105)
+    expect((await response.json()).radar).deep.equals({
+      pitchWindowSec: 3,
+      inPlayWindowSec: 12
+    })
   })
 
   it('falls back to the default for each value a row holds badly, and caches', async () => {

@@ -26,6 +26,7 @@ describe('node settings', function () {
 
   it('defaults the board to 1%, 1% and 15% (0.01, 0.01, 0.15), a 5 s hold and 2026-10-01', function () {
     expect(asNodeSettings(defaultNodeSettings)).deep.equals({
+      radar: { pitchWindowSec: 3, inPlayWindowSec: 15 },
       scoreboard: {
         overlayStartDate: '2026-10-01',
         single: { x: 0.01, y: 0.01, height: 0.15 },
@@ -43,6 +44,17 @@ describe('node settings', function () {
   })
 
   it('refuses each value out of range, naming it', function () {
+    for (const key of ['pitchWindowSec', 'inPlayWindowSec'] as const)
+      for (const value of [0, -1, Infinity, NaN, 601])
+        expect(
+          refused(
+            with_(s => {
+              s.radar[key] = value
+            })
+          )
+        ).contains(`radar.${key}`)
+    const { radar: _radar, ...legacy } = defaultNodeSettings
+    expect(asNodeSettings(legacy).radar).deep.equals(defaultNodeSettings.radar)
     expect(refused(with_(s => (s.scoreboard.single.x = 1)))).equals(
       'scoreboard.single.x must be a number from 0 to under 1'
     )

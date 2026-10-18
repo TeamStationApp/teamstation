@@ -101,7 +101,8 @@ function batterSafe(
 function decide(
   state: GameState,
   decision: Decision,
-  sentence: readonly ScoringAction[]
+  sentence: readonly ScoringAction[],
+  transcript = ''
 ): Step | null {
   const pending = state.pending
   if (!WAITS.includes(decision) || pending == null) return null
@@ -143,7 +144,11 @@ function decide(
           : named?.type === 'ballInPlay'
             ? named.fielder
             : undefined
-      const first = state.liveData.linescore.defense['1B']?.id
+      const first =
+        (fielder == null
+          ? undefined
+          : namedAt(state, transcript, '1B', fielder)) ??
+        state.liveData.linescore.defense['1B']?.id
       if (!thrown || fielder == null || first == null)
         return [out(batter, '1B', pending.outcome)]
       return [
@@ -2057,6 +2062,26 @@ export function leadRunnersFirst(
   return ordered
 }
 
+/** Only words unambiguously belonging to the play being completed. */
+function completionWords(
+  initial: GameState,
+  current: GameState,
+  sentence: readonly ScoringAction[],
+  transcript: string
+): string {
+  const index =
+    current.liveData.plays.allPlays.length -
+    initial.liveData.plays.allPlays.length
+  const parts = transcript.split(/\b(?:next|following)\s+(?:batter|hitter)\b/i)
+  if (parts.length > 1) return parts[index] ?? ''
+  // Without a clear spoken boundary, keep canonical fielders and normal
+  // base coverage rather than borrowing a receiver from another batter.
+  return index > 0 ||
+    sentence.filter(action => action.type === 'result').length > 1
+    ? ''
+    : transcript
+}
+
 /**
  * A play that still waits on something a tap would settle — the batter out
  * at first on a ground out nobody finished, the runners out on a fielder's
@@ -2070,7 +2095,8 @@ export function leadRunnersFirst(
  */
 export function settleBetween(
   game: GameState,
-  sentence: readonly ScoringAction[]
+  sentence: readonly ScoringAction[],
+  transcript = ''
 ): { actions: ScoringAction[]; question?: Question } {
   const settled: ScoringAction[] = []
   const rest = [...sentence]
@@ -2104,7 +2130,12 @@ export function settleBetween(
       const answer =
         decision === 'batterOut' && ownOut >= 0
           ? rest.splice(ownOut, 1)
-          : decide(state, decision, settled)
+          : decide(
+              state,
+              decision,
+              settled,
+              completionWords(game, state, sentence, transcript)
+            )
       if (answer != null && !Array.isArray(answer)) {
         const { ask } = answer
         const after = [action, ...rest]
@@ -2147,13 +2178,19 @@ export function settleBetween(
 
 export function completeSentence(
   game: GameState,
-  sentence: readonly ScoringAction[]
+  sentence: readonly ScoringAction[],
+  transcript = ''
 ): { actions: ScoringAction[] } | { question: Question } {
   let state = game
   for (const action of sentence) state = applyAction(state, action).state
   const actions = [...sentence]
   for (let step = 0; step < 12; step++) {
-    const answer = decide(state, nextDecision(state), sentence)
+    const answer = decide(
+      state,
+      nextDecision(state),
+      sentence,
+      completionWords(game, state, sentence, transcript)
+    )
     if (answer == null) return { actions }
     if (!Array.isArray(answer)) {
       const { ask } = answer

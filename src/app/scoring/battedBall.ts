@@ -4,7 +4,7 @@ import {
   outcomeAvailable,
   trajectoryLabel
 } from '../../common/scoring/rules'
-import { fieldingLocation } from '../field/fieldingLocation'
+import { fieldingLocation, isFairLocation } from '../field/fieldingLocation'
 import type { GroundPoint } from '../field/fieldModel'
 import { homeRunLanding } from '../field/stadiumBoundary'
 import { initialHitTarget } from '../field/trajectoryGuide'
@@ -196,7 +196,11 @@ export function acceptTrajectory(
       ...(outcome === 'Throw Out'
         ? { outBy: 'throw' as const }
         : outcome === 'Ball Caught'
-          ? { outBy: 'catch' as const }
+          ? {
+              outBy: 'catch' as const,
+              foulCaught:
+                pending.location != null && !isFairLocation(pending.location)
+            }
           : outcome === 'Batter Interference'
             ? { outBy: 'interference' as const }
             : {})

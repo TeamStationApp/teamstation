@@ -31,6 +31,7 @@ for (const key of [
 // its own time origin, so supply the same clock to each frame callback.
 Object.defineProperty(globalThis, 'requestAnimationFrame', {
   configurable: true,
+  writable: true,
   value: callback =>
     dom.window.requestAnimationFrame(() => callback(performance.now()))
 })

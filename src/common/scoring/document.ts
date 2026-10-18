@@ -45,6 +45,8 @@ export interface PlayStamp {
   actions: ScoringAction[]
   /** When each action was taken, one per action; undefined where unknown. */
   actionTimes?: ReadonlyArray<string | undefined>
+  /** Historical playback clock, separate from radar correction times. */
+  playbackTimes?: ReadonlyArray<string | undefined>
   startTime?: string | null
   endTime?: string | null
 }
@@ -56,13 +58,22 @@ export interface PlayStamp {
 function recordActions(stamp: PlayStamp): {
   actions: ScoringAction[]
   actionTimes?: string[]
+  playbackTimes?: string[]
 } {
   const times = stamp.actionTimes
   return times != null &&
     stamp.actions.length > 0 &&
     times.length === stamp.actions.length &&
     times.every(time => time != null)
-    ? { actions: stamp.actions, actionTimes: [...times] as string[] }
+    ? {
+        actions: stamp.actions,
+        actionTimes: [...times] as string[],
+        ...(stamp.playbackTimes?.length === times.length &&
+        stamp.playbackTimes.every(time => time != null) &&
+        stamp.playbackTimes.some((time, i) => time !== times[i])
+          ? { playbackTimes: [...stamp.playbackTimes] as string[] }
+          : {})
+      }
     : { actions: stamp.actions }
 }
 
@@ -421,7 +432,10 @@ function leadOf(
     }
   if (eventType === 'passed_ball')
     return {
-      credit: { eventType, label: title, credit: null },
+      credit:
+        event.catcher == null
+          ? { eventType, label: title, credit: null }
+          : credit(name(event.catcher), 'catcher', title),
       player: null
     }
   if (BATTER_ACTIONS.has(eventType)) {

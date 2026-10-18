@@ -272,6 +272,8 @@ const actionCleaners = {
     to: asOneOf(DESTINATIONS),
     out: asOptional(asBoolean),
     reason: asOptional(asOneOf(RUNNER_REASONS)),
+    error: asOptional(asSessionId),
+    errorEvent: asOptional(asNumber),
     fielders: asOptional(asArray(asSessionId)),
     locations: asOptional(asArray(asPoint)),
     runnerLocation: asOptional(asPoint)

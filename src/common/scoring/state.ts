@@ -112,6 +112,8 @@ export interface PlayEvent {
    * who threw the wild pitch.
    */
   pitcher?: PlayerRef
+  /** The catcher charged with a passed ball, before any later substitution. */
+  catcher?: PlayerRef
 }
 const asPlayEvent = exactly(
   asObject({
@@ -138,7 +140,8 @@ const asPlayEvent = exactly(
       asObject({ startSpeed: asOptional(asNumber), zone: asOptional(asNumber) })
     ),
     player: asPlayerRef,
-    pitcher: asOptional(asPlayerRef)
+    pitcher: asOptional(asPlayerRef),
+    catcher: asOptional(asPlayerRef)
   })
 ) as Cleaner<PlayEvent>
 

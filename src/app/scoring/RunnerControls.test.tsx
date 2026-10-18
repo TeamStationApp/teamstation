@@ -43,14 +43,111 @@ async function click(label: string): Promise<void> {
 function initial(): ScoringState {
   return initialScoringState(createDevelopmentSession(gameFixture, [], []))
 }
-afterEach(async function () {
-  await act(async () => {
-    root?.unmount()
-  })
-  root = undefined
-  received = []
-})
 describe('runner decisions', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    received = []
+  })
+  it('offers previous or separate error attribution and cancellation', async () => {
+    const state = initial()
+    state.phase = 'runnerErrorReuse'
+    await render(state)
+    expect(document.body.textContent).includes('Was this the same error?')
+    await click('Use previous error')
+    expect(received.at(-1)).deep.equals({
+      type: 'RUNNER_ERROR_REUSE',
+      reuse: true
+    })
+    await click('Record another error')
+    expect(received.at(-1)).deep.equals({
+      type: 'RUNNER_ERROR_REUSE',
+      reuse: false
+    })
+    await click('Cancel')
+    expect(received.at(-1)).deep.equals({ type: 'RUNNER_CANCEL' })
+  })
+  it('offers the two pitch choices, explains unavailable choices, and cancels error selection', async () => {
+    let state = initial()
+    state.session.liveData.linescore.offense.first = playerRef(state.session, 2)
+    state = scoringReducer(state, {
+      type: 'RUNNER_DROP',
+      id: 2,
+      to: 2,
+      decision: 'safe',
+      generation: state.generation
+    })
+    const reason = state
+    state = scoringReducer(reason, {
+      type: 'RUNNER_REASON',
+      reason: 'Wild Pitch'
+    })
+    await render(state)
+    expect(
+      document
+        .querySelector('[aria-label="Use previous pitch as wild pitch"]')
+        ?.getAttribute('aria-disabled')
+    ).equals('true')
+    expect(document.body.textContent).includes(
+      'No previous ball or strike is available.'
+    )
+    await click('Add a pitched ball to the count')
+    expect(received.at(-1)).deep.equals({ type: 'RUNNER_PITCH', addBall: true })
+    await click('Cancel')
+    expect(received.at(-1)).deep.equals({ type: 'RUNNER_CANCEL' })
+    const pitched = scoringReducer(initial(), { type: 'PITCH', kind: 'called' })
+    state.session = pitched.session
+    state.runnerAction!.reason = 'Passed Ball'
+    await render(state)
+    await click('YES')
+    await click('NO')
+    expect(received.at(-1)).deep.equals({ type: 'RUNNER_PITCH_NEW' })
+    await click('YES')
+    expect(received.at(-1)).deep.equals({
+      type: 'RUNNER_PITCH',
+      addBall: false
+    })
+    await click('Cancel')
+    expect(received.at(-1)).deep.equals({ type: 'RUNNER_CANCEL' })
+    state.runnerAction!.reason = 'Wild Pitch'
+    await render(state)
+    await click('Use previous pitch as wild pitch')
+    expect(received.at(-1)).deep.equals({
+      type: 'RUNNER_PITCH',
+      addBall: false
+    })
+    let walk = initial()
+    for (let n = 0; n < 4; n++)
+      walk = scoringReducer(walk, { type: 'PITCH', kind: 'ball' })
+    state.session = walk.session
+    state.runnerAction!.reason = 'Wild Pitch'
+    await render(state)
+    expect(
+      document
+        .querySelector('[aria-label="Add a pitched ball to the count"]')
+        ?.getAttribute('aria-disabled')
+    ).equals('true')
+    expect(document.body.textContent).includes(
+      'Finish the current play before adding another pitch.'
+    )
+    state.runnerAction!.reason = 'Passed Ball'
+    await render(state)
+    expect(
+      document.querySelector('[aria-label="NO"]')?.getAttribute('aria-disabled')
+    ).equals('true')
+    expect(document.body.textContent).includes(
+      'Finish the current play before adding another pitch.'
+    )
+    state = scoringReducer(reason, {
+      type: 'RUNNER_REASON',
+      reason: 'Fielding Error'
+    })
+    await render(state)
+    await click('Cancel')
+    expect(received.at(-1)).deep.equals({ type: 'RUNNER_CANCEL' })
+  })
   it('offers home Safe/Out and only a validated Back', async function () {
     let state = initial()
     state.session.liveData.linescore.offense.third = playerRef(state.session, 4)

@@ -764,6 +764,27 @@ const nodeSettingsSchema = {
   additionalProperties: false,
   required: ['scoreboard', 'highlights'],
   properties: {
+    radar: {
+      type: 'object',
+      additionalProperties: false,
+      description:
+        'Radar matching windows; omitted by older clients to use defaults.',
+      required: ['pitchWindowSec', 'inPlayWindowSec'],
+      properties: {
+        pitchWindowSec: {
+          type: 'number',
+          exclusiveMinimum: 0,
+          maximum: 600,
+          default: 3
+        },
+        inPlayWindowSec: {
+          type: 'number',
+          exclusiveMinimum: 0,
+          maximum: 600,
+          default: 15
+        }
+      }
+    },
     scoreboard: {
       type: 'object',
       additionalProperties: false,
@@ -1105,9 +1126,7 @@ const gumboSchemas = {
       pitchData: {
         type: 'object',
         description:
-          'Only what the scorer gave of the pitch: its speed and its zone. ' +
-          'TeamStation measures nothing, so it writes no `coordinates` or ' +
-          'other tracking.',
+          'Pitch speed in mph from a matching radar packet, and the scorer’s zone. No tracking coordinates.',
         properties: {
           startSpeed: {
             type: 'number',
@@ -1130,10 +1149,15 @@ const gumboSchemas = {
           '`totalDistance` and `coordinates` are where the scorer put the ' +
           "ball, sized by the game's fence distance (`fenceDistanceFt` on " +
           '`GET /games/{gameId}`, 200 feet unless the game, its season or ' +
-          'its league says otherwise). TeamStation writes no speed; a ' +
+          'its league says otherwise). Radar launchSpeed is mph, only for fair balls in play; a ' +
           'dictated angle, the untouched default, or one estimated from a ' +
           'trajectory alone stays in the `teamStation` record.',
         properties: {
+          launchSpeed: {
+            type: 'number',
+            exclusiveMinimum: 0,
+            description: 'Radar exit velocity in mph; never on a foul.'
+          },
           launchAngle: {
             type: 'number',
             description: 'Degrees, -90 to 90, as the scorer dragged it.'
@@ -1271,7 +1295,8 @@ const gumboSchemas = {
       'estimates (trajectory, launch angle). Replay and undo read it; ' +
       '`npm run refold-scored-games` rebuilds the rest of the play from it.' +
       ' `version` is 1; a post whose record has any other version is ' +
-      'refused with 400. The server stores the record as it is sent.',
+      'refused with 400. Scoring sessions preserve historical playback times ' +
+      'and the server adds radar measurement provenance when necessary.',
     required: ['version', 'setupBefore', 'actions'],
     properties: {
       version: { type: 'integer', enum: [1] },
@@ -1287,6 +1312,21 @@ const gumboSchemas = {
           'with no time; such a play has only its `about.startTime` and ' +
           '`about.endTime`. A list that does not match `actions` in length ' +
           'is ignored when the play is read back.'
+      },
+      playbackTimes: {
+        type: 'array',
+        items: { type: 'string', format: 'date-time' },
+        description:
+          'Session-maintained historical action times for scoreboard playback. ' +
+          'Radar category corrections can change actionTimes without moving playback.'
+      },
+      radarMeasurements: {
+        type: 'object',
+        readOnly: true,
+        description:
+          'Server-maintained measurement timestamps, indexed by play-event index ' +
+          'and pitchSpeed or exitVelocity. Retained speeds are revalidated against ' +
+          'the configured matching window even after the source log expires.'
       },
       detail: { type: 'object' }
     }

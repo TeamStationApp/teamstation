@@ -10,18 +10,21 @@ import { NO_OVERRIDES } from '../../common/scoreboard'
 import {
   addGame,
   addPerson,
+  addScorableTeams,
   addTeam,
   connectedClient,
   dropPrefix,
   type Person,
   quiet,
   requireRedis,
+  scoreDirectly,
   scratchDatabase,
   testPrefix,
   until
 } from '../../test/scoreboardKit'
 import type { Database } from '../db/database'
 import { attachScoreboard } from './attachScoreboard'
+import { computeBoardTimeline, makeBoardTimelineCache } from './boardTimeline'
 import { makeScoreboardHub } from './scoreboardHub'
 import { logScoreboard } from './scoreboardLog'
 import {
@@ -209,6 +212,7 @@ describe('the scoreboard log', function () {
     const at = written(worker.results[0])
     expect(at).equals(clock)
     expect(row).deep.equals({
+      radar: null,
       game_id: gameId,
       version: at * 1000,
       at: new Date(at),
@@ -218,6 +222,121 @@ describe('the scoreboard log', function () {
       overrides: NO_OVERRIDES
     })
     expect(row.actor_id).is.a('number')
+  })
+
+  it('keeps repeated radar packets, but never treats held fields or dashboard writes as measurements', async function () {
+    const worker = await startWorker()
+    const gameId = await newGame()
+    const phone = await publisher(worker, gameId)
+    send(phone, { pitchSpeed: 88 })
+    await rowCount(gameId, 1)
+    clock += 1000
+    send(phone, { pitchSpeed: 88 })
+    await rowCount(gameId, 2)
+    clock += 1000
+    send(phone, { exitVelocity: 99 })
+    await rowCount(gameId, 3)
+    send(phone, { balls: 1 })
+    const found = await rowCount(gameId, 4)
+    expect(found.map(r => r.radar)).deep.equals([
+      { pitchSpeed: 88 },
+      { pitchSpeed: 88 },
+      { exitVelocity: 99 },
+      null
+    ])
+    expect(found[2].publisher.state.pitchSpeed).equals(88)
+  })
+
+  it('persists a late WebSocket radar reading on the current scored pitch', async function () {
+    const context = await addScorableTeams(db, {
+      home: 'Comets',
+      away: 'Rockets'
+    })
+    const gameId = await addGame(db, {
+      homeTeamId: context.teams.home.id,
+      awayTeamId: context.teams.away.id,
+      startAt: new Date()
+    })
+    const scorer = await addPerson(db, 'publisher', {
+      owns: context.teams.home.id
+    })
+    const worker = await startWorker()
+    const phone = connect(`${worker.url}/${gameId}/publish`, scorer)
+    await phone.opened
+    await scoreDirectly(db, gameId, context, [{ type: 'pitch', call: 'B' }])
+    clock = Date.now()
+    send(phone, { pitchSpeed: 87 })
+    await until('speed on scored pitch', async () => {
+      const row = await db
+        .selectFrom('games')
+        .select('currentPlay')
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow()
+      return (
+        (row.currentPlay as any)?.playEvents?.find((p: any) => p.isPitch)
+          ?.pitchData?.startSpeed === 87
+      )
+    })
+    expect(logged).deep.equals([])
+  })
+
+  it('retains late-arriving older radar writes from another worker without duplicating a version', async function () {
+    const gameId = await newGame()
+    const row = {
+      gameId,
+      at: clock,
+      cause: 'publisher' as const,
+      actorId: null,
+      publisher: undefined,
+      overrides: NO_OVERRIDES
+    }
+    await logScoreboard(db, { ...row, version: 2, radar: { pitchSpeed: 82 } })
+    await logScoreboard(db, { ...row, version: 1, radar: { pitchSpeed: 81 } })
+    await logScoreboard(db, { ...row, version: 1, radar: { pitchSpeed: 81 } })
+    expect((await rows(gameId)).map(r => r.radar)).deep.equals([
+      { pitchSpeed: 81, measurementOnly: true },
+      { pitchSpeed: 82 }
+    ])
+  })
+
+  it('keeps cached and rebuilt timelines identical when an older measurement arrives late', async () => {
+    const gameId = await newGame()
+    const cache = makeBoardTimelineCache(2)
+    const row = {
+      gameId,
+      cause: 'publisher' as const,
+      actorId: null,
+      overrides: NO_OVERRIDES
+    }
+    await logScoreboard(db, {
+      ...row,
+      version: 2,
+      at: clock + 2000,
+      publisher: {
+        state: { balls: 2, pitchSpeed: 82 },
+        receivedAt: clock + 2000
+      },
+      radar: { pitchSpeed: 82 }
+    })
+    const before = await cache.get(db, gameId)
+    await logScoreboard(db, {
+      ...row,
+      version: 1,
+      at: clock + 1000,
+      publisher: {
+        state: { balls: 1, pitchSpeed: 81 },
+        receivedAt: clock + 1000
+      },
+      radar: { pitchSpeed: 81 }
+    })
+    expect((await rows(gameId))[0].radar).deep.equals({
+      pitchSpeed: 81,
+      measurementOnly: true
+    })
+    expect(await cache.get(db, gameId)).equals(before)
+    expect(await computeBoardTimeline(db, gameId)).deep.equals(before)
+    expect(before?.steps.some(step => step.state.balls === 1)).equals(false)
+    expect(before?.steps.at(-1)?.state.balls).equals(2)
   })
 
   it('skips an uncontested packet that changes nothing, and logs a repeated contested one (U6)', async function () {

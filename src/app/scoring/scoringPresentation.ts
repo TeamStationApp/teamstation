@@ -102,6 +102,8 @@ export interface HitSequence {
 }
 export interface ThrowSequence {
   dictated?: boolean
+  /** A failed pickoff already recorded; completion must not retire the runner. */
+  safe?: boolean
   id: string
   generation: number
   kind: 'throw'

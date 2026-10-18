@@ -59,6 +59,17 @@ export interface HighlightTimings {
 export interface NodeSettings {
   scoreboard: ScoreboardSettings
   highlights: HighlightTimings
+  radar: RadarSettings
+}
+
+export interface RadarSettings {
+  pitchWindowSec: number
+  inPlayWindowSec: number
+}
+
+export const defaultRadarSettings: RadarSettings = {
+  pitchWindowSec: 3,
+  inPlayWindowSec: 15
 }
 
 export const defaultScoreboardSettings: ScoreboardSettings = {
@@ -79,7 +90,8 @@ export const defaultHighlightTimings: HighlightTimings = {
 
 export const defaultNodeSettings: NodeSettings = {
   scoreboard: defaultScoreboardSettings,
-  highlights: defaultHighlightTimings
+  highlights: defaultHighlightTimings,
+  radar: defaultRadarSettings
 }
 
 /** The longest any of the second-valued settings may be. */
@@ -115,6 +127,7 @@ export function asNodeSettings(raw: unknown): NodeSettings {
   const scoreboard = record(value.scoreboard, 'scoreboard')
   const highlights = record(value.highlights, 'highlights')
   return {
+    radar: asRadarSettings(value.radar ?? defaultRadarSettings),
     scoreboard: {
       overlayStartDate: asDate(
         scoreboard.overlayStartDate,
@@ -143,6 +156,17 @@ export function asNodeSettings(raw: unknown): NodeSettings {
         'highlights.mergeWithinSec'
       )
     }
+  }
+}
+
+export function asRadarSettings(raw: unknown): RadarSettings {
+  const value = record(raw, 'radar')
+  return {
+    pitchWindowSec: asHoldSeconds(value.pitchWindowSec, 'radar.pitchWindowSec'),
+    inPlayWindowSec: asHoldSeconds(
+      value.inPlayWindowSec,
+      'radar.inPlayWindowSec'
+    )
   }
 }
 

@@ -11,6 +11,41 @@ import type { ScoringAction } from './actions'
  */
 export const REPLACED_KEEPS_TIME_MS = 60_000
 
+/** A correction into a different radar window is a newly timed decision. */
+export function radarActionCategory(action: ScoringAction): string | undefined {
+  if (action.type === 'pitch')
+    return ['B', 'C', 'S'].includes(action.call) ? 'plain' : action.call
+  if (action.type === 'ballInPlay') return 'inPlay'
+  if (action.type === 'result') {
+    if (action.eventType === 'strikeout') return 'plain'
+    if (action.eventType === 'hit_by_pitch') return 'H'
+    if (
+      [
+        'single',
+        'double',
+        'triple',
+        'home_run',
+        'field_out',
+        'field_error',
+        'fielders_choice',
+        'sac_fly',
+        'sac_bunt'
+      ].includes(action.eventType)
+    )
+      return 'inPlay'
+  }
+  return undefined
+}
+
+function radarCategory(key: string): string | undefined {
+  try {
+    return radarActionCategory(JSON.parse(key) as ScoringAction)
+  } catch {
+    /* Non-action keys are also used by the generic matching tests. */
+  }
+  return undefined
+}
+
 /**
  * An action written out, once per action, with each object's keys in order:
  * two that say the same have the same key, as `sync` takes them to be the
@@ -38,6 +73,8 @@ export function keyOf(action: ScoringAction): string {
 export interface DisplacedActions {
   keys: readonly string[]
   times: ReadonlyArray<string | undefined>
+  /** Historical clock for Undo age when radar corrections use a later time. */
+  ageTimes?: ReadonlyArray<string | undefined>
   /**
    * When each displaced action was cut off: what was left over from an
    * earlier cut keeps the moment of that cut.
@@ -114,8 +151,8 @@ function partnersOf(
  * - an action applied in the call that made the cut, paired with one that
  *   cut took off, takes that one's time whatever its age, whether it is the
  *   same action or the one that replaced it: that is a screen applying its
- *   history again with a change in it, and every pitch in it, the changed
- *   one too, happened when it happened;
+ *   history again with a change in it. A change of radar category is the
+ *   exception: it uses the new decision time and matching window;
  * - any other applied action equal to a displaced one, or one that takes a
  *   displaced action's place, takes that one's time when the displaced
  *   action was more than a minute old when it was cut, and keeps its own
@@ -131,14 +168,16 @@ function partnersOf(
  *
  * `applied` are the applied actions written out, `stamped` the moment each
  * was applied, and `replayed` how many of the first were applied in the call
- * that made the cut.
+ * that made the cut. The playback clock retains historical times even when
+ * the radar category changes; it never uses the correction's decision time.
  */
 export function matchTimes(
   applied: readonly string[],
   stamped: readonly string[],
   displaced: DisplacedActions,
   before: string | undefined,
-  replayed = 0
+  replayed = 0,
+  clock: 'radar' | 'playback' = 'radar'
 ): MatchedTimes {
   const shown = displaced.keys
   const m = applied.length
@@ -171,14 +210,19 @@ export function matchTimes(
     if (j >= 0) {
       const old = displaced.times[j]
       const same = applied[i] === shown[j]
+      const category = radarCategory(applied[i])
+      const oldCategory = radarCategory(shown[j])
       // An action put back unchanged that never had a time (scored before
       // actions carried them) stays without one, so its play keeps its own.
-      if (old == null) times.push(same ? old : own)
+      if (clock === 'radar' && !same && category !== oldCategory)
+        times.push(own)
+      else if (old == null) times.push(same ? old : own)
       // History put back by the cutting call is paired only with its own cut.
       else if (i < replayed) times.push(old)
       else
         times.push(
-          Date.parse(displaced.cutAt[j]) - Date.parse(old) >
+          Date.parse(displaced.cutAt[j]) -
+            Date.parse(displaced.ageTimes?.[j] ?? old) >
             REPLACED_KEEPS_TIME_MS
             ? old
             : own

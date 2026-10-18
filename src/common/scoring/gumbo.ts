@@ -52,6 +52,8 @@ export interface TeamStationRecord {
    * with an action that has none, has only the play's own times.
    */
   actionTimes?: string[]
+  /** Historical times when a radar correction changes an action's clock. */
+  playbackTimes?: string[]
   /** What the scoring screen recorded that Gumbo has no place for. */
   detail?: unknown
 }
@@ -61,6 +63,7 @@ const asRecord: Cleaner<TeamStationRecord> = asObject({
   setupBefore: asGameSetup,
   actions: asArray(asUnknown),
   actionTimes: asUnknown,
+  playbackTimes: asUnknown,
   detail: asUnknown
 }) as Cleaner<TeamStationRecord>
 
@@ -83,7 +86,7 @@ export function recordOf(play: unknown): TeamStationRecord | null {
 
 function cleanRecord(raw: unknown): TeamStationRecord | null {
   try {
-    const { actionTimes, ...record } = asRecord(raw)
+    const { actionTimes, playbackTimes, ...record } = asRecord(raw)
     const actions: ScoringAction[] = []
     for (const action of record.actions) {
       const cleaned = cleanAction(action)
@@ -96,7 +99,18 @@ function cleanRecord(raw: unknown): TeamStationRecord | null {
       Array.isArray(actionTimes) &&
       actionTimes.length === actions.length &&
       actionTimes.every(time => typeof time === 'string')
-    return { ...record, actions, ...(timed ? { actionTimes } : {}) }
+    const historical =
+      Array.isArray(playbackTimes) &&
+      playbackTimes.length === actions.length &&
+      playbackTimes.every(
+        time => typeof time === 'string' && Number.isFinite(Date.parse(time))
+      )
+    return {
+      ...record,
+      actions,
+      ...(timed ? { actionTimes } : {}),
+      ...(historical ? { playbackTimes } : {})
+    }
   } catch {
     return null
   }
@@ -196,6 +210,7 @@ export interface Replayed {
     atBatIndex: number
     actions: ScoringAction[]
     actionTimes: Array<string | undefined>
+    playbackTimes?: string[]
   }>
   /** Plays rebuilt from their documents, which cannot be undone into. */
   derived: number
@@ -282,7 +297,14 @@ export function replayPlays(
       times.push(record.actionTimes?.[i])
       onAction?.(state, atBatIndex, record.actionTimes?.[i])
     }
-    segments.push({ atBatIndex, actions: kept, actionTimes: times })
+    segments.push({
+      atBatIndex,
+      actions: kept,
+      actionTimes: times,
+      ...(record.playbackTimes == null
+        ? {}
+        : { playbackTimes: record.playbackTimes.slice(0, kept.length) })
+    })
   }
   return { state, base, segments, derived: prefix.length, problems }
 }

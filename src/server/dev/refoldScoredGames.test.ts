@@ -10,9 +10,11 @@ import {
 } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { mintUserId } from '../../common/mintUserId'
+import { defaultRadarSettings } from '../../common/nodeSettings'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/apply'
 import { freshGame, newSetup } from '../../common/scoring/lineup'
+import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
 import {
   type EventStore,
   ScoringSession,
@@ -671,5 +673,73 @@ describe('refolding the stored plays (U11)', function () {
       skipped: []
     })
     expect(await pitchData()).deep.equals(stored)
+  })
+
+  it('does not repeatedly refold server radar measurements on completed and current plays', async function () {
+    const gameId = await newGame()
+    await score(gameId, [
+      { type: 'pitch', call: 'B' },
+      { type: 'ballInPlay', contact: 'swing', fielder: 14 },
+      { type: 'result', eventType: 'single' },
+      close,
+      { type: 'pitch', call: 'C' }
+    ])
+    const measured = (value: unknown): any => {
+      return withRadarSpeeds(
+        value,
+        radarTargets(value).map((target, i) => ({
+          at: target.at,
+          version: i + 1,
+          pitchSpeed: 82,
+          exitVelocity: 94
+        })),
+        defaultRadarSettings
+      )
+    }
+    const [row] = await readPlays(db, gameId)
+    const current = (
+      await db
+        .selectFrom('games')
+        .select('currentPlay')
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow()
+    ).currentPlay
+    await db
+      .updateTable('events')
+      .set({ gumbo: measured(row.gumbo) })
+      .where('id', '=', row.id)
+      .execute()
+    await db
+      .updateTable('games')
+      .set({ currentPlay: measured(current) })
+      .where('id', '=', gameId)
+      .execute()
+    for (let i = 0; i < 2; i++)
+      expect(await refoldScoredGames(db, { gameId })).deep.equals({
+        changed: [],
+        unchanged: [gameId],
+        skipped: []
+      })
+    const wrong = measured(row.gumbo)
+    wrong.count.balls = 3
+    await db
+      .updateTable('events')
+      .set({ gumbo: wrong })
+      .where('id', '=', row.id)
+      .execute()
+    expect(
+      (await refoldScoredGames(db, { gameId }))!.changed.map(
+        change => change.gameId
+      )
+    ).deep.equals([gameId])
+    expect((await refoldScoredGames(db, { gameId }))!.unchanged).deep.equals([
+      gameId
+    ])
+    const saved = (await readPlays(db, gameId))[0].gumbo as any
+    expect(
+      saved.playEvents
+        .filter((e: any) => e.isPitch)
+        .map((e: any) => e.pitchData.startSpeed)
+    ).deep.equals([82, 82])
   })
 })

@@ -1,11 +1,16 @@
 import React from 'react'
 import { Text, View } from 'react-native'
 
-import { homeBackProposal } from '../../common/scoring/rules'
+import { hasEligiblePitch, homeBackProposal } from '../../common/scoring/rules'
+import { CancelAction } from '../components/CancelAction'
 import type { BaseProjection } from '../field/fieldTypes'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
-import { runnerDecisionError, runnerReasons } from './scoringFlow'
+import {
+  hasCurrentRunnerPitch,
+  runnerDecisionError,
+  runnerReasons
+} from './scoringFlow'
 import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 export function RunnerControls({
@@ -21,6 +26,102 @@ export function RunnerControls({
 }): React.ReactElement | null {
   const theme = useTheme()
   const action = state.runnerAction
+  if (state.phase === 'runnerErrorReuse')
+    return (
+      <ScoringSheet
+        title="Was this the same error?"
+        onClose={() => {
+          dispatch({ type: 'RUNNER_CANCEL' })
+        }}
+      >
+        <ScoringButton
+          row
+          label="Use previous error"
+          onPress={() => {
+            dispatch({ type: 'RUNNER_ERROR_REUSE', reuse: true })
+          }}
+        />
+        <ScoringButton
+          row
+          label="Record another error"
+          onPress={() => {
+            dispatch({ type: 'RUNNER_ERROR_REUSE', reuse: false })
+          }}
+        />
+      </ScoringSheet>
+    )
+  if (state.phase === 'runnerError' || state.phase === 'runnerPitchType')
+    return (
+      <View style={{ position: 'absolute', bottom: 130, alignSelf: 'center' }}>
+        <CancelAction
+          accessibilityLabel="Cancel"
+          onPress={() => {
+            dispatch({ type: 'RUNNER_CANCEL' })
+          }}
+        />
+      </View>
+    )
+  if (state.phase === 'runnerPitch' && action?.reason === 'Passed Ball')
+    return (
+      <ScoringSheet
+        title="Was the passed ball the previous pitch?"
+        onClose={() => {
+          dispatch({ type: 'RUNNER_CANCEL' })
+        }}
+      >
+        <ScoringButton
+          row
+          label="YES"
+          disabled={!hasCurrentRunnerPitch(state)}
+          onPress={() => {
+            dispatch({ type: 'RUNNER_PITCH', addBall: false })
+          }}
+        />
+        <ScoringButton
+          row
+          label="NO"
+          disabled={state.session.pending != null}
+          onPress={() => {
+            dispatch({ type: 'RUNNER_PITCH_NEW' })
+          }}
+        />
+        {state.session.pending != null && (
+          <ScoringError message="Finish the current play before adding another pitch." />
+        )}
+      </ScoringSheet>
+    )
+  if (state.phase === 'runnerPitch')
+    return (
+      <ScoringSheet
+        title={action!.reason!}
+        onClose={() => {
+          dispatch({ type: 'RUNNER_CANCEL' })
+        }}
+      >
+        <ScoringButton
+          row
+          label="Add a pitched ball to the count"
+          disabled={state.session.pending != null}
+          onPress={() => {
+            dispatch({ type: 'RUNNER_PITCH', addBall: true })
+          }}
+        />
+        <ScoringButton
+          row
+          label={`Use previous pitch as ${action!.reason!.toLowerCase()}`}
+          disabled={!hasEligiblePitch(state.session)}
+          onPress={() => {
+            dispatch({ type: 'RUNNER_PITCH', addBall: false })
+          }}
+        />
+        {!hasEligiblePitch(state.session) && (
+          <ScoringError message="No previous ball or strike is available." />
+        )}
+        {state.session.pending != null && (
+          <ScoringError message="Finish the current play before adding another pitch." />
+        )}
+      </ScoringSheet>
+    )
   if (state.phase === 'runnerReason')
     return (
       <ScoringSheet

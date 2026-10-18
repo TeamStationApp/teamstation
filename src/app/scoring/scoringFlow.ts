@@ -10,8 +10,10 @@ import {
   closesAutomatically,
   completesHitOffer,
   forcedFrom,
+  hasEligiblePitch,
   homeBackProposal,
   nextDecision,
+  previousRunnerError,
   runnerDecisionError as gameRunnerError,
   runnerReasons as gameRunnerReasons
 } from '../../common/scoring/rules'
@@ -318,6 +320,10 @@ export function completeDefense(
   state: ScoringState,
   sequence: ThrowSequence
 ): void {
+  if (sequence.safe === true) {
+    settleRunners(state)
+    return
+  }
   const action = state.runnerAction!
   const point = { x: sequence.to.x, z: sequence.to.z }
   if (sequence.stage === 'transfer') {
@@ -400,6 +406,23 @@ export function runnerDecisionError(state: ScoringState): string | undefined {
 
 function commitSafe(state: ScoringState): void {
   const action = state.runnerAction!
+  let pickoff: ThrowSequence | undefined
+  if (
+    action.origin === 'between' &&
+    action.from === action.to &&
+    action.reason === 'Safe from Pickoff'
+  ) {
+    const defense = state.session.liveData.linescore.defense
+    const pitcher = defense.P
+    const receiver = defense[(['1B', '2B', '3B'] as const)[action.to - 1]]
+    if (pitcher != null && receiver != null) {
+      action.thrower = pitcher.id
+      pickoff = {
+        ...throwPresentation(state, receiver.id, BASES[action.to]),
+        safe: true
+      }
+    }
+  }
   const choice =
     action.returnPhase === 'resolveBatter' ||
     action.purpose === 'droppedThirdStrike'
@@ -407,6 +430,14 @@ function commitSafe(state: ScoringState): void {
     type: 'runnerMovement',
     runner: action.playerId,
     to: destination(action.to),
+    ...(pickoff == null
+      ? {}
+      : {
+          fielders: [pickoff.thrower, pickoff.receiver],
+          locations: [pickoff.holderOrigin, BASES[action.to]]
+        }),
+    ...(action.error == null ? {} : { error: action.error }),
+    ...(action.errorEvent == null ? {} : { errorEvent: action.errorEvent }),
     ...(choice || action.reason == null
       ? {}
       : { reason: action.reason as RunnerReason })
@@ -414,6 +445,8 @@ function commitSafe(state: ScoringState): void {
   state.runnerAction = null
   state.phase = 'runnerMovement'
   settleRunners(state)
+  if (pickoff != null && state.presentationEnabled === true)
+    state.presentation = pickoff
 }
 
 function validDefender(
@@ -453,6 +486,15 @@ export function accepted(
       revision: next.correctionWindow.revision + 1
     }
   return next
+}
+
+/** Passed-ball confirmation belongs to this batter, never the preceding one. */
+export function hasCurrentRunnerPitch(state: ScoringState): boolean {
+  return (
+    hasEligiblePitch(state.session) &&
+    state.session.recentPitch?.atBatIndex ===
+      state.session.liveData.plays.currentPlay?.about.atBatIndex
+  )
 }
 
 export function runnerReducer(
@@ -615,7 +657,99 @@ export function runnerReducer(
     return accepted(state, event.reason, next => {
       next.runnerAction!.reason = event.reason
       if (next.runnerAction!.decision === 'out') beginDefense(next)
+      else if (['Throwing Error', 'Fielding Error'].includes(event.reason))
+        next.phase = 'runnerError'
+      else if (['Wild Pitch', 'Passed Ball'].includes(event.reason))
+        next.phase =
+          event.reason === 'Passed Ball' && !hasCurrentRunnerPitch(next)
+            ? 'runnerPitchType'
+            : 'runnerPitch'
       else commitSafe(next)
+    })
+  }
+  if (event.type === 'RUNNER_ERROR') {
+    if (
+      state.phase !== 'runnerError' ||
+      event.generation !== state.generation ||
+      !validDefender(state, event.id)
+    )
+      return state
+    return accepted(state, state.runnerAction!.reason!, next => {
+      next.runnerAction!.error = event.id
+      if (
+        previousRunnerError(
+          next.session,
+          next.runnerAction!.reason,
+          event.id
+        ) != null
+      )
+        next.phase = 'runnerErrorReuse'
+      else commitSafe(next)
+    })
+  }
+  if (event.type === 'RUNNER_ERROR_REUSE') {
+    if (state.phase !== 'runnerErrorReuse' || state.runnerAction == null)
+      return state
+    const prior = previousRunnerError(
+      state.session,
+      state.runnerAction.reason,
+      state.runnerAction.error
+    )
+    if (event.reuse && prior == null) return state
+    return accepted(state, state.runnerAction.reason!, next => {
+      if (event.reuse) next.runnerAction!.errorEvent = prior
+      commitSafe(next)
+    })
+  }
+  if (event.type === 'RUNNER_PITCH_NEW') {
+    if (
+      state.phase !== 'runnerPitch' ||
+      state.runnerAction?.reason !== 'Passed Ball' ||
+      state.session.pending != null
+    )
+      return state
+    return { ...state, phase: 'runnerPitchType' }
+  }
+  if (event.type === 'RUNNER_PITCH' || event.type === 'RUNNER_PITCH_KIND') {
+    const selecting = event.type === 'RUNNER_PITCH_KIND'
+    const add = selecting || event.addBall
+    const passed = state.runnerAction?.reason === 'Passed Ball'
+    if (
+      state.phase !== (selecting ? 'runnerPitchType' : 'runnerPitch') ||
+      (selecting && !passed) ||
+      (!add &&
+        !(passed
+          ? hasCurrentRunnerPitch(state)
+          : hasEligiblePitch(state.session))) ||
+      (add && state.session.pending != null) ||
+      (!selecting && passed && event.addBall)
+    )
+      return state
+    return accepted(state, state.runnerAction!.reason!, next => {
+      const action = next.runnerAction!
+      if (add)
+        act(next, {
+          type: 'pitch',
+          call: selecting
+            ? ({ ball: 'B', called: 'C', swing: 'S' } as const)[event.kind]
+            : 'B'
+        })
+      // Ball four already advances forced runners. Keep that walk movement,
+      // and charge a wild pitch/passed ball only for an additional advance.
+      const awarded =
+        next.session.pending?.movements.some(
+          move =>
+            move.playerId === action.playerId &&
+            move.force &&
+            move.to === action.to
+        ) === true
+      // A third strike that ends the inning cannot score the drafted advance.
+      // Settle the pitch first, retaining its out and the atomic Undo snapshot.
+      if (awarded || next.session.liveData.linescore.outs >= 3) {
+        next.runnerAction = null
+        next.phase = 'runnerMovement'
+        settleRunners(next)
+      } else commitSafe(next)
     })
   }
   if (event.type === 'THROWER') {

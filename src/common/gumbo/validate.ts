@@ -125,7 +125,7 @@ const ACTION_DETAILS: Shape = {
  * `totalDistance` is where the scorer put the ball on a field of the game's
  * size, so neither is here.
  */
-const MEASURED = ['launchSpeed', 'hardness']
+const MEASURED = ['hardness']
 
 const SIDES: ReadonlySet<unknown> = new Set(['L', 'R', 'S'])
 const HANDS: ReadonlySet<unknown> = new Set(['L', 'R'])
@@ -415,8 +415,21 @@ export function gumboViolations(play: unknown): GumboViolation[] {
       add('hitData', path, `expected an object, got ${show(value)}`)
       return
     }
-    const { trajectory, location, coordinates, launchAngle, totalDistance } =
-      value
+    const {
+      trajectory,
+      location,
+      coordinates,
+      launchAngle,
+      totalDistance,
+      launchSpeed
+    } = value
+    if (
+      launchSpeed !== undefined &&
+      (typeof launchSpeed !== 'number' ||
+        !Number.isFinite(launchSpeed) ||
+        launchSpeed <= 0)
+    )
+      add('hitData', `${path}.launchSpeed`, 'expected positive finite mph')
     if (launchAngle !== undefined && !isLaunchAngle(launchAngle))
       add(
         'hitData',
