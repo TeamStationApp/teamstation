@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import express from 'express'
 
-import { maestro } from './refinementsMaestro.e2e'
+import { maestro, type MaestroHandle } from './refinementsMaestro.e2e'
 
 /** Exercise real touch capture in WebKit while defender editing becomes locked. */
 async function main(): Promise<void> {
@@ -85,12 +85,16 @@ async function main(): Promise<void> {
   })
   app.use(express.static(directory))
   const server = app.listen(0, '127.0.0.1')
-  await new Promise<void>(resolve => server.once('listening', resolve))
-  const address = server.address()
-  assert(address != null && typeof address !== 'string')
-  const daemon = await maestro('score-screen-runner-drag')
-  let m: Awaited<ReturnType<typeof daemon.attach>> | undefined
+  let daemon: Awaited<ReturnType<typeof maestro>> | undefined
+  let m: MaestroHandle | undefined
   try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('listening', resolve)
+      server.once('error', reject)
+    })
+    const address = server.address()
+    assert(address != null && typeof address !== 'string')
+    daemon = await maestro('score-screen-runner-drag')
     m = await daemon.attach({
       device,
       platform: 'ios',
@@ -122,18 +126,35 @@ async function main(): Promise<void> {
       'PASS simulator Safari: runner advances and offers Safe/Out for a pickoff'
     )
   } finally {
-    await writeFile(
-      path.join(output, 'drags.json'),
-      JSON.stringify(drags, null, 2)
-    )
-    await m?.detach()
-    await daemon.shutdown()
     server.closeAllConnections()
-    await new Promise<void>(resolve =>
-      server.close(() => {
-        resolve()
+    const cleanup = await Promise.allSettled([
+      writeFile(
+        path.join(output, 'drags.json'),
+        JSON.stringify(drags, null, 2)
+      ),
+      (async () => {
+        try {
+          await m?.detach()
+        } finally {
+          await daemon?.shutdown()
+        }
+      })(),
+      new Promise<void>(resolve => {
+        server.close(() => {
+          resolve()
+        })
       })
-    )
+    ])
+    const failures = cleanup.filter(result => result.status === 'rejected')
+    if (failures.length > 0) {
+      console.error(
+        new AggregateError(
+          failures.map(result => result.reason),
+          'Runner test cleanup failed'
+        )
+      )
+      process.exitCode = 1
+    }
   }
 }
 main().catch((error: unknown) => {
