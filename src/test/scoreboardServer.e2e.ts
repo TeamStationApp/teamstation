@@ -352,7 +352,7 @@ async function e3(): Promise<void> {
       path: '/'
     })
     await page.goto(`${WEB}/games/${gameId}`)
-    await click(page, 'Score Game')
+    await click(page, 'Score')
     await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
     await click(page, 'Full game scoring')
     await page.waitForFunction(() => location.pathname.endsWith('/score'))

@@ -35,24 +35,32 @@ afterEach(async function () {
   root = undefined
 })
 describe('actual game scoring entry', function () {
-  it('renders Score Game after Box score and Videos, and shows its choices under the pills', async function () {
+  it('renders Score on the hero and opens its separate scoring page', async function () {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => ({ ...gameFixture, canScore: true })
     client.teams = async () => []
-    await render(<GameScreen client={client} gameId="g1" />)
-    expect(button('Score Game')?.getAttribute('role')).equals('tab')
+    let opened = 0
+    await render(
+      <GameScreen
+        client={client}
+        gameId="g1"
+        onScoreGame={() => {
+          opened++
+        }}
+      />
+    )
+    expect(button('Score')?.getAttribute('role')).equals('button')
     const text = document.body.textContent ?? ''
     expect(text.indexOf('Box score')).lessThan(text.indexOf('Videos'))
-    expect(text.indexOf('Videos')).lessThan(text.indexOf('Score Game'))
     expect(text).includes('Owls')
     expect(text).not.includes('Full game scoring')
     await act(async () => {
-      button('Score Game')?.click()
+      button('Score')?.click()
     })
     const next = document.body.textContent ?? ''
     expect(next).includes('Owls')
-    expect(next).includes('Full game scoring')
-    expect(next.indexOf('Owls')).lessThan(next.indexOf('Full game scoring'))
+    expect(opened).equals(1)
+    expect(next).not.includes('Full game scoring')
     expect(button('Videos')).not.equals(null)
     expect(button('Box score')).not.equals(null)
   })
@@ -93,7 +101,7 @@ describe('actual game scoring entry', function () {
     })
     client.teams = async () => []
     await render(<GameScreen client={client} gameId="g1" />)
-    expect(button('Score Game')).equals(null)
+    expect(button('Score')).equals(null)
     expect(button('Videos')).not.equals(null)
     expect(button('Box score')).not.equals(null)
   })
@@ -115,7 +123,7 @@ describe('actual game scoring entry', function () {
       client.game = async () => game
       client.teams = async () => []
       await render(<GameScreen client={client} gameId="g1" />)
-      expect(button('Score Game')).equals(null)
+      expect(button('Score')).equals(null)
       expect(button('Continue Scoring')).equals(null)
       expect(button('Box score')).not.equals(null)
       await act(async () => {
@@ -133,12 +141,12 @@ describe('actual game scoring entry', function () {
     })
     client.teams = async () => []
     await render(<GameScreen client={client} gameId="g1" />)
-    expect(button('Score Game')).not.equals(null)
+    expect(button('Score')).not.equals(null)
   })
 })
 
 describe('scoring entry on the phones', function () {
-  // Score Game is a tab of the game page on every platform, for the same
+  // Score is an action on the game page on every platform, for the same
   // people, and sits immediately before DJ Game where there is one.
   const web = Platform.OS
   afterEach(function () {
@@ -155,11 +163,11 @@ describe('scoring entry on the phones', function () {
     return Array.from(document.querySelectorAll<HTMLElement>('[aria-label]'))
       .map(node => node.getAttribute('aria-label') ?? '')
       .filter(label =>
-        ['Box score', 'Videos', 'Score Game', 'DJ Game'].includes(label)
+        ['Box score', 'Videos', 'Score', 'Record'].includes(label)
       )
   }
   for (const os of ['ios', 'android'] as const) {
-    it(`offers Score Game on ${os}, before DJ Game`, async function () {
+    it(`offers Score and Record on ${os}`, async function () {
       const client = new TeamStationClient({ baseUrl: '/api/v1' })
       client.game = async () => ({
         ...gameFixture,
@@ -172,16 +180,10 @@ describe('scoring entry on the phones', function () {
         <GameScreen
           client={client}
           gameId="g1"
-          music={{ djSupported: true }}
-          onDjGame={() => undefined}
+          recording={{ open: () => undefined }}
         />
       )
-      expect(pills()).deep.equals([
-        'Box score',
-        'Videos',
-        'Score Game',
-        'DJ Game'
-      ])
+      expect(pills()).deep.equals(['Score', 'Record', 'Box score', 'Videos'])
       expect(button('Continue Scoring')).equals(null)
     })
 
@@ -190,7 +192,7 @@ describe('scoring entry on the phones', function () {
       client.game = async () => ({ ...gameFixture, canScore: false })
       client.teams = async () => []
       await renderOn(os, <GameScreen client={client} gameId="g1" />)
-      expect(button('Score Game')).equals(null)
+      expect(button('Score')).equals(null)
       expect(button('Box score')).not.equals(null)
     })
   }
@@ -353,6 +355,7 @@ describe('game actions preserve box score and videos', function () {
     window.HTMLMediaElement.prototype.pause = () => undefined
     window.HTMLMediaElement.prototype.load = () => undefined
     const moments: Array<[string, number]> = []
+    const scoringReturns: unknown[] = []
     try {
       await render(
         <GameScreen
@@ -360,6 +363,9 @@ describe('game actions preserve box score and videos', function () {
           gameId="g1"
           autoPlay
           startAtSec={7}
+          onScoreGame={resume => {
+            scoringReturns.push(resume)
+          }}
           onMoment={(id, sec) => {
             moments.push([id, sec])
           }}
@@ -396,6 +402,12 @@ describe('game actions preserve box score and videos', function () {
         restored?.dispatchEvent(new window.Event('loadedmetadata'))
       })
       expect(restored?.currentTime).equals(20)
+      await act(async () => {
+        button('Score')?.click()
+      })
+      expect(scoringReturns).deep.equals([
+        { videoId: 'v2', at: 20, autoPlay: false }
+      ])
     } finally {
       await act(async () => {
         root?.unmount()

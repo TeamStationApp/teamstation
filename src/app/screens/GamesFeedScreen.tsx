@@ -21,6 +21,8 @@ import {
   PinnedSpacer
 } from '../components/PinnedBands'
 import { usePinnedTabs } from '../components/usePinnedTabs'
+import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useLatestRequest } from '../hooks/useLatestRequest'
 import { columnsForWidth } from '../layout/grid'
 import { gameCountLabel, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -122,27 +124,25 @@ export function GamesFeedScreen(
     [onWhenChange, selectTab]
   )
 
-  useEffect(() => {
-    let cancelled = false
-    const load = async (): Promise<void> => {
+  const beginGames = useLatestRequest()
+  const loadGames = useCallback(async (): Promise<void> => {
+    const current = beginGames()
+    try {
       const all = await client.games(
         mode === 'schedule' && when !== 'all' ? { when } : {}
       )
-      if (!cancelled) setGames(all)
+      if (current()) {
+        setGames(all)
+        setError(undefined)
+      }
+    } catch (caught) {
+      if (current())
+        setError(caught instanceof Error ? caught.message : 'Cannot load')
+    } finally {
+      if (current()) setLoading(false)
     }
-    load()
-      .catch((caught: unknown) => {
-        if (!cancelled) {
-          setError(caught instanceof Error ? caught.message : 'Cannot load')
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [client, mode, when])
+  }, [client, mode, when, beginGames])
+  useForegroundRefresh(loadGames)
 
   // Videos offers no filter. Nothing that has not been played can have a
   // recording, so `Upcoming` was always empty and `Past` was always the whole
@@ -218,6 +218,7 @@ export function GamesFeedScreen(
                       first={lines.first}
                       second={lines.second}
                       startAt={game.startAt}
+                      isGameLive={game.isGameLive}
                       venue={game.venue}
                       status={game.status}
                       awayScore={game.awayScore}

@@ -250,7 +250,7 @@ class Browser {
   /** Coach Game, opened from the game's pill. */
   async coachGame(gameId: string): Promise<void> {
     await this.pills(gameId)
-    await this.tap('Coach Game')
+    await this.tap('Coach')
     await this.page.waitForSelector('[aria-label="Save Rosters"]', {
       timeout: 60000
     })
@@ -453,21 +453,20 @@ describe('Coach Game', function () {
     const fixture = lineupFixture()
     await coach.as(fixture, 'headCoach')
     const pills = await coach.pills(fixture.gameId)
-    expect(pills.slice(0, 3)).deep.equals(['Box score', 'Videos', 'Coach Game'])
-    for (const later of pills.slice(3))
-      expect(['DJ Game', 'Settings']).includes(later)
+    expect(pills.slice(0, 2)).deep.equals(['Box score', 'Videos'])
+    expect(await coach.page.$('[aria-label="Coach"]')).not.equals(null)
     await coach.shot('game-pills-after.png')
     for (const who of ['assistant', 'member'] as const) {
       await coach.as(fixture, who)
       const theirs = await coach.pills(fixture.gameId)
-      expect(theirs, who).not.includes('Coach Game')
+      expect(await coach.page.$('[aria-label="Coach"]'), who).equals(null)
       expect(theirs.slice(0, 2), who).deep.equals(['Box score', 'Videos'])
     }
     // The scorekeeper scores, and coaches nothing.
     await coach.as(fixture, 'scorekeeper')
-    const scorer = await coach.pills(fixture.gameId)
-    expect(scorer).includes('Score Game')
-    expect(scorer).not.includes('Coach Game')
+    await coach.pills(fixture.gameId)
+    expect(await coach.page.$('[aria-label="Score"]')).not.equals(null)
+    expect(await coach.page.$('[aria-label="Coach"]')).equals(null)
   })
 
   it('C2: opens full screen with its own chevron, the team on the right, four tabs and the roster bar', async function () {
@@ -500,15 +499,15 @@ describe('Coach Game', function () {
     const tabs = await coach.page.$$eval('[role="tab"]', nodes =>
       nodes.map(node => String(node.getAttribute('aria-label')))
     )
-    expect(tabs).deep.equals(['Box Score', 'Roster', 'Lineup', 'Defense'])
-    // The bar, as the scorekeeper's: green Add Player text, the round mic
+    expect(tabs).deep.equals(['Box', 'Roster', 'Lineup', 'Defense'])
+    // The bar, as the scorekeeper's: green Create Player text, the round mic
     // in the middle and taller than Save, Cancel under them.
     const bar = await coach.box('[data-testid="Roster footer bar"]')
     const add = await coach.box('[aria-label="Create Player"]')
     const mic = await coach.box('[data-testid="Roster mic"]')
     const save = await coach.box('[aria-label="Save Rosters"]')
     const cancel = await coach.box('[aria-label="Cancel"]')
-    expect(await coach.text()).includes('Add Player')
+    expect(await coach.text()).includes('Create Player')
     expect(add.x).lessThan(mic.x)
     expect(mic.x + mic.width).lessThan(save.x + 1)
     expect(mic.x + mic.width / 2).closeTo(bar.x + bar.width / 2, 1)
@@ -529,7 +528,7 @@ describe('Coach Game', function () {
     ])
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
-    await coach.tabOn('Box Score')
+    await coach.tabOn('Box')
     await coach.page.waitForFunction(
       () => String(document.body.textContent).includes('Pitching — Visitors'),
       { timeout: 30000 }
@@ -569,7 +568,7 @@ describe('Coach Game', function () {
     const fixture = lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
-    await coach.tabOn('Box Score')
+    await coach.tabOn('Box')
     const boxText = async (has: string): Promise<string> => {
       await coach.page.waitForFunction(
         has =>
@@ -652,7 +651,7 @@ describe('Coach Game', function () {
     // The visitors' head coach: Judge bats first for them.
     await coach.as(fixture, 'awayCoach')
     await coach.coachGame(fixture.gameId)
-    await coach.tabOn('Box Score')
+    await coach.tabOn('Box')
     const mic = await coach.box(ROSTER_MIC)
     await coach.page.mouse.click(mic.x + mic.width / 2, mic.y + mic.height / 2)
     const status = async (text: string): Promise<void> => {
@@ -774,7 +773,7 @@ describe('Coach Game', function () {
     expect(url.pathname).equals(`/games/${fixture.gameId}`)
     expect(url.searchParams.get('tab')).equals('boxScore')
     // And the browser's Back, with a change staged, leaves on Discard too.
-    await coach.tap('Coach Game')
+    await coach.tap('Coach')
     await coach.page.waitForSelector('[aria-label="Save Rosters"]')
     await coach.tap('Lineup', 'tab')
     await coach.dragAfter(0, 2)

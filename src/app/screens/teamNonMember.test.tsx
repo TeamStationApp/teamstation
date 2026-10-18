@@ -21,12 +21,11 @@ import { TeamScreen } from './TeamScreen'
  * Somebody signed in who is not a member of a team, following it or not: the
  * members' page, less what the server keeps for members. Every name and no
  * photo; how the team is doing and not how each player is; the schedule with
- * its thumbnails and no video library; and on a game, the pictures of the
- * highlights and never the video, nor a player box with nothing in it.
+ * its thumbnails and public video library; and on a game, the pictures of the
+ * highlights without playback, nor a player box with nothing in it.
  */
 let root: Root | undefined
 
-const MEMBERS_ONLY = 'You need to be a member of one of the teams to see this.'
 const VIDEOS_MEMBERS_ONLY =
   "You need to be a member of one of the teams to watch this game's videos."
 
@@ -208,6 +207,7 @@ describe('a non-member’s team page', function () {
     await render(
       <TeamScreen
         client={client}
+        signedIn
         team={{
           id: 'tem_hawks',
           name: 'Demo Hawks',
@@ -264,19 +264,24 @@ describe('a non-member’s team page', function () {
     const { asked } = await team('stats')
     expect(text()).includes('SEASON PERFORMANCE')
     expect(text()).includes('2–0')
-    expect(text()).includes(MEMBERS_ONLY)
+    expect(text()).includes(
+      'You need to be a member of this team to see individual player stats.'
+    )
+    expect(text()).includes('Request membership')
+    expect(document.querySelector('[data-testid="warningSheet"]')).equals(null)
     readable(document.querySelector('[role="alert"]'))
     expect(text()).not.includes('BATTING')
     expect(text()).not.includes('PITCHING')
     expect(asked).deep.equals([])
   })
 
-  it('keeps the video library for members, and says so readably', async function () {
-    await team('videos')
-    const notice = document.querySelector('[role="alert"]')
-    expect(notice?.textContent).equals(MEMBERS_ONLY)
-    readable(notice)
-    expect(text()).not.includes('GAME VIDEO LIBRARY')
+  it('shows the public video library without starting playback', async function () {
+    const { opened } = await team('videos')
+    expect(document.querySelector('[role="alert"]')).equals(null)
+    expect(text()).includes('GAME VIDEO LIBRARY')
+    expect(document.body.innerHTML).includes(POSTER)
+    expect(opened).deep.equals([])
+    noPlayerBox()
   })
 
   it('marks recorded schedule rows and opens a game without playing it', async function () {
@@ -392,11 +397,15 @@ describe('a non-member’s game page', function () {
     durationSec: 300,
     width: 1920,
     height: 1080,
-    codecs: null
+    codecs: null,
+    posterUrl: 'https://example.com/poster.jpg'
   })
   const STILL = 'https://example.com/stills/20.jpg'
 
-  async function page(): Promise<{
+  async function page(
+    signedIn = true,
+    onSignIn = () => undefined
+  ): Promise<{
     asked: string[]
     moments: Array<[string, number]>
   }> {
@@ -472,6 +481,8 @@ describe('a non-member’s game page', function () {
         client={client}
         gameId="g1"
         autoPlay
+        signedIn={signedIn}
+        onSignIn={onSignIn}
         onMoment={(id, sec) => {
           moments.push([id, sec])
         }}
@@ -483,62 +494,57 @@ describe('a non-member’s game page', function () {
     return { asked, moments }
   }
 
-  it('shows the score and records, no summary, and the message in place of a player above the highlights’ pictures', async function () {
-    const { asked, moments } = await page()
-    for (const words of ['Owls', 'Hawks', '0–2', '2–0', '3', '5'])
-      expect(text()).includes(words)
-    expect(text()).not.includes(' BB')
-    expect(text()).not.includes('Def:')
-    // No player box, and the message where it would have been, above the
-    // list, in the page's own colours.
-    noPlayerBox()
-    const notice = document.querySelector('[data-testid="gameVideoNotice"]')
-    expect(notice?.textContent).equals(VIDEOS_MEMBERS_ONLY)
-    readable(notice!.querySelector('[role="alert"]'))
-    expect(text().indexOf(VIDEOS_MEMBERS_ONLY)).lessThan(
-      text().indexOf('Avery S doubles')
-    )
-    expect(document.body.innerHTML).includes(STILL)
-    // Each camera can still be chosen for its highlights; all of them at
-    // once cannot, since that is four videos.
-    expect(document.querySelector('[aria-label="Camera angles"]')).not.equals(
-      null
-    )
-    expect(text()).not.includes('All angles')
-    // Tapping a highlight seeks nothing and links nothing: the message above
-    // says why, and so does a copy under the highlight tapped; the play's
-    // account is for members.
-    expect(
-      document.querySelector('[data-testid="highlightMembersOnly"]')
-    ).equals(null)
-    const highlight = [
-      ...document.querySelectorAll<HTMLElement>('[tabindex="0"]')
-    ].find(node => node.textContent?.includes('Avery S doubles') === true)
-    expect(highlight).not.equals(undefined)
-    await act(async () => {
-      highlight!.click()
-      await delay(10)
+  for (const signedIn of [false, true])
+    it(`shows posters and blocks main and highlight playback for ${signedIn ? 'nonmembers' : 'guests'}`, async function () {
+      let logins = 0
+      const { asked, moments } = await page(signedIn, () => {
+        logins += 1
+      })
+      for (const words of ['Owls', 'Hawks', '0–2', '2–0', '3', '5'])
+        expect(text()).includes(words)
+      expect(document.querySelector('video')).equals(null)
+      expect(document.body.innerHTML).includes('https://example.com/poster.jpg')
+      expect(document.body.innerHTML).includes(STILL)
+      expect(document.querySelector('[data-testid="warningSheet"]')).equals(
+        null
+      )
+      expect(text()).not.includes('All angles')
+      await press('Play game video')
+      expect(text()).includes(VIDEOS_MEMBERS_ONLY)
+      const sheet = document.querySelector('[data-testid="warningSheet"]')!
+      expect(getComputedStyle(sheet).backgroundColor).equals(
+        'rgb(255, 213, 79)'
+      )
+      expect(text()).includes(
+        signedIn ? 'Request membership' : 'Log in / Sign up'
+      )
+      await press('Close warning')
+      await press('Play highlight:')
+      expect(document.querySelector('[data-testid="warningSheet"]')).not.equals(
+        null
+      )
+      expect(text()).not.includes('Avery S doubles to left.')
+      if (!signedIn) {
+        expect(text()).includes(
+          'Log in or create an account first to request membership.'
+        )
+        await press('Log in / Sign up')
+        expect(logins).equals(1)
+      } else await press('Close warning')
+      await act(async () => {
+        await delay(350)
+      })
+      expect(moments).deep.equals([])
+      expect(asked).deep.equals([])
     })
-    const alerts = [...document.querySelectorAll('[role="alert"]')]
-    expect(alerts.map(alert => alert.textContent)).deep.equals([
-      VIDEOS_MEMBERS_ONLY,
-      VIDEOS_MEMBERS_ONLY
-    ])
-    const repeated = document.querySelector(
-      '[data-testid="highlightMembersOnly"]'
-    )
-    expect(highlight!.contains(repeated)).equals(true)
-    readable(repeated)
-    expect(text()).not.includes('Avery S doubles to left.')
-    expect(moments).deep.equals([])
-    expect(asked).deep.equals([])
-  })
 
   it('switches angles without asking for the video', async function () {
     const { asked } = await page()
     await press('Outfield')
-    noPlayerBox()
-    expect(text()).includes(VIDEOS_MEMBERS_ONLY)
+    expect(document.querySelector('video')).equals(null)
+    expect(
+      document.querySelector('[data-testid="gameVideoPreview"]')
+    ).not.equals(null)
     expect(asked).deep.equals([])
   })
 })

@@ -46,7 +46,7 @@ import {
   PeopleList,
   peopleSubtitle
 } from '../components/PeopleList'
-import { lstrings, videoCountLabel } from '../locales/strings'
+import { videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
@@ -57,6 +57,7 @@ import {
   shortTime
 } from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
+import { MembershipAccess } from './MembershipAccess'
 import { PublicTeamContent } from './PublicTeamContent'
 import { hasScheduleRsvpLine, ScheduleRsvpControl } from './ScheduleRsvpControl'
 import {
@@ -70,6 +71,8 @@ import { chronological, gamesFor, nextGameIndex } from './whenFilter'
 
 export interface TeamScreenProps {
   client: TeamStationClient
+  signedIn?: boolean
+  onSignIn?: () => void
   team: TeamSummary
   /**
    * The public projection, for somebody not signed in: nobody signed in
@@ -78,9 +81,8 @@ export interface TeamScreenProps {
   publicDetail?: GroupDetail
   /**
    * Somebody signed in who is not a member, following the team or not: the
-   * members' page less what is kept for members. No batting or pitching, no
-   * video library, and no player pages, which answer them `404`. The
-   * schedule carries the thumbnails the Videos tab would have.
+   * members' page less what is kept for members. No batting or pitching and no player pages, which answer them `404`.
+   * The video library opens the game with playback unavailable.
    */
   nonMemberView?: boolean
   /** Revalidate private collections when the access adapter refreshes. */
@@ -178,6 +180,15 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
+  const membershipAccess = (
+    <MembershipAccess
+      key={`${team.id}:${props.signedIn === true}`}
+      client={client}
+      signedIn={props.signedIn === true}
+      teams={[{ id: team.id, name: team.name }]}
+      onSignIn={() => props.onSignIn?.()}
+    />
+  )
   const { width, fontScale } = useWindowDimensions()
   const [identityWidth, setIdentityWidth] = useState<number>()
 
@@ -422,14 +433,17 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
       {loading && <Text style={styles.muted}>Loading…</Text>}
 
       {publicDetail != null && (
-        <PublicTeamContent detail={publicDetail} tab={tab} />
+        <PublicTeamContent
+          membershipAccess={membershipAccess}
+          detail={publicDetail}
+          tab={tab}
+          onOpenGame={onOpenGame}
+        />
       )}
 
       {!loading && publicDetail == null && (
         <PinnedContent key={tab} part={pinned.content} testID="teamTabContent">
-          {tab === 'videos' && nonMemberView && <MembersOnly />}
-
-          {tab === 'videos' && !nonMemberView && (
+          {tab === 'videos' && (
             <View style={styles.section}>
               <SectionHeader
                 title="Game video library"
@@ -443,6 +457,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                     key={game.id}
                     game={game}
                     mode="videos"
+                    nonMemberView={nonMemberView}
                     teamId={team.id}
                     onOpen={onOpenGame}
                   />
@@ -476,8 +491,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                     }
                   >
                     {nonMemberView ? (
-                      // A visitor opens recordings from the schedule;
-                      // the library itself is kept for members.
+                      // Visitors can open every published game without
+                      // receiving member-only RSVP controls.
                       <GameCard
                         game={game}
                         mode="schedule"
@@ -496,7 +511,9 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                   </View>
                 ))
               )}
-              {onCreateGame != null && <AddEventCard onPress={onCreateGame} />}
+              {onCreateGame != null && (
+                <AddEventCard variant="game" onPress={onCreateGame} />
+              )}
             </View>
           )}
 
@@ -518,7 +535,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                         onTeam: team.id
                       })
                     }
-                  if (managesPeople && onOpenPerson != null)
+                  if (!nonMemberView && managesPeople && onOpenPerson != null)
                     return () => {
                       onOpenPerson(person.userId, person.shortName, team.id)
                     }
@@ -540,7 +557,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                 is: the batting and pitching are kept for members.
               */}
               {nonMemberView ? (
-                <MembersOnly />
+                membershipAccess
               ) : (
                 <>
                   <SectionHeader
@@ -624,6 +641,7 @@ function GameCard(props: {
         <ScheduleRow
           first={eventName(game) ?? lines.second}
           startAt={game.startAt}
+          isGameLive={game.isGameLive}
           venue={game.venue}
           status={game.status}
           awayScore={game.awayScore}
@@ -715,6 +733,7 @@ function ScheduleCard(props: {
   const rowProps = {
     first: eventName(game) ?? lines.second,
     startAt: game.startAt,
+    isGameLive: game.isGameLive,
     venue: game.venue,
     status: game.status,
     awayScore: game.awayScore,
@@ -812,20 +831,6 @@ function StatsTable<T extends { userId: number; shortName?: string }>(props: {
         ))}
       </View>
     </WideTable>
-  )
-}
-
-/**
- * What a non-member is told in place of the team's videos and its players'
- * figures: the page's own text colour on the page, read rather than skimmed
- * past as a hint, the way the game page says it.
- */
-function MembersOnly(): React.ReactElement {
-  const styles = getStyles(useTheme())
-  return (
-    <Text accessibilityRole="alert" style={styles.notice}>
-      {lstrings.members_only}
-    </Text>
   )
 }
 
@@ -1003,14 +1008,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.875),
     fontWeight: '600',
     color: theme.primaryTextColor
-  },
-  notice: {
-    color: theme.primaryTextColor,
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(1),
-    lineHeight: theme.rem(1.4),
-    textAlign: 'center' as const,
-    paddingVertical: theme.rem(1)
   },
   muted: {
     fontFamily: theme.regularTextFont,
