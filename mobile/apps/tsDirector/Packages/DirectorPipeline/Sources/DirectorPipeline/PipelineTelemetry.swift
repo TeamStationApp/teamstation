@@ -244,6 +244,10 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   /// One frame in this many reaches the archive. Above 1 the camera is recording at a fraction of
   /// its live rate on purpose, because its encoder could not sustain the full one.
   public var archiveStride = 1
+  /// The NDI archive clock's repeats, skips and late pictures; see `ReceiveStats`.
+  public var archiveRepeatedTicks: UInt64 = 0
+  public var archiveSkippedPictures: UInt64 = 0
+  public var archiveLatePictures: UInt64 = 0
   /// The last complete second's worst frame timing: how late the latest frame was, whether that late
   /// frame was a keyframe, and the longest one frame spent in our own decode-and-deliver work. A
   /// stutter the operator can see is one of these two numbers, and which one says whose fault it is.
@@ -274,6 +278,9 @@ public struct TileTelemetry: Sendable, Codable, Equatable {
   public var soundAwaitingClock: UInt64 = 0
   public var correctedCaptureTime: Double = 0
   public var correctedCaptureAgeMilliseconds: Double = 0
+  /// NDI frames placed by the sender's stamp, and frames placed at their arrival.
+  public var captureFromSenderFrames: UInt64 = 0
+  public var captureFromArrivalFrames: UInt64 = 0
   /// Frames that arrived after they were due, each of which was a visible stall.
   public var playoutLateFrames: UInt64 = 0
   public var playoutDepth = 0

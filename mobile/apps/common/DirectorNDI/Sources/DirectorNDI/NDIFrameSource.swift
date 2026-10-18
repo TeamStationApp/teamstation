@@ -49,6 +49,43 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   /// The delay line, mirroring RTSP's numbers exactly so both transports hold the same way.
   private static let drainInterval: TimeInterval = 0.004
   private static let reportInterval: TimeInterval = 1
+  /// How long a burst may take to arrive on top of the archive delay: the Cosmo C2's 100 ms.
+  static let archiveBurstSeconds: Double = 0.1
+
+  /// What the archive may hold of a camera's pixel pool, and how long it may hold each picture.
+  ///
+  /// The archive holds each picture from its arrival until its tick, about `rate × (delay +
+  /// burst)` pictures, out of the same pool as the delay line. The two hold the same newest
+  /// pictures, so the pool has to cover the longer of the two holds, not their sum, and the delay
+  /// line is already capped to `poolFrames`. The archive is capped to it too, less the picture it
+  /// is repeating: at 1080p that is 55 pictures, far more than the 21 it needs at 60 fps, and
+  /// nothing changes. A 4K pool of 16 buffers leaves `poolFrames` 8, so the archive queues 7, and 7
+  /// pictures at 60 fps cover 117 ms: after the 100 ms burst allowance the delay is about 17 ms.
+  ///
+  /// **A 4K archive is therefore not burst-paced.** With 17 ms of delay against a sender's 100 ms
+  /// bursts, most pictures arrive after their moment and are taken late, so a bursty 4K sender's
+  /// recording holds and skips much as the old newest-first archive did. What the cap buys is that
+  /// it never starves the pool into `poolMisses`, which dropped frames from the live tile and the
+  /// recording alike. A change of budget mid-stream re-bases the queue; see `applyArchiveBudget`.
+  static func archiveBudget(poolFrames: Int, rate: Double) -> (queueLimit: Int, delay: Double) {
+    let queueLimit = max(1, min(ArchiveTicker<Void>.maximumQueued, poolFrames - 1))
+    let covered = Double(queueLimit) / max(1, rate) - archiveBurstSeconds
+    return (queueLimit, min(ArchiveTicker<Void>.defaultArchiveDelay, max(0, covered)))
+  }
+
+  /// Puts a new budget into effect. A delay that moved by more than a millisecond re-bases every
+  /// held picture onto it, so a shrunken delay (a 1080p camera switched to 4K) does not make every
+  /// new picture due before the old queue's last and refused as late while it drains; the smaller
+  /// queue limit lets go of the oldest at once. Called with the lock held.
+  private func applyArchiveBudget(_ budget: (queueLimit: Int, delay: Double)) {
+    if let inUse = archiveBudgetInUse {
+      guard inUse.queueLimit != budget.queueLimit || abs(inUse.delay - budget.delay) > 0.001 else { return }
+      if abs(inUse.delay - budget.delay) > 0.001 { ticker.shiftDue(by: budget.delay - inUse.delay) }
+    }
+    ticker.queueLimit = budget.queueLimit
+    archiveBudgetInUse = budget
+  }
+
   /// The delay line's ceiling is two seconds; holding more than that is a queue growing with
   /// nowhere to release to.
   private static let pictureQueueSeconds: Double = 2
@@ -176,19 +213,23 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   private static let encoderUnavailableReason = "no encoder available for this camera's archive"
   private var decimator = ArchiveDecimator()
   /// The archive's own clock, at the raw camera frame rate. See `ArchiveTicker`.
-  private var ticker = ArchiveTicker(frameRate: 60)
+  private var ticker = ArchiveTicker<ArchivePicture>(frameRate: 60)
+  /// The budget the ticker's queue and its pictures' moments were set from; see `archiveBudget`.
+  private var archiveBudgetInUse: (queueLimit: Int, delay: Double)?
+  /// Marks `encodeQueue`, so a drain asked for on it runs in place rather than deadlocking.
+  private let encodeQueueKey = DispatchSpecificKey<Void>()
   private var archiveTimer: DispatchSourceTimer?
-  /// The newest decoded picture, waiting for the archive's next tick.
+  /// A decoded picture waiting for the archive tick it belongs on, carried by the ticker itself as
+  /// its picture's payload, so there is one store with one bound and nothing it let go is kept.
   private struct ArchivePicture {
     let buffer: CVPixelBuffer
-    /// Wall-clock seconds when it arrived.
-    let arrivedWall: Double
-    /// Its smoothed capture time on our clock, when the sender stamps its frames.
-    let captureWall: Double?
+    /// Its smoothed capture time on our clock (its arrival, when the sender stamps nothing).
+    let captureWall: Double
+    /// From that capture to its arrival here: the age the latency gate is owed, without the
+    /// archive's own hold.
+    let transit: Double
     let frameID: UInt64
   }
-  private var archivePicture: ArchivePicture?
-  private var archiveNewest: ArchiveTicker.Picture?
   private var archiveSequence: UInt64 = 0
   /// Fits pictures to the raw camera resolution. Nil only if one could not be made, in which case
   /// the camera's own size is recorded rather than nothing.
@@ -211,6 +252,8 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
   private struct PendingFrame {
     let frameID: UInt64
     let captureWallClock: WallClock?
+    /// When the picture arrived, re-based onto its label; see `archiveFrameTimes`.
+    let arrivalWallClock: WallClock
   }
 
   private var pendingFrames: [CMTimeValue: PendingFrame] = [:]
@@ -258,6 +301,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       label: "app.teamstation.director.ndi.encode.\(sourceID.slug)",
       qos: .userInitiated
     )
+    encodeQueue.setSpecific(key: encodeQueueKey, value: ())
   }
 
   /// Sinks and the audio format without a receiver, so a test can hand frames in.
@@ -299,6 +343,16 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     snapshot.outOfOrderFrames = receiveClock.outOfOrderFrames
     snapshot.senderClockRestarts = receiveClock.clockRestarts
     snapshot.cameraClockSteps = receiveClock.clockSteps
+    // The sender's clock as the RTSP path reports a camera's: the offset mapping it onto ours, what
+    // that offset rests on, and the last capture time it gave.
+    let senderClock = receiveClock.clockReport
+    snapshot.cameraClockOffsetSeconds = (senderClock.observedOffsetSeconds * 1000).rounded() / 1000
+    snapshot.cameraClockOffsetFilteredSeconds = (senderClock.filteredOffsetSeconds * 1000).rounded() / 1000
+    snapshot.cameraClockOffsetSamples = senderClock.offsetSamples
+    snapshot.correctedCaptureTime = senderClock.lastCaptureSeconds
+    snapshot.correctedCaptureAgeMilliseconds = (senderClock.lastCaptureAgeSeconds * 1000).rounded()
+    snapshot.captureFromSenderFrames = senderClock.capturesFromSender
+    snapshot.captureFromArrivalFrames = senderClock.capturesFromArrival
     // From the last picture across reconnects, not from this session; see `SilenceClock`.
     snapshot.stalledForSeconds = running
       ? silence.stalledForSeconds(now: Date(), timeout: Self.stallTimeout)
@@ -403,6 +457,9 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       return
     }
     receiver = created
+    // Every frame of the first minute of each receiver, so a reboot's re-anchoring is all there.
+    // Before the capture threads for this receiver start, so the count is not raced.
+    timestampLog?.receiverOpened()
     startedAt = Date()
     silence.sessionStarted(at: startedAt ?? Date())
     lastVideoAt = nil
@@ -599,7 +656,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       lock.unlock()
       return
     }
-    let previousVideo = videoEncoder
+    var previousVideo = videoEncoder
     if isArchiving {
       guard NDIArchiveBudget.shared.acquire(sourceID.rawValue) else {
         archiveRefused = true
@@ -613,14 +670,25 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       decimator.reset()
       audioEncoder = WireAudioEncoder(channelCount: 1)
       archiveEncoding = archiveEncodingProvider()
-      ticker = ArchiveTicker(frameRate: archiveEncoding.frameRate)
-      archivePicture = nil
-      archiveNewest = nil
+      ticker.restart(frameRate: archiveEncoding.frameRate)
+      archiveBudgetInUse = nil
       archiveScaler = ArchiveScaler(
         width: archiveEncoding.resolution.width,
         height: archiveEncoding.resolution.height
       )
     } else {
+      // The pictures still queued were captured in the archive's last delay and are due after
+      // this moment. Encoded on their ticks before the encoder is finished, so the recording
+      // reaches the stop, as every other angle's does, instead of ending a delay early. The sink
+      // is still attached: the pipeline detaches it only after this returns.
+      archiveTimer?.cancel()
+      archiveTimer = nil
+      let deadline = Self.seconds(.now()) + (archiveBudgetInUse?.delay ?? ArchiveTicker<Void>.defaultArchiveDelay)
+      lock.unlock()
+      drainArchive(through: deadline)
+      lock.lock()
+      // The drain may have built the encoder, for a take whose first picture came due only now.
+      previousVideo = videoEncoder
       self.isArchiving = false
       archiveRefused = false
       NDIArchiveBudget.shared.release(sourceID.rawValue)
@@ -634,11 +702,10 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       encoderHeight = 0
       pendingFrames.removeAll()
       decimator.reset()
-      archivePicture = nil
-      archiveNewest = nil
+      // Lets go of anything left, keeping the counts.
+      ticker.restart(frameRate: archiveEncoding.frameRate)
+      archiveBudgetInUse = nil
       archiveScaler = nil
-      archiveTimer?.cancel()
-      archiveTimer = nil
     }
     lock.unlock()
     if isArchiving { startArchiveTimer() }
@@ -677,8 +744,8 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     pendingFrames.removeAll()
     archiveTimer?.cancel()
     archiveTimer = nil
-    archivePicture = nil
-    archiveNewest = nil
+    ticker.restart(frameRate: archiveEncoding.frameRate)
+    archiveBudgetInUse = nil
     sinks = FrameSinks()
     upstreamConnections = 0
     lock.unlock()
@@ -754,8 +821,10 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     failedAttempts = 0
     lock.unlock()
 
-    timestampLog?.note(frame, arrivalSeconds: clock.now.seconds)
-    guard let timing = receiveClock.timing(for: frame) else { return }
+    let timestampArrival = clock.now.seconds
+    let timing = receiveClock.timing(for: frame)
+    timestampLog?.note(frame, arrivalSeconds: timestampArrival, timing: timing)
+    guard let timing else { return }
 
     let width = Int(frame.xres)
     let height = Int(frame.yres)
@@ -793,6 +862,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     // holding; a line longer than the pool starves itself into `poolMisses`. Read here, on the
     // thread that owns the converter, and handed to the drain as the hold it may not exceed.
     let poolFrames = max(8, videoConverter.maximumBuffers - 8)
+    let archiveBudget = Self.archiveBudget(poolFrames: poolFrames, rate: rate)
     lock.lock()
     if let last = lastArrivalUptime {
       arrivalGapWindowMax = max(arrivalGapWindowMax, (arrived - last) * 1000)
@@ -825,21 +895,34 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     stats.publishMilliseconds += (publishElapsed - stats.publishMilliseconds) * 0.1
     lock.unlock()
 
-    // The newest picture waits for the archive's next tick; see `archiveTick`.
+    // The picture waits for the archive tick it belongs on; see `archiveTick`.
     lock.lock()
     if isArchiving, sinks.compressed != nil {
       archiveSequence &+= 1
-      archivePicture = ArchivePicture(
-        buffer: pixelBuffer,
+      applyArchiveBudget(archiveBudget)
+      // Its smoothed capture time on the uptime clock the ticker runs on, then the archive's
+      // delay: the moment it belongs in the recording, whenever its burst happened to arrive.
+      let moment = Self.archiveMoment(
+        arrived: arrived,
         arrivedWall: picture.wallClock.seconds,
-        // The smoothed capture time, not the raw stamp: a segment's start on the recording's wall
-        // clock comes from its first frame's entry here, and the Cosmo's raw stamps jitter enough
-        // that rec-401's NDI segments started up to 90 ms off the three-second step their frames
-        // kept, which placed alternate segments of the export at visibly different offsets.
-        captureWall: timing.captureWallClock == nil ? nil : smoothedCaptureSeconds,
-        frameID: timing.frameID
+        smoothedCapture: smoothedCaptureSeconds
       )
-      archiveNewest = ArchiveTicker.Picture(arrived: arrived, sequence: archiveSequence)
+      ticker.add(ArchiveTicker.Picture(
+        arrived: arrived,
+        due: moment + archiveBudget.delay,
+        sequence: archiveSequence,
+        payload: ArchivePicture(
+          buffer: pixelBuffer,
+          // The smoothed capture time, not the raw stamp: a segment's start on the recording's
+          // wall clock comes from its first frame's entry here, and the Cosmo's raw stamps jitter
+          // enough that rec-401's NDI segments started up to 90 ms off the three-second step their
+          // frames kept, which placed alternate segments of the export at visibly different
+          // offsets.
+          captureWall: smoothedCaptureSeconds,
+          transit: max(0, picture.wallClock.seconds - smoothedCaptureSeconds),
+          frameID: timing.frameID
+        )
+      ))
     }
     lock.unlock()
   }
@@ -861,9 +944,10 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     timer.resume()
   }
 
-  /// One tick of the archive's clock, on `encodeQueue`. The newest picture is encoded as the tick's
-  /// frame and stamped with the tick's own time, never with anything measured from the camera, so
-  /// no estimate of the camera's frame rate can reach the recording's timeline.
+  /// One tick of the archive's clock, on `encodeQueue`. The picture `ArchiveTicker` chooses — the
+  /// next by capture time once due, for a sender whose clock places its pictures — is encoded as
+  /// the tick's frame and stamped with the tick's own time, never with anything measured from the
+  /// camera, so no estimate of the camera's frame rate can reach the recording's timeline.
   private func archiveTick() {
     let now = Self.seconds(.now())
     lock.lock()
@@ -871,9 +955,76 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       lock.unlock()
       return
     }
-    guard case let .encode(index, _) = ticker.tick(at: now, newest: archiveNewest),
-          let picture = archivePicture
-    else {
+    let decision = ticker.tick(at: now)
+    noteTickerCounts()
+    guard case let .encode(index, _) = decision, let chosen = ticker.current else {
+      lock.unlock()
+      return
+    }
+    let sinceTaken = ticker.sinceTaken
+    lock.unlock()
+    encodeArchive(chosen, index: index, sinceTaken: sinceTaken)
+  }
+
+  /// The ticker's counts, which it keeps across takes like the other archive counters. Called with
+  /// the lock held.
+  private func noteTickerCounts() {
+    stats.archiveRepeatedTicks = ticker.repeatedTicks
+    stats.archiveSkippedPictures = ticker.skippedPictures
+    stats.archiveLatePictures = ticker.latePictures
+  }
+
+  /// Runs the ticks the queued pictures are due on up to `deadline`, and completes every frame the
+  /// encoder still holds, on `encodeQueue` and before returning; see `setArchiving`.
+  private func drainArchive(through deadline: Double) {
+    let work = { [self] in
+      lock.lock()
+      let ticks = ticker.drain(through: deadline)
+      noteTickerCounts()
+      lock.unlock()
+      for tick in ticks {
+        encodeArchive(tick.picture, index: tick.index, sinceTaken: tick.sinceTaken)
+      }
+      lock.lock()
+      let encoder = videoEncoder
+      lock.unlock()
+      encoder?.completeFrames()
+    }
+    if DispatchQueue.getSpecific(key: encodeQueueKey) != nil {
+      work()
+    } else {
+      encodeQueue.sync(execute: work)
+    }
+  }
+
+  /// Where a picture belongs on the archive's uptime clock before the delay: its smoothed capture
+  /// time, whether that came from the sender's stamp or from its arrival. `captureSmoother` has
+  /// already eased a picture placed at its arrival (an unconfirmed clock jump, or a sender that
+  /// stamps nothing) onto the frame grid, so it lands in its slot among its neighbours. Its raw
+  /// arrival is up to a burst later, which held the picture before it for that long and then
+  /// refused every neighbour captured meanwhile as late.
+  static func archiveMoment(arrived: Double, arrivedWall: Double, smoothedCapture: Double) -> Double {
+    arrived - (arrivedWall - smoothedCapture)
+  }
+
+  /// A frame's capture label and the arrival it is presented with.
+  ///
+  /// The label is the picture's own capture time, moved on by `sinceTaken` for a repeat; see
+  /// `ArchiveTicker.sinceTaken`. The arrival is that label plus the picture's transit, so the
+  /// frame's age at the latency gate is capture to arrival, as the gate's contract says, and not the
+  /// archive's own hold: stamped with the encoder's output time, every frame was the archive delay
+  /// (250 ms) plus encode time old, and any disk cap under about 300 ms refused the whole angle.
+  static func archiveFrameTimes(captureWall: Double, transit: Double, sinceTaken: Double) -> (capture: WallClock, arrival: WallClock) {
+    let label = captureWall + sinceTaken
+    return (WallClock(seconds: label), WallClock(seconds: label + transit))
+  }
+
+  /// Encodes `chosen` as archive frame `index`, `sinceTaken` after the tick that took it. On
+  /// `encodeQueue`, without the lock held.
+  private func encodeArchive(_ chosen: ArchiveTicker<ArchivePicture>.Picture, index: Int64, sinceTaken: Double) {
+    let picture = chosen.payload
+    lock.lock()
+    guard isArchiving, sinks.compressed != nil else {
       lock.unlock()
       return
     }
@@ -892,14 +1043,15 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
     }
     let settings = archiveEncoding
     let presentationTime = CMTime(value: index, timescale: CMTimeScale(settings.frameRate))
-    // A picture encoded again on a later tick moves on with the tick on the capture timeline, as
-    // the camera's own clock would have while it stalled.
-    let captureWall = picture.captureWall.map {
-      WallClock(seconds: $0 + (clock.now.seconds - picture.arrivedWall))
-    }
+    let times = Self.archiveFrameTimes(
+      captureWall: picture.captureWall,
+      transit: picture.transit,
+      sinceTaken: sinceTaken
+    )
     pendingFrames[presentationTime.value] = PendingFrame(
       frameID: picture.frameID,
-      captureWallClock: captureWall
+      captureWallClock: times.capture,
+      arrivalWallClock: times.arrival
     )
     // Bounded so a stalled encoder cannot grow this without limit. Two seconds of 60 fps is far
     // more slack than the encoder ever needs, and the oldest entry is the one whose frame is least
@@ -1036,7 +1188,7 @@ public final class NDIFrameSource: FrameSource, @unchecked Sendable {
       isKeyframe: unit.isKeyframe,
       presentationTime: unit.presentationTime,
       decodeTime: .invalid,
-      wallClock: clock.now,
+      wallClock: pending?.arrivalWallClock ?? clock.now,
       captureWallClock: pending?.captureWallClock,
       frameID: pending?.frameID ?? 0
     ))

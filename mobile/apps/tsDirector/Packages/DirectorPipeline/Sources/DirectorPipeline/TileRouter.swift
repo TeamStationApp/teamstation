@@ -250,12 +250,17 @@ public final class SourcePipeline: @unchecked Sendable {
 
   public func setArchive(_ sink: ArchiveSink?) {
     lock.lock()
-    archive = sink
     let source = self.source
     lock.unlock()
     // Tells a source that has to encode its own archive whether anyone is reading it. A source
-    // that gets its coded frames for free ignores this.
-    source.setArchiving(sink != nil)
+    // that gets its coded frames for free ignores this. Told before the archive is detached, so a
+    // source still holding pictures for their ticks (NDI) can encode them into it first, and the
+    // recording reaches the moment it was stopped.
+    if sink == nil { source.setArchiving(false) }
+    lock.lock()
+    archive = sink
+    lock.unlock()
+    if sink != nil { source.setArchiving(true) }
   }
 
   /// The frame rate the camera says it is set to; see `FrameSource.setAnnouncedFrameRate`.

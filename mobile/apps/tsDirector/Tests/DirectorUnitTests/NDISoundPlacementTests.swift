@@ -65,7 +65,7 @@ struct NDISoundPlacementTests {
     for index in 3 ..< placed.count {
       #expect(abs(placed[index] - (500 + Double(index) * 0.02)) < 0.000_01)
     }
-    // A sender with an unset clock (1970) is not believed either.
+    // A sender clock near 1970 with no offset measured yet lands at its own arrival.
     wall.set(1_800_000_000)
     let unset = clock.audioCaptureSeconds(timestamp: ticks(10), sampleIndex: 0, sampleRate: 48_000)
     #expect(abs(unset - 1_800_000_000) < 0.000_1)
