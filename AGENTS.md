@@ -73,6 +73,28 @@ reviewed it for what follows and fixed what you found.
    by kind, without quoting what you removed. Tell the user at once about anything that may already have
    leaked: a credential has to be rotated and an invite code revoked, whatever the history says.
 
+## Test coverage
+
+- Every fix or feature needs appropriate regression tests: unit tests for isolated
+  logic, integration tests for boundaries and persistence, and end-to-end tests
+  for user journeys. Use the combination appropriate to the behavior.
+- Keep unit-only coverage gates at **90% minimum**. Require **95% minimum
+  combined executable-line coverage** from unit, integration, and end-to-end
+  tests for the production code implementing the work. Apply the combined gate
+  to changed executable lines in each changed file and overall; new production
+  files must meet 95% across their executable lines. Do not require unit tests
+  alone to reach 95%.
+- Merge measured coverage counters from the same source revision before
+  calculating combined coverage. Never average percentages, count passing tests
+  as coverage, or infer end-to-end coverage from screenshots.
+- Include every fix/feature and its affected production code in the coverage
+  scope. Missing instrumentation or source maps is a failure, not an exclusion.
+  Exclude test code, fixtures, generated code and type-only declarations; do not
+  exclude uncovered production paths or add meaningless tests to raise the score.
+- Run the relevant tests and coverage gate before declaring the work complete.
+  Report the measured combined percentage, scope, and any remaining gaps. For UI
+  tweaks, use `coverage.uiTweaks` against the feature branch's integration base.
+
 ## UI rules
 
 Before adding or changing a screen, read [docs/ui-rules.md](docs/ui-rules.md). A picker of more
