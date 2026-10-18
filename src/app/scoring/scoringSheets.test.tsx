@@ -6,6 +6,7 @@ import { Text } from 'react-native'
 
 import { TeamStationClient } from '../../common/api'
 import { ScoringSession } from '../../common/scoring/session'
+import { mintedRosterEntry } from '../../test/mintedRosterEntry'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
@@ -22,10 +23,12 @@ let root: Root | undefined
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
 async function click(label: string): Promise<void> {
-  const node = document.querySelector<HTMLElement>(`[aria-label="${label}"]`)
+  const node = document
+    .querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)
+    .item(document.querySelectorAll(`[aria-label="${label}"]`).length - 1)
   expect(node, label).not.equals(null)
   await act(async () => {
-    node!.click()
+    node.click()
   })
 }
 async function keys(label: string, keys: string[]): Promise<void> {
@@ -106,6 +109,8 @@ async function mount(
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
   client.roster = async () => []
+  client.createRosterPlayer = async (_teamId, player) =>
+    mintedRosterEntry(player)
   const source: ScoringSource = {
     open: async () => {
       const session = createDevelopmentSession(gameFixture, [], [])
@@ -221,10 +226,10 @@ describe('scoring slide-up sheets', function () {
     )
     expect(document.querySelectorAll('[aria-label="Cancel"]')).length(1)
     expect(
-      document.querySelector('[aria-label="Add Placeholder Players"]')
+      document.querySelector('[aria-label="Create Placeholder Player"]')
     ).equals(null)
     const footer = document.querySelector('[data-testid="Roster footer"]')!
-    expect(footer.textContent).includes('Add PlayerSave RostersCancel')
+    expect(footer.textContent).includes('Create PlayerSave RostersCancel')
     await click('Defense')
     expect(document.body.textContent).includes(
       'Drag player into position. On touch, hold briefly first.'
@@ -286,22 +291,16 @@ describe('scoring slide-up sheets', function () {
     await menu('Set Team Rosters')
     await click('Create Player')
     const more = document.querySelector(
-      '[aria-label="Save and Add Another Player"]'
+      '[aria-label="Save and Create Another Player"]'
     )!
     const placeholders = document.querySelector(
-      '[aria-label="Add Placeholder Players"]'
+      '[aria-label="Create Placeholder Player"]'
     )!
     expect(more.compareDocumentPosition(placeholders) & 4).equals(4)
-    await click('Add Placeholder Players')
+    await click('Create Placeholder Player')
     await click('Player count 3')
-    await click('Add')
-    expect(document.querySelector('[aria-label="First Name"]')).not.equals(null)
-    await act(async () => {
-      const cancels = document.querySelectorAll<HTMLElement>(
-        '[aria-label="Cancel"]'
-      )
-      cancels[cancels.length - 1].click()
-    })
+    await click('Create')
+    expect(document.querySelector('[aria-label="First Name"]')).equals(null)
     expect(
       document.querySelector('[data-roster-target="roster"]')!.textContent
     ).includes('Owls A')
@@ -326,7 +325,7 @@ describe('scoring slide-up sheets', function () {
         await input('First Name', first)
         await input('Last Name', last)
         if (jersey !== '') await input('Jersey Number', jersey)
-        await click('Add Player')
+        await click('Create Player')
       }
       const roster = (): string[] =>
         Array.from(
@@ -353,7 +352,7 @@ describe('scoring slide-up sheets', function () {
       expect(roster().every(row => lineup.includes(row))).equals(true)
       await click('Lineup')
       // Adding to the lineup puts him last there; the lineup is not sorted.
-      await click('Add Zed Ten to Lineup')
+      await click('Add Zed T to Lineup')
       const last = Array.from(
         document.querySelectorAll(
           '[data-roster-target^="lineup-"][data-roster-player]'
@@ -365,7 +364,7 @@ describe('scoring slide-up sheets', function () {
     }
   })
 
-  it('edits both lineups and defense, adds local players and commits once with undo', async function () {
+  it('edits both lineups and defense, adds created players and commits once with undo', async function () {
     await mount()
     await menu('Set Team Rosters')
     await click('Remove Player 2')
@@ -396,9 +395,9 @@ describe('scoring slide-up sheets', function () {
     }
     await click('Create Player')
     await input('First Name', 'Alex')
-    await input('Last Name', 'Local')
-    await click('Add Player')
-    await click('Add Alex Local to Lineup')
+    await input('Last Name', 'Rodriguez')
+    await click('Create Player')
+    await click('Add Alex R to Lineup')
     await click('Defense')
     await click('Clear P')
     expect(
@@ -421,7 +420,7 @@ describe('scoring slide-up sheets', function () {
     ).not.equals(null)
     await click('Undo Set team roster')
     await menu('Set Team Rosters')
-    expect(document.body.textContent).not.includes('Alex Local')
+    expect(document.body.textContent).not.includes('Alex R')
     await click('Cancel')
     expect(document.querySelector('[aria-label="Nothing to undo"]')).not.equals(
       null

@@ -250,9 +250,11 @@ async function main(): Promise<void> {
         target.y > 110 &&
         target.y + target.height <
           screen.height -
-            (['Add Placeholder Players', 'Add Player', 'Save Player'].includes(
-              label
-            )
+            ([
+              'Create Placeholder Player',
+              'Create Player',
+              'Save Player'
+            ].includes(label)
               ? native
                 ? 35
                 : 100
@@ -315,15 +317,15 @@ async function main(): Promise<void> {
         count++
       )
         await m.pressKey('Enter')
-    await reach('Add Placeholder Players')
-    await tap('Add Placeholder Players')
-    await shown('Select number of players to add')
+    await reach('Create Placeholder Player')
+    await tap('Create Placeholder Player')
+    await shown('Select number of players to create')
     await tap('Cancel')
     await input('First Name', 'Jose')
     await input('Last Name', 'Ramirez')
     await input('Jersey Number', '11')
-    await reach('Add Player')
-    await tap('Add Player')
+    await reach('Create Player')
+    await tap('Create Player')
     await shown('Jose Ramirez')
     await tap('Create Player')
     if (native) await m.hideKeyboard()
@@ -336,9 +338,9 @@ async function main(): Promise<void> {
         count++
       )
         await m.pressKey('Enter')
-    await reach('Add Placeholder Players')
-    await tap('Add Placeholder Players')
-    await tap('Add')
+    await reach('Create Placeholder Player')
+    await tap('Create Placeholder Player')
+    await tap('Create')
     await tap('Cancel')
     await tap('Roster')
     await shown('game-only player')
@@ -525,8 +527,8 @@ async function main(): Promise<void> {
       await input('First Name', 'Jose')
       await input('Last Name', 'Ramirez')
       await input('Jersey Number', '11')
-      await reach('Add Player')
-      await tap('Add Player')
+      await reach('Create Player')
+      await tap('Create Player')
       await shown('Jose Ramirez')
       await reach('Jose Ramirez')
       await capture('local-card')

@@ -56,8 +56,31 @@ describe('placeholder count sheet and platform adapters', function () {
     )
     await click('Create Player')
     expect(
-      (node('Add Placeholder Players').firstChild as HTMLElement).style.color
+      (node('Create Placeholder Player').firstChild as HTMLElement).style.color
     ).equals('rgb(52, 211, 153)')
+  })
+  it('returns to player entry on cancellation and to the roster after creating placeholders', async function () {
+    await mount(
+      <RosterEditor
+        state={initialScoringState(
+          createDevelopmentSession(gameFixture, [], [])
+        )}
+        onSave={() => undefined}
+      />
+    )
+    await click('Create Player')
+    expect(document.activeElement).not.equals(node('First Name'))
+    await click('Create Placeholder Player')
+    await click('Cancel')
+    expect(node('First Name')).not.equals(null)
+    await click('Create Placeholder Player')
+    await click('Player count 3')
+    await click('Create')
+    expect(node('First Name')).equals(null)
+    expect(node('Number of placeholder players')).equals(null)
+    expect(node('Save Rosters')).not.equals(null)
+    await click('Create Player')
+    expect(document.activeElement).not.equals(node('First Name'))
   })
   it('retries a failed asynchronous add and prevents duplicate submissions while saving', async function () {
     let attempts = 0
@@ -78,17 +101,17 @@ describe('placeholder count sheet and platform adapters', function () {
         }}
       />
     )
-    await click('Add')
+    await click('Create')
     expect(document.body.textContent).includes(
-      'Unable to add players. Please try again.'
+      'Unable to create the players. Please try again.'
     )
     expect(closes).equals(0)
     await act(async () => {
-      node('Add').click()
-      node('Add').click()
+      node('Create').click()
+      node('Create').click()
     })
     expect(attempts).equals(2)
-    expect(node('Add').getAttribute('aria-disabled')).equals('true')
+    expect(node('Create').getAttribute('aria-disabled')).equals('true')
     await act(async () => {
       release()
       await pending
@@ -121,8 +144,8 @@ describe('placeholder count sheet and platform adapters', function () {
       wheel.dispatchEvent(new window.Event('scroll'))
     })
     expect(node('Player count 16').getAttribute('aria-selected')).equals('true')
-    await click('Add')
-    await click('Add')
+    await click('Create')
+    await click('Create')
     expect(counts).deep.equals([16])
     expect(closes).equals(1)
   })

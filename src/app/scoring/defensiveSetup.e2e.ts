@@ -11,6 +11,7 @@ import { asGameDetail, asRosterEntry } from '../../common/api'
 import { shortName } from '../../common/names'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { ScoringSession, type StoredGame } from '../../common/scoring/session'
+import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
 import { createPlayers } from '../field/fieldModel'
 import {
@@ -440,7 +441,15 @@ async function open(fixture: Fixture = {}): Promise<{
       } else if (u.pathname === '/api/v1/teams') body = []
       else if (u.pathname.endsWith('/live-streams'))
         body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
-      else {
+      else if (
+        request.method === 'POST' &&
+        u.pathname.endsWith('/roster-players')
+      ) {
+        let bytes = ''
+        for await (const chunk of request) bytes += String(chunk)
+        body = rosterEntryFromBody(JSON.parse(bytes === '' ? '{}' : bytes))
+        response.statusCode = 201
+      } else {
         unexpected.push(`${request.method} ${u.pathname}`)
         body = []
       }
@@ -502,9 +511,20 @@ async function open(fixture: Fixture = {}): Promise<{
   }
 }
 async function click(page: Page, label: string): Promise<void> {
-  await page.waitForSelector(`[aria-label="${label}"]`)
-  await page.locator(`[aria-label="${label}"]`).click()
+  const selector = `[aria-label="${label}"]:not([aria-disabled="true"]):not(:disabled)`
+  const opening =
+    label === 'Create Player' &&
+    (await page.$('[aria-label="First Name"]')) == null
+  await page.waitForSelector(selector)
+  const point = await page.evaluate(s => {
+    const nodes = document.querySelectorAll(s)
+    const box = nodes[nodes.length - 1].getBoundingClientRect()
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  }, selector)
+  await page.mouse.click(point.x, point.y)
+  if (opening) await page.waitForSelector('[aria-label="First Name"]')
 }
+
 async function text(page: Page): Promise<string> {
   return await page.evaluate(() => document.body.innerText)
 }
@@ -700,7 +720,7 @@ describe('current defensive scoring setup browser', function () {
         const sheet = (await page.$('[data-testid="Scoring sheet"]'))!
         expect((await sheet.boundingBox()).height).closeTo((height * 2) / 3, 2)
         await click(page, 'Create Player')
-        await click(page, 'Add Placeholder Players')
+        await click(page, 'Create Placeholder Player')
         await page.waitForSelector(
           '[aria-label="Number of placeholder players"]'
         )
@@ -709,7 +729,7 @@ describe('current defensive scoring setup browser', function () {
         await page.waitForSelector(
           '[aria-label="Player count 2"][aria-selected="true"]'
         )
-        await click(page, 'Add')
+        await click(page, 'Create')
         await page.waitForFunction(
           () =>
             document.querySelectorAll('[aria-label^="Assign P "]').length === 10
@@ -845,9 +865,9 @@ describe('current defensive scoring setup browser', function () {
         expect(await page.$$('[aria-label^="Assign RF "]')).has.length(count)
         expect(await page.$('[aria-label="Create Player"]')).not.equals(null)
         await click(page, 'Create Player')
-        await click(page, 'Add Placeholder Players')
+        await click(page, 'Create Placeholder Player')
         await click(page, 'Player count 2')
-        await click(page, 'Add')
+        await click(page, 'Create')
         await page.waitForFunction(
           n =>
             document.querySelectorAll('[aria-label^="Assign RF "]').length ===
@@ -948,7 +968,7 @@ describe('current defensive scoring setup browser', function () {
     try {
       await tapSlot(page, 'RF')
       await click(page, 'Create Player')
-      await click(page, 'Add Placeholder Players')
+      await click(page, 'Create Placeholder Player')
       await click(page, 'Player count 2')
       const added = await peer([
         {
@@ -970,7 +990,7 @@ describe('current defensive scoring setup browser', function () {
         { type: 'pitch', call: 'B' },
         { type: 'pitch', call: 'B' }
       ])
-      await click(page, 'Add')
+      await click(page, 'Create')
       await page.waitForSelector('[aria-label*="2 balls"]')
       expect(await page.$$('[aria-label^="Assign RF "]')).has.length(11)
       expect(await page.$('[aria-label="Create Player"]')).not.equals(null)
@@ -1021,7 +1041,7 @@ describe('current defensive scoring setup browser', function () {
         }
         await peer([{ type: 'gameFlow', kind: 'endGame' }])
         if (opening === 'completed') await page.reload()
-        else await click(page, 'Add Player')
+        else await click(page, 'Create Player')
         await page.waitForSelector('[aria-label="Game over"]')
         await tapField(page, 'P')
         expect(await page.$('[aria-label="Defensive roster"]')).equals(null)
@@ -1056,8 +1076,8 @@ describe('current defensive scoring setup browser', function () {
           await tapSlot(page, 'C')
           await page.waitForSelector('[aria-label="Defensive roster"]')
           await click(page, 'Create Player')
-          await click(page, 'Add Placeholder Players')
-          await click(page, 'Add')
+          await click(page, 'Create Placeholder Player')
+          await click(page, 'Create')
           await page.waitForSelector('[aria-label="Defensive roster"]')
           await choose(page, 'C', 1)
         } else {

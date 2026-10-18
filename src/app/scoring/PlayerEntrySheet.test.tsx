@@ -71,7 +71,7 @@ describe('player entry sheet', function () {
     expect(node('Throws R').getAttribute('aria-selected')).equals('true')
     expect(node('Throws —')).equals(null)
     expect(
-      document.querySelector('[aria-label="Save and Add Another Player"]')
+      document.querySelector('[aria-label="Save and Create Another Player"]')
     ).equals(null)
     await input('Last Name', 'Altuve')
     await tap('Save Player')
@@ -128,7 +128,7 @@ describe('player entry sheet', function () {
     expect(original.throws).equals(null)
   })
 
-  it('focuses, validates, saves all optional fields, resets for another and cancels without adding', async function () {
+  it('opens without focusing, validates, and focuses the reset form only after saving another', async function () {
     const host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
@@ -152,14 +152,15 @@ describe('player entry sheet', function () {
       changeTheme(tsDark)
     })
     expect(
-      (node('Save and Add Another Player').firstChild as HTMLElement).style
+      (node('Save and Create Another Player').firstChild as HTMLElement).style
         .color
     ).equals('rgb(52, 211, 153)')
     await act(async () => {
       changeTheme(tsBallpark)
     })
-    expect(document.activeElement).equals(node('First Name'))
-    await tap('Add Player')
+    expect(document.activeElement).not.equals(node('First Name'))
+    expect(node('Jersey Number').getAttribute('inputmode')).equals('numeric')
+    await tap('Create Player')
     expect(document.body.textContent).includes('Enter a player name.')
     await input('First Name', 'Alex')
     const enter = async (label: string): Promise<void> => {
@@ -181,7 +182,7 @@ describe('player entry sheet', function () {
     expect(document.activeElement).not.equals(node('Jersey Number'))
     await input('Last Name', 'Local')
     await input('Jersey Number', '7x')
-    await tap('Add Player')
+    await tap('Create Player')
     expect(document.body.textContent).includes('Use digits')
     await input('Jersey Number', '07')
     await tap('Throws L')
@@ -201,7 +202,7 @@ describe('player entry sheet', function () {
       '[data-testid="Scoring sheet content"]'
     )!
     scroll.scrollTop = 280
-    await tap('Save and Add Another Player')
+    await tap('Save and Create Another Player')
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 40))
     })
@@ -224,8 +225,8 @@ describe('player entry sheet', function () {
     expect(closes).equals(1)
     expect(added).length(1)
     await input('Last Name', 'Solo')
-    await tap('Add Player')
-    await tap('Add Player')
+    await tap('Create Player')
+    await tap('Create Player')
     expect(added).length(2)
     expect(closes).equals(2)
   })

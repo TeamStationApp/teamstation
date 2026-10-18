@@ -285,7 +285,7 @@ describe('the roster screen for a scorekeeper', function () {
     await new Promise(resolve => setTimeout(resolve, 300))
   }
 
-  it('E1: labels the tabs Roster, Lineup and Defense over a bar of Add Player, a round mic and a dim Save', async function () {
+  it('E1: labels the tabs Roster, Lineup and Defense over a bar of Create Player, a round mic and a dim Save', async function () {
     const fixture = lineupFixture()
     await scoreGame(fixture.gameId)
     await acceptLineups()
@@ -317,7 +317,7 @@ describe('the roster screen for a scorekeeper', function () {
           background: style.backgroundColor
         }
       })
-      expect(add.text).equals('Add Player')
+      expect(add.text).equals('Create Player')
       // Green text, with no outline and no fill.
       const [red, green, blue] = add.color.match(/\d+/g)!.map(Number)
       expect(green).greaterThan(red + 60)
@@ -630,7 +630,7 @@ describe('the roster screen for a scorekeeper', function () {
     inside(entry)
     const controls = await sheets
       .at(-1)!
-      .$$eval('[aria-label="Add Player"], [aria-label="Cancel"]', nodes =>
+      .$$eval('[aria-label="Create Player"], [aria-label="Cancel"]', nodes =>
         nodes.map(node => {
           const r = node.getBoundingClientRect()
           return {

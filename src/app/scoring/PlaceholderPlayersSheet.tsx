@@ -28,7 +28,7 @@ export function PlaceholderPlayersSheet({
       added = true
       onClose()
     } catch {
-      setProblem('Unable to add players. Please try again.')
+      setProblem('Unable to create the players. Please try again.')
     } finally {
       if (!added) saving.current = false
       setBusy(false)
@@ -36,7 +36,7 @@ export function PlaceholderPlayersSheet({
   }
   return (
     <ScoringSheet
-      title="Select number of players to add."
+      title="Select number of players to create."
       placement="center"
       textCancel
       onClose={onClose}
@@ -48,8 +48,8 @@ export function PlaceholderPlayersSheet({
           color={theme.scoringMenuActiveBackground}
           textColor={theme.scoringMenuActiveText}
           compact
-          accessibilityLabel="Add"
-          label="Add"
+          accessibilityLabel="Create"
+          label="Create"
           disabled={busy}
           onPress={() => {
             add().catch(() => undefined)
