@@ -1739,12 +1739,13 @@ describe('a player’s Team roles on Settings', function () {
         .querySelector('[data-testid="role-team-scorekeeper"] [role="switch"]')
         ?.getAttribute('aria-checked')
     ).equals('true')
-    // Songkeeper comes with Scorekeeper; nothing to add.
+    // Songkeeper can be assigned explicitly even while Scorekeeper is held.
     const songkeeper = section!.querySelector(
       '[data-testid="role-team-songkeeper"]'
     )
-    expect(songkeeper?.querySelector('[role="switch"]')).equals(null)
-    expect(songkeeper?.textContent).includes('With Scorekeeper')
+    expect(
+      songkeeper?.querySelector('[role="switch"]')?.getAttribute('aria-checked')
+    ).equals('false')
     // Their place on the team is the roster's: Member reads Player.
     const member = section!.querySelector('[data-testid="role-team-member"]')
     expect(member?.querySelector('[role="switch"]')).equals(null)
@@ -1758,7 +1759,7 @@ describe('a player’s Team roles on Settings', function () {
     ).equals('true')
   })
 
-  it('reads Member as Player for the team’s administrator too, and every staff role with Admin', async function () {
+  it('keeps player membership fixed while allowing explicit staff roles beside Admin', async function () {
     const asked: unknown[] = []
     await render(
       <PlayerScreen
@@ -1775,11 +1776,31 @@ describe('a player’s Team roles on Settings', function () {
         .querySelector('[data-testid="role-team-admin"] [role="switch"]')
         ?.getAttribute('aria-checked')
     ).equals('true')
-    for (const role of ['coach', 'assistant', 'scorekeeper', 'songkeeper']) {
+    for (const role of [
+      'coach',
+      'assistant',
+      'scorekeeper',
+      'songkeeper',
+      'videographer'
+    ]) {
       const row = section!.querySelector(`[data-testid="role-team-${role}"]`)
-      expect(row?.querySelector('[role="switch"]'), role).equals(null)
-      expect(row?.textContent, role).includes('With Admin')
+      expect(
+        row?.querySelector('[role="switch"]')?.getAttribute('aria-checked'),
+        role
+      ).equals('false')
     }
+    await press('Coach')
+    expect(asked).deep.include(['add', 'team', 't1', 7, 'coach'])
+    expect(
+      section!
+        .querySelector('[data-testid="role-team-coach"] [role="switch"]')
+        ?.getAttribute('aria-checked')
+    ).equals('true')
+    expect(
+      section!
+        .querySelector('[data-testid="role-team-admin"] [role="switch"]')
+        ?.getAttribute('aria-checked')
+    ).equals('true')
     const member = section!.querySelector('[data-testid="role-team-member"]')
     expect(member?.querySelector('[role="switch"]')).equals(null)
     expect(member?.textContent).includes('Player')
