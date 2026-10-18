@@ -58,6 +58,7 @@ export interface Theme {
   buttonTextColor: string
   /** The Score action on a game's hero. */
   scoreActionColor: string
+  djActionColor: string
 
   // Inputs
   inputBackgroundColor: string

@@ -383,6 +383,7 @@ export async function rosterEditFixture(
             ingestMessage: null,
             nonMemberView: false,
             canScore: true,
+            assignedRoles: { away: [], home: ['scorekeeper'] },
             videos: []
           }
         else if (u.pathname.endsWith('/default-lineup')) {

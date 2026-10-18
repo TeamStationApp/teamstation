@@ -25,6 +25,7 @@ export interface GameTabsInput {
     GameDetail,
     | 'canScore'
     | 'canDj'
+    | 'assignedRoles'
     | 'coachSides'
     | 'scoreboard'
     | 'linescore'
@@ -64,22 +65,33 @@ export function gameTabs(input: GameTabsInput): GameTabPill[] {
   return pills
 }
 
-/** Hero actions share scoring availability, with independent capabilities. */
+/** Assigned coaching sides only; administrative permission is not a UI role. */
+export function heroCoachSides(
+  game: GameTabsInput['game']
+): Array<'away' | 'home'> {
+  return game.coachSides.filter(side =>
+    game.assignedRoles[side].includes('coach')
+  )
+}
+
+/** Hero actions require an assigned role as well as the existing capability. */
 export function gameActions(input: GameTabsInput): GameAction[] {
   const { game, onRecordGame, onCoachGame, onDjGame } = input
   if (game.eventKind === 'event') return []
   const actions: GameAction[] = []
+  const assigned = [...game.assignedRoles.away, ...game.assignedRoles.home]
   // Preserve Score's existing availability, including reopening our own games.
   const scoringAvailable =
     scoringEntry(game) != null || game.scoreboard?.open === true
   if (scoringAvailable) {
-    if (game.canScore)
+    if (game.canScore && assigned.includes('scorekeeper'))
       actions.push({ id: 'score', label: lstrings.game_hero_score })
-    if (game.coachSides.length > 0 && onCoachGame != null)
+    if (heroCoachSides(game).length > 0 && onCoachGame != null)
       actions.push({ id: 'coach', label: lstrings.game_hero_coach })
-    if (game.canDj && onDjGame != null) actions.push({ id: 'dj', label: 'DJ' })
+    if (game.canDj && assigned.includes('songkeeper') && onDjGame != null)
+      actions.push({ id: 'dj', label: 'DJ' })
   }
-  if (onRecordGame != null)
+  if (onRecordGame != null && assigned.includes('videographer'))
     actions.push({ id: 'record', label: lstrings.game_hero_record })
   return actions
 }

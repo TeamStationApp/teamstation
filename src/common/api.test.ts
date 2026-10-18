@@ -1203,7 +1203,8 @@ describe('api client', function () {
       ...game,
       canScore: true,
       canDj: true,
-      scoreboard: { open: true, mayOverride: false }
+      scoreboard: { open: true, mayOverride: false },
+      assignedRoles: { away: ['coach'], home: ['songkeeper'] }
     })
     const detail = await new TeamStationClient({
       baseUrl: 'http://x/api/v1',
@@ -1212,6 +1213,10 @@ describe('api client', function () {
     expect(flagged.calls[0].url).equals('http://x/api/v1/games/g%2F1')
     expect(detail.canScore).equals(true)
     expect(detail.canDj).equals(true)
+    expect(detail.assignedRoles).deep.equals({
+      away: ['coach'],
+      home: ['songkeeper']
+    })
     expect(detail.scoreboard).deep.equals({ open: true, mayOverride: false })
     const older = await new TeamStationClient({
       baseUrl: 'http://x/api/v1',
@@ -1219,6 +1224,7 @@ describe('api client', function () {
     }).game('g/1')
     expect(older.canScore).equals(false)
     expect(older.canDj).equals(false)
+    expect(older.assignedRoles).deep.equals({ away: [], home: [] })
     expect(older.scoreboard).equals(null)
   })
 

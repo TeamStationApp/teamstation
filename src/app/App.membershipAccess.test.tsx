@@ -77,7 +77,8 @@ describe('actual app membership sign-in return', () => {
     TeamStationClient.prototype.game = async () => ({
       ...gameFixture,
       canScore: true,
-      canDj: true
+      canDj: true,
+      assignedRoles: { away: [], home: ['scorekeeper', 'songkeeper'] }
     })
     TeamStationClient.prototype.djGame = async () =>
       asDjGame({
@@ -124,7 +125,8 @@ describe('actual app membership sign-in return', () => {
       TeamStationClient.prototype.game = async () => ({
         ...gameFixture,
         canScore: true,
-        coachSides: ['home']
+        coachSides: ['home'],
+        assignedRoles: { away: [], home: ['scorekeeper', 'coach'] }
       })
       showRoute({ name: 'djGame', gameId: 'g1' }, true)
       await mount(<App />)

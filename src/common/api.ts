@@ -342,6 +342,11 @@ export const asGameDetail = withEventMetadata(
      * server, and false.
      */
     canDj: asOptional(asBoolean, false),
+    /** Assigned roles, including season/league inheritance, without implied privileges. UI only. */
+    assignedRoles: asOptional(
+      asObject({ away: asArray(asRole), home: asArray(asRole) }),
+      () => ({ away: [], home: [] })
+    ),
     /**
      * The sides whose team this viewer head-coaches, which every administrator
      * of it does, and so whose lineup they may save. An assistant has none.

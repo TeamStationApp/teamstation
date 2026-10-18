@@ -19,6 +19,7 @@ import {
   canScore,
   canSeeGame,
   canSeeTeam,
+  givenRolesOnTeams,
   isHeadCoach,
   nonMemberTeam,
   roleScopes,
@@ -572,6 +573,10 @@ export function teamRoutes(
           includeNew: false
         })
       )
+      const assigned =
+        actor == null || nonMemberView
+          ? undefined
+          : await givenRolesOnTeams(db, [game.away_team_id, game.home_team_id])
       res.json({
         id: game.id,
         pendingApproval: pending.pendingApproval,
@@ -623,6 +628,10 @@ export function teamRoutes(
           ? withoutTotals(game.linescore)
           : game.linescore,
         fenceDistanceFt: Number(game.resolved_fence_distance_ft),
+        assignedRoles: {
+          away: assigned?.get(game.away_team_id)?.get(actor!.userId) ?? [],
+          home: assigned?.get(game.home_team_id)?.get(actor!.userId) ?? []
+        },
         canScore:
           !nonMemberView &&
           roles != null &&

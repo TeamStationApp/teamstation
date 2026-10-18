@@ -163,7 +163,13 @@ function server(game: Partial<GameDetail> = {}): Server {
     client,
     saved: [],
     reads: { events: 0, boxScore: 0, lineups: 0 },
-    game: { ...gameFixture, canScore: false, coachSides: ['home'], ...game },
+    game: {
+      ...gameFixture,
+      canScore: false,
+      coachSides: ['home'],
+      assignedRoles: { away: ['coach'], home: ['coach'] },
+      ...game
+    },
     answer: async () => lineups('mine', true)
   }
   client.game = async () => held.game
@@ -1025,7 +1031,12 @@ describe('the Coach Game pill', function () {
     coachSides: Array<'away' | 'home'>
   ): Promise<string[]> {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
-    client.game = async () => ({ ...gameFixture, canScore: false, coachSides })
+    client.game = async () => ({
+      ...gameFixture,
+      canScore: false,
+      coachSides,
+      assignedRoles: { away: ['coach'], home: ['coach'] }
+    })
     client.teams = async () => []
     client.boxScore = async () => ({
       batting: [],
@@ -1083,7 +1094,12 @@ describe('Coach Game in the app', function () {
             : path.endsWith('/games/g1/box-score')
               ? { batting: [], pitching: [] }
               : path.endsWith('/games/g1')
-                ? { ...gameFixture, canScore: false, coachSides: ['home'] }
+                ? {
+                    ...gameFixture,
+                    canScore: false,
+                    coachSides: ['home'],
+                    assignedRoles: { away: [], home: ['coach'] }
+                  }
                 : path.endsWith('/default-lineup')
                   ? { lineup: null, fromGameId: null, setAt: null }
                   : path.endsWith('/health')

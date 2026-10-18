@@ -75,11 +75,16 @@ that a location has not been set.
 
 ### Game hero actions stay compact
 
-Order hero actions Score, Coach, DJ, Record, filtering each by its capability.
+Order hero actions Score, Coach, DJ, Record, filtering each by its capability
+and assigned scorekeeper, coach, songkeeper, or videographer role respectively.
+Inherited season/league assignments count; admin privileges and roles implied
+by another role do not. This presentation rule does not change authorization.
 Coach and DJ use Score's existing scoring availability; DJ also needs device
-support. Keep each button 4.5 rem wide with a 1.5 rem visible pill, 0.875 rem
-label and a 3 rem touch target, regardless of the number of visible actions.
-Wrap on narrow screens instead of stretching or shrinking the buttons.
+support. Divide the card's full inner width into four equal slots with the
+usual gaps and card margins. Reserve unused slots so fewer actions keep the
+same width. Keep a 1.5 rem visible pill, 0.875 rem label and 3 rem touch target;
+allow labels to scale down on narrow phones without truncation. Score is blue,
+Coach green, DJ dark purple, and Record red.
 
 ### Membership and access actions belong in list rows
 

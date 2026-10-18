@@ -42,6 +42,10 @@ function fixture(): { client: TeamStationClient; game: GameDetail } {
     ingestMessage: null,
     videos: [],
     canScore: true,
+    assignedRoles: {
+      away: [],
+      home: ['coach', 'scorekeeper', 'songkeeper', 'videographer']
+    },
     hasScoringEvents: false
   })
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
@@ -143,7 +147,7 @@ describe('the event page’s automatic and explicit sections', () => {
       )!
       const shell = button.firstElementChild as HTMLElement
       return [
-        getComputedStyle(button).width,
+        getComputedStyle(button).flexGrow,
         getComputedStyle(shell).height,
         shell.style.paddingLeft,
         shell.style.paddingRight
@@ -151,7 +155,10 @@ describe('the event page’s automatic and explicit sections', () => {
     }
     await render(props)
     const size = dimensions('Score')
-    expect(size[0]).equals('72px')
+    expect(size[0]).equals('1')
+    expect(
+      document.querySelector('[data-testid="game-hero-actions"]')!.children
+    ).has.length(4)
     expect(size[1]).equals('24px')
     expect(dimensions('Record')).deep.equals(size)
     game.coachSides = ['home']
@@ -167,6 +174,10 @@ describe('the event page’s automatic and explicit sections', () => {
     })
     for (const label of ['Score', 'Coach', 'DJ', 'Record'])
       expect(dimensions(label)).deep.equals(size)
+    const djShell = document.querySelector(
+      '[aria-label="DJ"][role="button"]'
+    )!.firstElementChild!
+    expect(getComputedStyle(djShell).backgroundColor).equals('rgb(91, 33, 182)')
     for (const label of ['DJ', 'Coach', 'Record'])
       await act(async () => {
         document

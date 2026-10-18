@@ -687,6 +687,37 @@ describe('whether a viewer may score a game', function () {
     return asGameDetail(await response.json()).canScore
   }
 
+  it('returns assigned and inherited roles without expanding admin or scorekeeper privileges', async () => {
+    for (const [name, awayRoles, homeRoles] of [
+      ['siteAdmin', [], []],
+      ['awayManager', ['admin'], []],
+      ['coach', [], ['coach']],
+      ['assistant', [], ['assistant']],
+      ['homeScorekeeper', [], ['scorekeeper']],
+      ['awayScorekeeper', ['scorekeeper'], []],
+      ['seasonScorekeeper', ['scorekeeper'], ['scorekeeper']],
+      ['leagueScorekeeper', ['scorekeeper'], ['scorekeeper']],
+      ['songkeeper', ['songkeeper'], ['songkeeper']],
+      ['awaySongkeeper', ['songkeeper'], []],
+      ['videographer', ['videographer'], ['videographer']],
+      ['bothCoach', ['coach'], ['coach']],
+      ['member', [], []],
+      ['outsider', [], []]
+    ] as Array<[string, string[], string[]]>) {
+      const response = await fetch(`${base}/games/${game}`, {
+        headers: { 'x-test-user': String(idOf(name)) }
+      })
+      expect(response.status, name).equals(200)
+      expect(
+        asGameDetail(await response.json()).assignedRoles,
+        name
+      ).deep.equals({
+        away: awayRoles,
+        home: homeRoles
+      })
+    }
+  })
+
   it('says yes to a scorekeeper or an admin of either team, from any height', async function () {
     for (const name of [
       'homeScorekeeper',

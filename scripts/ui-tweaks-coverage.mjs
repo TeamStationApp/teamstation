@@ -104,6 +104,7 @@ run(
     'src/server/routes/membershipRequests.test.ts',
     'src/server/routes/appSignIn.test.ts',
     'src/server/routes/events.test.ts',
+    'src/server/routes/games.test.ts',
     'src/server/routes/seasons.test.ts',
     'src/server/routes/seasonReaders.test.ts',
     'src/server/notifications/requestInformation.test.ts',
