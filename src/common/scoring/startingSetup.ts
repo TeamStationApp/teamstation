@@ -1,4 +1,5 @@
 import type { GameDetail, RosterEntry } from '../api'
+import type { Unrostered } from '../unroster'
 import type { ScoringAction } from './actions'
 import { begun, newSetup, type RosterPlayer } from './lineup'
 import {
@@ -8,6 +9,7 @@ import {
   sameArrangement,
   unseenLineup
 } from './lineupHistory'
+import { reconcileRoster } from './rosterAvailability'
 import {
   copyState,
   type GameSetup,
@@ -69,7 +71,10 @@ export type DefaultLineups = Partial<Record<Side, Lineup | null>>
  * `arrangeFromDefault`).
  */
 export function startingSetup(
-  game: GameTeams,
+  game: GameTeams & {
+    unrostered?: Unrostered
+    guestPlayers?: Record<Side, RosterEntry[]>
+  },
   away: RosterEntry[],
   home: RosterEntry[],
   defaults: DefaultLineups = {},
@@ -78,16 +83,28 @@ export function startingSetup(
   const setup = newSetup(
     teamsOf(game),
     {
-      away: rosterOf(away),
-      home: rosterOf(home)
+      away: rosterOf(
+        away.filter(row => game.unrostered?.away.includes(row.userId) !== true)
+      ),
+      home: rosterOf(
+        home.filter(row => game.unrostered?.home.includes(row.userId) !== true)
+      )
     },
     fillRoster
   )
+  const reconciled = reconcileRoster(
+    setup,
+    teamsOf(game),
+    { away, home },
+    game.guestPlayers ?? { away: [], home: [] },
+    game.unrostered ?? { away: [], home: [] }
+  )
   for (const side of ['away', 'home'] as const) {
     const lineup = defaults[side]
-    if (lineup != null) arrangeFromDefault(setup, teamsOf(game), side, lineup)
+    if (lineup != null)
+      arrangeFromDefault(reconciled, teamsOf(game), side, lineup)
   }
-  return setup
+  return reconciled
 }
 
 /**
