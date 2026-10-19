@@ -1,0 +1,138 @@
+import type { Kysely } from 'kysely'
+
+import type { UnrosterBody } from '../../common/api'
+import { badRequest, conflict, forbidden, notFound } from '../../common/errors'
+import {
+  asPostEventsBody,
+  type CurrentPlay,
+  type GumboPlay
+} from '../../common/gumboPlay'
+import { recordOf } from '../../common/scoring/gumbo'
+import { reconcileRoster } from '../../common/scoring/rosterAvailability'
+import { awaitingResult } from '../../common/scoring/rules'
+import { ScoringSession } from '../../common/scoring/session'
+import { setupOf } from '../../common/scoring/state'
+import type { Unrostered } from '../../common/unroster'
+import { isHeadCoach, roleScopes } from '../access'
+import { survivorsOf, UnresolvedAccount } from '../admin/people'
+import type { Actor } from '../auth/sessions'
+import type { Database } from '../db/database'
+import { postGamePlays, readPlays } from '../events/postPlays'
+import { resolveScoringGame } from '../scoring/openRow'
+import { contextOf } from '../scoring/replayContext'
+import { notifyGameChange } from '../socket/gameChanges'
+import { gameAvailability } from './rosterAvailability'
+
+/** A switch and its lineup change commit together, serialized with scoring writes. */
+export async function setRostered(
+  db: Kysely<Database>,
+  actor: Actor,
+  gameId: string,
+  body: UnrosterBody
+): Promise<Unrostered> {
+  return await db.transaction().execute(async trx => {
+    const game = await trx
+      .selectFrom('games')
+      .selectAll()
+      .where('id', '=', gameId)
+      .forUpdate()
+      .executeTakeFirst()
+    if (game == null) throw notFound()
+    const teamId = body.side === 'away' ? game.away_team_id : game.home_team_id
+    if (
+      !isHeadCoach(await roleScopes(trx, actor.userId, actor.isAdmin), teamId)
+    )
+      throw forbidden('Only the head coach may change game availability')
+    if (game.status === 'final' || game.status === 'cancelled')
+      throw conflict('This game cannot accept lineup changes')
+    const userId = await survivorsOf(trx, [body.userId])
+      .then(ids => ids.get(body.userId)!)
+      .catch((error: unknown) => {
+        if (error instanceof UnresolvedAccount)
+          throw badRequest('The player does not exist')
+        throw error
+      })
+    const availability = await gameAvailability(trx, game)
+    if (
+      !availability.roster[body.side].some(
+        row => row.userId === userId && row.isPlayer
+      )
+    )
+      throw badRequest('Only a player on this team can be unrostered')
+    const unrostered = availability.unrostered
+    const isRostered = !unrostered[body.side].includes(userId)
+    if (isRostered === body.rostered) return unrostered
+    unrostered[body.side] = body.rostered
+      ? unrostered[body.side].filter(id => id !== userId)
+      : [...unrostered[body.side], userId]
+    const stored = await resolveScoringGame(trx, {
+      plays: (await readPlays(trx, gameId)).map(row => row.gumbo as GumboPlay),
+      currentPlay: game.currentPlay as CurrentPlay | null
+    })
+    if (
+      [...stored.plays, stored.currentPlay].some(
+        play => play?.teamStation != null && recordOf(play) == null
+      )
+    )
+      throw conflict('The stored game cannot be read')
+    const context = await contextOf(trx, gameId, game, stored)
+    await trx
+      .updateTable('games')
+      .set({ unrostered, updated_at: new Date() })
+      .where('id', '=', gameId)
+      .execute()
+    if (context != null) {
+      let failure: Error | undefined
+      const session = await ScoringSession.open(
+        {
+          load: async () => stored,
+          save: async (_id, change) => {
+            try {
+              const posted = await postGamePlays(
+                trx,
+                gameId,
+                asPostEventsBody({
+                  ...change,
+                  mode: 'live',
+                  source: { system: 'teamstation' }
+                })
+              )
+              return {
+                plays: posted.plays.map(row => row.gumbo as GumboPlay),
+                currentPlay: posted.currentPlay as CurrentPlay | null
+              }
+            } catch (error) {
+              failure =
+                error instanceof Error ? error : new Error(String(error))
+              throw failure
+            }
+          }
+        },
+        gameId,
+        context,
+        {
+          requireCurrentSetup: true,
+          setTimer: () => null,
+          clearTimer: () => undefined
+        }
+      )
+      if (session.problem != null || awaitingResult(session.state))
+        throw conflict('Finish the current play first')
+      const setup = reconcileRoster(
+        setupOf(session.state),
+        context.teams,
+        availability.roster,
+        availability.guestPlayers,
+        unrostered
+      )
+      const problem = session.apply({ type: 'lineup', kind: 'roster', setup })
+        .problems[0]
+      if (problem != null) throw conflict(problem.message)
+      await session.flush()
+      if (failure != null) throw failure
+      if (session.problem != null) throw conflict(session.problem)
+    }
+    await notifyGameChange(trx, { game: gameId, kind: 'game' })
+    return unrostered
+  })
+}
