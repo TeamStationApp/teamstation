@@ -15,8 +15,11 @@ import {
   View
 } from 'react-native'
 
-import { asRosterEntry, type RosterEntry } from '../../common/api'
-import { reconcileRoster } from '../../common/scoring/rosterAvailability'
+import type { RosterEntry } from '../../common/api'
+import {
+  reconcileRoster,
+  type ScoringRosterEntry
+} from '../../common/scoring/rosterAvailability'
 import {
   type ChosenRosterCommand,
   ROSTER_TAB,
@@ -322,26 +325,24 @@ export function RosterEditor({
     lists: Unrostered
   ): ScoringSessionState => {
     const next = copyState(previous)
-    const entries = (of: Side, local: boolean): RosterEntry[] =>
+    const entries = (of: Side, local: boolean): ScoringRosterEntry[] =>
       next.liveData.boxscore.teams[of].players
         .map(id => next.gameData.players[id])
         .filter(player => player.local === local)
-        .map(player =>
-          asRosterEntry({
-            userId: player.id,
-            shortName: player.fullName,
-            jersey: player.jersey,
-            positions: player.positions,
-            bats: player.bats,
-            throws: player.throws,
-            isPlayer: true,
-            role: 'player',
-            section: 'player',
-            staffRoles: [],
-            inheritedFrom: null
-          })
-        )
-    const roster = (of: Side): readonly RosterEntry[] =>
+        .map(player => ({
+          gumboId: player.id,
+          shortName: player.fullName,
+          jersey: player.jersey,
+          positions: player.positions,
+          bats: player.bats,
+          throws: player.throws,
+          isPlayer: true,
+          role: 'player',
+          section: 'player',
+          staffRoles: [],
+          inheritedFrom: null
+        }))
+    const roster = (of: Side): readonly ScoringRosterEntry[] =>
       rosters?.[next.gameData.teams[of].id] ?? entries(of, false)
     const setup = reconcileRoster(
       setupOf(next),
@@ -368,9 +369,12 @@ export function RosterEditor({
       setDraft(previous => applyAvailability(previous, lists))
       setBase(previous => applyAvailability(previous, lists))
       if (!rostered) {
-        setNextBatter(previous => (previous === userId ? undefined : previous))
+        const gumboId = rosters?.[draft.gameData.teams[side].id]?.find(
+          row => row.userId === userId
+        )?.gumboId
+        setNextBatter(previous => (previous === gumboId ? undefined : previous))
         setRunners(previous =>
-          previous.filter(runner => runner.player !== userId)
+          previous.filter(runner => runner.player !== gumboId)
         )
       }
     } catch (error) {

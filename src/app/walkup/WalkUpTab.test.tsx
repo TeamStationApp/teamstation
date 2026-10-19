@@ -99,6 +99,7 @@ const fixture: WalkUpSong = {
 function entry(song: WalkUpSong | null, userId = 7): RosterEntry {
   return asRosterEntry({
     userId,
+    gumboId: userId,
     shortName: 'Jordan P',
     jersey: '4',
     positions: ['CF'],

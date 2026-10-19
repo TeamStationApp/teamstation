@@ -115,7 +115,7 @@ export function EditRosterList({
                 <Switch
                   accessibilityLabel="Rostered for this game"
                   testID={`Rostered ${row.userId}`}
-                  value={!unrostered.includes(row.userId)}
+                  value={!unrostered.includes(row.id)}
                   disabled={rosterBusy}
                   onValueChange={value => {
                     onRosteredChange(row.userId!, value)

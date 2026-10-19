@@ -7,6 +7,7 @@ export function scoringRoster(firstId: number): RosterEntry[] {
   return Array.from({ length: 9 }, (_, index) =>
     asRosterEntry({
       userId: firstId + index,
+      gumboId: firstId + index,
       shortName: `Player ${index + 1}`,
       jersey: String(index + 1),
       positions: [],

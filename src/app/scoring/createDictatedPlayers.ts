@@ -6,7 +6,12 @@ import {
   type RosterSituation,
   type StagedRoster
 } from '../../common/scoring/rosterCommands'
-import type { GameState, Side } from '../../common/scoring/state'
+import {
+  copyState,
+  type GameState,
+  type Side
+} from '../../common/scoring/state'
+import { asGumboId } from '../../common/userId'
 import {
   emptyPlayerDraft,
   type PlayerDraft,
@@ -72,22 +77,38 @@ export async function createDictatedPlayers(
         ? await createGuest!(command.side, player)
         : await create!(teamId, player))
     completed.set(key, entry)
+    const gumboId = asGumboId(entry.gumboId)
+    const held = draft.gameData.players[gumboId]
+    if (held != null && held.teamId !== teamId)
+      return { problem: 'The player belongs to the other team.' }
     minted.set(command, entry)
   }
   if (!current()) return { problem: 'Player creation was interrupted.' }
-  const result = applyRosterCommands(
-    draft,
-    commands.map(command =>
+  const pending = commands
+    .filter(
+      command =>
+        command.type !== 'addPlayer' ||
+        draft.gameData.players[asGumboId(minted.get(command)!.gumboId)] == null
+    )
+    .map(command =>
       command.type === 'addPlayer'
-        ? { ...command, player: minted.get(command)!.userId }
+        ? { ...command, player: asGumboId(minted.get(command)!.gumboId) }
         : command
-    ),
-    situation
-  )
+    )
+  const result =
+    pending.length === 0
+      ? {
+          ...checked,
+          draft: copyState(draft),
+          lines: [],
+          runners: [...(situation.runners ?? [])],
+          nextBatter: situation.nextBatter
+        }
+      : applyRosterCommands(draft, pending, situation)
   if ('problem' in result) return result
   for (const { command, player } of additions) {
     const entry = minted.get(command)!
-    Object.assign(result.draft.gameData.players[entry.userId], {
+    Object.assign(result.draft.gameData.players[asGumboId(entry.gumboId)], {
       ...player,
       fullName: entry.shortName,
       local: command.placeholder === true

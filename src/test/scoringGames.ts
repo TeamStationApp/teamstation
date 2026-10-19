@@ -30,9 +30,15 @@ export const F = {
 export function game(): GameState {
   const roster = (
     start: number
-  ): Array<{ userId: number; shortName: string; jersey: string }> =>
+  ): Array<{
+    userId: number
+    gumboId: number
+    shortName: string
+    jersey: string
+  }> =>
     Array.from({ length: 9 }, (_, i) => ({
       userId: start + i,
+      gumboId: start + i,
       shortName: `Player ${i + 1}`,
       jersey: String(i + 1)
     }))
