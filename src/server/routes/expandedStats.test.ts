@@ -65,7 +65,7 @@ describe('expanded statistics routes', function () {
           id: 'gps_pitcher',
           game_id: 'gam_demo',
           team_id: 'tem_home',
-          user_id: ids[0],
+          gumbo_id: ids[0],
           extra: JSON.stringify({
             ...emptyStatExtras(),
             appeared: true,
@@ -81,7 +81,7 @@ describe('expanded statistics routes', function () {
           id: 'gps_batter',
           game_id: 'gam_demo',
           team_id: 'tem_home',
-          user_id: ids[1],
+          gumbo_id: ids[1],
           pa: 2,
           ab: 2,
           h: 1,

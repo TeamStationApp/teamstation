@@ -10,7 +10,7 @@ import {
 
 import { asLiteral } from '../asLiteral'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
-import { asUserId } from '../userIdNumber'
+import { asGumboId } from '../userId'
 import type { ScoringAction } from './actions'
 import { recordOf, replayPlays } from './gumbo'
 import { addPlayer, begun } from './lineup'
@@ -37,7 +37,7 @@ import {
 
 export interface LineupPerson {
   /** Null for a placeholder the team named at the field. */
-  userId: number | null
+  gumboId: number | null
   /** The short name the scoring screen shows; never a full name. */
   name: string
   jersey: string
@@ -168,7 +168,7 @@ function benchOf(state: GameState): Record<Side, LineupPerson[]> {
       .map(id => {
         const player = state.gameData.players[id]
         return {
-          userId: player?.userId ?? null,
+          gumboId: player?.id ?? null,
           name: player?.fullName ?? '',
           jersey: player?.jersey ?? ''
         }
@@ -178,7 +178,7 @@ function benchOf(state: GameState): Record<Side, LineupPerson[]> {
 }
 
 const asLineupPerson: Cleaner<LineupPerson> = asObject({
-  userId: asEither(asNull, asUserId),
+  gumboId: asEither(asNull, asGumboId),
   name: asString,
   jersey: asString
 })
@@ -242,7 +242,7 @@ export function lineupOf(
   const person = (id: number): LineupPerson => {
     const player = players[id]
     return {
-      userId: player?.userId ?? null,
+      gumboId: player?.id ?? null,
       name: player?.fullName ?? '',
       jersey: player?.jersey ?? ''
     }
@@ -262,7 +262,9 @@ export function lineupOf(
 /** A person as two lineups compare him: his user id, or a placeholder's name. */
 function personKey(person: LineupPerson | null): string {
   if (person == null) return ''
-  return person.userId != null ? `user:${person.userId}` : `name:${person.name}`
+  return person.gumboId != null
+    ? `user:${person.gumboId}`
+    : `name:${person.name}`
 }
 
 /**
@@ -584,7 +586,7 @@ function dueOf(state: GameState, stored: StoredLineupGame): DueBatter | null {
   const person = (id: number): LineupPerson => {
     const player = players[id]
     return {
-      userId: player?.userId ?? null,
+      gumboId: player?.id ?? null,
       name: player?.fullName ?? '',
       jersey: player?.jersey ?? ''
     }
@@ -663,13 +665,13 @@ function storedPerson(
   if (raw == null || typeof raw !== 'object') return null
   const { id, fullName } = raw as { id?: unknown; fullName?: unknown }
   const name = typeof fullName === 'string' ? fullName : ''
-  const userId = typeof id === 'number' ? id : null
+  const gumboId = typeof id === 'number' ? id : null
   const known = Object.values(players).find(player =>
-    userId == null
-      ? player.userId == null && player.fullName === name
-      : player.userId === userId
+    gumboId == null
+      ? player.id == null && player.fullName === name
+      : player.id === gumboId
   )
-  return { userId, name, jersey: known?.jersey ?? '' }
+  return { gumboId, name, jersey: known?.jersey ?? '' }
 }
 
 /** The side a changed player belongs to, as the game knows him, or by the half. */
@@ -681,9 +683,9 @@ function sideOfChange(
   players: Record<number, GamePlayer>
 ): Side {
   const candidates = Object.values(players).filter(player =>
-    person.userId == null
-      ? player.userId == null && player.fullName === person.name
-      : player.userId === person.userId
+    person.gumboId == null
+      ? player.id == null && player.fullName === person.name
+      : player.id === person.gumboId
   )
   const teams = new Set(candidates.map(player => player.teamId))
   if (teams.size === 1) {
@@ -722,7 +724,7 @@ function courtesyOf(
       runners.push({
         atBatIndex: play.about.atBatIndex,
         player: storedPerson(event.player, players) ?? {
-          userId: null,
+          gumboId: null,
           name: '',
           jersey: ''
         },
@@ -748,7 +750,7 @@ function changesOf(
       if (typeof eventType !== 'string' || !TYPES.has(eventType)) continue
       const type = eventType as SubstitutionType
       const player = storedPerson(event.player, players) ?? {
-        userId: null,
+        gumboId: null,
         name: '',
         jersey: ''
       }

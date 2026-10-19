@@ -70,6 +70,7 @@ const text = (): string => document.body.textContent ?? ''
 
 const jordan = asRosterEntry({
   userId: 7,
+  gumboId: 7,
   shortName: 'Jordan P',
   jersey: '4',
   positions: ['CF', 'OF'],
