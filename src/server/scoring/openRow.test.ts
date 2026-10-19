@@ -36,9 +36,15 @@ describe('opening scoring through account merges', function () {
   }
   const roster = (
     start: number
-  ): Array<{ userId: number; shortName: string; jersey: string }> =>
+  ): Array<{
+    userId: number
+    gumboId: number
+    shortName: string
+    jersey: string
+  }> =>
     users.slice(start, start + 9).map((user, i) => ({
       userId: user.userId,
+      gumboId: user.userId,
       shortName: `Player ${i + 1}`,
       jersey: String(i + 1)
     }))
@@ -191,8 +197,7 @@ describe('opening scoring through account merges', function () {
     const aliasSetup = structuredClone(record.setupBefore)
     aliasSetup.players[survivor] = {
       ...aliasSetup.players[original],
-      id: survivor,
-      userId: survivor
+      id: survivor
     }
     aliasSetup.sides.away.players.push(survivor)
     aliasSetup.tagOrder.push(survivor)
@@ -262,6 +267,35 @@ describe('opening scoring through account merges', function () {
       error = caught
     }
     expect((error as Error).message).includes('opposing teams')
+  })
+
+  it('preserves database failures instead of reporting unresolved history', async () => {
+    const outage = new Error('Database unavailable')
+    const failing = fixture.db.withPlugin({
+      transformQuery() {
+        throw outage
+      },
+      async transformResult({ result }) {
+        return result
+      }
+    })
+    const stored: StoredGame = {
+      plays: [
+        {
+          about: { atBatIndex: 0 },
+          result: { eventType: 'single' },
+          matchup: { batter: { id: users[0].userId } }
+        }
+      ],
+      currentPlay: null
+    }
+    let failure: unknown
+    try {
+      await resolveScoringGame(failing, stored)
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).equals(outage)
   })
 
   it('follows a second merge, leaves open identities alone and refuses missing or cyclic chains', async () => {

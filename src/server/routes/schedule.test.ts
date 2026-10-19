@@ -991,7 +991,7 @@ describe('scheduling a team’s games over HTTP', function () {
       .values({
         id: makeId('eventPlayer'),
         event_id: top.id,
-        user_id: userOf('leagueAdmin'),
+        gumbo_id: userOf('leagueAdmin'),
         team_id: placeholder,
         role: 'fielder',
         position: 'SS'
@@ -1024,14 +1024,14 @@ describe('scheduling a team’s games over HTTP', function () {
             .selectFrom('event_players')
             .innerJoin('events', 'events.id', 'event_players.event_id')
             .select([
-              'event_players.user_id as userId',
+              'event_players.gumbo_id as userId',
               'event_players.team_id as teamId'
             ])
             .where('events.gameId', '=', gameId)
             .execute()
         : await db!
             .selectFrom('game_player_stats')
-            .select(['user_id as userId', 'team_id as teamId'])
+            .select(['gumbo_id as userId', 'team_id as teamId'])
             .where('game_id', '=', gameId)
             .execute()
     const byPerson: Record<string, string | null> = {}

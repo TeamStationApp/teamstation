@@ -444,16 +444,22 @@ export interface EventCreditsTable {
   eventType: string
   label: string
   teamId: string | null
-  creditUserId: number | null
+  creditGumboId: number | null
   name: string
   role: string | null
   position: string | null
 }
 
+export interface GumboIdsTable {
+  gumbo_id: number
+  user_id: number
+  created_at: Timestamp
+}
+
 export interface EventPlayersTable {
   id: string
   event_id: string
-  user_id: number
+  gumbo_id: number
   team_id: string | null
   role: 'batter' | 'pitcher' | 'runner' | 'scorer' | 'fielder' | 'catcher'
   position: string | null
@@ -662,7 +668,7 @@ export interface GameStatsStateTable {
 export interface GamePlayerStatsTable {
   id: string
   game_id: string
-  user_id: number
+  gumbo_id: number
   team_id: string | null
   pa: Generated<number>
   ab: Generated<number>
@@ -866,6 +872,7 @@ export interface Database {
   email_codes: EmailCodesTable
   rate_events: RateEventsTable
   eventCredits: EventCreditsTable
+  gumbo_ids: GumboIdsTable
   event_players: EventPlayersTable
   events: EventsTable
   external_ids: ExternalIdsTable

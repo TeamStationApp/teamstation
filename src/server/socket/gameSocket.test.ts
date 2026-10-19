@@ -96,9 +96,15 @@ describe('the game socket (U14)', function () {
   }
   const rosterOf = (
     users: Array<{ userId: number }>
-  ): Array<{ userId: number; shortName: string; jersey: string }> =>
+  ): Array<{
+    userId: number
+    gumboId: number
+    shortName: string
+    jersey: string
+  }> =>
     users.map((user, i) => ({
       userId: user.userId,
+      gumboId: user.userId,
       shortName: `P${i + 1}`,
       jersey: String(i + 1)
     }))
@@ -830,8 +836,8 @@ describe('the game socket (U14)', function () {
         type: 'lineup',
         kind: 'substitute',
         side: 'away',
-        player: 10,
-        replaces: 2
+        player: awayPlayers[9].userId,
+        replaces: awayPlayers[1].userId
       })
       expect(await settled(listener, from)).deep.equals([
         'game',
