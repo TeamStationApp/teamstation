@@ -52,6 +52,7 @@ import {
   type ParentPreview
 } from './groupLinks'
 import { asGuests } from './guests'
+import { asUnrostered } from './unroster'
 import { asCurrentPlay, asGumboPlay } from './gumboPlay'
 import { asLocality, type Locality } from './locality'
 import {
@@ -279,6 +280,7 @@ export type LineScoreSide = ReturnType<typeof asLineScoreSide>
 export const asGameDetail = withEventMetadata(
   asObject({
     guests: asGuests,
+    unrostered: asUnrostered,
     id: asString,
     homeTeamId: asString,
     awayTeamId: asString,

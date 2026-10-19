@@ -251,6 +251,7 @@ export interface ExternalIdsTable {
 
 export interface GamesTable {
   guests: Generated<unknown>
+  unrostered: Generated<unknown>
   notes: Generated<string | null>
   arrival_time_delta: Generated<number | null>
   end_at: Generated<Date | null>
