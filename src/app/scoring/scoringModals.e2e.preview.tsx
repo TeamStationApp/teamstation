@@ -4,8 +4,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import { asGameDetail } from '../../common/api'
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider, useTheme } from '../theme/ThemeContext'
-import { createDevelopmentSession } from './developmentSession'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { RunnerControls } from './RunnerControls'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -13,7 +13,7 @@ import type { ScoringEvent, ScoringState } from './scoringTypes'
 
 /** Controlled renderer fixtures supplement gestures blocked on the base branch. */
 export function modalRendererFixture(kind: string): ScoringState {
-  const session = createDevelopmentSession(
+  const session = scoringSession(
     asGameDetail({
       nonMemberView: false,
       id: 'modal-preview',
@@ -31,9 +31,7 @@ export function modalRendererFixture(kind: string): ScoringState {
       ingestMessage: null,
       canScore: true,
       videos: []
-    }),
-    [],
-    []
+    })
   )
   for (const player of Object.values(session.gameData.players))
     player.fullName = player.id === 2 ? 'Mike Trout' : 'Mookie Betts'

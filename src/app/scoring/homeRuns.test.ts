@@ -2,13 +2,13 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { sampleHit } from '../field/playAnimationModel'
 import {
   homeRunKind,
   homeRunLanding,
   OUTFIELD_RADIUS
 } from '../field/stadiumBoundary'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
@@ -16,10 +16,7 @@ import { presentationRuntime, stepPresentation } from './scoringPresentation'
 import { playerRef } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
 function initial(mask: number, animate = false): ScoringState {
-  const state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], []),
-    animate
-  )
+  const state = initialScoringState(scoringSession(gameFixture), animate)
   for (const [i, base] of (['first', 'second', 'third'] as const).entries())
     if ((mask & (1 << i)) !== 0)
       state.session.liveData.linescore.offense[base] = playerRef(

@@ -5,6 +5,7 @@ import { type Kysely, type Selectable, sql } from 'kysely'
 import { badRequest, conflict, notFound } from '../../common/errors'
 import { withPreviousTagIdentities } from '../../common/eventTags'
 import type { GumboPlay, PostEventsBody } from '../../common/gumboPlay'
+import { recordOf } from '../../common/scoring/gumbo'
 import {
   halfOutcomes,
   lineScore,
@@ -89,7 +90,7 @@ export async function postGamePlays(
   )
   if (unread != null)
     throw badRequest(
-      `Play ${unread.about.atBatIndex}: teamStation.version must be 1`
+      `Play ${unread.about.atBatIndex}: teamStation must be a valid version 1 or 2 record`
     )
   const prepared = withHalfOuts(body.plays)
   let refreshDelay: number | undefined
@@ -384,7 +385,7 @@ function readableVersion(play: object): boolean {
     typeof record === 'object'
       ? (record as { version?: unknown }).version
       : undefined
-  return version === 1
+  return (version === 1 || version === 2) && recordOf(play) != null
 }
 
 /**
