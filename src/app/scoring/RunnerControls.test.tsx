@@ -5,10 +5,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { PerspectiveCamera, Vector3 } from 'three'
 
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES } from '../field/fieldModel'
 import type { BaseProjection } from '../field/fieldTypes'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { RunnerControls } from './RunnerControls'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -47,7 +47,7 @@ async function click(label: string): Promise<void> {
   })
 }
 function initial(): ScoringState {
-  return initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  return initialScoringState(scoringSession(gameFixture))
 }
 describe('runner decisions', function () {
   afterEach(async function () {

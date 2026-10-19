@@ -56,7 +56,7 @@ export function sampleGame(): GameState {
     for (const id of ids)
       players[id] = {
         id,
-        userId: id * 1000,
+        userId: id,
         teamId,
         fullName: `Player ${id}`,
         jersey: String(id),
@@ -118,7 +118,7 @@ export function sampleGame(): GameState {
     final: false,
     meta: {
       sequence: 0,
-      identities: { sourceToSession: {}, sessionToSource: {}, nextId: 19 }
+      tagOrder: Array.from({ length: 18 }, (_, i) => i + 1)
     }
   }
 }
@@ -383,15 +383,15 @@ describe('scoring actions', function () {
     expect(text).includes('Visitors batting, Hosts in the field.')
     // Every player by his tag, and no id.
     expect(text).includes(
-      `Batter: Player 4. #4 (tag ${tagOf(4)}). Pitcher: Player 1. #10 (tag ${tagOf(10)}).`
+      `Batter: Player 4. #4 (tag ${tagOf(3)}). Pitcher: Player 1. #10 (tag ${tagOf(9)}).`
     )
     expect(text).includes(
-      `On first: nobody. On second: Player 3. #3 (tag ${tagOf(3)}).`
+      `On first: nobody. On second: Player 3. #3 (tag ${tagOf(2)}).`
     )
-    expect(text).includes(`Next batter: Player 5. #5 (tag ${tagOf(5)}).`)
-    expect(text).includes(`SS Player 1. #14 (tag ${tagOf(14)})`)
+    expect(text).includes(`Next batter: Player 5. #5 (tag ${tagOf(4)}).`)
+    expect(text).includes(`SS Player 1. #14 (tag ${tagOf(13)})`)
     expect([...taggedIds(text)].sort((a, b) => a - b)).deep.equals([
-      3, 4, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18
+      2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16, 17
     ])
     expect(text).not.match(/\bid\b/)
     expect(text).not.match(/runs?\b|score|atBatIndex|at-bat/i)
@@ -402,6 +402,7 @@ describe('scoring actions', function () {
     line.currentInning = 12
     line.outs = 2
     line.offense.batter = { id: 99, fullName: 'Unlisted' }
+    bottom.meta.tagOrder.push(99)
     expect(promptContext(bottom)).includes(
       'Bottom of the 12th, 2 outs, count 1-2.'
     )
@@ -409,11 +410,11 @@ describe('scoring actions', function () {
       'Hosts batting, Visitors in the field.'
     )
     expect(promptContext(bottom)).includes(
-      `Batter: Unlisted (tag ${tagOf(99)}).`
+      `Batter: Unlisted (tag ${tagOf(18)}).`
     )
     // A player with no number on the roster is named without one.
     bottom.gameData.players[14].jersey = '  '
-    expect(promptContext(bottom)).includes(`SS Player 1. (tag ${tagOf(14)})`)
+    expect(promptContext(bottom)).includes(`SS Player 1. (tag ${tagOf(13)})`)
   })
 
   it('reads a dictated action’s players back from their tags, and tags them again for the model', function () {
@@ -535,7 +536,7 @@ describe('scoring actions', function () {
     const fielding = fieldingIds(context)
     const ids = taggedIds(context)
     for (const position of POSITIONS) {
-      const id = defense[position]?.id
+      const id = game.meta.tagOrder.indexOf(defense[position]!.id)
       expect(fielding.get(position), position).equals(id)
       expect(
         untaggedAction(
@@ -549,7 +550,8 @@ describe('scoring actions', function () {
       })
     }
     // In the words a scorer uses, in every field that names a fielder.
-    const at = (position: Position): number | undefined => defense[position]?.id
+    const at = (position: Position): number | undefined =>
+      game.meta.tagOrder.indexOf(defense[position]!.id)
     expect(
       untaggedAction(
         {
@@ -819,7 +821,7 @@ describe('scoring actions', function () {
       player.fullName = `Chase Kaczmarek${player.id}`
     }
     const text = promptContext(game)
-    expect(text).includes(`Batter: Chase K. #4 (tag ${tagOf(4)}).`)
+    expect(text).includes(`Batter: Chase K. #4 (tag ${tagOf(3)}).`)
     expect(text).not.match(/Kaczmarek/)
     expect(keyterms(game).join(' ')).not.match(/Kaczmarek/)
   })
@@ -945,7 +947,7 @@ describe('game state and setup', function () {
     const setup = setupOf(game)
     expect(asGameSetup(copyState(setup))).deep.equals(setup)
     expect(setup.sides.home.defense.SS).equals(14)
-    expect(setup.players[4].userId).equals(4000)
+    expect(setup.players[4].userId).equals(4)
   })
 
   it('keeps a setup apart from the game it came from', function () {

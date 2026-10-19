@@ -3,8 +3,8 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import type { ScoringState } from './scoringTypes'
@@ -23,7 +23,7 @@ let setAllowed: (allowed: boolean) => void
 let dispatched = 0
 function Harness(): React.ReactElement {
   const [state, setState] = useState(() =>
-    initialScoringState(createDevelopmentSession(gameFixture, [], []))
+    initialScoringState(scoringSession(gameFixture))
   )
   const [allowed, allow] = useState(true)
   current = state
@@ -222,7 +222,7 @@ describe('tiebreaker selection lifecycle', () => {
     expect(canceled).equals(true)
   })
   it('shows an empty runner roster and actionable setup errors without fabricating a player', async () => {
-    const session = createDevelopmentSession(gameFixture, [], [])
+    const session = scoringSession(gameFixture)
     session.liveData.boxscore.teams.away.battingOrder = []
     await mount(
       <RunnerRosterSheet

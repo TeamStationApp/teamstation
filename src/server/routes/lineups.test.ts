@@ -44,6 +44,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { hashToken } from '../auth/tokens'
 import { type Database, makeDatabase } from '../db/database'
 import { postGamePlays, readPlays } from '../events/postPlays'
+import { createGuestPlayer } from '../games/guestPlayers'
 import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
@@ -80,6 +81,7 @@ describe('the lineup routes (U11)', function () {
   const songkeeper = mint()
   const scorekeeper = mint()
   const players = Array.from({ length: 18 }, mint)
+  let guestId: number
   /** The bare team's players, by the name each is given. */
   const bench = { Zed: mint(), Amy: mint(), Bob: mint(), Cal: mint() }
   const BENCH_JERSEYS = { Zed: '3', Amy: '12', Bob: null, Cal: '3' }
@@ -301,6 +303,22 @@ describe('the lineup routes (U11)', function () {
       scored,
       { gamePk: scored, teams: TEAMS, setup }
     )
+    guestId = (
+      await createGuestPlayer(
+        db,
+        { userId: admin.userId, isAdmin: true, scopes: [] },
+        scored,
+        'away',
+        {
+          firstName: 'Guest',
+          lastName: '',
+          jersey: '77',
+          positions: [],
+          bats: null,
+          throws: null
+        }
+      )
+    ).userId
     for (const action of [
       { type: 'pitch', call: 'C' },
       { type: 'pitch', call: 'C' },
@@ -309,6 +327,7 @@ describe('the lineup routes (U11)', function () {
       {
         type: 'lineup',
         kind: 'addPlayer',
+        player: guestId,
         side: 'away',
         name: 'Guest',
         jersey: '77'
@@ -317,8 +336,8 @@ describe('the lineup routes (U11)', function () {
         type: 'lineup',
         kind: 'substitute',
         side: 'away',
-        player: 19,
-        replaces: 2
+        player: guestId,
+        replaces: players[1].userId
       }
     ] as const)
       expect(session.apply(action).problems).deep.equals([])
@@ -379,6 +398,41 @@ describe('the lineup routes (U11)', function () {
     return { status: response.status, body: await response.json() }
   }
 
+  it('creates game guests through the validated route and refuses invalid sides and unauthorized callers', async function () {
+    const post = async (
+      token: string | null,
+      side: string
+    ): Promise<Response> =>
+      await fetch(`${base}/games/${fresh}/guest-players`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(token == null ? {} : { authorization: `Bearer ${token}` })
+        },
+        body: JSON.stringify({
+          side,
+          firstName: 'Babe',
+          lastName: 'Ruth',
+          jersey: '00',
+          positions: [],
+          bats: 'left',
+          throws: null
+        })
+      })
+    expect((await post(null, 'away')).status).equals(401)
+    expect((await post(STRANGER, 'away')).status).equals(403)
+    expect((await post(ADMIN, 'other')).status).equals(400)
+    const created = await post(ADMIN, 'away')
+    expect(created.status).equals(201)
+    const body = (await created.json()) as { userId: number }
+    const game = await db!
+      .selectFrom('games')
+      .select('guests')
+      .where('id', '=', fresh)
+      .executeTakeFirstOrThrow()
+    expect(game.guests).deep.equals({ away: [body.userId], home: [] })
+  })
+
   it("reads a team's default lineup, or nulls for none", async function () {
     // The scored game has begun, so it gave both teams theirs.
     const kept = await get(`/teams/${home}/default-lineup`, MEMBER)
@@ -429,7 +483,7 @@ describe('the lineup routes (U11)', function () {
     expect(read.home).deep.include({ teamId: home, teamName: 'Hosts' })
     expect(read.away.start?.batters[1].name).equals('A2')
     expect(read.away.current?.batters[1]).deep.equals({
-      userId: null,
+      userId: guestId,
       name: 'Guest',
       jersey: '77'
     })
@@ -488,7 +542,7 @@ describe('the lineup routes (U11)', function () {
         'A9'
       ])
       expect(dj.away.batters[1]).deep.equals({
-        userId: null,
+        userId: guestId,
         name: 'Guest',
         walkUpSong: null
       })
@@ -795,10 +849,25 @@ describe("saving a side's lineup (U8)", function () {
       games.between
     ])
       await score(gameId, [{ type: 'pitch', call: 'B' }])
+    const guest = await createGuestPlayer(
+      db,
+      { userId: coach.userId, isAdmin: false, scopes: [] },
+      games.locals,
+      'home',
+      {
+        firstName: 'Guest',
+        lastName: '',
+        jersey: '77',
+        positions: [],
+        bats: null,
+        throws: null
+      }
+    )
     await score(games.locals, [
       {
         type: 'lineup',
         kind: 'addPlayer',
+        player: guest.userId,
         side: 'home',
         name: 'Guest',
         jersey: '77'
@@ -1865,16 +1934,34 @@ describe("saving a side's lineup (U8)", function () {
     expect(written.filter(id => id === games.live)).lengthOf(1)
   })
 
-  it('matches a made-up player by name and jersey, and adds a new one', async function () {
+  it('keeps existing guests by identity and adds a newly persisted guest', async function () {
     const session = await scoring(games.locals)
     const body = bodyOf(session.state, 'home')
-    body.players.push({ userId: null, fullName: 'Newcomer', jersey: '88' })
+    const guest = await createGuestPlayer(
+      db!,
+      { userId: coach.userId, isAdmin: false, scopes: [] },
+      games.locals,
+      'home',
+      {
+        firstName: 'Newcomer',
+        lastName: '',
+        jersey: '88',
+        positions: [],
+        bats: null,
+        throws: null
+      }
+    )
+    body.players.push({
+      userId: guest.userId,
+      fullName: 'Newcomer',
+      jersey: '88'
+    })
     body.defense.LF = body.players.length - 1
     const answer = await save(games.locals, COACH, body)
     expect(answer.status, JSON.stringify(answer.body)).equals(200)
     const read = asGameLineupsResponse(answer.body)
     expect(read.home.current?.defense.LF).deep.include({
-      userId: null,
+      userId: guest.userId,
       name: 'Newcomer'
     })
     const after = await scoring(games.locals)
@@ -1890,7 +1977,25 @@ describe("saving a side's lineup (U8)", function () {
     const session = await scoring(games.runner)
     expect(session.state.liveData.linescore.offense.first).not.equals(null)
     const body = bodyOf(session.state, 'away')
-    body.players.push({ userId: null, fullName: 'Freeman', jersey: '5' })
+    const guest = await createGuestPlayer(
+      db!,
+      { userId: scorer.userId, isAdmin: false, scopes: [] },
+      games.runner,
+      'away',
+      {
+        firstName: 'Freeman',
+        lastName: '',
+        jersey: '5',
+        positions: [],
+        bats: null,
+        throws: null
+      }
+    )
+    body.players.push({
+      userId: guest.userId,
+      fullName: 'Freeman',
+      jersey: '5'
+    })
     body.runners = [{ base: '1B', player: body.players.length - 1 }]
     const answer = await save(games.runner, SCORER, body)
     expect(answer.status, JSON.stringify(answer.body)).equals(200)

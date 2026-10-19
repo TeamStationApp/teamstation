@@ -1262,7 +1262,7 @@ describe('posting and reading plays', function () {
     expect(JSON.stringify(row.gumbo)).not.contains('description')
   })
 
-  it('refuses a TeamStation record in a version it cannot read, naming the play, and writes nothing', async function () {
+  it('refuses malformed or unsupported TeamStation records, naming the play, and writes nothing', async function () {
     const record = (version: unknown): unknown => ({
       version,
       setupBefore: {},
@@ -1279,7 +1279,7 @@ describe('posting and reading plays', function () {
             }
           ]
         },
-        'Play 2: teamStation.version must be 1'
+        'Play 2: teamStation must be a valid version 1 or 2 record'
       ],
       [
         {
@@ -1294,7 +1294,7 @@ describe('posting and reading plays', function () {
             teamStation: record('2')
           }
         },
-        'Play 5: teamStation.version must be 1'
+        'Play 5: teamStation must be a valid version 1 or 2 record'
       ],
       [
         {
@@ -1305,7 +1305,7 @@ describe('posting and reading plays', function () {
             }
           ]
         },
-        'Play 0: teamStation.version must be 1'
+        'Play 0: teamStation must be a valid version 1 or 2 record'
       ]
     ] as const) {
       const refused = await ask(`/games/${twiceId}/events`, 'POST', {
@@ -3537,11 +3537,11 @@ describe('the team default lineup a live post keeps (U10)', function () {
   const ball: ScoringAction = { type: 'pitch', call: 'B' }
   const strike: ScoringAction = { type: 'pitch', call: 'C' }
   const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
-  const reorder = (order: number[]): ScoringAction => ({
+  const reorder = (slots: number[]): ScoringAction => ({
     type: 'lineup',
     kind: 'battingOrder',
     side: 'away',
-    order
+    order: slots.map(slot => awayIds[slot - 1] ?? slot)
   })
   async function gameRow(gameId: string): Promise<{
     lineup_started_at: Date | null
@@ -3623,8 +3623,8 @@ describe('the team default lineup a live post keeps (U10)', function () {
         type: 'lineup',
         kind: 'substitute',
         side: 'away',
-        player: 10,
-        replaces: 8
+        player: awayIds[9],
+        replaces: awayIds[7]
       },
       reorder([10, 9, 7, 6, 5, 4, 3, 2, 1])
     )

@@ -29,6 +29,18 @@ const count = (state: ReturnType<typeof game>): string => {
 }
 
 describe('applying pitches', function () {
+  it('refuses adding a player before a persistent id has been supplied', () => {
+    const state = game()
+    const result = applyAction(state, {
+      type: 'lineup',
+      kind: 'addPlayer',
+      side: 'home',
+      name: 'Mike Trout'
+    })
+    expect(result.problems[0].code).equals('malformed')
+    expect(result.state).deep.equals(state)
+  })
+
   it('moves the count for each call', function () {
     let state = game()
     const seen: string[] = []
@@ -367,6 +379,7 @@ describe('applying lineup changes', function () {
     let state = after(game(), {
       type: 'lineup',
       kind: 'addPlayer',
+      player: 19,
       side: 'home',
       name: '  New Kid ',
       jersey: '42'
@@ -374,7 +387,7 @@ describe('applying lineup changes', function () {
     const kid = state.liveData.boxscore.teams.home.players.at(-1)!
     expect(state.gameData.players[kid]).includes({
       fullName: 'New Kid',
-      userId: null,
+      userId: 19,
       local: true,
       jersey: '42'
     })
@@ -512,8 +525,20 @@ describe('a pinch runner who keeps the batting order (U3)', function () {
   const walked = (): ReturnType<typeof game> =>
     after(
       walk(game()),
-      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Freeman' },
-      { type: 'lineup', kind: 'addPlayer', side: 'home', name: 'Cole' },
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        player: 19,
+        side: 'away',
+        name: 'Freeman'
+      },
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        player: 20,
+        side: 'home',
+        name: 'Cole'
+      },
       {
         type: 'lineup',
         kind: 'substitute',

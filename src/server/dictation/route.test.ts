@@ -641,6 +641,38 @@ describe('dictation route', function () {
     })
   })
 
+  it('resolves model tag slots to persistent players and refuses missing slots', async function () {
+    const client = await connect()
+    const recogniser = recognisers[recognisers.length - 1]
+    for (const [index, tagOrder] of [[700001], []].entries()) {
+      const id = `tags-${index}`
+      client.send(start(id, { tagOrder }))
+      await settled(recogniser, 'begin', index + 1)
+      client.audio(4)
+      client.send({ kind: 'release', id })
+      await settled(recogniser, 'end', index + 1)
+      script.push({
+        kind: 'actions',
+        actions: [{ type: 'ballInPlay', contact: 'swing', fielder: 0 }],
+        dropped: []
+      })
+      recogniser.handlers.onFinal('Hit to the pitcher.')
+      expect((await client.next()).kind).equals('transcript')
+      const reply = await client.next()
+      if (index === 0) {
+        expect(reply.kind).equals('actions')
+        if (reply.kind !== 'actions') throw new Error('Expected actions')
+        expect(reply.actions).deep.equals([
+          { type: 'ballInPlay', contact: 'swing', fielder: 700001 }
+        ])
+      } else {
+        expect(reply.kind).equals('error')
+      }
+    }
+    client.ws.close()
+    await pause()
+  })
+
   it('turns a hold into actions, and never reads audio outside one', async function () {
     const client = await connect()
     const recogniser = recognisers[recognisers.length - 1]

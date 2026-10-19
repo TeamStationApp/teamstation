@@ -4,7 +4,7 @@ import { describe, it } from 'mocha'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { nextDecision } from '../../common/scoring/rules'
 import { completeMotions } from '../../test/scoringHelpers'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer, screenOf } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
@@ -13,7 +13,7 @@ import type { ScoringPhase, ScoringState } from './scoringTypes'
 const FINISH = 'Finish what is on screen, then say it again'
 
 function fresh(): ScoringState {
-  return initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  return initialScoringState(scoringSession(gameFixture))
 }
 function say(
   state: ScoringState,

@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { mintedRosterEntry } from '../test/mintedRosterEntry'
 import { testPasswordParameters } from '../test/passwordFixtures'
 import {
   asSaveLineupsBody,
@@ -44,6 +45,32 @@ function stubFetch(
 }
 
 describe('api client', function () {
+  it('posts a game guest to its side and returns the minted identity', async () => {
+    const player = {
+      firstName: 'Mike',
+      lastName: 'Trout',
+      jersey: '27',
+      positions: ['CF'],
+      bats: 'right' as const,
+      throws: 'right' as const
+    }
+    const set = stubFetch(201, mintedRosterEntry(player, 700001))
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: set.fetch
+    })
+    const entry = await client.createGuestPlayer('game 1', 'away', player)
+    expect(entry.userId).equals(700001)
+    expect(set.calls[0].url).equals(
+      'https://example.test/api/v1/games/game%201/guest-players'
+    )
+    expect(set.calls[0].method).equals('POST')
+    expect(JSON.parse(set.calls[0].body!)).deep.equals({
+      side: 'away',
+      ...player
+    })
+  })
+
   it('keeps node access filters on the existing users collection and escapes name/email searches', async () => {
     const response = stubFetch(200, [
       {
