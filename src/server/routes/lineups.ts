@@ -11,6 +11,7 @@ import {
   type RosterEntry,
   type SaveLineupsBody
 } from '../../common/api'
+import { asLiteral } from '../../common/asLiteral'
 import { atBatFromCurrentPlay } from '../../common/djAtBat'
 import {
   badRequest,
@@ -20,14 +21,16 @@ import {
   notFound,
   unauthorized
 } from '../../common/errors'
+import { asGuests } from '../../common/guests'
 import {
   asPostEventsBody,
   type CurrentPlay,
   type GumboPlay
 } from '../../common/gumboPlay'
 import { shortNames } from '../../common/names'
+import { asNewRosterPlayer } from '../../common/playerSettings'
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
-import { addPlayer, allocatePlayer } from '../../common/scoring/lineup'
+import { addPlayer } from '../../common/scoring/lineup'
 import {
   type Lineup,
   NO_DEFAULT_LINEUP,
@@ -69,6 +72,7 @@ import {
   type TeamSideLineups
 } from '../events/teamLineups'
 import { fenceDistanceFor } from '../games/fenceDistance'
+import { createGuestPlayer } from '../games/guestPlayers'
 import { cleanBody } from '../jsonBody'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -146,6 +150,21 @@ export function lineupRoutes(
   options: LineupRouteOptions = {}
 ): Router {
   const router = Router()
+
+  router.post(
+    '/games/:gameId/guest-players',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const gameId = pathParam(req.params.gameId)
+      const side = cleanBody(asLiteral('away', 'home'), req.body?.side)
+      const player = cleanBody(asNewRosterPlayer, req.body)
+      res
+        .status(201)
+        .json(await createGuestPlayer(db, actor, gameId, side, player))
+    })
+  )
 
   router.get(
     '/teams/:teamId/default-lineup',
@@ -390,6 +409,15 @@ async function saveSide(
       return {
         stored,
         context,
+        guests: asGuests(
+          (
+            await trx
+              .selectFrom('games')
+              .select('guests')
+              .where('id', '=', gameId)
+              .executeTakeFirstOrThrow()
+          ).guests
+        )[body.side],
         roster: sees(context.teams[body.side].id)
           ? (
               await teamRoster(trx, undefined, context.teams[body.side].id)
@@ -452,7 +480,13 @@ async function saveSide(
   const held =
     session.actions.length > 0 ||
     session.state.liveData.plays.allPlays.length > 0
-  const actions = sideActions(session.state, body, held, read.roster)
+  const actions = sideActions(
+    session.state,
+    body,
+    held,
+    read.roster,
+    read.guests
+  )
   markRosterVisibility(
     actions,
     session.actions,
@@ -566,14 +600,15 @@ function markRosterVisibility(
  * defence replaced, then a pinch runner per runner. None when the lineup is
  * already that one and the game `held` it.
  *
- * Each body player is the side's player of the same user id, else its
- * made-up player of the same name and jersey, else a new made-up player.
+ * Players retain their persistent identities. A new option must already be
+ * a team roster member or a guest created for this side of this game.
  */
 function sideActions(
   state: GameState,
   body: SaveLineupsBody,
   held = true,
-  roster: readonly RosterEntry[] = []
+  roster: readonly RosterEntry[] = [],
+  guests: readonly number[] = []
 ): ScoringAction[] {
   const side = body.side
   const setup: GameSetup = setupOf(state)
@@ -581,24 +616,27 @@ function sideActions(
   const draft = {
     gameData: { teams: state.gameData.teams, players: setup.players },
     liveData: { boxscore: { teams: setup.sides } },
-    meta: { identities: setup.identities }
+    meta: { tagOrder: setup.tagOrder }
   }
   const ids: number[] = []
   for (const player of body.players) {
-    let known = team.players.find(id => {
-      const existing = setup.players[id]
-      return player.userId != null
-        ? existing.userId === player.userId
-        : existing.local &&
-            !ids.includes(id) &&
-            existing.fullName === player.fullName.trim() &&
-            existing.jersey === player.jersey
-    })
-    if (known == null && player.userId != null) {
+    if (player.userId == null)
+      throw badRequest('Create the player before saving the lineup')
+    let known = team.players.find(id => id === player.userId)
+    if (known == null && guests.includes(player.userId))
+      known = addPlayer(
+        draft,
+        side,
+        player.userId,
+        player.fullName,
+        player.jersey
+      )
+    if (known == null) {
       const entry = roster.find(person => person.userId === player.userId)
       if (entry == null)
         throw badRequest(`${player.fullName} is not on this team's roster`)
-      const id = allocatePlayer(setup.identities, entry.userId)
+      const id = entry.userId
+      if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
       const existing = setup.players[id]
       if (existing != null && existing.teamId !== state.gameData.teams[side].id)
         throw badRequest(`${player.fullName} is already on the other team`)
@@ -616,7 +654,7 @@ function sideActions(
       }
       known = id
     }
-    const id = known ?? addPlayer(draft, side, player.fullName, player.jersey)
+    const id = known
     if (ids.includes(id))
       throw badRequest(`${player.fullName} is named more than once`)
     ids.push(id)

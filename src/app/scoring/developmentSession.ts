@@ -28,8 +28,9 @@ export function createDevelopmentSession(
 export function addDevelopmentPlayer(
   session: ScoringSessionState,
   side: Side,
+  playerId: number,
   name: string,
   jersey = ''
 ): number {
-  return addPlayer(session, side, name, jersey)
+  return addPlayer(session, side, playerId, name, jersey)
 }

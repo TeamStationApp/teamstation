@@ -22,6 +22,7 @@ import {
 import { AskCard, useDictationControls } from './DictationButton'
 import { upcoming } from './dictationHook'
 import type { DictationSocket, OpenMicrophone } from './dictationTypes'
+import type { PlayerDraft } from './playerDraft'
 import { type ChatTurn, RosterChat } from './RosterChat'
 import type { Side } from './scoringTypes'
 
@@ -115,6 +116,7 @@ export function useRosterDictation({
   question: asked,
   pending,
   onCreatePlayer,
+  onCreateGuest,
   onStage
 }: {
   options?: RosterDictationOptions
@@ -132,6 +134,7 @@ export function useRosterDictation({
   question?: RosterQuestion
   pending?: readonly ChosenRosterCommand[]
   onCreatePlayer?: CreateRosterPlayer
+  onCreateGuest?: (side: Side, player: PlayerDraft) => Promise<RosterEntry>
   onStage: (staged: StagedRoster) => void
 }): {
   control: ReactNode
@@ -215,11 +218,7 @@ export function useRosterDictation({
       ])
       return
     }
-    if (
-      !found.commands.some(
-        command => command.type === 'addPlayer' && command.placeholder !== true
-      )
-    ) {
+    if (!found.commands.some(command => command.type === 'addPlayer')) {
       const staged = applyRosterCommands(draft, found.commands, situation)
       if ('problem' in staged)
         addLines([{ kind: 'problem', text: staged.problem }])
@@ -241,7 +240,8 @@ export function useRosterDictation({
         situation,
         onCreatePlayer,
         stillCurrent,
-        completed
+        completed,
+        onCreateGuest
       )
       if (!stillCurrent()) return
       if ('problem' in staged)

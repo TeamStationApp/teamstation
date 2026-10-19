@@ -1,4 +1,5 @@
 import { DEFAULT_FENCE_DISTANCE_FT } from '../fenceDistance'
+import { asGumboId } from '../userId'
 import {
   asGamePlay,
   BASE_KEYS,
@@ -11,7 +12,6 @@ import {
   type GameState,
   type GameTeam,
   lineupsOf,
-  type PlayerIdentityMap,
   type PlayerRef,
   type Position,
   POSITIONS,
@@ -21,31 +21,6 @@ import {
 } from './state'
 
 /** Who bats, who fields, and who is where: the lineup and the players. */
-
-export function createIdentityMap(): PlayerIdentityMap {
-  return { sourceToSession: {}, sessionToSource: {}, nextId: 1 }
-}
-
-/**
- * The session id for a player. The same server identity always gets the same
- * id; a player made up at the field (`source` null) always gets a new one.
- * Type-prefixed keys keep `"123"` and `123` apart.
- */
-export function allocatePlayer(
-  map: PlayerIdentityMap,
-  source: string | number | null
-): number {
-  const key = `${typeof source}:${String(source)}`
-  if (source != null && map.sourceToSession[key] != null)
-    return map.sourceToSession[key]
-  while (Object.hasOwn(map.sessionToSource, map.nextId)) map.nextId++
-  if (!Number.isSafeInteger(map.nextId))
-    throw new Error('Local player identifiers exhausted')
-  const id = map.nextId++
-  map.sessionToSource[id] = source
-  if (source != null) map.sourceToSession[key] = id
-  return id
-}
 
 export function battingSide(state: GameState): Side {
   return state.liveData.linescore.isTopInning ? 'away' : 'home'
@@ -222,7 +197,7 @@ export function applyRoster(
   if (error != null) return { error }
   const next = copyState(state)
   next.gameData.players = copyState(setup.players)
-  next.meta.identities = copyState(setup.identities)
+  next.meta.tagOrder = [...setup.tagOrder]
   const activeSide = battingSide(next)
   if (
     setup.sides[activeSide].battingOrder.length === 0 &&
@@ -1075,16 +1050,20 @@ export function addPlayer(
   state: {
     gameData: GameState['gameData']
     liveData: { boxscore: GameState['liveData']['boxscore'] }
-    meta: { identities: PlayerIdentityMap }
+    meta: { tagOrder: number[] }
   },
   side: Side,
+  playerId: number,
   name: string,
   jersey = ''
 ): number {
-  const id = allocatePlayer(state.meta.identities, null)
+  const id = asGumboId(playerId)
+  if (state.gameData.players[id] != null)
+    throw new Error('Player already exists in game')
+  if (!state.meta.tagOrder.includes(id)) state.meta.tagOrder.push(id)
   state.gameData.players[id] = {
     id,
-    userId: null,
+    userId: id,
     teamId: state.gameData.teams[side].id,
     fullName: name.trim(),
     jersey,
@@ -1152,32 +1131,31 @@ export function freshGame(
     recentPitch: null,
     awaitingBatter: null,
     final: false,
-    meta: { sequence: 0, identities: copyState(setup.identities) }
+    meta: { sequence: 0, tagOrder: [...setup.tagOrder] }
   }
   state.awaitingBatter = startAppearance(state)
   return state
 }
 
 /**
- * A new game from the two rosters: everyone who plays, topped up to nine a
- * side with made-up players, batting in roster order, with each position
+ * A new game from the two rosters: everyone who plays, batting in roster order, with each position
  * given to the first player who lists it and the rest filled in order.
  */
 export function newSetup(
   teams: Record<Side, GameTeam>,
   rosters: Record<Side, RosterPlayer[]>,
-  fillRoster = true
+  _fillRoster = false
 ): GameSetup {
   const players: Record<number, GamePlayer> = {}
   const draft = {
     gameData: { teams, players },
     liveData: { boxscore: { teams: { away: emptySide(), home: emptySide() } } },
-    meta: { identities: createIdentityMap() }
+    meta: { tagOrder: [] as number[] }
   }
   for (const side of ['away', 'home'] as const) {
     const team = draft.liveData.boxscore.teams[side]
     for (const row of rosters[side]) {
-      const id = allocatePlayer(draft.meta.identities, row.userId)
+      const id = asGumboId(row.userId)
       if (draft.gameData.players[id] != null)
         throw new Error('Player appears more than once in the game roster')
       draft.gameData.players[id] = {
@@ -1192,15 +1170,8 @@ export function newSetup(
         local: false
       }
       team.players.push(id)
+      draft.meta.tagOrder.push(id)
     }
-    if (fillRoster)
-      while (team.players.length < 9)
-        addPlayer(
-          draft,
-          side,
-          `Player ${team.players.length + 1}`,
-          String(team.players.length + 1)
-        )
     team.battingOrder = [...team.players]
     const assigned = new Set<number>()
     for (const position of POSITIONS) {
@@ -1226,6 +1197,6 @@ export function newSetup(
   return {
     players: draft.gameData.players,
     sides: draft.liveData.boxscore.teams,
-    identities: draft.meta.identities
+    tagOrder: draft.meta.tagOrder
   }
 }

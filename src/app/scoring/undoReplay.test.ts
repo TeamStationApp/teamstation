@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { completeMotions } from '../../test/scoringHelpers'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { outcomeEvents } from './scoringContract'
 import {
@@ -39,10 +39,7 @@ function random(seed: number): () => number {
 }
 
 function start(presentation = false): ScoringState {
-  return initialScoringState(
-    createDevelopmentSession(gameFixture, [], []),
-    presentation
-  )
+  return initialScoringState(scoringSession(gameFixture), presentation)
 }
 
 const OUTCOMES = Object.keys(outcomeEvents) as Array<keyof typeof outcomeEvents>

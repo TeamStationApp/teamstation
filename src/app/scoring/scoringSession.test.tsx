@@ -13,12 +13,9 @@ import {
   applyAction,
   ScoringSession as GameSession
 } from '../../common/scoring/session'
+import { scoringRoster, scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
-import {
-  createDevelopmentSession,
-  startingSetup,
-  teamsOf
-} from './developmentSession'
+import { startingSetup, teamsOf } from './developmentSession'
 import { CORRECTION_INSTRUCTION } from './InstructionToast'
 import { gameFixture } from './isUnscoredGame.test'
 import { scoringPreferences } from './scoringPreferences'
@@ -96,8 +93,8 @@ function clientForSwitchHitter(
     team === 'away'
       ? [
           asRosterEntry({
-            userId: 101,
-            shortName: 'Jordan K.',
+            userId: 1,
+            shortName: 'Jason K.',
             jersey: '00',
             positions: ['P'],
             isPlayer: true,
@@ -106,9 +103,10 @@ function clientForSwitchHitter(
             staffRoles: [],
             inheritedFrom: null,
             bats
-          })
+          }),
+          ...scoringRoster(1).slice(1)
         ]
-      : []
+      : scoringRoster(10)
   return client
 }
 afterEach(async function () {
@@ -177,11 +175,7 @@ describe('local scoring controls', function () {
       open: async (game, away, home) => {
         expect(away).deep.equals([])
         expect(home).deep.equals([])
-        return GameSession.start(
-          store,
-          game.id,
-          createDevelopmentSession(game, away, home)
-        )
+        return GameSession.start(store, game.id, scoringSession(game))
       }
     }
     await mount(client, source)
@@ -246,11 +240,7 @@ describe('saving from the scoring screen', function () {
     }
     const source: ScoringSource = {
       open: async game =>
-        GameSession.start(
-          store,
-          game.id,
-          createDevelopmentSession(game, [], [])
-        )
+        GameSession.start(store, game.id, scoringSession(game))
     }
     await mount(clientForSwitchHitter('right'), source)
     await click('Ball')
@@ -303,7 +293,7 @@ describe('saving from the scoring screen', function () {
     }
     const source: ScoringSource = {
       open: async game => {
-        let decided = createDevelopmentSession(game, [], [])
+        let decided = scoringSession(game)
         for (const action of [
           { type: 'ballInPlay', contact: 'swing' },
           { type: 'result', eventType: 'single' }
@@ -405,7 +395,11 @@ describe('saving from the scoring screen', function () {
   it('undoes a play scored before the screen opened', async function () {
     const source = new DevelopmentScoringSource()
     const client = clientForSwitchHitter('right')
-    const first = await source.open(gameFixture, [], [])
+    const first = await source.open(
+      gameFixture,
+      scoringRoster(1),
+      scoringRoster(10)
+    )
     first.apply({ type: 'pitch', call: 'B' })
     first.apply({ type: 'pitch', call: 'B' })
     await first.flush()
@@ -420,7 +414,11 @@ describe('saving from the scoring screen', function () {
 
   it('takes every Undo tap one step back, in order, though the taps come before the screen redraws', async function () {
     const source = new DevelopmentScoringSource()
-    const first = await source.open(gameFixture, [], [])
+    const first = await source.open(
+      gameFixture,
+      scoringRoster(1),
+      scoringRoster(10)
+    )
     for (let i = 0; i < 3; i++) first.apply({ type: 'pitch', call: 'B' })
     await first.flush()
     await mount(clientForSwitchHitter('right'), source)
@@ -452,7 +450,11 @@ describe('saving from the scoring screen', function () {
 
   it('opens a game saved with a ball in play and no result at the pitch before it', async function () {
     const source = new DevelopmentScoringSource()
-    const first = await source.open(gameFixture, [], [])
+    const first = await source.open(
+      gameFixture,
+      scoringRoster(1),
+      scoringRoster(10)
+    )
     first.apply({ type: 'pitch', call: 'B' })
     first.apply({ type: 'ballInPlay', contact: 'swing' })
     await first.flush()
@@ -461,9 +463,9 @@ describe('saving from the scoring screen', function () {
     expect(document.body.textContent).includes('Pitches 1')
     // Opening it saved nothing…
     const kinds = async (): Promise<string[]> =>
-      (await source.open(gameFixture, [], [])).actions.map(
-        action => action.type
-      )
+      (
+        await source.open(gameFixture, scoringRoster(1), scoringRoster(10))
+      ).actions.map(action => action.type)
     expect(await kinds()).deep.equals(['pitch', 'ballInPlay'])
     // …and the scorer's next pitch saves the game from the pitch before.
     await click('Ball')
@@ -476,7 +478,11 @@ describe('saving from the scoring screen', function () {
 
   it('undoes a saved ball in play back to the pitch before it, not to a ball without a result', async function () {
     const source = new DevelopmentScoringSource()
-    const first = await source.open(gameFixture, [], [])
+    const first = await source.open(
+      gameFixture,
+      scoringRoster(1),
+      scoringRoster(10)
+    )
     for (const action of [
       { type: 'pitch', call: 'B' },
       { type: 'ballInPlay', contact: 'swing' },
@@ -507,7 +513,11 @@ describe('saving from the scoring screen', function () {
       /Pitches \d+/.exec(document.body.textContent ?? '')?.[0] ?? ''
     // The saved game ends with a hit by pitch and the next batter's empty
     // appearance.
-    const first = await source.open(gameFixture, [], [])
+    const first = await source.open(
+      gameFixture,
+      scoringRoster(1),
+      scoringRoster(10)
+    )
     first.apply({ type: 'pitch', call: 'B' })
     expect(
       first.apply({ type: 'result', eventType: 'hit_by_pitch' }).problems
@@ -528,7 +538,11 @@ describe('saving from the scoring screen', function () {
 
   it('logs the close of a saved hit by pitch the screen closes as it opens', async function () {
     const source = new DevelopmentScoringSource()
-    const first = await source.open(gameFixture, [], [])
+    const first = await source.open(
+      gameFixture,
+      scoringRoster(1),
+      scoringRoster(10)
+    )
     first.apply({ type: 'result', eventType: 'hit_by_pitch' })
     await first.flush()
     await mount(clientForSwitchHitter('right'), source)
@@ -536,7 +550,11 @@ describe('saving from the scoring screen', function () {
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 5))
     })
-    const saved = await source.open(gameFixture, [], [])
+    const saved = await source.open(
+      gameFixture,
+      scoringRoster(1),
+      scoringRoster(10)
+    )
     expect(saved.actions.map(action => action.type)).deep.equals([
       'result',
       'gameFlow',
@@ -607,9 +625,7 @@ describe('saving from the scoring screen', function () {
       center: 250,
       rightLine: 250
     })
-    expect(
-      createDevelopmentSession(sized, [], []).gameData.venue?.fieldInfo.center
-    ).equals(250)
+    expect(scoringSession(sized).gameData.venue?.fieldInfo.center).equals(250)
 
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.gameEvents = async () => ({ plays: [], currentPlay: null })
