@@ -3,12 +3,12 @@ import { describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import { scoringSession } from '../../test/scoringSession'
 import { changeTheme, getTheme, ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
 import { DEFENSE_LOCATIONS, DefensiveField } from './DefensiveField'
 import { DefensiveFieldArt as NativeDefensiveFieldArt } from './DefensiveFieldArt.native'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { RosterDragGroup } from './RosterDrag'
 import { defenseRosterMinimum, RosterEditor } from './RosterEditor'
@@ -35,9 +35,7 @@ describe('compact defensive field', function () {
           <ThemeProvider>
             <ScoringSheetHeight.Provider value={260}>
               <RosterEditor
-                state={initialScoringState(
-                  createDevelopmentSession(gameFixture, [], [])
-                )}
+                state={initialScoringState(scoringSession(gameFixture))}
                 onSave={() => undefined}
               />
             </ScoringSheetHeight.Provider>
@@ -89,9 +87,7 @@ describe('compact defensive field', function () {
     const host = document.createElement('div')
     document.body.appendChild(host)
     const root = createRoot(host)
-    const state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+    const state = initialScoringState(scoringSession(gameFixture))
     try {
       await act(async () => {
         root.render(

@@ -1078,6 +1078,7 @@ describe('a scoring session', function () {
     const bench = (name: string, side: Side = 'away'): ScoringAction => ({
       type: 'lineup',
       kind: 'addPlayer',
+      player: name === 'Away Two' ? 20 : 19,
       side,
       name
     })
@@ -1336,14 +1337,10 @@ describe('a scoring session', function () {
     }
     const addHomeBench = (setup: ReturnType<typeof setupOf>): void => {
       const sample = setup.players[setup.sides.home.battingOrder[0]]
-      const id =
-        Math.max(
-          ...Object.keys(setup.players).map(Number),
-          setup.identities.nextId - 1
-        ) + 1
+      const id = Math.max(...setup.tagOrder) + 1
       setup.players[id] = {
         id,
-        userId: null,
+        userId: id,
         teamId: sample.teamId,
         fullName: 'Home Bench',
         jersey: '99',
@@ -1353,19 +1350,14 @@ describe('a scoring session', function () {
         local: true
       }
       setup.sides.home.players.push(id)
-      setup.identities.sessionToSource[id] = null
-      setup.identities.nextId = id + 1
+      setup.tagOrder.push(id)
     }
     const addAwayBench = (setup: ReturnType<typeof setupOf>): void => {
       const sample = setup.players[setup.sides.away.battingOrder[0]]
-      const id =
-        Math.max(
-          ...Object.keys(setup.players).map(Number),
-          setup.identities.nextId - 1
-        ) + 1
+      const id = Math.max(...setup.tagOrder) + 1
       setup.players[id] = {
         id,
-        userId: null,
+        userId: id,
         teamId: sample.teamId,
         fullName: 'Away Bench',
         jersey: '98',
@@ -1375,8 +1367,7 @@ describe('a scoring session', function () {
         local: true
       }
       setup.sides.away.players.push(id)
-      setup.identities.sessionToSource[id] = null
-      setup.identities.nextId = id + 1
+      setup.tagOrder.push(id)
     }
 
     it('names the digest each answer and each read leaves as the next base', async function () {
@@ -1768,10 +1759,10 @@ describe('a scoring session', function () {
       const draft = {
         gameData: { teams: TEAMS, players: shown.players },
         liveData: { boxscore: { teams: shown.sides } },
-        meta: { identities: shown.identities }
+        meta: { tagOrder: shown.tagOrder }
       }
-      const guest = addPlayer(draft, 'away', 'Guest', '0')
-      expect(guest).equals(bench)
+      const guest = addPlayer(draft, 'away', 9000000, 'Guest', '0')
+      expect(guest).not.equals(bench)
       const order = [...shown.sides.away.battingOrder]
       order[0] = guest
       shown.sides.away.battingOrder = order
@@ -1943,7 +1934,7 @@ describe('a scoring session', function () {
       expect(read.due).deep.equals({
         awaiting: false,
         player: {
-          userId: null,
+          userId: chosen,
           name: session.state.gameData.players[chosen].fullName,
           jersey: session.state.gameData.players[chosen].jersey
         }
@@ -2253,6 +2244,7 @@ describe('a scoring session', function () {
     const bench: ScoringAction = {
       type: 'lineup',
       kind: 'addPlayer',
+      player: 19,
       side: 'away',
       name: 'Away Bench'
     }

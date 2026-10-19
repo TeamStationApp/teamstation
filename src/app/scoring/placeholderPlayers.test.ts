@@ -1,10 +1,12 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { createDevelopmentSession } from './developmentSession'
+import { guestCreator } from '../../test/guestPlayers'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
   addPlaceholderPlayers,
+  PartialPlaceholderCreation,
   placeholderSuffix,
   placeholderTeamName
 } from './placeholderPlayers'
@@ -58,6 +60,27 @@ const productionNames: Array<[string, string]> = [
   ['West Baseball Navy 9U', 'WBN']
 ]
 describe('team-named placeholder players', function () {
+  it('reports acknowledged additions when a later creation fails', async () => {
+    const draft = scoringSession(gameFixture)
+    const before = draft.liveData.boxscore.teams.home.players.length
+    const create = guestCreator()
+    let attempts = 0
+    let failure: unknown
+    try {
+      await addPlaceholderPlayers(draft, 'home', 3, async (side, player) => {
+        if (++attempts === 3) throw new Error('Offline')
+        return await create(side, player)
+      })
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).instanceOf(PartialPlaceholderCreation)
+    expect(failure).includes({ created: 2, remaining: 1 })
+    expect((failure as Error).message).includes('Created 2 players.')
+    expect(draft.liveData.boxscore.teams.home.players).length(before + 2)
+    await addPlaceholderPlayers(draft, 'home', 1, create)
+    expect(draft.liveData.boxscore.teams.home.players).length(before + 3)
+  })
   for (const [name, expected] of productionNames)
     it(`abbreviates ${name}`, function () {
       expect(placeholderTeamName(name)).equals(expected)
@@ -85,17 +108,16 @@ describe('team-named placeholder players', function () {
     expect(placeholderSuffix(701)).equals('ZZ')
     expect(placeholderSuffix(702)).equals('AAA')
   })
-  it('adds once per batch to the selected roster with defaults, skips collisions and preserves save/undo', function () {
-    const initial = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+  it('adds once per batch to the selected roster with defaults, skips collisions and preserves save/undo', async function () {
+    const create = guestCreator()
+    const initial = initialScoringState(scoringSession(gameFixture))
     const draft = structuredClone(initial.session)
     draft.gameData.teams.away.name = 'Hawks'
     const awayBefore = draft.liveData.boxscore.teams.away.players.length
     const homeBefore = JSON.stringify(draft.liveData.boxscore.teams.home)
     const ids = [
-      ...addPlaceholderPlayers(draft, 'away', 16),
-      ...addPlaceholderPlayers(draft, 'away', 16)
+      ...(await addPlaceholderPlayers(draft, 'away', 16, create)),
+      ...(await addPlaceholderPlayers(draft, 'away', 16, create))
     ]
     expect(ids).length(32)
     expect(new Set(ids).size).equals(32)
@@ -120,17 +142,22 @@ describe('team-named placeholder players', function () {
       initial.session.liveData.boxscore.teams.away.defense
     )
     draft.gameData.players[ids[0]].fullName = 'hawks a'
-    const next = addPlaceholderPlayers(draft, 'away', 1)[0]
+    const next = (await addPlaceholderPlayers(draft, 'away', 1, create))[0]
     expect(draft.gameData.players[next].fullName).equals('Hawks AG')
-    addPlaceholderPlayers(draft, 'home', 1)
+    await addPlaceholderPlayers(draft, 'home', 1, create)
     const saved = scoringReducer(initial, { type: 'ROSTER', draft })
     expect(saved.session.gameData.players[next].fullName).equals('Hawks AG')
     expect(scoringReducer(saved, { type: 'UNDO' }).session).deep.equals(
       initial.session
     )
-    for (const count of [0, 17, -1, 1.5, NaN, Infinity])
-      expect(() => addPlaceholderPlayers(draft, 'home', count)).throws(
-        'between 1 and 16'
-      )
+    for (const count of [0, 17, -1, 1.5, NaN, Infinity]) {
+      let failure: unknown
+      try {
+        await addPlaceholderPlayers(draft, 'home', count, create)
+      } catch (error) {
+        failure = error
+      }
+      expect(String(failure)).contains('between 1 and 16')
+    }
   })
 })

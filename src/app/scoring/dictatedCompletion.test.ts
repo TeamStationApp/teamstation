@@ -3,7 +3,7 @@ import { describe, it } from 'mocha'
 
 import type { ScoringAction } from '../../common/scoring/actions'
 import { nextDecision } from '../../common/scoring/rules'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import {
   answerOf,
   completeSentence,
@@ -28,10 +28,7 @@ const BATTER = 1
 function game(
   bases: { first?: number; second?: number; third?: number } = {}
 ): ScoringState {
-  const state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], []),
-    false
-  )
+  const state = initialScoringState(scoringSession(gameFixture), false)
   const offense = state.session.liveData.linescore.offense
   for (const key of ['first', 'second', 'third'] as const) {
     const id = bases[key]
