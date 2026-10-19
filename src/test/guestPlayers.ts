@@ -5,10 +5,12 @@ import type { Side } from '../common/scoring/state'
 /** A deterministic stand-in for successful guest creation in UI unit tests. */
 export function guestCreator(firstId = 9000000) {
   let nextId = firstId
-  return async (_side: Side, player: PlayerDraft): Promise<RosterEntry> =>
-    asRosterEntry({
+  return async (_side: Side, player: PlayerDraft): Promise<RosterEntry> => {
+    const id = nextId++
+    return asRosterEntry({
       ...player,
-      userId: nextId++,
+      userId: id,
+      gumboId: id,
       shortName: `${player.firstName} ${player.lastName}`.trim(),
       isPlayer: true,
       role: 'player',
@@ -16,4 +18,5 @@ export function guestCreator(firstId = 9000000) {
       staffRoles: [],
       inheritedFrom: null
     })
+  }
 }

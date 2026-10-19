@@ -40,6 +40,7 @@ import { CORRECTION_WINDOW_MS, type ScoringState } from './scoringTypes'
 const roster = [
   asRosterEntry({
     userId: 1,
+    gumboId: 1,
     shortName: 'Jason K.',
     jersey: '00',
     positions: ['P'],
@@ -84,7 +85,7 @@ describe('local scoring sessions', function () {
       home: { id: 'home', name: 'Hawks', logoUrl: null }
     })
     expect(session.gameData.players[1]).includes({
-      userId: 1,
+      id: 1,
       fullName: 'Jason K.',
       jersey: '00',
       bats: 'switch'
@@ -104,6 +105,7 @@ describe('local scoring sessions', function () {
     const ignored = asRosterEntry({
       ...roster[0],
       userId: 104,
+      gumboId: 104,
       isPlayer: false,
       section: 'spectator'
     })
@@ -120,7 +122,7 @@ describe('local scoring sessions', function () {
     )
     expect(session.gameData.players[local]).includes({
       fullName: 'Casey Mize',
-      userId: 9000000,
+      id: 9000000,
       jersey: '',
       local: true
     })
@@ -508,7 +510,7 @@ describe('local scoring sessions', function () {
     expect(game.pending).equals(0)
     const again = await source.open(gameFixture, roster, scoringRoster(10))
     expect(again.state.liveData.linescore.balls).equals(1)
-    expect(again.state.gameData.players[1].userId).equals(1)
+    expect(again.state.gameData.players[1].id).equals(1)
   })
   it('stores per-user help, bounds counts, handles unavailable storage and resets', async function () {
     const items = new Map<string, string>()
@@ -776,6 +778,7 @@ describe('a scorekeeper and a side left unseen', function () {
     return Array.from({ length: 9 }, (_, index) =>
       asRosterEntry({
         userId: first + index,
+        gumboId: first + index,
         shortName: `Owl ${first + index}`,
         jersey: String(index + 1),
         positions: [],
