@@ -100,20 +100,25 @@ export function RunnerControls({
           const slot = choiceRunners
             .slice(0, index)
             .filter(other => other.to % 4 === move.to % 4).length
+          const count = choiceRunners.filter(
+            other => other.to % 4 === move.to % 4
+          ).length
+          const horizontal =
+            move.to % 4 === 2 || (move.to % 4 === 0 && count > 1)
           return (
             <View
               key={move.playerId}
               accessibilityLabel={`Fielder's choice decision for ${name}`}
               style={{
-                ...choiceDecisionFrame(projection, move.to, slot),
-                flexDirection: move.to % 4 === 2 ? 'row' : 'column',
+                ...choiceDecisionFrame(projection, move.to, slot, count),
+                flexDirection: horizontal ? 'row' : 'column',
                 gap: 8
               }}
             >
               {(['safe', 'out'] as const).map(decision => (
                 <View
                   key={decision}
-                  style={move.to % 4 === 2 ? { flex: 1 } : undefined}
+                  style={horizontal ? { flex: 1 } : undefined}
                 >
                   <ScoringButton
                     label={`${decision === 'safe' ? 'Safe' : 'Out'} ${name}`}

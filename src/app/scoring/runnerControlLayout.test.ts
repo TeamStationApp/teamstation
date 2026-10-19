@@ -1,6 +1,9 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
+import { PerspectiveCamera } from 'three'
 
+import { projectBases } from '../field/baseProjection'
+import { applyFieldCamera } from '../field/cameraModel'
 import type { BaseProjection } from '../field/fieldTypes'
 import { choiceDecisionFrame, homeDecisionFrame } from './runnerControlLayout'
 
@@ -54,10 +57,50 @@ describe('runner-relative decision placement', function () {
     )
   })
   it('keeps repeated home decisions separate near home', function () {
-    const first = choiceDecisionFrame(projection, 4)
-    const second = choiceDecisionFrame(projection, 4, 1)
-    expect(Math.abs(second.top - first.top)).at.least(104)
+    const first = choiceDecisionFrame(projection, 4, 0, 2)
+    const second = choiceDecisionFrame(projection, 4, 1, 2)
+    expect(Math.abs(second.top - first.top)).equals(52)
   })
+  for (const [width, height] of [
+    [874, 292],
+    [568, 320],
+    [402, 579]
+  ])
+    it(`separates complete rectangles and three home arrivals at ${width}x${height}`, function () {
+      const camera = new PerspectiveCamera()
+      applyFieldCamera(camera, {
+        width,
+        height,
+        view: 'home',
+        zoom: 1,
+        tilt: 0,
+        heightOffset: 33,
+        bottomExtension: 112
+      })
+      const view = projectBases(camera, width, height)
+      const distinct = [2, 3, 4].map(to => ({
+        ...choiceDecisionFrame(view, to),
+        height: to === 2 ? 44 : 96
+      }))
+      const homes = [0, 1, 2].map(slot => ({
+        ...choiceDecisionFrame(view, 4, slot, 3),
+        height: 44
+      }))
+      for (const frames of [distinct, homes])
+        for (const [index, frame] of frames.entries()) {
+          expect(frame.left).at.least(8)
+          expect(frame.left + frame.width).at.most(width - 8)
+          expect(frame.top).at.least(8)
+          expect(frame.top + frame.height).at.most(height - 128)
+          for (const other of frames.slice(index + 1))
+            expect(
+              frame.left + frame.width <= other.left ||
+                other.left + other.width <= frame.left ||
+                frame.top + frame.height <= other.top ||
+                other.top + other.height <= frame.top
+            ).equals(true)
+        }
+    })
   it('keeps the home and above-second hit targets apart in short landscape fields', function () {
     const view: BaseProjection = {
       ...projection,

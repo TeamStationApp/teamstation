@@ -4,6 +4,8 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { PerspectiveCamera } from 'three'
 
+import { applyAction } from '../../common/scoring/session'
+import { asGameState } from '../../common/scoring/state'
 import { completeMotions } from '../../test/scoringHelpers'
 import { projectBases } from '../field/baseProjection'
 import { applyFieldCamera } from '../field/cameraModel'
@@ -58,6 +60,79 @@ describe('runner decisions', function () {
     root = undefined
     received = []
   })
+  it('separates all three home calls after reopening a preserved batter advance', async function () {
+    let state = initial()
+    for (const [index, base] of (
+      ['first', 'second', 'third'] as const
+    ).entries())
+      state.session.liveData.linescore.offense[base] = playerRef(
+        state.session,
+        index + 6
+      )
+    for (const event of [
+      { type: 'OUTCOME', outcome: "Fielder's Choice" },
+      { type: 'FIELDER', id: 15, point: { x: 0, z: -25 }, generation: 0 },
+      { type: 'TRAJECTORY', angle: 20, generation: 0 }
+    ] as ScoringEvent[])
+      state = completeMotions(scoringReducer(state, event))
+    const applied = applyAction(state.session, {
+      type: 'runnerMovement',
+      runner: 1,
+      to: '3B'
+    })
+    expect(applied.problems).deep.equals([])
+    state = initialScoringState(
+      asGameState(JSON.parse(JSON.stringify(applied.state)))
+    )
+    for (const event of [
+      { type: 'THROWER', id: 15, point: { x: 0, z: -25 }, generation: 0 },
+      { type: 'DEFENDER', generation: 0 }
+    ] as ScoringEvent[])
+      state = completeMotions(scoringReducer(state, event))
+    expect(state.phase).equals('fieldersChoice')
+    expect(
+      state.pendingPlay!.fieldersChoice!.runners.map(move => move.to)
+    ).deep.equals([4, 4, 4])
+    for (const [width, height] of [
+      [874, 292],
+      [568, 320],
+      [402, 579]
+    ]) {
+      const camera = new PerspectiveCamera()
+      applyFieldCamera(camera, {
+        width,
+        height,
+        view: 'home',
+        zoom: 1,
+        tilt: 0,
+        heightOffset: 33,
+        bottomExtension: 112
+      })
+      await render(state, null, projectBases(camera, width, height))
+      const groups = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '[aria-label^="Fielder\'s choice decision for"]'
+        )
+      )
+      expect(groups).length(3)
+      expect(groups.every(group => group.style.flexDirection === 'row')).equals(
+        true
+      )
+      const tops = groups
+        .map(group => parseFloat(group.style.top))
+        .sort((a, b) => a - b)
+      expect(tops[1] - tops[0]).at.least(52)
+      expect(tops[2] - tops[1]).at.least(52)
+      for (const id of [6, 7, 8]) {
+        await click(`Safe Player ${id}`)
+        expect(received.at(-1)).includes({
+          type: 'CHOICE_DECIDE',
+          id,
+          decision: 'safe'
+        })
+      }
+    }
+  })
   it('separates unresolved runners offered the same home destination on a wide field', async () => {
     const state = initial()
     state.phase = 'fieldersChoice'
@@ -87,7 +162,7 @@ describe('runner decisions', function () {
     expect(cards.every(card => card.style.position === 'absolute')).equals(true)
     expect(
       Math.abs(parseFloat(cards[0].style.top) - parseFloat(cards[1].style.top))
-    ).at.least(104)
+    ).at.least(52)
     expect(
       cards.every(
         card => getComputedStyle(card).backgroundColor === 'rgba(0, 0, 0, 0)'

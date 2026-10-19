@@ -58,31 +58,47 @@ export function homeDecisionFrame(
 export function choiceDecisionFrame(
   projection: BaseProjection,
   to: number,
-  slot = 0
+  slot = 0,
+  count = 1
 ): DecisionFrame {
   const base = to % 4
   const point = projection.bases[base]
   const head = projection.heads?.[base] ?? point
   const feet = projection.feet?.[base] ?? point
-  const width = base === 2 ? ROW_WIDTH : BUTTON_WIDTH
-  const height = base === 2 ? BUTTON_HEIGHT : PAIR_HEIGHT
+  // Multiple arrivals share a compact local column, sized as a whole so
+  // clamping at the field edge cannot put one runner's Out over another Safe.
+  const repeatedHome = base === 0 && count > 1
+  const width = base === 2 || repeatedHome ? ROW_WIDTH : BUTTON_WIDTH
+  const height = base === 2 || repeatedHome ? BUTTON_HEIGHT : PAIR_HEIGHT
   const home =
     base === 0 ? homeDecisionFrame(projection, null, false)! : undefined
-  const left =
+  let left =
     home?.left ??
     (base === 2
       ? head.x - width / 2
       : base === 3
         ? feet.x - width - SIDE_OFFSET
         : feet.x + SIDE_OFFSET)
-  const initialTop =
+  let initialTop =
     home?.top ??
     (base === 2 ? head.y - height - 8 : (head.y + feet.y) / 2 - height / 2)
-  const after = initialTop + slot * (height + 8)
-  const top =
-    after + height <= projection.height - 8
-      ? after
-      : initialTop - slot * (height + 8)
+  const clusterHeight = count * height + (count - 1) * GAP
+  initialTop = Math.max(
+    GAP,
+    Math.min(projection.height - 128 - clusterHeight, initialTop)
+  )
+  if (base === 1 || base === 3) {
+    const second = choiceDecisionFrame(projection, 2)
+    if (
+      initialTop < second.top + BUTTON_HEIGHT + GAP &&
+      initialTop + height > second.top - GAP
+    )
+      left =
+        base === 3
+          ? Math.min(left, second.left - width - GAP)
+          : Math.max(left, second.left + second.width + GAP)
+  }
+  const top = initialTop + slot * (height + GAP)
   return {
     position: 'absolute',
     width,

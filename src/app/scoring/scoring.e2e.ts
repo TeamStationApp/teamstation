@@ -3958,6 +3958,7 @@ describe('scoring browser', function () {
             { width: 1200, height: 900 },
             { width: 800, height: 450 },
             { width: 390, height: 640 },
+            { width: 568, height: 320 },
             { width: 874, height: 292 }
           ]) {
             await page.setViewport(viewport)
@@ -3998,13 +3999,25 @@ describe('scoring browser', function () {
               )
               return (
                 buttons.length === 6 &&
-                buttons.every(button => {
+                buttons.every((button, index) => {
                   const box = button.getBoundingClientRect()
                   const hit = document.elementFromPoint(
                     box.x + box.width / 2,
                     box.y + box.height / 2
                   )
-                  return hit != null && button.contains(hit)
+                  return (
+                    hit != null &&
+                    button.contains(hit) &&
+                    buttons.slice(index + 1).every(other => {
+                      const target = other.getBoundingClientRect()
+                      return (
+                        box.right <= target.left ||
+                        target.right <= box.left ||
+                        box.bottom <= target.top ||
+                        target.bottom <= box.top
+                      )
+                    })
+                  )
                 })
               )
             })
