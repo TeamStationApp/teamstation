@@ -4,6 +4,12 @@ import { before, describe, it } from 'mocha'
 import { mintUserId } from '../../common/mintUserId'
 import { shortNames } from '../../common/names'
 import { statsDatabase } from '../../test/statsDatabase'
+import {
+  battingLines,
+  battingRates,
+  pitchingLines,
+  pitchingRates
+} from '../stats'
 import { statRows } from './rows'
 
 describe('stat rows', function () {
@@ -63,6 +69,69 @@ describe('stat rows', function () {
           ab: 1
         }
       ])
+      .execute()
+  })
+
+  it('groups a merge chain into one game or season line and recomputes rates from counts', async function () {
+    const { db, ids } = fixture
+    const earlier = mintUserId(() => false)
+    await db
+      .insertInto('users')
+      .values({
+        id: earlier.userId,
+        legacyId: earlier.legacyId,
+        display_name: 'Ted Williams',
+        merged_into: placeholder.userId
+      })
+      .execute()
+    await db
+      .insertInto('game_player_stats')
+      .values({
+        id: 'gps_chain',
+        game_id: 'gam_demo',
+        team_id: 'tem_home',
+        user_id: earlier.userId,
+        pa: 4,
+        ab: 4,
+        h: 0,
+        pitch_outs: 3,
+        pitch_er: 2
+      })
+      .execute()
+    await db
+      .updateTable('game_player_stats')
+      .set({ pitch_outs: 6, pitch_er: 1 })
+      .where('id', '=', 'gps_own')
+      .execute()
+    const before = await db
+      .selectFrom('game_player_stats')
+      .selectAll()
+      .orderBy('id')
+      .execute()
+    for (const filter of [
+      { gameId: 'gam_demo' },
+      { seasonId: 'sea_demo', teamId: 'tem_home' }
+    ]) {
+      const rows = await statRows(db, filter)
+      const batting = battingLines(rows).filter(row => row.userId === ids[0])
+      expect(batting).has.length(1)
+      expect(batting[0]).includes({ ab: 9, h: 3 })
+      expect(battingRates(batting[0]).avg).equals(0.333)
+      const pitching = pitchingLines(rows).filter(row => row.userId === ids[0])
+      expect(pitching).has.length(1)
+      expect(pitching[0]).includes({ outs: 9, er: 3 })
+      expect(pitchingRates(pitching[0]).era).equals(6)
+    }
+    expect(
+      await db
+        .selectFrom('game_player_stats')
+        .selectAll()
+        .orderBy('id')
+        .execute()
+    ).deep.equals(before)
+    await db
+      .deleteFrom('game_player_stats')
+      .where('id', '=', 'gps_chain')
       .execute()
   })
 

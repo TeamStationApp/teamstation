@@ -22,6 +22,7 @@ import {
 import type { Side } from '../../common/scoring/state'
 import type { Database } from '../db/database'
 import { fenceDistanceFor } from '../games/fenceDistance'
+import { resolveScoringGame } from '../scoring/openRow'
 import { readPlays } from './postPlays'
 
 type Trx = Kysely<Database>
@@ -66,7 +67,10 @@ export async function gameLineups(
 ): Promise<Record<Side, TeamSideLineups>> {
   const context = await lineupContext(db, game)
   const sides = lineupHistory(
-    storedLineupGame(await readPlays(db, game.id), game.currentPlay),
+    await resolveScoringGame(
+      db,
+      storedLineupGame(await readPlays(db, game.id), game.currentPlay)
+    ),
     context
   )
   return {
@@ -102,7 +106,10 @@ export async function lineupsAnswer(
 ): Promise<Record<Side, TeamSideLineups> & { digest: string }> {
   const context = await lineupContext(db, game)
   const read = readLineups(
-    storedLineupGame(await readPlays(db, game.id), game.currentPlay),
+    await resolveScoringGame(
+      db,
+      storedLineupGame(await readPlays(db, game.id), game.currentPlay)
+    ),
     context
   )
   const sides = {
@@ -141,7 +148,10 @@ export async function storedLineupsDigest(
 ): Promise<string> {
   if (game.lineups_digest != null) return game.lineups_digest
   const read = readLineups(
-    storedLineupGame(await readPlays(db, game.id), game.currentPlay),
+    await resolveScoringGame(
+      db,
+      storedLineupGame(await readPlays(db, game.id), game.currentPlay)
+    ),
     await lineupContext(db, game)
   )
   return lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
@@ -237,7 +247,10 @@ export async function keepLineups(
   fromTeamStation: boolean,
   now: Date
 ): Promise<{ lineups_digest: string; lineup_started_at?: Date | null }> {
-  const read: GameLineups = readLineups(stored, await lineupContext(trx, game))
+  const read: GameLineups = readLineups(
+    await resolveScoringGame(trx, stored),
+    await lineupContext(trx, game)
+  )
   const digest = lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
   if (read.problem != null) {
     console.warn(
