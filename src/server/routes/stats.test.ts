@@ -111,13 +111,13 @@ describe('one player’s figures', function () {
         {
           id: jordan,
           legacyId: legacyId(jordan),
-          display_name: 'Jordan Pujols'
+          display_name: 'Jordan Pacheco'
         },
         // The same child, on another team, closed into the row above.
         {
           id: jordanClosed,
           legacyId: legacyId(jordanClosed),
-          display_name: 'Jordan Pujols',
+          display_name: 'Jordan Pacheco',
           merged_into: jordan
         },
         {
@@ -154,7 +154,7 @@ describe('one player’s figures', function () {
         .values({
           id: makeId('gamePlayerStats'),
           game_id: game.id,
-          user_id: game.user,
+          gumbo_id: game.user,
           team_id: game.team,
           pa: 4,
           ab: 3,

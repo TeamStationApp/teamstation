@@ -259,6 +259,7 @@ describe('Roster tab cards and selector', function () {
                 [state.session.gameData.teams.away.id]: [
                   asRosterEntry({
                     userId: 100,
+                    gumboId: 100,
                     shortName: 'Mookie B',
                     jersey: '1',
                     positions: [],

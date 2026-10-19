@@ -50,6 +50,7 @@ const info = (): EventInfo =>
     attendees: [
       {
         userId: 101,
+        gumboId: 101,
         name: 'Babe R',
         response: null,
         canReply: true,
@@ -59,6 +60,7 @@ const info = (): EventInfo =>
       },
       {
         userId: 103,
+        gumboId: 103,
         name: 'Mike T',
         response: null,
         canReply: true,

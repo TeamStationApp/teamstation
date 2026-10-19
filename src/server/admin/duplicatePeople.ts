@@ -181,7 +181,8 @@ export async function findDuplicatePeople(
   const rows = await db
     .selectFrom('memberships')
     .innerJoin('users', 'users.id', 'memberships.user_id')
-    .leftJoin('event_players', 'event_players.user_id', 'users.id')
+    .leftJoin('gumbo_ids', 'gumbo_ids.user_id', 'users.id')
+    .leftJoin('event_players', 'event_players.gumbo_id', 'gumbo_ids.gumbo_id')
     .select([
       'memberships.team_id as teamId',
       'users.id as userId',
@@ -365,7 +366,8 @@ export async function findSamePersonAcrossTeams(
 ): Promise<SamePersonGroup[]> {
   const rows = await db
     .selectFrom('users')
-    .leftJoin('event_players', 'event_players.user_id', 'users.id')
+    .leftJoin('gumbo_ids', 'gumbo_ids.user_id', 'users.id')
+    .leftJoin('event_players', 'event_players.gumbo_id', 'gumbo_ids.gumbo_id')
     .select([
       'users.id as userId',
       'users.first_name as firstName',

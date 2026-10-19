@@ -130,7 +130,7 @@ export async function createLineupFixture(
     const people = game.roster[side]
       .slice(0, POSITIONS.length)
       .map((userId, i) => ({
-        userId,
+        gumboId: userId,
         name: LINEUP_NAMES[side][i],
         jersey: String(i + 1)
       }))

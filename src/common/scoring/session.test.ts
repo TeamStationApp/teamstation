@@ -1340,7 +1340,7 @@ describe('a scoring session', function () {
       const id = Math.max(...setup.tagOrder) + 1
       setup.players[id] = {
         id,
-        userId: id,
+
         teamId: sample.teamId,
         fullName: 'Home Bench',
         jersey: '99',
@@ -1357,7 +1357,7 @@ describe('a scoring session', function () {
       const id = Math.max(...setup.tagOrder) + 1
       setup.players[id] = {
         id,
-        userId: id,
+
         teamId: sample.teamId,
         fullName: 'Away Bench',
         jersey: '98',
@@ -1934,7 +1934,7 @@ describe('a scoring session', function () {
       expect(read.due).deep.equals({
         awaiting: false,
         player: {
-          userId: chosen,
+          gumboId: chosen,
           name: session.state.gameData.players[chosen].fullName,
           jersey: session.state.gameData.players[chosen].jersey
         }

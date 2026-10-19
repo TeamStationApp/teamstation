@@ -119,7 +119,7 @@ export function eventTypeCounts(
 }
 
 export interface PlayerGameLine {
-  userId: number
+  gumboId: number
   teamId: string | null
   pa: number
   ab: number
@@ -154,14 +154,14 @@ export type GameStatResult =
   | { kind: 'lines'; lines: PlayerGameLine[] }
   | { kind: 'incomplete'; detail: string }
 
-type FigureKey = Exclude<keyof PlayerGameLine, 'userId' | 'teamId'>
+type FigureKey = Exclude<keyof PlayerGameLine, 'gumboId' | 'teamId'>
 
 export function emptyLine(
-  userId: number,
+  gumboId: number,
   teamId: string | null
 ): PlayerGameLine {
   return {
-    userId,
+    gumboId,
     teamId,
     pa: 0,
     ab: 0,
@@ -243,10 +243,10 @@ function resolveId(
   player: Record<string, unknown>,
   path: string,
   atBatIndex: number,
-  knownUsers: ReadonlySet<number>
+  knownGumboIds: ReadonlySet<number>
 ): { id: number | null } | { incomplete: GameStatResult } {
   if (!('id' in player) || player.id == null) return { id: null }
-  if (!isSafeUserId(player.id) || !knownUsers.has(player.id)) {
+  if (!isSafeUserId(player.id) || !knownGumboIds.has(player.id)) {
     return { incomplete: notAUser(atBatIndex, path, player.id) }
   }
   return { id: player.id }
@@ -260,7 +260,7 @@ function resolveId(
  */
 function pitchingChanges(
   play: GumboPlay,
-  knownUsers: ReadonlySet<number>
+  knownGumboIds: ReadonlySet<number>
 ): Array<{ index: number; pitcherId: number | null }> {
   const events: unknown = (play as Record<string, unknown>).playEvents
   if (!Array.isArray(events)) return []
@@ -276,7 +276,7 @@ function pitchingChanges(
     return [
       {
         index: event.index,
-        pitcherId: isSafeUserId(id) && knownUsers.has(id) ? id : null
+        pitcherId: isSafeUserId(id) && knownGumboIds.has(id) ? id : null
       }
     ]
   })
@@ -333,16 +333,16 @@ function strikeoutReplaced(
 
 function addFigure(
   lines: Map<number, PlayerGameLine>,
-  userId: number | null,
+  gumboId: number | null,
   teamId: string | null,
   field: FigureKey,
   n: number
 ): void {
-  if (userId == null || n === 0) return
-  let line = lines.get(userId)
+  if (gumboId == null || n === 0) return
+  let line = lines.get(gumboId)
   if (line == null) {
-    line = emptyLine(userId, teamId)
-    lines.set(userId, line)
+    line = emptyLine(gumboId, teamId)
+    lines.set(gumboId, line)
   }
   line[field] += n
 }
@@ -350,7 +350,7 @@ function addFigure(
 export function gameStatLines(
   plays: GumboPlay[],
   teams: GameTeams,
-  knownUsers: ReadonlySet<number>
+  knownGumboIds: ReadonlySet<number>
 ): GameStatResult {
   const lines = new Map<number, PlayerGameLine>()
   let awayRuns = 0
@@ -387,7 +387,7 @@ export function gameStatLines(
       matchup.pitcher,
       'matchup.pitcher',
       atBatIndex,
-      knownUsers
+      knownGumboIds
     )
     if ('incomplete' in pitcherResolved) return pitcherResolved.incomplete
     const matchupPitcherId = pitcherResolved.id
@@ -415,7 +415,7 @@ export function gameStatLines(
         matchup.batter,
         'matchup.batter',
         atBatIndex,
-        knownUsers
+        knownGumboIds
       )
       if ('incomplete' in batterResolved) return batterResolved.incomplete
       batterId = batterResolved.id
@@ -446,7 +446,7 @@ export function gameStatLines(
           replaced.player,
           replaced.path,
           atBatIndex,
-          knownUsers
+          knownGumboIds
         )
         if ('incomplete' in resolved) return resolved.incomplete
         strikeoutId = resolved.id
@@ -467,7 +467,7 @@ export function gameStatLines(
     // An out made before a pitching change in the middle of a plate
     // appearance is the pitcher's who was on the mound at its event: the one
     // the last change before it brought in, or the one who began the play.
-    const changes = pitchingChanges(play, knownUsers)
+    const changes = pitchingChanges(play, knownGumboIds)
     const began = lastPitcher.has(halfInning)
       ? (lastPitcher.get(halfInning) ?? null)
       : matchupPitcherId
@@ -506,7 +506,7 @@ export function gameStatLines(
         details.runner,
         `${path}.details.runner`,
         atBatIndex,
-        knownUsers
+        knownGumboIds
       )
       if ('incomplete' in runnerResolved) return runnerResolved.incomplete
 
@@ -516,7 +516,7 @@ export function gameStatLines(
             details.pitcher,
             `${path}.details.pitcher`,
             atBatIndex,
-            knownUsers
+            knownGumboIds
           )
           if ('incomplete' in outPitcher) return outPitcher.incomplete
           if (outPitcher.id != null && outPitcher.id !== matchupPitcherId) {
@@ -546,7 +546,7 @@ export function gameStatLines(
           details.responsiblePitcher,
           `${path}.details.responsiblePitcher`,
           atBatIndex,
-          knownUsers
+          knownGumboIds
         )
         if ('incomplete' in rp) return rp.incomplete
       }
@@ -562,7 +562,7 @@ export function gameStatLines(
           details.responsiblePitcher,
           `${path}.details.responsiblePitcher`,
           atBatIndex,
-          knownUsers
+          knownGumboIds
         )
         if ('incomplete' in owner) return owner.incomplete
         if (owner.id != null) walkOwnerId = owner.id
@@ -631,7 +631,7 @@ export function gameStatLines(
       const creditedRunner =
         runner.id == null
           ? null
-          : isSafeUserId(runner.id) && knownUsers.has(runner.id)
+          : isSafeUserId(runner.id) && knownGumboIds.has(runner.id)
             ? runner.id
             : null
 
@@ -659,7 +659,7 @@ export function gameStatLines(
         const rpId =
           rp?.id == null
             ? null
-            : isSafeUserId(rp.id) && knownUsers.has(rp.id)
+            : isSafeUserId(rp.id) && knownGumboIds.has(rp.id)
               ? rp.id
               : null
         addFigure(lines, rpId, pitchingTeam, 'pitch_r', 1)
@@ -691,6 +691,6 @@ export function gameStatLines(
 
   return {
     kind: 'lines',
-    lines: [...lines.values()].sort((a, b) => a.userId - b.userId)
+    lines: [...lines.values()].sort((a, b) => a.gumboId - b.gumboId)
   }
 }

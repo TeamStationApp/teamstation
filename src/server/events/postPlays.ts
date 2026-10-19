@@ -413,8 +413,8 @@ export function unknownUser(
     detail?: unknown
   }
   if (code !== '23503') return
-  // Postgres says which key was missing: `Key (creditUserId)=(7) is not
-  // present in table "users".`
+  // Postgres says which key was missing: `Key (creditGumboId)=(7) is not
+  // present in table "gumbo_ids".`
   const key = (column: string): number | undefined => {
     const match = new RegExp(`^Key \\(${column}\\)=\\((\\d+)\\)`).exec(
       typeof detail === 'string' ? detail : ''
@@ -422,7 +422,7 @@ export function unknownUser(
     return match == null ? undefined : Number(match[1])
   }
   if (table === 'eventCredits') {
-    const userId = key('creditUserId')
+    const userId = key('creditGumboId')
     const credited = plays.find(
       play =>
         play.credits?.some(credit => credit.creditUserId === userId) === true
@@ -435,7 +435,7 @@ export function unknownUser(
     )
   }
   if (table === 'event_players') {
-    const userId = key('user_id')
+    const userId = key('gumbo_id')
     if (userId == null) return
     const named = plays.find(play => playerIds(play).includes(userId))
     if (named == null) {

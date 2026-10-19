@@ -40,6 +40,7 @@ import { warmVideoStills } from '../media/videoStills'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { gumboIdsOfUsers } from '../scoring/gumboIds'
 import { highlightSettings } from '../settings'
 import { playerFilterOf } from '../stats/rows'
 import { createRosterPlayer } from '../teams/addPlayers'
@@ -260,6 +261,7 @@ export function playerRoutes(
       // somebody was named on a play, which is not the same as somebody having
       // done something worth watching.
       const creditsByEvent = await creditsForPlayer(db, person.userId)
+      const creditedIds = await gumboIdsOfUsers(db, person.userIds)
       // A team filter is the team they played for, as on their stats: a play
       // whose credit names another team of theirs is that team's, even in a
       // game against this one. A credit with no team leaves it to the game.
@@ -271,7 +273,7 @@ export function playerRoutes(
               .filter(
                 outcome =>
                   outcome.creditUserId != null &&
-                  person.userIds.includes(outcome.creditUserId)
+                  creditedIds.includes(outcome.creditUserId)
               )
               .map(outcome => outcome.teamId)
           )
@@ -398,7 +400,7 @@ export function playerRoutes(
         const mine = credits.filter(
           outcome =>
             outcome.creditUserId != null &&
-            person.userIds.includes(outcome.creditUserId)
+            creditedIds.includes(outcome.creditUserId)
         )
         if (mine.length === 0) continue
 
@@ -799,6 +801,7 @@ export async function teamsOf(
   // game's plays change, so a team they batted for yesterday is here today.
   const fromPlays = await db
     .selectFrom('game_player_stats')
+    .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'game_player_stats.gumbo_id')
     .innerJoin('games', 'games.id', 'game_player_stats.game_id')
     .innerJoin('teams', 'teams.id', 'game_player_stats.team_id')
     .leftJoin('seasons', 'seasons.id', 'games.season_id')
@@ -811,7 +814,7 @@ export async function teamsOf(
       'seasons.year as seasonYear'
     ])
     .distinct()
-    .where('game_player_stats.user_id', 'in', userIds)
+    .where('gumbo_ids.user_id', 'in', userIds)
     .where('teams.merged_into', 'is', null)
     .execute()
 
