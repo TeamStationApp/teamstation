@@ -8,7 +8,7 @@ import { AccessibilityInfo } from 'react-native'
 import { RosterSelector } from '../scoring/RosterSelector'
 import { SwitchHitterHint } from '../scoring/SwitchHitterHint'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { LivePill } from './LivePill'
+import { AnimatedLivePill, LivePill } from './LivePill'
 
 const query = AccessibilityInfo.isReduceMotionEnabled
 const subscribe = AccessibilityInfo.addEventListener
@@ -55,8 +55,8 @@ describe('Reanimated UI components', () => {
     let dismissed = 0
     await render(
       <>
-        <LivePill />
-        <LivePill inline />
+        <AnimatedLivePill />
+        <AnimatedLivePill inline />
         <SwitchHitterHint
           onDismiss={() => {
             dismissed++
@@ -86,6 +86,17 @@ describe('Reanimated UI components', () => {
       host.querySelector<HTMLElement>('[aria-label="OK"]')!.click()
     })
     expect(dismissed).equals(1)
+  })
+  it('holds the Live pill still in a browser, where a pulse over the picture costs it frames', async function () {
+    await render(<LivePill />)
+    await act(async () => {
+      await delay(60)
+    })
+    const live = host.querySelector<HTMLElement>('[aria-label="Live now"]')!
+    expect(live.textContent).equals('live')
+    expect(live.style.opacity).equals('')
+    expect(['', 'none']).includes(getComputedStyle(live).animationName)
+    expect(listeners.size, 'no motion preference to follow').equals(0)
   })
   it('settles roster thumbs after programmatic selection and width changes with reduced motion', async () => {
     const draw = async (value: number): Promise<void> => {

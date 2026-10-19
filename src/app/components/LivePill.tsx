@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react'
-import { Text } from 'react-native'
+import { Platform, Text, View } from 'react-native'
 import Animated, {
   cancelAnimation,
   Easing,
@@ -29,8 +29,44 @@ export interface LivePillProps {
  *
  * It holds still for anybody who has asked their system for less movement.
  * A pulse is decoration; for some people it is worse than that.
+ *
+ * In a browser it holds still; see `StillLivePill`.
  */
 export function LivePill(props: LivePillProps): React.ReactElement {
+  return Platform.OS === 'web' ? (
+    <StillLivePill {...props} />
+  ) : (
+    <AnimatedLivePill {...props} />
+  )
+}
+
+/**
+ * The pill as the browser draws it: still.
+ *
+ * Any movement over a live picture costs Chrome the picture. On a Pixel 10
+ * playing a 1080p60 game, the pulse — whether Reanimated's, which on the web
+ * rewrites the pill's style in JavaScript every display frame, or a CSS
+ * animation — dropped a quarter of the frames at every segment, and the game
+ * played at 0.86 of real time, slipping about nine seconds further behind
+ * live each minute. The same pill holding still, on the same page, played it
+ * at full speed with no drops.
+ */
+export function StillLivePill(props: LivePillProps): React.ReactElement {
+  const { inline = false } = props
+  const styles = getStyles(useTheme())
+  return (
+    <View
+      style={[styles.pill, inline ? styles.inline : styles.overlay]}
+      accessibilityRole="text"
+      accessibilityLabel="Live now"
+    >
+      <Text style={styles.label}>live</Text>
+    </View>
+  )
+}
+
+/** The pill as the apps draw it, pulsing on Reanimated's UI thread. */
+export function AnimatedLivePill(props: LivePillProps): React.ReactElement {
   const { inline = false } = props
   const styles = getStyles(useTheme())
   const reduceMotion = useMotionPreference()
