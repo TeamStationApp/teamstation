@@ -24,6 +24,14 @@ import {
 } from './runner'
 import { gitFixture } from './source.test'
 import { State } from './state'
+import {
+  apiKeyFixture,
+  duplicateReply,
+  fakeXcrun,
+  p8Body,
+  success,
+  xcrunCalls
+} from './testflight.test'
 import { type Endpoint, endpoint } from './upload.test'
 let root: string, service: Endpoint, config: string, source: string
 const deployFile = path.resolve('scripts/deploy.ts')
@@ -77,6 +85,36 @@ const builder: Builder = async context => {
   return {
     file,
     buildNumber: nativeNumber(context.target.platform, context.buildNumber)
+  }
+}
+/** Sends the iOS build to TestFlight too, through a fake altool. */
+function testflightConfig(enabled = true): void {
+  const value = JSON.parse(readFileSync(config, 'utf8'))
+  const settings = value.branches.master.settings
+  const ios = settings.apps[app].ios
+  ios.apple.appStoreProfileNames = { [app]: 'Fixture AppStore' }
+  if (enabled)
+    ios.testflight = {
+      apiKeyFile: apiKeyFixture(root),
+      appleId: '6824597245'
+    }
+  else delete ios.testflight
+  settings.tools.xcrun = path.join(root, 'xcrun')
+  writeFileSync(config, JSON.stringify(value), { mode: 0o600 })
+}
+/** An iOS build with an App Store IPA beside its ad-hoc one. */
+const storeBuilder: Builder = async context => {
+  const built = await builder(context)
+  const testflight = path.join(context.source, 'ios-appstore.ipa')
+  writeFileSync(testflight, 'fake-store-package')
+  return { ...built, testflight }
+}
+function onlyRun(): ReturnType<State['load']> {
+  const state = new State(path.join(root, 'state'))
+  try {
+    return state.load(String(state.db.prepare('SELECT id FROM runs').get()?.id))
+  } finally {
+    state.close()
   }
 }
 describe('Pinned multi-app deployment orchestration', () => {
@@ -360,6 +398,126 @@ describe('Pinned multi-app deployment orchestration', () => {
     )
     assert.equal(service.requests.length, 1)
     assert(existsSync(path.join(root, 'output', id, 'ios.ipa')))
+  })
+  it('uploads the App Store IPA to TestFlight only after the ad-hoc IPA reaches builds.teamstation.app', async () => {
+    testflightConfig()
+    fakeXcrun(root, success)
+    service.statuses.push(401)
+    const logs: string[] = []
+    assert.equal(
+      await run(
+        parse('ios'),
+        { ios: storeBuilder },
+        new AbortController().signal,
+        line => logs.push(line)
+      ),
+      1
+    )
+    assert.deepEqual(xcrunCalls(root), [])
+    assert(!logs.some(line => line.includes('testflight')))
+    const record = onlyRun()
+    const store = record.artifacts[0].testflight!
+    assert.equal(store.file, 'ios-appstore.ipa')
+    assert.equal(store.published, undefined)
+    assert.equal(store.size, 'fake-store-package'.length)
+    const retained = path.join(root, 'output', record.id, 'ios-appstore.ipa')
+    assert.equal(readFileSync(retained, 'utf8'), 'fake-store-package')
+    assert.throws(() => {
+      writeFileSync(retained, 'changed')
+    })
+    const number = String(record.artifacts[0].buildNumber)
+    logs.length = 0
+    assert.equal(
+      await run(
+        { ...parse('ios'), publishOnly: record.id },
+        {},
+        new AbortController().signal,
+        line => logs.push(line)
+      ),
+      0
+    )
+    assert.deepEqual(logs, [
+      'ios uploaded',
+      `ios testflight uploaded 1.0.0 (${number})`
+    ])
+    const [call] = xcrunCalls(root)
+    assert.equal(call[call.indexOf('--upload-package') + 1], retained)
+    assert.equal(call[call.indexOf('--bundle-version') + 1], number)
+    assert.equal(
+      call[call.indexOf('--bundle-short-version-string') + 1],
+      '1.0.0'
+    )
+    assert.equal(call[call.indexOf('--apple-id') + 1], '6824597245')
+    assert.equal(onlyRun().artifacts[0].testflight?.published, true)
+    logs.length = 0
+    assert.equal(
+      await run(
+        { ...parse('ios'), publishOnly: record.id },
+        {},
+        new AbortController().signal,
+        line => logs.push(line)
+      ),
+      0
+    )
+    assert.deepEqual(logs, ['ios was already published'])
+    assert.equal(xcrunCalls(root).length, 1)
+    assert.equal(service.requests.length, 2)
+  })
+  it('retries only TestFlight after it fails, and counts a build Apple already holds as published', async () => {
+    testflightConfig()
+    fakeXcrun(
+      root,
+      { 'product-errors': [{ message: `Rejected key ${p8Body}` }] },
+      1
+    )
+    const logs: string[] = []
+    assert.equal(
+      await run(
+        parse('ios'),
+        { ios: storeBuilder },
+        new AbortController().signal,
+        line => logs.push(line)
+      ),
+      1
+    )
+    assert.equal(service.requests.length, 1)
+    assert(logs.includes('ios uploaded'))
+    assert(
+      logs.includes('ios testflight upload failed; package retained for retry')
+    )
+    assert(logs.some(line => line.includes('Rejected key [redacted]')))
+    assert(!logs.join('\n').includes(p8Body))
+    const record = onlyRun()
+    const number = String(record.artifacts[0].buildNumber)
+    const retry = async (): Promise<number> => {
+      logs.length = 0
+      return await run(
+        { ...parse('ios'), publishOnly: record.id },
+        {},
+        new AbortController().signal,
+        line => logs.push(line)
+      )
+    }
+    // A changed store IPA is never sent.
+    const retained = path.join(root, 'output', record.id, 'ios-appstore.ipa')
+    chmodSync(retained, 0o600)
+    writeFileSync(retained, 'changed-store-package')
+    assert.equal(await retry(), 1)
+    assert.equal(xcrunCalls(root).length, 1)
+    writeFileSync(retained, 'fake-store-package')
+    // Nor is it sent once TestFlight is no longer configured.
+    testflightConfig(false)
+    assert.equal(await retry(), 1)
+    assert.equal(xcrunCalls(root).length, 1)
+    testflightConfig()
+    fakeXcrun(root, duplicateReply, 1)
+    assert.equal(await retry(), 0)
+    assert.deepEqual(logs, [
+      'ios was already published',
+      `ios testflight already published 1.0.0 (${number})`
+    ])
+    assert.equal(xcrunCalls(root).length, 2)
+    assert.equal(service.requests.length, 1)
   })
   it('reports a failing tool status without private paths or compiler output', async () => {
     const lines: string[] = []

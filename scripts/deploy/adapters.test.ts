@@ -40,11 +40,18 @@ import {
 import { resolveSettings } from './config'
 import { app, fixtureSettings, testRoot } from './config.test'
 import { appDirectory, buildEnvironment, prepare } from './prepare'
-import { type Command, Processes } from './process'
+import { type Command, DeploymentToolError, Processes } from './process'
 import type { BuildContext } from './runner'
 import { target } from './targets'
+import { apiKeyFixture } from './testflight.test'
 
 let root: string, context: BuildContext, calls: Command[], profile: Profile
+/** The App Store profile Match supplies when a TestFlight build asks for one. */
+let storeProfile: Profile
+/** Whether the profile last decoded came from the App Store side of signing. */
+let fromStore: boolean
+/** Every Match request, read while its private request file still exists. */
+let matches: Array<Record<string, any>>
 let certificate: Buffer
 let original: Processes['run'], dispatch: (command: Command) => Promise<string>
 const team = 'EXAMPLETEAM'
@@ -82,10 +89,12 @@ async function fake(command: Command): Promise<string> {
       if (command.args.includes('-s')) defaultKeychain = command.args.at(-1)!
       return JSON.stringify(defaultKeychain)
     }
+    if (verb === 'cms') fromStore = command.args.at(-1)!.includes('appStore')
     return '<plist/>'
   }
   if (command.file === 'bundle' && command.args[1] === 'ruby') {
     const value = request(command)
+    if (command.args[3] === 'match') matches.push(value)
     if (command.args[3] === 'project')
       file(
         path.join(value.project, 'project.pbxproj'),
@@ -93,13 +102,14 @@ async function fake(command: Command): Promise<string> {
       )
     if (command.args[3] === 'match')
       file(path.join(value.profilesDirectory, 'fixture.mobileprovision'))
-    if (command.args[3] === 'profile') return JSON.stringify(profile)
+    if (command.args[3] === 'profile')
+      return JSON.stringify(fromStore ? storeProfile : profile)
     return ''
   }
   if (command.file === 'plutil')
     return JSON.stringify(
       command.args.at(-1)!.endsWith('entitlements.plist')
-        ? profile.entitlements
+        ? (fromStore ? storeProfile : profile).entitlements
         : info()
     )
   if (command.args[0]?.endsWith('clientConfig.mjs'))
@@ -231,6 +241,14 @@ describe('Native build and signing adapters', () => {
         'com.apple.developer.team-identifier': team
       }
     }
+    storeProfile = {
+      ...profile,
+      uuid: '00000000-0000-4000-8000-000000000002',
+      name: 'Fixture AppStore',
+      devices: []
+    }
+    fromStore = false
+    matches = []
     keychains = [path.join(root, 'original.keychain')]
     defaultKeychain = keychains[0]
     calls = []
@@ -821,5 +839,232 @@ describe('Native build and signing adapters', () => {
       `<plist version="1.0">${xml({ CFBundleIdentifier: app, CFBundleVersion: '26093004', CFBundleShortVersionString: '1.2.3', CFBundleExecutable: 'Example' })}</plist>`
     )
     assert.equal((await readInfo(context, appPath)).CFBundleIdentifier, app)
+  })
+  /** Sends this app's iOS build to TestFlight as well. */
+  function testflight(): void {
+    const apple = context.settings.apps[app].ios!.apple!
+    apple.appStoreProfileNames = { [app]: 'Fixture AppStore' }
+    context.settings.apps[app].ios!.testflight = {
+      apiKeyFile: apiKeyFixture(root),
+      appleId: '6824597245'
+    }
+  }
+  /** Records each export's options as written, and tags each IPA with its export. */
+  function recordExports(plists: Array<{ name: string; text: string }>): void {
+    const previous = dispatch
+    dispatch = async c => {
+      if (c.file === 'xcodebuild' && c.args[0] === '-exportArchive') {
+        plists.push({
+          name: path.basename(c.args.at(-1)!),
+          text: readFileSync(c.args.at(-1)!, 'utf8')
+        })
+        file(path.join(c.args[4], 'fixture.ipa'), path.basename(c.args[4]))
+        return ''
+      }
+      return await previous(c)
+    }
+  }
+  it('accepts only a store profile with no devices as an App Store profile', () => {
+    testflight()
+    assert.equal(
+      validateProfile(storeProfile, app, context, 'appStore').name,
+      'Fixture AppStore'
+    )
+    for (const override of [
+      { devices: ['fixture-device'] },
+      { provisionsAllDevices: true },
+      {
+        entitlements: { ...storeProfile.entitlements, 'get-task-allow': true }
+      },
+      { expires: '2020-01-01T00:00:00Z' },
+      { teams: ['OTHERTEAM'] },
+      {
+        entitlements: {
+          ...storeProfile.entitlements,
+          'com.apple.developer.team-identifier': 'OTHERTEAM'
+        }
+      },
+      {
+        entitlements: {
+          ...storeProfile.entitlements,
+          'application-identifier': `${team}.app.teamstation.director`
+        }
+      },
+      { name: 'Fixture' }
+    ])
+      assert.throws(
+        () =>
+          validateProfile(
+            { ...storeProfile, ...override },
+            app,
+            context,
+            'appStore'
+          ),
+        /did not match/
+      )
+    // An ad-hoc profile is not a store profile, nor the other way round.
+    assert.throws(() => validateProfile(profile, app, context, 'appStore'))
+    assert.throws(() => validateProfile(storeProfile, app, context, 'adHoc'))
+    assert.equal(
+      validateProfile(profile, app, context, 'adHoc').name,
+      'Fixture'
+    )
+    // Registered devices matter only to ad-hoc builds.
+    context.settings.apps[app].ios!.apple!.requiredDevices = ['unregistered']
+    validateProfile(storeProfile, app, context, 'appStore')
+    delete context.settings.apps[app].ios!.apple!.appStoreProfileNames
+    assert.throws(() => validateProfile(storeProfile, app, context, 'appStore'))
+  })
+  it('fetches App Store profiles with a second Match run only for a TestFlight app', async () => {
+    const home = path.join(root, 'home')
+    const legacy = path.join(home, 'Library/MobileDevice/Provisioning Profiles')
+    await withSigning(
+      context,
+      async signing => {
+        assert.equal(signing.appStoreProfiles, undefined)
+      },
+      home
+    )
+    assert.equal(matches.length, 1)
+    assert.equal(matches[0].type, 'adhoc')
+    matches = []
+    testflight()
+    await withSigning(
+      context,
+      async signing => {
+        assert.equal(signing.profiles.get(app)?.name, 'Fixture')
+        assert.equal(
+          signing.appStoreProfiles?.get(app)?.name,
+          'Fixture AppStore'
+        )
+        assert.deepEqual(readdirSync(legacy).sort(), [
+          `${profile.uuid}.mobileprovision`,
+          `${storeProfile.uuid}.mobileprovision`
+        ])
+      },
+      home
+    )
+    assert.deepEqual(
+      matches.map(m => [m.type, m.appIds, path.basename(m.profilesDirectory)]),
+      [
+        ['adhoc', [app], 'profiles'],
+        ['appstore', [app], 'appStoreProfiles']
+      ]
+    )
+    assert.equal(matches[1].password, undefined)
+    assert.equal(matches[1].keychain, matches[0].keychain)
+    assert.deepEqual(readdirSync(legacy), [])
+    assert.equal(readdirSync(context.output).length, 0)
+    // A store profile that still lists devices stops the build, and the
+    // ad-hoc profile already installed is removed again.
+    storeProfile.devices = ['fixture-device']
+    await assert.rejects(
+      withSigning(context, async () => assert.fail('accepted'), home),
+      /did not match/
+    )
+    assert.deepEqual(readdirSync(legacy), [])
+    assert.equal(keychains.length, 1)
+    storeProfile.devices = []
+    delete context.settings.apps[app].ios!.apple!.appStoreProfileNames
+    await assert.rejects(
+      withSigning(context, async () => assert.fail('accepted'), home),
+      /App Store profiles/
+    )
+  })
+  it("exports one archive once without TestFlight, with today's exact options", async () => {
+    const plists: Array<{ name: string; text: string }> = []
+    recordExports(plists)
+    const result = await ios(context, path.join(root, 'home'))
+    assert.deepEqual(plists, [
+      {
+        name: 'ExportOptions.plist',
+        text: `<?xml version="1.0"?><plist version="1.0"><dict><key>method</key><string>release-testing</string><key>signingStyle</key><string>manual</string><key>teamID</key><string>${team}</string><key>signingCertificate</key><string>Fixture Distribution</string><key>provisioningProfiles</key><dict><key>${app}</key><string>Fixture</string></dict><key>manageAppVersionAndBuildNumber</key><false/><key>stripSwiftSymbols</key><true/></dict></plist>`
+      }
+    ])
+    assert.equal(result.testflight, undefined)
+    assert.equal(readFileSync(result.file, 'utf8'), 'export')
+    assert.deepEqual(readdirSync(context.output), ['ios.ipa'])
+  })
+  it('exports the same archive again for App Store Connect when the app goes to TestFlight', async () => {
+    testflight()
+    const plists: Array<{ name: string; text: string }> = []
+    recordExports(plists)
+    const result = await ios(context, path.join(root, 'home'))
+    const exports = calls.filter(
+      c => c.file === 'xcodebuild' && c.args[0] === '-exportArchive'
+    )
+    assert.equal(
+      calls.filter(c => c.file === 'xcodebuild' && c.args[0] === 'archive')
+        .length,
+      1
+    )
+    assert.equal(exports.length, 2)
+    assert.equal(exports[0].args[2], exports[1].args[2])
+    assert.notEqual(exports[0].args[4], exports[1].args[4])
+    assert.equal(plists[0].name, 'ExportOptions.plist')
+    assert(plists[0].text.includes('<string>release-testing</string>'))
+    assert.deepEqual(plists[1], {
+      name: 'AppStoreExportOptions.plist',
+      text: `<?xml version="1.0"?><plist version="1.0"><dict><key>method</key><string>app-store-connect</string><key>signingStyle</key><string>manual</string><key>teamID</key><string>${team}</string><key>signingCertificate</key><string>Fixture Distribution</string><key>provisioningProfiles</key><dict><key>${app}</key><string>Fixture AppStore</string></dict><key>manageAppVersionAndBuildNumber</key><false/><key>uploadSymbols</key><true/><key>stripSwiftSymbols</key><true/></dict></plist>`
+    })
+    // The ad-hoc IPA stays the package; the store IPA rides beside it.
+    assert.equal(result.file, path.join(context.output, 'ios.ipa'))
+    assert.equal(readFileSync(result.file, 'utf8'), 'export')
+    assert.equal(
+      result.testflight,
+      path.join(context.output, 'ios-appstore.ipa')
+    )
+    assert.equal(readFileSync(result.testflight, 'utf8'), 'appStoreExport')
+    assert.deepEqual(readdirSync(context.output).sort(), [
+      'ios-appstore.ipa',
+      'ios.ipa'
+    ])
+    // A store IPA signed with the ad-hoc profile is refused, and nothing is kept.
+    context.output = path.join(root, 'second-output')
+    mkdirSync(context.output)
+    const previous = dispatch
+    dispatch = async c => {
+      const out = await previous(c)
+      if (c.args[0] === 'cms' && c.args.at(-1)!.includes('appStoreUnpacked'))
+        fromStore = false
+      return out
+    }
+    await assert.rejects(ios(context, path.join(root, 'home')), /did not match/)
+    assert.deepEqual(readdirSync(context.output), [])
+    // The API key is checked before anything is built.
+    chmodSync(context.settings.apps[app].ios!.testflight!.apiKeyFile, 0o644)
+    calls = []
+    await assert.rejects(ios(context, path.join(root, 'home')), /private/)
+    assert.equal(calls.length, 0)
+  })
+  it('reports whether a real profile provisions every device and refuses unknown Match types', async () => {
+    Processes.prototype.run = original
+    context.settings.tools.bundle = process.env.DEPLOY_TEST_BUNDLE ?? 'bundle'
+    const plist = path.join(root, 'profile.plist')
+    writeFileSync(
+      plist,
+      `<plist version="1.0"><dict><key>UUID</key><string>${storeProfile.uuid}</string><key>Name</key><string>Fixture AppStore</string><key>ExpirationDate</key><date>2099-01-01T00:00:00Z</date><key>TeamIdentifier</key><array><string>${team}</string></array><key>Platform</key><array><string>iOS</string></array><key>ProvisionsAllDevices</key><true/><key>DeveloperCertificates</key><array><data>${certificate.toString('base64')}</data></array><key>Entitlements</key>${xml(profile.entitlements)}</dict></plist>`
+    )
+    testflight()
+    const parsed = JSON.parse(
+      await ruby(context, 'profile', { file: plist }, root)
+    )
+    assert.equal(parsed.provisionsAllDevices, true)
+    assert.deepEqual(parsed.devices, [])
+    assert.throws(() => validateProfile(parsed, app, context, 'appStore'))
+    validateProfile(
+      { ...parsed, provisionsAllDevices: false },
+      app,
+      context,
+      'appStore'
+    )
+    await assert.rejects(
+      ruby(context, 'match', { type: 'enterprise' }, root),
+      (error: unknown) =>
+        error instanceof DeploymentToolError &&
+        error
+          .lastLines(20)
+          .some(line => line.includes('Unsupported signing type'))
+    )
   })
 })

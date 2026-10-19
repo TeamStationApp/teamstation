@@ -10,6 +10,8 @@ command, request_file = ARGV
 config = JSON.parse(File.read(request_file))
 case command
 when 'match', 'import'
+  # Ad-hoc and App Store profiles for iOS, a Developer ID certificate for macOS.
+  raise 'Unsupported signing type' unless %w[adhoc appstore developer_id].include?(config.fetch('type'))
   require 'fastlane'
   require 'match'
   require 'open3'
@@ -160,6 +162,7 @@ when 'profile'
     'uuid' => profile.fetch('UUID'), 'name' => profile.fetch('Name'),
     'expires' => profile.fetch('ExpirationDate').to_time.iso8601,
     'teams' => profile.fetch('TeamIdentifier'), 'devices' => profile.fetch('ProvisionedDevices', []),
+    'provisionsAllDevices' => profile.fetch('ProvisionsAllDevices', false),
     'platforms' => profile.fetch('Platform'), 'entitlements' => profile.fetch('Entitlements'),
     'certificates' => profile.fetch('DeveloperCertificates').map { |cert| Digest::SHA256.hexdigest(cert.respond_to?(:string) ? cert.string : cert) }
   })

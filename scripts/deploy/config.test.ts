@@ -200,6 +200,87 @@ describe('Deployment configuration', () => {
     writeFileSync(file, 'bad json')
     assert.throws(() => loadSettings(file, 'master'))
   })
+  it('resolves TestFlight and App Store profile paths, and keeps TestFlight to iOS with store profiles', () => {
+    const store = (): any => {
+      const settings: any = fixtureSettings(root)
+      settings.apps[app].ios.apple.appStoreProfileNames = {
+        [app]: 'Fixture AppStore'
+      }
+      settings.apps[app].ios.testflight = {
+        apiKeyFile: 'appStoreConnect/appStoreConnect.json',
+        appleId: '6824597245'
+      }
+      settings.match.imports = {
+        ios: {
+          certificate: 'asset.cer',
+          privateKey: 'asset.p12',
+          profile: 'adhoc.mobileprovision',
+          appStoreProfile: 'appstore.mobileprovision'
+        }
+      }
+      return settings
+    }
+    const config = (settings: unknown): object => ({
+      schemaVersion: 1,
+      branches: { master: { settings } }
+    })
+    const plain = resolveSettings(config(fixtureSettings(root)), 'master')
+    assert.equal(plain.apps[app].ios?.testflight, undefined)
+    assert.equal(plain.apps[app].ios?.apple?.appStoreProfileNames, undefined)
+    const file = path.join(root, 'config.json')
+    writeFileSync(file, JSON.stringify(config(store())), { mode: 0o600 })
+    const settings = loadSettings(file, 'master')
+    assert.deepEqual(settings.apps[app].ios?.testflight, {
+      apiKeyFile: path.join(root, 'appStoreConnect/appStoreConnect.json'),
+      appleId: '6824597245'
+    })
+    assert.deepEqual(
+      { ...settings.apps[app].ios?.apple?.appStoreProfileNames },
+      { [app]: 'Fixture AppStore' }
+    )
+    assert.equal(
+      settings.match?.imports.ios.appStoreProfile,
+      path.join(root, 'appstore.mobileprovision')
+    )
+    assert.equal(
+      settings.match?.imports.ios.profile,
+      path.join(root, 'adhoc.mobileprovision')
+    )
+    for (const change of [
+      (s: any) => {
+        s.apps[app].android.testflight = s.apps[app].ios.testflight
+      },
+      (s: any) => {
+        s.apps[app].macos = {
+          ...s.apps[app].ios,
+          apple: { ...s.apps[app].ios.apple }
+        }
+        delete s.apps[app].macos.testflight
+      },
+      (s: any) => {
+        delete s.apps[app].ios.apple.appStoreProfileNames
+      },
+      (s: any) => {
+        s.apps[app].ios.testflight.appleId = 'app.teamstation.app'
+      },
+      (s: any) => {
+        s.apps[app].ios.testflight.appleId = '1'.repeat(21)
+      },
+      (s: any) => {
+        s.apps[app].ios.testflight.apiKey = 'inline'
+      },
+      (s: any) => {
+        delete s.apps[app].ios.testflight.apiKeyFile
+      },
+      (s: any) => {
+        s.apps[app].ios.apple.appStoreProfileNames = { [app]: '' }
+      }
+    ]) {
+      const settings = store()
+      change(settings)
+      assert.throws(() => resolveSettings(config(settings), 'master'))
+    }
+  })
   it('validates CLI app/platform/branch and portable scalar inputs', () => {
     const valid = [
       '--app',

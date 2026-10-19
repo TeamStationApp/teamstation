@@ -28,6 +28,7 @@ import {
   sentryUploader
 } from './sentry'
 import { noSymlinks } from './state'
+import { apiKey } from './testflight'
 import { text } from './validation'
 
 const asProfile = asObject({
@@ -40,6 +41,7 @@ const asProfile = asObject({
   expires: asString,
   teams: asArray(asString),
   devices: asArray(asString),
+  provisionsAllDevices: asOptional(asBoolean),
   platforms: asArray(asString),
   certificates: asArray(asString),
   entitlements: asObject({
@@ -48,7 +50,13 @@ const asProfile = asObject({
     'com.apple.developer.team-identifier': asString
   })
 })
-export type Profile = ReturnType<typeof asProfile>
+/** Only an enterprise profile says whether it provisions every device. */
+export type Profile = Omit<
+  ReturnType<typeof asProfile>,
+  'provisionsAllDevices'
+> & {
+  provisionsAllDevices?: boolean
+}
 const asInfo = asObject({
   CFBundleIdentifier: asString,
   CFBundleVersion: asString,
@@ -82,16 +90,25 @@ function quotedPaths(value: string): string[] {
     return line.slice(1, -1)
   })
 }
+/**
+ * Ad-hoc profiles carry the registered devices; App Store profiles carry
+ * none, and must not be an enterprise profile that installs everywhere.
+ */
+export type ProfileKind = 'adHoc' | 'appStore'
 export function validateProfile(
   value: unknown,
   appId: string,
-  context: BuildContext
+  context: BuildContext,
+  kind: ProfileKind = 'adHoc'
 ): Profile {
   const profile = asProfile(value)
   const apple = context.settings.apps[context.target.app].ios?.apple
+  const names =
+    kind === 'adHoc' ? apple?.profileNames : apple?.appStoreProfileNames
   if (
-    apple?.profileNames[appId] == null ||
-    profile.name !== apple.profileNames[appId] ||
+    apple == null ||
+    names?.[appId] == null ||
+    profile.name !== names[appId] ||
     !profile.teams.includes(apple.teamId) ||
     !profile.platforms.includes('iOS') ||
     profile.entitlements['application-identifier'] !==
@@ -101,8 +118,10 @@ export function validateProfile(
     profile.entitlements['get-task-allow'] ||
     !Number.isFinite(Date.parse(profile.expires)) ||
     Date.parse(profile.expires) <= Date.now() + 60000 ||
-    profile.devices.length === 0 ||
-    apple.requiredDevices.some(device => !profile.devices.includes(device))
+    (kind === 'adHoc'
+      ? profile.devices.length === 0 ||
+        apple.requiredDevices.some(device => !profile.devices.includes(device))
+      : profile.devices.length > 0 || profile.provisionsAllDevices === true)
   )
     throw new Error(
       'Signing profile identity, expiry or registered devices did not match'
@@ -193,6 +212,8 @@ export interface Signing {
   keychain: string
   directory: string
   profiles: Map<string, Profile>
+  /** The App Store profiles, fetched only for an app that goes to TestFlight. */
+  appStoreProfiles?: Map<string, Profile>
 }
 function profileDirectories(home: string): string[] {
   const legacy = path.resolve(
@@ -269,28 +290,35 @@ export async function withSigning<T>(
       ...original,
       keychain
     ])
-    const profilesDirectory = path.join(directory, 'profiles')
-    await ruby(
-      context,
-      'match',
-      {
-        ...match,
-        password: undefined,
-        keychainPassword: undefined,
-        p12Password: undefined,
-        type: context.target.platform === 'ios' ? 'adhoc' : 'developer_id',
-        keychain,
-        profilesDirectory,
-        teamId: apple.teamId,
-        appIds:
-          context.target.platform === 'ios'
-            ? Object.keys(apple.profileNames)
-            : [context.target.app]
-      },
-      directory
-    )
-    const profiles = new Map<string, Profile>()
-    if (context.target.platform === 'ios') {
+    // Fetches one Match type's profiles into its own directory and installs
+    // each for Xcode once it is verified as that kind.
+    const fetch = async (
+      type: string,
+      profilesDirectory: string,
+      names: Record<string, string>,
+      kind: ProfileKind
+    ): Promise<Map<string, Profile>> => {
+      await ruby(
+        context,
+        'match',
+        {
+          ...match,
+          password: undefined,
+          keychainPassword: undefined,
+          p12Password: undefined,
+          type,
+          keychain,
+          profilesDirectory,
+          teamId: apple.teamId,
+          appIds:
+            context.target.platform === 'ios'
+              ? Object.keys(names)
+              : [context.target.app]
+        },
+        directory
+      )
+      const profiles = new Map<string, Profile>()
+      if (context.target.platform !== 'ios') return profiles
       for (const name of readdirSync(profilesDirectory)) {
         if (!name.endsWith('.mobileprovision')) continue
         const file = path.join(profilesDirectory, name)
@@ -305,7 +333,7 @@ export async function withSigning<T>(
         const id = candidate.entitlements['application-identifier'].slice(
           apple.teamId.length + 1
         )
-        const profile = validateProfile(raw, id, context)
+        const profile = validateProfile(raw, id, context, kind)
         profiles.set(id, profile)
         const bytes = readFileSync(file)
         for (const profileDirectory of profileDirectories(profileHome)) {
@@ -326,10 +354,31 @@ export async function withSigning<T>(
           }
         }
       }
-      if (Object.keys(apple.profileNames).some(id => !profiles.has(id)))
+      if (Object.keys(names).some(id => !profiles.has(id)))
         throw new Error('Match did not supply all requested profiles')
+      return profiles
     }
-    return await action({ keychain, directory, profiles })
+    const profiles = await fetch(
+      context.target.platform === 'ios' ? 'adhoc' : 'developer_id',
+      path.join(directory, 'profiles'),
+      apple.profileNames,
+      'adHoc'
+    )
+    const testflight =
+      context.target.platform === 'ios'
+        ? context.settings.apps[context.target.app].ios?.testflight
+        : undefined
+    if (testflight == null)
+      return await action({ keychain, directory, profiles })
+    if (apple.appStoreProfileNames == null)
+      throw new Error('TestFlight needs iOS App Store profiles')
+    const appStoreProfiles = await fetch(
+      'appstore',
+      path.join(directory, 'appStoreProfiles'),
+      apple.appStoreProfileNames,
+      'appStore'
+    )
+    return await action({ keychain, directory, profiles, appStoreProfiles })
   } finally {
     try {
       for (const item of installed) {
@@ -544,7 +593,8 @@ export async function archive(
 export async function verifyApp(
   context: BuildContext,
   app: string,
-  signing: Signing
+  signing: Signing,
+  kind: ProfileKind = 'adHoc'
 ): Promise<void> {
   const apple =
     context.settings.apps[context.target.app][context.target.platform]!.apple!
@@ -598,7 +648,8 @@ export async function verifyApp(
         await ruby(context, 'profile', { file: profileFile }, signing.directory)
       ),
       info.CFBundleIdentifier,
-      context
+      context,
+      kind
     )
     const certificate = path.join(signing.directory, 'leaf')
     await context.processes.run({
@@ -667,10 +718,67 @@ export async function verifyApp(
       )
   }
 }
+/** Where one export's options, IPA and unpacked app go in the signing directory. */
+interface ExportNames {
+  options: string
+  exported: string
+  unpacked: string
+}
+/**
+ * Exports the archive with these options, checks the one IPA it holds as a
+ * `kind` build, and returns that IPA.
+ */
+async function exportIpa(
+  context: BuildContext,
+  signing: Signing,
+  archived: string,
+  options: object,
+  names: ExportNames,
+  kind: ProfileKind
+): Promise<string> {
+  const plist = path.join(signing.directory, names.options)
+  writeFileSync(
+    plist,
+    `<?xml version="1.0"?><plist version="1.0">${xml(options)}</plist>`,
+    { mode: 0o600 }
+  )
+  const exported = path.join(signing.directory, names.exported)
+  await context.processes.run({
+    file: context.settings.tools.xcodebuild,
+    args: [
+      '-exportArchive',
+      '-archivePath',
+      archived,
+      '-exportPath',
+      exported,
+      '-exportOptionsPlist',
+      plist
+    ],
+    cwd: context.source,
+    capture: false
+  })
+  const ipas = readdirSync(exported).filter(item => item.endsWith('.ipa'))
+  if (ipas.length !== 1) throw new Error('Expected one exported IPA')
+  const file = path.join(exported, ipas[0])
+  const unpacked = path.join(signing.directory, names.unpacked)
+  await context.processes.run({
+    file: 'ditto',
+    args: ['-x', '-k', file, unpacked],
+    cwd: context.source
+  })
+  const payload = path.join(unpacked, 'Payload')
+  const apps = readdirSync(payload).filter(item => item.endsWith('.app'))
+  if (apps.length !== 1) throw new Error('Expected one IPA application')
+  await verifyApp(context, path.join(payload, apps[0]), signing, kind)
+  return file
+}
 export async function ios(
   context: BuildContext,
   profileHome = os.homedir()
 ): Promise<BuiltPackage> {
+  // The key is read before the archive, so a bad one fails in seconds.
+  const testflight = context.settings.apps[context.target.app].ios?.testflight
+  if (testflight != null) apiKey(testflight.apiKeyFile)
   return await withSigning(
     context,
     async signing => {
@@ -685,45 +793,64 @@ export async function ios(
         ? 'release-testing'
         : 'ad-hoc'
       const apple = context.settings.apps[context.target.app].ios!.apple!
-      const options = path.join(signing.directory, 'ExportOptions.plist')
-      writeFileSync(
-        options,
-        `<?xml version="1.0"?><plist version="1.0">${xml({ method, signingStyle: 'manual', teamID: apple.teamId, signingCertificate: apple.identity, provisioningProfiles: apple.profileNames, manageAppVersionAndBuildNumber: false, stripSwiftSymbols: true })}</plist>`,
-        { mode: 0o600 }
+      // The ad-hoc IPA is the one builds.teamstation.app serves.
+      const file = await exportIpa(
+        context,
+        signing,
+        archived,
+        {
+          method,
+          signingStyle: 'manual',
+          teamID: apple.teamId,
+          signingCertificate: apple.identity,
+          provisioningProfiles: apple.profileNames,
+          manageAppVersionAndBuildNumber: false,
+          stripSwiftSymbols: true
+        },
+        {
+          options: 'ExportOptions.plist',
+          exported: 'export',
+          unpacked: 'unpacked'
+        },
+        'adHoc'
       )
-      const exported = path.join(signing.directory, 'export')
-      await context.processes.run({
-        file: context.settings.tools.xcodebuild,
-        args: [
-          '-exportArchive',
-          '-archivePath',
-          archived,
-          '-exportPath',
-          exported,
-          '-exportOptionsPlist',
-          options
-        ],
-        cwd: context.source,
-        capture: false
-      })
-      const names = readdirSync(exported).filter(name => name.endsWith('.ipa'))
-      if (names.length !== 1) throw new Error('Expected one exported IPA')
-      const file = path.join(exported, names[0])
-      const unpacked = path.join(signing.directory, 'unpacked')
-      await context.processes.run({
-        file: 'ditto',
-        args: ['-x', '-k', file, unpacked],
-        cwd: context.source
-      })
-      const payload = path.join(unpacked, 'Payload')
-      const apps = readdirSync(payload).filter(name => name.endsWith('.app'))
-      if (apps.length !== 1) throw new Error('Expected one IPA application')
-      await verifyApp(context, path.join(payload, apps[0]), signing)
       const retained = path.join(context.output, 'ios.ipa')
+      if (testflight == null) {
+        copyFileSync(file, retained, 1)
+        return {
+          file: retained,
+          buildNumber: nativeNumber('ios', context.buildNumber)
+        }
+      }
+      // The same archive, signed for App Store Connect, goes to TestFlight.
+      const store = await exportIpa(
+        context,
+        signing,
+        archived,
+        {
+          method: 'app-store-connect',
+          signingStyle: 'manual',
+          teamID: apple.teamId,
+          signingCertificate: apple.identity,
+          provisioningProfiles: apple.appStoreProfileNames,
+          manageAppVersionAndBuildNumber: false,
+          uploadSymbols: true,
+          stripSwiftSymbols: true
+        },
+        {
+          options: 'AppStoreExportOptions.plist',
+          exported: 'appStoreExport',
+          unpacked: 'appStoreUnpacked'
+        },
+        'appStore'
+      )
+      const retainedStore = path.join(context.output, 'ios-appstore.ipa')
       copyFileSync(file, retained, 1)
+      copyFileSync(store, retainedStore, 1)
       return {
         file: retained,
-        buildNumber: nativeNumber('ios', context.buildNumber)
+        buildNumber: nativeNumber('ios', context.buildNumber),
+        testflight: retainedStore
       }
     },
     profileHome
