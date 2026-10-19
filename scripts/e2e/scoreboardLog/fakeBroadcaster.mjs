@@ -3,7 +3,8 @@
 //
 //   node scripts/e2e/scoreboardLog/fakeBroadcaster.mjs \
 //     --url rtmp://127.0.0.1:1946/live/<key> [--stamped] [--duration 180] \
-//     [--outage <at>:<seconds>]... [--lead <seconds>] [--size 1280x720] \
+//     [--outage <at>:<seconds>]... [--stall <at>:<seconds>]... \
+//     [--jump <at>:<seconds>]... [--lead <seconds>] [--size 1280x720] \
 //     [--fps 30] [--ffmpeg /opt/homebrew/bin/ffmpeg]
 //
 // 1. Plans the start, T0, `--lead` seconds ahead (by default long enough to
@@ -22,6 +23,14 @@
 //    from where the picture would be by then, as a camera that lost its
 //    network does: the twenty seconds in between are never sent, and the new
 //    publish's timestamps start again from zero. Repeat it for more outages.
+// 6. `--stall 70:20` stops the publishing FFmpeg (SIGSTOP) 70 s in, for 20 s,
+//    and lets it go on (SIGCONT) on the same connection. `-re` then sends the
+//    twenty seconds it owes as a burst, as an uplink that held its queue
+//    does. Keep it under 30 s or the server closes the quiet publisher.
+// 7. `--jump 40:34` moves every timestamp from 40 s in forward by 34 s, on
+//    the same connection (the `setts` bitstream filter, the publish still
+//    `-c copy`): an encoder that dropped its queue. PTS and DTS move
+//    together; the picture, and the wall clock burned into it, do not.
 //
 // Several at once publish several angles. Each line it prints is one JSON
 // event; the last is `{"event":"done"}`. It exits 1 if a publish fails.
@@ -45,6 +54,8 @@ const { values } = parseArgs({
     stamped: { type: 'boolean', default: false },
     duration: { type: 'string', default: '180' },
     outage: { type: 'string', multiple: true, default: [] },
+    stall: { type: 'string', multiple: true, default: [] },
+    jump: { type: 'string', multiple: true, default: [] },
     lead: { type: 'string' },
     size: { type: 'string', default: '1280x720' },
     fps: { type: 'string', default: '30' },
@@ -63,6 +74,17 @@ const outages = values.outage
 for (const { at, seconds } of outages)
   if (!(at > 0 && seconds > 0 && at + seconds < duration))
     throw new Error(`--outage ${at}:${seconds} is not inside the stream`)
+const timed = (list, name) =>
+  list
+    .map(one => one.split(':').map(Number))
+    .map(([at, seconds]) => {
+      if (!(at > 0 && seconds > 0 && at < duration))
+        throw new Error(`--${name} ${at}:${seconds} is not inside the stream`)
+      return { at, seconds }
+    })
+    .sort((a, b) => a.at - b.at)
+const stalls = timed(values.stall, 'stall')
+const jumps = timed(values.jump, 'jump')
 // libx265 runs several times faster than real time at this size; a quarter
 // of the length, and ten seconds to spare, covers the encode and the stamp.
 const lead = values.lead == null ? 10 + duration / 4 : Number(values.lead)
@@ -93,6 +115,18 @@ function markerFilters() {
 
 const work = mkdtempSync(join(tmpdir(), 'tsFakeBroadcaster-'))
 let failed = false
+/** The FFmpeg publishing now, stopped with this process. */
+let publishing = null
+// Stopped from outside — the player-layouts fixture's `--stop-live` ends a
+// live angle this way — it left its encode behind, some 600 MB a time, and
+// its FFmpeg publishing on with nothing to stop it.
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    publishing?.kill('SIGTERM')
+    rmSync(work, { recursive: true, force: true })
+    process.exit(1)
+  })
+}
 try {
   say({
     event: 'planned',
@@ -100,6 +134,8 @@ try {
     t0Iso: new Date(t0).toISOString(),
     duration,
     outages,
+    stalls,
+    jumps,
     stamped: values.stamped
   })
 
@@ -168,6 +204,25 @@ try {
   for (const part of parts) {
     await pause(t0 + part.from * 1000 - Date.now())
     say({ event: 'publish', fromSec: part.from, toSec: part.to })
+    // Each jump inside this part, in the part's own timestamps, which start
+    // again from zero; the later ones carry the earlier ones' offsets.
+    const shifts = []
+    let carried = 0
+    for (const { at, seconds } of jumps) {
+      if (at <= part.from || at >= part.to) continue
+      shifts.push({ at: at - part.from + carried, seconds })
+      carried += seconds
+    }
+    const moved = name =>
+      shifts.reduce(
+        (expr, { at, seconds }) =>
+          `${expr}+if(gte(${name}\\,${at}/TB)\\,${seconds}/TB\\,0)`,
+        name
+      )
+    const bsf =
+      shifts.length === 0
+        ? []
+        : ['-bsf:v', `setts=pts=${moved('PTS')}:dts=${moved('DTS')}`]
     const code = await new Promise(resolve => {
       const child = spawn(
         values.ffmpeg,
@@ -183,13 +238,38 @@ try {
           String(part.to - part.from),
           '-c',
           'copy',
+          ...bsf,
           '-f',
           'flv',
           values.url
         ],
         { stdio: ['ignore', 'ignore', 'inherit'] }
       )
-      child.on('exit', resolve)
+      publishing = child
+      const timers = []
+      for (const { at, seconds } of stalls) {
+        if (at <= part.from || at >= part.to) continue
+        timers.push(
+          setTimeout(
+            () => {
+              child.kill('SIGSTOP')
+              say({ event: 'stall', atSec: at, seconds })
+              timers.push(
+                setTimeout(() => {
+                  child.kill('SIGCONT')
+                  say({ event: 'resumed', atSec: at + seconds })
+                }, seconds * 1000)
+              )
+            },
+            Math.max(0, t0 + at * 1000 - Date.now())
+          )
+        )
+      }
+      child.on('exit', code => {
+        publishing = null
+        for (const timer of timers) clearTimeout(timer)
+        resolve(code)
+      })
     })
     say({ event: 'stopped', fromSec: part.from, toSec: part.to, code })
     if (code !== 0) {
