@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import type { BallArcState } from '../field/ballArcModel'
 import { fieldingLocation, isFairLocation } from '../field/fieldingLocation'
 import { fieldKey } from '../field/fieldKeyboard'
@@ -10,13 +11,12 @@ import type { FieldCanvasProps } from '../field/fieldTypes'
 import { homeRunKind, homeRunLanding } from '../field/stadiumBoundary'
 import { initialHitTarget } from '../field/trajectoryGuide'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { asScoringPlay } from './scoringContract'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
 const initial = (): ReturnType<typeof initialScoringState> =>
-  initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  initialScoringState(scoringSession(gameFixture))
 describe('outcome-specific fielding', function () {
   it('uses the current batting side for home-run default guidance and restores it with Undo', function () {
     for (const code of ['L', 'R'] as const) {

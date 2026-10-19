@@ -25,7 +25,7 @@ import {
   ordinal,
   withHalfOuts
 } from './linescore'
-import { newSetup } from './lineup'
+import { addPlayer, newSetup } from './lineup'
 import { copyState, type GameState, setupOf } from './state'
 
 /**
@@ -85,15 +85,19 @@ const context = { gamePk: 'g1', teams: TEAMS, setup: setupOf(game()) }
 function rostered(): GameState {
   const setup = newSetup(TEAMS, {
     away: Array.from({ length: 9 }, (_, i) => ({
-      userId: 5000 + i,
+      userId: 1 + i,
       shortName: `Away ${i + 1}`
     })),
     home: Array.from({ length: 8 }, (_, i) => ({
-      userId: 6000 + i,
+      userId: 10 + i,
       shortName: `Home ${i + 1}`
     }))
   })
-  return after(game(), { type: 'lineup', kind: 'roster', setup })
+  const state = after(game(), { type: 'lineup', kind: 'roster', setup })
+  addPlayer(state, 'home', 18, 'Player 9', '9')
+  state.liveData.boxscore.teams.home.battingOrder.push(18)
+  state.liveData.boxscore.teams.home.defense.RF = 18
+  return state
 }
 
 const inning: ScoringAction[] = [
@@ -131,7 +135,7 @@ const inning: ScoringAction[] = [
 ]
 
 describe('folding a play for the server', function () {
-  it('names every player by user id, and one made up at the field by name alone', function () {
+  it('keeps persistent identities for rostered players and game guests', function () {
     const start = rostered()
     const scored = score(start, inning.slice(0, 3))
     const current = scored.current as unknown as {
@@ -147,14 +151,14 @@ describe('folding a play for the server', function () {
     }
     expect(current.about).includes({ isComplete: false, atBatIndex: 0 })
     expect(current).not.to.have.property('result')
-    expect(current.matchup.batter).deep.equals({ id: 5000, fullName: 'Away 1' })
+    expect(current.matchup.batter).deep.equals({ id: 1, fullName: 'Away 1' })
     expect(current.matchup.pitcher).deep.equals({
-      id: 6000,
+      id: 10,
       fullName: 'Home 1'
     })
     // The home side had eight: the ninth, playing right field, was made up.
     const madeUp = start.liveData.boxscore.teams.home.defense.RF!
-    expect(start.gameData.players[madeUp].userId).equals(null)
+    expect(start.gameData.players[madeUp].userId).equals(18)
     const folded = foldCurrentPlay(
       start,
       {
@@ -168,7 +172,7 @@ describe('folding a play for the server', function () {
     )
     expect(
       (folded as unknown as { matchup: { pitcher: unknown } }).matchup.pitcher
-    ).deep.equals({ fullName: 'Player 9' })
+    ).deep.equals({ id: 18, fullName: 'Player 9' })
     expect(asCurrentPlay(scored.current)).deep.equals(scored.current)
   })
 
@@ -193,7 +197,7 @@ describe('folding a play for the server', function () {
         eventType: 'single',
         label: 'Single: Away 1',
         teamId: 'away',
-        creditUserId: 5000,
+        creditUserId: 1,
         credit: { name: 'Away 1', role: 'batter', position: null }
       }
     ])
@@ -202,7 +206,7 @@ describe('folding a play for the server', function () {
     )[0]
     expect(runner.credits).deep.equals([
       {
-        player: { id: 6004, fullName: 'Home 5' },
+        player: { id: 14, fullName: 'Home 5' },
         position: {
           code: '6',
           name: 'Shortstop',
@@ -308,7 +312,13 @@ describe('reading a game back', function () {
       { type: 'result', eventType: 'single' }
     )
     push(
-      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Pinch' },
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        player: 19,
+        side: 'away',
+        name: 'Pinch'
+      },
       {
         type: 'lineup',
         kind: 'substitute',
@@ -341,7 +351,13 @@ describe('reading a game back', function () {
       player: 19
     }
     const scored = score(game(), [
-      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Freeman' },
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        player: 19,
+        side: 'away',
+        name: 'Freeman'
+      },
       ...inning.slice(0, 3),
       runner,
       { type: 'pitch', call: 'B' },
@@ -565,9 +581,9 @@ describe('reading a game back', function () {
     expect(state.liveData.linescore.outs).equals(1)
     expect(state.liveData.linescore.teams.away.runs).equals(1)
     expect(state.liveData.linescore.offense.first).equals(null)
-    expect(state.liveData.linescore.offense.second!.id).equals(2)
-    expect(state.liveData.linescore.offense.third!.id).equals(1)
-    expect(state.liveData.linescore.offense.batter!.id).equals(4)
+    expect(state.liveData.linescore.offense.second!.id).equals(7001)
+    expect(state.liveData.linescore.offense.third!.id).equals(7000)
+    expect(state.liveData.linescore.offense.batter!.id).equals(7003)
     expect(state.liveData.plays.currentPlay!.about.atBatIndex).equals(4)
 
     // An imported game gives the score, the outs and the next batter, and
@@ -583,7 +599,7 @@ describe('reading a game back', function () {
       null,
       null
     ])
-    expect(imported.offense.batter!.id).equals(4)
+    expect(imported.offense.batter!.id).equals(7003)
 
     // Scoring carries on from there with the lineup the first scored play kept.
     const next = score(state, [{ type: 'pitch', call: 'B' }])

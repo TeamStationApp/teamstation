@@ -1294,12 +1294,14 @@ const gumboSchemas = {
       "engine's own vocabulary, and `detail` the scorer's own picks and " +
       'estimates (trajectory, launch angle). Replay and undo read it; ' +
       '`npm run refold-scored-games` rebuilds the rest of the play from it.' +
-      ' `version` is 1; a post whose record has any other version is ' +
+      ' New records use `version` 2 with persistent numeric player ids and ' +
+      'an append-only `tagOrder`. Historical version 1 records are read ' +
+      'through their saved identity maps. Invalid or unsupported records are ' +
       'refused with 400. Scoring sessions preserve historical playback times ' +
       'and the server adds radar measurement provenance when necessary.',
     required: ['version', 'setupBefore', 'actions'],
     properties: {
-      version: { type: 'integer', enum: [1] },
+      version: { type: 'integer', enum: [1, 2] },
       setupBefore: { type: 'object' },
       actions: { type: 'array', items: { type: 'object' } },
       actionTimes: {
@@ -4384,6 +4386,82 @@ export function openApiDocument(version: string): OpenApiDocument {
             },
             401: errorResponse,
             404: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/guest-players': {
+        post: {
+          summary: 'Create a persistent player for one game',
+          description:
+            'A roster manager for the selected side creates a guest with no ' +
+            'login, email or team membership. The returned identity is appended ' +
+            'to that side of GameDetail.guests before the client adds the player ' +
+            'to its lineup. Final, cancelled or unresolved plays refuse creation.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: [
+                    'side',
+                    'firstName',
+                    'lastName',
+                    'jersey',
+                    'positions',
+                    'bats',
+                    'throws'
+                  ],
+                  properties: {
+                    side: { type: 'string', enum: ['away', 'home'] },
+                    firstName: {
+                      type: 'string',
+                      maxLength: PLAYER_NAME_MAX_LENGTH
+                    },
+                    lastName: {
+                      type: 'string',
+                      maxLength: PLAYER_NAME_MAX_LENGTH
+                    },
+                    jersey: {
+                      type: 'string',
+                      nullable: true,
+                      maxLength: JERSEY_MAX_LENGTH
+                    },
+                    positions: {
+                      type: 'array',
+                      items: { type: 'string', enum: [...PLAYER_POSITIONS] }
+                    },
+                    bats: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right', 'switch']
+                    },
+                    throws: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right']
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description: 'The saved guest',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/RosterEntry' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
           }
         }
       },

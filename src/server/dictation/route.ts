@@ -14,6 +14,7 @@ import {
   type DictationUp
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { actionFromTagSlots } from '../../common/scoring/actions'
 import { type Actor, actorForToken } from '../auth/sessions'
 import { sessionToken } from '../auth/tokens'
 import type { Database } from '../db/database'
@@ -336,12 +337,22 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
     const { transcript } = flight
     log(dictationReplyLine(id, flight.model, transcript, turn))
     switch (turn.kind) {
-      case 'actions':
+      case 'actions': {
+        let actions: typeof turn.actions
+        try {
+          actions = turn.actions.map(action =>
+            actionFromTagSlots(action, flight.start.tagOrder ?? [])
+          )
+        } catch {
+          fail(id, 'The player tags changed. Please try again.')
+          finish(flight, 'invalid player tag')
+          return
+        }
         send({
           kind: 'actions',
           id,
           transcript,
-          actions: turn.actions,
+          actions,
           ...(turn.roster == null ? {} : { roster: turn.roster }),
           dropped: turn.dropped,
           ...(turn.undo === true ? { undo: true } : {})
@@ -351,6 +362,7 @@ function serve(ws: WebSocket, actor: Actor, options: DictationOptions): void {
           `${turn.undo === true ? 'undo, ' : ''}${turn.actions.length} actions, ${turn.roster == null ? '' : `${turn.roster.length} roster commands, `}${turn.dropped.length} dropped`
         )
         return
+      }
       case 'ask':
         flight.phase = 'asking'
         flight.options = turn.options

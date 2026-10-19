@@ -8,10 +8,8 @@ import {
   validateRoster
 } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
-import {
-  addDevelopmentPlayer,
-  createDevelopmentSession
-} from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
+import { addDevelopmentPlayer } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
   copyState,
@@ -21,7 +19,7 @@ import {
 import { playerRef } from './scoringSelectors'
 import { POSITIONS } from './scoringTypes'
 const initial = (): ReturnType<typeof initialScoringState> =>
-  initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  initialScoringState(scoringSession(gameFixture))
 /** What taking a roster would do: the error, or the game it leaves. */
 function applyRosterDraft(
   state: ReturnType<typeof initial>,
@@ -110,7 +108,12 @@ describe('atomic scoring edits', function () {
     // runner the new order leaves out.
     const empty = initial()
     const newDraft = copyState(empty.session)
-    const replacement = addDevelopmentPlayer(newDraft, 'away', 'New player')
+    const replacement = addDevelopmentPlayer(
+      newDraft,
+      'away',
+      9000000,
+      'New player'
+    )
     newDraft.liveData.boxscore.teams.away.battingOrder = [replacement]
     newDraft.gameData.players[replacement].bats = 'left'
     expect(
@@ -132,7 +135,7 @@ describe('atomic scoring edits', function () {
     }
     state.phase = 'awaitingBatter'
     const draft = copyState(session)
-    const newId = addDevelopmentPlayer(draft, 'away', 'Relief batter')
+    const newId = addDevelopmentPlayer(draft, 'away', 9000000, 'Relief batter')
     draft.liveData.boxscore.teams.away.battingOrder.push(newId)
     expect(applyRosterDraft(state, draft).error).is.a('string')
     expect(applyRosterDraft(state, draft, 1).error).is.a('string')
