@@ -3,13 +3,6 @@
  * have stood still before the playlist on the server is looked at.
  */
 export const STALE_PLAYLIST_SEC = 20
-/**
- * How much further the server's playlist must reach than the player's before
- * the player is taken to have stopped reading it. More than the three
- * segments a live player holds back from the end, so a player that is merely
- * keeping its distance is never mistaken for one that has stopped.
- */
-export const BEHIND_PLAYLIST_SEC = 20
 /** The longest wait between two reloads while the player stays behind. */
 export const MAX_PLAYLIST_RELOAD_SEC = 60
 
@@ -30,11 +23,19 @@ const realClock: PlaylistWatchClock = {
   }
 }
 
-/** The playlist as the server has it now, or undefined if it cannot be read. */
-async function fetchPlaylist(url: string): Promise<string | undefined> {
+/** The server's answer for the playlist, or undefined if none came. */
+export interface PlaylistAnswer {
+  status: number
+  text?: string
+}
+
+async function fetchPlaylist(url: string): Promise<PlaylistAnswer | undefined> {
   try {
     const response = await fetch(url, { cache: 'no-store' })
-    return response.ok ? await response.text() : undefined
+    return {
+      status: response.status,
+      text: response.ok ? await response.text() : undefined
+    }
   } catch {
     return undefined
   }
@@ -46,12 +47,17 @@ async function fetchPlaylist(url: string): Promise<string | undefined> {
  */
 export function playlistSeconds(playlist: string): number | undefined {
   if (!playlist.startsWith('#EXTM3U')) return undefined
-  if (playlist.includes('#EXT-X-STREAM-INF')) return undefined
   let total = 0
   for (const match of playlist.matchAll(/^#EXTINF:([0-9.]+)/gm)) {
     total += Number(match[1])
   }
   return total > 0 ? total : undefined
+}
+
+/** A playlist's `EXT-X-TARGETDURATION`, or four seconds if it gives none. */
+export function targetSeconds(playlist: string): number {
+  const match = /^#EXT-X-TARGETDURATION:(\d+)/m.exec(playlist)
+  return match == null ? 4 : Number(match[1])
 }
 
 export interface WatchedVideo {
@@ -75,12 +81,17 @@ export interface WatchedVideo {
  *
  * So while a viewer wants the game playing, a picture that has stood still as
  * long as the end of what the player can reach is checked against the
- * playlist on the server. If the server's reaches well past the player's, the
- * player has stopped reading it and `reload` is called; if not, the game
- * itself is waiting — the camera at the field is away — and nothing is done.
+ * playlist on the server, twice. If the server's has grown by two segments
+ * between the looks while the player's end has not moved, the player has
+ * stopped reading it and `reload` is called. If it has not grown, the game
+ * itself is waiting — the camera at the field is away — and nothing is done,
+ * however far behind the player holds itself: that distance is three
+ * segments, and segments are as long as the publisher's keyframes make them.
  * A player on a line slower than the game keeps reading its playlist, so its
- * end keeps moving and it is never reloaded. The waits between reloads double,
- * to a minute, while the player stays behind.
+ * end keeps moving and it is never looked at. A refused address is reloaded
+ * too, so the error ladder can ask for a new one. The waits between reloads
+ * double, to a minute, while it stays behind; a gap in the ticks — a Mac that
+ * slept — starts the clocks again.
  */
 export function watchLivePlaylist(
   video: WatchedVideo,
@@ -88,12 +99,12 @@ export function watchLivePlaylist(
     url: string
     wantsToPlay: () => boolean
     reload: () => void
-    fetchText?: (url: string) => Promise<string | undefined>
+    fetch?: (url: string) => Promise<PlaylistAnswer | undefined>
     clock?: PlaylistWatchClock
   }
 ): () => void {
   const { url, wantsToPlay, reload } = options
-  const fetchText = options.fetchText ?? fetchPlaylist
+  const fetchText = options.fetch ?? fetchPlaylist
   const clock = options.clock ?? realClock
   let stopped = false
   let timer: unknown
@@ -104,28 +115,43 @@ export function watchLivePlaylist(
   let wait = STALE_PLAYLIST_SEC * 1000
   let nextCheckAt = 0
   let checking = false
+  /** The server's length at the first look since the player stood still. */
+  let baseline: number | null = null
+  let lastTick = clock.now()
 
   const seekableEnd = (): number | null => {
     const ranges = video.seekable
     return ranges.length > 0 ? ranges.end(ranges.length - 1) : null
   }
 
-  const check = async (end: number): Promise<void> => {
+  const reloadNow = (): void => {
+    reload()
+    // A reloaded player starts its clocks again.
+    movedAt = clock.now()
+    endMovedAt = clock.now()
+    lastEnd = null
+    baseline = null
+    nextCheckAt = clock.now() + wait
+    wait = Math.min(wait * 2, MAX_PLAYLIST_RELOAD_SEC * 1000)
+  }
+
+  const check = async (): Promise<void> => {
     checking = true
     try {
-      const text = await fetchText(url)
+      const answer = await fetchText(url)
       if (stopped) return
+      if (answer?.status === 401 || answer?.status === 403) {
+        reloadNow()
+        return
+      }
+      nextCheckAt = clock.now() + TICK_MS * 2
+      const text = answer?.text
       const serverSec = text == null ? undefined : playlistSeconds(text)
-      if (serverSec != null && serverSec - end > BEHIND_PLAYLIST_SEC) {
-        reload()
-        // A reloaded player starts its clocks again.
-        movedAt = clock.now()
-        endMovedAt = clock.now()
-        lastEnd = null
-        nextCheckAt = clock.now() + wait
-        wait = Math.min(wait * 2, MAX_PLAYLIST_RELOAD_SEC * 1000)
-      } else {
-        nextCheckAt = clock.now() + TICK_MS * 2
+      if (text == null || serverSec == null) return
+      if (baseline == null) {
+        baseline = serverSec
+      } else if (serverSec - baseline >= Math.max(8, 2 * targetSeconds(text))) {
+        reloadNow()
       }
     } finally {
       checking = false
@@ -136,13 +162,24 @@ export function watchLivePlaylist(
     const now = clock.now()
     const at = video.currentTime
     const end = seekableEnd()
+    // Timers that did not run — a sleeping Mac, a tab put away — say nothing
+    // about the player, which catches up by itself on waking.
+    const slept = now - lastTick > TICK_MS * 3
+    lastTick = now
+    if (slept) {
+      movedAt = now
+      endMovedAt = now
+      baseline = null
+    }
     if (end != null && (lastEnd == null || end > lastEnd + 0.5)) {
       lastEnd = end
       endMovedAt = now
+      baseline = null
     }
     if (!wantsToPlay() || video.paused || video.ended || at > lastAt + 0.1) {
       movedAt = now
       wait = STALE_PLAYLIST_SEC * 1000
+      baseline = null
     } else if (
       !checking &&
       end != null &&
@@ -150,7 +187,7 @@ export function watchLivePlaylist(
       now - movedAt >= STALE_PLAYLIST_SEC * 1000 &&
       now - endMovedAt >= STALE_PLAYLIST_SEC * 1000
     ) {
-      check(end).catch(() => undefined)
+      check().catch(() => undefined)
     }
     lastAt = video.currentTime
     timer = clock.setTimeout(tick, TICK_MS)

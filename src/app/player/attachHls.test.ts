@@ -532,14 +532,17 @@ describe('the browser’s own player, when it stumbles', function () {
   it('loads a live game again once Safari has stopped reading its playlist, and plays on from there', async function () {
     const video = new FakeVideo()
     const clock = manualClock()
-    // Safari stopped at 388 s; the server's playlist runs to 440 s.
-    const segments = Array.from(
-      { length: 110 },
-      (_, i) => `#EXTINF:4.000000,\nseg${String(i)}.m4s`
-    )
+    // Safari stopped at 388 s; the server's playlist carries on growing.
+    let count = 100
     const realFetch = globalThis.fetch
-    globalThis.fetch = async () =>
-      new Response(`#EXTM3U\n${segments.join('\n')}\n`)
+    globalThis.fetch = async () => {
+      count += 3
+      const segments = Array.from(
+        { length: count },
+        (_, i) => `#EXTINF:4.000000,\nseg${String(i)}.m4s`
+      )
+      return new Response(`#EXTM3U\n${segments.join('\n')}\n`)
+    }
     try {
       video.paused = false
       video.currentTime = 388
@@ -551,7 +554,7 @@ describe('the browser’s own player, when it stumbles', function () {
         { wantsToPlay: () => true, isLive: () => true },
         clock
       )
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 8; i++) {
         clock.advance(5000)
         for (let j = 0; j < 10; j++) await Promise.resolve()
       }
