@@ -161,6 +161,13 @@ describe('TestFlight upload', () => {
       { alreadyPublished: true }
     )
   })
+  it('fails when Apple already holds a higher build number', async () => {
+    const higher = JSON.parse(
+      JSON.stringify(duplicateReply).replace('26093004', '26093010')
+    )
+    for (const status of [1, 0])
+      await assert.rejects(upload(fakeXcrun(root, higher, status)))
+  })
   it('throws a redacted error for any other result, never printing the key', async () => {
     const leak = {
       'product-errors': [

@@ -510,7 +510,12 @@ describe('Pinned multi-app deployment orchestration', () => {
     assert.equal(await retry(), 1)
     assert.equal(xcrunCalls(root).length, 1)
     testflightConfig()
-    fakeXcrun(root, duplicateReply, 1)
+    // Apple's duplicate reply names the build number it already holds.
+    fakeXcrun(
+      root,
+      JSON.parse(JSON.stringify(duplicateReply).replace('26093004', number)),
+      1
+    )
     assert.equal(await retry(), 0)
     assert.deepEqual(logs, [
       'ios was already published',

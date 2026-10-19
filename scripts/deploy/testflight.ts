@@ -38,9 +38,18 @@ export function apiKey(file: string): ApiKey {
   return key
 }
 
-/** What App Store Connect says when this build number is already there. */
+/** What App Store Connect says when a build number is already there. */
 const duplicate =
   /Redundant Binary Upload|already (?:been )?uploaded a build|bundle version must be higher|has already been used|ENTITY_ERROR\.ATTRIBUTE\.INVALID\.DUPLICATE/i
+
+/**
+ * Apple gives the same reply for this build number and for a lower one, and
+ * names the number it already holds. Only our own number is "published"; a
+ * higher one means this build would never reach testers.
+ */
+function alreadyHolds(reply: string, buildNumber: string): boolean {
+  return duplicate.test(reply) && reply.includes(`'${buildNumber}'`)
+}
 
 export interface TestFlightUpload {
   ipa: string
@@ -100,7 +109,7 @@ export async function uploadToTestFlight(
     // A failed altool's output is reachable only redacted.
     if (
       error instanceof DeploymentToolError &&
-      duplicate.test(error.lastLines(400).join('\n'))
+      alreadyHolds(error.lastLines(400).join('\n'), upload.buildNumber)
     )
       return { alreadyPublished: true }
     throw error
@@ -116,7 +125,7 @@ export async function uploadToTestFlight(
       ? (result as Record<string, unknown>)
       : {}
   const errors = JSON.stringify(fields['product-errors'] ?? [])
-  if (errors !== '[]' && duplicate.test(errors))
+  if (errors !== '[]' && alreadyHolds(errors, upload.buildNumber))
     return { alreadyPublished: true }
   if (errors === '[]' && typeof fields['success-message'] === 'string')
     return { alreadyPublished: false }
