@@ -33,21 +33,21 @@ export interface ExpandedGameLine extends PlayerGameLine {
 export function expandedGameStatLines(
   plays: GumboPlay[],
   teams: GameTeams,
-  knownUsers: ReadonlySet<number>
+  knownGumboIds: ReadonlySet<number>
 ):
   | { kind: 'lines'; lines: ExpandedGameLine[] }
   | { kind: 'incomplete'; detail: string } {
-  const base = gameStatLines(plays, teams, knownUsers)
+  const base = gameStatLines(plays, teams, knownGumboIds)
   if (base.kind === 'incomplete') return base
   const lines = new Map<number, ExpandedGameLine>(
     base.lines.map(line => [
-      line.userId,
+      line.gumboId,
       { ...line, sb: 0, cs: 0, extra: emptyStatExtras() }
     ])
   )
   const idOf = (value: unknown): number | null => {
     const id = doc(value).id
-    return typeof id === 'number' && knownUsers.has(id) ? id : null
+    return typeof id === 'number' && knownGumboIds.has(id) ? id : null
   }
   const lineOf = (
     id: number | null,
@@ -375,6 +375,6 @@ export function expandedGameStatLines(
   if (halfKey !== '') finishHalf()
   return {
     kind: 'lines',
-    lines: [...lines.values()].sort((a, b) => a.userId - b.userId)
+    lines: [...lines.values()].sort((a, b) => a.gumboId - b.gumboId)
   }
 }

@@ -152,9 +152,9 @@ export function withRosterDetails(
   const players = { ...session.gameData.players }
   let changed = false
   for (const player of Object.values(players)) {
-    if (player.local || player.userId == null) continue
+    if (player.local) continue
     const entry = rosters[player.teamId]?.find(
-      row => row.isPlayer && row.userId === player.userId
+      row => row.isPlayer && row.gumboId === player.id
     )
     if (entry == null) continue
     const currentName = entry.shortName.trim()

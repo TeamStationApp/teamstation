@@ -121,10 +121,12 @@ function rostered(): GameState {
     {
       away: Array.from({ length: 9 }, (_, i) => ({
         userId: 1 + i,
+        gumboId: 1 + i,
         shortName: `Away ${i + 1}`
       })),
       home: Array.from({ length: 9 }, (_, i) => ({
         userId: 10 + i,
+        gumboId: 10 + i,
         shortName: `Home ${i + 1}`
       }))
     }
@@ -2415,8 +2417,8 @@ describe('the matchup', function () {
       'g1',
       teams,
       newSetup(teams, {
-        away: [{ userId: 1, shortName: 'Lefty', bats: 'left' }],
-        home: [{ userId: 2, shortName: 'Southpaw', throws: 'left' }]
+        away: [{ gumboId: 1, shortName: 'Lefty', bats: 'left' }],
+        home: [{ gumboId: 2, shortName: 'Southpaw', throws: 'left' }]
       })
     )
     expect(stored(handed).matchup).deep.equals({

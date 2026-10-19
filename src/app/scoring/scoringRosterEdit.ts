@@ -1,6 +1,7 @@
 import type { MyRoles, RosterEntry } from '../../common/api'
 import { rosterFullName } from '../../common/names'
 import type { GameState, Side } from '../../common/scoring/state'
+import { asGumboId } from '../../common/userId'
 import { byJersey } from './rosterOrder'
 
 /** Prefer the one team where the scorer holds an admin or staff role. */
@@ -40,7 +41,7 @@ export function editRosterRows(
   const rows: EditRosterRow[] = entries
     .filter(entry => entry.isPlayer)
     .map(entry => ({
-      id: entry.userId,
+      id: asGumboId(entry.gumboId),
       navigationTitle: entry.shortName,
       key: `player:${entry.userId}`,
       userId: entry.userId,

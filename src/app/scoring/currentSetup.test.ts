@@ -297,7 +297,7 @@ describe('current scoring setup', function () {
       defensiveRosterLabel({
         ...player,
         local: false,
-        userId: 8800001,
+
         firstName: 'Cliff',
         lastName: 'Lee',
         fullName: 'Cliff L',
@@ -308,7 +308,7 @@ describe('current scoring setup', function () {
       defensiveRosterLabel({
         ...player,
         local: false,
-        userId: 42,
+
         firstName: undefined,
         lastName: undefined,
         fullName: 'Luis Ga',
@@ -330,7 +330,7 @@ describe('current scoring setup', function () {
       original.gameData.players[id] = {
         ...original.gameData.players[id],
         local: false,
-        userId: 200 + index,
+
         firstName,
         lastName,
         fullName: `${firstName} ${lastName}`,
@@ -338,6 +338,7 @@ describe('current scoring setup', function () {
       }
       return asRosterEntry({
         userId: 200 + index,
+        gumboId: id,
         shortName: index === 0 ? 'Luis Ga' : 'Luis Go',
         jersey: null,
         positions: [],
@@ -360,12 +361,12 @@ describe('current scoring setup', function () {
     const original = game()
     const player = original.gameData.players[1]
     player.local = false
-    player.userId = 101
     player.fullName = 'Mookie B'
     player.jersey = ''
     const before = JSON.stringify(original)
     const entry = asRosterEntry({
       userId: 101,
+      gumboId: 1,
       shortName: 'Mookie B',
       jersey: '00',
       positions: [],
@@ -598,7 +599,7 @@ describe('names drawn on the field', function () {
     parts?: { firstName: string; lastName: string }
   ): ScoringPlayer => ({
     id,
-    userId: null,
+
     teamId: 'home',
     fullName,
     firstName: parts?.firstName,

@@ -65,7 +65,7 @@ describe('the teams and seasons a player has played in', function () {
       .values({
         id: makeId('gamePlayerStats'),
         game_id: gameId,
-        user_id: child,
+        gumbo_id: child,
         team_id: teamId,
         pa: 3,
         ab: 3,
@@ -334,9 +334,9 @@ describe('the teams and seasons a player has played in', function () {
  * played for, every figure and every highlight, the teams the child has left
  * included. A coach of one of those teams reads that team's part alone.
  *
- * On `guardianFixture`: Avery (201) plays for Demo Hawks and Demo Comets, and
+ * On `guardianFixture`: Alfonso (201) plays for Demo Hawks and Demo Comets, and
  * Tim Raines (106) is his guardian with no membership of his own. A Comets
- * game with a video, a credited play and stat lines is added, then Avery
+ * game with a video, a credited play and stat lines is added, then Alfonso
  * leaves the Comets.
  */
 describe('a guardian reading their child’s page', function () {
@@ -398,10 +398,10 @@ describe('a guardian reading their child’s page', function () {
           credits: [
             {
               eventType: 'double',
-              label: 'Double: Avery S',
+              label: 'Double: Alfonso S',
               teamId: f.secondTeam,
               creditUserId: avery,
-              credit: { name: 'Avery S', role: 'batter', position: null }
+              credit: { name: 'Alfonso S', role: 'batter', position: null }
             }
           ]
         }
@@ -418,7 +418,7 @@ describe('a guardian reading their child’s page', function () {
         ).map(([eventId, teamId]) => ({
           id: makeId('eventPlayer'),
           event_id: eventId,
-          user_id: avery,
+          gumbo_id: avery,
           team_id: teamId,
           role: 'batter' as const,
           position: null
@@ -436,7 +436,7 @@ describe('a guardian reading their child’s page', function () {
         ).map(([gameId, teamId]) => ({
           id: makeId('gamePlayerStats'),
           game_id: gameId,
-          user_id: avery,
+          gumbo_id: avery,
           team_id: teamId,
           pa: 4,
           ab: 4,
@@ -444,7 +444,7 @@ describe('a guardian reading their child’s page', function () {
         }))
       )
       .execute()
-    // Avery leaves the Comets.
+    // Alfonso leaves the Comets.
     await db
       .deleteFrom('memberships')
       .where('user_id', '=', avery)

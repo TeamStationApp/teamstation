@@ -25,7 +25,13 @@ describe('upgraded ownership reads and current competition projections', functio
 
   for (const ambiguous of [false, true])
     it(`preserves authenticated legacy access until an atomic ${ambiguous ? 'explicitly resolved' : 'ready'} ownership cutover`, async () => {
-      h = await accountHarness()
+      h = await accountHarness(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        migrations.filter(migration => migration.name < '066')
+      )
       await h.db
         .insertInto('users')
         .values({
