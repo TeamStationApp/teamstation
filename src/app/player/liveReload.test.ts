@@ -144,6 +144,38 @@ describe('a live phone player that stopped for good', function () {
     expect(f.restarts()).equals(1)
   })
 
+  it('only restarts a player that has failed', function () {
+    let now = 0
+    let run: (() => void) | undefined
+    let failed = false
+    let restarts = 0
+    reloadStalledLive(
+      { currentTime: 10 },
+      () => true,
+      () => {
+        restarts += 1
+      },
+      {
+        now: () => now,
+        setTimeout: next => {
+          run = next
+          return next
+        },
+        clearTimeout: () => undefined
+      },
+      () => failed
+    )
+    for (let second = 0; second < 300; second++) {
+      now += 1000
+      run?.()
+    }
+    expect(restarts, 'waiting for footage').equals(0)
+    failed = true
+    now += 1000
+    run?.()
+    expect(restarts, 'failed, and long still').equals(1)
+  })
+
   it('can run on the real clock', function () {
     reloadStalledLive(
       { currentTime: 0 },

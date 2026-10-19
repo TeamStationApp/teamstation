@@ -185,7 +185,7 @@ describe('a phone watching a live game whose camera is away', function () {
       }
       expect(
         player.loads(),
-        'the ladder, then the watch, again and again'
+        'the ladder, then the watch, until the picture moves'
       ).greaterThan(2)
       expect(gaveUp()).equals(false)
     } finally {
@@ -218,6 +218,54 @@ describe('a phone watching a live game whose camera is away', function () {
         player.loads(),
         'more than the ladder’s three, the watch carrying on'
       ).greaterThan(6)
+    } finally {
+      Date.now = realNow
+    }
+  })
+
+  it('keeps watching a failed player through a canplay that brought no picture', async function () {
+    const realNow = Date.now
+    let now = realNow()
+    Date.now = () => now
+    try {
+      const { handle, player } = await watching()
+      handle.handleProgress({
+        currentTime: 2941,
+        playableDuration: 2941,
+        seekableDuration: 2941
+      })
+      handle.handleBuffer({ isBuffering: true })
+      handle.handleError(playlistStuck)
+      // iOS reports "keeping up" changing, picture or not: a canplay.
+      handle.handleBuffer({ isBuffering: false })
+      for (let second = 0; second < 60; second++) {
+        now += 1000
+        for (const run of timers.splice(0)) run()
+      }
+      expect(player.loads(), 'the watch still restarted it').greaterThan(0)
+    } finally {
+      Date.now = realNow
+    }
+  })
+
+  it('leaves a player that is only waiting for footage alone, however long', async function () {
+    const realNow = Date.now
+    let now = realNow()
+    Date.now = () => now
+    try {
+      const { handle, player } = await watching()
+      handle.handleProgress({
+        currentTime: 2941,
+        playableDuration: 2950,
+        seekableDuration: 2960
+      })
+      // Run dry on a slow line: buffering, no error, for ten minutes.
+      handle.handleBuffer({ isBuffering: true })
+      for (let second = 0; second < 600; second++) {
+        now += 1000
+        for (const run of timers.splice(0)) run()
+      }
+      expect(player.loads(), 'its buffer is not thrown away').equals(0)
     } finally {
       Date.now = realNow
     }

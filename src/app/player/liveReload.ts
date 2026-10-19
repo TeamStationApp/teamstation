@@ -40,8 +40,12 @@ const realClock: ReloadClock = {
  * `attachHls.native.ts` reloads it, but a reload made while the publisher is
  * still away fails the same way, and then nothing is left to try again.
  *
- * So the picture is watched rather than the errors: while the viewer wants
- * it playing and it has not moved for twenty seconds, `restart` is called.
+ * So the picture is watched as well as the errors: while the viewer wants it
+ * playing, it has not moved for twenty seconds and it has failed, `restart`
+ * is called. A player that has not failed is left alone, however long it
+ * waits: AVPlayer on a line slower than the game waits until it has about
+ * fifty seconds in hand and then plays, and reloading it every minute (as
+ * this once did) kept it from ever getting there.
  * While the game stays away the waits double, to a minute. A restart puts the
  * player back where it was, and only movement past that point counts as the
  * game having come back, so a player that replays a few seconds it already
@@ -52,7 +56,14 @@ export function reloadStalledLive(
   player: { readonly currentTime: number; readonly ended?: boolean },
   wantsToPlay: () => boolean,
   restart: () => void,
-  clock: ReloadClock = realClock
+  clock: ReloadClock = realClock,
+  /**
+   * Whether the player has given up — reported an error and shown nothing
+   * since. Only such a player is loaded again: one that is merely waiting for
+   * footage, on a line slower than the game, is filling its buffer, and a
+   * reload would throw that away.
+   */
+  hasFailed: () => boolean = () => true
 ): () => void {
   let lastAt = player.currentTime
   let lastProgress = clock.now()
@@ -72,7 +83,7 @@ export function reloadStalledLive(
       lastProgress = now
       wait = LIVE_RELOAD_MS
       mustPass = null
-    } else if (now - lastProgress >= wait) {
+    } else if (now - lastProgress >= wait && hasFailed()) {
       mustPass = Math.max(at, mustPass ?? at)
       restart()
       lastProgress = now

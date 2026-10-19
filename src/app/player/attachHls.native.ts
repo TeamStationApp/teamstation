@@ -85,6 +85,18 @@ export function attachHls(
    * loads the stream again first.
    */
   let failed = false
+  /**
+   * Where the player was when it last reported a failure, until it has played
+   * on from there. Kept apart from `failed`, which a `canplay` clears: iOS
+   * sends that whenever AVPlayer changes its mind about keeping up, picture or
+   * not, and a failed AVPlayer raises no second error to set it again.
+   */
+  let failedAt: number | null = null
+  const hasFailed = (): boolean => {
+    if (failedAt == null) return false
+    if (handle.currentTime > failedAt + 0.5) failedAt = null
+    return failedAt != null
+  }
   /** Where to put the playhead once a reloaded stream has opened. */
   let resumeAtSec: number | null = null
   const putBack = (): void => {
@@ -119,7 +131,13 @@ export function attachHls(
   // recording has nothing to wait for.
   const singleLive = intent?.isLive != null && intent.buffer == null
   const stopReloading = singleLive
-    ? reloadStalledLive(handle, () => intent.wantsToPlay(), restart)
+    ? reloadStalledLive(
+        handle,
+        () => intent.wantsToPlay(),
+        restart,
+        undefined,
+        hasFailed
+      )
     : undefined
   const onPlay = (): void => {
     wantsToPlay = true
@@ -166,6 +184,7 @@ export function attachHls(
       return
     }
     failed = true
+    failedAt ??= handle.currentTime
     const now = Date.now()
     if (firstFailureAt === 0) firstFailureAt = now
     if (now - firstFailureAt > patience) {
