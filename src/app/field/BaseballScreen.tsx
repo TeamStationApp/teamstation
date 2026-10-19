@@ -21,8 +21,13 @@ import {
   ControlIcon,
   DICTATION_LOG_HEIGHT
 } from '../scoring/ScoringControlAppearance'
-import { type HistoryBounds, HistoryPopup } from '../scoring/ScoringHistory'
+import {
+  type HistoryBounds,
+  HistoryPopup,
+  type HistoryRow
+} from '../scoring/ScoringHistory'
 import { SwitchHitterHint } from '../scoring/SwitchHitterHint'
+import { UndoTicker } from '../scoring/UndoTicker'
 import { useHoldSelection } from '../scoring/useHoldSelection'
 import { useMenuEscape } from '../scoring/useMenuEscape'
 import { useTheme } from '../theme/ThemeContext'
@@ -55,7 +60,7 @@ export interface BaseballScreenProps {
   onMenuButton?: (edges: MenuButtonEdges) => void
   onUndo: () => void
   onPitch: (kind: (typeof PITCH_CONTROLS)[number]['kind']) => void
-  historyRows?: TagTarget[]
+  historyRows?: HistoryRow[]
   /** Undo wording only when its action produced the newest tag target. */
   tagHistoryDetail?: { primary: string; secondary?: string }
   onHistoryOpen?: () => void
@@ -145,7 +150,6 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           viewport={{ width: viewportWidth, height: viewportHeight }}
           bounds={historyBounds}
           rows={(props.historyRows ?? []).slice(-6)}
-          latest={props.tagHistoryDetail}
           onClose={closeHistory}
           onSelect={target => {
             closeHistory()
@@ -401,9 +405,12 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                       pointerEvents="none"
                       style={{ flex: 1, minWidth: 0, paddingLeft: 8, gap: 3 }}
                     >
-                      <Text
-                        selectable={false}
-                        numberOfLines={1}
+                      <UndoTicker
+                        enabled={
+                          historyBounds == null &&
+                          props.suspended !== true &&
+                          props.historyLabel != null
+                        }
                         testID="scoring-control-label"
                         style={{
                           color: '#ffffff',
@@ -411,27 +418,33 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                           fontSize: 12,
                           fontWeight: '900'
                         }}
-                      >
-                        {props.historyLabel == null
-                          ? lstrings.scoring_no_plays
-                          : (props.historyDetail?.primary ??
-                            props.historyLabel)}
-                      </Text>
-                      <Text
-                        selectable={false}
-                        numberOfLines={1}
+                        text={
+                          props.historyLabel == null
+                            ? lstrings.scoring_no_plays
+                            : (props.historyDetail?.primary ??
+                              props.historyLabel)
+                        }
+                      />
+                      <UndoTicker
+                        enabled={
+                          historyBounds == null &&
+                          props.suspended !== true &&
+                          props.historyLabel != null
+                        }
+                        testID="scoring-undo-description"
                         style={{
                           color: '#cbd5e1',
                           fontFamily: theme.regularTextFont,
                           fontSize: 9
                         }}
-                      >
-                        {props.historyLabel == null
-                          ? lstrings.scoring_history_hint
-                          : props.historyDetail == null
-                            ? lstrings.scoring_undo_hint
-                            : (props.historyDetail.secondary ?? '')}
-                      </Text>
+                        text={
+                          props.historyLabel == null
+                            ? lstrings.scoring_history_hint
+                            : props.historyDetail == null
+                              ? lstrings.scoring_undo_hint
+                              : (props.historyDetail.secondary ?? '')
+                        }
+                      />
                     </View>
                   </Pressable>
                 </View>

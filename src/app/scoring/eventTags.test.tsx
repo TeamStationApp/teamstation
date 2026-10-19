@@ -72,7 +72,9 @@ describe('event tag UI', function () {
     root = undefined
   })
 
-  it('dismisses stale viewport bounds and keeps older rows scrollable in a short viewport', async () => {
+  it('dismisses stale viewport bounds and keeps older rows scrollable in a short native viewport', async () => {
+    const os = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' })
     const element = document.documentElement
     const original = ['clientWidth', 'clientHeight'].map(key =>
       Object.getOwnPropertyDescriptor(element, key)
@@ -152,7 +154,7 @@ describe('event tag UI', function () {
         '[data-testid="scoring-history-older-scroll"]'
       )!
       expect(closed).equals(false)
-      expect(Number.parseFloat(older.style.maxHeight)).equals(99)
+      expect(Number.parseFloat(older.style.maxHeight)).equals(95)
       expect(
         document.querySelectorAll('[data-testid^="tag-history-"]')
       ).has.length(6)
@@ -160,6 +162,7 @@ describe('event tag UI', function () {
         window.getComputedStyle(older).overflowY
       )
     } finally {
+      Object.defineProperty(Platform, 'OS', os)
       for (const [at, key] of ['clientWidth', 'clientHeight'].entries()) {
         const descriptor = original[at]
         if (descriptor == null) Reflect.deleteProperty(element, key)
@@ -173,6 +176,7 @@ describe('event tag UI', function () {
 
   it('anchors to the measured modal origin and dismisses a resized native modal', async () => {
     const os = Object.getOwnPropertyDescriptor(Platform, 'OS')!
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' })
     let closed = false
     try {
       await mount(
@@ -199,10 +203,18 @@ describe('event tag UI', function () {
       }
       await layout()
       const anchor = document.querySelector<HTMLElement>(
-        '[data-testid="tag-history-target_5"]'
-      )!.parentElement!
-      expect(anchor.style.left).equals('200px')
-      expect(anchor.style.top).equals('144px')
+        '[data-testid="scoring-history-frame"]'
+      )!
+      expect(anchor.style.left).equals('12px')
+      expect(anchor.style.right).equals('136px')
+      expect(anchor.style.bottom).equals('152px')
+      // Both edges stay in the visible viewport even when the modal shifts.
+      expect(62 + 874 - Number.parseFloat(anchor.style.right)).equals(800)
+      rectangle = new window.DOMRect(-62, 0, 874, 292)
+      await layout()
+      expect(anchor.style.left).equals('74px')
+      expect(anchor.style.right).equals('12px')
+      expect(-62 + Number.parseFloat(anchor.style.left)).equals(12)
       expect(closed).equals(false)
       Object.defineProperty(Platform, 'OS', {
         configurable: true,
@@ -244,6 +256,43 @@ describe('event tag UI', function () {
     expect(selected).equals('target_5')
     await click('Dismiss scoring history')
     expect(closed).equals(true)
+  })
+
+  it('keeps event wording separate from Undo and puts tiny tags beside the title above the description', async () => {
+    const row = {
+      ...targets[5],
+      tag: 'great play',
+      display: {
+        primary: 'Player 6 reaches on a single',
+        secondary: 'Player 7 scores'
+      }
+    }
+    await mount(
+      <HistoryPopup
+        viewport={{ width: 402, height: 874 }}
+        bounds={{ x: 88, y: 650, width: 220, height: 56 }}
+        rows={[row]}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />
+    )
+    const event = document.querySelector<HTMLElement>(
+      '[data-testid="tag-history-target_5"]'
+    )!
+    expect(event.textContent).contains(row.display.primary)
+    const description = document.querySelector<HTMLElement>(
+      '[data-testid="history-description-target_5"]'
+    )!
+    expect(description.textContent).equals(row.display.secondary)
+    const pill = document.querySelector<HTMLElement>(
+      '[data-testid="history-tag-target_5"]'
+    )!
+    expect(pill.textContent).equals('great play')
+    expect(pill.parentElement!.textContent).contains(row.display.primary)
+    expect(pill.parentElement!.contains(description)).equals(false)
+    expect(getComputedStyle(pill.firstElementChild!).fontSize).equals(
+      getComputedStyle(description).fontSize
+    )
   })
 
   it('clears the activated gesture selection after release and preserves editable input selection', async () => {

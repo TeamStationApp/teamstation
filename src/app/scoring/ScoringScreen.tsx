@@ -1080,6 +1080,7 @@ function ScoringPanel(props: {
         ? target
         : {
             ...target,
+            display: described,
             description: [described.primary, described.secondary]
               .filter(line => line != null && line !== '')
               .join(' ')
