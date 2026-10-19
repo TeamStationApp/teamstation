@@ -168,6 +168,9 @@ await writeFile(
 )
 await copyFile('src/app/web/favicon.ico', 'dist/favicon.ico')
 await copyFile('src/app/web/favicon.png', 'dist/favicon.png')
+// The privacy policy is a plain page, readable without loading the app; the
+// stores link to https://web.teamstation.app/privacy.html.
+await copyFile('src/app/web/privacy.html', 'dist/privacy.html')
 // The text fonts the phones carry, so the web draws the very same faces
 // (`index.html` declares them); never a system font. In production each is
 // renamed `<Family>-<Style>-<hash>.ttf`, its content's hash as the bundle's
