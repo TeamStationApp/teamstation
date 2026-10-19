@@ -160,11 +160,14 @@ describe('the game as a scoreboard source', function () {
     setup = newSetup(teams, {
       away: minted.slice(0, 9).map((made, i) => ({
         userId: made.userId,
+        gumboId: made.userId,
         shortName: `Away ${i + 1}`
       })),
-      home: minted
-        .slice(9)
-        .map((made, i) => ({ userId: made.userId, shortName: `Home ${i + 1}` }))
+      home: minted.slice(9).map((made, i) => ({
+        userId: made.userId,
+        gumboId: made.userId,
+        shortName: `Home ${i + 1}`
+      }))
     })
     runner = await addPerson(db, 'runner', { owns: home })
     stranger = await addPerson(db, 'stranger')

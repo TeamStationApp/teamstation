@@ -240,12 +240,12 @@ function playerOf(
   state: GameState,
   setup: GameSetup,
   id: number
-): { userId: number | null; fullName: string; teamId: string } | null {
+): { id: number; fullName: string; teamId: string } | null {
   const player = state.gameData.players[id] ?? setup.players[id]
   return player == null
     ? null
     : {
-        userId: player.userId,
+        id: player.id,
         fullName: player.fullName,
         teamId: player.teamId
       }
@@ -255,7 +255,7 @@ function playerOf(
 function person(state: GameState, setup: GameSetup, ref: PlayerRef): Person {
   const player = playerOf(state, setup, ref.id)
   const fullName = player?.fullName ?? ref.fullName
-  return player?.userId == null ? { fullName } : { id: player.userId, fullName }
+  return player?.id == null ? { fullName } : { id: player.id, fullName }
 }
 
 /**
@@ -316,7 +316,7 @@ function runnersOf(
         runner: who(details.runner),
         responsiblePitcher:
           charged && pitcher != null
-            ? { id: playerOf(state, setup, pitcher.id)?.userId ?? null }
+            ? { id: playerOf(state, setup, pitcher.id)?.id ?? null }
             : null,
         isScoringEvent: scored,
         rbi: details.rbi === true,
@@ -1563,7 +1563,7 @@ function highlightCredits(
       eventType,
       label: `${head}: ${name}${position == null ? '' : ` (${position})`}${detail}`,
       teamId: sideOf(state, player?.teamId),
-      creditUserId: player?.userId ?? null,
+      creditUserId: player?.id ?? null,
       credit: { name, role, position }
     })
   }
@@ -1867,7 +1867,7 @@ export function foldInputsOf(state: GameState): string {
   ]
   for (const id of Object.keys(gameData.players)) {
     const player = gameData.players[Number(id)]
-    parts.push(`${id}:${player.userId}:${player.teamId}:${player.fullName}`)
+    parts.push(`${id}:${player.id}:${player.teamId}:${player.fullName}`)
   }
   return JSON.stringify(parts)
 }

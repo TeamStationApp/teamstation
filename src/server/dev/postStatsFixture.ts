@@ -2,16 +2,18 @@ import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
 import type { GumboPlay } from '../../common/gumboPlay'
+import { asGumboId } from '../../common/userId'
 import type { PlayerGameLine } from '../stats/gumboStats'
 
 export interface FixtureFile {
   plays: GumboPlay[]
-  expected: PlayerGameLine[]
+  expected: Array<Omit<PlayerGameLine, 'gumboId'> & { userId: number }>
   finalScore: { away: number; home: number }
 }
 
 export interface RosterPlayer {
   userId: number
+  gumboId: number | null
   isPlayer: boolean
 }
 
@@ -58,8 +60,10 @@ export function mapScorebookFixture(
   }
 
   const idMap = new Map<number, number>()
-  for (let i = 0; i < 10; i++) idMap.set(i + 1, awayPlayers[i].userId)
-  for (let i = 0; i < 9; i++) idMap.set(i + 11, homePlayers[i].userId)
+  for (let i = 0; i < 10; i++)
+    idMap.set(i + 1, asGumboId(awayPlayers[i].gumboId))
+  for (let i = 0; i < 9; i++)
+    idMap.set(i + 11, asGumboId(homePlayers[i].gumboId))
 
   let plays = structuredClone(fixture.plays)
   if (options.innings != null) {
@@ -94,9 +98,9 @@ export function mapScorebookFixture(
 
   const expected = fixture.expected
     .filter(line => idMap.has(line.userId))
-    .map(line => ({
+    .map(({ userId, ...line }) => ({
       ...line,
-      userId: idMap.get(line.userId)!,
+      gumboId: idMap.get(userId)!,
       teamId:
         line.teamId === 'away'
           ? teams.awayTeamId
@@ -136,22 +140,30 @@ function remapIds(plays: GumboPlay[], idMap: Map<number, number>): void {
     if (next != null) player.id = next
   }
 
-  for (const play of plays) {
-    remapPlayer(play.matchup?.batter)
-    remapPlayer(play.matchup?.pitcher)
-    for (const entry of play.runners ?? []) {
-      const details = entry.details as
-        | {
-            runner?: { id?: number | null }
-            responsiblePitcher?: { id?: number | null }
-            pitcher?: { id?: number | null }
-          }
-        | undefined
-      remapPlayer(details?.runner)
-      remapPlayer(details?.responsiblePitcher)
-      remapPlayer(details?.pitcher)
+  const fields = new Set([
+    'batter',
+    'pitcher',
+    'runner',
+    'responsiblePitcher',
+    'fielder',
+    'player',
+    'replacedPlayer'
+  ])
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    if (value == null || typeof value !== 'object') return
+    for (const [key, child] of Object.entries(value)) {
+      if (fields.has(key) && child != null && typeof child === 'object')
+        remapPlayer(child)
+      if (key === 'creditUserId' && typeof child === 'number') {
+        ;(value as Record<string, unknown>)[key] = idMap.get(child) ?? null
+      } else visit(child)
     }
   }
+  visit(plays)
 }
 
 export function loadScorebookFixture(): FixtureFile {
@@ -272,9 +284,14 @@ async function fetchRoster(
   }
   const rows = (await res.json()) as Array<{
     userId: number
+    gumboId: number | null
     isPlayer: boolean
   }>
-  return rows.map(row => ({ userId: row.userId, isPlayer: row.isPlayer }))
+  return rows.map(row => ({
+    userId: row.userId,
+    gumboId: row.gumboId,
+    isPlayer: row.isPlayer
+  }))
 }
 
 export async function runFixtureMain(argv: string[]): Promise<void> {

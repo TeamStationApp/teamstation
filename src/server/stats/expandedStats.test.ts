@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { GumboPlay } from '../../common/gumboPlay'
-import type { ScoringAction } from '../../common/scoring/actions'
+import { mapPlayers, type ScoringAction } from '../../common/scoring/actions'
 import { foldPlay } from '../../common/scoring/gumbo'
 import { freshGame, newSetup } from '../../common/scoring/lineup'
 import { setupOf } from '../../common/scoring/state'
@@ -39,7 +39,7 @@ function play(
 function lines(plays: GumboPlay[]): Map<number, ExpandedGameLine> {
   const result = expandedGameStatLines(plays, teams, known)
   if (result.kind !== 'lines') throw new Error(result.detail)
-  return new Map(result.lines.map(line => [line.userId, line]))
+  return new Map(result.lines.map(line => [line.gumboId, line]))
 }
 const movement = (
   type: string,
@@ -60,11 +60,22 @@ describe('expanded game statistics', function () {
     const away = Array.from({ length: pinchRunner ? 10 : 9 }, (_, i) => 101 + i)
     const home = Array.from({ length: pinchRunner ? 9 : 10 }, (_, i) => 201 + i)
     const setup = newSetup(TEAMS, {
-      away: away.map(userId => ({ userId, shortName: 'Away' })),
-      home: home.map(userId => ({ userId, shortName: 'Home' }))
+      away: away.map(gumboId => ({ gumboId, shortName: 'Away' })),
+      home: home.map(gumboId => ({ gumboId, shortName: 'Home' }))
     })
     setup.sides.away.battingOrder = setup.sides.away.battingOrder.slice(0, 9)
     setup.sides.home.battingOrder = setup.sides.home.battingOrder.slice(0, 9)
+    // These scorebook scenarios name slots; translate once to the persisted IDs.
+    actions = actions.map(
+      action =>
+        mapPlayers(action, slot => {
+          if (typeof slot !== 'number')
+            throw new Error('Expected a scorebook slot')
+          const id = setup.tagOrder[slot - 1] ?? (slot === 20 ? 210 : undefined)
+          if (id == null) throw new Error('Unknown scorebook slot')
+          return id
+        }) as ScoringAction
+    )
     const state = after(freshGame('g1', TEAMS, setup), ...actions)
     const plays = state.liveData.plays.allPlays.map(play =>
       foldPlay(state, play, { setupBefore: setupOf(state), actions })
@@ -76,10 +87,10 @@ describe('expanded game statistics', function () {
         homeTeamId: TEAMS.home.id,
         awayTeamId: TEAMS.away.id
       },
-      new Set([...away, ...home])
+      new Set([...away, ...home, 210])
     )
     if (result.kind !== 'lines') throw new Error(result.detail)
-    return new Map(result.lines.map(line => [line.userId, line]))
+    return new Map(result.lines.map(line => [line.gumboId, line]))
   }
   const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
   const strikeout: ScoringAction[] = [
@@ -314,11 +325,17 @@ describe('expanded game statistics', function () {
       { type: 'result', eventType },
       close
     ]
-    // Away 1 singles off the starter, who leaves for a made-up reliever
-    // (session 20, who has no user); Away 10 runs for him and keeps the order.
+    // Away 1 singles off the starter, who leaves for a persisted guest
+    // (slot 20, gumbo 210); Away 10 runs for him and keeps the order.
     const ran: ScoringAction[] = [
       ...hit('single'),
-      { type: 'lineup', kind: 'addPlayer', side: 'home', name: 'Reliever' },
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        side: 'home',
+        name: 'Reliever',
+        player: 20
+      },
       {
         type: 'lineup',
         kind: 'substitute',
@@ -339,7 +356,7 @@ describe('expanded game statistics', function () {
       expect(result.get(110)!.r).equals(1)
       expect(result.get(101)!.r).equals(0)
       expect(result.get(102)!.r).equals(1)
-      // The reliever, who has no user, is charged only the batter's run.
+      // The guest reliever is charged only the batter's run.
       expect(result.get(201)!.pitch_r).equals(1)
       expect(result.get(201)!.extra.lob).equals(0)
     })

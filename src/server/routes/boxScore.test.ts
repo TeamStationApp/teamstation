@@ -135,7 +135,7 @@ describe('GET /games/:gameId/box-score stats', function () {
         {
           id: makeId('gamePlayerStats'),
           game_id: gameId,
-          user_id: batter,
+          gumbo_id: batter,
           team_id: away,
           pa: 3,
           ab: 2,
@@ -147,7 +147,7 @@ describe('GET /games/:gameId/box-score stats', function () {
         {
           id: makeId('gamePlayerStats'),
           game_id: gameId,
-          user_id: pitcher,
+          gumbo_id: pitcher,
           team_id: home,
           pitch_bf: 4,
           pitch_outs: 3,

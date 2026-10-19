@@ -596,6 +596,7 @@ async function main(): Promise<void> {
             canManage: true,
             attendees: Array.from({ length: 28 }, (_, i) => ({
               userId: i + 400,
+              gumboId: i + 400,
               name: `Player ${i + 1}`,
               avatarUrl: null,
               jersey: String(i + 1),
