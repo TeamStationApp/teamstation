@@ -60,6 +60,7 @@ const text = (): string => document.body.textContent ?? ''
 
 const jordan = asRosterEntry({
   userId: 7,
+  gumboId: 7,
   shortName: 'Jordan P',
   // What an older server sent a coach. The cleaner drops it.
   fullName: 'Jordan Pujols',
@@ -74,6 +75,7 @@ const jordan = asRosterEntry({
 
 const batting = asBattingRow({
   userId: 7,
+  gumboId: 7,
   shortName: 'Jordan P',
   teamId: 'tem_hawks',
   pa: 4,
@@ -92,6 +94,7 @@ const batting = asBattingRow({
 
 const pitching = asPitchingRow({
   userId: 7,
+  gumboId: 7,
   shortName: 'Jordan P',
   teamId: 'tem_hawks',
   ip: '2.0',
@@ -272,6 +275,7 @@ describe('a player’s whole name is never shown', function () {
         jordan,
         asRosterEntry({
           userId: 8,
+          gumboId: 8,
           shortName: 'Coach C',
           jersey: null,
           positions: [],

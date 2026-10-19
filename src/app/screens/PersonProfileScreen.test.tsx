@@ -46,6 +46,7 @@ function profile(fields: Partial<PersonProfile> = {}): PersonProfile {
     context: { kind: 'team', id: 'tem_hawks', name: 'Demo Hawks' },
     person: {
       userId: 203,
+      gumboId: 203,
       shortName: 'Pat Y',
       fullName: 'Pat Young',
       avatarUrl: null,
@@ -54,6 +55,7 @@ function profile(fields: Partial<PersonProfile> = {}): PersonProfile {
     guardianOf: [
       {
         userId: 202,
+        gumboId: 202,
         shortName: 'Avery Y',
         avatarUrl: null,
         teamId: 'tem_hawks'

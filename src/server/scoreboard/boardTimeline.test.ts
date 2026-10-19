@@ -351,12 +351,16 @@ describe('the board timeline', function () {
       )
       .execute()
     setup = newSetup(teams, {
-      away: made
-        .slice(0, 9)
-        .map((one, i) => ({ userId: one.userId, shortName: `Away ${i + 1}` })),
-      home: made
-        .slice(9)
-        .map((one, i) => ({ userId: one.userId, shortName: `Home ${i + 1}` }))
+      away: made.slice(0, 9).map((one, i) => ({
+        userId: one.userId,
+        gumboId: one.userId,
+        shortName: `Away ${i + 1}`
+      })),
+      home: made.slice(9).map((one, i) => ({
+        userId: one.userId,
+        gumboId: one.userId,
+        shortName: `Home ${i + 1}`
+      }))
     })
     // Ten at home: nine in the order and the field, and one on the bench.
     const homeSide = setup.sides.home

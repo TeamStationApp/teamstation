@@ -284,14 +284,19 @@ describe('one person, however many rows', function () {
     await db
       .insertInto('game_player_stats')
       .values([
-        { id: makeId('gamePlayerStats'), game_id: game, user_id: one, pa: 1 },
-        { id: makeId('gamePlayerStats'), game_id: game, user_id: other, pa: 3 },
+        { id: makeId('gamePlayerStats'), game_id: game, gumbo_id: one, pa: 1 },
+        {
+          id: makeId('gamePlayerStats'),
+          game_id: game,
+          gumbo_id: other,
+          pa: 3
+        },
         // Entered in the lineup and never up: that is one child written twice,
         // not two children, so it is not evidence against a merge.
         {
           id: makeId('gamePlayerStats'),
           game_id: game,
-          user_id: benched,
+          gumbo_id: benched,
           pa: 0
         }
       ])

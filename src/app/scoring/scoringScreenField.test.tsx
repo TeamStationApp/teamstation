@@ -698,7 +698,7 @@ describe('scoring screen field wiring', function () {
         const id = away.players[0]
         const person = initial.gameData.players[id]
         person.local = false
-        person.userId = id
+        person.id = id
         person.fullName = 'Mookie B'
         person.jersey = '7'
         const savedPlayer = { ...person }
@@ -710,6 +710,7 @@ describe('scoring screen field wiring', function () {
             away: [
               asRosterEntry({
                 userId: id,
+                gumboId: id,
                 shortName: 'Mike T',
                 jersey,
                 positions: [],
@@ -2374,6 +2375,7 @@ describe('scoring screen field wiring', function () {
           [gameFixture.awayTeamId]: [
             asRosterEntry({
               userId: 1,
+              gumboId: 1,
               shortName: 'Mike T',
               jersey: '7',
               positions: [],

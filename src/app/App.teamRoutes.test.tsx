@@ -245,6 +245,7 @@ describe('a person’s profile, through the app', () => {
     proto.roster = async () => [
       asRosterEntry({
         userId: 203,
+        gumboId: 203,
         shortName: 'Pat Y',
         jersey: null,
         positions: [],
@@ -261,6 +262,7 @@ describe('a person’s profile, through the app', () => {
         context: { kind: 'team', id: 'canonical', name: 'Demo Hawks' },
         person: {
           userId: 203,
+          gumboId: 203,
           shortName: 'Pat Y',
           fullName: 'Pat Young',
           avatarUrl: null,
@@ -377,6 +379,7 @@ describe('a season’s and a league’s People tab, however the page is opened',
   const people = [
     asRosterEntry({
       userId: 203,
+      gumboId: 203,
       shortName: 'Pat Y',
       jersey: null,
       positions: [],

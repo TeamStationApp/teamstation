@@ -50,14 +50,15 @@ export async function bothPlayedTogether(
   // in one place in.
   for (const row of await db
     .selectFrom('event_players')
+    .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'event_players.gumbo_id')
     .innerJoin('events', 'events.id', 'event_players.event_id')
     .select([
       'events.gameId as gameId',
       'events.inning as inning',
       'events.halfInning as half',
-      'event_players.user_id as userId'
+      'gumbo_ids.user_id as userId'
     ])
-    .where('event_players.user_id', 'in', wanted)
+    .where('gumbo_ids.user_id', 'in', wanted)
     .execute()) {
     note(`${row.gameId} ${row.inning ?? ''} ${row.half ?? ''}`, row.userId)
   }
@@ -66,6 +67,7 @@ export async function bothPlayedTogether(
   // tagged. An empty line is a lineup slot rather than an appearance.
   for (const row of await db
     .selectFrom('game_player_stats')
+    .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'game_player_stats.gumbo_id')
     .select(['game_id', 'user_id', 'pa', 'pitch_outs'])
     .where('user_id', 'in', wanted)
     .execute()) {

@@ -118,6 +118,7 @@ const game = asGameSummary({
 const roster = [
   asRosterEntry({
     userId: 104,
+    gumboId: 104,
     shortName: 'Ichiro',
     jersey: null,
     positions: [],
@@ -130,6 +131,7 @@ const roster = [
   }),
   asRosterEntry({
     userId: 201,
+    gumboId: 201,
     shortName: 'Avery S',
     jersey: '7',
     positions: ['SS', '2B'],
@@ -143,6 +145,7 @@ const roster = [
   // A family member as a non-member is answered: no `guardianOf`.
   asRosterEntry({
     userId: 106,
+    gumboId: 106,
     shortName: 'Tim R',
     jersey: null,
     positions: [],

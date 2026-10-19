@@ -1459,7 +1459,7 @@ describe('posting and reading plays', function () {
       .values({
         id: makeId('eventPlayer'),
         event_id: before.id,
-        user_id: manager.userId,
+        gumbo_id: manager.userId,
         team_id: home,
         role: 'fielder'
       })
@@ -3296,13 +3296,13 @@ describe('a play naming a user who does not exist', function () {
   it('names the play when it can find it', function () {
     expect(
       unknownUser(
-        missing('eventCredits', 'Key (creditUserId)=(11) is not present'),
+        missing('eventCredits', 'Key (creditGumboId)=(11) is not present'),
         plays
       )?.message
     ).equals('play 2 credits user 11, who does not exist')
     expect(
       unknownUser(
-        missing('event_players', 'Key (user_id)=(12) is not present'),
+        missing('event_players', 'Key (gumbo_id)=(12) is not present'),
         plays
       )?.message
     ).equals('play 2 names user 12, who does not exist')
@@ -3310,7 +3310,7 @@ describe('a play naming a user who does not exist', function () {
 
   it('still answers 400 when it cannot', function () {
     const credit = unknownUser(
-      missing('eventCredits', 'Key (creditUserId)=(99) is not present'),
+      missing('eventCredits', 'Key (creditGumboId)=(99) is not present'),
       plays
     )
     expect(credit?.message).equals('A credit names a user who does not exist')
@@ -3320,7 +3320,7 @@ describe('a play naming a user who does not exist', function () {
     ).equals('A credit names a user who does not exist')
     expect(
       unknownUser(
-        missing('event_players', 'Key (user_id)=(99) is not present'),
+        missing('event_players', 'Key (gumbo_id)=(99) is not present'),
         plays
       )?.message
     ).equals('A play names user 99, who does not exist')
@@ -3375,9 +3375,15 @@ describe('the team default lineup a live post keeps (U10)', function () {
   }
   const rosterOf = (
     ids: number[]
-  ): Array<{ userId: number; shortName: string; jersey: string }> =>
+  ): Array<{
+    userId: number
+    gumboId: number
+    shortName: string
+    jersey: string
+  }> =>
     ids.map((userId, i) => ({
       userId,
+      gumboId: userId,
       shortName: `P${i + 1}`,
       jersey: String(i + 1)
     }))
@@ -3554,7 +3560,7 @@ describe('the team default lineup a live post keeps (U10)', function () {
       .executeTakeFirstOrThrow()
   }
   async function defaultOf(teamId: string): Promise<{
-    lineup: { batters: Array<{ userId: number | null }> }
+    lineup: { batters: Array<{ gumboId: number | null }> }
     fromGameId: string
     setAt: string
   } | null> {
@@ -3566,7 +3572,7 @@ describe('the team default lineup a live post keeps (U10)', function () {
     return row.default_lineup as never
   }
   const battersOf = (value: Awaited<ReturnType<typeof defaultOf>>): unknown =>
-    value?.lineup.batters.map(person => person.userId)
+    value?.lineup.batters.map(person => person.gumboId)
 
   it('takes both starting lineups once the game begins, and keeps a default that is the same', async function () {
     const [g1, g2] = games

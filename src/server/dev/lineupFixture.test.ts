@@ -217,7 +217,9 @@ describe('development game fixtures', function () {
           .where('id', '=', fixture.teams[side])
           .executeTakeFirstOrThrow()
         const value = asDefaultLineup(team.default_lineup)
-        const nine = fixture.players[side].slice(0, 9)
+        const nine = fixture.players[side]
+          .slice(0, 9)
+          .map(({ userId, ...person }) => ({ ...person, gumboId: userId }))
         expect(value.fromGameId).to.equal(null)
         expect(value.lineup?.batters).to.deep.equal(nine)
         expect(value.lineup?.defense.P).to.deep.equal(nine[0])

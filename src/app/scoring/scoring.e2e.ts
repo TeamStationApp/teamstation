@@ -263,6 +263,7 @@ async function open(
         ? [
             {
               userId: 101,
+              gumboId: 101,
               shortName: 'Jordan K.',
               jersey: '00',
               positions: ['P'],
@@ -277,6 +278,7 @@ async function open(
           ].concat(
             Array.from({ length: 8 }, (_, i) => ({
               userId: 102 + i,
+              gumboId: 102 + i,
               shortName: `Player ${i + 2}`,
               jersey: String(i + 2),
               positions: [createPlayers()[i + 1].id],
@@ -291,6 +293,7 @@ async function open(
           )
         : Array.from({ length: 9 }, (_, i) => ({
             userId: 201 + i,
+            gumboId: 201 + i,
             shortName: `Player ${i + 1}`,
             jersey: String(i + 1),
             positions: [createPlayers()[i].id],

@@ -262,6 +262,7 @@ describe('restored access-aware team presentation', () => {
         return [
           asRosterEntry({
             userId: 201,
+            gumboId: 201,
             shortName: 'Avery S',
             jersey: '7',
             positions: ['SS'],

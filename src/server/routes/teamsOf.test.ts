@@ -65,7 +65,7 @@ describe('the teams and seasons a player has played in', function () {
       .values({
         id: makeId('gamePlayerStats'),
         game_id: gameId,
-        user_id: child,
+        gumbo_id: child,
         team_id: teamId,
         pa: 3,
         ab: 3,
@@ -418,7 +418,7 @@ describe('a guardian reading their child’s page', function () {
         ).map(([eventId, teamId]) => ({
           id: makeId('eventPlayer'),
           event_id: eventId,
-          user_id: avery,
+          gumbo_id: avery,
           team_id: teamId,
           role: 'batter' as const,
           position: null
@@ -436,7 +436,7 @@ describe('a guardian reading their child’s page', function () {
         ).map(([gameId, teamId]) => ({
           id: makeId('gamePlayerStats'),
           game_id: gameId,
-          user_id: avery,
+          gumbo_id: avery,
           team_id: teamId,
           pa: 4,
           ab: 4,

@@ -939,7 +939,7 @@ async function player(run: Run): Promise<void> {
       .values({
         id: makeId('gamePlayerStats'),
         game_id: gameId,
-        user_id: avery.id,
+        gumbo_id: avery.id,
         team_id: f.teamA,
         pa: 4,
         ab: 4,
@@ -2123,7 +2123,7 @@ async function home(run: Run): Promise<void> {
       .values({
         id: makeId('gamePlayerStats'),
         game_id: gameId,
-        user_id: avery.id,
+        gumbo_id: avery.id,
         team_id: teamId,
         pa: ab,
         ab,

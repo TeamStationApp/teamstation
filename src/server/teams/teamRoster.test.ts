@@ -171,7 +171,7 @@ describe('scoring roster HTTP contract', function () {
       .values({
         id: 'stat-child',
         game_id: game,
-        user_id: child,
+        gumbo_id: child,
         team_id: team,
         pa: 2,
         ab: 2,
@@ -271,6 +271,7 @@ describe('scoring roster HTTP contract', function () {
     // A member of the season is a member of its teams, with no place on them.
     expect(roster[2]).includes({
       userId: seasonMember,
+      gumboId: seasonMember,
       shortName: 'Frank F',
       bats: 'left',
       throws: 'right',

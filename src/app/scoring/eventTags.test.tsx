@@ -389,6 +389,7 @@ describe('event tag UI', function () {
       Array.from({ length: 9 }, (_, at) =>
         asRosterEntry({
           userId: (team === 'away' ? 101 : 201) + at,
+          gumboId: (team === 'away' ? 101 : 201) + at,
           shortName: `Player ${at + 1}`,
           jersey: String(at + 1),
           positions: [],

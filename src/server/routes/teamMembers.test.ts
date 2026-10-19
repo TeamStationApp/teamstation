@@ -1225,6 +1225,7 @@ describe('a team’s people by external id', function () {
       expect(players).to.have.length(1)
       expect(players[0]).deep.include({
         userId,
+        gumboId: userId,
         jersey: '11',
         isPlayer: true
       })

@@ -303,6 +303,7 @@ describe('a league’s People tab', () => {
         people: [
           asRosterEntry({
             userId: 201,
+            gumboId: 201,
             shortName: 'Avery S',
             jersey: null,
             positions: [],
@@ -314,6 +315,7 @@ describe('a league’s People tab', () => {
           }),
           asRosterEntry({
             userId: 271,
+            gumboId: 271,
             shortName: 'Leo G',
             jersey: null,
             positions: [],

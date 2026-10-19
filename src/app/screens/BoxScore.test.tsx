@@ -51,6 +51,7 @@ function pinned(container: HTMLElement, text: string): HTMLElement[] {
 
 const BLAIR = asPitchingRow({
   userId: 2,
+  gumboId: 2,
   shortName: 'Blair',
   teamId: 'away',
   ip: '5.0',
@@ -84,6 +85,7 @@ async function boxScore(
     batting: batting ?? [
       asBattingRow({
         userId: 1,
+        gumboId: 1,
         shortName: 'Alex',
         teamId: 'away',
         pa: 2,
@@ -283,6 +285,7 @@ describe('the box score', function () {
       [0, 1].map(i =>
         asBattingRow({
           userId: 100 + side * 2 + i,
+          gumboId: 100 + side * 2 + i,
           shortName: `${side === 0 ? 'Away' : 'Home'} ${i === 0 ? 'Lead' : 'Power'}`,
           teamId,
           pa: i + 1,
@@ -316,6 +319,7 @@ function batter(
 ): BattingRow {
   return asBattingRow({
     userId,
+    gumboId: userId,
     shortName,
     teamId,
     pa,
@@ -379,7 +383,13 @@ describe('the box score module (U24)', function () {
   ]
   const pitching = [
     BLAIR,
-    asPitchingRow({ ...BLAIR, userId: 4, shortName: 'Drew', teamId: 'home' })
+    asPitchingRow({
+      ...BLAIR,
+      userId: 4,
+      gumboId: 4,
+      shortName: 'Drew',
+      teamId: 'home'
+    })
   ]
 
   it('puts a coach’s side first: his batters, his pitchers, then the opponent’s', async function () {
@@ -426,11 +436,11 @@ describe('the box score module (U24)', function () {
       runner
     ]
     const order = [
-      { userId: 12, shortName: 'Early' },
-      { userId: 11, shortName: 'First' },
-      { userId: null, shortName: 'Made Up' },
-      { userId: 15, shortName: 'Runner' },
-      { userId: 10, shortName: 'Late' }
+      { userId: 12, gumboId: 12, shortName: 'Early' },
+      { userId: 11, gumboId: 11, shortName: 'First' },
+      { userId: null, gumboId: null, shortName: 'Made Up' },
+      { userId: 15, gumboId: 15, shortName: 'Runner' },
+      { userId: 10, gumboId: 10, shortName: 'Late' }
     ]
     const ordered = battingOrder(lines, order, 'away')
     expect(ordered.map(line => line.shortName)).deep.equals([

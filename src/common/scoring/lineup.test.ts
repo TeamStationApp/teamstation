@@ -34,21 +34,21 @@ describe('a new game from two rosters', function () {
     const setup = newSetup(TEAMS, {
       away: [
         {
-          userId: 501,
+          gumboId: 501,
           shortName: 'Ace P',
           positions: ['SS', 'P'],
           bats: 'left',
           throws: 'left',
           jersey: '7'
         },
-        { userId: 502, shortName: 'Cat C', positions: ['C'] }
+        { gumboId: 502, shortName: 'Cat C', positions: ['C'] }
       ],
       home: []
     })
     const away = setup.sides.away
     expect(away.players).deep.equals([501, 502])
     expect(setup.players[501]).includes({
-      userId: 501,
+      id: 501,
       fullName: 'Ace P',
       bats: 'left',
       local: false
@@ -68,8 +68,8 @@ describe('a new game from two rosters', function () {
     expect(() =>
       newSetup(TEAMS, {
         away: [
-          { userId: 1, shortName: 'A' },
-          { userId: 1, shortName: 'A' }
+          { gumboId: 1, shortName: 'A' },
+          { gumboId: 1, shortName: 'A' }
         ],
         home: []
       })

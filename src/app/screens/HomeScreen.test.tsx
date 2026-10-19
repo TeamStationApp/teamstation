@@ -204,7 +204,13 @@ function guarded(
   shortName: string,
   avatarUrl: string | null = null
 ): UserMatch {
-  return asUserMatch({ userId, externalIds: [], shortName, avatarUrl })
+  return asUserMatch({
+    userId,
+    gumboId: userId,
+    externalIds: [],
+    shortName,
+    avatarUrl
+  })
 }
 
 function league(id: string, name: string): PublicGroup {
@@ -1011,7 +1017,14 @@ describe('a player opened from Home, through the app', function () {
         : path.endsWith('/me/roles')
           ? { teams: {}, guardianOf: [7] }
           : url.endsWith('/users?guardedBy=me')
-            ? [{ userId: 7, externalIds: [], shortName: 'Jordan P' }]
+            ? [
+                {
+                  userId: 7,
+                  gumboId: 7,
+                  externalIds: [],
+                  shortName: 'Jordan P'
+                }
+              ]
             : path.endsWith('/players/7')
               ? { userId: 7, name: 'Jordan P', teams: [] }
               : path.endsWith('/players/7/highlights')

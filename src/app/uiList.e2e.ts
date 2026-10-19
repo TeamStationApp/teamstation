@@ -215,6 +215,7 @@ async function open(path: string, size: Size): Promise<Page> {
             batting: [
               {
                 userId: 1,
+                gumboId: 1,
                 shortName: 'Alex',
                 teamId: 'away',
                 pa: 2,

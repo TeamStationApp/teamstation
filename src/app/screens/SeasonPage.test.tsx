@@ -230,6 +230,7 @@ describe('a season’s People tab, and a team’s roster, through the group page
   const people = [
     asRosterEntry({
       userId: 201,
+      gumboId: 201,
       shortName: 'Avery S',
       jersey: null,
       positions: [],
@@ -242,6 +243,7 @@ describe('a season’s People tab, and a team’s roster, through the group page
     }),
     asRosterEntry({
       userId: 106,
+      gumboId: 106,
       shortName: 'Tim R',
       jersey: null,
       positions: [],

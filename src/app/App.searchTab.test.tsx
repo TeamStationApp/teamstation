@@ -140,6 +140,7 @@ describe('the Search tab', () => {
     proto.roster = async () => [
       asRosterEntry({
         userId: 201,
+        gumboId: 201,
         shortName: 'Avery S',
         jersey: '7',
         positions: ['SS'],

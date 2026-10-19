@@ -94,6 +94,7 @@ function clientForSwitchHitter(
       ? [
           asRosterEntry({
             userId: 1,
+            gumboId: 1,
             shortName: 'Jordan K.',
             jersey: '00',
             positions: ['P'],

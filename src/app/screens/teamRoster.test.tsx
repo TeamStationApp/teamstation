@@ -34,6 +34,7 @@ function entry(
 ): RosterEntry {
   return asRosterEntry({
     userId,
+    gumboId: userId,
     shortName,
     jersey: null,
     positions: [],

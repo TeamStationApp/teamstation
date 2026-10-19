@@ -102,6 +102,7 @@ const phSong = song('Pinch Anthem', 'lf:000000000000000c')
 const entry = (userId: number, walkUpSong: WalkUpSong | null): RosterEntry =>
   ({
     userId,
+    gumboId: userId - 100,
     shortName: `Player ${userId}`,
     walkUpSong
   }) as unknown as RosterEntry
@@ -109,12 +110,12 @@ const rosters: WalkUpRosters = {
   tem_t: [entry(101, null), entry(102, tomSong), entry(103, phSong)]
 }
 
-// Session ids 1-3 are T's players with user ids 101-103.
+// Scoring IDs 1-3 map to accounts 101-103.
 const players = {
-  1: { id: 1, userId: 101, teamId: 'tem_t', fullName: 'Al A' },
-  2: { id: 2, userId: 102, teamId: 'tem_t', fullName: 'Tom B' },
-  3: { id: 3, userId: 103, teamId: 'tem_t', fullName: 'Pete C' },
-  4: { id: 4, userId: null, teamId: 'tem_t', fullName: 'Guest' }
+  1: { id: 1, teamId: 'tem_t', fullName: 'Al A' },
+  2: { id: 2, teamId: 'tem_t', fullName: 'Tom B' },
+  3: { id: 3, teamId: 'tem_t', fullName: 'Pete C' },
+  4: { id: 4, teamId: 'tem_t', fullName: 'Guest' }
 }
 interface EventSketch {
   sub?: { player: number; replaced: number }

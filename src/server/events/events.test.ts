@@ -158,7 +158,7 @@ describe('scoring events', function () {
       .values({
         id: makeId('eventPlayer'),
         event_id: fielderEvent.id,
-        user_id: player.userId,
+        gumbo_id: player.userId,
         team_id: away,
         role: 'fielder'
       })
@@ -222,7 +222,7 @@ describe('scoring events', function () {
     expect(document.gumbo).to.not.have.property('source')
     const roles = await db
       .selectFrom('event_players')
-      .select(['role', 'user_id'])
+      .select(['role', 'gumbo_id'])
       .where('event_id', '=', replaced[0].id)
       .execute()
     expect(roles.map(row => row.role)).deep.equals(['fielder'])
@@ -317,7 +317,7 @@ describe('scoring events', function () {
       .values({
         id: makeId('gamePlayerStats'),
         game_id: gameId,
-        user_id: player.userId,
+        gumbo_id: player.userId,
         team_id: home,
         pa: 0,
         pitch_outs: 0

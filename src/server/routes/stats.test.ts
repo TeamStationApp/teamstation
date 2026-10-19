@@ -154,7 +154,7 @@ describe('one player’s figures', function () {
         .values({
           id: makeId('gamePlayerStats'),
           game_id: game.id,
-          user_id: game.user,
+          gumbo_id: game.user,
           team_id: game.team,
           pa: 4,
           ab: 3,

@@ -614,6 +614,7 @@ const cleanRosterEntry = asObject({
   bats: asOptional(asBats, null),
   throws: asOptional(asThrows, null),
   userId: asUserId,
+  gumboId: asOptional(asNullable(asGumboId), null),
   /**
    * First name, last initial. The field is named for what it is so a full
    * name cannot be shipped here by accident — the compiler visits every call
@@ -1474,7 +1475,7 @@ export const asGameLineupsResponse: Cleaner<GameLineupsResponse> = asObject({
 /** A player in a saved lineup, named by who he is, never by a session id. */
 export interface LineupPlayer {
   /** Null for a player made up at the field. */
-  userId: number | null
+  gumboId: number | null
   fullName: string
   jersey: string
 }
@@ -1482,7 +1483,7 @@ export interface LineupPlayer {
 /**
  * `POST /games/:gameId/lineups`: one side's players, batting order and
  * defence, as its head coach or a scorekeeper saves them. Every number but a
- * `userId` is an index into `players`, so the server never depends on the
+ * `gumboId` is an index into `players`, so the server never depends on the
  * client numbering players as it does. `base` is the lineups digest the
  * client last read; the last save wins, and the client uses it only to tell
  * its own save from somebody else's.
@@ -1511,7 +1512,7 @@ const asSaveLineupsShape = asObject({
   base: asString,
   players: asArray(
     asObject({
-      userId: asNullable(asUserId),
+      gumboId: asNullable(asGumboId),
       fullName: asString,
       jersey: asString
     })
