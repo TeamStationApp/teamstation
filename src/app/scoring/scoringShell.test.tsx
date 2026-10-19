@@ -69,6 +69,7 @@ function fixtureFetch(signedIn = true): void {
           : path.endsWith('/roster')
             ? Array.from({ length: 9 }, (_, i) => ({
                 userId: (path.includes('/away/') ? 101 : 201) + i,
+                gumboId: (path.includes('/away/') ? 101 : 201) + i,
                 shortName: `Player ${i + 1}`,
                 jersey: String(i + 1),
                 positions: [],
@@ -487,6 +488,7 @@ describe('scoring shell and exit', function () {
     const roster = (base: number): unknown[] =>
       Array.from({ length: 9 }, (_, index) => ({
         userId: base + index,
+        gumboId: base + index,
         shortName: `P${base + index}`,
         fullName: null,
         avatarUrl: null,
@@ -621,6 +623,7 @@ describe('scoring shell and exit', function () {
     const roster = (base: number, ids: string[]): unknown[] =>
       Array.from({ length: 9 }, (_, index) => ({
         userId: base + index,
+        gumboId: base + index,
         shortName: `P${base + index}`,
         fullName: null,
         avatarUrl: null,

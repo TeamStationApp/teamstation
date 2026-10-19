@@ -70,7 +70,7 @@ export async function addPlaceholderPlayers(
       lastName
     }
     const entry = await create(side, draft)
-    ids.push(addPlayerDraft(session, side, draft, entry.userId))
+    ids.push(addPlayerDraft(session, side, draft, entry.gumboId!))
     names.add(name.toLowerCase())
   }
   return ids

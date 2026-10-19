@@ -189,7 +189,7 @@ describe('legacy creation and person reads respect current authority', function 
         id: 'gps_demo_profile_boundary',
         game_id: 'gam_demo_profile_boundary',
         team_id: f.teamA,
-        user_id: 106
+        gumbo_id: 106
       })
       .execute()
     for (const user of [102, 104]) {

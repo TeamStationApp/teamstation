@@ -78,8 +78,14 @@ export async function createGuestPlayer(
         positions: player.positions
       })
       .execute()
+    const mapping = await trx
+      .selectFrom('gumbo_ids')
+      .select('gumbo_id')
+      .where('user_id', '=', minted.userId)
+      .executeTakeFirstOrThrow()
+    const gumboId = mapping.gumbo_id
     const guests = asGuests(game.guests)
-    guests[side].push(minted.userId)
+    guests[side].push(gumboId)
     await trx
       .updateTable('games')
       .set({ guests })
@@ -87,6 +93,7 @@ export async function createGuestPlayer(
       .execute()
     return {
       userId: minted.userId,
+      gumboId,
       shortName: fullName,
       nameDetails: {
         firstName: player.firstName,

@@ -71,20 +71,20 @@ describe('one person, however many rows', function () {
         {
           id: survivor,
           legacyId: legacyId(survivor),
-          display_name: 'Jordan Pujols'
+          display_name: 'Jordan Pacheco'
         },
         // Closed into the survivor, and one closed into that one: a child can
         // be merged twice as more teams turn up.
         {
           id: closed,
           legacyId: legacyId(closed),
-          display_name: 'Jordan Pujols',
+          display_name: 'Jordan Pacheco',
           merged_into: survivor
         },
         {
           id: closedTwice,
           legacyId: legacyId(closedTwice),
-          display_name: 'Jordan Pujols',
+          display_name: 'Jordan Pacheco',
           merged_into: closed
         },
         {
@@ -284,14 +284,19 @@ describe('one person, however many rows', function () {
     await db
       .insertInto('game_player_stats')
       .values([
-        { id: makeId('gamePlayerStats'), game_id: game, user_id: one, pa: 1 },
-        { id: makeId('gamePlayerStats'), game_id: game, user_id: other, pa: 3 },
+        { id: makeId('gamePlayerStats'), game_id: game, gumbo_id: one, pa: 1 },
+        {
+          id: makeId('gamePlayerStats'),
+          game_id: game,
+          gumbo_id: other,
+          pa: 3
+        },
         // Entered in the lineup and never up: that is one child written twice,
         // not two children, so it is not evidence against a merge.
         {
           id: makeId('gamePlayerStats'),
           game_id: game,
-          user_id: benched,
+          gumbo_id: benched,
           pa: 0
         }
       ])
@@ -359,7 +364,7 @@ describe('one person, however many rows', function () {
       .values({
         id: stranded,
         legacyId: legacyId(stranded),
-        display_name: 'Jordan Pujols',
+        display_name: 'Jordan Pacheco',
         merged_into: survivor
       })
       .execute()

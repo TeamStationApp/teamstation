@@ -11,17 +11,24 @@ import { asGameSetup, asLegacyGameSetup, setupOf } from './state'
 
 function historical(): ReturnType<typeof asLegacyGameSetup> {
   const { tagOrder, ...setup } = setupOf(game())
+  const players: ReturnType<typeof asLegacyGameSetup>['players'] = {}
   const sessionToSource: Record<number, number | null> = {}
   const sourceToSession: Record<string, number> = {}
   for (const id of tagOrder) {
     const source = 1000000 + id
-    setup.players[id].userId = source
+    players[id] = {
+      ...setup.players[id],
+      firstName: setup.players[id].firstName,
+      lastName: setup.players[id].lastName,
+      userId: source
+    }
     sessionToSource[id] = source
     sourceToSession[`number:${source}`] = id
   }
   setup.sides.home.pitchCounts[10] = 7
   return asLegacyGameSetup({
     ...setup,
+    players,
     identities: { sessionToSource, sourceToSession, nextId: 19 }
   })
 }
@@ -50,7 +57,7 @@ describe('historical scoring identities', function () {
         setup.players[1].id = 0
       },
       (setup: typeof clean) => {
-        setup.players[1].userId = 2
+        setup.players[1].id = 2
       },
       (setup: typeof clean) => {
         setup.tagOrder.push(1)

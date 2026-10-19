@@ -564,7 +564,7 @@ async function main(): Promise<void> {
         player => player.fullName === 'Jose Ramirez'
       )!
       assert(original.local)
-      assert.equal(original.userId, original.id)
+      assert.equal(original.id, original.id)
       const reopen = async (): Promise<void> => {
         await shown('Open scoring menu')
         await tap('Open scoring menu')
@@ -601,7 +601,7 @@ async function main(): Promise<void> {
       const after = latestSetup()
       assert.deepEqual(after.sides, before.sides)
       assert.deepEqual(after.tagOrder, before.tagOrder)
-      assert.equal(after.players[original.id].userId, original.id)
+      assert.equal(after.players[original.id].id, original.id)
       assert.equal(after.players[original.id].jersey, '00')
       assert.equal(after.players[original.id].throws, 'left')
       assert.equal(after.players[original.id].bats, 'switch')

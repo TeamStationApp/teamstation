@@ -269,11 +269,13 @@ describe('the lineup routes (U11)', function () {
     const setup = newSetup(TEAMS, {
       away: players.slice(0, 9).map((user, i) => ({
         userId: user.userId,
+        gumboId: user.userId,
         shortName: `A${i + 1}`,
         jersey: String(i + 1)
       })),
       home: players.slice(9).map((user, i) => ({
         userId: user.userId,
+        gumboId: user.userId,
         shortName: `H${i + 1}`,
         jersey: String(i + 1)
       }))
@@ -483,7 +485,7 @@ describe('the lineup routes (U11)', function () {
     expect(read.home).deep.include({ teamId: home, teamName: 'Hosts' })
     expect(read.away.start?.batters[1].name).equals('A2')
     expect(read.away.current?.batters[1]).deep.equals({
-      userId: guestId,
+      gumboId: guestId,
       name: 'Guest',
       jersey: '77'
     })
@@ -696,9 +698,15 @@ describe("saving a side's lineup (U8)", function () {
   const roster = (
     users: Array<{ userId: number }>,
     prefix: string
-  ): Array<{ userId: number; shortName: string; jersey: string }> =>
+  ): Array<{
+    userId: number
+    gumboId: number
+    shortName: string
+    jersey: string
+  }> =>
     users.map((user, i) => ({
       userId: user.userId,
+      gumboId: user.userId,
       shortName: `${prefix}${SURNAMES[i]}`,
       jersey: String(i + 1)
     }))
@@ -994,7 +1002,7 @@ describe("saving a side's lineup (U8)", function () {
     const players = team.players.map(id => {
       const player = state.gameData.players[id]
       return {
-        userId: player.userId,
+        gumboId: player.id,
         fullName: player.fullName,
         jersey: player.jersey
       }
@@ -1064,14 +1072,14 @@ describe("saving a side's lineup (U8)", function () {
   }
 
   const batters = (side: { current: unknown }): Array<number | null> =>
-    (side.current as { batters: Array<{ userId: number | null }> }).batters.map(
-      person => person.userId
-    )
+    (
+      side.current as { batters: Array<{ gumboId: number | null }> }
+    ).batters.map(person => person.gumboId)
 
   it('saves a head coach’s side before the first pitch, leaving the game scheduled', async function () {
     // The hosts start from their roster: the first nine of ten bat.
     const players = homePlayers.map((user, i) => ({
-      userId: user.userId,
+      gumboId: user.userId,
       fullName: `H${SURNAMES[i]}`,
       jersey: String(i + 1)
     }))
@@ -1098,7 +1106,7 @@ describe("saving a side's lineup (U8)", function () {
     expect(batters(read.home)).deep.equals(
       body.battingOrder.map(index => homePlayers[index].userId)
     )
-    expect(read.home.current?.defense.P?.userId).equals(homePlayers[9].userId)
+    expect(read.home.current?.defense.P?.gumboId).equals(homePlayers[9].userId)
     const row = await gameRow(games.fresh)
     expect(row.status).equals('scheduled')
     expect(row.currentPlay).not.equals(null)
@@ -1140,7 +1148,7 @@ describe("saving a side's lineup (U8)", function () {
     expect(read.home.current).not.equals(null)
     expect(batters(read.home)).deep.equals(
       opened.state.liveData.boxscore.teams.home.battingOrder.map(
-        id => opened.state.gameData.players[id].userId
+        id => opened.state.gameData.players[id].id
       )
     )
     const row = await gameRow(games.unheld)
@@ -1164,10 +1172,10 @@ describe("saving a side's lineup (U8)", function () {
       () => false
     )
     const order = roster.setup.sides.away.battingOrder.map(
-      id => roster.setup.players[id].userId
+      id => roster.setup.players[id].id
     )
     const person = (userId: number | null): LineupPerson => ({
-      userId,
+      gumboId: userId,
       name: `User ${userId}`,
       jersey: ''
     })
@@ -1238,12 +1246,12 @@ describe("saving a side's lineup (U8)", function () {
     )
     const orderOf = (side: Side): Array<number | null> =>
       roster.setup.sides[side].battingOrder.map(
-        id => roster.setup.players[id].userId
+        id => roster.setup.players[id].id
       )
     const personOf = (id: number): LineupPerson => {
       const player = roster.setup.players[id]
       return {
-        userId: player.userId,
+        gumboId: player.id,
         name: player.fullName,
         jersey: player.jersey
       }
@@ -1286,7 +1294,7 @@ describe("saving a side's lineup (U8)", function () {
     const teamDefault = async (
       teamId: string
     ): Promise<{
-      lineup: { batters: Array<{ userId: number | null }> }
+      lineup: { batters: Array<{ gumboId: number | null }> }
       fromGameId: string
       setAt: string
     } | null> => {
@@ -1319,14 +1327,14 @@ describe("saving a side's lineup (U8)", function () {
       const saved = await save(games.kept, COACH, hosts)
       expect(saved.status, JSON.stringify(saved.body)).equals(200)
       const visitors = await teamDefault(away)
-      expect(visitors?.lineup.batters.map(item => item.userId)).deep.equals(
+      expect(visitors?.lineup.batters.map(item => item.gumboId)).deep.equals(
         [...orderOf('away')].reverse()
       )
       await score(games.kept, [{ type: 'pitch', call: 'B' }])
       expect(await teamDefault(away)).deep.equals(visitors)
       const taken = await teamDefault(home)
       expect(taken?.fromGameId).equals(games.kept)
-      expect(taken?.lineup.batters.map(item => item.userId)).deep.equals(
+      expect(taken?.lineup.batters.map(item => item.gumboId)).deep.equals(
         orderOf('home')
       )
       const begun = await db!
@@ -1357,12 +1365,12 @@ describe("saving a side's lineup (U8)", function () {
     )
     const orderOf = (side: Side): Array<number | null> =>
       roster.setup.sides[side].battingOrder.map(
-        id => roster.setup.players[id].userId
+        id => roster.setup.players[id].id
       )
     const personOf = (id: number): LineupPerson => {
       const player = roster.setup.players[id]
       return {
-        userId: player.userId,
+        gumboId: player.id,
         name: player.fullName,
         jersey: player.jersey
       }
@@ -1405,7 +1413,7 @@ describe("saving a side's lineup (U8)", function () {
     const teamDefault = async (
       teamId: string
     ): Promise<{
-      lineup: { batters: Array<{ userId: number | null }> }
+      lineup: { batters: Array<{ gumboId: number | null }> }
       fromGameId: string
       setAt: string
     } | null> => {
@@ -1453,7 +1461,7 @@ describe("saving a side's lineup (U8)", function () {
       expect(await teamDefault(away)).deep.equals(visitors)
       const taken = await teamDefault(home)
       expect(taken?.fromGameId).equals(games.revised)
-      expect(taken?.lineup.batters.map(item => item.userId)).deep.equals(
+      expect(taken?.lineup.batters.map(item => item.gumboId)).deep.equals(
         orderOf('home')
       )
     } finally {
@@ -1478,12 +1486,12 @@ describe("saving a side's lineup (U8)", function () {
     )
     const orderOf = (side: Side): Array<number | null> =>
       roster.setup.sides[side].battingOrder.map(
-        id => roster.setup.players[id].userId
+        id => roster.setup.players[id].id
       )
     const personOf = (id: number): LineupPerson => {
       const player = roster.setup.players[id]
       return {
-        userId: player.userId,
+        gumboId: player.id,
         name: player.fullName,
         jersey: player.jersey
       }
@@ -1510,7 +1518,7 @@ describe("saving a side's lineup (U8)", function () {
       .where('id', '=', away)
       .execute()
     const teamDefault = async (): Promise<{
-      lineup: { batters: Array<{ userId: number | null }> }
+      lineup: { batters: Array<{ gumboId: number | null }> }
       fromGameId: string
     } | null> => {
       const row = await db!
@@ -1562,7 +1570,7 @@ describe("saving a side's lineup (U8)", function () {
       expect(changed.status, JSON.stringify(changed.body)).equals(200)
       const after = asGameLineupsResponse(changed.body)
       expect(batters(after.away)).deep.equals(
-        reversed.batters.map(person => person.userId)
+        reversed.batters.map(person => person.gumboId)
       )
       expect(batters(after.home)).deep.equals(hostsLineup)
       await score(games.accept, [{ type: 'pitch', call: 'B' }])
@@ -1586,7 +1594,7 @@ describe("saving a side's lineup (U8)", function () {
     const personOf = (id: number): LineupPerson => {
       const player = roster.setup.players[id]
       return {
-        userId: player.userId,
+        gumboId: player.id,
         name: player.fullName,
         jersey: player.jersey
       }
@@ -1637,7 +1645,7 @@ describe("saving a side's lineup (U8)", function () {
       const order = setup.sides.away.battingOrder
       setup.sides.away.battingOrder = [order[1], order[0], ...order.slice(2)]
       const wanted = setup.sides.away.battingOrder.map(
-        id => session.state.gameData.players[id].userId
+        id => session.state.gameData.players[id].id
       )
       await score(games.set, [
         {
@@ -1654,11 +1662,13 @@ describe("saving a side's lineup (U8)", function () {
         .where('id', '=', away)
         .executeTakeFirstOrThrow()
       const lineup = taken.default_lineup as {
-        lineup: { batters: Array<{ userId: number | null }> }
+        lineup: { batters: Array<{ gumboId: number | null }> }
         fromGameId: string
       }
       expect(lineup.fromGameId).equals(games.set)
-      expect(lineup.lineup.batters.map(item => item.userId)).deep.equals(wanted)
+      expect(lineup.lineup.batters.map(item => item.gumboId)).deep.equals(
+        wanted
+      )
     } finally {
       await db!
         .updateTable('teams')
@@ -1680,12 +1690,12 @@ describe("saving a side's lineup (U8)", function () {
     )
     const orderOf = (side: Side): Array<number | null> =>
       roster.setup.sides[side].battingOrder.map(
-        id => roster.setup.players[id].userId
+        id => roster.setup.players[id].id
       )
     const personOf = (id: number): LineupPerson => {
       const player = roster.setup.players[id]
       return {
-        userId: player.userId,
+        gumboId: player.id,
         name: player.fullName,
         jersey: player.jersey
       }
@@ -1778,7 +1788,7 @@ describe("saving a side's lineup (U8)", function () {
     const personOf = (id: number): LineupPerson => {
       const player = roster.setup.players[id]
       return {
-        userId: player.userId,
+        gumboId: player.id,
         name: player.fullName,
         jersey: player.jersey
       }
@@ -1836,7 +1846,7 @@ describe("saving a side's lineup (U8)", function () {
         (await ask('GET', `/games/${games.shown}/lineups`, FAN)).body
       )
       const orderOf = roster.setup.sides.away.battingOrder.map(
-        id => roster.setup.players[id].userId
+        id => roster.setup.players[id].id
       )
       expect(batters(fan.away)).deep.equals(orderOf)
       const before = await teamDefault()
@@ -1856,7 +1866,7 @@ describe("saving a side's lineup (U8)", function () {
         (await ask('GET', `/games/${games.shown}/lineups`, FAN)).body
       )
       expect(batters(after.away)).deep.equals(
-        reversed.batters.map(person => person.userId)
+        reversed.batters.map(person => person.gumboId)
       )
       expect(batters(after.home)).deep.equals(
         batters(asGameLineupsResponse(saved.body).home)
@@ -1953,7 +1963,7 @@ describe("saving a side's lineup (U8)", function () {
       }
     )
     body.players.push({
-      userId: guest.userId,
+      gumboId: guest.userId,
       fullName: 'Newcomer',
       jersey: '88'
     })
@@ -1962,7 +1972,7 @@ describe("saving a side's lineup (U8)", function () {
     expect(answer.status, JSON.stringify(answer.body)).equals(200)
     const read = asGameLineupsResponse(answer.body)
     expect(read.home.current?.defense.LF).deep.include({
-      userId: guest.userId,
+      gumboId: guest.userId,
       name: 'Newcomer'
     })
     const after = await scoring(games.locals)
@@ -1993,7 +2003,7 @@ describe("saving a side's lineup (U8)", function () {
       }
     )
     body.players.push({
-      userId: guest.userId,
+      gumboId: guest.userId,
       fullName: 'Freeman',
       jersey: '5'
     })
@@ -2078,7 +2088,7 @@ describe("saving a side's lineup (U8)", function () {
       ...body,
       players: [
         ...body.players,
-        { userId: fan.userId, fullName: 'Fan', jersey: '' }
+        { gumboId: fan.userId, fullName: 'Fan', jersey: '' }
       ]
     })
     expect(stranger.status).equals(400)
@@ -2228,7 +2238,7 @@ describe("saving a side's lineup (U8)", function () {
       context
     )
     const body = bodyOf(session.state, 'home')
-    expect(body.players.map(player => player.userId)).not.includes(userId)
+    expect(body.players.map(player => player.gumboId)).not.includes(userId)
     const guest = await createGuestPlayer(
       db!,
       { userId: coach.userId, isAdmin: false, scopes: [] },
@@ -2245,7 +2255,7 @@ describe("saving a side's lineup (U8)", function () {
     )
     expect((await save(id, COACH, body)).status).equals(400)
     body.players.push({
-      userId: guest.userId,
+      gumboId: guest.userId,
       fullName: guest.shortName,
       jersey: guest.jersey ?? ''
     })

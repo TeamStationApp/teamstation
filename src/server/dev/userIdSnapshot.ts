@@ -60,6 +60,7 @@ const WHOLE_TABLES = [
   'event_players',
   'gumbo_ids',
   'game_placeholder_guests',
+  'game_guest_details',
   'group_requests',
   'group_request_sides'
 ]

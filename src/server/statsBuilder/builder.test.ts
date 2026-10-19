@@ -175,14 +175,14 @@ describe('statsBuilder drain', function () {
       .where('game_id', '=', gameId)
       .execute()
     expect(rows.length).equals(2)
-    const bat = rows.find(row => Number(row.user_id) === batter)!
+    const bat = rows.find(row => Number(row.gumbo_id) === batter)!
     expect(bat.pa).equals(1)
     expect(bat.singles).equals(1)
     expect(bat.team_id).equals(away)
     expect(new Date(bat.computed_at).toISOString()).equals(
       clockNow.toISOString()
     )
-    const pit = rows.find(row => Number(row.user_id) === pitcher)!
+    const pit = rows.find(row => Number(row.gumbo_id) === pitcher)!
     expect(pit.pitch_bf).equals(1)
     expect(pit.team_id).equals(home)
   })
@@ -235,11 +235,11 @@ describe('statsBuilder drain', function () {
       (
         await db
           .selectFrom('game_player_stats')
-          .select('user_id')
+          .select('gumbo_id')
           .where('game_id', '=', gameId)
           .execute()
       )
-        .map(row => Number(row.user_id))
+        .map(row => Number(row.gumbo_id))
         .sort((a, b) => a - b)
     ).deep.equals([batter, otherBatter, pitcher].sort((a, b) => a - b))
 
@@ -253,10 +253,10 @@ describe('statsBuilder drain', function () {
     const ids = (
       await db
         .selectFrom('game_player_stats')
-        .select('user_id')
+        .select('gumbo_id')
         .where('game_id', '=', gameId)
         .execute()
-    ).map(row => Number(row.user_id))
+    ).map(row => Number(row.gumbo_id))
     expect(ids.includes(otherBatter)).equals(false)
     expect(ids.includes(batter)).equals(true)
   })
@@ -351,10 +351,10 @@ describe('statsBuilder drain', function () {
     const ids = (
       await db
         .selectFrom('game_player_stats')
-        .select('user_id')
+        .select('gumbo_id')
         .where('game_id', '=', gameId)
         .execute()
-    ).map(row => Number(row.user_id))
+    ).map(row => Number(row.gumbo_id))
     expect(ids.includes(otherBatter)).equals(true)
     expect(ids.includes(batter)).equals(false)
   })
@@ -417,12 +417,29 @@ describe('statsBuilder drain', function () {
           updated_at: now
         })
         .execute()
+    const guest = mint()
+    await db
+      .insertInto('users')
+      .values({
+        id: guest,
+        legacyId: legacies.get(guest)!,
+        display_name: 'Guest'
+      })
+      .execute()
     const [v01, v02, v03, , , , , , , v10, v11, v12] = visitors
     const [starter] = hosts
     const relief = hosts[9]
     const setup = newSetup(TEAMS, {
-      away: visitors.map(userId => ({ userId, shortName: String(userId) })),
-      home: hosts.map(userId => ({ userId, shortName: String(userId) }))
+      away: visitors.map(userId => ({
+        userId,
+        gumboId: userId,
+        shortName: String(userId)
+      })),
+      home: hosts.map(userId => ({
+        userId,
+        gumboId: userId,
+        shortName: String(userId)
+      }))
     })
     for (const side of ['away', 'home'] as const)
       setup.sides[side].battingOrder = setup.sides[side].battingOrder.slice(
@@ -436,7 +453,7 @@ describe('statsBuilder drain', function () {
     const sub = (player: number, replaces: number): ScoringAction => ({
       type: 'lineup',
       kind: 'substitute',
-      side: player > 12 ? 'home' : 'away',
+      side: hosts.includes(player) ? 'home' : 'away',
       player,
       replaces
     })
@@ -448,14 +465,19 @@ describe('statsBuilder drain', function () {
     const steps = (sheetPinchHitter: boolean): Step[] =>
       sheetPinchHitter
         ? [
-            // Visitor 1 goes to 0-2; a man made in the sheet, with no user
-            // id, strikes out for him.
+            // Visitor 1 goes to 0-2; a persisted guest strikes out for him.
             () => [
               ...pitches(['C', 'C']),
-              { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'PH' }
+              {
+                type: 'lineup',
+                kind: 'addPlayer',
+                side: 'away',
+                name: 'PH',
+                player: guest
+              }
             ],
             state => [
-              sub(state.liveData.boxscore.teams.away.players.at(-1)!, 1),
+              sub(state.liveData.boxscore.teams.away.players.at(-1)!, v01),
               ...pitches(['C'])
             ],
             settle
@@ -482,9 +504,9 @@ describe('statsBuilder drain', function () {
             ],
             settle,
             state => [
-              sub(22, fielder(state, 'P')),
+              sub(relief, fielder(state, 'P')),
               ...pitches(['C', 'C']),
-              sub(10, 2)
+              sub(v10, v02)
             ],
             () => pitches(['C']),
             settle,
@@ -494,9 +516,9 @@ describe('statsBuilder drain', function () {
                 kind: 'pinchRunner',
                 side: 'away',
                 base: '1B',
-                player: 11
+                player: v11
               },
-              { type: 'baseRunning', kind: 'steal', runner: 11, to: '2B' }
+              { type: 'baseRunning', kind: 'steal', runner: v11, to: '2B' }
             ],
             state => [
               ...pitches(['F']),
@@ -507,12 +529,12 @@ describe('statsBuilder drain', function () {
                 trajectory: 'line_drive'
               },
               { type: 'result', eventType: 'single' },
-              { type: 'runnerMovement', runner: 11, to: 'home' }
+              { type: 'runnerMovement', runner: v11, to: 'home' }
             ],
             settle,
             () => [
               ...pitches(['B', 'C', 'C']),
-              sub(12, 4),
+              sub(v12, visitors[3]),
               ...pitches(['B', 'B', 'B'])
             ],
             settle
@@ -543,7 +565,7 @@ describe('statsBuilder drain', function () {
         .selectAll()
         .where('game_id', '=', gameId)
         .execute()
-      return new Map(rows.map(row => [Number(row.user_id), row]))
+      return new Map(rows.map(row => [Number(row.gumbo_id), row]))
     }
 
     const e8 = await build(false)

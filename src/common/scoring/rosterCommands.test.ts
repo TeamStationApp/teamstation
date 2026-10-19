@@ -61,6 +61,7 @@ function pregame(): GameState {
   const roster = (names: string[], first: number): RosterPlayer[] =>
     names.map((shortName, i) => ({
       userId: first + i,
+      gumboId: first + i,
       shortName,
       jersey: String(i + 2)
     }))
@@ -308,7 +309,7 @@ describe('roster commands: lineups, defenses and players (U1)', function () {
       firstName: 'Shohei',
       lastName: 'Ohtani',
       jersey: '17',
-      userId: 9000000,
+      id: 9000000,
       local: true,
       teamId: TEAMS.home.id
     })
