@@ -550,43 +550,44 @@ export function strandedNote(stranded: number[]): string | undefined {
   )
 }
 
+export class UnresolvedAccount extends Error {}
+
 /** Who each of these ids is now, for a read that has rows rather than a name. */
 export async function survivorsOf(
   db: Kysely<Database>,
   userIds: number[]
 ): Promise<Map<number, number>> {
-  const survivors = new Map<number, number>()
-  if (userIds.length === 0) return survivors
-  const rows = await db
-    .selectFrom('users')
-    .select(['id', 'merged_into'])
-    .where('id', 'in', [...new Set(userIds)])
-    .execute()
-
-  const mergedInto = new Map<number, number>()
-  for (const row of rows) {
-    if (row.merged_into != null) mergedInto.set(row.id, row.merged_into)
+  const next = new Map<number, number | null>()
+  let pending = [...new Set(userIds)]
+  while (pending.length > 0) {
+    const rows = await db
+      .selectFrom('users')
+      .select(['id', 'merged_into'])
+      .where('id', 'in', pending)
+      .execute()
+    if (rows.length !== pending.length)
+      throw new UnresolvedAccount('Missing account in merge chain')
+    for (const row of rows) next.set(row.id, row.merged_into)
+    pending = [
+      ...new Set(
+        rows.flatMap(row =>
+          row.merged_into == null || next.has(row.merged_into)
+            ? []
+            : [row.merged_into]
+        )
+      )
+    ]
   }
-  for (const row of rows) {
-    let id = row.id
-    const walked = new Set<number>([id])
-    while (true) {
-      const next = mergedInto.get(id)
-      if (next == null || walked.has(next)) break
-      walked.add(next)
-      id = next
-      // The chain can leave the batch, and then one more lookup settles it.
-      if (!mergedInto.has(id)) {
-        const beyond = await db
-          .selectFrom('users')
-          .select(['merged_into'])
-          .where('id', '=', id)
-          .executeTakeFirst()
-        if (beyond?.merged_into == null) break
-        mergedInto.set(id, beyond.merged_into)
-      }
+  const survivors = new Map<number, number>()
+  for (const source of userIds) {
+    const seen = new Set<number>()
+    let id = source
+    while (next.get(id) != null) {
+      if (seen.has(id)) throw new UnresolvedAccount('Cyclic account merge')
+      seen.add(id)
+      id = next.get(id)!
     }
-    survivors.set(row.id, id)
+    survivors.set(source, id)
   }
   return survivors
 }
