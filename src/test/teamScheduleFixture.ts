@@ -187,6 +187,7 @@ const ROSTER = [
 ].map((person, index) => ({
   ...person,
   userId: 100 + index,
+  gumboId: 100 + index,
   avatarUrl: null,
   isPlayer: person.section === 'player',
   role: 'member',
@@ -202,6 +203,7 @@ const BATTING = PLAYERS.map(([shortName], index) => {
   const h = 5 + (index % 7)
   return {
     userId: 103 + index,
+    gumboId: 103 + index,
     shortName,
     teamId: TEAM_ID,
     g: 8,
@@ -233,6 +235,7 @@ const PITCHING = PLAYERS.filter(([, , positions]) =>
   (positions as readonly string[]).includes('P')
 ).map(([shortName], index) => ({
   userId: 200 + index,
+  gumboId: 200 + index,
   shortName,
   teamId: TEAM_ID,
   ip: `${8 + index}.1`,

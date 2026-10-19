@@ -288,10 +288,12 @@ export async function addScorableTeams(
   const setup = newSetup(teams, {
     away: roster.away.map((userId, i) => ({
       userId,
+      gumboId: userId,
       shortName: `Away ${i + 1}`
     })),
     home: roster.home.map((userId, i) => ({
       userId,
+      gumboId: userId,
       shortName: `Home ${i + 1}`
     }))
   })

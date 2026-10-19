@@ -112,7 +112,7 @@ describe('defensive roster sheet', function () {
       session.gameData.players[id] = {
         ...session.gameData.players[id],
         local: false,
-        userId: 200 + i,
+
         fullName: i === 0 ? 'Luis Ga' : 'Luis Gi',
         jersey: ''
       }

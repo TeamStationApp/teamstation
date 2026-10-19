@@ -22,6 +22,7 @@ import {
 import type { Side } from '../../common/scoring/state'
 import type { Database } from '../db/database'
 import { fenceDistanceFor } from '../games/fenceDistance'
+import { resolveGumboIds } from '../scoring/gumboIds'
 import { resolveScoringGame } from '../scoring/openRow'
 import { readPlays } from './postPlays'
 
@@ -220,6 +221,36 @@ export function defaultOf(raw: unknown): DefaultLineup | null {
   }
 }
 
+/** Resolve stored default identities without modifying the historical lineup. */
+export async function resolvedDefaultOf(
+  db: Trx,
+  raw: unknown
+): Promise<DefaultLineup | null> {
+  const kept = defaultOf(raw)
+  if (kept?.lineup == null) return kept
+  const people = [...kept.lineup.batters, ...Object.values(kept.lineup.defense)]
+  const mapping = await resolveGumboIds(
+    db,
+    people.flatMap(person => (person?.gumboId == null ? [] : [person.gumboId]))
+  )
+  const resolve = (person: LineupPerson): LineupPerson => ({
+    ...person,
+    gumboId: person.gumboId == null ? null : mapping.get(person.gumboId)!
+  })
+  return {
+    ...kept,
+    lineup: {
+      batters: kept.lineup.batters.map(resolve),
+      defense: Object.fromEntries(
+        Object.entries(kept.lineup.defense).map(([position, person]) => [
+          position,
+          person == null ? null : resolve(person)
+        ])
+      ) as typeof kept.lineup.defense
+    }
+  }
+}
+
 /**
  * What a live post leaves of the game's lineups, inside its transaction and
  * after its writes: the digest, and for a post from TeamStation the teams'
@@ -277,7 +308,7 @@ export async function keepLineups(
       .where('id', '=', teamId)
       .forUpdate()
       .executeTakeFirst()
-    const kept = defaultOf(row?.default_lineup)
+    const kept = await resolvedDefaultOf(trx, row?.default_lineup)
     if (kept?.lineup != null && sameArrangement(kept.lineup, lineup)) continue
     const value: DefaultLineup = {
       lineup,
