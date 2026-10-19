@@ -171,7 +171,7 @@ async function startupSmoke(): Promise<void> {
       .values({
         id: 'gps_startup',
         game_id: 'gam_startup',
-        user_id: 101,
+        gumbo_id: 101,
         team_id: 'tem_startup_home',
         pa: 4,
         ab: 3,

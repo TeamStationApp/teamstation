@@ -224,6 +224,7 @@ describe('game actions preserve box score and videos', function () {
       batting: [
         asBattingRow({
           userId: 1,
+          gumboId: 1,
           shortName: 'Alex',
           teamId: 'away',
           pa: 2,
@@ -243,6 +244,7 @@ describe('game actions preserve box score and videos', function () {
       pitching: [
         asPitchingRow({
           userId: 2,
+          gumboId: 2,
           shortName: 'Blake',
           teamId: 'home',
           ip: '1.0',

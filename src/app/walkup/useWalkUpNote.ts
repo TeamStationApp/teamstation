@@ -100,11 +100,11 @@ export function useWalkUpNote(
   const batterId = batters.length === 0 ? null : batters[batters.length - 1]
   const batter =
     batterId == null ? undefined : session.gameData.players[batterId]
-  const song =
-    batter?.userId == null
-      ? null
-      : (rosters[batter.teamId]?.find(entry => entry.userId === batter.userId)
-          ?.walkUpSong ?? null)
+  const account =
+    batter == null
+      ? undefined
+      : rosters[batter.teamId]?.find(entry => entry.gumboId === batter.id)
+  const song = account?.walkUpSong ?? null
   const appearance =
     play == null || batterId == null
       ? null
@@ -114,22 +114,28 @@ export function useWalkUpNote(
   // The song as this appearance looks for it: a new batter, or a changed
   // song, looks again.
   const lookup =
-    appearance == null || song == null || batter?.userId == null
+    appearance == null || song == null || batter == null || account == null
       ? null
-      : `${appearance}|${batter.teamId}:${batter.userId}:${song.provider}:${song.providerId}`
+      : `${appearance}|${batter.teamId}:${account.userId}:${song.provider}:${song.providerId}`
 
   const [found, setFound] = useState<{
     lookup: string
     handle: string | null
   }>()
-  const asking = useRef({ song, batter })
-  asking.current = { song, batter }
+  const asking = useRef({ song, batter, account })
+  asking.current = { song, batter, account }
   useEffect(() => {
-    const { song: tune, batter: who } = asking.current
-    if (!music.available || lookup == null || tune == null || who == null)
+    const { song: tune, batter: who, account } = asking.current
+    if (
+      !music.available ||
+      lookup == null ||
+      tune == null ||
+      who == null ||
+      account == null
+    )
       return
     let live = true
-    const owner = { teamId: who.teamId, userId: String(who.userId) }
+    const owner = { teamId: who.teamId, userId: String(account.userId) }
     const looking =
       resolve == null ? resolveSong(music, tune, owner) : resolve(tune, owner)
     looking

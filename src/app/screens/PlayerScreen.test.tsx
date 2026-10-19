@@ -127,6 +127,7 @@ const coach = roles({ t1: ['coach'] })
 
 const jordan = asRosterEntry({
   userId: 7,
+  gumboId: 7,
   shortName: 'Jordan P',
   jersey: '4',
   positions: ['CF'],
@@ -927,8 +928,9 @@ describe('taking a player off the team from Settings', function () {
             context: { kind: 'team', id: 't1', name: 'Hawks' },
             person: {
               userId: 7,
+              gumboId: 7,
               shortName: 'Jordan P',
-              fullName: 'Jordan Pujols',
+              fullName: 'Jordan Pacheco',
               avatarUrl: null,
               canHoldRoles: options.canHoldRoles ?? true
             },
@@ -1676,8 +1678,9 @@ describe('a player’s Team roles on Settings', function () {
           context: { kind: 'team', id: 't1', name: 'Hawks' },
           person: {
             userId: 7,
+            gumboId: 7,
             shortName: 'Jordan P',
-            fullName: 'Jordan Pujols',
+            fullName: 'Jordan Pacheco',
             avatarUrl: null,
             canHoldRoles
           },
