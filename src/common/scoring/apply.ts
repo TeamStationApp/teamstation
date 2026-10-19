@@ -802,7 +802,9 @@ function finishOut(ctx: Ctx, call: OutCall): void {
   // double play, retired before the batter.
   const force =
     (call.to === call.from + 1 && forcedFrom(ctx.state, call.from)) ||
-    (old?.force === true && old.decision === 'pending') ||
+    (pending?.outcome !== "Fielder's Choice" &&
+      old?.force === true &&
+      old.decision === 'pending') ||
     (call.from === 0 && call.to <= 1)
   l.outs++
   // A batter who reached on an error and is then put out on the same play
@@ -1266,6 +1268,29 @@ function locate(ctx: Ctx, runner: number): number {
   return -1
 }
 
+/** Whole-play relay metadata is separate from a particular out's credits. */
+function saveChoiceRoute(
+  ctx: Ctx,
+  route: NonNullable<RunnerMovementAction['fieldingRoute']>
+): void {
+  if (ctx.state.pending?.outcome !== "Fielder's Choice")
+    refuse('notNow', 'A whole fielding route belongs to a fielder’s choice')
+  if (
+    route.length === 0 ||
+    route.some(
+      hop =>
+        !isFielder(ctx, hop.id) ||
+        !Number.isFinite(hop.point.x) ||
+        !Number.isFinite(hop.point.z)
+    )
+  )
+    refuse('illegal', 'Choose the fielders and their locations')
+  current(ctx).source.teamstation.fieldingRoute = route.map(hop => ({
+    player: playerRef(ctx.state, hop.id),
+    location: { ...hop.point }
+  }))
+}
+
 /**
  * `joining` is the event of the action this movement is part of, when that
  * action has already written it: the second runner a wild pitch moved.
@@ -1302,6 +1327,7 @@ function runnerMovement(
   const decision = nextDecision(state)
   if (decision === 'errorAttribution')
     refuse('notNow', 'Charge the error first')
+  if (action.fieldingRoute != null) saveChoiceRoute(ctx, action.fieldingRoute)
   // The batter of a dropped third strike already stands on first, still
   // waiting for his call there: he runs from the plate.
   const droppedBatter =
@@ -1331,7 +1357,11 @@ function runnerMovement(
     return
   }
   const retakingOffer = completesHitOffer(state, action.runner, where, to)
-  if (decision === 'homeDecision' && !retakingOffer)
+  if (
+    decision === 'homeDecision' &&
+    !retakingOffer &&
+    !(pending?.outcome === "Fielder's Choice" && action.out === true)
+  )
     refuse('notNow', 'Decide the runner headed home first')
   if (where === 0) {
     const batterTurn =
@@ -1367,6 +1397,23 @@ function runnerMovement(
     to
   })
   if (error != null) refuse('illegal', error)
+  // Older choice actions carried the complete relay on the Safe batter.
+  if (
+    action.fieldingRoute == null &&
+    pending?.outcome === "Fielder's Choice" &&
+    where === 0 &&
+    action.fielders != null
+  ) {
+    if (action.locations?.length !== action.fielders.length)
+      refuse('illegal', 'Choose the fielders and their locations')
+    saveChoiceRoute(
+      ctx,
+      action.fielders.map((id, index) => ({
+        id,
+        point: action.locations![index]
+      }))
+    )
+  }
   commitSafe(ctx, action, where, to, joining)
 }
 
@@ -1392,7 +1439,9 @@ function commitSafe(
     movement.force =
       to === from + 1 &&
       (from === 0 ||
-        pending.originalBases.slice(0, from).every(id => id != null)) &&
+        (pending.outcome === "Fielder's Choice"
+          ? forcedFrom(ctx.state, from)
+          : pending.originalBases.slice(0, from).every(id => id != null))) &&
       pending.movements.some(move => move.from === 0 && move.decision !== 'out')
     Object.assign(old, movement)
     if (pending.outcome === 'Dropped Third Strike') {
@@ -1570,7 +1619,12 @@ function homeMovement(
 ): void {
   const state = ctx.state
   const pending = state.pending!
-  if (state.homeQueue[0] !== action.runner)
+  // Choice calls carry their own play order, including a tag out or a Safe
+  // crossing before another arrival. Other outcomes still resolve the lead.
+  if (
+    state.homeQueue[0] !== action.runner &&
+    !(pending.outcome === "Fielder's Choice" && to === 4)
+  )
     refuse('notNow', 'Decide the lead runner headed home first')
   const movement = pending.movements.find(
     move => move.playerId === action.runner
@@ -1595,7 +1649,7 @@ function homeMovement(
     const rbi = earnsRbi(pending.outcome, reason)
     scoreRun(ctx, action.runner, rbi)
     recordRunner(ctx, movement, { reason, rbi })
-    state.homeQueue.shift()
+    state.homeQueue = state.homeQueue.filter(id => id !== action.runner)
     settle(ctx)
     return
   }
@@ -2088,15 +2142,24 @@ export function applyAction(
       const problem = currentSetupError(ctx.state, acceptedLineup)
       if (problem != null) refuse('notNow', problem)
     }
+    const priorFieldingRoute =
+      ctx.state.liveData.plays.currentPlay?.source.teamstation.fieldingRoute
     ;(HANDLERS[action.type] as (ctx: Ctx, action: ScoringAction) => void)(
       ctx,
       action
     )
     settle(ctx)
     keepCharges(ctx.state, ctx.charges, mound)
+    const open = ctx.state.liveData.plays.currentPlay
+    if (
+      action.type === 'runnerMovement' &&
+      open?.source.teamstation.fieldingRoute != null &&
+      open.source.teamstation.fieldingRoute !== priorFieldingRoute
+    )
+      open.source.teamstation.fieldingRouteRecordCount =
+        open.source.teamstation.runnerActions?.length ?? 0
     // Until its first pitch or action, a play begins with the lineups as
     // they stand.
-    const open = ctx.state.liveData.plays.currentPlay
     if (
       open?.lineups != null &&
       open.playEvents.every(event => event.isSubstitution === true)

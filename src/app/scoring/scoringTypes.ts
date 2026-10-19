@@ -42,6 +42,7 @@ export type ScoringPhase =
   | 'runnerMovement'
   | 'homeDecision'
   | 'resolveBatter'
+  | 'fieldersChoice'
   | 'chooseThrower'
   | 'chooseDefender'
   | 'runnerDecision'
@@ -57,6 +58,18 @@ export type ScoringPhase =
  * stands. Who went where, and what is still to be decided, is the game's.
  */
 export interface PendingPlay {
+  fieldersChoice?: {
+    route: Array<{ id: number; point: GroundPoint }>
+    runners: Array<{
+      playerId: number
+      from: number
+      to: number
+      decision?: 'safe' | 'out'
+      putout?: number
+    }>
+    calls: number[]
+    choosingPutout?: number
+  }
   contactKind?: ContactKind
   homeRunKind?: HomeRunKind
   landingHeight?: number
@@ -91,7 +104,11 @@ export interface MotionCommand {
 }
 export interface RunnerAction {
   defensiveRoute?: Array<{ id: number; point: GroundPoint }>
-  purpose?: 'batterRetirement' | 'errorAttribution' | 'droppedThirdStrike'
+  purpose?:
+    | 'batterRetirement'
+    | 'errorAttribution'
+    | 'droppedThirdStrike'
+    | 'fieldersChoice'
   runnerPoint?: GroundPoint
   playerId: number
   from: number
@@ -268,8 +285,16 @@ export type ScoringEvent =
       decision: 'safe' | 'out'
       generation: number
     }
+  | { type: 'CHOICE_CANCEL'; generation: number }
   | { type: 'RUNNER_PROPOSE'; id: number; to: number }
   | { type: 'RUNNER_DECIDE'; decision: 'safe' | 'out' }
+  | {
+      type: 'CHOICE_DECIDE'
+      id: number
+      decision: 'safe' | 'out'
+      putout?: number
+      generation: number
+    }
   | { type: 'RUNNER_REASON'; reason: string }
   | { type: 'RUNNER_ERROR'; id: number; generation: number }
   | { type: 'RUNNER_ERROR_REUSE'; reuse: boolean }

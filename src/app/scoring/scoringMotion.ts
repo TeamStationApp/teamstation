@@ -1,3 +1,4 @@
+import type { GamePlay } from '../../common/scoring/state'
 import type { Transition } from '../../common/scoring/transitions'
 import {
   BASES,
@@ -153,6 +154,24 @@ export function sequencesFor(
     }
   }
 }
+/** Saved catches in the same chronological order used by the renderer. */
+export function scoringDefensiveRoute(
+  session: ScoringState['session']
+): NonNullable<GamePlay['source']['teamstation']['fieldingRoute']> {
+  const detail = session.liveData.plays.currentPlay?.source.teamstation
+  const records = detail?.runnerActions ?? []
+  const routeThrough = detail?.fieldingRouteRecordCount ?? records.length
+  const defensiveRoute = records.flatMap((record, index) => [
+    ...(index === routeThrough ? (detail?.fieldingRoute ?? []) : []),
+    // A failed pickoff returns to the positions before its presentation.
+    ...(record.reason === 'Safe from Pickoff'
+      ? []
+      : (record.defensiveRoute ?? []))
+  ])
+  if (routeThrough >= records.length)
+    defensiveRoute.push(...(detail?.fieldingRoute ?? []))
+  return defensiveRoute
+}
 export function scoringFieldPlayers(
   state: Pick<
     ScoringState,
@@ -190,6 +209,7 @@ export function scoringFieldPlayers(
   const labels = shortPlayerNames(Object.values(session.gameData.players))
   const pending = state.pendingPlay
   const movements = session.pending?.movements ?? []
+  const defensiveRoute = scoringDefensiveRoute(session)
   const homeQueue = session.homeQueue
   const absent = movements
     .filter(move => move.decision === 'out' || move.to === 4)
@@ -295,6 +315,31 @@ export function scoringFieldPlayers(
       }
     }
   }
+  const savedChoiceBatter =
+    session.pending?.outcome === "Fielder's Choice"
+      ? movements.find(move => move.from === 0)
+      : undefined
+  if (
+    pending?.fieldersChoice != null ||
+    (state.runnerAction?.purpose === 'fieldersChoice' &&
+      savedChoiceBatter?.decision === 'safe')
+  ) {
+    const batter = session.liveData.plays.currentPlay!.matchup.batter.id
+    for (const move of [
+      ...(pending?.fieldersChoice?.runners ?? []),
+      ...(savedChoiceBatter?.decision === 'out'
+        ? []
+        : [{ playerId: batter, to: Math.max(1, savedChoiceBatter?.to ?? 1) }])
+    ]) {
+      const player = addRunner(move.playerId)
+      player.batting = false
+      player.runnerBase = move.to
+      if (player.motion == null) {
+        player.position = { ...BASES[move.to % 4] }
+        player.target = { ...player.position }
+      }
+    }
+  }
   if (state.presentation?.kind === 'hit' && state.presentation.out) {
     const batter = addRunner(state.presentation.batter)
     batter.batting = false
@@ -358,18 +403,15 @@ export function scoringFieldPlayers(
       player.target = { ...player.position }
     }
     if (player.team === 'defense') {
-      for (const record of session.liveData.plays.currentPlay?.source
-        .teamstation.runnerActions ?? []) {
-        // The throw presentation owns a failed pickoff's temporary positions.
-        // Its saved route must not leave the defender overlapping the runner.
-        if (record.reason === 'Safe from Pickoff') continue
-        for (const hop of record.defensiveRoute ?? [])
-          if (hop.player.id === player.playerId) {
-            player.position = { ...hop.location }
-            player.target = { ...hop.location }
-          }
-      }
-      for (const hop of state.runnerAction?.defensiveRoute ?? [])
+      for (const hop of defensiveRoute)
+        if (hop.player.id === player.playerId) {
+          player.position = { ...hop.location }
+          player.target = { ...hop.location }
+        }
+      for (const hop of [
+        ...(pending?.fieldersChoice?.route ?? []),
+        ...(state.runnerAction?.defensiveRoute ?? [])
+      ])
         if (hop.id === player.playerId) {
           player.position = { ...hop.point }
           player.target = { ...hop.point }

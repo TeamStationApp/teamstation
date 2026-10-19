@@ -2,8 +2,12 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { PerspectiveCamera, Vector3 } from 'three'
 
 import { completeMotions } from '../../test/scoringHelpers'
+import { applyFieldCamera } from '../field/cameraModel'
+import { BASES } from '../field/fieldModel'
+import type { BaseProjection } from '../field/fieldTypes'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { RunnerControls } from './RunnerControls'
@@ -14,7 +18,8 @@ let root: Root | undefined
 let received: ScoringEvent[] = []
 async function render(
   state: ScoringState,
-  anchor: { x: number; y: number } | null = null
+  anchor: { x: number; y: number } | null = null,
+  projection?: BaseProjection
 ): Promise<void> {
   if (root == null) {
     const host = document.createElement('div')
@@ -26,6 +31,7 @@ async function render(
       <RunnerControls
         state={state}
         anchor={anchor}
+        projection={projection}
         dispatch={event => {
           received.push(event)
         }}
@@ -50,6 +56,264 @@ describe('runner decisions', function () {
     })
     root = undefined
     received = []
+  })
+  it('separates unresolved runners offered the same home destination on a wide field', async () => {
+    const state = initial()
+    state.phase = 'fieldersChoice'
+    state.pendingPlay = {
+      outcome: "Fielder's Choice",
+      trajectoryAccepted: true,
+      fieldersChoice: {
+        route: [{ id: 15, point: { x: 0, z: -25 } }],
+        runners: [
+          { playerId: 7, from: 2, to: 4 },
+          { playerId: 8, from: 3, to: 4 }
+        ],
+        calls: []
+      }
+    }
+    await render(state, null, {
+      width: 1200,
+      height: 900,
+      bases: [0, 1, 2, 3].map(() => ({ x: 600, y: 750 }))
+    })
+    const cards = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[aria-label^="Fielder\'s choice decision for"]'
+      )
+    )
+    expect(cards).length(2)
+    expect(cards.every(card => card.style.position !== 'absolute')).equals(true)
+    expect(cards[0].parentElement!.style.flexDirection).equals('row')
+    await click('Safe Player 7')
+    expect(received.at(-1)).deep.equals({
+      type: 'CHOICE_DECIDE',
+      id: 7,
+      decision: 'safe',
+      generation: 0
+    })
+    await click('Out Player 8')
+    expect(received.at(-1)).deep.equals({
+      type: 'CHOICE_DECIDE',
+      id: 8,
+      decision: 'out',
+      generation: 0
+    })
+  })
+  it('separates distinct runner destinations at the default camera projection', async () => {
+    const state = initial()
+    state.phase = 'fieldersChoice'
+    state.pendingPlay = {
+      outcome: "Fielder's Choice",
+      trajectoryAccepted: true,
+      fieldersChoice: {
+        route: [{ id: 15, point: { x: 0, z: -25 } }],
+        runners: [6, 7, 8].map((playerId, index) => ({
+          playerId,
+          from: index + 1,
+          to: index + 2
+        })),
+        calls: []
+      }
+    }
+    const width = 800
+    const height = 450
+    const camera = new PerspectiveCamera()
+    applyFieldCamera(camera, {
+      width,
+      height,
+      view: 'home',
+      zoom: 1.25,
+      tilt: (-11 * Math.PI) / 180,
+      heightOffset: 33,
+      bottomExtension: 112
+    })
+    await render(state, null, {
+      width,
+      height,
+      bases: BASES.map(point => {
+        const projected = new Vector3(point.x, 9, point.z).project(camera)
+        return {
+          x: ((projected.x + 1) * width) / 2,
+          y: ((1 - projected.y) * height) / 2
+        }
+      })
+    })
+    const cards = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[aria-label^="Fielder\'s choice decision for"]'
+      )
+    )
+    expect(cards).length(3)
+    expect(cards.every(card => card.style.position !== 'absolute')).equals(true)
+    for (const id of [6, 7, 8]) {
+      await click(`Safe Player ${id}`)
+      expect(received.at(-1)).includes({ id, decision: 'safe' })
+      await click(`Out Player ${id}`)
+      expect(received.at(-1)).includes({ id, decision: 'out' })
+    }
+  })
+  it('offers the selected catches for a putout, including the initial fielder and repeated receivers', async () => {
+    const state = initial()
+    state.phase = 'fieldersChoice'
+    state.pendingPlay = {
+      outcome: "Fielder's Choice",
+      trajectoryAccepted: true,
+      fieldersChoice: {
+        route: [15, 13, 15].map(id => ({ id, point: { x: 0, z: -25 } })),
+        runners: [
+          { playerId: 6, from: 1, to: 2 },
+          { playerId: 7, from: 2, to: 3 }
+        ],
+        calls: [],
+        choosingPutout: 6
+      }
+    }
+    const fielder = state.session.gameData.players[15].fullName
+    const receiver = state.session.gameData.players[13].fullName
+    await render(state)
+    expect(document.body.textContent).contains('Who put out Player 6?')
+    const title = Array.from(document.querySelectorAll<HTMLElement>('*')).find(
+      node =>
+        node.childNodes.length === 1 &&
+        node.textContent === 'Who put out Player 6?'
+    )!
+    const optionText = document.querySelector<HTMLElement>(
+      `[aria-label="Putout by ${fielder}, fielded ball"]`
+    )!.firstElementChild!
+    expect(getComputedStyle(optionText).color).equals(
+      getComputedStyle(title).color
+    )
+    await click(`Putout by ${fielder}, fielded ball`)
+    expect(received.at(-1)).deep.equals({
+      type: 'CHOICE_DECIDE',
+      id: 6,
+      decision: 'out',
+      putout: 0,
+      generation: 0
+    })
+    await click(`Putout by ${fielder}, catch 2`)
+    expect(received.at(-1)).deep.equals({
+      type: 'CHOICE_DECIDE',
+      id: 6,
+      decision: 'out',
+      putout: 2,
+      generation: 0
+    })
+    await click('Cancel')
+    expect(received.at(-1)).deep.equals({
+      type: 'CHOICE_CANCEL',
+      generation: 0
+    })
+    state.pendingPlay.fieldersChoice!.runners[1] = {
+      playerId: 7,
+      from: 2,
+      to: 3,
+      decision: 'out',
+      putout: 1
+    }
+    await render(state)
+    expect(
+      document.querySelector(
+        `[aria-label="Putout by ${fielder}, fielded ball"]`
+      )
+    ).equals(null)
+    await click(`Putout by ${receiver}, catch 1`)
+    expect(received.at(-1)).deep.equals({
+      type: 'CHOICE_DECIDE',
+      id: 6,
+      decision: 'out',
+      putout: 1,
+      generation: 0
+    })
+  })
+  it('shows independent fielder choice calls for existing runners and none for the safe batter', async () => {
+    const state = initial()
+    state.phase = 'fieldersChoice'
+    state.pendingPlay = {
+      outcome: "Fielder's Choice",
+      trajectoryAccepted: true,
+      fieldersChoice: {
+        route: [{ id: 10, point: { x: 0, z: -25 } }],
+        runners: [
+          { playerId: 6, from: 1, to: 2 },
+          { playerId: 7, from: 2, to: 3 },
+          { playerId: 8, from: 3, to: 4 }
+        ],
+        calls: []
+      }
+    }
+    await render(state)
+    const name = (id: number): string =>
+      state.session.gameData.players[id].fullName
+    expect(
+      document.querySelectorAll(
+        '[aria-label^="Fielder\'s choice decision for"]'
+      )
+    ).length(3)
+    for (const id of [6, 7, 8]) {
+      await click(`Safe ${name(id)}`)
+      expect(received.at(-1)).deep.equals({
+        type: 'CHOICE_DECIDE',
+        id,
+        decision: 'safe',
+        generation: 0
+      })
+      await click(`Out ${name(id)}`)
+      expect(received.at(-1)).deep.equals({
+        type: 'CHOICE_DECIDE',
+        id,
+        decision: 'out',
+        generation: 0
+      })
+    }
+    expect(document.querySelector(`[aria-label="Out ${name(1)}"]`)).equals(null)
+    await render(state, null, {
+      width: 1200,
+      height: 900,
+      bases: [
+        { x: 600, y: 700 },
+        { x: 750, y: 550 },
+        { x: 600, y: 350 },
+        { x: 300, y: 550 }
+      ]
+    })
+    const home = document.querySelector<HTMLElement>(
+      `[aria-label="Fielder's choice decision for ${name(8)}"]`
+    )!
+    expect(parseFloat(home.style.top)).lessThan(700)
+    expect(parseFloat(home.style.left)).greaterThan(0)
+    await render(state, null, {
+      width: 568,
+      height: 292,
+      bases: [0, 1, 2, 3].map(() => ({ x: 284, y: 146 }))
+    })
+    expect(
+      document.querySelectorAll(
+        '[aria-label^="Fielder\'s choice decision for"]'
+      )
+    ).length(3)
+    await click(`Safe ${name(8)}`)
+    expect(received.at(-1)).deep.equals({
+      type: 'CHOICE_DECIDE',
+      id: 8,
+      decision: 'safe',
+      generation: 0
+    })
+    state.pendingPlay.fieldersChoice!.runners[0].decision = 'safe'
+    await render(state)
+    expect(
+      document.querySelectorAll(
+        '[aria-label^="Fielder\'s choice decision for"]'
+      )
+    ).length(2)
+    state.phase = 'runnerMovement'
+    await render(state)
+    expect(
+      document.querySelectorAll(
+        '[aria-label^="Fielder\'s choice decision for"]'
+      )
+    ).length(0)
   })
   it('offers previous or separate error attribution and cancellation', async () => {
     const state = initial()

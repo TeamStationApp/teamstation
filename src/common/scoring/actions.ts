@@ -276,7 +276,10 @@ const actionCleaners = {
     errorEvent: asOptional(asNumber),
     fielders: asOptional(asArray(asSessionId)),
     locations: asOptional(asArray(asPoint)),
-    runnerLocation: asOptional(asPoint)
+    runnerLocation: asOptional(asPoint),
+    fieldingRoute: asOptional(
+      asArray(asObject({ id: asSessionId, point: asPoint }))
+    )
   }),
   baseRunning: asObject({
     type: asLiteral('baseRunning'),

@@ -2,6 +2,7 @@ import {
   type Destination,
   DESTINATIONS,
   type Problem,
+  type RunnerMovementAction,
   type RunnerReason,
   type ScoringAction
 } from '../../common/scoring/actions'
@@ -28,9 +29,9 @@ import {
   snapshotOf,
   withStep
 } from './scoringMachine'
-import { approachFirst, sequencesFor } from './scoringMotion'
+import { approachFirst, basePath, enqueue, sequencesFor } from './scoringMotion'
 import { throwPresentation, type ThrowSequence } from './scoringPresentation'
-import { battingSide } from './scoringSelectors'
+import { baseIds, battingSide } from './scoringSelectors'
 import {
   CORRECTION_WINDOW_MS,
   type ScoringEvent,
@@ -147,6 +148,29 @@ export function settleRunners(state: ScoringState): void {
   const decision = nextDecision(game)
   const moving = state.motions.some(motion => !motion.complete)
   if (decision === 'resolveBatter') {
+    if (game.pending?.outcome === "Fielder's Choice") {
+      if (pending?.fieldersChoice != null) {
+        state.phase = moving ? 'runnerMovement' : 'fieldersChoice'
+        return
+      }
+      const batter = game.pending.movements.find(move => move.from === 0)
+      const subject =
+        batter?.decision === 'out'
+          ? game.pending.movements.find(
+              move => move.decision === 'pending' && move.to < 4
+            )!
+          : batter!
+      state.runnerAction = {
+        purpose: 'fieldersChoice',
+        playerId: subject.playerId,
+        from: subject.from,
+        to: Math.min(4, subject.from + 1),
+        origin: 'current',
+        returnPhase: 'fieldersChoice'
+      }
+      beginDefense(state)
+      return
+    }
     // A dropped third strike asks only whether the batter made first.
     if (game.pending?.outcome === 'Dropped Third Strike') {
       if (moving) {
@@ -488,6 +512,152 @@ export function accepted(
   return next
 }
 
+/** A saved Safe batter advance survives reopening the choice. */
+function choiceBatterDestination(state: ScoringState): number | undefined {
+  const batter = state.session.pending?.movements.find(move => move.from === 0)
+  if (batter?.decision === 'out') return
+  return Math.max(1, batter?.decision === 'safe' ? batter.to : 1)
+}
+
+/** Commit the collected calls in play order, keeping original-base force rules. */
+function commitFieldersChoice(state: ScoringState): void {
+  const choice = state.pendingPlay!.fieldersChoice!
+  const batter = state.session.liveData.plays.currentPlay!.matchup.batter.id
+  const batterTo = choiceBatterDestination(state)
+  delete state.pendingPlay!.fieldersChoice
+  state.motions = []
+  const moveRunner = (action: RunnerMovementAction): void => {
+    act(state, { ...action, fieldingRoute: copyState(choice.route) })
+  }
+  if (batterTo != null)
+    moveRunner({
+      type: 'runnerMovement',
+      runner: batter,
+      to: destination(batterTo),
+      fielders: choice.route.map(hop => hop.id),
+      locations: choice.route.map(hop => ({ ...hop.point }))
+    })
+  // A saved pending destination can block a leading Safe advance. Draft
+  // legal calls first, then retry after another runner moves or retires.
+  const draftSafes = (): void => {
+    for (const move of [...choice.runners].sort((a, b) => b.from - a.from))
+      if (
+        move.decision === 'safe' &&
+        state.session.pending?.choiceApplied !== true &&
+        gameRunnerError(state.session, move) == null
+      )
+        moveRunner({
+          type: 'runnerMovement',
+          runner: move.playerId,
+          to: destination(move.to)
+        })
+  }
+  draftSafes()
+  const homes = choice.runners
+    .filter(move => move.to === 4 && move.decision === 'safe')
+    .sort((a, b) => b.from - a.from)
+  if (batterTo === 4)
+    homes.push({ playerId: batter, from: 0, to: 4, decision: 'safe' })
+  const scoreHome = (through = choice.calls.length): void => {
+    for (const home of homes)
+      if (
+        choice.calls.indexOf(home.playerId) <= through &&
+        (state.session.homeQueue.includes(home.playerId) ||
+          (state.session.homeQueue.length === 0 &&
+            baseIds(state.session).includes(home.playerId)))
+      )
+        moveRunner({
+          type: 'runnerMovement',
+          runner: home.playerId,
+          to: 'home'
+        })
+  }
+  let routeStart = 0
+  for (const id of choice.calls) {
+    if (state.session.liveData.linescore.outs >= 3) break
+    const move = choice.runners.find(move => move.playerId === id)!
+    // Settle legal interim positions before recording home crossings. A
+    // runner still forced home must join the queue, even if his Out is later.
+    if (homes.length > 0 && state.session.pending?.choiceApplied !== true)
+      for (const waiting of state.session.pending!.movements) {
+        const out = choice.runners.find(
+          runner =>
+            runner.playerId === waiting.playerId && runner.decision === 'out'
+        )
+        if (
+          waiting.decision === 'pending' &&
+          waiting.from > 0 &&
+          out != null &&
+          !(
+            out.to < 4 &&
+            out.to === waiting.from + 1 &&
+            forcedFrom(state.session, waiting.from)
+          )
+        ) {
+          let to =
+            out.to === waiting.from + 1 &&
+            forcedFrom(state.session, waiting.from)
+              ? out.to
+              : waiting.from
+          while (
+            to <= out.to &&
+            gameRunnerError(state.session, {
+              playerId: waiting.playerId,
+              from: waiting.from,
+              to
+            }) != null
+          )
+            to++
+          if (to > out.to) continue
+          moveRunner({
+            type: 'runnerMovement',
+            runner: waiting.playerId,
+            to: destination(to)
+          })
+        }
+      }
+    draftSafes()
+    if (state.session.pending?.choiceApplied === true)
+      scoreHome(choice.calls.indexOf(id))
+    if (move.decision !== 'out') continue
+    const point = BASES[move.to % 4]
+    const routeEnd = move.putout!
+    const route = choice.route.slice(routeStart, routeEnd + 1)
+    routeStart = routeEnd
+    moveRunner({
+      type: 'runnerMovement',
+      runner: id,
+      to: destination(move.to),
+      out: true,
+      fielders: route.map(hop => hop.id),
+      locations: route.map(hop => ({ ...hop.point })),
+      runnerLocation: { ...point }
+    })
+  }
+  if (state.session.liveData.linescore.outs < 3) {
+    scoreHome()
+    for (const move of [...choice.runners].sort((a, b) => b.from - a.from))
+      if (
+        move.decision === 'safe' &&
+        move.to < 4 &&
+        baseIds(state.session)[move.to - 1] !== move.playerId
+      )
+        moveRunner({
+          type: 'runnerMovement',
+          runner: move.playerId,
+          to: destination(move.to)
+        })
+  }
+  // Every offered advance already finished. Only scoring/out motions remain.
+  for (const motion of state.motions) {
+    const move = choice.runners.find(move => move.playerId === motion.playerId)
+    if (move != null || (motion.playerId === batter && batterTo != null))
+      motion.waypoints[0] = { ...BASES[(move?.to ?? batterTo!) % 4] }
+  }
+  state.phase = 'runnerMovement'
+  settleRunners(state)
+}
+
 /** Passed-ball confirmation belongs to this batter, never the preceding one. */
 export function hasCurrentRunnerPitch(state: ScoringState): boolean {
   return (
@@ -501,6 +671,67 @@ export function runnerReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState | undefined {
+  if (event.type === 'CHOICE_CANCEL') {
+    if (
+      state.phase !== 'fieldersChoice' ||
+      state.readOnly === true ||
+      event.generation !== state.generation ||
+      state.pendingPlay?.fieldersChoice?.choosingPutout == null
+    )
+      return state
+    return accepted(state, 'Cancel putout choice', next => {
+      delete next.pendingPlay!.fieldersChoice!.choosingPutout
+    })
+  }
+  if (event.type === 'CHOICE_DECIDE') {
+    const draft = state.pendingPlay?.fieldersChoice
+    const runner = draft?.runners.find(move => move.playerId === event.id)
+    if (
+      state.phase !== 'fieldersChoice' ||
+      state.readOnly === true ||
+      state.presentation != null ||
+      state.motions.some(motion => !motion.complete) ||
+      event.generation !== state.generation ||
+      runner == null ||
+      runner.decision != null ||
+      (draft!.choosingPutout != null && draft!.choosingPutout !== event.id) ||
+      (event.decision === 'safe' && event.putout != null)
+    )
+      return state
+    const previousPutout = Math.max(
+      0,
+      ...draft!.runners.map(move => move.putout ?? 0)
+    )
+    const putout = event.putout ?? (draft!.route.length === 1 ? 0 : undefined)
+    if (event.decision === 'out') {
+      if (putout == null) {
+        if (draft!.choosingPutout === event.id) return state
+        return accepted(state, 'Choose who made the out', next => {
+          next.pendingPlay!.fieldersChoice!.choosingPutout = event.id
+        })
+      }
+      if (
+        !Number.isInteger(putout) ||
+        putout < previousPutout ||
+        putout >= draft!.route.length
+      )
+        return state
+    }
+    return accepted(
+      state,
+      `${event.decision === 'safe' ? 'Safe' : 'Out'} ${state.session.gameData.players[event.id].fullName}`,
+      next => {
+        const choice = next.pendingPlay!.fieldersChoice!
+        const move = choice.runners.find(move => move.playerId === event.id)!
+        move.decision = event.decision
+        if (event.decision === 'out') move.putout = putout
+        delete choice.choosingPutout
+        choice.calls.push(event.id)
+        if (choice.runners.some(move => move.decision == null)) return
+        commitFieldersChoice(next)
+      }
+    )
+  }
   if (event.type === 'ERROR_CANCEL')
     return state.phase === 'errorCredit'
       ? { ...state, phase: 'chooseDefender' }
@@ -795,6 +1026,55 @@ export function runnerReducer(
     if (event.id == null && action?.purpose === 'errorAttribution')
       return accepted(state, 'Choose error fielder', next => {
         next.phase = 'errorCredit'
+      })
+    if (event.id == null && action?.purpose === 'fieldersChoice')
+      return accepted(state, 'Finish fielder’s choice defense', next => {
+        const pending = next.pendingPlay!
+        const batterTo = choiceBatterDestination(next)
+        let required = batterTo == null ? 1 : Math.min(4, batterTo + 1)
+        const runners = next.session.pending!.originalBases.flatMap(
+          (id, index) => {
+            const previous = next.session.pending!.movements.find(
+              move => move.playerId === id
+            )
+            if (id == null || previous?.decision === 'out') return []
+            const safe =
+              previous?.decision === 'safe' && previous.to > previous.from
+            const to = Math.min(
+              4,
+              Math.max(index + 2, required, safe ? previous.to : 0)
+            )
+            required = Math.min(4, to + 1)
+            return [
+              {
+                playerId: id,
+                from: index + 1,
+                to,
+                decision: safe ? ('safe' as const) : undefined
+              }
+            ]
+          }
+        )
+        pending.fieldersChoice = {
+          route: copyState(next.runnerAction!.defensiveRoute!),
+          runners,
+          calls: runners
+            .filter(move => move.decision != null)
+            .map(move => move.playerId)
+        }
+        for (const move of runners)
+          enqueue(next, move.playerId, basePath(move.from, move.to))
+        if (batterTo != null)
+          enqueue(
+            next,
+            next.session.liveData.plays.currentPlay!.matchup.batter.id,
+            basePath(0, batterTo)
+          )
+        next.runnerAction = null
+        next.phase = 'runnerMovement'
+        if (runners.every(move => move.decision != null))
+          commitFieldersChoice(next)
+        else settleRunners(next)
       })
     return accepted(
       state,

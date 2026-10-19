@@ -15,7 +15,11 @@ export function fieldStageInstruction(state: ScoringState): string | undefined {
     return 'Tap or drag a player to where the ball was fielded.'
   if (state.phase === 'trajectory')
     return 'Drag up and down for ball trajectory.'
+  if (state.phase === 'fieldersChoice')
+    return 'Mark each runner Safe or Out in play order.'
   if (state.phase === 'chooseDefender') {
+    if (state.runnerAction?.purpose === 'fieldersChoice')
+      return 'Tap or drag each defender who handled the ball, then hit Done to mark the runners.'
     if (state.runnerAction?.purpose === 'errorAttribution')
       return 'Tap or drag another defender, or hit Done to choose who committed the error.'
     const offense = state.session.liveData.linescore.offense

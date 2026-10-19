@@ -823,24 +823,9 @@ describe('scoring screen field wiring', function () {
         requireCurrentSetup: true
       })
       await mount({ persistent: true, open: async () => live })
-      const batter = players().find(
-        player =>
-          player.playerId ===
-            live.state.liveData.plays.currentPlay!.matchup.batter.id &&
-          player.team === 'runner'
-      )!
-      expect(field().interaction?.runnerIds).includes(batter.id)
+      expect(field().interaction?.runnerIds).deep.equals([])
       expect(field().tapIds ?? []).deep.equals([])
-      await step(() =>
-        field().onRunnerDrop?.(
-          batter.id,
-          1,
-          'out',
-          field().interaction!.generation
-        )
-      )
-      await settle()
-      // The shortstop has the ball; credit the receiver at first and confirm.
+      // A reopened choice collects its fielding sequence before runner calls.
       const fielder = players().find(
         player =>
           player.playerId ===
@@ -854,6 +839,14 @@ describe('scoring screen field wiring', function () {
         })
       )
       await step(() => props().onFinish?.())
+      await settle()
+      await step(() => {
+        document
+          .querySelector<HTMLElement>(
+            `[aria-label="Out ${initial.gameData.players[2].fullName}"]`
+          )!
+          .click()
+      })
       await settle()
       await step(() => props().onFinish?.())
       await live.flush()
