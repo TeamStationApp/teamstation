@@ -4389,6 +4389,65 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games/{gameId}/unroster': {
+        put: {
+          summary: 'Change one roster player’s availability for this game',
+          description:
+            'Only the head coach of the selected side may toggle a team player. Off removes the player from lineup and defense options and current placements; on restores the option without placing the player. Guests cannot be toggled. The exclusion and lineup changes commit together, and a play awaiting its result refuses the change. Repeating the current value is idempotent.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['side', 'userId', 'rostered'],
+                  properties: {
+                    side: { type: 'string', enum: ['away', 'home'] },
+                    userId: {
+                      type: 'integer',
+                      minimum: 1,
+                      maximum: Number.MAX_SAFE_INTEGER
+                    },
+                    rostered: { type: 'boolean' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The game’s unrostered lists',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['away', 'home'],
+                    properties: {
+                      away: {
+                        type: 'array',
+                        uniqueItems: true,
+                        items: { type: 'integer' }
+                      },
+                      home: {
+                        type: 'array',
+                        uniqueItems: true,
+                        items: { type: 'integer' }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
       '/games/{gameId}/guest-players': {
         post: {
           summary: 'Create a persistent player for one game',
@@ -4396,7 +4455,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'A roster manager for the selected side creates a guest with no ' +
             'login, email or team membership. The returned identity is appended ' +
             'to that side of GameDetail.guests before the client adds the player ' +
-            'to its lineup. Final, cancelled or unresolved plays refuse creation.',
+            'to its lineup. GameDetail.guestPlayers returns the saved guest details on reopen. Final, cancelled or unresolved plays refuse creation.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {
