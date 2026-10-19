@@ -529,6 +529,46 @@ describe('the browser’s own player, when it stumbles', function () {
     expect(video.plays).equals(1)
   })
 
+  it('loads a live game again once Safari has stopped reading its playlist, and plays on from there', async function () {
+    const video = new FakeVideo()
+    const clock = manualClock()
+    // Safari stopped at 388 s; the server's playlist runs to 440 s.
+    const segments = Array.from(
+      { length: 110 },
+      (_, i) => `#EXTINF:4.000000,\nseg${String(i)}.m4s`
+    )
+    const realFetch = globalThis.fetch
+    globalThis.fetch = async () =>
+      new Response(`#EXTM3U\n${segments.join('\n')}\n`)
+    try {
+      video.paused = false
+      video.currentTime = 388
+      video.seekable = { length: 1, start: () => 0, end: () => 388 }
+      const detach = attachNativeHls(
+        video,
+        url,
+        undefined,
+        { wantsToPlay: () => true, isLive: () => true },
+        clock
+      )
+      for (let i = 0; i < 5; i++) {
+        clock.advance(5000)
+        for (let j = 0; j < 10; j++) await Promise.resolve()
+      }
+      expect(video.loads, 'loaded again').equals(1)
+      // A reloaded element starts at the newest footage; it is put back.
+      video.paused = true
+      video.currentTime = 428
+      video.emit('loadedmetadata')
+      expect(video.currentTime).equals(388)
+      video.emit('canplay')
+      expect(video.plays, 'and played').equals(1)
+      detach()
+    } finally {
+      globalThis.fetch = realFetch
+    }
+  })
+
   it('ignores a load stopped on purpose, and a second error while waiting', function () {
     const video = new FakeVideo()
     const clock = manualClock()
