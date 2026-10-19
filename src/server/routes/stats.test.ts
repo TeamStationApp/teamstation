@@ -450,6 +450,59 @@ describe('one player’s figures', function () {
       expect((await plays()).ids).not.include(hiddenOut)
     })
 
+    it('orders plays within a game by at-bat sequence regardless of insertion order', async function () {
+      if (db == null) throw new Error('Fixture database is required')
+      const later = makeId('event')
+      const earlier = makeId('event')
+      try {
+        await db
+          .insertInto('events')
+          .values(
+            [
+              [later, 3],
+              [earlier, 2]
+            ].map(([id, atBatIndex]) => ({
+              id,
+              gameId: springGame,
+              battingTeamId: hawks,
+              hidden: false,
+              gumbo: JSON.stringify({
+                about: { atBatIndex, inning: 1, halfInning: 'bottom' },
+                result: { eventType: 'single', rbi: 0 },
+                matchup: { batter: { id: jordan }, pitcher: { id: jordan } }
+              })
+            })) as never
+          )
+          .execute()
+        const answer = await plays()
+        expect(answer.status).equals(200)
+        expect(
+          answer.body.map((row: { eventId: string; role: string }) => [
+            row.eventId,
+            row.role
+          ])
+        ).deep.equals([
+          [single, 'batter'],
+          [earlier, 'batter'],
+          [earlier, 'pitcher'],
+          [later, 'batter'],
+          [later, 'pitcher'],
+          [double, 'batter']
+        ])
+        expect((await plays('?role=batter')).ids).deep.equals([
+          single,
+          earlier,
+          later,
+          double
+        ])
+      } finally {
+        await db
+          .deleteFrom('events')
+          .where('id', 'in', [later, earlier])
+          .execute()
+      }
+    })
+
     it('narrows to a season and to an event type', async function () {
       expect((await plays(`?seasonId=${fall}`)).ids).deep.equals([double])
       expect((await plays('?eventType=single')).ids).deep.equals([single])
