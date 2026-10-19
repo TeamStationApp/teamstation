@@ -835,6 +835,12 @@ export interface VideoWallAnchorsTable {
 }
 
 export interface Database {
+  game_guest_details: {
+    game_id: string
+    user_id: number
+    jersey: string | null
+    positions: string[]
+  }
   team_events: TeamEventsTable
   game_rsvps: EventRsvpsTable
   team_event_rsvps: EventRsvpsTable
