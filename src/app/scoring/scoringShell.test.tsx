@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { TeamStationClient } from '../../common/api'
+import { scoringRoster } from '../../test/scoringSession'
 import { App, stackFor } from '../App'
 import { BaseballScreen } from '../field/BaseballScreen'
 import { StandaloneField } from '../field/StandaloneField'
@@ -302,6 +303,8 @@ describe('scoring shell and exit', function () {
   it('warns on dirty exit and document unload, while Undo clears the warning', async function () {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => gameFixture
+    client.roster = async teamId =>
+      scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
     let exits = 0
     // Save the host method solely for restoration.
     // eslint-disable-next-line @typescript-eslint/unbound-method

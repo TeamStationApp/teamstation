@@ -13,7 +13,7 @@ import {
 } from '../../common/scoring/rosterCommands'
 import { applyAction } from '../../common/scoring/session'
 import { copyState, type GameState } from '../../common/scoring/state'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import {
   dictatedSheet,
   FINISH_THE_PLAY,
@@ -31,7 +31,7 @@ const BENCH = { away: 90, home: 91 }
 
 /** A new game, each side with one player on the bench. */
 function opening(): GameState {
-  const state = copyState(createDevelopmentSession(gameFixture, [], []))
+  const state = copyState(scoringSession(gameFixture))
   for (const side of ['away', 'home'] as const) {
     const id = BENCH[side]
     const first = state.liveData.boxscore.teams[side].battingOrder[0]

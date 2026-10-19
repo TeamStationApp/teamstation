@@ -187,7 +187,7 @@ describe('posting and reading plays', function () {
         {
           id: admin.userId,
           legacyId: admin.legacyId,
-          display_name: 'Ada',
+          display_name: 'Adam Dunn',
           is_admin: true,
           created_at: now,
           updated_at: now
@@ -195,21 +195,21 @@ describe('posting and reading plays', function () {
         {
           id: stranger.userId,
           legacyId: stranger.legacyId,
-          display_name: 'Bea',
+          display_name: 'Babe Ruth',
           created_at: now,
           updated_at: now
         },
         {
           id: member.userId,
           legacyId: member.legacyId,
-          display_name: 'Cam',
+          display_name: 'Cam Bedrosian',
           created_at: now,
           updated_at: now
         },
         {
           id: manager.userId,
           legacyId: manager.legacyId,
-          display_name: 'Dee',
+          display_name: 'Dee Gordon',
           created_at: now,
           updated_at: now
         },
@@ -469,7 +469,7 @@ describe('posting and reading plays', function () {
           atBatIndex: 0,
           awayScore: 2,
           homeScore: 0,
-          credits: [{ teamId: 'away', name: 'Ada' }],
+          credits: [{ teamId: 'away', name: 'Adam Dunn' }],
           startTime: '2026-05-01T18:00:00.000Z'
         })
       ],
@@ -632,14 +632,16 @@ describe('posting and reading plays', function () {
 
     // A credit names its person by user id, never by another service's id.
     for (const credit of [
-      { name: 'Ada', externalPlayerId: 'p-ada' },
-      { name: 'Ada', acmePlayerId: 'p-ada' }
+      { name: 'Adam Dunn', externalPlayerId: 'p-ada' },
+      { name: 'Adam Dunn', acmePlayerId: 'p-ada' }
     ]) {
       const external = await ask(`/games/${refusedId}/events`, 'POST', {
         plays: [
           {
             ...play({ atBatIndex: 4, awayScore: 1, homeScore: 0 }),
-            credits: [{ creditUserId: null, label: 'Single: Ada', credit }]
+            credits: [
+              { creditUserId: null, label: 'Single: Adam Dunn', credit }
+            ]
           }
         ],
         source: { system: 'manual' }
@@ -880,7 +882,7 @@ describe('posting and reading plays', function () {
             homeScore: 0,
             outs: 1,
             playEvents: [{ type: 'inning_ended', outs: 3 }],
-            credits: [{ teamId: 'away', name: 'Ada' }],
+            credits: [{ teamId: 'away', name: 'Adam Dunn' }],
             startTime: '2026-05-01T18:00:00.000Z'
           }),
           play({
@@ -1262,7 +1264,7 @@ describe('posting and reading plays', function () {
     expect(JSON.stringify(row.gumbo)).not.contains('description')
   })
 
-  it('refuses a TeamStation record in a version it cannot read, naming the play, and writes nothing', async function () {
+  it('refuses malformed or unsupported TeamStation records, naming the play, and writes nothing', async function () {
     const record = (version: unknown): unknown => ({
       version,
       setupBefore: {},
@@ -1279,7 +1281,7 @@ describe('posting and reading plays', function () {
             }
           ]
         },
-        'Play 2: teamStation.version must be 1'
+        'Play 2: teamStation must be a valid version 1 or 2 record'
       ],
       [
         {
@@ -1294,7 +1296,7 @@ describe('posting and reading plays', function () {
             teamStation: record('2')
           }
         },
-        'Play 5: teamStation.version must be 1'
+        'Play 5: teamStation must be a valid version 1 or 2 record'
       ],
       [
         {
@@ -1305,7 +1307,7 @@ describe('posting and reading plays', function () {
             }
           ]
         },
-        'Play 0: teamStation.version must be 1'
+        'Play 0: teamStation must be a valid version 1 or 2 record'
       ]
     ] as const) {
       const refused = await ask(`/games/${twiceId}/events`, 'POST', {
@@ -1416,7 +1418,7 @@ describe('posting and reading plays', function () {
     pitches = 1
   ): Record<string, unknown> => ({
     about: { atBatIndex, inning: 1, halfInning: 'top', isComplete: false },
-    matchup: { batter: { id: member.userId, fullName: 'Cam' } },
+    matchup: { batter: { id: member.userId, fullName: 'Cam Bedrosian' } },
     playEvents: Array.from({ length: pitches }, (_, index) => ({
       index,
       pitchNumber: index + 1,
@@ -3537,11 +3539,11 @@ describe('the team default lineup a live post keeps (U10)', function () {
   const ball: ScoringAction = { type: 'pitch', call: 'B' }
   const strike: ScoringAction = { type: 'pitch', call: 'C' }
   const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
-  const reorder = (order: number[]): ScoringAction => ({
+  const reorder = (slots: number[]): ScoringAction => ({
     type: 'lineup',
     kind: 'battingOrder',
     side: 'away',
-    order
+    order: slots.map(slot => awayIds[slot - 1] ?? slot)
   })
   async function gameRow(gameId: string): Promise<{
     lineup_started_at: Date | null
@@ -3623,8 +3625,8 @@ describe('the team default lineup a live post keeps (U10)', function () {
         type: 'lineup',
         kind: 'substitute',
         side: 'away',
-        player: 10,
-        replaces: 8
+        player: awayIds[9],
+        replaces: awayIds[7]
       },
       reorder([10, 9, 7, 6, 5, 4, 3, 2, 1])
     )

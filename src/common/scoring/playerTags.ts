@@ -2,7 +2,7 @@ import { type Position, POSITIONS } from './state'
 
 /**
  * How a dictation model names a player: by a tag of two letters and a digit,
- * `KT4`, and never by his session id. The game it reads writes the tag after
+ * `KT4`, and never by his tag slot. The game it reads writes the tag after
  * the player's name and jersey, `(tag KT4)`. A bare number in a sentence about a
  * ball game is a base, a count, a jersey or a position, and a model handed
  * players by number took one for another: a steal of third went to the
@@ -55,7 +55,7 @@ while (gcd(stride, PAIRS.length) !== 1) stride++
 
 const ids = new Map<string, number>()
 
-/** A player's tag, for his session id. Throws past `TAGGED_IDS`. */
+/** A player's tag, for his tag slot. Throws past `TAGGED_IDS`. */
 export function tagOf(id: number): string {
   if (!Number.isSafeInteger(id) || id < 0 || id >= TAGGED_IDS)
     throw new RangeError(`No tag for player ${id}`)
@@ -64,7 +64,7 @@ export function tagOf(id: number): string {
 
 for (let id = 0; id < TAGGED_IDS; id++) ids.set(tagOf(id), id)
 
-/** The session id a tag names, or undefined for anything that is not a tag. */
+/** The tag slot a tag names, or undefined for anything that is not a tag. */
 export function idOfTag(tag: string): number | undefined {
   return ids.get(tag.trim().toUpperCase())
 }
@@ -73,7 +73,7 @@ export function idOfTag(tag: string): number | undefined {
 const WRITTEN = /\(tag ([A-Z]{2}[0-9])\)/g
 
 /**
- * The session id of the tag a model wrote for a player: the tag alone, or
+ * The tag slot of the tag a model wrote for a player: the tag alone, or
  * the one tag among other words written as the game writes it ("Marte #5
  * (tag KD0)", copied from the game). Anything else names nobody.
  */
@@ -105,7 +105,7 @@ export function taggedIds(text: string): Set<number> {
 }
 
 /**
- * The fielder at each position, by session id, as a game written for a model
+ * The fielder at each position, by tag slot, as a game written for a model
  * lists them: "Fielders: P Max S. #1 (tag QV2), C …". A position played by
  * nobody has none.
  */

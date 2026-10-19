@@ -220,6 +220,7 @@ describe('a pinch hitter at two strikes (U25, 9.15(b))', function () {
   const bench = (name: string): ScoringAction => ({
     type: 'lineup',
     kind: 'addPlayer',
+    player: name === 'Bench One' ? 19 : 20,
     side: 'away',
     name
   })
