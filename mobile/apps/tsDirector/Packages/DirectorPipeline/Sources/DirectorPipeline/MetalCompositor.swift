@@ -17,7 +17,6 @@ public final class MetalCompositor: @unchecked Sendable {
   private let commandQueue: MTLCommandQueue
   private let pipelineYUV: MTLRenderPipelineState
   private let pipelineOverlay: MTLRenderPipelineState
-  private let textureCache: CVMetalTextureCache
   private let outputPool: PixelBufferFactory
 
   /// Default parking spot for a native-size overlay.
@@ -74,10 +73,6 @@ public final class MetalCompositor: @unchecked Sendable {
       let pipelineOverlay = try? device.makeRenderPipelineState(descriptor: overlayDescriptor)
     else { return nil }
 
-    var cache: CVMetalTextureCache?
-    guard CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache) == kCVReturnSuccess,
-          let cache else { return nil }
-
     guard let outputPool = PixelBufferFactory(
       width: width,
       height: height,
@@ -90,7 +85,6 @@ public final class MetalCompositor: @unchecked Sendable {
     self.commandQueue = commandQueue
     self.pipelineYUV = pipelineYUV
     self.pipelineOverlay = pipelineOverlay
-    self.textureCache = cache
     self.outputPool = outputPool
     self.width = width
     self.height = height
@@ -164,7 +158,6 @@ public final class MetalCompositor: @unchecked Sendable {
 
     commandBuffer.commit()
     commandBuffer.waitUntilCompleted()
-    CVMetalTextureCacheFlush(textureCache, 0)
 
     lock.lock()
     composedFrames += 1
@@ -222,32 +215,40 @@ public final class MetalCompositor: @unchecked Sendable {
     return texture
   }
 
+  /// A Metal view of one plane of a pixel buffer, made straight from its IOSurface.
+  ///
+  /// Not through a `CVMetalTextureCache`. Asking the cache got slower the longer the app ran, its
+  /// own bookkeeping (`freeUnusedIOSurfaceTextureBackings`) on every request: measured on the iPad
+  /// with one 1080p60 camera, the three textures of a programme frame took about 15 ms after 40
+  /// minutes, the camera's drain thread — which composes the programme too — was busy 84% of the
+  /// time, and the tile fell from 60 frames a second to 46 within the hour and to 19 after two and
+  /// a half, the rest dropped where nothing counted them. A texture made from the surface directly
+  /// keeps nothing between frames. The pools behind these buffers ask for IOSurface backing, so
+  /// every buffer has one.
   private func makeTexture(
     from pixelBuffer: CVPixelBuffer,
     plane: Int,
     format: MTLPixelFormat
   ) -> MTLTexture? {
-    let width = CVPixelBufferGetPlaneCount(pixelBuffer) > 0
+    guard let surface = CVPixelBufferGetIOSurface(pixelBuffer)?.takeUnretainedValue() else {
+      return nil
+    }
+    let planar = CVPixelBufferGetPlaneCount(pixelBuffer) > 0
+    let width = planar
       ? CVPixelBufferGetWidthOfPlane(pixelBuffer, plane)
       : CVPixelBufferGetWidth(pixelBuffer)
-    let height = CVPixelBufferGetPlaneCount(pixelBuffer) > 0
+    let height = planar
       ? CVPixelBufferGetHeightOfPlane(pixelBuffer, plane)
       : CVPixelBufferGetHeight(pixelBuffer)
-
-    var textureRef: CVMetalTexture?
-    let status = CVMetalTextureCacheCreateTextureFromImage(
-      kCFAllocatorDefault,
-      textureCache,
-      pixelBuffer,
-      nil,
-      format,
-      width,
-      height,
-      plane,
-      &textureRef
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+      pixelFormat: format,
+      width: width,
+      height: height,
+      mipmapped: false
     )
-    guard status == kCVReturnSuccess, let textureRef else { return nil }
-    return CVMetalTextureGetTexture(textureRef)
+    descriptor.usage = [.shaderRead, .renderTarget]
+    descriptor.storageMode = .shared
+    return device.makeTexture(descriptor: descriptor, iosurface: surface, plane: planar ? plane : 0)
   }
 
   private static let shaderSource = """
