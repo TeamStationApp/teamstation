@@ -13,6 +13,7 @@ import {
   PlayFolder,
   type PlayStamp
 } from './document'
+import { upgradeRecord } from './legacyRecord'
 import {
   freshGame,
   ordinal,
@@ -41,7 +42,7 @@ import {
  */
 
 export interface TeamStationRecord {
-  version: 1
+  version: 2
   /** The rosters and lineups as they stood before this play's first action. */
   setupBefore: GameSetup
   /** The actions of this play, in order, lineup changes included. */
@@ -59,7 +60,7 @@ export interface TeamStationRecord {
 }
 
 const asRecord: Cleaner<TeamStationRecord> = asObject({
-  version: asLiteral(1),
+  version: asLiteral(2),
   setupBefore: asGameSetup,
   actions: asArray(asUnknown),
   actionTimes: asUnknown,
@@ -86,7 +87,9 @@ export function recordOf(play: unknown): TeamStationRecord | null {
 
 function cleanRecord(raw: unknown): TeamStationRecord | null {
   try {
-    const { actionTimes, playbackTimes, ...record } = asRecord(raw)
+    const { actionTimes, playbackTimes, ...record } = asRecord(
+      upgradeRecord(raw)
+    )
     const actions: ScoringAction[] = []
     for (const action of record.actions) {
       const cleaned = cleanAction(action)
@@ -314,7 +317,7 @@ function sessionId(state: GameState, raw: unknown): number | null {
   if (raw == null || typeof raw !== 'object') return null
   const id = (raw as { id?: unknown }).id
   if (typeof id !== 'number') return null
-  return state.meta.identities.sourceToSession[`number:${id}`] ?? null
+  return state.gameData.players[id] == null ? null : id
 }
 
 /** A base as a document names it: a number, or `'1B'` to `'3B'`. */

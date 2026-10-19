@@ -346,6 +346,7 @@ export function useDictation(options: UseDictationOptions): Dictation {
         scope,
         target,
         context: contextOf == null ? dictationContext(session) : contextOf(),
+        tagOrder: [...session.meta.tagOrder],
         ...(model == null ? {} : { model })
       })
       if (since != null)

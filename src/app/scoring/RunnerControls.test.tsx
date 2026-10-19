@@ -7,10 +7,10 @@ import { PerspectiveCamera } from 'three'
 import { applyAction } from '../../common/scoring/session'
 import { asGameState } from '../../common/scoring/state'
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { projectBases } from '../field/baseProjection'
 import { applyFieldCamera } from '../field/cameraModel'
 import type { BaseProjection } from '../field/fieldTypes'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { homeDecisionFrame } from './runnerControlLayout'
 import { RunnerControls } from './RunnerControls'
@@ -50,7 +50,7 @@ async function click(label: string): Promise<void> {
   })
 }
 function initial(): ScoringState {
-  return initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  return initialScoringState(scoringSession(gameFixture))
 }
 describe('runner decisions', function () {
   afterEach(async function () {

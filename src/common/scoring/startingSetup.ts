@@ -1,6 +1,6 @@
 import type { GameDetail, RosterEntry } from '../api'
 import type { ScoringAction } from './actions'
-import { addPlayer, begun, newSetup, type RosterPlayer } from './lineup'
+import { begun, newSetup, type RosterPlayer } from './lineup'
 import {
   type Lineup,
   lineupOf,
@@ -104,37 +104,11 @@ function arrangeFromDefault(
   lineup: Lineup
 ): void {
   const team = setup.sides[side]
-  const rosterIds = team.players.filter(id => !setup.players[id].local)
-  const byUser = new Map<number, number>()
-  for (const id of rosterIds) {
-    const userId = setup.players[id].userId
-    if (userId != null) byUser.set(userId, id)
-  }
-  // The roster's made-up players give way to the default's own.
-  for (const id of team.players)
-    if (setup.players[id].local) {
-      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-      delete setup.players[id]
-      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-      delete setup.identities.sessionToSource[id]
-    }
-  team.players = [...rosterIds]
-  const draft = {
-    gameData: { teams, players: setup.players },
-    liveData: { boxscore: { teams: setup.sides } },
-    meta: { identities: setup.identities }
-  }
-  const placeholders = new Map<string, number>()
-  const idOf = (person: LineupPerson | null): number | null => {
-    if (person == null) return null
-    if (person.userId != null) return byUser.get(person.userId) ?? null
-    let id = placeholders.get(person.name)
-    if (id == null) {
-      id = addPlayer(draft, side, person.name, person.jersey)
-      placeholders.set(person.name, id)
-    }
-    return id
-  }
+  const available = new Set(team.players)
+  const idOf = (person: LineupPerson | null): number | null =>
+    person?.userId != null && available.has(person.userId)
+      ? person.userId
+      : null
   const order: number[] = []
   for (const person of lineup.batters) {
     const id = idOf(person)
@@ -167,7 +141,7 @@ export function withSideLineup(
   arrangeFromDefault(setup, next.gameData.teams, side, lineup)
   next.gameData.players = setup.players
   next.liveData.boxscore.teams = setup.sides
-  next.meta.identities = setup.identities
+  next.meta.tagOrder = setup.tagOrder
   return next
 }
 

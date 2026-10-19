@@ -7,8 +7,8 @@ import { Text } from 'react-native'
 import { TeamStationClient } from '../../common/api'
 import { ScoringSession } from '../../common/scoring/session'
 import { mintedRosterEntry } from '../../test/mintedRosterEntry'
+import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
   RosterDrag as NativeDrag,
@@ -109,11 +109,19 @@ async function mount(
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
   client.roster = async () => []
+  // These player-entry tests act as the roster manager of both teams.
+  // Opponent-only guest permissions are exercised in the dedicated suite.
+  client.myRoles = async () => ({
+    teams: { away: ['scorekeeper'], home: ['scorekeeper'] },
+    guardianOf: []
+  })
+  client.createGuestPlayer = async (_gameId, _side, player) =>
+    mintedRosterEntry(player)
   client.createRosterPlayer = async (_teamId, player) =>
     mintedRosterEntry(player)
   const source: ScoringSource = {
     open: async () => {
-      const session = createDevelopmentSession(gameFixture, [], [])
+      const session = scoringSession(gameFixture)
       prepare?.(session)
       const store = memoryStore()
       const save = store.save

@@ -4,7 +4,7 @@ import { describe, it } from 'mocha'
 import React from 'react'
 import { Vector3 } from 'three'
 
-import { createDevelopmentSession } from '../scoring/developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { initialScoringState } from '../scoring/scoringMachine'
 import { PITCH_TIMING, pitchPresentation } from '../scoring/scoringPresentation'
@@ -25,10 +25,7 @@ import { TERRAIN } from './terrain'
 describe('articulated athlete motion', function () {
   for (const side of ['R', 'L'] as const) {
     it(`loads the pelvis before the torso and releases continuously from the ${side} hand`, function () {
-      const state = initialScoringState(
-        createDevelopmentSession(gameFixture, [], []),
-        true
-      )
+      const state = initialScoringState(scoringSession(gameFixture), true)
       state.session.gameData.players[10].throws =
         side === 'L' ? 'left' : 'right'
       const sequence = pitchPresentation(state, 'called')

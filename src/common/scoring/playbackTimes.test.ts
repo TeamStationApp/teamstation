@@ -13,7 +13,7 @@ const later = '2026-01-01T12:11:00.000Z'
 function play(calls = ['B', 'C', 'F']): any {
   return {
     teamStation: {
-      version: 1,
+      version: 2,
       setupBefore: setupOf(game()),
       actions: calls.map(call => ({ type: 'pitch', call })),
       actionTimes: [...times]

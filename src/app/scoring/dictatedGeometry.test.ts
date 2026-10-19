@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import {
   directionPoint,
   foulFielder,
@@ -11,10 +11,8 @@ import {
 import { gameFixture } from './isUnscoredGame.test'
 
 // The development game's hosts field 11 C, 12 1B, 14 SS, 15 3B, 16 LF, 17 CF, 18 RF.
-function game(
-  bats: 'L' | 'R' = 'R'
-): ReturnType<typeof createDevelopmentSession> {
-  const session = createDevelopmentSession(gameFixture, [], [])
+function game(bats: 'L' | 'R' = 'R'): ReturnType<typeof scoringSession> {
+  const session = scoringSession(gameFixture)
   session.liveData.plays.currentPlay!.matchup.batSide.code = bats
   return session
 }

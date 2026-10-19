@@ -4,8 +4,8 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
+import { scoringSession } from '../../test/scoringSession'
 import { getTheme, ThemeProvider } from '../theme/ThemeContext'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
   ROSTER_MODE_LABELS,
@@ -55,7 +55,7 @@ const tabs = (): string[] =>
 const testId = (id: string): HTMLElement | null =>
   host.querySelector<HTMLElement>(`[data-testid="${id}"]`)
 const fresh = (): ReturnType<typeof initialScoringState> =>
-  initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  initialScoringState(scoringSession(gameFixture))
 /** The rgb() a browser computes for a #rrggbb colour. */
 const rgb = (hex: string): string =>
   `rgb(${[1, 3, 5].map(at => parseInt(hex.slice(at, at + 2), 16)).join(', ')})`

@@ -4,7 +4,7 @@ import React, { act, useReducer } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { singleCorrection } from '../../test/scoringHelpers'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { runCorrectionClock, type ScoringClock } from './scoringClock'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -98,9 +98,7 @@ describe('correction clock', function () {
   })
   for (const native of [false, true])
     it(`${native ? 'on a phone, ' : ''}pauses for a sheet and a hidden ${native ? 'app' : 'document'}, then closes exactly once at the remaining deadline`, async function () {
-      let initial = initialScoringState(
-        createDevelopmentSession(gameFixture, [], [])
-      )
+      let initial = initialScoringState(scoringSession(gameFixture))
       initial = singleCorrection(initial)
       const clock = new FakeClock()
       const host = document.createElement('div')
