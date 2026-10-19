@@ -68,8 +68,12 @@ export async function importSigning(
     )
       throw new Error('Signing import files must be private regular files')
   }
-  if (platform === 'ios' && files.profile == null)
-    throw new Error('An ad-hoc provisioning profile is required')
+  if (
+    platform === 'ios' &&
+    files.profile == null &&
+    files.appStoreProfile == null
+  )
+    throw new Error('An ad-hoc or App Store provisioning profile is required')
   const processes = new Processes(signal)
   const visibility = asObject({ isPrivate: asBoolean })(
     JSON.parse(
@@ -122,7 +126,10 @@ export async function importSigning(
       keychain: path.join(directory, 'unused.keychain'),
       ...adHoc
     }
-    await ruby(context, 'import', request, directory)
+    // An App Store profile can be imported on its own, so a newer ad-hoc
+    // profile already in the repository is never replaced by an older file.
+    if (platform !== 'ios' || adHoc.profile != null)
+      await ruby(context, 'import', request, directory)
     // The App Store profile shares the distribution certificate and key; Match
     // stores it under its own type.
     if (platform === 'ios' && appStoreProfile != null)
