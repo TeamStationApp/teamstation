@@ -4,17 +4,44 @@ import type { RetryClock } from './attachHls'
 export const LIVE_STALL_MS = 10_000
 const MAX_GAP_SEC = 60
 const MAX_NUDGES = 3
+/**
+ * Footage held at the playhead that an engine should be playing rather than
+ * waiting for more of: one segment.
+ */
+export const RESTART_AHEAD_SEC = 4
 
 type StalledVideo = Pick<
   HTMLVideoElement,
   'currentTime' | 'paused' | 'ended' | 'seeking' | 'buffered'
->
+> & {
+  pause: () => void
+  play: () => Promise<void>
+}
+
+/** Seconds of footage held without a break from `at` onwards. */
+export function heldAhead(ranges: TimeRanges, at: number): number {
+  for (let index = 0; index < ranges.length; index++) {
+    const start = ranges.start(index)
+    const end = ranges.end(index)
+    if (start <= at && end > at) return end - at
+  }
+  return 0
+}
 
 /**
  * A live publisher can leave a timestamp hole with playable footage after it.
  * Some engines wait at that hole indefinitely without raising an error. Once
  * the picture has stopped for ten seconds, move into footage already held.
  * Never jump to the live edge, reload the source, or undo the viewer's pause.
+ *
+ * Safari can also stop with the footage right there. Its own player runs dry
+ * at the edge of what it has, decides the line is too slow to keep up with
+ * the one rendition there is, and waits for it to get faster — for ever,
+ * while it goes on loading. Measured on an iPhone held to 3 Mbit/s under a
+ * 5.4 Mbit/s game: stopped at `readyState` 3 with 44 seconds buffered ahead,
+ * through three 50 ms nudges (each one cost it its decoded pictures and none
+ * started it) and a bare `play()`. A pause and a play started it at once. So
+ * where a whole segment is held at the playhead, that is what it gets.
  */
 export function recoverLiveStalls(
   video: StalledVideo,
@@ -42,6 +69,17 @@ export function recoverLiveStalls(
       lastProgress = now
     } else if (Math.abs(at - lastTime) > 0.001) {
       nudges = 0
+      lastProgress = now
+    } else if (
+      now - lastProgress >= LIVE_STALL_MS &&
+      nudges < MAX_NUDGES &&
+      heldAhead(video.buffered, at) >= RESTART_AHEAD_SEC
+    ) {
+      // The pause is not the viewer's: the play straight after it says so to
+      // anything listening, and the element is playing again either way.
+      video.pause()
+      video.play().catch(() => undefined)
+      nudges += 1
       lastProgress = now
     } else if (now - lastProgress >= LIVE_STALL_MS && nudges < MAX_NUDGES) {
       const ranges = video.buffered
