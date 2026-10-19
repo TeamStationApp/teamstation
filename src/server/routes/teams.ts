@@ -502,11 +502,17 @@ export function teamRoutes(
         // the top-left quadrant. `created_at` on its own is import time rather
         // than upload order, and a camera backfilled a week late would sort a
         // week after its siblings, so the recording's own start wins where it
-        // has one. Cameras of one take share that start, and then the id is
-        // arbitrary, so the program — the one titled Primary — leads them and
-        // the game opens on it.
+        // has one. Cameras of one take share that start. The program leads,
+        // then first, third and home, so the game opens on Primary and the
+        // picker follows the diamond. Anything else keeps id order.
         .orderBy(sql`coalesce(start_at, created_at)`)
-        .orderBy(sql`case when title like ${'% Primary'} then 0 else 1 end`)
+        .orderBy(sql`case
+          when title like ${'% Primary'} then 0
+          when title like ${'% 1st'} or title like ${'% First'} then 1
+          when title like ${'% 3rd'} or title like ${'% Third'} then 2
+          when title like ${'% Home'} then 3
+          else 4
+        end`)
         .orderBy('id')
         .execute()
       const receiving = await receivingVideoIds(

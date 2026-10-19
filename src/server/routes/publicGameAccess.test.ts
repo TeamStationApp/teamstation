@@ -167,7 +167,7 @@ describe('public game access', function () {
         expect(denied.status, route).oneOf([401, 403, 404])
       }
     })
-  it('opens on Primary when the cameras of a take started together', async () => {
+  it('orders a take Primary, 1st, 3rd, then Home', async () => {
     const start = new Date('2026-10-18T16:00:00.000Z')
     const earlier = new Date('2026-10-18T15:00:00.000Z')
     const gameId = 'gam_settings3_scheduled'
@@ -226,8 +226,8 @@ describe('public game access', function () {
         'vid_lead_z_early',
         'vid_lead_d_primary',
         'vid_lead_a_1st',
-        'vid_lead_b_home',
-        'vid_lead_c_3rd'
+        'vid_lead_c_3rd',
+        'vid_lead_b_home'
       ])
     } finally {
       await f.h.db
