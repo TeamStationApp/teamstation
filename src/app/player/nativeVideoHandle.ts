@@ -257,7 +257,13 @@ export class NativeVideoHandle implements VideoHandle {
 
   async play(): Promise<void> {
     this.playerStoppedAt = null
-    if (!this.props.paused) return
+    if (!this.props.paused) {
+      // A failed player still reads as playing, and a press of Play — or a
+      // highlight's — is what has it loaded again: said, so the recovery
+      // hears it.
+      if (this.failed) this.emit('play')
+      return
+    }
     this.rebase()
     this.props = { ...this.props, paused: false }
     this.onPropsChange()
@@ -315,6 +321,8 @@ export class NativeVideoHandle implements VideoHandle {
     this.width = data.naturalSize.width
     this.height = data.naturalSize.height
     this.state = 1
+    // A source that has loaded has not failed, or not yet.
+    this.failed = false
     // A fresh source starts where it says it does, and a seek aimed at the
     // *previous* one will never be answered now.
     this.pendingSeekTo = null
@@ -372,6 +380,8 @@ export class NativeVideoHandle implements VideoHandle {
     // emitted by `play` or `pause`, and emitting it twice makes `attachHls`
     // believe a viewer paused something they did not.
     const paused = !data.isPlaying
+    // Playing is a picture again, whatever came before it.
+    if (!paused) this.failed = false
     if (paused === this.props.paused) return
     // A player that has run dry is waiting, not paused, as a browser's
     // element is. Android says "not playing" for both, and taking a stall for

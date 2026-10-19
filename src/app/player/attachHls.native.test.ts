@@ -366,8 +366,7 @@ describe('a phone watching a live game whose camera is away', function () {
     })
     handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
     expect(handle.paused, 'failed, not paused').equals(false)
-    // A viewer who will not wait for the recovery: pause, then play.
-    handle.pause()
+    // A viewer who will not wait for the recovery presses play.
     await handle.play()
     expect(player.loads(), 'the press loaded the stream again').equals(1)
     expect(handle.paused, 'and asked it to play').equals(false)

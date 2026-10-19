@@ -320,6 +320,43 @@ describe('NativeVideoHandle', function () {
     expect(handle.paused).equals(true)
   })
 
+  it('gives a stop back before the error is heard, so the recovery knows it is wanted', async function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.attach(fakePlayer().ref)
+    await handle.play()
+    handle.handleReadyForDisplay()
+    const heard: string[] = []
+    handle.addEventListener('play', () => heard.push('play'))
+    handle.onError = () => heard.push(`error, paused ${handle.paused}`)
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    handle.handleError({ error: { code: -1 } })
+    expect(heard).deep.equals(['play', 'error, paused false'])
+  })
+
+  it('says play when pressed while failed, and forgets a failure with a new source', async function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.attach(fakePlayer().ref)
+    await handle.play()
+    handle.handleReadyForDisplay()
+    const events: string[] = []
+    handle.addEventListener('play', () => events.push('play'))
+    handle.addEventListener('pause', () => events.push('pause'))
+    handle.handleError({ error: { code: -1 } })
+    // Still reads as playing; a press is passed on for the recovery.
+    await handle.play()
+    expect(events).deep.equals(['play'])
+    // A new source: its "not playing" is a pause again.
+    handle.reset()
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    expect(events).deep.equals(['play', 'pause'])
+    // Playing again clears it as a picture does.
+    await handle.play()
+    handle.handleError({ error: { code: -1 } })
+    handle.handlePlaybackState({ isPlaying: true, isSeeking: false })
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    expect(handle.paused).equals(true)
+  })
+
   it('hands an error to whoever is watching for one', function () {
     const handle = new NativeVideoHandle(() => undefined)
     const errors: unknown[] = []
