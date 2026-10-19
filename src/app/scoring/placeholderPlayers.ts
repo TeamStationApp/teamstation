@@ -89,7 +89,7 @@ export async function addPlaceholderPlayers(
         throw new PartialPlaceholderCreation(ids.length, count - ids.length)
       throw error
     }
-    ids.push(addPlayerDraft(session, side, draft, entry.userId))
+    ids.push(addPlayerDraft(session, side, draft, entry.gumboId!))
     names.add(name.toLowerCase())
   }
   return ids

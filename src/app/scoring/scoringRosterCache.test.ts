@@ -9,6 +9,7 @@ describe('private roster presentation cache', function () {
   it('removes name metadata without changing player settings or its input', function () {
     const row = asRosterEntry({
       userId: 100,
+      gumboId: 100,
       shortName: 'Mookie B',
       jersey: '12',
       positions: ['P'],

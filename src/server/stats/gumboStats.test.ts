@@ -21,11 +21,11 @@ const scorebook = JSON.parse(
   readFileSync(join(__dirname, 'fixtures/scorebookGame.json'), 'utf8')
 ) as {
   plays: GumboPlay[]
-  expected: PlayerGameLine[]
+  expected: Array<Omit<PlayerGameLine, 'gumboId'> & { userId: number }>
   finalScore: { away: number; home: number }
 }
 
-function emptyFigures(): Omit<PlayerGameLine, 'userId' | 'teamId'> {
+function emptyFigures(): Omit<PlayerGameLine, 'gumboId' | 'teamId'> {
   return {
     pa: 0,
     ab: 0,
@@ -57,11 +57,11 @@ function emptyFigures(): Omit<PlayerGameLine, 'userId' | 'teamId'> {
 }
 
 function line(
-  userId: number,
+  gumboId: number,
   teamId: string | null,
-  figures: Partial<Omit<PlayerGameLine, 'userId' | 'teamId'>>
+  figures: Partial<Omit<PlayerGameLine, 'gumboId' | 'teamId'>>
 ): PlayerGameLine {
-  return { userId, teamId, ...emptyFigures(), ...figures }
+  return { gumboId, teamId, ...emptyFigures(), ...figures }
 }
 
 type EventType = GumboPlay['result']['eventType']
@@ -140,14 +140,20 @@ function paPlay(
 describe('gameStatLines', function () {
   it('matches the scorebook fixture box score', function () {
     const result = gameStatLines(scorebook.plays, teams, known)
-    expect(result).deep.equals({ kind: 'lines', lines: scorebook.expected })
+    expect(result).deep.equals({
+      kind: 'lines',
+      lines: scorebook.expected.map(({ userId, ...line }) => ({
+        ...line,
+        gumboId: userId
+      }))
+    })
   })
 
   it('counts each figures-table event type', function () {
     const cases: Array<{
       eventType: EventType
-      batter?: Partial<Omit<PlayerGameLine, 'userId' | 'teamId'>>
-      pitcher?: Partial<Omit<PlayerGameLine, 'userId' | 'teamId'>>
+      batter?: Partial<Omit<PlayerGameLine, 'gumboId' | 'teamId'>>
+      pitcher?: Partial<Omit<PlayerGameLine, 'gumboId' | 'teamId'>>
       play?: GumboPlay
     }> = [
       {
@@ -352,11 +358,11 @@ describe('gameStatLines', function () {
       expect(result.kind, row.eventType).equals('lines')
       if (result.kind !== 'lines') continue
       expect(
-        result.lines.find(l => l.userId === 1),
+        result.lines.find(l => l.gumboId === 1),
         row.eventType
       ).deep.equals(line(1, 'away', row.batter ?? {}))
       expect(
-        result.lines.find(l => l.userId === 11),
+        result.lines.find(l => l.gumboId === 11),
         row.eventType
       ).deep.equals(line(11, 'home', row.pitcher ?? {}))
     }
@@ -487,8 +493,8 @@ describe('gameStatLines', function () {
     const result = gameStatLines([topOut, bottomOut, topAgain], teams, known)
     expect(result.kind).equals('lines')
     if (result.kind !== 'lines') return
-    expect(result.lines.find(l => l.userId === 11)?.pitch_outs).equals(2)
-    expect(result.lines.find(l => l.userId === 10)?.pitch_outs).equals(1)
+    expect(result.lines.find(l => l.gumboId === 11)?.pitch_outs).equals(2)
+    expect(result.lines.find(l => l.gumboId === 10)?.pitch_outs).equals(1)
   })
 
   it('gives an out entry with details.pitcher its own out', function () {
@@ -612,7 +618,7 @@ describe('gameStatLines', function () {
       if (result.kind !== 'lines') throw new Error(result.detail)
       return result.lines
         .filter(row => row.teamId === 'home')
-        .map(row => [row.userId, row.pitch_outs, row.pitch_bf])
+        .map(row => [row.gumboId, row.pitch_outs, row.pitch_bf])
     }
     // Changed after the caught stealing: that out is the starter's.
     expect(outs([single, changedAt(2)])).deep.equals([
@@ -656,7 +662,7 @@ describe('gameStatLines', function () {
     if (result.kind !== 'lines') throw new Error(result.detail)
     return result.lines
       .filter(row => row.pitch_bf > 0 || row.pitch_outs > 0)
-      .map(row => [row.userId, row.teamId, row.pitch_outs, row.pitch_bf])
+      .map(row => [row.gumboId, row.teamId, row.pitch_outs, row.pitch_bf])
   }
 
   it('gives a reliever who leaves inside the plate appearance he entered in the outs he made', function () {
@@ -860,10 +866,10 @@ describe('gameStatLines', function () {
     const result = gameStatLines([top, bottom], teams, known)
     expect(result.kind).equals('lines')
     if (result.kind !== 'lines') return
-    expect(result.lines.find(l => l.userId === 5)).deep.equals(
+    expect(result.lines.find(l => l.gumboId === 5)).deep.equals(
       line(5, 'away', { sb: 1 })
     )
-    expect(result.lines.find(l => l.userId === 12)?.teamId).equals('home')
+    expect(result.lines.find(l => l.gumboId === 12)?.teamId).equals('home')
   })
 
   describe('incomplete for each required field', function () {
@@ -1281,7 +1287,7 @@ describe('gameStatLines', function () {
     const result = gameStatLines([play], teams, known)
     expect(result.kind).equals('lines')
     if (result.kind !== 'lines') return
-    expect(result.lines.find(l => l.userId === 2)).deep.equals(
+    expect(result.lines.find(l => l.gumboId === 2)).deep.equals(
       line(2, 'away', { sb: 1 })
     )
   })
@@ -1365,7 +1371,7 @@ describe('gameStatLines', function () {
 describe('imported games build the lines they always did', function () {
   interface Fixture {
     plays: GumboPlay[]
-    expected: Array<Omit<PlayerGameLine, 'sh'>>
+    expected: Array<Omit<PlayerGameLine, 'sh' | 'gumboId'> & { userId: number }>
     finalScore: { away: number; home: number }
   }
   const load = (name: string): Fixture =>
@@ -1389,7 +1395,8 @@ describe('imported games build the lines they always did', function () {
     }
     return expected.map(held => {
       const moved = bunts.get(held.userId) ?? 0
-      return { ...held, sf: held.sf - moved, sh: moved }
+      const { userId, ...line } = held
+      return { ...line, gumboId: userId, sf: held.sf - moved, sh: moved }
     })
   }
 
@@ -1422,7 +1429,7 @@ describe('imported games build the lines they always did', function () {
           : held
       )
       const lines = movedToSh(bunted, baseLines)
-      const mine = lines.find(held => held.userId === batter)!
+      const mine = lines.find(held => held.gumboId === batter)!
       expect(mine.sh, eventType).equals(1)
       expect(
         gameStatLines(bunted, teams, new Set(namedPlayerIds(bunted))),

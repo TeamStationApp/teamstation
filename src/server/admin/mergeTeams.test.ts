@@ -293,11 +293,11 @@ describe('merging two rows that are one team', function () {
     await drain(db, () => new Date('2026-09-25T12:00:00.000Z'))
     const rows = await db
       .selectFrom('game_player_stats')
-      .select(['user_id', 'team_id'])
+      .select(['gumbo_id', 'team_id'])
       .where('game_id', '=', game)
       .execute()
     expect(rows.length).greaterThan(0)
-    const bat = rows.find(row => Number(row.user_id) === batter.userId)!
+    const bat = rows.find(row => Number(row.gumbo_id) === batter.userId)!
     expect(bat.team_id).equals(into)
   })
 })

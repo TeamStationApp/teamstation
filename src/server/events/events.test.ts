@@ -57,7 +57,7 @@ describe('scoring events', function () {
       .values({
         id: player.userId,
         legacyId: player.legacyId,
-        display_name: 'Ada',
+        display_name: 'Adam Dunn',
         created_at: now,
         updated_at: now
       })
@@ -158,7 +158,7 @@ describe('scoring events', function () {
       .values({
         id: makeId('eventPlayer'),
         event_id: fielderEvent.id,
-        user_id: player.userId,
+        gumbo_id: player.userId,
         team_id: away,
         role: 'fielder'
       })
@@ -182,11 +182,11 @@ describe('scoring events', function () {
             credits: [
               {
                 eventType: 'single',
-                label: 'Single: Ada',
+                label: 'Single: Adam Dunn',
                 teamId: home,
                 creditUserId: player.userId,
                 credit: {
-                  name: 'Ada',
+                  name: 'Adam Dunn',
                   role: 'batter',
                   position: null
                 }
@@ -222,15 +222,15 @@ describe('scoring events', function () {
     expect(document.gumbo).to.not.have.property('source')
     const roles = await db
       .selectFrom('event_players')
-      .select(['role', 'user_id'])
+      .select(['role', 'gumbo_id'])
       .where('event_id', '=', replaced[0].id)
       .execute()
     expect(roles.map(row => row.role)).deep.equals(['fielder'])
 
     const byPlayer = await creditsForPlayer(db, player.userId)
-    expect(byPlayer.get(replaced[0].id)?.[0].credit?.name).equals('Ada')
+    expect(byPlayer.get(replaced[0].id)?.[0].credit?.name).equals('Adam Dunn')
     expect(byPlayer.get(replaced[0].id)?.[0].creditUserId).equals(player.userId)
-    expect(byPlayer.get(replaced[0].id)?.[0].label).equals('Single: Ada')
+    expect(byPlayer.get(replaced[0].id)?.[0].label).equals('Single: Adam Dunn')
     expect(await creditsForPlayer(db, 9_007_199_254_740_000)).deep.equals(
       new Map()
     )
@@ -276,7 +276,7 @@ describe('scoring events', function () {
     const empty = indexes.find(row => row.atBatIndex === 9999)
     expect(looked.get(empty?.id ?? '')).deep.equals([])
     const single = indexes.find(row => row.atBatIndex === 0)
-    expect(looked.get(single?.id ?? '')?.[0].label).equals('Single: Ada')
+    expect(looked.get(single?.id ?? '')?.[0].label).equals('Single: Adam Dunn')
 
     await db
       .insertInto('games')
@@ -317,7 +317,7 @@ describe('scoring events', function () {
       .values({
         id: makeId('gamePlayerStats'),
         game_id: gameId,
-        user_id: player.userId,
+        gumbo_id: player.userId,
         team_id: home,
         pa: 0,
         pitch_outs: 0
@@ -329,7 +329,7 @@ describe('scoring events', function () {
       .values({
         id: other.userId,
         legacyId: other.legacyId,
-        display_name: 'Bea',
+        display_name: 'Babe Ruth',
         created_at: new Date(),
         updated_at: new Date()
       })
@@ -369,7 +369,7 @@ describe('scoring events', function () {
               halfInning: 'top',
               isComplete: false
             },
-            matchup: { batter: { id: player.userId, fullName: 'Ada' } },
+            matchup: { batter: { id: player.userId, fullName: 'Adam Dunn' } },
             playEvents: pitches
           }
         })

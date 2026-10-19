@@ -72,7 +72,7 @@ describe('game-bounded historical box-score averages', function () {
             id: 'gps_demo_shared_average',
             game_id: gameId,
             team_id: f.teamB,
-            user_id: 104,
+            gumbo_id: 104,
             pa: 1,
             ab: 1,
             h: 0
@@ -81,7 +81,7 @@ describe('game-bounded historical box-score averages', function () {
             id: 'gps_demo_private_average',
             game_id: 'gam_demo_private_average',
             team_id: f.teamB,
-            user_id: 104,
+            gumbo_id: 104,
             pa: 1,
             ab: 1,
             h: 1
