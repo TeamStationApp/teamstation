@@ -108,7 +108,7 @@ export function lineupsBody(
   const players = team.players.map(id => {
     const player = draft.gameData.players[id]
     return {
-      userId: player.userId,
+      gumboId: player.id,
       fullName: player.fullName,
       jersey: player.jersey
     }
@@ -143,7 +143,8 @@ export function lineupsBody(
  */
 export function battingOrders(
   game: GameState,
-  sides: readonly Side[] = ['away', 'home']
+  sides: readonly Side[] = ['away', 'home'],
+  accounts: readonly RosterEntry[] = []
 ): Partial<Record<Side, LineupBatter[]>> {
   return Object.fromEntries(
     sides.map(side => [
@@ -152,7 +153,13 @@ export function battingOrders(
         const player = game.gameData.players[id]
         return player == null
           ? []
-          : [{ userId: player.userId, shortName: player.fullName }]
+          : [
+              {
+                userId:
+                  accounts.find(row => row.gumboId === id)?.userId ?? null,
+                shortName: player.fullName
+              }
+            ]
       })
     ])
   )
@@ -673,7 +680,13 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
                     first={side}
                     lineups={battingOrders(
                       state.session,
-                      theirsHeld ? ['away', 'home'] : [opened.side]
+                      theirsHeld ? ['away', 'home'] : [opened.side],
+                      [
+                        ...Object.values(opened.rosters).flat(),
+                        ...Object.values(
+                          (detail ?? opened.game).guestPlayers
+                        ).flat()
+                      ]
                     )}
                   />
                 </ScrollView>

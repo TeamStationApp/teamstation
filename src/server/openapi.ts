@@ -1616,13 +1616,13 @@ export function openApiDocument(version: string): OpenApiDocument {
         },
         LineupPerson: {
           type: 'object',
-          required: ['userId', 'name', 'jersey'],
+          required: ['gumboId', 'name', 'jersey'],
           description:
-            'A player in a lineup: his user id, or null for a placeholder ' +
+            'A player in a lineup: his scoring id, or null for a placeholder ' +
             'named at the field, the short name the scoring screen shows ' +
             '(never a full name), and his jersey.',
           properties: {
-            userId: { type: ['integer', 'null'] },
+            gumboId: { type: ['integer', 'null'] },
             name: { type: 'string' },
             jersey: { type: 'string' }
           }
@@ -1900,6 +1900,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           type: 'object',
           required: [
             'userId',
+            'gumboId',
             'shortName',
             'avatarUrl',
             'jersey',
@@ -1921,6 +1922,11 @@ export function openApiDocument(version: string): OpenApiDocument {
             'false, no jersey, no positions and no walk-up song.',
           properties: {
             userId: { type: 'integer' },
+            gumboId: {
+              type: ['integer', 'null'],
+              minimum: 1,
+              maximum: 9007199254740991
+            },
             shortName: {
               type: 'string',
               description: 'First name and last initial.'
@@ -4555,9 +4561,8 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             "One side's players, batting order and defence, as its head " +
             'coach sets them between plays. The players are named by who ' +
-            'they are: `userId`, or for a player made up at the field ' +
-            '`fullName` and `jersey`, matched against the side’s made-up ' +
-            'players and added when none matches. Every other number is an ' +
+            'they are: `gumboId`, including persisted game guests. ' +
+            'Every other number is an ' +
             'index into `players`. The game is replayed as the scoring ' +
             'screen replays it, the lineup is applied as a scorer’s roster ' +
             'change, followed by a pinch runner who keeps the batting order ' +
@@ -4606,10 +4611,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                       description: "Every player on the side's roster",
                       items: {
                         type: 'object',
-                        required: ['userId', 'fullName', 'jersey'],
+                        required: ['gumboId', 'fullName', 'jersey'],
                         properties: {
-                          userId: {
-                            oneOf: [{ type: 'integer' }, { type: 'null' }]
+                          gumboId: {
+                            type: 'integer',
+                            minimum: 1,
+                            maximum: 9007199254740991
                           },
                           fullName: { type: 'string' },
                           jersey: { type: 'string' }

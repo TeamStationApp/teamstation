@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { after, F, TEAMS } from '../../test/scoringGames'
+import { after, TEAMS } from '../../test/scoringGames'
 import type { GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from '../scoring/actions'
 import { currentDocumentOf, finalDocumentOf } from '../scoring/document'
@@ -22,6 +22,17 @@ const feed = JSON.parse(
   readFileSync('src/common/gumbo/reference/feed776258.json', 'utf8')
 ) as { liveData: { plays: { allPlays: unknown[] } } }
 
+const F = {
+  P: 201,
+  C: 202,
+  '1B': 203,
+  '2B': 204,
+  SS: 205,
+  '3B': 206,
+  LF: 207,
+  CF: 208,
+  RF: 209
+}
 const AWAY = Array.from({ length: 9 }, (_, i) => 101 + i)
 const HOME = Array.from({ length: 9 }, (_, i) => 201 + i)
 
@@ -30,8 +41,16 @@ function start(): GameState {
     'g1',
     TEAMS,
     newSetup(TEAMS, {
-      away: AWAY.map((userId, i) => ({ userId, shortName: `Away ${i + 1}` })),
-      home: HOME.map((userId, i) => ({ userId, shortName: `Home ${i + 1}` }))
+      away: AWAY.map((userId, i) => ({
+        userId,
+        gumboId: userId,
+        shortName: `Away ${i + 1}`
+      })),
+      home: HOME.map((userId, i) => ({
+        userId,
+        gumboId: userId,
+        shortName: `Home ${i + 1}`
+      }))
     })
   )
 }
@@ -54,25 +73,31 @@ const scoredActions: ScoringAction[] = [
   },
   { type: 'result', eventType: 'single' },
   close,
-  { type: 'baseRunning', kind: 'steal', runner: 1 },
+  { type: 'baseRunning', kind: 'steal', runner: 101 },
   ball,
   { type: 'ballInPlay', contact: 'swing', fielder: F.LF },
   { type: 'result', eventType: 'double' },
-  { type: 'runnerMovement', runner: 1, to: 'home' },
+  { type: 'runnerMovement', runner: 101, to: 'home' },
   close,
-  { type: 'lineup', kind: 'addPlayer', side: 'home', name: 'Reliever' },
+  {
+    type: 'lineup',
+    kind: 'addPlayer',
+    side: 'home',
+    name: 'Reliever',
+    player: 210
+  },
   {
     type: 'lineup',
     kind: 'substitute',
     side: 'home',
-    player: 19,
+    player: 210,
     replaces: F.P
   },
   ball,
   {
     type: 'batteryEvent',
     kind: 'wild_pitch',
-    advances: [{ runner: 2, to: '3B' }]
+    advances: [{ runner: 102, to: '3B' }]
   },
   strike,
   strike,
@@ -81,7 +106,7 @@ const scoredActions: ScoringAction[] = [
   { type: 'ballInPlay', contact: 'swing', fielder: F.SS },
   { type: 'result', eventType: 'field_error' },
   { type: 'fieldingPlay', fielders: [F.SS], error: F.SS },
-  { type: 'runnerMovement', runner: 2, to: 'home' },
+  { type: 'runnerMovement', runner: 102, to: 'home' },
   close
 ]
 
