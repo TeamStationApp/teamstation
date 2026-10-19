@@ -15,7 +15,8 @@ import {
   View
 } from 'react-native'
 
-import type { RosterEntry } from '../../common/api'
+import { asRosterEntry, type RosterEntry } from '../../common/api'
+import { reconcileRoster } from '../../common/scoring/rosterAvailability'
 import {
   type ChosenRosterCommand,
   ROSTER_TAB,
@@ -25,6 +26,7 @@ import {
 } from '../../common/scoring/rosterCommands'
 import { rosterError } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
+import type { Unrostered } from '../../common/unroster'
 import { Button } from '../components/Button'
 import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
@@ -165,6 +167,8 @@ export function RosterEditor({
   onDraftChange,
   onDirtyChange,
   onEditPlayer,
+  unrostered,
+  onRosteredChange,
   rosterLoading,
   rosterError: editError,
   onRetryRoster,
@@ -224,6 +228,12 @@ export function RosterEditor({
   /** Whether the draft differs from the game it was opened over, as it changes. */
   onDirtyChange?: (dirty: boolean) => void
   onEditPlayer?: (userId: number, name: string, teamId: string) => void
+  unrostered?: Unrostered
+  onRosteredChange?: (
+    side: Side,
+    userId: number,
+    rostered: boolean
+  ) => Promise<Unrostered>
   rosterLoading?: boolean
   rosterError?: string
   onRetryRoster?: () => void
@@ -296,9 +306,83 @@ export function RosterEditor({
   // The game as the editor opened: a newer one shown behind the sheet (the
   // scoring screen following another device) leaves the draft clean until
   // the screen opens the editor again over it.
-  const [opened] = useState(() => state.session)
-  const base = initialDraft?.base ?? opened
-  const openedOver = initialDraft?.base
+  const [base, setBase] = useState(() => initialDraft?.base ?? state.session)
+  const openedOver = base
+  const [exclusions, setExclusions] = useState(
+    unrostered ?? { away: [], home: [] }
+  )
+  const [rosterBusy, setRosterBusy] = useState(false)
+  const [savingRoster, setSavingRoster] = useState(false)
+  const [rosterProblem, setRosterProblem] = useState<string>()
+  useEffect(() => {
+    if (unrostered != null) setExclusions(unrostered)
+  }, [unrostered])
+  const applyAvailability = (
+    previous: ScoringSessionState,
+    lists: Unrostered
+  ): ScoringSessionState => {
+    const next = copyState(previous)
+    const entries = (of: Side, local: boolean): RosterEntry[] =>
+      next.liveData.boxscore.teams[of].players
+        .map(id => next.gameData.players[id])
+        .filter(player => player.local === local)
+        .map(player =>
+          asRosterEntry({
+            userId: player.id,
+            shortName: player.fullName,
+            jersey: player.jersey,
+            positions: player.positions,
+            bats: player.bats,
+            throws: player.throws,
+            isPlayer: true,
+            role: 'player',
+            section: 'player',
+            staffRoles: [],
+            inheritedFrom: null
+          })
+        )
+    const roster = (of: Side): readonly RosterEntry[] =>
+      rosters?.[next.gameData.teams[of].id] ?? entries(of, false)
+    const setup = reconcileRoster(
+      setupOf(next),
+      next.gameData.teams,
+      { away: roster('away'), home: roster('home') },
+      { away: entries('away', true), home: entries('home', true) },
+      lists
+    )
+    next.gameData.players = setup.players
+    next.liveData.boxscore.teams[side] = setup.sides[side]
+    next.meta.tagOrder = setup.tagOrder
+    return next
+  }
+  const toggleRostered = async (
+    userId: number,
+    rostered: boolean
+  ): Promise<void> => {
+    if (onRosteredChange == null || rosterBusy || savingRoster) return
+    setRosterBusy(true)
+    setRosterProblem(undefined)
+    try {
+      const lists = await onRosteredChange(side, userId, rostered)
+      setExclusions(lists)
+      setDraft(previous => applyAvailability(previous, lists))
+      setBase(previous => applyAvailability(previous, lists))
+      if (!rostered) {
+        setNextBatter(previous => (previous === userId ? undefined : previous))
+        setRunners(previous =>
+          previous.filter(runner => runner.player !== userId)
+        )
+      }
+    } catch (error) {
+      setRosterProblem(
+        error instanceof Error
+          ? error.message
+          : 'Could not change game availability'
+      )
+    } finally {
+      setRosterBusy(false)
+    }
+  }
   useEffect(() => {
     onDraftChange?.({
       draft,
@@ -561,7 +645,16 @@ export function RosterEditor({
           }}
           rows={rosterRows}
           loading={rosterLoading}
-          error={editError}
+          error={rosterProblem ?? editError}
+          unrostered={exclusions[side]}
+          rosterBusy={rosterBusy || savingRoster}
+          onRosteredChange={
+            coach && onRosteredChange != null
+              ? (userId, rostered) => {
+                  toggleRostered(userId, rostered).catch(() => undefined)
+                }
+              : undefined
+          }
           onRetry={onRetryRoster}
           onEditLocal={
             canEditLocal
@@ -879,7 +972,10 @@ export function RosterEditor({
               accessibilityLabel="Save Rosters"
               label="Save Rosters"
               disabled={
-                spoken.busy || !rosterSavable(dirty, unaccepted, validation)
+                rosterBusy ||
+                savingRoster ||
+                spoken.busy ||
+                !rosterSavable(dirty, unaccepted, validation)
               }
               onPress={() => {
                 const saving = onSave(
@@ -887,18 +983,21 @@ export function RosterEditor({
                   nextBatter,
                   runners.length === 0 ? undefined : runners
                 )
-                if (saving instanceof Promise)
+                if (saving instanceof Promise) {
+                  setSavingRoster(true)
                   saving.then(
                     () => {
+                      setSavingRoster(false)
                       spoken.clear()
                     },
                     (error: unknown) => {
+                      setSavingRoster(false)
                       const message =
                         error instanceof Error ? error.message : ''
                       if (message !== '') spoken.problem(message)
                     }
                   )
-                else spoken.clear()
+                } else spoken.clear()
               }}
             />
           </View>
