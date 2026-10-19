@@ -203,7 +203,7 @@ describe('the game as a scoreboard source', function () {
       awayTeamId: away,
       startAt: new Date()
     })
-    const actions = situationActions()
+    const actions = situationActions(setup)
     await score(gameId, actions)
 
     let memory = freshGame(gameId, teams, setup)
@@ -253,7 +253,7 @@ describe('the game as a scoreboard source', function () {
       awayTeamId: away,
       startAt: new Date()
     })
-    await score(broken, situationActions().slice(0, 5))
+    await score(broken, situationActions(setup).slice(0, 5))
     const stored = await load(broken)
     const record = (
       stored.plays[0] as unknown as {
@@ -266,7 +266,7 @@ describe('the game as a scoreboard source', function () {
         currentPlay: JSON.stringify({
           ...(stored.currentPlay ?? { about: { atBatIndex: 2 } }),
           teamStation: {
-            version: 1,
+            version: 2,
             setupBefore: record.setupBefore,
             actions: [{ type: 'result', eventType: 'strikeout' }]
           }
@@ -286,7 +286,7 @@ describe('the game as a scoreboard source', function () {
       awayTeamId: away,
       startAt: new Date()
     })
-    await score(gameId, situationActions().slice(0, 3))
+    await score(gameId, situationActions(setup).slice(0, 3))
     const result = await writeGameScoreboard({ db, store, log }, gameId)
     expect(result?.kind).equals('written')
     const hash = await store.readScoreboard(gameId)

@@ -101,5 +101,25 @@ export function upgradeRecord(raw: unknown): unknown {
     }
     return converted
   })
-  return { ...record, version: 2, setupBefore: convert(initial), actions }
+  // The drawing detail also holds session references in fielding routes and
+  // runner credits. Other numeric fields (positions, bases and counts) stay put.
+  const detail = (raw: unknown, parent = ''): unknown => {
+    if (Array.isArray(raw)) return raw.map(value => detail(value, parent))
+    if (raw == null || typeof raw !== 'object') return raw
+    return Object.fromEntries(
+      Object.entries(raw).map(([key, value]) => [
+        key,
+        key === 'id' && (parent === 'player' || parent === 'runner')
+          ? idOf(value)
+          : detail(value, key)
+      ])
+    )
+  }
+  return {
+    ...record,
+    version: 2,
+    setupBefore: convert(initial),
+    actions,
+    ...(record.detail == null ? {} : { detail: detail(record.detail) })
+  }
 }

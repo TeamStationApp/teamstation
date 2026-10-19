@@ -101,7 +101,13 @@ describe('historical scoring identities', function () {
       setupBefore,
       actions,
       actionTimes: ['time'],
-      detail: { note: 'kept' }
+      detail: {
+        note: 'kept',
+        fieldingRoute: [{ player: { id: 10 }, location: { x: 1, z: 2 } }],
+        runnerActions: [
+          { runner: { id: 1 }, origin: 1, credits: [{ player: { id: 11 } }] }
+        ]
+      }
     }
     const before = structuredClone(raw)
     const upgraded = upgradeRecord(raw) as typeof raw
@@ -154,7 +160,17 @@ describe('historical scoring identities', function () {
       }
     ])
     expect(upgraded.actionTimes).deep.equals(raw.actionTimes)
-    expect(upgraded.detail).deep.equals(raw.detail)
+    expect(upgraded.detail).deep.equals({
+      note: 'kept',
+      fieldingRoute: [{ player: { id: 1000010 }, location: { x: 1, z: 2 } }],
+      runnerActions: [
+        {
+          runner: { id: 1000001 },
+          origin: 1,
+          credits: [{ player: { id: 1000011 } }]
+        }
+      ]
+    })
     expect(raw).deep.equals(before)
   })
 

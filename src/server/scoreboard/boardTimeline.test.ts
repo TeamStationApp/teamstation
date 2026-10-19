@@ -392,7 +392,7 @@ describe('the board timeline', function () {
           player: bench,
           replaces: secondBaseman
         },
-        ...situationActions().slice(0, 10)
+        ...situationActions(setup).slice(0, 10)
       ]
       const score = await scorer(gameId, direct)
       const times: number[] = []
@@ -418,7 +418,7 @@ describe('the board timeline', function () {
 
     it("puts a play's actions at its end, and the at-bat in progress at its start, without action times", async function () {
       const gameId = await newGame()
-      const actions = situationActions().slice(0, 8)
+      const actions = situationActions(setup).slice(0, 8)
       const score = await scorer(gameId, direct)
       for (const action of actions) {
         clock += 1000
@@ -496,7 +496,7 @@ describe('the board timeline', function () {
     it('stops at an action that no longer applies, and says so', async function () {
       const gameId = await newGame()
       const score = await scorer(gameId, direct)
-      for (const action of situationActions().slice(0, 5)) {
+      for (const action of situationActions(setup).slice(0, 5)) {
         clock += 1000
         await score(action)
       }
@@ -1031,7 +1031,7 @@ describe('the board timeline', function () {
       })
 
       it('reads only the plays before the first TeamStation scored, and turns to its half', function () {
-        const record = { version: 1, setupBefore: setup, actions: [] }
+        const record = { version: 2, setupBefore: setup, actions: [] }
         const boards = importedBoards(
           [
             row(0, { inning: 1, half: 'top' }, 1, [1, 7], {
