@@ -6,6 +6,7 @@ import { CancelAction } from '../components/CancelAction'
 import type { BaseProjection } from '../field/fieldTypes'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
+import { choiceDecisionFrame, homeDecisionFrame } from './runnerControlLayout'
 import {
   hasCurrentRunnerPitch,
   runnerDecisionError,
@@ -91,103 +92,35 @@ export function RunnerControls({
     state.pendingPlay?.fieldersChoice?.runners.filter(
       move => move.decision == null
     ) ?? []
-  const cardAnchors = choiceRunners.map(move => {
-    const point = projection?.bases[move.to % 4]
-    return point == null
-      ? undefined
-      : {
-          left: Math.max(8, Math.min(projection!.width - 208, point.x - 100)),
-          top: Math.max(8, point.y - 112)
-        }
-  })
-  const overlappingCards = cardAnchors.some(
-    (anchor, index) =>
-      anchor != null &&
-      cardAnchors
-        .slice(index + 1)
-        .some(
-          other =>
-            other != null &&
-            Math.abs(anchor.left - other.left) < 208 &&
-            Math.abs(anchor.top - other.top) < 120
-        )
-  )
-  const narrowChoice = projection != null && projection.width < 480
-  const compactChoice =
-    projection != null &&
-    (projection.height < 420 || projection.width < 700 || overlappingCards)
   if (state.phase === 'fieldersChoice')
-    return (
-      <View
-        pointerEvents="box-none"
-        style={
-          projection == null || compactChoice
-            ? {
-                position: 'absolute',
-                ...(compactChoice ? { top: 8 } : { bottom: 130 }),
-                alignSelf: 'center',
-                flexDirection: narrowChoice ? 'column' : 'row',
-                gap: 8
-              }
-            : { position: 'absolute', inset: 0 }
-        }
-      >
-        {choiceRunners.map(move => {
+    return projection == null ? null : (
+      <View pointerEvents="box-none" style={{ position: 'absolute', inset: 0 }}>
+        {choiceRunners.map((move, index) => {
           const name = state.session.gameData.players[move.playerId].fullName
-          const point = compactChoice
-            ? undefined
-            : projection?.bases[move.to % 4]
+          const slot = choiceRunners
+            .slice(0, index)
+            .filter(other => other.to % 4 === move.to % 4).length
+          const count = choiceRunners.filter(
+            other => other.to % 4 === move.to % 4
+          ).length
+          const horizontal =
+            move.to % 4 === 2 || (move.to % 4 === 0 && count > 1)
           return (
             <View
               key={move.playerId}
               accessibilityLabel={`Fielder's choice decision for ${name}`}
               style={{
-                ...(point == null
-                  ? {}
-                  : {
-                      position: 'absolute',
-                      left: Math.max(
-                        8,
-                        Math.min(projection!.width - 208, point.x - 100)
-                      ),
-                      top: Math.max(8, point.y - 112)
-                    }),
-                width: compactChoice
-                  ? Math.min(
-                      200,
-                      narrowChoice
-                        ? projection.width - 32
-                        : (projection.width -
-                            32 -
-                            8 * (choiceRunners.length - 1)) /
-                            choiceRunners.length
-                    )
-                  : 200,
-                padding: 8,
-                gap: 6,
-                borderRadius: 8,
-                backgroundColor: theme.backgroundColor
+                ...choiceDecisionFrame(projection, move.to, slot, count),
+                flexDirection: horizontal ? 'row' : 'column',
+                gap: 8
               }}
             >
-              <Text
-                style={{
-                  color: theme.primaryTextColor,
-                  textAlign: 'center',
-                  fontFamily: theme.regularTextFont
-                }}
-              >
-                {name}
-              </Text>
-              <View
-                style={{
-                  flexDirection: 'row',
-                  gap: 8,
-                  justifyContent: 'center'
-                }}
-              >
-                {(['safe', 'out'] as const).map(decision => (
+              {(['safe', 'out'] as const).map(decision => (
+                <View
+                  key={decision}
+                  style={horizontal ? { flex: 1 } : undefined}
+                >
                   <ScoringButton
-                    key={decision}
                     label={`${decision === 'safe' ? 'Safe' : 'Out'} ${name}`}
                     text={decision === 'safe' ? 'Safe' : 'Out'}
                     color={
@@ -204,8 +137,8 @@ export function RunnerControls({
                       })
                     }}
                   />
-                ))}
-              </View>
+                </View>
+              ))}
             </View>
           )
         })}
@@ -345,8 +278,13 @@ export function RunnerControls({
   const width = vertical ? 130 : 220
   const tall =
     home && homeBackProposal(state.session) != null ? 254 : vertical ? 204 : 138
-  const position =
-    point == null
+  const position = home
+    ? homeDecisionFrame(
+        projection,
+        anchor,
+        homeBackProposal(state.session) != null
+      )
+    : point == null
       ? undefined
       : {
           position: 'absolute' as const,
@@ -375,26 +313,34 @@ export function RunnerControls({
     <View
       accessibilityLabel={`${home ? 'Home plate' : 'Runner'} decision for ${state.session.gameData.players[id].fullName}`}
       style={
-        position ?? {
-          position: 'absolute',
-          bottom: 130,
-          alignSelf: 'center',
-          gap: 6,
-          padding: 10,
-          backgroundColor: theme.backgroundColor,
-          borderRadius: 8
-        }
+        home
+          ? (position ?? {
+              position: 'absolute',
+              bottom: 130,
+              alignSelf: 'center'
+            })
+          : (position ?? {
+              position: 'absolute',
+              bottom: 130,
+              alignSelf: 'center',
+              gap: 6,
+              padding: 10,
+              backgroundColor: theme.backgroundColor,
+              borderRadius: 8
+            })
       }
     >
-      <Text
-        style={{
-          color: theme.primaryTextColor,
-          fontFamily: theme.regularTextFont,
-          textAlign: 'center'
-        }}
-      >
-        {state.session.gameData.players[id].fullName}
-      </Text>
+      {!home && (
+        <Text
+          style={{
+            color: theme.primaryTextColor,
+            fontFamily: theme.regularTextFont,
+            textAlign: 'center'
+          }}
+        >
+          {state.session.gameData.players[id].fullName}
+        </Text>
+      )}
       <View
         style={{
           flexDirection: vertical ? 'column' : 'row',
@@ -404,8 +350,8 @@ export function RunnerControls({
       >
         {!currentHold && (home || action!.to > 0) && (
           <ScoringButton
-            decision
-            secondaryLabel={baseLabel}
+            decision={!home}
+            secondaryLabel={home ? undefined : baseLabel}
             label={!home && stationary ? 'Safe from Pickoff' : 'Safe'}
             color={theme.scoringSafeColor}
             disabled={error != null}
@@ -419,8 +365,8 @@ export function RunnerControls({
           />
         )}
         <ScoringButton
-          decision
-          secondaryLabel={baseLabel}
+          decision={!home}
+          secondaryLabel={home ? undefined : baseLabel}
           label="Out"
           color={theme.scoringOutColor}
           onPress={() => {

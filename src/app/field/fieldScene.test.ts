@@ -5,14 +5,51 @@ import React from 'react'
 import { type Camera, PerspectiveCamera, Ray, Vector2, Vector3 } from 'three'
 
 import type { BallArcState } from './ballArcModel'
+import { projectBases } from './baseProjection'
 import { fieldingLocation } from './fieldingLocation'
 import { createPlayers } from './fieldModel'
 import { FieldScene } from './FieldScene'
-import type { FieldPlacement } from './fieldTypes'
+import type { BaseProjection, FieldPlacement } from './fieldTypes'
 import { nameplateSize, projectPlayerLabel } from './playerPresentation'
 import { TERRAIN } from './terrain'
 
 describe('rendered field interaction', function () {
+  it('reports runner head and foot anchors with the camera, only when projection changes', async function () {
+    let camera: Camera | undefined
+    const reports: BaseProjection[] = []
+    const props = {
+      players: createPlayers(),
+      selected: '',
+      onSelect: () => undefined,
+      view: 'home' as const,
+      zoom: 1,
+      onBaseProjection: (value: BaseProjection) => reports.push(value)
+    }
+    const renderer = await create(React.createElement(FieldScene, props), {
+      width: 402,
+      height: 579,
+      onCreated: state => {
+        camera = state.camera
+      }
+    })
+    try {
+      await renderer.advanceFrames(3, 1 / 60)
+      expect(camera).not.equals(undefined)
+      expect(reports.at(-1)).deep.equals(projectBases(camera!, 402, 579))
+      const count = reports.length
+      await renderer.advanceFrames(3, 1 / 60)
+      expect(reports).length(count)
+      await renderer.update(
+        React.createElement(FieldScene, { ...props, zoom: 1.25 })
+      )
+      await renderer.advanceFrames(3, 1 / 60)
+      expect(reports.length).greaterThan(count)
+      expect(reports.at(-1)).deep.equals(projectBases(camera!, 402, 579))
+      expect(reports.at(-1)!.heads![2].y).lessThan(reports.at(-1)!.feet![2].y)
+    } finally {
+      await renderer.unmount()
+    }
+  })
   it('removes and restores defenders without a movement or pause change', async function () {
     const players = createPlayers()
     const props = {
