@@ -9,7 +9,9 @@ import {
   ScoringSession
 } from '../../common/scoring/session'
 import { copyState, setupOf } from '../../common/scoring/state'
+import { guestCreator } from '../../test/guestPlayers'
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { fieldKey } from '../field/fieldKeyboard'
 import { projectPlayerLabel } from '../field/playerPresentation'
 import {
@@ -24,7 +26,6 @@ import {
   shortPlayerNames,
   withRosterDetails
 } from './currentSetup'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { addPlaceholderPlayers } from './placeholderPlayers'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -40,8 +41,8 @@ const applyAction = (
   action: ScoringAction
 ): ReturnType<typeof applyStoredAction> =>
   applyStoredAction(state, action, { requireCurrentSetup: true })
-const game = (): ReturnType<typeof createDevelopmentSession> =>
-  createDevelopmentSession(gameFixture, [], [])
+const game = (): ReturnType<typeof scoringSession> =>
+  scoringSession(gameFixture)
 describe('current scoring setup', function () {
   it('retains lineup acceptance through queued sentences and question answers', function () {
     const initial = game()
@@ -551,7 +552,7 @@ describe('current scoring setup', function () {
       applyAction(half.state, { type: 'pitch', call: 'B' }).problems[0].message
     ).includes('C')
   })
-  it('preserves awaiting-batter state on defense-only edits and placeholder creation, including Undo', function () {
+  it('preserves awaiting-batter state on defense-only edits and placeholder creation, including Undo', async function () {
     const initial = game()
     initial.liveData.boxscore.teams.away.battingOrder = [1]
     initial.liveData.linescore.offense.first = {
@@ -571,7 +572,7 @@ describe('current scoring setup', function () {
       'C',
       initial.liveData.boxscore.teams.home.defense.P!
     )
-    addPlaceholderPlayers(draft, 'home', 2)
+    await addPlaceholderPlayers(draft, 'home', 2, guestCreator())
     const next = scoringReducer(state, { type: 'ROSTER', draft })
     expect(next.phase).equals('awaitingBatter')
     expect(next.session.awaitingBatter).deep.equals(initial.awaitingBatter)

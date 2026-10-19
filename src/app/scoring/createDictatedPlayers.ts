@@ -2,12 +2,12 @@ import type { RosterEntry } from '../../common/api'
 import {
   applyRosterCommands,
   type RosterCommand,
+  rosterCommandScope,
   type RosterSituation,
   type StagedRoster
 } from '../../common/scoring/rosterCommands'
-import { copyState, type GameState } from '../../common/scoring/state'
+import type { GameState, Side } from '../../common/scoring/state'
 import {
-  addRosteredPlayer,
   emptyPlayerDraft,
   type PlayerDraft,
   playerDraftError
@@ -19,24 +19,27 @@ export type CreateRosterPlayer = (
 ) => Promise<RosterEntry>
 
 /** Validate the entire sentence before creating anyone. Named players use the same
- * persistent roster operation as the form; only explicit placeholders stay local. */
+ * persistent roster operation as the form; placeholders are persisted as guests. */
 export async function createDictatedPlayers(
   draft: GameState,
   commands: readonly RosterCommand[],
   situation: RosterSituation,
   create: CreateRosterPlayer | undefined,
   current: () => boolean = () => true,
-  completed = new Map<string, RosterEntry>()
+  completed = new Map<string, RosterEntry>(),
+  createGuest?: (side: Side, player: PlayerDraft) => Promise<RosterEntry>
 ): Promise<StagedRoster | { problem: string }> {
-  const checked = applyRosterCommands(draft, commands, situation)
+  const checked = rosterCommandScope(commands, situation)
   if ('problem' in checked) return checked
+  if (!commands.some(command => command.type === 'addPlayer'))
+    return applyRosterCommands(draft, commands, situation)
   if (
-    !commands.some(
-      command => command.type === 'addPlayer' && command.placeholder !== true
+    commands.some(
+      command =>
+        command.type === 'addPlayer' &&
+        (command.placeholder === true ? createGuest == null : create == null)
     )
   )
-    return checked
-  if (create == null)
     return { problem: 'Unable to create the player. Please try again.' }
   const additions = commands.flatMap(command => {
     if (command.type !== 'addPlayer') return []
@@ -53,22 +56,42 @@ export async function createDictatedPlayers(
     const error = playerDraftError(player)
     if (error != null) return { problem: error }
   }
-  let next = copyState(draft)
-  for (const { command, player } of additions) {
+  const minted = new Map<RosterCommand, RosterEntry>()
+  for (const [index, { command, player }] of additions.entries()) {
     if (!current()) return { problem: 'Player creation was interrupted.' }
-    if (command.placeholder === true) {
-      const staged = applyRosterCommands(next, [command], situation)
-      if ('problem' in staged) return staged
-      next = staged.draft
-    } else {
-      const teamId = next.gameData.teams[command.side].id
-      // Keep acknowledged writes across failed sentences. Retrying must reuse
-      // the persistent identity even though the draft was not staged yet.
-      const key = JSON.stringify([teamId, player])
-      const entry = completed.get(key) ?? (await create(teamId, player))
-      completed.set(key, entry)
-      addRosteredPlayer(next, command.side, entry, player)
-    }
+    const teamId = draft.gameData.teams[command.side].id
+    const key = JSON.stringify([
+      index,
+      command.placeholder === true ? 'guest' : 'roster',
+      teamId,
+      player
+    ])
+    const entry =
+      completed.get(key) ??
+      (command.placeholder === true
+        ? await createGuest!(command.side, player)
+        : await create!(teamId, player))
+    completed.set(key, entry)
+    minted.set(command, entry)
   }
-  return { ...checked, draft: next }
+  if (!current()) return { problem: 'Player creation was interrupted.' }
+  const result = applyRosterCommands(
+    draft,
+    commands.map(command =>
+      command.type === 'addPlayer'
+        ? { ...command, player: minted.get(command)!.userId }
+        : command
+    ),
+    situation
+  )
+  if ('problem' in result) return result
+  for (const { command, player } of additions) {
+    const entry = minted.get(command)!
+    Object.assign(result.draft.gameData.players[entry.userId], {
+      ...player,
+      fullName: entry.shortName,
+      local: command.placeholder === true
+    })
+  }
+  return result
 }

@@ -29,11 +29,11 @@ const TEAMS = {
 }
 const setup = newSetup(TEAMS, {
   away: Array.from({ length: 9 }, (_, i) => ({
-    userId: 1000 + i,
+    userId: 1 + i,
     shortName: `Away ${i + 1}`
   })),
   home: Array.from({ length: 9 }, (_, i) => ({
-    userId: 2000 + i,
+    userId: 10 + i,
     shortName: `Home ${i + 1}`
   }))
 })

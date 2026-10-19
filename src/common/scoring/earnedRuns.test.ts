@@ -277,7 +277,7 @@ describe('the responsible pitcher (U5)', function () {
           halfInning: 'top',
           isComplete: false
         },
-        teamStation: { version: 1, setupBefore, actions }
+        teamStation: { version: 2, setupBefore, actions }
       } as unknown as StoredGame['currentPlay']
     }
     const replayed = replayPlays(stored, {
@@ -328,8 +328,8 @@ describe('the responsible pitcher (U5)', function () {
     expect(
       details.map(d => [d.earned, d.teamUnearned, d.rbi, d.responsiblePitcher])
     ).deep.equals([
-      [false, true, true, { id: null }],
-      [true, false, true, { id: null }]
+      [false, true, true, { id: 10 }],
+      [true, false, true, { id: 10 }]
     ])
     expect(JSON.stringify(stored.teamStation)).not.contains('errorlessOuts')
   })
@@ -685,6 +685,7 @@ describe('a pinch runner (U23)', function () {
       state = after(state, {
         type: 'lineup',
         kind: 'addPlayer',
+        player: 19 + ['A', 'B', 'C'].indexOf(name.slice(-1)),
         side: 'away',
         name
       })
@@ -858,6 +859,7 @@ describe('a pinch runner (U23)', function () {
       after(game(), {
         type: 'lineup',
         kind: 'addPlayer',
+        player: 19,
         side: 'away',
         name: 'Runner'
       })
@@ -944,6 +946,7 @@ describe('a roster save, read by the men it keeps (QA 25)', function () {
       state = after(state, {
         type: 'lineup',
         kind: 'addPlayer',
+        player: 19 + ['A', 'B', 'C'].indexOf(name.slice(-1)),
         side: 'away',
         name
       })
