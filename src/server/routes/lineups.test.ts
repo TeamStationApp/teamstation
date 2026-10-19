@@ -674,7 +674,8 @@ describe("saving a side's lineup (U8)", function () {
     set: makeId('game'),
     accept: makeId('game'),
     keeper: makeId('game'),
-    shown: makeId('game')
+    shown: makeId('game'),
+    availability: makeId('game')
   }
   const TEAMS = {
     away: { id: away, name: 'Visitors' },
@@ -1014,7 +1015,7 @@ describe("saving a side's lineup (U8)", function () {
   }
 
   async function ask(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PUT',
     path: string,
     token: string,
     body?: unknown
@@ -2081,7 +2082,9 @@ describe("saving a side's lineup (U8)", function () {
       ]
     })
     expect(stranger.status).equals(400)
-    expect(stranger.body.message).equals("Fan is not on this team's roster")
+    expect(stranger.body.message).equals(
+      'The lineup must include every available roster player and game guest'
+    )
     const twice = await save(games.live, COACH, {
       ...body,
       players: [...body.players, body.players[0]]
@@ -2191,5 +2194,83 @@ describe("saving a side's lineup (U8)", function () {
     )
     expect(tries).equals(3)
     expect(written).not.include(games.busy)
+  })
+  it('requires exactly the available roster and guests after a head-coach toggle', async () => {
+    const id = games.availability
+    const userId = homePlayers[0].userId
+    const toggle = async (
+      rostered: boolean,
+      token = COACH
+    ): ReturnType<typeof ask> =>
+      await ask('PUT', `/games/${id}/unroster`, token, {
+        side: 'home',
+        userId,
+        rostered
+      })
+    expect((await toggle(false, SCORER)).status).equals(403)
+    expect((await toggle(false)).body).deep.equals({ away: [], home: [userId] })
+    const old = bodyOf((await scoring(id)).state, 'home')
+    expect((await save(id, COACH, old)).status).equals(400)
+    const context = await startingContext(
+      db!,
+      id,
+      { home_team_id: home, away_team_id: away },
+      () => true
+    )
+    const session = await ScoringSession.open(
+      {
+        load: async () => ({ plays: [], currentPlay: null }),
+        save: async () => {
+          throw new Error('Read only')
+        }
+      },
+      id,
+      context
+    )
+    const body = bodyOf(session.state, 'home')
+    expect(body.players.map(player => player.userId)).not.includes(userId)
+    const guest = await createGuestPlayer(
+      db!,
+      { userId: coach.userId, isAdmin: false, scopes: [] },
+      id,
+      'home',
+      {
+        firstName: 'Babe',
+        lastName: 'Ruth',
+        jersey: '3',
+        positions: [],
+        bats: 'left',
+        throws: 'left'
+      }
+    )
+    expect((await save(id, COACH, body)).status).equals(400)
+    body.players.push({
+      userId: guest.userId,
+      fullName: guest.shortName,
+      jersey: guest.jersey ?? ''
+    })
+    const missing = {
+      ...body,
+      players: body.players.slice(1),
+      battingOrder: [],
+      defense: {}
+    }
+    expect((await save(id, COACH, missing)).status).equals(400)
+    expect((await save(id, COACH, body)).status).equals(200)
+    expect((await toggle(true)).status).equals(200)
+    const returned = (await scoring(id)).state.liveData.boxscore.teams.home
+    expect(returned.players).includes(userId)
+    expect(returned.battingOrder).not.includes(userId)
+    expect(Object.values(returned.defense)).not.includes(userId)
+    expect((await toggle(true)).status).equals(200)
+    expect(
+      (
+        await ask('PUT', `/games/${id}/unroster`, COACH, {
+          side: 'bad',
+          userId,
+          rostered: false
+        })
+      ).status
+    ).equals(400)
   })
 })
