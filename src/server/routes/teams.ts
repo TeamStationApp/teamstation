@@ -580,6 +580,7 @@ export function teamRoutes(
       res.json({
         id: game.id,
         guests: game.guests,
+        unrostered: game.unrostered,
         pendingApproval: pending.pendingApproval,
         pendingRequestId: pending.pendingRequestId,
         homeTeamId: game.home_team_id,
