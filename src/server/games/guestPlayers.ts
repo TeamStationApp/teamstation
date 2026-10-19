@@ -69,6 +69,15 @@ export async function createGuestPlayer(
           player.bats != null || player.throws != null ? 'manual' : null
       })
       .execute()
+    await trx
+      .insertInto('game_guest_details')
+      .values({
+        game_id: gameId,
+        user_id: minted.userId,
+        jersey: player.jersey,
+        positions: player.positions
+      })
+      .execute()
     const guests = asGuests(game.guests)
     guests[side].push(minted.userId)
     await trx
