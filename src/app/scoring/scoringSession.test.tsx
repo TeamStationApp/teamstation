@@ -159,8 +159,9 @@ describe('local scoring controls', function () {
       expect((await scoringPreferences.read('scorer')).shown).equals(0)
     }
   })
-  it('keeps real team names when roster reads fail and supports a failing replaceable source', async function () {
+  it('retries failed roster reads before opening a replaceable source and retains save recovery', async function () {
     const client = clientForSwitchHitter()
+    const roster = client.roster.bind(client)
     client.roster = async () => {
       throw new Error('unavailable')
     }
@@ -173,12 +174,15 @@ describe('local scoring controls', function () {
     }
     const source: ScoringSource = {
       open: async (game, away, home) => {
-        expect(away).deep.equals([])
-        expect(home).deep.equals([])
+        expect(away).length(9)
+        expect(home).length(9)
         return GameSession.start(store, game.id, scoringSession(game))
       }
     }
     await mount(client, source)
+    expect(document.body.textContent).includes('Unable to load scoring.')
+    client.roster = roster
+    await click('Retry loading scoring')
     expect(document.body.textContent).includes('Owls 0 · Hawks 0')
     expect(document.querySelector('[aria-label="Save status"]')).equals(null)
     await click('Ball')
@@ -201,6 +205,63 @@ describe('local scoring controls', function () {
       }
     })
     expect(document.body.textContent).includes('Unable to load scoring.')
+  })
+  it('leaves a saved game untouched when one roster fails and scores with its original lineup after retry', async function () {
+    const store = memoryStore()
+    const first = GameSession.start(
+      store,
+      gameFixture.id,
+      scoringSession(gameFixture)
+    )
+    first.apply({ type: 'pitch', call: 'B' })
+    await first.flush()
+    const before = structuredClone(store.games.get(gameFixture.id))
+    const client = clientForSwitchHitter('right')
+    const roster = client.roster.bind(client)
+    let fail = true
+    let reads = 0
+    let writes = 0
+    client.roster = async teamId => {
+      if (fail && teamId === gameFixture.homeTeamId)
+        throw new HttpError('offline', 'Temporary roster failure')
+      return await roster(teamId)
+    }
+    client.gameEvents = async gameId => {
+      reads++
+      return await store.load(gameId)
+    }
+    client.saveGameEvents = async (gameId, change) => {
+      writes++
+      return await store.save(gameId, change)
+    }
+    const source = new ServerScoringSource(client)
+    await mount(client, source)
+    expect(document.body.textContent).includes('Unable to load scoring.')
+    expect(document.querySelector('[aria-label="Ball"]')).equals(null)
+    expect(reads).equals(0)
+    expect(writes).equals(0)
+    expect(store.games.get(gameFixture.id)).deep.equals(before)
+    fail = false
+    await click('Retry loading scoring')
+    expect(document.body.textContent).includes('1 balls')
+    await click('Ball')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    })
+    expect(document.body.textContent).includes('2 balls')
+    expect(writes).equals(1)
+    const reopened = await source.open(
+      gameFixture,
+      await roster(gameFixture.awayTeamId),
+      await roster(gameFixture.homeTeamId)
+    )
+    for (const side of ['away', 'home'] as const) {
+      const expected = first.state.liveData.boxscore.teams[side]
+      const actual = reopened.state.liveData.boxscore.teams[side]
+      expect(actual.players).deep.equals(expected.players)
+      expect(actual.battingOrder).deep.equals(expected.battingOrder)
+      expect(actual.defense).deep.equals(expected.defense)
+    }
   })
   it('runs the native preference adapter through its platform storage implementation', async function () {
     await nativePreferences.write('native-test', { help: false, shown: 2 })
