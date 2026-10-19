@@ -25,6 +25,7 @@ import {
   TAP_SLOP_PX
 } from './ballArcModel'
 import { Ballpark } from './Ballpark'
+import { projectBases } from './baseProjection'
 import { applyFieldCamera } from './cameraModel'
 import { fieldKey } from './fieldKeyboard'
 import type { FieldPlayer } from './fieldModel'
@@ -102,17 +103,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
           )
       )
     if (callbacks.current.onBaseProjection != null) {
-      const value = {
-        width: size.width,
-        height: size.height,
-        bases: BASES.map(point => {
-          const v = new Vector3(point.x, 9, point.z).project(camera)
-          return {
-            x: ((v.x + 1) * size.width) / 2,
-            y: ((1 - v.y) * size.height) / 2
-          }
-        })
-      }
+      const value = projectBases(camera, size.width, size.height)
       const key = JSON.stringify(value)
       if (baseKey.current !== key) {
         baseKey.current = key

@@ -3795,20 +3795,35 @@ describe('scoring browser', function () {
   it('backs up a legal home arrival', async function () {
     this.timeout(120000)
     const rollback = await open('/games/g1/score')
+    const tap = async (label: string): Promise<void> => {
+      await rollback.page
+        .locator(`[aria-label="${label}"]:not([aria-disabled="true"])`)
+        .click()
+    }
     try {
-      await click(rollback.page, 'Open scoring menu')
-      await click(rollback.page, 'Overrides')
-      await click(rollback.page, 'Second base')
-      await click(rollback.page, 'Choose Second base Player 7')
-      await click(rollback.page, 'Third base')
-      await click(rollback.page, 'Choose Third base Player 8')
-      await click(rollback.page, 'Apply Override')
+      await tap('Open scoring menu')
+      await tap('Overrides')
+      await tap('Second base')
+      await tap('Choose Second base Player 7')
+      await tap('Third base')
+      await tap('Choose Third base Player 8')
+      await tap('Apply Override')
       await chooseHit(rollback.page, 'Single')
       await rollback.page.waitForSelector(
         '[aria-label="Home plate decision for Player 8"]',
         { timeout: 30000 }
       )
-      await click(rollback.page, 'Back')
+      if (process.env.RUNNER_CONTROLS_ARTIFACT_DIR != null) {
+        await rollback.page.setViewport({ width: 402, height: 579 })
+        await new Promise(resolve => setTimeout(resolve, 500))
+        await rollback.page.screenshot({
+          path: join(
+            process.env.RUNNER_CONTROLS_ARTIFACT_DIR,
+            `home-${process.env.RUNNER_CONTROLS_STAGE ?? 'after'}.png`
+          )
+        })
+      }
+      await tap('Back')
       await rollback.page.waitForSelector('[aria-label="Time to edit play"]', {
         timeout: 30000
       })
@@ -3922,13 +3937,60 @@ describe('scoring browser', function () {
             )
           })
         if (mask === 7 && outIds.length === 0) {
+          if (process.env.RUNNER_CONTROLS_ARTIFACT_DIR != null) {
+            for (const [name, viewport] of [
+              ['portrait', { width: 402, height: 579 }],
+              ['landscape', { width: 844, height: 390 }]
+            ] as const) {
+              await page.setViewport(viewport)
+              await new Promise(resolve => setTimeout(resolve, 500))
+              await page.screenshot({
+                path: join(
+                  process.env.RUNNER_CONTROLS_ARTIFACT_DIR,
+                  `${name}-${process.env.RUNNER_CONTROLS_STAGE ?? 'after'}.png`
+                )
+              })
+            }
+          }
           for (const viewport of [
+            { width: 402, height: 579 },
+            { width: 844, height: 390 },
             { width: 1200, height: 900 },
             { width: 800, height: 450 },
             { width: 390, height: 640 },
+            { width: 568, height: 320 },
             { width: 874, height: 292 }
           ]) {
             await page.setViewport(viewport)
+            if (process.env.RUNNER_CONTROLS_ARTIFACT_DIR != null) {
+              await new Promise(resolve => setTimeout(resolve, 500))
+              console.log(
+                'Runner decision hit targets',
+                viewport,
+                await page.evaluate(() =>
+                  Array.from(
+                    document.querySelectorAll(
+                      '[aria-label^="Fielder\'s choice decision for"] [role="button"]'
+                    )
+                  ).map(button => {
+                    const box = button.getBoundingClientRect()
+                    const hit = document.elementFromPoint(
+                      box.x + box.width / 2,
+                      box.y + box.height / 2
+                    )
+                    return {
+                      label: button.getAttribute('aria-label'),
+                      rect: box.toJSON(),
+                      // Browser callbacks cannot reference Sucrase helpers.
+
+                      hit: hit == null ? null : hit.getAttribute('aria-label'),
+
+                      text: hit == null ? null : hit.textContent
+                    }
+                  })
+                )
+              )
+            }
             await page.waitForFunction(() => {
               const buttons = Array.from(
                 document.querySelectorAll(
@@ -3937,16 +3999,57 @@ describe('scoring browser', function () {
               )
               return (
                 buttons.length === 6 &&
-                buttons.every(button => {
+                buttons.every((button, index) => {
                   const box = button.getBoundingClientRect()
                   const hit = document.elementFromPoint(
                     box.x + box.width / 2,
                     box.y + box.height / 2
                   )
-                  return hit != null && button.contains(hit)
+                  return (
+                    hit != null &&
+                    button.contains(hit) &&
+                    buttons.slice(index + 1).every(other => {
+                      const target = other.getBoundingClientRect()
+                      return (
+                        box.right <= target.left ||
+                        target.right <= box.left ||
+                        box.bottom <= target.top ||
+                        target.bottom <= box.top
+                      )
+                    })
+                  )
                 })
               )
             })
+            const placements = await page.evaluate(() =>
+              [6, 7, 8].map(id => {
+                const group = document.querySelector(
+                  `[aria-label="Fielder's choice decision for Player ${id}"]`
+                )!
+                const plate = document.querySelector(
+                  `[data-nameplate="offense-${id}"]`
+                )!
+                return {
+                  control: group.getBoundingClientRect().toJSON(),
+                  runner: plate.getBoundingClientRect().toJSON(),
+                  text: group.textContent,
+                  background: getComputedStyle(group).backgroundColor
+                }
+              })
+            )
+            expect(placements[0].control.bottom).lessThan(
+              placements[0].runner.top
+            )
+            expect(placements[1].control.right).at.most(
+              placements[1].runner.left
+            )
+            expect(placements[2].control.left).at.least(
+              placements[2].runner.right
+            )
+            for (const placed of placements) {
+              expect(placed.text).equals('SafeOut')
+              expect(placed.background).equals('rgba(0, 0, 0, 0)')
+            }
           }
           const controls = await page.$$(
             '[aria-label^="Fielder\'s choice decision for"] [role="button"]'

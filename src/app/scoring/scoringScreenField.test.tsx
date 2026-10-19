@@ -826,6 +826,18 @@ describe('scoring screen field wiring', function () {
       expect(field().interaction?.runnerIds).deep.equals([])
       expect(field().tapIds ?? []).deep.equals([])
       // A reopened choice collects its fielding sequence before runner calls.
+      await step(() =>
+        field().onBaseProjection?.({
+          width: 1200,
+          height: 900,
+          bases: [
+            { x: 600, y: 700 },
+            { x: 850, y: 500 },
+            { x: 600, y: 300 },
+            { x: 350, y: 500 }
+          ]
+        })
+      )
       const fielder = players().find(
         player =>
           player.playerId ===
