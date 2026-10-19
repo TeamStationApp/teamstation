@@ -24,6 +24,69 @@ const row = (id: number, jersey: string): EditRosterRow => ({
   positions: ['P', 'SS', 'CF']
 })
 describe('Roster tab cards and selector', function () {
+  it('keeps the coach switch separate from player settings and omits it for guests and scorekeepers', async () => {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    let edited = 0
+    const toggles: Array<[number, boolean]> = []
+    const render = async (coach: boolean): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <ThemeProvider>
+            <EditRosterList
+              rows={[row(1, '1'), { ...row(2, '2'), userId: undefined }]}
+              onEdit={() => {
+                edited++
+              }}
+              onEditLocal={() => {
+                edited++
+              }}
+              unrostered={[]}
+              onRosteredChange={
+                coach
+                  ? (id, value) => {
+                      toggles.push([id, value])
+                    }
+                  : undefined
+              }
+            />
+          </ThemeProvider>
+        )
+      })
+    }
+    try {
+      await render(true)
+      const switches = host.querySelectorAll<HTMLInputElement>(
+        'input[type="checkbox"]'
+      )
+      expect(switches).length(1)
+      expect(switches[0].checked).equals(true)
+      expect(switches[0].getAttribute('aria-label')).equals(
+        'Rostered for this game'
+      )
+      await act(async () => {
+        switches[0].click()
+      })
+      expect(toggles).deep.equals([[1, false]])
+      expect(edited).equals(0)
+      await act(async () => {
+        host
+          .querySelector<HTMLElement>('[aria-label*="Mookie Betts,"]')!
+          .click()
+      })
+      expect(edited).equals(1)
+      expect(toggles).length(1)
+      await render(false)
+      expect(host.querySelectorAll('input[type="checkbox"]')).length(0)
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+    }
+  })
+
   it('uses the staff team once roles finish loading and preserves chosen or retained sides', async function () {
     const state = initialScoringState(scoringSession(gameFixture))
     for (const scenario of ['default', 'chosen', 'retained'] as const) {
