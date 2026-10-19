@@ -71,6 +71,7 @@ const roster = (side: string): Array<ReturnType<typeof asRosterEntry>> =>
   names.map((displayName, i) =>
     asRosterEntry({
       userId: (side === 'home' ? 200 : 100) + i,
+      gumboId: (side === 'home' ? 200 : 100) + i,
       shortName: shortName({ id: i, displayName }),
       jersey: numbers[i],
       positions: [POSITIONS[i % 9]],
@@ -175,11 +176,9 @@ export function DefensiveRosterSheetFixture(): React.ReactElement {
                   })
                 }}
                 onAddPlaceholders={async count => {
-                  setSession(previous => {
-                    const next = copyState(previous)
-                    addPlaceholderPlayers(next, 'home', count)
-                    return next
-                  })
+                  const next = copyState(session)
+                  await addPlaceholderPlayers(next, 'home', count)
+                  setSession(next)
                 }}
               />
             )}
