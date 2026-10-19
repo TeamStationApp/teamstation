@@ -10,6 +10,7 @@ import {
 } from '../api'
 import type { ScoringAction } from './actions'
 import { freshGame } from './lineup'
+import { reconcileRoster } from './rosterAvailability'
 import {
   defaultPending,
   defaultsUnaccepted,
@@ -90,6 +91,80 @@ function arranged(
 describe('the lineups a game starts from (U4b)', function () {
   const away = roster([101, 102, 103, 104, 105, 106, 107, 108, 109, 110])
   const home = roster([201, 202, 203, 204, 205, 206, 207, 208, 209])
+
+  it('omits unrostered players from defaults and keeps guests unplaced unless named', () => {
+    const changed = {
+      ...game,
+      unrostered: { away: [101], home: [] },
+      guestPlayers: { away: roster([901]), home: [] }
+    }
+    const initial = startingSetup(changed, away, home)
+    expect(initial.sides.away.players).not.includes(101)
+    expect(initial.sides.away.battingOrder).not.includes(101)
+    expect(Object.values(initial.sides.away.defense)).not.includes(101)
+    expect(initial.sides.away.players).includes(901)
+    expect(initial.sides.away.battingOrder).not.includes(901)
+    expect(initial.players[901].local).equals(true)
+    const setup = startingSetup(changed, away, home, {
+      away: {
+        batters: [person(101), person(102), person(901)],
+        defense: { ...noDefense(), P: person(101), C: person(102) }
+      }
+    })
+    expect(setup.sides.away.battingOrder).deep.equals([102, 901])
+    expect(setup.sides.away.defense.P).equals(null)
+    expect(setup.sides.away.defense.C).equals(102)
+    expect(setup.sides.away.players).includes(110)
+  })
+
+  it('reconciles a saved subset, removes unavailable placements and preserves the due batter', () => {
+    const held = startingSetup(game, away.slice(0, 3), home)
+    held.sides.away.battingIndex = 2
+    const before = JSON.stringify(held)
+    const next = reconcileRoster(
+      held,
+      teamsOf(game),
+      { away, home },
+      { away: roster([901]), home: [] },
+      { away: [101], home: [] }
+    )
+    expect(next.sides.away.players).deep.equals([
+      102, 103, 104, 105, 106, 107, 108, 109, 110, 901
+    ])
+    expect(next.sides.away.battingOrder).deep.equals([102, 103])
+    expect(next.sides.away.battingIndex).equals(1)
+    expect(next.sides.away.defense.P).equals(null)
+    expect(next.sides.away.defense.C).equals(102)
+    expect(JSON.stringify(held)).equals(before)
+    const returned = reconcileRoster(
+      next,
+      teamsOf(game),
+      { away, home },
+      { away: roster([901, 102]), home: [] },
+      { away: [], home: [] }
+    )
+    expect(returned.sides.away.players.at(-1)).equals(101)
+    expect(returned.sides.away.players.filter(id => id === 102)).length(1)
+    expect(returned.players[102].local).equals(false)
+    expect(returned.sides.away.battingOrder).deep.equals([102, 103])
+    const empty = reconcileRoster(
+      held,
+      teamsOf(game),
+      { away: [], home },
+      { away: [], home: [] },
+      { away: [], home: [] }
+    )
+    expect(empty.sides.away.battingIndex).equals(0)
+    expect(() =>
+      reconcileRoster(
+        held,
+        teamsOf(game),
+        { away, home },
+        { away: [], home: roster([101]) },
+        { away: [], home: [] }
+      )
+    ).throws('both teams')
+  })
 
   it('keeps roster order without a default', function () {
     const setup = startingSetup(game, away, home)
