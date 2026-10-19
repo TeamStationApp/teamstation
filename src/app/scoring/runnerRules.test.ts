@@ -349,18 +349,22 @@ describe('runner progression and correction deadline', function () {
         .description
     ).equals('Safe from Pickoff')
   })
-  it('resolves Fielder’s Choice without inventing a batter base or displacing a runner silently', function () {
+  it('resolves Fielder’s Choice after the relay with the batter safe and the existing runner called out', function () {
     for (const outcome of ["Fielder's Choice"] as const) {
       let state = hit(initial(1), outcome)
-      expect(state.phase).equals('resolveBatter')
-      state = scoringReducer(state, { type: 'RUNNER_PROPOSE', id: 1, to: 1 })
-      state = scoringReducer(state, { type: 'RUNNER_DECIDE', decision: 'safe' })
-      expect(state.phase).equals('resolveBatter')
+      expect(state.phase).equals('chooseDefender')
       expect(baseIds(state.session)).deep.equals([2, null, null])
-      state = scoringReducer(state, { type: 'RUNNER_PROPOSE', id: 2, to: 2 })
-      state = scoringReducer(state, { type: 'RUNNER_DECIDE', decision: 'out' })
       state = completeMotions(retire(state))
-      state = completeMotions(state)
+      expect(state.phase).equals('fieldersChoice')
+      state = completeMotions(
+        scoringReducer(state, {
+          type: 'CHOICE_DECIDE',
+          id: 2,
+          decision: 'out',
+          putout: state.pendingPlay!.fieldersChoice!.route.length - 1,
+          generation: state.generation
+        })
+      )
       expect(baseIds(state.session)).deep.equals([1, null, null])
       expect(
         state.session.liveData.plays.currentPlay!.runners.find(

@@ -360,6 +360,26 @@ export const ASK_SCORER: OpenAiTool = {
   }
 }
 
+const CHOICE_INSTRUCTIONS = `- Preserve every spoken throw on a fielder's choice, including late throws.
+  Each Out runnerMovement names only the chain through that putout. A Safe
+  batter runnerMovement must carry fielders for the remaining relay, starting
+  with the current ball holder; it does not credit any putout or assist.
+  Send this Safe relay after the Out calls that precede its throws.
+  If everyone is Safe, carry the entire named relay on the Safe batter.
+  When one holder makes consecutive unassisted outs, each Out has just him.
+  When the scorer explicitly calls it a fielder's choice, keep that result
+  even if everyone is Safe. Send a Safe runnerMovement for each original
+  runner he says advanced safely; never invent an out in this case.
+  This is an exception to omitting the batter's automatic Safe call: when
+  late throws are described, ALWAYS send that Safe batter runnerMovement
+  with the full remaining chain, even when nobody was put out. Repeat a
+  fielder when the ball comes back to him. Leave reason off a Safe relay;
+  it is never Safe from Pickoff. An initial unassisted putout followed by
+  3B to 2B to 1B late is Out fielders [3B], then Safe batter fielders
+  [3B, 2B, 1B]. A force at home followed by C to 2B to 1B late is Out
+  fielders [3B, C], then Safe batter fielders [C, 2B, 1B]. An all-Safe
+  3B to 2B to 3B to 2B is Safe batter fielders [3B, 2B, 3B, 2B].`
+
 const INSTRUCTIONS = `YOUR JOB
 Report what just happened as tool calls, one per thing that happened, in order.
 Several calls from one sentence are normal.
@@ -869,7 +889,18 @@ function cleanTagged(
   raw: Record<string, unknown> & { type: string },
   game: Players
 ): Cleaned {
-  const untagged = untaggedAction(raw, game.ids, game.fielding)
+  // These model labels repeat the play/base, not a separate advance reason.
+  // Keep the actual runner, destination and Out call for the game to settle.
+  const optionalReason =
+    raw.type === 'runnerMovement' &&
+    typeof raw.reason === 'string' &&
+    (/^fielder['’]?s? choice$/i.test(raw.reason) ||
+      (raw.out === true && /^out at (?:first|second|third)$/i.test(raw.reason)))
+  const untagged = untaggedAction(
+    optionalReason ? { ...raw, reason: undefined } : raw,
+    game.ids,
+    game.fielding
+  )
   return 'problem' in untagged ? untagged : cleanAction(untagged.raw)
 }
 
@@ -987,6 +1018,10 @@ export class Interpretation {
     readonly transcript: string
   ) {
     const context = withTags(given)
+    const choiceRules = /\bfielder['’]?s? choice\b/i.test(transcript)
+      ? `\n\nFIELDER CHOICE RELAYS\n${CHOICE_INSTRUCTIONS}`
+      : ''
+    const game = `${gamePrompt(context)}${choiceRules}`
     this.players = {
       ids: taggedIds(context),
       fielding: fieldingIds(context)
@@ -998,12 +1033,12 @@ export class Interpretation {
             { role: 'system', content: systemPrompt() },
             {
               role: 'user',
-              content: `${gamePrompt(context)}\n\nTHE SCORER SAID\n${transcript}`
+              content: `${game}\n\nTHE SCORER SAID\n${transcript}`
             }
           ]
         : [
             { role: 'system', content: systemPrompt() },
-            { role: 'system', content: gamePrompt(context) },
+            { role: 'system', content: game },
             { role: 'user', content: transcript }
           ]
   }

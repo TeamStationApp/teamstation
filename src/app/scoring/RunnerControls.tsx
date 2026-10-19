@@ -1,5 +1,5 @@
 import React from 'react'
-import { Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import { hasEligiblePitch, homeBackProposal } from '../../common/scoring/rules'
 import { CancelAction } from '../components/CancelAction'
@@ -12,6 +12,7 @@ import {
   runnerReasons
 } from './scoringFlow'
 import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
+import { useScoringSheetTheme } from './scoringSheetTheme'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 export function RunnerControls({
   state,
@@ -25,7 +26,191 @@ export function RunnerControls({
   dispatch: (event: ScoringEvent) => void
 }): React.ReactElement | null {
   const theme = useTheme()
+  const pickerTheme = useScoringSheetTheme()
   const action = state.runnerAction
+  const choice = state.pendingPlay?.fieldersChoice
+  if (state.phase === 'fieldersChoice' && choice?.choosingPutout != null) {
+    const runner = state.session.gameData.players[choice.choosingPutout]
+    const first = Math.max(0, ...choice.runners.map(move => move.putout ?? 0))
+    return (
+      <ScoringSheet
+        fullScreen
+        title={`Who put out ${runner.fullName}?`}
+        onClose={() => {
+          dispatch({ type: 'CHOICE_CANCEL', generation: state.generation })
+        }}
+      >
+        {choice.route.slice(first).map((hop, offset) => {
+          const index = first + offset
+          const name = state.session.gameData.players[hop.id].fullName
+          return (
+            <Pressable
+              key={index}
+              accessibilityRole="button"
+              accessibilityLabel={`Putout by ${name}, ${index === 0 ? 'fielded ball' : `catch ${index}`}`}
+              style={{
+                minHeight: 48,
+                padding: 12,
+                gap: 4,
+                borderBottomWidth: 1,
+                borderBottomColor: pickerTheme.defaultBorderColor
+              }}
+              onPress={() => {
+                dispatch({
+                  type: 'CHOICE_DECIDE',
+                  id: runner.id,
+                  decision: 'out',
+                  putout: index,
+                  generation: state.generation
+                })
+              }}
+            >
+              <Text
+                style={{
+                  color: pickerTheme.primaryTextColor,
+                  fontFamily: pickerTheme.semiBoldTextFont
+                }}
+              >
+                {name}
+              </Text>
+              <Text
+                style={{
+                  color: pickerTheme.secondaryTextColor,
+                  fontFamily: pickerTheme.regularTextFont
+                }}
+              >
+                {index === 0 ? 'Fielded the ball' : `Catch ${index}`}
+              </Text>
+            </Pressable>
+          )
+        })}
+      </ScoringSheet>
+    )
+  }
+  const choiceRunners =
+    state.pendingPlay?.fieldersChoice?.runners.filter(
+      move => move.decision == null
+    ) ?? []
+  const cardAnchors = choiceRunners.map(move => {
+    const point = projection?.bases[move.to % 4]
+    return point == null
+      ? undefined
+      : {
+          left: Math.max(8, Math.min(projection!.width - 208, point.x - 100)),
+          top: Math.max(8, point.y - 112)
+        }
+  })
+  const overlappingCards = cardAnchors.some(
+    (anchor, index) =>
+      anchor != null &&
+      cardAnchors
+        .slice(index + 1)
+        .some(
+          other =>
+            other != null &&
+            Math.abs(anchor.left - other.left) < 208 &&
+            Math.abs(anchor.top - other.top) < 120
+        )
+  )
+  const narrowChoice = projection != null && projection.width < 480
+  const compactChoice =
+    projection != null &&
+    (projection.height < 420 || projection.width < 700 || overlappingCards)
+  if (state.phase === 'fieldersChoice')
+    return (
+      <View
+        pointerEvents="box-none"
+        style={
+          projection == null || compactChoice
+            ? {
+                position: 'absolute',
+                ...(compactChoice ? { top: 8 } : { bottom: 130 }),
+                alignSelf: 'center',
+                flexDirection: narrowChoice ? 'column' : 'row',
+                gap: 8
+              }
+            : { position: 'absolute', inset: 0 }
+        }
+      >
+        {choiceRunners.map(move => {
+          const name = state.session.gameData.players[move.playerId].fullName
+          const point = compactChoice
+            ? undefined
+            : projection?.bases[move.to % 4]
+          return (
+            <View
+              key={move.playerId}
+              accessibilityLabel={`Fielder's choice decision for ${name}`}
+              style={{
+                ...(point == null
+                  ? {}
+                  : {
+                      position: 'absolute',
+                      left: Math.max(
+                        8,
+                        Math.min(projection!.width - 208, point.x - 100)
+                      ),
+                      top: Math.max(8, point.y - 112)
+                    }),
+                width: compactChoice
+                  ? Math.min(
+                      200,
+                      narrowChoice
+                        ? projection.width - 32
+                        : (projection.width -
+                            32 -
+                            8 * (choiceRunners.length - 1)) /
+                            choiceRunners.length
+                    )
+                  : 200,
+                padding: 8,
+                gap: 6,
+                borderRadius: 8,
+                backgroundColor: theme.backgroundColor
+              }}
+            >
+              <Text
+                style={{
+                  color: theme.primaryTextColor,
+                  textAlign: 'center',
+                  fontFamily: theme.regularTextFont
+                }}
+              >
+                {name}
+              </Text>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  gap: 8,
+                  justifyContent: 'center'
+                }}
+              >
+                {(['safe', 'out'] as const).map(decision => (
+                  <ScoringButton
+                    key={decision}
+                    label={`${decision === 'safe' ? 'Safe' : 'Out'} ${name}`}
+                    text={decision === 'safe' ? 'Safe' : 'Out'}
+                    color={
+                      decision === 'safe'
+                        ? theme.scoringSafeColor
+                        : theme.scoringOutColor
+                    }
+                    onPress={() => {
+                      dispatch({
+                        type: 'CHOICE_DECIDE',
+                        id: move.playerId,
+                        decision,
+                        generation: state.generation
+                      })
+                    }}
+                  />
+                ))}
+              </View>
+            </View>
+          )
+        })}
+      </View>
+    )
   if (state.phase === 'runnerErrorReuse')
     return (
       <ScoringSheet

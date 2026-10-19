@@ -158,6 +158,8 @@ export interface ThrowParts {
   runnerPoint: GroundPoint
   /** The last fielder runs the ball to the base himself. */
   final: boolean
+  /** A late defensive relay may continue after its carrier has scored. */
+  safe?: boolean
 }
 export function throwSequence(
   state: ScoringState,
@@ -165,9 +167,11 @@ export function throwSequence(
 ): ThrowSequence {
   const { players, thrower, receiver, from, to, runnerPoint, final } = parts
   const runner = players.find(p => p.playerId === parts.runner)!
-  runner.position = { ...runnerPoint }
-  runner.target = { ...runnerPoint }
-  runner.batting = false
+  if (parts.safe !== true || runner != null) {
+    runner.position = { ...runnerPoint }
+    runner.target = { ...runnerPoint }
+    runner.batting = false
+  }
   for (const player of players) {
     if (player.playerId === thrower) {
       player.position = { ...from }
@@ -190,6 +194,7 @@ export function throwSequence(
     thrower,
     receiver,
     runner: parts.runner,
+    ...(parts.safe === true ? { safe: true } : {}),
     holderOrigin: { ...from },
     runnerFrom: { ...runnerPoint },
     throwSide,

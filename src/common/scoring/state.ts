@@ -272,6 +272,10 @@ export const asGamePlay = asObject({
       launchAngleSet: asOptional(asBoolean),
       /** The lineup changed during this at-bat, so the at-bat is open. */
       lineupChanged: asOptional(asBoolean),
+      /** Every selected catch, including throws that did not produce an out. */
+      fieldingRoute: asOptional(asRoute),
+      /** Runner records included in that relay; later routes take precedence. */
+      fieldingRouteRecordCount: asOptional(asNumber),
       errorCredit: asOptional(
         asObject({ player: asPlayerRef, defensiveRoute: asRoute })
       ),

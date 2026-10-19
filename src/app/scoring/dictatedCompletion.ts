@@ -7,10 +7,19 @@ import type {
   ScoringAction
 } from '../../common/scoring/actions'
 import { destinationBase, RUNNER_REASONS } from '../../common/scoring/actions'
-import { type Decision, nextDecision } from '../../common/scoring/rules'
+import {
+  type Decision,
+  forcedFrom,
+  nextDecision,
+  runnerDecisionError
+} from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { type GameState, POSITIONS } from '../../common/scoring/state'
+import { fieldingLocation } from '../field/fieldingLocation'
+import { BASES } from '../field/fieldModel'
 import { directionPoint, foulFielder, foulPoint } from './dictatedGeometry'
+import { fieldPlayersFor } from './fieldAdapter'
+import { scoringDefensiveRoute, scoringFieldPlayers } from './scoringMotion'
 import type { DictationQuestion } from './scoringTypes'
 
 /**
@@ -91,7 +100,11 @@ function batterSafe(
   for (let index = bases.length - 1; index >= 0; index--) {
     const id = bases[index]
     const forced = bases.slice(0, index).every(behind => behind != null)
-    if (id != null && forced && !outs.has(id))
+    const alreadySafe = state.pending!.movements.some(
+      move =>
+        move.playerId === id && move.decision === 'safe' && move.to >= index + 2
+    )
+    if (id != null && forced && !outs.has(id) && !alreadySafe)
       moves.push(safe(id, BASE_NAMES[index + 2]))
   }
   return [...moves, safe(batterOf(state), '1B')]
@@ -170,9 +183,18 @@ function decide(
         // A fielder's choice always has a runner on: the library refuses one
         // without.
         const runners = pending.originalBases.flatMap((id, index) =>
-          id == null ? [] : [{ id, next: BASE_NAMES[index + 2] }]
+          id == null ||
+          sentence.some(
+            action =>
+              action.type === 'runnerMovement' &&
+              action.runner === id &&
+              action.out !== true
+          )
+            ? []
+            : [{ id, next: BASE_NAMES[index + 2] }]
         )
-        if (outs.size > 0) return batterSafe(state, outs)
+        if (outs.size > 0 || runners.length === 0)
+          return batterSafe(state, outs)
         if (runners.length === 1)
           return [
             out(runners[0].id, runners[0].next),
@@ -459,7 +481,27 @@ export function playDefaults(
         continue
       }
     }
-    if (action.type === 'ballInPlay') inPlaySince = true
+    if (action.type === 'ballInPlay') {
+      // The result establishes the batter and forced runners before their
+      // calls can settle the play. Preserve the calls' chronology, including
+      // a home crossing before a tag third out, and stop at any play boundary.
+      let ahead = index + 1
+      while (
+        rest[ahead]?.type === 'runnerMovement' ||
+        rest[ahead]?.type === 'fieldingPlay'
+      )
+        ahead++
+      const result = rest[ahead]
+      if (
+        ahead > index + 1 &&
+        result?.type === 'result' &&
+        result.eventType === 'fielders_choice'
+      ) {
+        rest.splice(ahead, 1)
+        rest.splice(index + 1, 0, result)
+      }
+      inPlaySince = true
+    }
     if (action.type === 'result') {
       if (
         !inPlaySince &&
@@ -580,8 +622,301 @@ export function playDefaults(
   })
   return holding(
     game,
-    doublePlay(game, creditThrowOuts(game, filled, transcript), transcript)
+    choiceRelayLocations(
+      game,
+      doublePlay(
+        game,
+        creditThrowOuts(
+          game,
+          explicitChoice(game, filled, transcript),
+          transcript
+        ),
+        transcript
+      )
+    )
   )
+}
+
+/** Explicit base-by-base FC calls take precedence over a partial model reply. */
+function explicitChoice(
+  game: GameState,
+  actions: ScoringAction[],
+  words: string
+): ScoringAction[] {
+  if (
+    !/\bfielder['’]?s? choice\b/i.test(words) ||
+    /\b(?:not|never|almost|nearly|if|\w+n['’]t)\b/i.test(words) ||
+    /\bto (?:the )?(?:first|second|third|home|plate)\b(?!\s+baseman)/i.test(
+      words
+    ) ||
+    actions.some(
+      a =>
+        a.type === 'runnerMovement' &&
+        ((a.runner === game.liveData.plays.currentPlay?.matchup.batter.id &&
+          (a.out === true || destinationBase(a.to) > 1)) ||
+          (a.out !== true &&
+            a.runner !== game.liveData.plays.currentPlay?.matchup.batter.id &&
+            (a.fielders?.length ?? 0) > 0) ||
+          a.locations != null ||
+          a.runnerLocation != null ||
+          a.fieldingRoute != null ||
+          actions.filter(
+            other =>
+              other.type === 'runnerMovement' && other.runner === a.runner
+          ).length > 1)
+    ) ||
+    actions.filter(a => a.type === 'ballInPlay').length !== 1 ||
+    actions.filter(a => a.type === 'result').length !== 1 ||
+    actions.some(
+      a => !['ballInPlay', 'result', 'runnerMovement'].includes(a.type)
+    )
+  )
+    return actions
+  const ball = actions.find(
+    (a): a is BallInPlayAction => a.type === 'ballInPlay'
+  )!
+  const batter = game.liveData.plays.currentPlay?.matchup.batter.id
+  const on = [
+    game.liveData.linescore.offense.first,
+    game.liveData.linescore.offense.second,
+    game.liveData.linescore.offense.third
+  ]
+  if (batter == null || ball.fielder == null || on.every(r => r == null))
+    return actions
+  const names = ['first', 'second', 'third']
+  const calls: Array<{
+    runner: number
+    from: number
+    to: Destination
+    out: boolean
+    clause: string
+  }> = []
+  for (const clause of words.split(/[.;,]|\b(?:then|and|but)\b/i)) {
+    const from = /\brunner from (first|second|third)\b/i.exec(clause)
+    if (from == null) continue
+    const base = names.indexOf(from[1].toLowerCase())
+    const runner = on[base]?.id
+    if (runner == null || calls.some(c => c.runner === runner)) continue
+    const isOut =
+      /\bout\b|\bretire[sd]?\b/i.test(clause) &&
+      !/\b(?:not out|safe)\b/i.test(clause)
+    if (/\b(?:not|never|almost|nearly)\b/i.test(clause)) return actions
+    const isSafe = /\bsafe\b|\bscores?\b/i.test(clause)
+    if (!isOut && !isSafe) continue
+    const target = /\b(?:at|on) (first|second|third|home)\b/i
+      .exec(clause)?.[1]
+      ?.toLowerCase()
+    const to =
+      target === 'home' || /\bscores?\b/i.test(clause)
+        ? 'home'
+        : target == null
+          ? BASE_NAMES[base + 2]
+          : BASE_NAMES[names.indexOf(target) + 1]
+    calls.push({ runner, from: base + 1, to, out: isOut, clause })
+  }
+  if (/\ball runners are safe\b/i.test(words))
+    for (let base = 2; base >= 0; base--) {
+      const runner = on[base]?.id
+      if (runner != null && !calls.some(c => c.runner === runner))
+        calls.push({
+          runner,
+          from: base + 1,
+          to: BASE_NAMES[base + 2],
+          out: false,
+          clause: ''
+        })
+    }
+  if (
+    calls.length !== on.filter(r => r != null).length &&
+    calls.filter(c => c.out).length < 3 - game.liveData.linescore.outs
+  )
+    return actions
+  const idOf = (position: (typeof POSITIONS)[number]): number | undefined =>
+    game.liveData.linescore.defense[position]?.id
+  const route = chainOf([ball.fielder, ...receiversSaid(words).all.map(idOf)])
+  let cursor = 0
+  let uncertain = false
+  const moves: RunnerMovementAction[] = calls.map(call => {
+    if (!call.out)
+      return { type: 'runnerMovement', runner: call.runner, to: call.to }
+    const holder = route[cursor] ?? ball.fielder!
+    const receiver =
+      namedAt(game, call.clause, call.to, holder) ??
+      (HIMSELF.test(call.clause) ? holder : undefined)
+    const supplied = actions.find(
+      (a): a is RunnerMovementAction =>
+        a.type === 'runnerMovement' &&
+        a.runner === call.runner &&
+        a.out === true &&
+        destinationBase(a.to) === destinationBase(call.to)
+    )
+    if (
+      supplied?.fielders != null &&
+      supplied.fielders.length > 0 &&
+      (receiver == null || supplied.fielders.at(-1) === receiver)
+    ) {
+      const last = supplied.fielders.at(-1)
+      cursor = Math.max(
+        cursor,
+        route.findIndex((id, i) => i >= cursor && id === last)
+      )
+      return { ...supplied }
+    }
+    if (receiver == null) uncertain = true
+    const end =
+      receiver == null
+        ? cursor
+        : route.findIndex((id, i) => i >= cursor && id === receiver)
+    const fielders =
+      end < cursor ? [holder, receiver!] : route.slice(cursor, end + 1)
+    cursor = Math.max(cursor, end)
+    return {
+      type: 'runnerMovement',
+      runner: call.runner,
+      to: call.to,
+      out: true,
+      fielders
+    }
+  })
+  if (uncertain) return actions
+  const holder =
+    moves.findLast(move => move.out === true)?.fielders?.at(-1) ?? ball.fielder
+  const suppliedSafe = actions.find(
+    (a): a is RunnerMovementAction =>
+      a.type === 'runnerMovement' &&
+      a.runner === batter &&
+      a.out !== true &&
+      (a.fielders?.length ?? 0) > 1
+  )
+  const remaining =
+    suppliedSafe?.fielders?.[0] === holder
+      ? suppliedSafe.fielders
+      : chainOf([holder, ...route.slice(cursor + 1)])
+  return [
+    ball,
+    { type: 'result', eventType: 'fielders_choice' },
+    {
+      type: 'runnerMovement',
+      runner: batter,
+      to: '1B',
+      ...(remaining.length > 1 ? { fielders: remaining } : {})
+    },
+    ...moves
+  ]
+}
+
+/** Spoken Safe relays carry throws without awarding putout/assist credits. */
+function choiceRelayLocations(
+  game: GameState,
+  actions: ScoringAction[]
+): ScoringAction[] {
+  const located = [...actions]
+  const starts = actions.flatMap((a, index) =>
+    a.type === 'result' && a.eventType === 'fielders_choice' ? [index] : []
+  )
+  if (game.pending?.outcome === "Fielder's Choice") starts.unshift(-1)
+  for (const start of starts) {
+    const boundary = actions.findIndex(
+      (a, index) =>
+        index > start &&
+        ['pitch', 'result', 'ballInPlay', 'gameFlow', 'lineup'].includes(a.type)
+    )
+    const end = boundary < 0 ? actions.length : boundary
+    const ball = actions
+      .slice(0, Math.max(0, start))
+      .findLast((a): a is BallInPlayAction => a.type === 'ballInPlay')
+    const players =
+      ball == null
+        ? scoringFieldPlayers({
+            session: game,
+            phase: 'ready',
+            pendingPlay: null,
+            motions: [],
+            runnerAction: null
+          })
+        : fieldPlayersFor(game)
+    const positions = new Map(
+      players
+        .filter(p => p.team === 'defense')
+        .map(p => [p.playerId, p.position])
+    )
+    if (ball?.fielder != null) {
+      const point = ball.location ?? positions.get(ball.fielder)
+      if (point != null)
+        positions.set(ball.fielder, fieldingLocation("Fielder's Choice", point))
+    }
+    const moves = actions.flatMap((a, index) =>
+      index > start && index < end && a.type === 'runnerMovement'
+        ? [{ action: a, index }]
+        : []
+    )
+    // The reel shows putouts first, followed by all late Safe relay segments.
+    const ordered = [
+      ...moves.filter(m => m.action.out === true),
+      ...moves.filter(m => m.action.out !== true)
+    ]
+    for (const { action, index } of ordered) {
+      if (action.fielders == null) continue
+      const locations =
+        action.locations ??
+        action.fielders.map((id, hop) => {
+          if (action.out === true)
+            return hop === action.fielders!.length - 1
+              ? (action.runnerLocation ?? BASES[destinationBase(action.to) % 4])
+              : (positions.get(id) ?? BASES[0])
+          if (hop === 0) return positions.get(id) ?? BASES[0]
+          const position = POSITIONS.find(
+            p => game.liveData.linescore.defense[p]?.id === id
+          )
+          const base =
+            position === '1B'
+              ? 1
+              : position === '2B' || position === 'SS'
+                ? 2
+                : position === '3B'
+                  ? 3
+                  : position === 'C'
+                    ? 0
+                    : undefined
+          return base == null ? (positions.get(id) ?? BASES[0]) : BASES[base]
+        })
+      for (const [hop, id] of action.fielders.entries())
+        positions.set(id, locations[hop])
+      located[index] = {
+        ...action,
+        locations: locations.map(point => ({ ...point }))
+      }
+    }
+    const relays = ordered.filter(
+      m => m.action.out !== true && (m.action.fielders?.length ?? 0) > 1
+    )
+    if (relays.length === 0) continue
+    const earlier = start < 0 ? scoringDefensiveRoute(game) : []
+    const route = [
+      ...earlier.map(hop => ({
+        id: hop.player.id,
+        point: { ...hop.location }
+      })),
+      ...ordered
+        .filter(m => m.action.out === true || relays.includes(m))
+        .flatMap(({ index }) => {
+          const action = located[index] as RunnerMovementAction
+          return (action.fielders ?? []).map((id, hop) => ({
+            id,
+            point: { ...action.locations![hop] }
+          }))
+        })
+    ]
+    for (const { index } of moves)
+      located[index] = {
+        ...(located[index] as RunnerMovementAction),
+        fieldingRoute: route.map(hop => ({
+          id: hop.id,
+          point: { ...hop.point }
+        }))
+      }
+  }
+  return located
 }
 
 /** Where a ground ball or a bunt was hit, said as "to third" or "to short". */
@@ -693,8 +1028,47 @@ function creditThrowOuts(
   const defense = game.liveData.linescore.defense
   const idOf = (position: (typeof POSITIONS)[number]): number | undefined =>
     defense[position]?.id
-  let thrower: number | undefined
-  return actions.map(action => {
+  const positions = new Map(
+    scoringFieldPlayers({
+      session: game,
+      phase: 'ready',
+      pendingPlay: null,
+      motions: [],
+      runnerAction: null
+    })
+      .filter(p => p.team === 'defense')
+      .map(p => [p.playerId, p.position])
+  )
+  let thrower: number | undefined =
+    game.pending?.outcome === "Fielder's Choice"
+      ? (scoringDefensiveRoute(game).at(-1)?.player.id ?? game.pending.fielder)
+      : undefined
+  const withFielders = (
+    action: RunnerMovementAction,
+    fielders: number[]
+  ): RunnerMovementAction => ({
+    ...action,
+    fielders,
+    ...(action.locations?.length === 1 && fielders.length === 2
+      ? {
+          locations: [
+            positions.get(fielders[0]) ?? BASES[0],
+            ...action.locations
+          ]
+        }
+      : {})
+  })
+  const remember = (action: RunnerMovementAction): void => {
+    for (const [index, id] of (action.fielders ?? []).entries()) {
+      const point =
+        action.locations?.[index] ??
+        (index === action.fielders!.length - 1
+          ? (action.runnerLocation ?? BASES[destinationBase(action.to) % 4])
+          : positions.get(id))
+      if (point != null) positions.set(id, point)
+    }
+  }
+  return actions.map((action, index) => {
     if (action.type === 'ballInPlay') {
       const onGround =
         action.trajectory === 'ground_ball' ||
@@ -705,18 +1079,64 @@ function creditThrowOuts(
         (!onGround && action.direction != null
           ? idOf(OUTFIELDER[action.direction])
           : undefined)
+      positions.clear()
+      for (const player of fieldPlayersFor(game))
+        if (player.team === 'defense')
+          positions.set(player.playerId, player.position)
+      if (thrower != null) {
+        const point = action.location ?? positions.get(thrower)
+        if (point != null) {
+          const following = actions.slice(index + 1)
+          const nextBall = following.findIndex(a => a.type === 'ballInPlay')
+          const result = following
+            .slice(0, nextBall < 0 ? following.length : nextBall)
+            .find(a => a.type === 'result')
+          const fair =
+            result?.type === 'result' &&
+            [
+              'single',
+              'double',
+              'triple',
+              'field_error',
+              'fielders_choice'
+            ].includes(result.eventType)
+          positions.set(
+            thrower,
+            fieldingLocation(fair ? "Fielder's Choice" : 'Throw Out', point)
+          )
+        }
+      }
       return action
     }
     if (action.type !== 'runnerMovement' || action.out !== true) return action
-    if ((action.fielders?.length ?? 0) > 0 || thrower == null) return action
+    if ((action.fielders?.length ?? 0) > 0) {
+      const fielders = action.fielders!
+      const receiver = fielders.at(-1)!
+      const onlyReceiver =
+        fielders.length === 1 &&
+        thrower != null &&
+        receiver !== thrower &&
+        namedAt(game, transcript, action.to, thrower) === receiver
+      const credited = onlyReceiver
+        ? withFielders(action, [thrower!, receiver])
+        : action
+      remember(credited)
+      thrower = receiver
+      return credited
+    }
+    if (thrower == null) return action
     const named = namedAt(game, transcript, action.to, thrower)
     const cover = coverAt(action.to, thrower, idOf)
     const receiver = named ?? (cover == null ? undefined : idOf(cover))
     if (receiver == null) return action
-    return {
-      ...action,
-      fielders: receiver === thrower ? [thrower] : [thrower, receiver]
-    }
+    const from = thrower
+    thrower = receiver
+    const credited = withFielders(
+      action,
+      receiver === from ? [from] : [from, receiver]
+    )
+    remember(credited)
+    return credited
   })
 }
 
@@ -815,6 +1235,7 @@ function holding(
     if (action.type === 'runnerMovement') {
       const stays =
         action.out !== true &&
+        action.fieldingRoute == null &&
         !moved.has(action.runner) &&
         on.get(action.runner) === action.to
       moved.add(action.runner)
@@ -936,6 +1357,7 @@ function doublePlaySaid(transcript: string): 'done' | 'denied' | 'unsaid' {
  * say covered first ("the pitcher covers first"), who takes the last throw.
  */
 function receiversSaid(transcript: string): {
+  all: Array<(typeof POSITIONS)[number]>
   between: Array<(typeof POSITIONS)[number]>
   atFirst?: (typeof POSITIONS)[number]
 } {
@@ -957,6 +1379,7 @@ function receiversSaid(transcript: string): {
     }
   found.sort((a, b) => a.index - b.index)
   return {
+    all: found.map(item => item.position),
     between: found.filter(item => !item.atFirst).map(item => item.position),
     atFirst: found.find(item => item.atFirst)?.position
   }
@@ -2100,12 +2523,121 @@ export function settleBetween(
 ): { actions: ScoringAction[]; question?: Question } {
   const settled: ScoringAction[] = []
   const rest = [...sentence]
+  const deferred = new Set<ScoringAction>()
   let state = game
   while (rest.length > 0) {
     const action = rest.shift()!
     if (
+      state.pending?.outcome === "Fielder's Choice" &&
+      state.liveData.linescore.outs === 2 &&
+      action.type === 'runnerMovement' &&
+      action.out === true
+    ) {
+      const batter = state.liveData.plays.currentPlay!.matchup.batter.id
+      const at = rest.findIndex(
+        move =>
+          move.type === 'runnerMovement' &&
+          move.runner === batter &&
+          move.out !== true &&
+          move.to === '1B'
+      )
+      if (at >= 0) {
+        const batterSafe = rest[at]
+        const applied = applyAction(state, batterSafe)
+        if (applied.problems.length === 0) {
+          state = applied.state
+          settled.push(batterSafe)
+          rest.splice(at, 1)
+        }
+      }
+    }
+    const earlierHomes = settled.filter(
+      (move): move is RunnerMovementAction =>
+        move.type === 'runnerMovement' &&
+        move.out !== true &&
+        move.to === 'home'
+    )
+    const homeNow =
       action.type === 'runnerMovement' &&
       action.out !== true &&
+      action.to === 'home'
+    if (
+      state.pending?.outcome === "Fielder's Choice" &&
+      (homeNow || earlierHomes.length > 0)
+    ) {
+      const batter = state.liveData.plays.currentPlay!.matchup.batter.id
+      if (
+        state.pending.movements.some(
+          move => move.playerId === batter && move.decision === 'pending'
+        ) &&
+        ![action, ...rest].some(
+          move => move.type === 'runnerMovement' && move.runner === batter
+        )
+      ) {
+        const batterSafe = safe(batter, '1B')
+        const applied = applyAction(state, batterSafe)
+        if (applied.problems.length === 0) {
+          state = applied.state
+          settled.push(batterSafe)
+        }
+      }
+      for (const waiting of state.pending?.movements ?? []) {
+        const call = [action, ...rest].find(
+          (move): move is RunnerMovementAction =>
+            move.type === 'runnerMovement' &&
+            move.out === true &&
+            move.runner === waiting.playerId
+        )
+        if (
+          waiting.decision !== 'pending' ||
+          waiting.from === 0 ||
+          call == null ||
+          (destinationBase(call.to) === waiting.from + 1 &&
+            forcedFrom(state, waiting.from))
+        )
+          continue
+        let to = waiting.from
+        while (
+          to <= destinationBase(call.to) &&
+          runnerDecisionError(state, {
+            playerId: waiting.playerId,
+            from: waiting.from,
+            to
+          }) != null
+        )
+          to++
+        if (to > destinationBase(call.to)) continue
+        const hold = safe(waiting.playerId, BASE_NAMES[to])
+        const applied = applyAction(state, hold)
+        if (applied.problems.length === 0) {
+          state = applied.state
+          settled.push(hold)
+        }
+      }
+      for (const home of earlierHomes)
+        if (
+          state.pending?.choiceApplied === true &&
+          state.homeQueue.includes(home.runner)
+        ) {
+          // Release the earlier crossing once its blockers are settled.
+          // Its defensive relay was already submitted with the first call.
+          const {
+            fielders: _fielders,
+            locations: _locations,
+            runnerLocation: _runnerLocation,
+            ...crossing
+          } = home
+          const applied = applyAction(state, crossing)
+          if (applied.problems.length === 0) {
+            state = applied.state
+            settled.push(crossing)
+          }
+        }
+    }
+    if (
+      action.type === 'runnerMovement' &&
+      action.out !== true &&
+      action.fieldingRoute == null &&
       state.pending?.movements.some(
         move =>
           move.playerId === action.runner &&
@@ -2118,6 +2650,22 @@ export function settleBetween(
       settled.length > 0 &&
       state.pending != null &&
       applyAction(state, action).problems.length > 0
+    // A non-forced lead runner can still occupy a Safe trailer's destination.
+    // Delay that non-scoring advance until the spoken lead move frees it;
+    // keep all home crossings and Out calls in their stated order.
+    if (
+      waits &&
+      state.pending?.outcome === "Fielder's Choice" &&
+      action.type === 'runnerMovement' &&
+      action.out !== true &&
+      destinationBase(action.to) < 4 &&
+      !deferred.has(action) &&
+      rest.some(next => next.type === 'runnerMovement')
+    ) {
+      deferred.add(action)
+      rest.push(action)
+      continue
+    }
     if (waits) {
       const decision = nextDecision(state)
       const batter = batterOf(state)

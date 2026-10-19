@@ -3792,7 +3792,7 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
-  it('backs up a legal home arrival and completes Fielder’s Choice explicitly', async function () {
+  it('backs up a legal home arrival', async function () {
     this.timeout(120000)
     const rollback = await open('/games/g1/score')
     try {
@@ -3816,36 +3816,238 @@ describe('scoring browser', function () {
     } finally {
       await rollback.page.close()
     }
-    for (const outcome of ["Fielder's Choice"]) {
-      const { page } = await open('/games/g1/score')
+  })
+  for (const [mask, outIds] of [
+    [1, [6]],
+    [2, [7]],
+    [3, [6]],
+    [4, []],
+    [5, [6]],
+    [6, [7]],
+    [7, []],
+    [7, [6, 7]],
+    [7, [8]]
+  ] as Array<[number, number[]]>)
+    it(`completes fielder choice bases ${mask}, runners out ${outIds.length === 0 ? 'none' : outIds.join(',')}, then reloads the saved play`, async function () {
+      this.timeout(120000)
+      const { page, unexpected } = await open('/games/g1/score')
+      const saves: Array<
+        Promise<{
+          plays?: Array<{
+            matchup: { batter: { id: number } }
+            runners: Array<{
+              details: { runner: { id: number; fullName: string } }
+              movement: { isOut: boolean }
+            }>
+            result: { awayScore: number }
+            teamStation: {
+              detail: {
+                fieldingRoute: Array<{
+                  player: { id: number }
+                  location: { x: number; z: number }
+                }>
+              }
+            }
+          }>
+        }>
+      > = []
+      page.on('request', request => {
+        if (
+          request.method() === 'POST' &&
+          new URL(request.url()).pathname.endsWith('/events')
+        )
+          saves.push(
+            request.fetchPostData().then(body => JSON.parse(body ?? '{}'))
+          )
+      })
+      // Locators wait for sheet controls to finish moving before pointer input.
+      const tap = async (label: string): Promise<void> => {
+        await page
+          .locator(`[aria-label="${label}"]:not([aria-disabled="true"])`)
+          .click()
+      }
       try {
-        if (outcome !== 'Error') {
-          await click(page, 'Open scoring menu')
-          await click(page, 'Overrides')
-          await click(page, 'First base')
-          await click(page, 'Choose First base Player 6')
-          await click(page, 'Apply Override')
+        await click(page, 'Open scoring menu')
+        await click(page, 'Overrides')
+        for (const [index, base] of [
+          'First base',
+          'Second base',
+          'Third base'
+        ].entries())
+          if ((mask & (1 << index)) !== 0) {
+            await tap(base)
+            await tap(`Choose ${base} Player ${index + 6}`)
+          }
+        await tap('Apply Override')
+        await chooseHit(page, "Fielder's Choice")
+        await page.waitForSelector(
+          '[aria-label^="Tap or drag each defender"]',
+          { timeout: 30000 }
+        )
+        expect(
+          await page.$('[aria-label^="Fielder\'s choice decision for"]')
+        ).equals(null)
+        expect(await page.$('[aria-label^="Drag batter to a base"]')).equals(
+          null
+        )
+        await placeDefenderWithKeyboard(page, true)
+        await page.waitForSelector(
+          '[aria-label="Finish defensive play"]:not([aria-disabled="true"])'
+        )
+        if (mask === 3) {
+          await placeDefenderWithKeyboard(page, true)
+          await page.waitForSelector(
+            '[aria-label="Finish defensive play"]:not([aria-disabled="true"])'
+          )
         }
-        await chooseHit(page, outcome)
-        await page.waitForSelector('[aria-label^="Drag batter to a base"]')
-        await dropRunnerWithKeyboard(page, 'Safe', true)
-        if (outcome !== 'Error') {
-          await page.waitForSelector('[aria-label^="Resolve Player 6"]')
-          await dropRunnerWithKeyboard(page, 'Out')
-          await placeDefenderWithKeyboard(page)
-          await click(page, 'Finish defensive play')
+        await click(page, 'Finish defensive play')
+        await page.waitForSelector(
+          '[aria-label^="Mark each runner Safe or Out"]',
+          { timeout: 30000 }
+        )
+        const ids = [6, 7, 8].filter((_, index) => (mask & (1 << index)) !== 0)
+        expect(
+          await page.$$('[aria-label^="Fielder\'s choice decision for"]')
+        ).length(ids.length)
+        expect(await page.$('[aria-label="Out Player 1"]')).equals(null)
+        if (
+          mask === 7 &&
+          outIds.length === 0 &&
+          process.env.CHOICE_ARTIFACT_DIR != null
+        )
+          await page.screenshot({
+            path: join(
+              process.env.CHOICE_ARTIFACT_DIR,
+              'loaded-bases-after.png'
+            )
+          })
+        if (mask === 7 && outIds.length === 0) {
+          for (const viewport of [
+            { width: 1200, height: 900 },
+            { width: 800, height: 450 },
+            { width: 390, height: 640 },
+            { width: 874, height: 292 }
+          ]) {
+            await page.setViewport(viewport)
+            await page.waitForFunction(() => {
+              const buttons = Array.from(
+                document.querySelectorAll(
+                  '[aria-label^="Fielder\'s choice decision for"] [role="button"]'
+                )
+              )
+              return (
+                buttons.length === 6 &&
+                buttons.every(button => {
+                  const box = button.getBoundingClientRect()
+                  const hit = document.elementFromPoint(
+                    box.x + box.width / 2,
+                    box.y + box.height / 2
+                  )
+                  return hit != null && button.contains(hit)
+                })
+              )
+            })
+          }
+          const controls = await page.$$(
+            '[aria-label^="Fielder\'s choice decision for"] [role="button"]'
+          )
+          for (const control of controls) {
+            const box = await control.boundingBox()
+            expect(box).not.equals(null)
+            expect(box!.y).at.least(0)
+            expect(box!.y + box!.height).at.most(292)
+          }
         }
+        for (const id of ids) {
+          await tap(`${outIds.includes(id) ? 'Out' : 'Safe'} Player ${id}`)
+          if (outIds.includes(id)) {
+            await page.waitForSelector('[aria-label^="Putout by"]')
+            if (mask === 3 && id === 6) {
+              await tap('Cancel')
+              await tap(`Out Player ${id}`)
+              await page.waitForSelector('[aria-label^="Putout by"]')
+            }
+            if (
+              mask === 7 &&
+              outIds.includes(6) &&
+              id === 6 &&
+              process.env.CHOICE_ARTIFACT_DIR != null
+            )
+              await page.screenshot({
+                path: join(
+                  process.env.CHOICE_ARTIFACT_DIR,
+                  'putout-picker-after.png'
+                )
+              })
+            const choices = await page.$$('[aria-label^="Putout by"]')
+            const label = await choices[
+              mask === 3 ? 1 : choices.length - 1
+            ].evaluate(node => node.getAttribute('aria-label')!)
+            await tap(label)
+          }
+        }
+        await page.setViewport({ width: 1200, height: 900 })
         await page.waitForSelector('[aria-label="Time to edit play"]', {
           timeout: 30000
         })
+        expect(await page.$('[aria-label^="Home plate decision"]')).equals(null)
+        await click(page, 'Finish at-bat')
         await page.waitForSelector('[aria-label*="Batter Player 2"]', {
-          timeout: 20000
+          timeout: 30000
         })
+        const expectedRuns = (mask & 4) !== 0 && !outIds.includes(8) ? 1 : 0
+        await page.waitForSelector(
+          `[aria-label*="Owls ${expectedRuns} · Hawks 0"]`
+        )
+        const bodies = await Promise.all(saves)
+        const play = bodies.flatMap(body => body.plays ?? []).at(-1)!
+        expect(play, 'saved completed choice').not.equals(undefined)
+        expect(play.runners.filter(row => row.movement.isOut)).length(
+          outIds.length
+        )
+        expect(
+          play.runners.some(
+            row =>
+              row.details.runner.id === play.matchup.batter.id &&
+              row.movement.isOut
+          )
+        ).equals(false)
+        expect(play.result.awayScore).equals(expectedRuns)
+        const route = play.teamStation.detail.fieldingRoute
+        expect(route).length(mask === 3 ? 3 : 2)
+        expect(
+          route.every(
+            hop =>
+              Number.isFinite(hop.location.x) && Number.isFinite(hop.location.z)
+          )
+        ).equals(true)
+        const loadedEvents = page.waitForResponse(
+          response =>
+            response.request().method() === 'GET' &&
+            response.url().endsWith('/games/g1/events')
+        )
+        await page.reload({ waitUntil: 'networkidle0', timeout: 30000 })
+        const loaded = (await (await loadedEvents).json()) as {
+          plays: Array<{
+            gumbo: { teamStation: { detail: { fieldingRoute: typeof route } } }
+          }>
+        }
+        expect(
+          loaded.plays.at(-1)!.gumbo.teamStation.detail.fieldingRoute
+        ).deep.equals(route)
+        await page.waitForSelector('[aria-label*="Batter Player 2"]', {
+          timeout: 30000
+        })
+        await page.waitForSelector(
+          `[aria-label*="Owls ${expectedRuns} · Hawks 0"]`
+        )
+        expect(await page.$('[aria-label^="Home plate decision"]')).equals(null)
+        expect(unexpected).deep.equals([])
       } finally {
         await page.close()
       }
-    }
-  })
+    })
+
   for (const [decision, advance, reasons] of [
     [
       'Safe',

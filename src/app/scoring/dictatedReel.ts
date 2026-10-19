@@ -2,6 +2,7 @@ import type {
   BallInPlayAction,
   PitchAction,
   ResultAction,
+  RunnerMovementAction,
   ScoringAction
 } from '../../common/scoring/actions'
 import { allowedAngle } from '../../common/scoring/rules'
@@ -11,7 +12,7 @@ import { homeRunLanding } from '../field/stadiumBoundary'
 import { foulFielder } from './dictatedGeometry'
 import { fieldPlayersFor } from './fieldAdapter'
 import type { Outcome } from './scoringContract'
-import { scoringFieldPlayers } from './scoringMotion'
+import { basePath, homeQueuePoint, scoringFieldPlayers } from './scoringMotion'
 import {
   hitPresentation,
   type PitchKind,
@@ -139,6 +140,8 @@ export function hitGeometry(
 
 /** Where a runner stands in this game: his base, or the plate for the batter. */
 function standingPoint(state: ScoringState, runner: number): GroundPoint {
+  const queued = state.session.homeQueue.indexOf(runner)
+  if (queued >= 0) return homeQueuePoint(queued)
   const offense = state.session.liveData.linescore.offense
   const base = [offense.first, offense.second, offense.third].findIndex(
     ref => ref?.id === runner
@@ -166,6 +169,59 @@ export class ReelBuilder {
   private hitResultSeen = false
   private landing: { fielder?: number; point: GroundPoint } | null = null
   private throwBeat: Beat | null = null
+  /** Where each defender finished the preceding throw in this sentence. */
+  private readonly defenderPoints = new Map<number, GroundPoint>()
+  private choice = false
+  private choiceOut?: {
+    runner: number
+    from: number
+    to: number
+    point: GroundPoint
+  }
+
+  private safeRelays: RunnerMovementAction[] = []
+
+  private finishSafeRelay(state: ScoringState): void {
+    let actions = this.safeRelays
+    this.safeRelays = []
+    this.choiceOut = undefined
+    // Settlement can defer a blocked advance until another runner scores.
+    // The complete route retains the physical order of those relay segments.
+    const route = actions[0]?.fieldingRoute
+    if (route != null) {
+      const waiting = [...actions]
+      const ordered: RunnerMovementAction[] = []
+      let end = route.length
+      while (waiting.length > 0) {
+        const index = waiting.findIndex(action =>
+          action.fielders!.every((id, hop) => {
+            const saved = route[end - action.fielders!.length + hop]
+            const point = action.locations?.[hop]
+            return (
+              saved?.id === id &&
+              (point == null ||
+                (saved.point.x === point.x && saved.point.z === point.z))
+            )
+          })
+        )
+        if (index < 0) break
+        const [action] = waiting.splice(index, 1)
+        ordered.unshift(action)
+        end -= action.fielders!.length
+      }
+      if (waiting.length === 0) actions = ordered
+    }
+    for (const action of actions)
+      this.throws(
+        state,
+        action.runner,
+        action.fielders!,
+        action.to,
+        action.locations,
+        true
+      )
+  }
+
   /** Set when the sentence holds a home run, for the celebration. */
   homeRunKind: 'in-park' | 'out-of-park' | undefined
 
@@ -177,16 +233,29 @@ export class ReelBuilder {
     rest: readonly ScoringAction[]
   ): void {
     this.throwBeat = null
+    this.choiceOut = undefined
+    if (this.current == null) {
+      this.choice = state.session.pending?.outcome === "Fielder's Choice"
+      for (const player of scoringFieldPlayers(state))
+        if (player.team === 'defense' && player.playerId != null)
+          this.defenderPoints.set(player.playerId, { ...player.position })
+    }
     switch (action.type) {
       case 'pitch':
+        this.finishSafeRelay(state)
+        this.choice = false
+        this.defenderPoints.clear()
         this.hitOpen = false
         this.open('pitch', pitchPresentation(state, PITCH_KINDS[action.call]))
         return
       case 'ballInPlay': {
+        this.finishSafeRelay(state)
         const result = rest.find(
           (next): next is ResultAction => next.type === 'result'
         )
         const { pending, angle } = hitGeometry(state, action, result)
+        this.defenderPoints.clear()
+        this.choice = pending.outcome === "Fielder's Choice"
         this.open(
           'hit',
           hitPresentation({ ...state, pendingPlay: pending }, angle)
@@ -215,8 +284,38 @@ export class ReelBuilder {
             ? action.out === true
             : action.kind === 'caught_stealing' || action.kind === 'pickoff'
         const fielders = action.fielders ?? []
+        const safeRelay = this.choice && !out && fielders.length > 1
+        if (safeRelay && action.type === 'runnerMovement') {
+          this.safeRelays.push(action)
+        }
+        if (this.choice && out && action.type === 'runnerMovement') {
+          if (this.hitBeat == null) {
+            this.open('other')
+            this.hitBeat = this.current
+          }
+          const offense = state.session.liveData.linescore.offense
+          const from =
+            [offense.first, offense.second, offense.third].findIndex(
+              ref => ref?.id === action.runner
+            ) + 1
+          this.choiceOut = {
+            runner: action.runner,
+            from: state.session.homeQueue.includes(action.runner) ? 4 : from,
+            point: standingPoint(state, action.runner),
+            to: action.to === 'home' ? 4 : BASE_INDEX[action.to]
+          }
+        }
         if (out && fielders.length > 0) {
-          if (this.throws(state, action.runner, fielders, action.to)) {
+          if (
+            this.throws(
+              state,
+              action.runner,
+              fielders,
+              action.to,
+              action.type === 'runnerMovement' ? action.locations : undefined,
+              safeRelay
+            )
+          ) {
             this.hitOpen = false
             return
           }
@@ -265,6 +364,46 @@ export class ReelBuilder {
     const beat = this.throwBeat ?? this.current
     if (beat == null) return
     for (const motion of made) {
+      if (
+        this.choiceOut?.runner === motion.playerId &&
+        this.hitBeat != null &&
+        beat.presentation?.kind === 'throw'
+      ) {
+        const { from, to, point } = this.choiceOut
+        const tagPoint = {
+          x: beat.presentation.to.x,
+          z: beat.presentation.to.z
+        }
+        const path = basePath(from, to)
+        path[0] = { ...point }
+        if (path.length > 1) path[path.length - 1] = { ...tagPoint }
+        else if (Math.hypot(point.x - tagPoint.x, point.z - tagPoint.z) > 0.001)
+          path.push({ ...tagPoint })
+        const existing = this.hitBeat.motions.find(
+          m => m.playerId === motion.playerId
+        )
+        if (existing == null)
+          this.hitBeat.motions.push({
+            ...motion,
+            id: `${motion.id}:approach`,
+            waypoints: path,
+            complete: path.length < 2
+          })
+        else {
+          existing.waypoints.push(...path.slice(1))
+          existing.complete = existing.waypoints.length < 2
+        }
+        this.beats.push({
+          after: 'presentation',
+          motions: [
+            {
+              ...motion,
+              waypoints: [tagPoint, ...motion.waypoints.slice(1)]
+            }
+          ]
+        })
+        continue
+      }
       const existing = beat.motions.find(m => m.playerId === motion.playerId)
       if (existing == null) {
         beat.motions.push({ ...motion, waypoints: [...motion.waypoints] })
@@ -282,6 +421,7 @@ export class ReelBuilder {
 
   /** The reel, with every picture flagged and named for its place in it. */
   finish(state: ScoringState): Beat[] {
+    this.finishSafeRelay(state)
     const beats = this.beats.filter(
       beat => beat.presentation != null || beat.motions.length > 0
     )
@@ -321,7 +461,9 @@ export class ReelBuilder {
     state: ScoringState,
     runner: number,
     fielders: readonly number[],
-    to: keyof typeof BASE_INDEX | undefined
+    to: keyof typeof BASE_INDEX | undefined,
+    locations?: readonly GroundPoint[],
+    safe = false
   ): boolean {
     const players = scoringFieldPlayers(state).map(player => ({
       ...player,
@@ -329,19 +471,33 @@ export class ReelBuilder {
       suppressed: false,
       hasBall: false
     }))
+    for (const player of players) {
+      const point =
+        player.playerId == null
+          ? undefined
+          : this.defenderPoints.get(player.playerId)
+      if (player.team === 'defense' && point != null) {
+        player.position = { ...point }
+        player.target = { ...point }
+      }
+    }
     const standing = (id: number): GroundPoint | undefined =>
       players.find(p => p.team === 'defense' && p.playerId === id)?.position
     if (
-      !players.some(p => p.playerId === runner) ||
+      (!safe && !players.some(p => p.playerId === runner)) ||
       fielders.some(id => standing(id) == null)
     )
       return false
     const base = { ...BASES[BASE_INDEX[to ?? '1B']] }
-    const runnerPoint = standingPoint(state, runner)
+    const runnerPoint =
+      this.choiceOut != null
+        ? (locations?.at(-1) ?? base)
+        : standingPoint(state, runner)
     let from =
-      this.landing?.fielder === fielders[0]
+      this.defenderPoints.get(fielders[0]) ??
+      (this.landing?.fielder === fielders[0]
         ? { ...this.landing.point }
-        : standing(fielders[0])!
+        : (locations?.[0] ?? standing(fielders[0])!))
     const chain =
       fielders.length === 1
         ? [{ thrower: fielders[0], receiver: fielders[0], final: true }]
@@ -352,24 +508,35 @@ export class ReelBuilder {
           }))
     chain.forEach((step, index) => {
       const last = index === chain.length - 1
-      const target = last ? base : standing(step.receiver)!
-      this.open(
-        'throw',
-        throwSequence(state, {
-          players: players.map(player => ({
-            ...player,
-            position: { ...player.position },
-            target: { ...player.target }
-          })),
+      const target =
+        (fielders.length === 1 ? locations?.[0] : locations?.[index + 1]) ??
+        (last ? base : standing(step.receiver)!)
+      this.open('throw', {
+        ...throwSequence(state, {
+          players: players.map(player => {
+            const point =
+              player.team === 'defense' && player.playerId != null
+                ? this.defenderPoints.get(player.playerId)
+                : undefined
+            return {
+              ...player,
+              position: { ...(point ?? player.position) },
+              target: { ...(point ?? player.target) }
+            }
+          }),
           thrower: step.thrower,
           receiver: step.receiver,
           runner,
           from,
           to: target,
           runnerPoint,
-          final: step.final
-        })
-      )
+          final: step.final,
+          safe
+        }),
+        ...(this.choiceOut != null && last ? { stage: 'tag' as const } : {})
+      })
+      this.defenderPoints.set(step.thrower, { ...from })
+      this.defenderPoints.set(step.receiver, { ...target })
       from = target
     })
     this.throwBeat = this.current
