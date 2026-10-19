@@ -86,10 +86,12 @@ function rostered(): GameState {
   const setup = newSetup(TEAMS, {
     away: Array.from({ length: 9 }, (_, i) => ({
       userId: 1 + i,
+      gumboId: 1 + i,
       shortName: `Away ${i + 1}`
     })),
     home: Array.from({ length: 8 }, (_, i) => ({
       userId: 10 + i,
+      gumboId: 10 + i,
       shortName: `Home ${i + 1}`
     }))
   })
@@ -158,7 +160,7 @@ describe('folding a play for the server', function () {
     })
     // The home side had eight: the ninth, playing right field, was made up.
     const madeUp = start.liveData.boxscore.teams.home.defense.RF!
-    expect(start.gameData.players[madeUp].userId).equals(18)
+    expect(start.gameData.players[madeUp].id).equals(18)
     const folded = foldCurrentPlay(
       start,
       {
@@ -534,10 +536,12 @@ describe('reading a game back', function () {
     const setup = newSetup(TEAMS, {
       away: Array.from({ length: 9 }, (_, i) => ({
         userId: 7000 + i,
+        gumboId: 7000 + i,
         shortName: `A${i}`
       })),
       home: Array.from({ length: 9 }, (_, i) => ({
         userId: 8000 + i,
+        gumboId: 8000 + i,
         shortName: `H${i}`
       }))
     })

@@ -1,10 +1,10 @@
 import { asCurrentPlay } from './gumboPlay'
 
 /** Who is at the plate, as DJ Game draws it. Top of an inning is the away side. */
-export interface DjAtBat {
+export interface ScoringAtBat {
   side: 'away' | 'home'
   /** Null for a batter this game named without an account, such as a guest. */
-  userId: number | null
+  gumboId: number | null
 }
 
 /**
@@ -12,7 +12,7 @@ export interface DjAtBat {
  * A document that is not a current play is treated as none, so a bad row
  * does not take the lineup list down with it.
  */
-export function atBatFromCurrentPlay(raw: unknown): DjAtBat | null {
+export function atBatFromCurrentPlay(raw: unknown): ScoringAtBat | null {
   if (raw == null) return null
   let play
   try {
@@ -24,7 +24,7 @@ export function atBatFromCurrentPlay(raw: unknown): DjAtBat | null {
   if (half !== 'top' && half !== 'bottom') return null
   return {
     side: half === 'top' ? 'away' : 'home',
-    userId: batterId(play.matchup)
+    gumboId: batterId(play.matchup)
   }
 }
 

@@ -343,7 +343,7 @@ describe('user identity comparison', function () {
   })
 })
 
-describe('user identity snapshot on the original database schema', function () {
+describe('user identity snapshot across real database schemas', function () {
   this.timeout(60000)
   const name = `teamstation_userids_${process.pid}_${Date.now()}`
   const admin = new Pool({ connectionString: testDatabaseUrl })
@@ -383,6 +383,29 @@ describe('user identity snapshot on the original database schema', function () {
       values ('gps_one', 'gam_one', 'tem_one', 1, 2, 2, 1)`)
     await pool.query(`insert into events (id, "gameId", gumbo) values
       ('evt_one', 'gam_one', '{"about":{"atBatIndex":0},"result":{"eventType":"game_advisory"}}')`)
+    // Capture each schema with the final adapter. The HTTP server runs the
+    // current application schema; older application APIs are proved by the
+    // pinned A/B/C deployment comparison.
+    const client = await pool.connect()
+    try {
+      const original = { ...(await snapshotSql(client)), api: {} }
+      expect(original.migrations.at(-1)).equals('065radarReadings')
+      await migrateUp(
+        pool,
+        migrations.filter(m => m.name > '065radarReadings' && m.name < '068')
+      )
+      const rostered = { ...(await snapshotSql(client)), api: {} }
+      await migrateUp(
+        pool,
+        migrations.filter(m => m.name.startsWith('068'))
+      )
+      const separated = { ...(await snapshotSql(client)), api: {} }
+      expect(compareUserIds(rostered, separated).differences).deep.equals([])
+      expect(separated.userColumns.gumbo_ids).deep.equals(['user_id'])
+      expect(separated.tables.game_guest_details).not.equals(undefined)
+    } finally {
+      client.release()
+    }
     db = new Kysely({ dialect: new PostgresDialect({ pool }) })
     const media: MediaContext = {
       ffmpegPath: 'ffmpeg',
@@ -482,7 +505,7 @@ describe('user identity snapshot on the original database schema', function () {
     const client = await pool.connect()
     try {
       const snap = await snapshotSql(client)
-      expect(snap.migrations.at(-1)).equals('065radarReadings')
+      expect(snap.migrations.at(-1)).equals('068gumboIds')
     } finally {
       client.release()
     }

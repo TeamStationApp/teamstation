@@ -29,7 +29,7 @@ import { EVENT_CLASS } from '../../common/scoring/hitsAndErrors'
 import { freshGame, newSetup } from '../../common/scoring/lineup'
 import { nextDecision } from '../../common/scoring/rules'
 import { type GameState, setupOf } from '../../common/scoring/state'
-import { after, F, TEAMS } from '../../test/scoringGames'
+import { after, TEAMS } from '../../test/scoringGames'
 import {
   eventTypeCounts,
   gameStatLines,
@@ -43,6 +43,17 @@ import {
  */
 const AWAY = Array.from({ length: 9 }, (_, i) => 101 + i)
 const HOME = Array.from({ length: 9 }, (_, i) => 201 + i)
+const F = {
+  P: 201,
+  C: 202,
+  '1B': 203,
+  '2B': 204,
+  SS: 205,
+  '3B': 206,
+  LF: 207,
+  CF: 208,
+  RF: 209
+}
 const PITCHER = HOME[0]
 const teams = { homeTeamId: TEAMS.home.id, awayTeamId: TEAMS.away.id }
 const known = new Set([...AWAY, ...HOME])
@@ -52,8 +63,16 @@ function start(): GameState {
     'g1',
     TEAMS,
     newSetup(TEAMS, {
-      away: AWAY.map((userId, i) => ({ userId, shortName: `Away ${i + 1}` })),
-      home: HOME.map((userId, i) => ({ userId, shortName: `Home ${i + 1}` }))
+      away: AWAY.map((userId, i) => ({
+        userId,
+        gumboId: userId,
+        shortName: `Away ${i + 1}`
+      })),
+      home: HOME.map((userId, i) => ({
+        userId,
+        gumboId: userId,
+        shortName: `Home ${i + 1}`
+      }))
     })
   )
 }
@@ -69,7 +88,7 @@ function scored(...actions: ScoringAction[]): GumboPlay[] {
 function lines(plays: GumboPlay[]): Map<number, PlayerGameLine> {
   const result = gameStatLines(plays, teams, known)
   if (result.kind !== 'lines') throw new Error(result.detail)
-  return new Map(result.lines.map(line => [line.userId, line]))
+  return new Map(result.lines.map(line => [line.gumboId, line]))
 }
 
 const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
@@ -80,14 +99,14 @@ const hit = (eventType: 'single' | 'double'): ScoringAction[] => [
   { type: 'ballInPlay', contact: 'swing', fielder: F.CF },
   { type: 'result', eventType }
 ]
-/** Session id n is the nth visitor; runner 1 is user 101. */
-const home = (runner: number, reason?: 'Wild Pitch'): ScoringAction =>
+/** These scorebook scenarios number visitors from one. */
+const home = (slot: number, reason?: 'Wild Pitch'): ScoringAction =>
   reason == null
-    ? { type: 'runnerMovement', runner, to: 'home' }
+    ? { type: 'runnerMovement', runner: AWAY[slot - 1], to: 'home' }
     : {
         type: 'batteryEvent',
         kind: 'wild_pitch',
-        advances: [{ runner, to: 'home' }]
+        advances: [{ runner: AWAY[slot - 1], to: 'home' }]
       }
 
 /** A stored play's events, which its cleaner keeps without checking. */
@@ -152,12 +171,12 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
       ball,
       ball,
       close,
-      { type: 'baseRunning', kind: 'steal', runner: 1 },
+      { type: 'baseRunning', kind: 'steal', runner: 101 },
       ball,
       {
         type: 'batteryEvent',
         kind: 'wild_pitch',
-        advances: [{ runner: 1, to: '3B' }]
+        advances: [{ runner: 101, to: '3B' }]
       },
       ball,
       home(1, 'Wild Pitch'),
@@ -190,7 +209,7 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
       {
         type: 'baseRunning',
         kind: 'caught_stealing',
-        runner: 1,
+        runner: 101,
         to: '2B',
         fielders: [F.C, F.SS]
       },
@@ -236,7 +255,7 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
     const got = lines(plays)
     expect(got.get(PITCHER)).includes({ pitch_bf: 3, pitch_outs: 3 })
     // The shortstop the visitors put on the mound bats fifth: session id 5.
-    expect(setup.sides.away.defense.P).equals(5)
+    expect(setup.sides.away.defense.P).equals(105)
     expect(got.get(AWAY[4])).includes({ pitch_bf: 1, pitch_outs: 1 })
   })
 
@@ -246,9 +265,14 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
     // the runner is caught stealing off him, and 211 relieves him before
     // the batter is out (an injury, rule 5.10(g)).
     const setup = newSetup(TEAMS, {
-      away: AWAY.map((userId, i) => ({ userId, shortName: `Away ${i + 1}` })),
+      away: AWAY.map((userId, i) => ({
+        userId,
+        gumboId: userId,
+        shortName: `Away ${i + 1}`
+      })),
       home: [...HOME, 210, 211].map((userId, i) => ({
         userId,
+        gumboId: userId,
         shortName: `Home ${i + 1}`
       }))
     })
@@ -264,16 +288,16 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
       ...hit('single'),
       close,
       ball,
-      reliever(19, F.P),
+      reliever(210, F.P),
       ball,
       {
         type: 'baseRunning',
         kind: 'caught_stealing',
-        runner: 1,
+        runner: 101,
         to: '2B',
         fielders: [F.C, F.SS]
       },
-      reliever(20, 19),
+      reliever(211, 210),
       ...strikeout,
       ...strikeout
     ]
@@ -286,7 +310,7 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
       new Set([...known, 210, 211])
     )
     if (result.kind !== 'lines') throw new Error(result.detail)
-    const got = new Map(result.lines.map(line => [line.userId, line]))
+    const got = new Map(result.lines.map(line => [line.gumboId, line]))
     expect(got.get(PITCHER)).includes({ pitch_bf: 1, pitch_outs: 0 })
     expect(got.get(210)).includes({ pitch_bf: 0, pitch_outs: 1 })
     expect(got.get(211)).includes({ pitch_bf: 2, pitch_outs: 2 })
@@ -297,9 +321,14 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
     // first, the home side swaps its pitcher and shortstop (Home 5 to the
     // mound), then brings 210 in for Home 5 while Home 2 bats.
     const setup = newSetup(TEAMS, {
-      away: AWAY.map((userId, i) => ({ userId, shortName: `Away ${i + 1}` })),
+      away: AWAY.map((userId, i) => ({
+        userId,
+        gumboId: userId,
+        shortName: `Away ${i + 1}`
+      })),
       home: [...HOME, 210].map((userId, i) => ({
         userId,
+        gumboId: userId,
         shortName: `Home ${i + 1}`
       }))
     })
@@ -321,7 +350,7 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
         type: 'lineup',
         kind: 'substitute',
         side: 'home',
-        player: 19,
+        player: 210,
         replaces: F.SS
       },
       ...strikeout,
@@ -357,7 +386,7 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
     ])
     const result = gameStatLines(plays, teams, new Set([...known, 210]))
     if (result.kind !== 'lines') throw new Error(result.detail)
-    const got = new Map(result.lines.map(line => [line.userId, line]))
+    const got = new Map(result.lines.map(line => [line.gumboId, line]))
     expect(got.get(210)).includes({ pitch_bf: 3, pitch_outs: 3 })
     // Home 5 neither batted nor pitched.
     expect(got.has(HOME[4])).equals(false)
@@ -365,13 +394,14 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
   })
 })
 
-describe('pitchers without a user id who share a name', function () {
+describe('persisted guest pitchers who share a name', function () {
   // Both sides bring eight, so each is topped up with its own "Player 9".
   const eight = (
     first: number,
     missing: string
   ): Array<{
     userId: number
+    gumboId: number
     shortName: string
     positions: string[]
   }> =>
@@ -379,6 +409,7 @@ describe('pitchers without a user id who share a name', function () {
       .filter(position => position !== missing)
       .map((position, i) => ({
         userId: first + i,
+        gumboId: first + i,
         shortName: `${first} ${position}`,
         positions: [position]
       }))
@@ -387,8 +418,22 @@ describe('pitchers without a user id who share a name', function () {
       'g1',
       TEAMS,
       newSetup(TEAMS, {
-        away: eight(101, awayMissing ?? ''),
-        home: eight(201, 'RF')
+        away: [
+          ...eight(101, awayMissing ?? ''),
+          ...(awayMissing == null
+            ? []
+            : [
+                {
+                  gumboId: 109,
+                  shortName: 'Player 9',
+                  positions: [awayMissing]
+                }
+              ])
+        ],
+        home: [
+          ...eight(201, 'RF'),
+          { gumboId: 209, shortName: 'Player 9', positions: ['RF'] }
+        ]
       })
     )
   const swap =
@@ -419,7 +464,7 @@ describe('pitchers without a user id who share a name', function () {
     )
     const result = gameStatLines(plays, teams, new Set([...AWAY, ...HOME]))
     if (result.kind !== 'lines') throw new Error(result.detail)
-    return new Map(result.lines.map(line => [line.userId, line]))
+    return new Map(result.lines.map(line => [line.gumboId, line]))
   }
 
   it("a change to the visitors' Player 9 while they bat takes no out from the home pitcher", function () {
@@ -465,12 +510,19 @@ describe('when each lineup change is announced', function () {
     away: [...AWAY, 110, 111],
     home: [...HOME, 210, 211, 212]
   }
-  const sessionId = (user: number): number =>
-    user < 200 ? user - 100 : user - 189
+  const sessionId = (user: number): number => user
   const begin = (): GameState => {
     const setup = newSetup(TEAMS, {
-      away: PLAYERS.away.map(userId => ({ userId, shortName: `${userId}` })),
-      home: PLAYERS.home.map(userId => ({ userId, shortName: `${userId}` }))
+      away: PLAYERS.away.map(userId => ({
+        userId,
+        gumboId: userId,
+        shortName: `${userId}`
+      })),
+      home: PLAYERS.home.map(userId => ({
+        userId,
+        gumboId: userId,
+        shortName: `${userId}`
+      }))
     })
     for (const side of ['away', 'home'] as const)
       setup.sides[side].battingOrder = setup.sides[side].battingOrder.slice(
@@ -595,6 +647,7 @@ describe('when each lineup change is announced', function () {
         kind: 'addPlayer',
         side: 'away',
         name: 'Zed Z',
+        player: 9000000,
         jersey: '99'
       })
       return [
@@ -603,6 +656,7 @@ describe('when each lineup change is announced', function () {
           kind: 'addPlayer',
           side: 'away',
           name: 'Zed Z',
+          player: 9000000,
           jersey: '99'
         },
         {
@@ -701,13 +755,13 @@ describe('when each lineup change is announced', function () {
       const result = gameStatLines(
         plays,
         teams,
-        new Set([...PLAYERS.away, ...PLAYERS.home])
+        new Set([...PLAYERS.away, ...PLAYERS.home, 9000000])
       )
       if (result.kind !== 'lines') throw new Error(result.detail)
       const lines = Object.fromEntries(
         result.lines
           .filter(line => line.pitch_bf > 0 || line.pitch_outs > 0)
-          .map(line => [line.userId, [line.pitch_bf, line.pitch_outs]])
+          .map(line => [line.gumboId, [line.pitch_bf, line.pitch_outs]])
       )
       if (pitchers != null) expect(lines, row).deep.equals(pitchers)
     }
@@ -1222,7 +1276,7 @@ describe('when each lineup change is announced', function () {
         announced: [
           '#1[0] offensive_substitution 111 PH 201 102 c=0-0-1',
           '#2[0] offensive_substitution 110 PR 202 111 c=0-0-1',
-          '#4[0] defensive_substitution - C - - c=0-0-0'
+          '#4[0] defensive_substitution 9000000 C - - c=0-0-0'
         ],
         said: [
           'Offensive Substitution: Pinch-hitter 111 replaces 102.',
@@ -1745,11 +1799,11 @@ describe('when each lineup change is announced', function () {
     const result = gameStatLines(
       plays,
       teams,
-      new Set([...PLAYERS.away, ...PLAYERS.home])
+      new Set([...PLAYERS.away, ...PLAYERS.home, 9000000])
     )
     if (result.kind !== 'lines') throw new Error(result.detail)
     const line = (user: number): PlayerGameLine | undefined =>
-      result.lines.find(entry => entry.userId === user)
+      result.lines.find(entry => entry.gumboId === user)
     expect(line(111)).includes({ r: 1, sb: 1, pa: 0 })
     expect(line(101)).includes({ r: 0, sb: 0, pa: 1, ab: 1 })
     expect(line(102)).includes({ r: 1, rbi: 2, hr: 1 })
@@ -1770,14 +1824,14 @@ describe('when each lineup change is announced', function () {
       const result = gameStatLines(
         state.liveData.plays.allPlays.map(play => foldPlay(state, play, stamp)),
         teams,
-        new Set([...PLAYERS.away, ...PLAYERS.home])
+        new Set([...PLAYERS.away, ...PLAYERS.home, 9000000])
       )
       if (result.kind !== 'lines') throw new Error(result.detail)
       return Object.fromEntries(
         result.lines
           .filter(line => line.pa > 0)
           .map(line => [
-            line.userId,
+            line.gumboId,
             `pa ${line.pa} ab ${line.ab} k ${line.k} bb ${line.bb}`
           ])
       )
@@ -1828,7 +1882,7 @@ describe('when each lineup change is announced', function () {
     const plays = state.liveData.plays.allPlays.map(play =>
       foldPlay(state, play, stamp)
     )
-    const known = new Set([...PLAYERS.away, ...PLAYERS.home])
+    const known = new Set([...PLAYERS.away, ...PLAYERS.home, 9000000])
     known.delete(101)
     expect(gameStatLines(plays, teams, known)).deep.equals({
       kind: 'incomplete',
@@ -1842,7 +1896,13 @@ describe('when each lineup change is announced', function () {
     // name ('new' is the sheet's man), gives the same PA/AB/K to the same
     // users in credits.ts `statLines` and in `gameStatLines`.
     const made: Step = () => [
-      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Pinch Hitter' }
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        side: 'away',
+        name: 'Pinch Hitter',
+        player: 9000000
+      }
     ]
     const madeId = (state: GameState): number =>
       state.liveData.boxscore.teams.away.players.at(-1)!
@@ -1884,20 +1944,20 @@ describe('when each lineup change is announced', function () {
       for (const [id, line] of Object.entries(
         statLines(state.liveData.plays.allPlays).batting
       )) {
-        const userId = state.gameData.players[Number(id)].userId
+        const userId = state.gameData.players[Number(id)].id
         if (userId != null && line.pa > 0) engine[userId] = said(line)
       }
       const stamp = { setupBefore: setupOf(state), actions }
       const result = gameStatLines(
         state.liveData.plays.allPlays.map(play => foldPlay(state, play, stamp)),
         teams,
-        new Set([...PLAYERS.away, ...PLAYERS.home])
+        new Set([...PLAYERS.away, ...PLAYERS.home, 9000000])
       )
       if (result.kind !== 'lines') throw new Error(result.detail)
       const builder = Object.fromEntries(
         result.lines
           .filter(line => line.pa > 0)
-          .map(line => [line.userId, said(line)])
+          .map(line => [line.gumboId, said(line)])
       )
       return { engine, builder }
     }
@@ -1906,7 +1966,10 @@ describe('when each lineup change is announced', function () {
       // The sheet's man at 0-2 strikes out: 101's strikeout.
       [[pitches('C', 'C'), subMade(101), pitches('C'), settle], { 101: K }],
       // At 1-1 it is his, and he has no line.
-      [[pitches('B', 'C'), subMade(101), pitches('C', 'C'), settle], {}],
+      [
+        [pitches('B', 'C'), subMade(101), pitches('C', 'C'), settle],
+        { 9000000: K }
+      ],
       // 111 at 0-1, the sheet's man for him at 0-2: 111's.
       [
         [
@@ -1941,7 +2004,7 @@ describe('when each lineup change is announced', function () {
           pitches('C'),
           settle
         ],
-        {}
+        { 9000000: K }
       ],
       // 111 at 0-2, as before.
       [[pitches('C', 'C'), sub(111, 101), pitches('C'), settle], { 101: K }]

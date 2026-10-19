@@ -57,7 +57,8 @@ export async function accountHarness(
     }
   ) => void,
   bindHost = '127.0.0.1',
-  mountExtra?: MountExtra
+  mountExtra?: MountExtra,
+  schema = migrations
 ): Promise<AccountHarness> {
   const name = `account_test_${Date.now()}_${Math.floor(Math.random() * 100000)}`
   const admin = new Pool({ connectionString: testDatabaseUrl })
@@ -65,7 +66,7 @@ export async function accountHarness(
   await admin.query(`create database ${name}`)
   const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
   const pool = new Pool({ connectionString: url })
-  await migrateUp(pool, migrations)
+  await migrateUp(pool, schema)
   await pool.end()
   const db = makeDatabase(url)
   for (const [id, label] of [
