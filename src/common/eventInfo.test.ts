@@ -27,6 +27,7 @@ describe('event information contracts', () => {
   it('counts only direct players, combines Maybe with unknown and validates count payloads', () => {
     const row = {
       userId: 1,
+      gumboId: 1,
       name: 'Babe R',
       avatarUrl: null,
       canReply: false,
@@ -39,7 +40,7 @@ describe('event information contracts', () => {
         { ...row, userId: 2, response: 'maybe' },
         { ...row, userId: 3, response: null },
         { ...row, userId: 4, response: 'no' },
-        { ...row, userId: 5, response: 'yes', isPlayer: false },
+        { ...row, userId: 5, gumboId: 5, response: 'yes', isPlayer: false },
         { ...row, userId: 6, response: 'no', isTeamParticipant: false }
       ])
     ).deep.equals({ yes: 1, unknown: 2, no: 1 })

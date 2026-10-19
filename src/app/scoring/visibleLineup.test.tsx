@@ -54,6 +54,7 @@ function entries(first: number): RosterEntry[] {
   return Array.from({ length: 9 }, (_, index) =>
     asRosterEntry({
       userId: first + index,
+      gumboId: first + index,
       shortName: `Owl ${first + index}`,
       jersey: String(index + 1),
       positions: [],
@@ -94,7 +95,7 @@ async function openBlind(): Promise<{ session: () => ScoringSession }> {
   const person = (id: number): Lineup['batters'][number] => {
     const player = seeded.state.gameData.players[id]
     return {
-      userId: player.userId,
+      gumboId: player.id,
       name: player.fullName,
       jersey: player.jersey
     }
@@ -177,7 +178,7 @@ describe('a scorekeeper shown a default left unseen', function () {
       throw new Error('roster save')
     expect(roster.confirmed).deep.equals(['away', 'home'])
     const ids = roster.setup.sides.away.battingOrder.map(
-      id => roster.setup!.players[id].userId
+      id => roster.setup!.players[id].id
     )
     expect(ids[0]).equals(109)
     expect(ids[ids.length - 1]).equals(101)
@@ -196,7 +197,7 @@ describe('a scorekeeper shown a default left unseen', function () {
     expect(roster.shown).equals(true)
     expect(
       roster.setup.sides.away.battingOrder.map(
-        id => roster.setup!.players[id].userId
+        id => roster.setup!.players[id].id
       )[0]
     ).equals(109)
   })

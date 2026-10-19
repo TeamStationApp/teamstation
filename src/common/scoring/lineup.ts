@@ -1067,7 +1067,7 @@ export function applyOverride(
 }
 
 export interface RosterPlayer {
-  userId: number | null
+  gumboId: number | null
   shortName: string
   jersey?: string | null
   bats?: 'left' | 'right' | 'switch' | null
@@ -1092,7 +1092,6 @@ export function addPlayer(
   if (!state.meta.tagOrder.includes(id)) state.meta.tagOrder.push(id)
   state.gameData.players[id] = {
     id,
-    userId: id,
     teamId: state.gameData.teams[side].id,
     fullName: name.trim(),
     jersey,
@@ -1184,12 +1183,11 @@ export function newSetup(
   for (const side of ['away', 'home'] as const) {
     const team = draft.liveData.boxscore.teams[side]
     for (const row of rosters[side]) {
-      const id = asGumboId(row.userId)
+      const id = asGumboId(row.gumboId)
       if (draft.gameData.players[id] != null)
         throw new Error('Player appears more than once in the game roster')
       draft.gameData.players[id] = {
         id,
-        userId: row.userId,
         teamId: teams[side].id,
         fullName: row.shortName,
         jersey: row.jersey ?? '',

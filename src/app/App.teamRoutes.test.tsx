@@ -245,7 +245,8 @@ describe('a person’s profile, through the app', () => {
     proto.roster = async () => [
       asRosterEntry({
         userId: 203,
-        shortName: 'Pat Y',
+        gumboId: 203,
+        shortName: 'Pat N',
         jersey: null,
         positions: [],
         isPlayer: false,
@@ -261,8 +262,9 @@ describe('a person’s profile, through the app', () => {
         context: { kind: 'team', id: 'canonical', name: 'Demo Hawks' },
         person: {
           userId: 203,
-          shortName: 'Pat Y',
-          fullName: 'Pat Young',
+          gumboId: 203,
+          shortName: 'Pat N',
+          fullName: 'Pat Neshek',
           avatarUrl: null,
           canHoldRoles: true
         },
@@ -287,7 +289,7 @@ describe('a person’s profile, through the app', () => {
       await settle()
       const row = [
         ...document.querySelectorAll<HTMLElement>('[role="button"]')
-      ].find(node => node.textContent?.includes('Pat Y') === true)
+      ].find(node => node.textContent?.includes('Pat N') === true)
       expect(row).not.equals(undefined)
       await act(async () => {
         row!.click()
@@ -295,7 +297,7 @@ describe('a person’s profile, through the app', () => {
       await settle()
       expect(asked).deep.equals([['team', 'canonical', 203]])
       expect(window.location.pathname).equals('/teams/canonical/people/203')
-      expect(document.body.textContent).includes('Pat Young')
+      expect(document.body.textContent).includes('Pat Neshek')
       expect(document.body.textContent).includes('Team · Demo Hawks')
       await act(async () => {
         root.unmount()
@@ -377,7 +379,8 @@ describe('a season’s and a league’s People tab, however the page is opened',
   const people = [
     asRosterEntry({
       userId: 203,
-      shortName: 'Pat Y',
+      gumboId: 203,
+      shortName: 'Pat N',
       jersey: null,
       positions: [],
       isPlayer: false,
@@ -489,7 +492,7 @@ describe('a season’s and a league’s People tab, however the page is opened',
       expect(seen.asked).deep.include(['group', 'season', 'sea_spring'])
       // The address asked for People, and People is what opened.
       expect(seen.asked).deep.include(['people', 'season', 'sea_spring'])
-      expect(document.body.textContent).includes('Pat Y')
+      expect(document.body.textContent).includes('Pat N')
       expect(window.location.search).includes('tab=people')
     } finally {
       await seen.done()

@@ -56,18 +56,18 @@ export async function setRostered(
         throw error
       })
     const availability = await gameAvailability(trx, game)
-    if (
-      !availability.roster[body.side].some(
-        row => row.userId === userId && row.isPlayer
-      )
+    const player = availability.roster[body.side].find(
+      row => row.userId === userId && row.isPlayer
     )
+    if (player?.gumboId == null)
       throw badRequest('Only a player on this team can be unrostered')
+    const gumboId = player.gumboId
     const unrostered = availability.unrostered
-    const isRostered = !unrostered[body.side].includes(userId)
+    const isRostered = !unrostered[body.side].includes(gumboId)
     if (isRostered === body.rostered) return unrostered
     unrostered[body.side] = body.rostered
-      ? unrostered[body.side].filter(id => id !== userId)
-      : [...unrostered[body.side], userId]
+      ? unrostered[body.side].filter(id => id !== gumboId)
+      : [...unrostered[body.side], gumboId]
     const stored = await resolveScoringGame(trx, {
       plays: (await readPlays(trx, gameId)).map(row => row.gumbo as GumboPlay),
       currentPlay: game.currentPlay as CurrentPlay | null

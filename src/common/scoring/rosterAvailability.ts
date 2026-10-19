@@ -1,5 +1,6 @@
 import type { RosterEntry } from '../api'
 import type { Unrostered } from '../unroster'
+import { asGumboId } from '../userId'
 import {
   copyState,
   type GameSetup,
@@ -8,26 +9,39 @@ import {
   type Side
 } from './state'
 
+export type ScoringRosterEntry = Pick<
+  RosterEntry,
+  | 'gumboId'
+  | 'isPlayer'
+  | 'shortName'
+  | 'jersey'
+  | 'positions'
+  | 'bats'
+  | 'throws'
+>
+
 /** Rebuild live options while preserving the placements of players still available. */
 export function reconcileRoster(
   held: GameSetup,
   teams: Record<Side, GameTeam>,
-  rosters: Record<Side, readonly RosterEntry[]>,
-  guests: Record<Side, readonly RosterEntry[]>,
+  rosters: Record<Side, readonly ScoringRosterEntry[]>,
+  guests: Record<Side, readonly ScoringRosterEntry[]>,
   unrostered: Unrostered
 ): GameSetup {
   const next = copyState(held)
   for (const side of ['away', 'home'] as const) {
     const roster = rosters[side].filter(row => row.isPlayer)
-    const rosterIds = new Set(roster.map(row => row.userId))
+    const rosterIds = new Set(roster.map(row => asGumboId(row.gumboId)))
     const rows = [
-      ...roster.filter(row => !unrostered[side].includes(row.userId)),
-      ...guests[side].filter(row => !rosterIds.has(row.userId))
+      ...roster.filter(
+        row => !unrostered[side].includes(asGumboId(row.gumboId))
+      ),
+      ...guests[side].filter(row => !rosterIds.has(asGumboId(row.gumboId)))
     ]
-    const ids = [...new Set(rows.map(row => row.userId))]
+    const ids = [...new Set(rows.map(row => asGumboId(row.gumboId)))]
     const available = new Set(ids)
     for (const row of rows) {
-      const id = row.userId
+      const id = asGumboId(row.gumboId)
       const prior = next.players[id]
       if (prior != null && prior.teamId !== teams[side].id)
         throw new Error('A player cannot be available for both teams')
@@ -35,7 +49,6 @@ export function reconcileRoster(
         prior == null
           ? {
               id,
-              userId: id,
               teamId: teams[side].id,
               fullName: row.shortName,
               jersey: row.jersey ?? '',

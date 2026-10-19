@@ -190,7 +190,7 @@ export async function refinementsFixture(
     .values({
       id: makeId('gamePlayerStats'),
       game_id: 'baseline-hawks-eagles',
-      user_id: 104,
+      gumbo_id: 104,
       team_id: f.teamA,
       pa: 4,
       ab: 3,

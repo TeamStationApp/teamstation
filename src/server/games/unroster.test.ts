@@ -449,4 +449,39 @@ describe('atomic game availability', function () {
     await rejected(async () => await toggle('gam_empty', 1, false), 'conflict')
     expect(await row('gam_empty')).deep.equals(unread)
   })
+  it('accepts the account ID but stores and compares its distinct scoring ID', async () => {
+    await db
+      .updateTable('gumbo_ids')
+      .set({ gumbo_id: 3129 })
+      .where('user_id', '=', 129)
+      .execute()
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: 129,
+        team_id: 'team-away',
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    const id = 'gam_distinct'
+    await db
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: 'team-home',
+        away_team_id: 'team-away',
+        start_at: new Date()
+      })
+      .execute()
+    expect((await toggle(id, 129, false)).away).deep.equals([3129])
+    expect((await row(id)).unrostered).deep.equals({ away: [3129], home: [] })
+    const available = await gameAvailability(db, await row(id))
+    expect(
+      available.roster.away.find(player => player.userId === 129)?.gumboId
+    ).equals(3129)
+    expect((await toggle(id, 129, true)).away).deep.equals([])
+    await rejected(async () => await toggle(id, 3129, false), 'badRequest')
+  })
 })
