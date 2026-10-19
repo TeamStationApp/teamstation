@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react'
 import { View } from 'react-native'
 
 import { Button } from '../components/Button'
+import { PartialPlaceholderCreation } from './placeholderPlayers'
 import { PlayerCountPicker } from './PlayerCountPicker'
 import { ScoringError, ScoringSheet } from './ScoringSheet'
 import { useScoringSheetTheme } from './scoringSheetTheme'
@@ -27,8 +28,11 @@ export function PlaceholderPlayersSheet({
       await onAdd(count)
       added = true
       onClose()
-    } catch {
-      setProblem('Unable to create the players. Please try again.')
+    } catch (error) {
+      if (error instanceof PartialPlaceholderCreation) {
+        setCount(error.remaining)
+        setProblem(error.message)
+      } else setProblem('Unable to create the players. Please try again.')
     } finally {
       if (!added) saving.current = false
       setBusy(false)

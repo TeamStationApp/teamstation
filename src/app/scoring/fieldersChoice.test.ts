@@ -5,9 +5,9 @@ import type { ScoringAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/session'
 import { asGameState } from '../../common/scoring/state'
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { BASES } from '../field/fieldModel'
 import { fieldStageInstruction } from './battedBallField'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
@@ -15,7 +15,7 @@ import { baseIds, playerRef } from './scoringSelectors'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 
 function initial(mask = 7, outs = 0): ScoringState {
-  const session = createDevelopmentSession(gameFixture, [], [])
+  const session = scoringSession(gameFixture)
   for (const [index, key] of (['first', 'second', 'third'] as const).entries())
     session.liveData.linescore.offense[key] =
       (mask & (1 << index)) !== 0 ? playerRef(session, index + 6) : null

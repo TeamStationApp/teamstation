@@ -625,6 +625,13 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
                 )
                 return entry
               }}
+              onCreateGuest={async (side, player) =>
+                await client.createGuestPlayer(
+                  gameId,
+                  side,
+                  rosterPlayerBody(player)
+                )
+              }
               unaccepted={unaccepted}
               conflict={live.conflict}
               onDirtyChange={setDirty}

@@ -9,7 +9,7 @@ import {
 } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/session'
 import { completeMotions } from '../../test/scoringHelpers'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import type { ScoringEvent, ScoringSessionState } from './scoringTypes'
@@ -34,7 +34,7 @@ function script(): ScoringAction[] {
   })
 }
 function tapped(): ScoringSessionState {
-  let state = initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  let state = initialScoringState(scoringSession(gameFixture))
   const tap = (event: ScoringEvent): void => {
     state = completeMotions(scoringReducer(state, event))
   }
@@ -98,7 +98,7 @@ function game(state: ScoringSessionState): unknown {
 
 describe('a dictated half inning and a tapped one', function () {
   it('make the same game, plays, credits and line score', function () {
-    let dictated = createDevelopmentSession(gameFixture, [], [])
+    let dictated = scoringSession(gameFixture)
     for (const action of script()) {
       const applied = applyAction(dictated, action)
       expect(applied.problems, JSON.stringify(action)).deep.equals([])

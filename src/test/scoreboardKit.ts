@@ -12,7 +12,11 @@ import {
 } from '../common/gumboPlay'
 import { makeId } from '../common/ids'
 import { mintUserId } from '../common/mintUserId'
-import type { ScoringAction } from '../common/scoring/actions'
+import {
+  cleanAction,
+  mapPlayers,
+  type ScoringAction
+} from '../common/scoring/actions'
 import { newSetup } from '../common/scoring/lineup'
 import {
   type EventStore,
@@ -229,10 +233,23 @@ export function situationEntries(): SituationEntry[] {
 }
 
 /** The fixture's actions, without its named points. */
-export function situationActions(): ScoringAction[] {
-  return situationEntries().filter(
-    (entry): entry is ScoringAction => !('point' in entry)
-  )
+export function situationActions(
+  setup: SessionContext['setup']
+): ScoringAction[] {
+  return situationEntries()
+    .filter((entry): entry is ScoringAction => !('point' in entry))
+    .map(action => {
+      const converted = cleanAction(
+        mapPlayers(action, value => {
+          const id = setup.tagOrder[Number(value) - 1]
+          if (id == null)
+            throw new Error('Fixture player has no persisted identity')
+          return id
+        })
+      )
+      if ('problem' in converted) throw new Error(converted.problem.message)
+      return converted.action
+    })
 }
 
 /** Two teams with nine players each, which a game between them can score. */

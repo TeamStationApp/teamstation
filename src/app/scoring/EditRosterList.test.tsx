@@ -4,8 +4,8 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { asRosterEntry } from '../../common/api'
+import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { createDevelopmentSession } from './developmentSession'
 import { EditRosterList } from './EditRosterList'
 import { gameFixture } from './isUnscoredGame.test'
 import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
@@ -25,9 +25,7 @@ const row = (id: number, jersey: string): EditRosterRow => ({
 })
 describe('Roster tab cards and selector', function () {
   it('uses the staff team once roles finish loading and preserves chosen or retained sides', async function () {
-    const state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+    const state = initialScoringState(scoringSession(gameFixture))
     for (const scenario of ['default', 'chosen', 'retained'] as const) {
       const host = document.createElement('div')
       document.body.append(host)
@@ -175,9 +173,7 @@ describe('Roster tab cards and selector', function () {
     const host = document.createElement('div')
     document.body.append(host)
     const root = createRoot(host)
-    const state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+    const state = initialScoringState(scoringSession(gameFixture))
     const id = state.session.liveData.boxscore.teams.away.players[0]
     let saved: typeof state.session | undefined
     let openedAccount = false
@@ -305,9 +301,7 @@ describe('Roster tab cards and selector', function () {
     const host = document.createElement('div')
     document.body.append(host)
     const root = createRoot(host)
-    const state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+    const state = initialScoringState(scoringSession(gameFixture))
     let saved: unknown
     try {
       await act(async () => {
