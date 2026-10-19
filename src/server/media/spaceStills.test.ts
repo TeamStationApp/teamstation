@@ -220,6 +220,35 @@ describe('a still from the Space', function () {
     expect(most, 'at once').equals(MAX_CONCURRENT_CUTS)
   })
 
+  it('frees its turn when a cut fails', async function () {
+    const failing = await Promise.allSettled(
+      [9001, 9002, 9003].map(
+        async atSec =>
+          await ensureStill({
+            ffmpegPath,
+            source: { kind: 'file', path: join(workDir, 'video.mp4') },
+            space,
+            videoId: 'vid_failing',
+            atSec
+          })
+      )
+    )
+    expect(failing.map(result => result.status)).deep.equals([
+      'rejected',
+      'rejected',
+      'rejected'
+    ])
+    expect(
+      await ensureStill({
+        ffmpegPath,
+        source: { kind: 'file', path: join(workDir, 'video.mp4') },
+        space,
+        videoId: 'vid_failing',
+        atSec: 5
+      })
+    ).equals('videos/vid_failing/stills/5.jpg')
+  })
+
   it('cuts a still once: the next ask finds it in the Space', async function () {
     const before = puts
     const again = await Promise.all([

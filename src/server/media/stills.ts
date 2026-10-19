@@ -127,6 +127,14 @@ const inFlight = new Map<string, Promise<string>>()
  * a thumbnail that arrives late is still a thumbnail.
  */
 export const MAX_CONCURRENT_CUTS = 2
+
+/**
+ * The longest a cut may hold its slot at any one step: a fetch from the Space,
+ * FFmpeg, the upload. Bounded, because two that hang would otherwise keep
+ * every still in the process waiting behind them for as long as the network
+ * cared to take.
+ */
+export const CUT_STEP_TIMEOUT_MS = 30_000
 let cutting = 0
 const waitingToCut: Array<() => void> = []
 
@@ -170,6 +178,8 @@ export async function ensureStill(options: StillOptions): Promise<string> {
       throw new Error('Read-only source still is not available')
     }
     await inCutSlot(async () => {
+      // Another worker may have kept it while this one waited its turn.
+      if (await stillInSpace(space, videoId, atSec)) return
       await cutAndKeep(options, key)
     })
     return key
@@ -198,7 +208,8 @@ async function cutAndKeep(options: StillOptions, key: string): Promise<void> {
       space,
       key,
       body: await readFile(path),
-      contentType: 'image/jpeg'
+      contentType: 'image/jpeg',
+      signal: AbortSignal.timeout(CUT_STEP_TIMEOUT_MS)
     })
   } finally {
     await rm(scratch, { recursive: true, force: true })
@@ -230,7 +241,12 @@ async function openFrame(
     space: source.space,
     videoId: source.videoId,
     atSec,
-    workDir: scratch
+    workDir: scratch,
+    fetch: async (input, init) =>
+      await fetch(input, {
+        ...init,
+        signal: AbortSignal.timeout(CUT_STEP_TIMEOUT_MS)
+      })
   })
 }
 
@@ -263,7 +279,7 @@ async function cutFrame(
       '4',
       path
     ],
-    { maxBuffer: 1 << 22 }
+    { maxBuffer: 1 << 22, timeout: CUT_STEP_TIMEOUT_MS }
   )
 
   const size = await fileSize(path)
