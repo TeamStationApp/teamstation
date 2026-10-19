@@ -4,10 +4,11 @@ import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Platform } from 'react-native'
 
+import { guestCreator } from '../../test/guestPlayers'
+import { scoringSession } from '../../test/scoringSession'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import { clampPlayerCount, countAtOffset } from './playerCount'
@@ -48,9 +49,8 @@ describe('placeholder count sheet and platform adapters', function () {
     })
     await mount(
       <RosterEditor
-        state={initialScoringState(
-          createDevelopmentSession(gameFixture, [], [])
-        )}
+        onCreateGuest={guestCreator()}
+        state={initialScoringState(scoringSession(gameFixture))}
         onSave={() => undefined}
       />
     )
@@ -62,9 +62,8 @@ describe('placeholder count sheet and platform adapters', function () {
   it('returns to player entry on cancellation and to the roster after creating placeholders', async function () {
     await mount(
       <RosterEditor
-        state={initialScoringState(
-          createDevelopmentSession(gameFixture, [], [])
-        )}
+        onCreateGuest={guestCreator()}
+        state={initialScoringState(scoringSession(gameFixture))}
         onSave={() => undefined}
       />
     )

@@ -1,14 +1,12 @@
 import type { Trajectory } from './actions'
 import {
   addPlayer,
-  allocatePlayer,
   applyOverride,
   applyRoster,
   baseIds,
   battersOf,
   battingSide,
   canSwitchBatter,
-  createIdentityMap,
   fieldingSide,
   freshGame,
   newSetup,
@@ -37,12 +35,10 @@ import {
 
 export {
   addPlayer,
-  allocatePlayer,
   baseIds,
   battersOf,
   battingSide,
   canSwitchBatter,
-  createIdentityMap,
   fieldingSide,
   freshGame,
   homeRunKind,

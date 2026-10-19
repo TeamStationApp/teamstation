@@ -7,17 +7,15 @@ import { baseIds } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { asGameState, setupOf } from '../../common/scoring/state'
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { fieldStageInstruction } from './battedBallField'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
 
 function initial(mask = 1): ScoringState {
-  const state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], [])
-  )
+  const state = initialScoringState(scoringSession(gameFixture))
   for (let base = 0; base < 3; base++)
     if ((mask & (1 << base)) !== 0)
       state.session.liveData.linescore.offense[

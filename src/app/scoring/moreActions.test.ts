@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { completeMotions } from '../../test/scoringHelpers'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { moreEligibility, type MoreInput } from './moreActions'
 import { asScoringPlay } from './scoringContract'
@@ -11,9 +11,7 @@ import { initialScoringState, scoringReducer } from './scoringMachine'
 import { baseIds, playerRef } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
 function initial(mask = 0): ScoringState {
-  const state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], [])
-  )
+  const state = initialScoringState(scoringSession(gameFixture))
   for (const [i, key] of (['first', 'second', 'third'] as const).entries())
     if ((mask & (1 << i)) !== 0)
       state.session.liveData.linescore.offense[key] = playerRef(

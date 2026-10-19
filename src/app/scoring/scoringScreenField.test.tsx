@@ -15,12 +15,12 @@ import { applyAction, ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import { mintedRosterEntry } from '../../test/mintedRosterEntry'
 import { F } from '../../test/scoringGames'
+import { scoringRoster, scoringSession } from '../../test/scoringSession'
 import type { BaseballScreen } from '../field/BaseballScreen'
 import type { FieldPlacement } from '../field/fieldTypes'
 import { ThemeProvider } from '../theme/ThemeContext'
 import webMusic from '../walkup/walkUpMusic'
 import type { WalkUpMusic } from '../walkup/walkUpMusicTypes'
-import { createDevelopmentSession } from './developmentSession'
 import type { UseDictationOptions } from './dictationTypes'
 import type { EventTagEditor } from './EventTagEditor'
 import { gameFixture } from './isUnscoredGame.test'
@@ -166,13 +166,18 @@ type ScreenProps = React.ComponentProps<typeof ScoringScreen>
 /** Renders the screen, and returns a render with some of its props changed. */
 async function mount(
   source?: ScoringSource,
-  rosters: Record<string, RosterEntry[]> = {},
+  rosters: Record<string, RosterEntry[]> = {
+    away: scoringRoster(1),
+    home: scoringRoster(10)
+  },
   extra: Partial<ScreenProps> = {}
 ): Promise<(changed: Partial<ScreenProps>) => Promise<void>> {
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
   client.roster = async teamId => rosters[teamId] ?? []
+  client.createGuestPlayer = async (_gameId, _side, player) =>
+    mintedRosterEntry(player)
   client.createRosterPlayer = async (_teamId, player) =>
     mintedRosterEntry(player)
   const node = document.createElement('div')
@@ -203,7 +208,7 @@ async function mount(
 describe('scoring screen field wiring', function () {
   for (const previous of [false, true])
     it(`limits passed-ball pitch entry to three controls, previous pitch ${previous}`, async () => {
-      const initial = createDevelopmentSession(gameFixture, [], [])
+      const initial = scoringSession(gameFixture)
       const live = ScoringSession.start(memoryStore(), 'g1', initial, {
         requireCurrentSetup: true
       })
@@ -273,7 +278,7 @@ describe('scoring screen field wiring', function () {
     })
   for (const reason of ['Throwing Error', 'Fielding Error'])
     it(`requires tapping a defender on the field for ${reason}`, async () => {
-      const initial = createDevelopmentSession(gameFixture, [], [])
+      const initial = scoringSession(gameFixture)
       const live = ScoringSession.start(memoryStore(), 'g1', initial, {
         requireCurrentSetup: true
       })
@@ -328,16 +333,19 @@ describe('scoring screen field wiring', function () {
       expect(live.state.liveData.linescore.teams.home.errors).equals(0)
     })
   it('does not overwrite a defensive choice when cancelled roster player creation finishes', async () => {
-    const initial = createDevelopmentSession(gameFixture, [], [])
+    const initial = scoringSession(gameFixture)
     initial.liveData.boxscore.teams.home.defense.P = null
     const live = ScoringSession.start(memoryStore(), 'g1', initial, {
       requireCurrentSetup: true
     })
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => gameFixture
-    client.roster = async () => []
+    client.roster = async teamId =>
+      scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
     let finish!: (entry: RosterEntry) => void
     let requested = false
+    client.createGuestPlayer = async (_gameId, _side, player) =>
+      mintedRosterEntry(player)
     client.createRosterPlayer = async () => {
       requested = true
       return await new Promise(resolve => {
@@ -392,7 +400,11 @@ describe('scoring screen field wiring', function () {
   for (const stage of ['settings', 'bases', 'runner'] as const)
     it(`does not open Undo history during tiebreaker ${stage} selection`, async () => {
       const source = new DevelopmentScoringSource()
-      const game = await source.open(gameFixture, [], [])
+      const game = await source.open(
+        gameFixture,
+        scoringRoster(1),
+        scoringRoster(10)
+      )
       game.apply({
         type: 'gameFlow',
         kind: 'placeRunner',
@@ -467,7 +479,7 @@ describe('scoring screen field wiring', function () {
 
   for (const change of ['runner', 'outs'] as const)
     it(`keeps the ${change} setup description after persistence and reopening`, async () => {
-      const initial = createDevelopmentSession(gameFixture, [], [])
+      const initial = scoringSession(gameFixture)
       const store = memoryStore()
       const original = ScoringSession.start(store, 'g1', initial, {
         requireCurrentSetup: true
@@ -504,7 +516,7 @@ describe('scoring screen field wiring', function () {
       )
     })
   it('places runners through projected bases, preserves outs setup and unwinds each change with normal Undo', async () => {
-    const initial = createDevelopmentSession(gameFixture, [], [])
+    const initial = scoringSession(gameFixture)
     const live = ScoringSession.start(memoryStore(), 'g1', initial, {
       requireCurrentSetup: true
     })
@@ -660,7 +672,8 @@ describe('scoring screen field wiring', function () {
     await press('Place a Runner (Tiebreaker)')
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => gameFixture
-    client.roster = async () => []
+    client.roster = async teamId =>
+      scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
     await step(() => {
       root!.render(
         <ThemeProvider>
@@ -679,13 +692,13 @@ describe('scoring screen field wiring', function () {
   for (const route of ['menu', 'lineup'] as const)
     for (const jersey of ['99', null])
       it(`keeps saved player details when saving ${route} with current jersey ${String(jersey)}`, async function () {
-        const initial = createDevelopmentSession(gameFixture, [], [])
+        const initial = scoringSession(gameFixture)
         const away = initial.liveData.boxscore.teams.away
         away.battingOrder.pop()
         const id = away.players[0]
         const person = initial.gameData.players[id]
         person.local = false
-        person.userId = 101
+        person.userId = id
         person.fullName = 'Mookie B'
         person.jersey = '7'
         const savedPlayer = { ...person }
@@ -696,7 +709,7 @@ describe('scoring screen field wiring', function () {
           {
             away: [
               asRosterEntry({
-                userId: 101,
+                userId: id,
                 shortName: 'Mike T',
                 jersey,
                 positions: [],
@@ -765,7 +778,7 @@ describe('scoring screen field wiring', function () {
         expect(reopened.state.gameData.players[id]).deep.equals(savedPlayer)
       })
   it('keeps a two-ball appearance gated after a resting defender move', async function () {
-    const initial = createDevelopmentSession(gameFixture, [], [])
+    const initial = scoringSession(gameFixture)
     const live = ScoringSession.start(memoryStore(), 'g1', initial, {
       requireCurrentSetup: true
     })
@@ -792,7 +805,7 @@ describe('scoring screen field wiring', function () {
   })
   for (const problem of ['partial', 'defense'] as const)
     it(`resolves reopened pending play with ${problem} setup, then blocks the next action`, async function () {
-      const initial = createDevelopmentSession(gameFixture, [], [])
+      const initial = scoringSession(gameFixture)
       if (problem === 'partial')
         initial.liveData.boxscore.teams.away.battingOrder.pop()
       else initial.liveData.boxscore.teams.home.defense.C = null
@@ -871,7 +884,7 @@ describe('scoring screen field wiring', function () {
     })
   for (const problem of ['defense', 'lineup'] as const)
     it(`repairs ${problem} setup after reopening an automatically closed third out`, async function () {
-      const initial = createDevelopmentSession(gameFixture, [], [])
+      const initial = scoringSession(gameFixture)
       const away = initial.liveData.boxscore.teams.away
       const home = initial.liveData.boxscore.teams.home
       const catcher = away.defense.C!
@@ -963,7 +976,7 @@ describe('scoring screen field wiring', function () {
       expect(live.state.liveData.linescore.balls).equals(1)
     })
   it('saves only the completed prior-half dictated prefix before newly current lineup acceptance', async function () {
-    const initial = createDevelopmentSession(gameFixture, [], [])
+    const initial = scoringSession(gameFixture)
     initial.liveData.boxscore.teams.home.battingOrder.pop()
     const store = memoryStore()
     const session = ScoringSession.start(store, 'g1', initial, {
@@ -1001,7 +1014,7 @@ describe('scoring screen field wiring', function () {
   })
   for (const problem of ['partial', 'defense'] as const)
     it(`locks resting runner entry while ${problem} setup is incomplete`, async function () {
-      const initial = createDevelopmentSession(gameFixture, [], [])
+      const initial = scoringSession(gameFixture)
       if (problem === 'partial')
         initial.liveData.boxscore.teams.away.battingOrder.pop()
       else initial.liveData.boxscore.teams.home.defense.C = null
@@ -1022,7 +1035,7 @@ describe('scoring screen field wiring', function () {
       }
     })
   it('refuses the same-index peer replacement of the originally unresolved play without writing', async function () {
-    const initial = createDevelopmentSession(gameFixture, [], [])
+    const initial = scoringSession(gameFixture)
     const store = memoryStore()
     const context = {
       gamePk: 'g1',
@@ -1067,7 +1080,7 @@ describe('scoring screen field wiring', function () {
     ).equals(true)
   })
   it('offers safe setup for an old unresolved partial-defense play without writing when the picker opens', async function () {
-    const initial = createDevelopmentSession(gameFixture, [], [])
+    const initial = scoringSession(gameFixture)
     const setup = setupOf(initial)
     setup.sides.home.defense.C = null
     const before = applyAction(initial, {
@@ -1110,7 +1123,7 @@ describe('scoring screen field wiring', function () {
     expect(live.state.liveData.plays.allPlays).has.length(0)
   })
   it('does not mutate a peer-started active play after a picker refresh', async function () {
-    const initial = createDevelopmentSession(gameFixture, [], [])
+    const initial = scoringSession(gameFixture)
     const store = memoryStore()
     const context = {
       gamePk: 'g1',
@@ -1143,7 +1156,7 @@ describe('scoring screen field wiring', function () {
     )
   })
   it('gates the actual dictated callback until a partial current lineup is accepted', async function () {
-    const initial = createDevelopmentSession(gameFixture, [], [])
+    const initial = scoringSession(gameFixture)
     initial.liveData.boxscore.teams.away.battingOrder.pop()
     await mount({
       open: async () => ScoringSession.start(memoryStore(), 'g1', initial)
@@ -1160,7 +1173,7 @@ describe('scoring screen field wiring', function () {
   })
   for (const route of ['lineup', 'defender', 'placeholder'] as const)
     it(`preserves another scorer's saved pitches through ${route} setup`, async function () {
-      const initial = createDevelopmentSession(gameFixture, [], [])
+      const initial = scoringSession(gameFixture)
       initial.liveData.boxscore.teams.away.battingOrder.pop()
       if (route === 'placeholder') {
         const home = initial.liveData.boxscore.teams.home
@@ -1244,7 +1257,7 @@ describe('scoring screen field wiring', function () {
         expect(saved.state.liveData.boxscore.teams.home.players).has.length(10)
     })
   it('revalidates the defending side when a peer changes halves while the picker is open', async function () {
-    const initial = createDevelopmentSession(gameFixture, [], [])
+    const initial = scoringSession(gameFixture)
     const context = {
       gamePk: 'g1',
       teams: initial.gameData.teams,
@@ -1347,7 +1360,11 @@ describe('scoring screen field wiring', function () {
 
   it('keeps a pitch description when a deferred batting-team roster change is the newest Undo action', async () => {
     const source = new DevelopmentScoringSource()
-    const original = await source.open(gameFixture, [], [])
+    const original = await source.open(
+      gameFixture,
+      scoringRoster(1),
+      scoringRoster(10)
+    )
     original.apply({ type: 'pitch', call: 'B' })
     const setup = setupOf(original.state)
     const defense = setup.sides.away.defense
@@ -1381,7 +1398,11 @@ describe('scoring screen field wiring', function () {
 
   it('tags the visible resumed ball rather than the stored unfinished in-play pitch', async () => {
     const source = new DevelopmentScoringSource()
-    const original = await source.open(gameFixture, [], [])
+    const original = await source.open(
+      gameFixture,
+      scoringRoster(1),
+      scoringRoster(10)
+    )
     original.apply({ type: 'pitch', call: 'B' })
     original.apply({
       type: 'ballInPlay',
@@ -2212,7 +2233,7 @@ describe('scoring screen field wiring', function () {
   })
   it('assigns current defense from the field, reuses placeholder quantity and dismisses complete warnings', async function () {
     this.timeout(10000)
-    const session = createDevelopmentSession(gameFixture, [], [])
+    const session = scoringSession(gameFixture)
     const home = session.liveData.boxscore.teams.home
     home.players = home.players.slice(0, 8)
     home.battingOrder = [...home.players]
@@ -2303,7 +2324,7 @@ describe('scoring screen field wiring', function () {
       // Each case waits out the notice's settle twice; on a loaded machine
       // that is slow, not wrong.
       this.timeout(30000)
-      const session = createDevelopmentSession(gameFixture, [], [])
+      const session = scoringSession(gameFixture)
       if (cover !== 'runner error reuse')
         for (const slot of POSITIONS)
           session.liveData.boxscore.teams.home.defense[slot] = null
@@ -2350,7 +2371,11 @@ describe('scoring screen field wiring', function () {
       // The tag history needs a source that saves tags, and a pitch to show.
       const tagging = new DevelopmentScoringSource()
       if (cover === 'tag history') {
-        const game = await tagging.open(gameFixture, [], [])
+        const game = await tagging.open(
+          gameFixture,
+          scoringRoster(1),
+          scoringRoster(10)
+        )
         game.apply({ type: 'pitch', call: 'B' })
         await game.flush()
       }
@@ -2365,7 +2390,7 @@ describe('scoring screen field wiring', function () {
         {
           [gameFixture.awayTeamId]: [
             asRosterEntry({
-              userId: 101,
+              userId: 1,
               shortName: 'Mike T',
               jersey: '7',
               positions: [],
@@ -2386,8 +2411,10 @@ describe('scoring screen field wiring', function () {
                 startMs: 10000,
                 endMs: 25000
               }
-            })
-          ]
+            }),
+            ...scoringRoster(1).slice(1)
+          ],
+          [gameFixture.homeTeamId]: scoringRoster(10)
         },
         {
           music: phone,
@@ -2508,7 +2535,7 @@ describe('scoring screen field wiring', function () {
   for (const persistent of [false, true])
     it(`creates named and placeholder bench players through the same picker and persists them (${persistent})`, async function () {
       this.timeout(10000)
-      const initial = createDevelopmentSession(gameFixture, [], [])
+      const initial = scoringSession(gameFixture)
       initial.liveData.boxscore.teams.home.defense.P = null
       const store = memoryStore()
       const live = persistent
@@ -2609,7 +2636,7 @@ describe('scoring screen field wiring', function () {
     })
 
   it('keeps player entry recoverable after a failed refresh and retries without duplicating', async function () {
-    const initial = createDevelopmentSession(gameFixture, [], [])
+    const initial = scoringSession(gameFixture)
     const store = memoryStore()
     const load = store.load
     let fail = false
@@ -2671,7 +2698,7 @@ describe('scoring screen field wiring', function () {
   })
 
   it('keeps a completed game out of defensive setup', async function () {
-    const initial = createDevelopmentSession(gameFixture, [], [])
+    const initial = scoringSession(gameFixture)
     const live = ScoringSession.start(memoryStore(), 'g1', initial)
     expect(
       live.apply({ type: 'gameFlow', kind: 'endGame' }).problems
@@ -2690,7 +2717,7 @@ describe('scoring screen field wiring', function () {
 
   for (const change of ['half', 'active', 'read-only', 'final'] as const)
     it(`blocks player creation when a peer makes the game ${change}`, async function () {
-      const initial = createDevelopmentSession(gameFixture, [], [])
+      const initial = scoringSession(gameFixture)
       const context = {
         gamePk: 'g1',
         teams: initial.gameData.teams,
@@ -2756,7 +2783,7 @@ describe('scoring screen field wiring', function () {
     })
 
   it('shows zero and partial current batting warnings with accurate routes, acceptance and guards', async function () {
-    const session = createDevelopmentSession(gameFixture, [], [])
+    const session = scoringSession(gameFixture)
     session.liveData.boxscore.teams.away.battingOrder = []
     const prepared = freshGame(
       session.gamePk,
