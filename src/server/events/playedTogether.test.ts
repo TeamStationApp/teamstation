@@ -17,7 +17,7 @@ describe('co-appearance with expanded stat rows', function () {
           id: `gps_${i}`,
           game_id: 'gam_demo',
           team_id: 'tem_home',
-          user_id: id,
+          gumbo_id: id,
           pa: i === 0 ? 1 : 0,
           pitch_outs: i === 1 ? 1 : 0,
           extra: JSON.stringify({ ...emptyStatExtras(), appeared: true })

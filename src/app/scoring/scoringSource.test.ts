@@ -43,6 +43,7 @@ const roster = (first: number): RosterEntry[] =>
   Array.from({ length: 9 }, (_, i) =>
     asRosterEntry({
       userId: first + i,
+      gumboId: first + i,
       shortName: `Player ${first + i}`,
       jersey: String(i + 1),
       positions: [],
@@ -56,7 +57,7 @@ const roster = (first: number): RosterEntry[] =>
 const away = roster(101)
 const home = roster(201)
 const person = (userId: number): LineupPerson => ({
-  userId,
+  gumboId: userId,
   name: `Player ${userId}`,
   jersey: ''
 })
@@ -95,7 +96,7 @@ function client(
 }
 const order = (session: ScoringSession, side: 'away' | 'home'): unknown[] =>
   session.state.liveData.boxscore.teams[side].battingOrder.map(
-    id => session.state.gameData.players[id].userId
+    id => session.state.gameData.players[id].id
   )
 
 describe('the server scoring source with default lineups (U12)', function () {
@@ -139,6 +140,7 @@ describe('the server scoring source with default lineups (U12)', function () {
     const guest = asRosterEntry({
       ...away[0],
       userId: 901,
+      gumboId: 901,
       shortName: 'Babe Ruth'
     })
     const current = {
@@ -205,7 +207,7 @@ describe('the server scoring source with default lineups (U12)', function () {
       201, 202, 203, 204, 205, 206, 207, 208, 209
     ])
     const pitcher = session.state.liveData.boxscore.teams.away.defense.P
-    expect(session.state.gameData.players[pitcher!].userId).equals(101)
+    expect(session.state.gameData.players[pitcher!].id).equals(101)
   })
 
   it('starts a side from its roster when its default fails to load', async function () {

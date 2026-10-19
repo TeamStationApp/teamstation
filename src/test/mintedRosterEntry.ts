@@ -17,6 +17,7 @@ export function mintedRosterEntry(
     .join(' ')
   return {
     userId,
+    gumboId: userId,
     shortName: shortName({
       id: userId,
       firstName: player.firstName,

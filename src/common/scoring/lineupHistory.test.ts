@@ -40,9 +40,15 @@ const TEAMS = {
 const roster = (
   first: number,
   count: number
-): Array<{ userId: number; shortName: string; jersey: string }> =>
+): Array<{
+  userId: number
+  gumboId: number
+  shortName: string
+  jersey: string
+}> =>
   Array.from({ length: count }, (_, i) => ({
     userId: first + i,
+    gumboId: first + i,
     shortName: `Player ${first + i}`,
     jersey: String(i + 1)
   }))
@@ -113,7 +119,7 @@ async function scored(
 }
 
 const users = (lineup: Lineup | null): Array<number | string | null> =>
-  lineup?.batters.map(person => person.userId ?? person.name) ?? []
+  lineup?.batters.map(person => person.gumboId ?? person.name) ?? []
 const summary = (change: LineupChange): string =>
   [
     change.atBatIndex,
@@ -121,8 +127,8 @@ const summary = (change: LineupChange): string =>
     change.eventType,
     change.position,
     change.battingOrder,
-    change.player.userId ?? change.player.name,
-    change.replaced?.userId ?? change.replaced?.name ?? '-'
+    change.player.gumboId ?? change.player.name,
+    change.replaced?.gumboId ?? change.replaced?.name ?? '-'
   ].join(' ')
 
 describe('lineup history (U9)', function () {
@@ -150,7 +156,7 @@ describe('lineup history (U9)', function () {
     expect(users(read.sides.away.current)).deep.equals([
       102, 101, 103, 104, 105, 106, 107, 108, 109
     ])
-    expect(read.sides.home.current?.defense.P?.userId).equals(205)
+    expect(read.sides.home.current?.defense.P?.gumboId).equals(205)
     expect(read.sides.home.current?.defense.SS).equals(null)
 
     session.apply(ball)
@@ -161,7 +167,7 @@ describe('lineup history (U9)', function () {
       102, 101, 103, 104, 105, 106, 107, 108, 109
     ])
     expect(read.sides.home.start?.defense.P).deep.equals({
-      userId: 205,
+      gumboId: 205,
       name: 'Player 205',
       jersey: '5'
     })
@@ -193,7 +199,7 @@ describe('lineup history (U9)', function () {
     const [change] = sides.away.changes
     expect(change).deep.include({ inning: 1, half: 'top' })
     expect(change.player).deep.equals({
-      userId: 110,
+      gumboId: 110,
       name: 'Player 110',
       jersey: '10'
     })
@@ -299,7 +305,7 @@ describe('lineup history (U9)', function () {
     const { session, kept } = await scored([ball, swap])
     let sides = lineupHistory(kept.game, context)
     // The side at bat moved its fielders: current at once, announced later.
-    expect(sides.away.current?.defense.P?.userId).equals(106)
+    expect(sides.away.current?.defense.P?.gumboId).equals(106)
     expect(sides.away.changes).deep.equals([])
     for (const action of [...K, ...K, ...K, ball])
       expect(session.apply(action).problems).deep.equals([])
@@ -330,7 +336,7 @@ describe('lineup history (U9)', function () {
     expect(sides.home.changes.map(summary)).deep.equals([
       '3 home ts_batting_order   202 -'
     ])
-    expect(sides.home.current?.defense.P?.userId).equals(209)
+    expect(sides.home.current?.defense.P?.gumboId).equals(209)
     expect(users(sides.home.current).slice(0, 2)).deep.equals([202, 201])
   })
 
@@ -445,7 +451,7 @@ describe('lineup history (U9)', function () {
 
   it('compares arrangements by user id, and placeholders by name', function () {
     const person = (userId: number | null, name: string): LineupPerson => ({
-      userId,
+      gumboId: userId,
       name,
       jersey: ''
     })
@@ -492,11 +498,11 @@ describe('lineup history (U9)', function () {
     }
     const lineup = lineupOf(lineups, 'home', made.players)
     expect(lineup.batters[0]).deep.equals({
-      userId: 201,
+      gumboId: 201,
       name: 'Player 201',
       jersey: '1'
     })
-    expect(lineup.defense.RF?.userId).equals(209)
+    expect(lineup.defense.RF?.gumboId).equals(209)
     // A session id the game does not know is nobody in particular.
     expect(
       lineupOf(
@@ -504,7 +510,7 @@ describe('lineup history (U9)', function () {
         'home',
         made.players
       ).batters
-    ).deep.equals([{ userId: null, name: '', jersey: '' }])
+    ).deep.equals([{ gumboId: null, name: '', jersey: '' }])
     expect(lineupsOf).a('function')
   })
 })

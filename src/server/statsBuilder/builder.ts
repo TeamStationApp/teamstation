@@ -157,11 +157,11 @@ export async function buildNext(
       const knownUsers = new Set<number>()
       if (named.length > 0) {
         const users = await trx
-          .selectFrom('users')
-          .select('id')
-          .where('id', 'in', named)
+          .selectFrom('gumbo_ids')
+          .select('gumbo_id')
+          .where('gumbo_id', 'in', named)
           .execute()
-        for (const user of users) knownUsers.add(Number(user.id))
+        for (const user of users) knownUsers.add(user.gumbo_id)
       }
 
       if (afterRead != null) {
@@ -213,7 +213,7 @@ export async function buildNext(
           .values({
             id: makeId('gamePlayerStats'),
             game_id: gameId,
-            user_id: line.userId,
+            gumbo_id: line.gumboId,
             team_id: line.teamId,
             pa: line.pa,
             ab: line.ab,

@@ -20,6 +20,7 @@ const entry = (
 ): ReturnType<typeof asRosterEntry> =>
   asRosterEntry({
     userId: id,
+    gumboId: id,
     shortName: `${firstName} ${lastName[0]}`,
     nameDetails: {
       firstName,

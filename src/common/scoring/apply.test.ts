@@ -425,7 +425,7 @@ describe('applying lineup changes', function () {
     const kid = state.liveData.boxscore.teams.home.players.at(-1)!
     expect(state.gameData.players[kid]).includes({
       fullName: 'New Kid',
-      userId: 19,
+      id: 19,
       local: true,
       jersey: '42'
     })
