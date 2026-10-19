@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
+import { makeId } from '../../common/ids'
 import { asNewRosterPlayer } from '../../common/playerSettings'
 import { currentDocumentOf } from '../../common/scoring/document'
 import { setupOf } from '../../common/scoring/state'
@@ -198,6 +199,16 @@ describe('persistent game guests', function () {
         await createGuestPlayer(db, actor, 'gam_guests', 'away', player),
       'conflict'
     )
+    await db
+      .insertInto('users')
+      .values(
+        Array.from({ length: 18 }, (_, index) => ({
+          id: index + 1,
+          legacyId: makeId('user'),
+          display_name: `Player ${index + 1}`
+        }))
+      )
+      .execute()
     const state = fixture()
     const action = {
       type: 'ballInPlay' as const,
