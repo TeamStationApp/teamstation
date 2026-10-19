@@ -1,5 +1,12 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import {
+  chmod,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,7 +18,7 @@ import { after, before, describe, it } from 'mocha'
 import { serverConfig } from '../serverConfig'
 import { ffmpegEncoders, probeFfmpeg, remuxToHls } from './ffmpeg'
 import { clearFragmentCache } from './spaceFrames'
-import { ensureStill, stillInSpace } from './stills'
+import { ensureStill, MAX_CONCURRENT_CUTS, stillInSpace } from './stills'
 
 const run = promisify(execFile)
 
@@ -177,6 +184,40 @@ describe('a still from the Space', function () {
     expect(there?.equals(here ?? Buffer.alloc(0))).equals(true)
     expect(await stillInSpace(space, 'vid_there', atSec)).equals(true)
     expect(await stillInSpace(space, 'vid_there', 21)).equals(false)
+  })
+
+  it('cuts no more than a few stills at once, however many are asked for together', async function () {
+    // FFmpeg behind a stand-in that notes when each run starts and ends.
+    const log = join(workDir, 'cuts.log')
+    const wrapper = join(workDir, 'ffmpeg-counted.sh')
+    await writeFile(
+      wrapper,
+      `#!/bin/sh\necho start >> '${log}'\n'${ffmpegPath}' "$@"\nrc=$?\necho end >> '${log}'\nexit $rc\n`
+    )
+    await chmod(wrapper, 0o755)
+    const seconds = [3, 6, 9, 12, 15, 18, 21, 24]
+    const keys = await Promise.all(
+      seconds.map(
+        async atSec =>
+          await ensureStill({
+            ffmpegPath: wrapper,
+            source: { kind: 'file', path: join(workDir, 'video.mp4') },
+            space,
+            videoId: 'vid_many',
+            atSec
+          })
+      )
+    )
+    expect(keys).deep.equals(
+      seconds.map(atSec => `videos/vid_many/stills/${String(atSec)}.jpg`)
+    )
+    let running = 0
+    let most = 0
+    for (const line of (await readFile(log, 'utf8')).trim().split('\n')) {
+      running += line === 'start' ? 1 : -1
+      most = Math.max(most, running)
+    }
+    expect(most, 'at once').equals(MAX_CONCURRENT_CUTS)
   })
 
   it('cuts a still once: the next ask finds it in the Space', async function () {
