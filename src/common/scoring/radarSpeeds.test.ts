@@ -26,7 +26,7 @@ function pitch(kind = 'B'): any {
   const hit = kind === 'hit' || kind === 'caught'
   return {
     teamStation: {
-      version: 1,
+      version: 2,
       setupBefore: setupOf(game()),
       actions: hit
         ? [{ type: 'ballInPlay', contact: 'swing' }]

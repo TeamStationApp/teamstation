@@ -589,7 +589,7 @@ describe('Coach Game (U25)', function () {
         open: async () => {
           // Number 2 is up to bat; the runner comes off the coach's bench.
           const game = copyState(gameUnderWay())
-          addDevelopmentPlayer(game, 'away', 'Owl 10', '10')
+          addDevelopmentPlayer(game, 'away', 9000000, 'Owl 10', '10')
           return ScoringSession.start(memoryStore(), 'g1', game)
         }
       },
@@ -748,6 +748,26 @@ describe('Coach Game (U25)', function () {
       gameId: 'g1',
       tab: 'boxScore'
     })
+  })
+
+  it('waits for a persisted game guest before adding it to the coach draft', async () => {
+    const held = server()
+    const requests: unknown[] = []
+    held.client.createGuestPlayer = async (gameId, side, player) => {
+      requests.push({ gameId, side, player })
+      return { ...roster('home')[0], userId: 9000001, shortName: 'Hawks A' }
+    }
+    await coach(held)
+    await click('Create Player')
+    await click('Create Placeholder Player')
+    await click('Create')
+    expect(requests).has.length(1)
+    expect(requests[0]).includes({ gameId: 'g1', side: 'home' })
+    expect(document.body.textContent).includes('Hawks A')
+    held.client.gameLineups = async () => lineups('mine', true)
+    await click('Save Rosters')
+    await waitFor(() => held.saved.length === 1, 'the saved guest')
+    expect(held.saved[0].players.map(player => player.userId)).includes(9000001)
   })
 
   it('creates a team roster player from the coach form', async () => {
@@ -1010,7 +1030,7 @@ describe('a coach’s lineup save', function () {
 
   it('lists each side’s batting order by who bats, for the box score', function () {
     const draft = copyState(game)
-    const made = addDevelopmentPlayer(draft, 'home', 'Made Up')
+    const made = addDevelopmentPlayer(draft, 'home', 9000000, 'Made Up')
     draft.liveData.boxscore.teams.home.battingOrder.push(made)
     const orders = battingOrders(draft)
     expect(orders.away!.map(batter => batter.userId)).deep.equals([
@@ -1018,7 +1038,10 @@ describe('a coach’s lineup save', function () {
     ])
     expect(orders.away![0]).deep.equals({ userId: 101, shortName: 'Owl 1' })
     expect(orders.home).has.length(10)
-    expect(orders.home![9]).deep.equals({ userId: null, shortName: 'Made Up' })
+    expect(orders.home![9]).deep.equals({
+      userId: 9000000,
+      shortName: 'Made Up'
+    })
     // One side's alone.
     expect(Object.keys(battingOrders(draft, ['home']))).deep.equals(['home'])
   })

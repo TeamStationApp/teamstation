@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import { PerspectiveCamera, Vector3 } from 'three'
 
-import { createDevelopmentSession } from '../scoring/developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from '../scoring/scoringMachine'
 import { PITCH_TIMING, pitchPresentation } from '../scoring/scoringPresentation'
@@ -10,7 +10,7 @@ import { applyFieldCamera } from './cameraModel'
 import { sampleHit, samplePitch, sampleThrow } from './playAnimationModel'
 
 const initial = (): ReturnType<typeof initialScoringState> =>
-  initialScoringState(createDevelopmentSession(gameFixture, [], []), true)
+  initialScoringState(scoringSession(gameFixture), true)
 describe('defender speed and perspective foul flight', function () {
   for (const distance of [12, 90])
     it(`finishes ${distance}-unit fielding travel from contact at eighty percent of catching speed`, function () {

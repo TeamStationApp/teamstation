@@ -111,7 +111,7 @@ function reasons(play: GumboPlay): string[] {
   )
 }
 
-/** Rostered, so every player is named by a user id: runner n is 100 + n. */
+/** Rostered, so every player is named by a user id: runner n retains identity n. */
 function rostered(): GameState {
   const setup = newSetup(
     {
@@ -120,11 +120,11 @@ function rostered(): GameState {
     },
     {
       away: Array.from({ length: 9 }, (_, i) => ({
-        userId: 101 + i,
+        userId: 1 + i,
         shortName: `Away ${i + 1}`
       })),
       home: Array.from({ length: 9 }, (_, i) => ({
-        userId: 201 + i,
+        userId: 10 + i,
         shortName: `Home ${i + 1}`
       }))
     }
@@ -432,12 +432,12 @@ describe('the stored runner document (U8)', function () {
   it('charges the scoring runners and the batter who walked to a pitcher, by user id', function () {
     let state = walk(rostered())
     const walked = runnersOf(stored(state, true))
-    expect(walked[0].details.responsiblePitcher).deep.equals({ id: 201 })
+    expect(walked[0].details.responsiblePitcher).deep.equals({ id: 10 })
     state = after(state, ...hit('double'), move(1, 'home'))
     const runners = runnersOf(stored(state))
     const scorer = runners.find(r => r.movement.end === 'score')!
     expect(scorer.details).deep.includes({
-      responsiblePitcher: { id: 201 },
+      responsiblePitcher: { id: 10 },
       isScoringEvent: true,
       earned: true,
       teamUnearned: false,
@@ -466,7 +466,7 @@ describe('the stored runner document (U8)', function () {
     )[0]
     expect(blank.credits[0]).not.to.have.property('position')
     expect(blank.credits[0]).deep.equals({
-      player: { id: 205, fullName: 'Home 5' },
+      player: { id: 14, fullName: 'Home 5' },
       credit: 'f_assist'
     })
   })
@@ -1059,7 +1059,7 @@ describe('action events (U12)', function () {
         description: 'Away 9 is placed on base.',
         isBaseRunningPlay: false,
         // The runner placed, not the pitcher.
-        player: { id: 109, fullName: 'Away 9' }
+        player: { id: 9, fullName: 'Away 9' }
       }
     ]
     for (const expected of cases) {
@@ -1176,7 +1176,7 @@ describe('action events (U12)', function () {
       'Balk by Home 1. Away 1 to 3rd.'
     ])
     expect(play.matchup).not.deep.include({
-      pitcher: { id: 201, fullName: 'Home 1' }
+      pitcher: { id: 10, fullName: 'Home 1' }
     })
   })
 
@@ -1391,12 +1391,7 @@ describe('hit data (U17)', function () {
       after(
         fenceDistanceFt == null
           ? game()
-          : freshGame(
-              'g1',
-              TEAMS,
-              newSetup(TEAMS, { away: [], home: [] }),
-              fenceDistanceFt
-            ),
+          : freshGame('g1', TEAMS, setupOf(game()), fenceDistanceFt),
         ball,
         { type: 'ballInPlay', contact: 'swing', ...ballInPlay },
         {
@@ -1830,6 +1825,7 @@ describe('substitutions (U19)', function () {
     after(state, {
       type: 'lineup',
       kind: 'addPlayer',
+      player: side === 'away' ? 19 : 20,
       side,
       name: `${side === 'away' ? 'Away' : 'Home'} Bench`
     })
@@ -1897,8 +1893,8 @@ describe('substitutions (U19)', function () {
     }
     // The pinch hitter bats in his man's place, in the count he left.
     expect(stored(subbed).matchup).deep.include({
-      batter: { fullName: 'Away Bench' },
-      pitcher: { fullName: 'Home Bench' }
+      batter: { id: 19, fullName: 'Away Bench' },
+      pitcher: { id: 20, fullName: 'Home Bench' }
     })
     expect(stored(subbed).count).deep.include({ balls: 1, strikes: 0 })
     // Only the pinch hitter and the switch carry his place and his man.
@@ -1915,7 +1911,7 @@ describe('substitutions (U19)', function () {
       abbreviation: 'PH'
     })
     expect(got.get('offensive_substitution')!.replacedPlayer).deep.equals({
-      id: 102,
+      id: 2,
       fullName: 'Away 2'
     })
     // As the feed's McKinstry: the pinch hitter's place, and the man at third.
@@ -1980,7 +1976,7 @@ describe('substitutions (U19)', function () {
     )
     expect(said(stored(stepwise))).deep.equals(expected)
     expect(stored(stepwise).matchup).deep.include({
-      pitcher: { id: 205, fullName: 'Home 5' }
+      pitcher: { id: 14, fullName: 'Home 5' }
     })
   })
 
@@ -2000,7 +1996,13 @@ describe('substitutions (U19)', function () {
       roster(benched(), setup => {
         setup.sides.away.battingOrder[1] = 19
       }),
-      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Away Two' },
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        player: 21,
+        side: 'away',
+        name: 'Away Two'
+      },
       {
         type: 'lineup',
         kind: 'substitute',
@@ -2013,7 +2015,7 @@ describe('substitutions (U19)', function () {
       substitutions(stored(twice)).map(event => event.battingOrder)
     ).deep.equals(['201', '202'])
     expect(stored(twice).matchup).deep.include({
-      batter: { fullName: 'Away Two' }
+      batter: { id: 21, fullName: 'Away Two' }
     })
   })
 
@@ -2035,7 +2037,7 @@ describe('substitutions (U19)', function () {
       event: 'Batting Order Change',
       description: 'Batting order change: Away 4 bats 3rd, Away 3 bats 4th.'
     })
-    expect(event.player).deep.equals({ id: 104, fullName: 'Away 4' })
+    expect(event.player).deep.equals({ id: 4, fullName: 'Away 4' })
     expect(STORED_EVENT_TYPES.has('ts_batting_order')).equals(true)
   })
 
@@ -2117,7 +2119,7 @@ describe('substitutions (U19)', function () {
     ])
     expect(runnersOf(bottom)[0].details.playIndex).equals(5)
     expect(bottom.matchup).deep.include({
-      pitcher: { id: 105, fullName: 'Away 5' }
+      pitcher: { id: 5, fullName: 'Away 5' }
     })
     // Only the first play of the half writes them.
     expect(said(stored(fanned))).deep.equals([])
@@ -2173,7 +2175,7 @@ describe('substitutions (U19)', function () {
         'defensive_switch SS 100 Away 5: Defensive switch from pitcher to shortstop for Away 1.'
       ])
       expect(stored(fielding).matchup, name).deep.include({
-        pitcher: { fullName: 'Away Bench' }
+        pitcher: { id: 19, fullName: 'Away Bench' }
       })
     }
     // The engine sees Away Bench come in to hit for Away 5, which he never
@@ -2238,7 +2240,13 @@ describe('substitutions (U19)', function () {
     const batting = after(
       benched(),
       away(19, 2),
-      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Away Two' },
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        player: 21,
+        side: 'away',
+        name: 'Away Two'
+      },
       away(21, 8)
     )
     const all = everySaid(toTheField(batting))
@@ -2279,8 +2287,20 @@ describe('a pinch runner who keeps the batting order (U4)', function () {
   const walked = (): GameState =>
     after(
       walk(rostered()),
-      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Away Bench' },
-      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Away Two' }
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        player: 19,
+        side: 'away',
+        name: 'Away Bench'
+      },
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        player: 20,
+        side: 'away',
+        name: 'Away Two'
+      }
     )
   const courtesy: ScoringAction = {
     type: 'lineup',
@@ -2316,7 +2336,7 @@ describe('a pinch runner who keeps the batting order (U4)', function () {
       isPitch: false,
       type: 'action',
       count: { balls: 0, strikes: 0, outs: 0 },
-      replacedPlayer: { id: 101, fullName: 'Away 1' },
+      replacedPlayer: { id: 1, fullName: 'Away 1' },
       startTime: null,
       endTime: null
     })
@@ -2406,9 +2426,9 @@ describe('the matchup', function () {
       pitchHand: { code: 'L', description: 'Left' }
     })
     expect(stored(rostered()).matchup).deep.equals({
-      batter: { id: 101, fullName: 'Away 1' },
+      batter: { id: 1, fullName: 'Away 1' },
       batSide: { code: 'R', description: 'Right' },
-      pitcher: { id: 201, fullName: 'Home 1' }
+      pitcher: { id: 10, fullName: 'Home 1' }
     })
   })
 })
@@ -2420,7 +2440,13 @@ describe('folding a whole game', function () {
     const K = [strike, strike, strike, close]
     const state = after(
       game(),
-      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Away Bench' },
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        player: 19,
+        side: 'away',
+        name: 'Away Bench'
+      },
       ball,
       {
         type: 'lineup',

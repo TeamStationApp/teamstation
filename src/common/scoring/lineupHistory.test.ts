@@ -95,7 +95,7 @@ const strike: ScoringAction = { type: 'pitch', call: 'C' }
 const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
 const K = [strike, strike, strike, close]
 const single: ScoringAction[] = [
-  { type: 'ballInPlay', contact: 'swing', fielder: 18 },
+  { type: 'ballInPlay', contact: 'swing', fielder: 208 },
   { type: 'result', eventType: 'single' }
 ]
 
@@ -132,13 +132,13 @@ describe('lineup history (U9)', function () {
         type: 'lineup',
         kind: 'battingOrder',
         side: 'away',
-        order: [2, 1, 3, 4, 5, 6, 7, 8, 9]
+        order: [102, 101, 103, 104, 105, 106, 107, 108, 109]
       },
       {
         type: 'lineup',
         kind: 'position',
         side: 'home',
-        player: 15,
+        player: 205,
         position: 'P'
       }
     ])
@@ -181,8 +181,8 @@ describe('lineup history (U9)', function () {
         type: 'lineup',
         kind: 'substitute',
         side: 'away',
-        player: 10,
-        replaces: 2
+        player: 110,
+        replaces: 102
       }
     ])
     const sides = lineupHistory(kept.game, context)
@@ -207,6 +207,7 @@ describe('lineup history (U9)', function () {
     const bench: ScoringAction = {
       type: 'lineup',
       kind: 'addPlayer',
+      player: 9000000,
       side: 'away',
       name: 'Away Bench',
       jersey: '44'
@@ -218,12 +219,12 @@ describe('lineup history (U9)', function () {
         type: 'lineup',
         kind: 'substitute',
         side: 'away',
-        player: 20,
-        replaces: 3
+        player: 9000000,
+        replaces: 103
       }
     ])
     let sides = lineupHistory(early.kept.game, context)
-    expect(users(sides.away.current)[2]).equals('Away Bench')
+    expect(users(sides.away.current)[2]).equals(9000000)
     expect(sides.away.current?.batters[2].jersey).equals('44')
     expect(sides.away.changes).deep.equals([])
     // The next batter up is not him: still nothing announced.
@@ -237,7 +238,7 @@ describe('lineup history (U9)', function () {
     await early.session.flush()
     sides = lineupHistory(early.kept.game, context)
     expect(sides.away.changes.map(summary)).deep.equals([
-      '2 away offensive_substitution PH 301 Away Bench 103'
+      '2 away offensive_substitution PH 301 9000000 103'
     ])
     expect(sides.away.changes[0].player.jersey).equals('44')
   })
@@ -250,7 +251,7 @@ describe('lineup history (U9)', function () {
         kind: 'pinchRunner',
         side: 'away',
         base: '1B',
-        player: 10
+        player: 110
       }
     ])
     const sides = lineupHistory(kept.game, context)
@@ -268,7 +269,7 @@ describe('lineup history (U9)', function () {
         kind: 'runner',
         side: 'away',
         base: '1B',
-        player: 10
+        player: 110
       },
       ...K
     ])
@@ -292,7 +293,7 @@ describe('lineup history (U9)', function () {
       type: 'lineup',
       kind: 'position',
       side: 'away',
-      player: 6,
+      player: 106,
       position: 'P'
     }
     const { session, kept } = await scored([ball, swap])
@@ -308,14 +309,14 @@ describe('lineup history (U9)', function () {
         type: 'lineup',
         kind: 'position',
         side: 'home',
-        player: 19,
+        player: 209,
         position: 'P'
       },
       {
         type: 'lineup',
         kind: 'battingOrder',
         side: 'home',
-        order: [12, 11, 13, 14, 15, 16, 17, 18, 19]
+        order: [202, 201, 203, 204, 205, 206, 207, 208, 209]
       }
     ] satisfies ScoringAction[])
       expect(session.apply(action).problems, action.kind).deep.equals([])
@@ -340,8 +341,8 @@ describe('lineup history (U9)', function () {
         type: 'lineup',
         kind: 'substitute',
         side: 'away',
-        player: 10,
-        replaces: 2
+        player: 110,
+        replaces: 102
       }
     ])
     session.undo()
@@ -421,7 +422,7 @@ describe('lineup history (U9)', function () {
         kind: 'substitute',
         side: 'away',
         player: 99,
-        replaces: 1
+        replaces: 101
       }
     ]
     let read = readLineups(refused, context)
@@ -625,7 +626,13 @@ describe('a side left unseen', function () {
     }
     const homeMoved = applyAction(held.state, homeCoach)
     expect(homeMoved.problems).deep.equals([])
-    const bench = addPlayer(homeMoved.state, 'home', 'Home Bench', '99')
+    const bench = addPlayer(
+      homeMoved.state,
+      'home',
+      9000000,
+      'Home Bench',
+      '99'
+    )
     const kept = reconcileShownLineup(
       shown,
       [blind, homeCoach],
