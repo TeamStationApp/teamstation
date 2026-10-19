@@ -13,7 +13,14 @@ import {
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { asArray, asObject, asOptional, asString, asUnknown } from 'cleaners'
+import {
+  asArray,
+  asBoolean,
+  asObject,
+  asOptional,
+  asString,
+  asUnknown
+} from 'cleaners'
 
 import {
   appId,
@@ -63,19 +70,28 @@ export const runId = (value: unknown): string => {
   if (!/^[a-f0-9]{32}$/.test(out)) throw new Error('Invalid run ID')
   return out
 }
+const digest = (value: unknown): string => {
+  const out = text(64)(value)
+  if (!/^[a-f0-9]{64}$/.test(out)) throw new Error('Invalid digest')
+  return out
+}
+/** An iOS run's App Store IPA, published to TestFlight after the ad-hoc one. */
+const asStorePackage = object({
+  file: text(256),
+  digest,
+  size: integer(1),
+  published: asOptional(asBoolean)
+})
 const asArtifact = object({
   platform,
   file: text(256),
-  digest: (value: unknown): string => {
-    const out = text(64)(value)
-    if (!/^[a-f0-9]{64}$/.test(out)) throw new Error('Invalid digest')
-    return out
-  },
+  digest,
   size: integer(1),
   buildNumber: integer(1, 2100000000),
   version: text(80),
   published: asOptional(integer(1)),
-  error: asOptional(text(256))
+  error: asOptional(text(256)),
+  testflight: asOptional(asStorePackage)
 })
 export const asRun = object({
   id: runId,
@@ -163,12 +179,12 @@ export class State {
   save(value: unknown): Run {
     const run = asRun(value)
     for (const artifact of run.artifacts)
-      if (
-        path.basename(artifact.file) !== artifact.file ||
-        artifact.file === '.' ||
-        artifact.file === '..'
-      )
-        throw new Error('Invalid artifact filename')
+      for (const file of [artifact.file, artifact.testflight?.file])
+        if (
+          file != null &&
+          (path.basename(file) !== file || file === '.' || file === '..')
+        )
+          throw new Error('Invalid artifact filename')
     this.db
       .prepare(
         'INSERT INTO runs VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data'

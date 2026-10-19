@@ -226,6 +226,48 @@ describe('Explicit encrypted signing import', () => {
       1
     )
   })
+  it('imports an App Store profile as a second appstore import with the same certificate and key', async () => {
+    await importSigning(args(), new AbortController().signal)
+    assert.equal(requests.length, 1)
+    assert.deepEqual(Object.keys(requests[0]).sort(), [
+      'apiKeyFile',
+      'appIds',
+      'branch',
+      'certificate',
+      'gitPrivateKey',
+      'keychain',
+      'privateKey',
+      'profile',
+      'profilesDirectory',
+      'repository',
+      'teamId',
+      'type'
+    ])
+    requests = []
+    writeFileSync(path.join(root, 'appstore.mobileprovision'), 'synthetic', {
+      mode: 0o600
+    })
+    settings.match.imports.ios.appStoreProfile = 'appstore.mobileprovision'
+    save()
+    await importSigning(args(), new AbortController().signal)
+    assert.equal(requests.length, 2)
+    const [adHoc, store] = requests
+    assert.equal(adHoc.type, 'adhoc')
+    assert.equal(adHoc.profile, path.join(root, 'asset.mobileprovision'))
+    assert.equal(adHoc.appStoreProfile, undefined)
+    assert.deepEqual(store, {
+      ...adHoc,
+      type: 'appstore',
+      profile: path.join(root, 'appstore.mobileprovision')
+    })
+    chmodSync(path.join(root, 'appstore.mobileprovision'), 0o644)
+    requests = []
+    await assert.rejects(
+      importSigning(args(), new AbortController().signal),
+      /private regular/
+    )
+    assert.equal(requests.length, 0)
+  })
   it('checks the real pinned Match implementation encrypts/decrypts with authenticated encryption', () => {
     Processes.prototype.run = previous
     const env = { ...process.env, ...bundleEnvironment() }
@@ -317,6 +359,18 @@ describe('Explicit encrypted signing import', () => {
     assert(result.includes('Managed checkout verified'))
     assert.equal(readFileSync(certificate, 'utf8'), encrypted)
     assert.equal(git('-C', checkout, 'status', '--porcelain'), '')
+    // An App Store import takes the same managed path.
+    const request = JSON.parse(readFileSync(requestFile, 'utf8'))
+    writeFileSync(requestFile, JSON.stringify({ ...request, type: 'appstore' }))
+    assert(
+      execFileSync(process.env.DEPLOY_TEST_BUNDLE ?? 'bundle', command, {
+        env,
+        encoding: 'utf8',
+        stdio: 'pipe'
+      }).includes('Managed checkout verified')
+    )
+    assert.equal(git('-C', checkout, 'status', '--porcelain'), '')
+    writeFileSync(requestFile, JSON.stringify(request))
     writeFileSync(certificate, 'changed')
     const refused = spawnSync(
       process.env.DEPLOY_TEST_BUNDLE ?? 'bundle',
