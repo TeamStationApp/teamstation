@@ -213,8 +213,14 @@ export class NativeVideoHandle implements VideoHandle {
     return this.length
   }
 
+  /**
+   * Paused, or failed: a player that has given up is not playing, and a tap
+   * on its picture should play it — which is what has it loaded again — not
+   * pause it. Only a pause is ever *said*, though: a failure sends no
+   * `pause`, so nobody takes it for the viewer's.
+   */
   get paused(): boolean {
-    return this.props.paused
+    return this.props.paused || this.failed
   }
 
   /** What a browser's element calls `ended`: it played to the end. */
@@ -258,9 +264,9 @@ export class NativeVideoHandle implements VideoHandle {
   async play(): Promise<void> {
     this.playerStoppedAt = null
     if (!this.props.paused) {
-      // A failed player still reads as playing, and a press of Play — or a
-      // highlight's — is what has it loaded again: said, so the recovery
-      // hears it.
+      // A failed player was never told to pause, and a press of Play — or a
+      // highlight's, or a tap on its picture — is what has it loaded again:
+      // said, so the recovery hears it.
       if (this.failed) this.emit('play')
       return
     }
@@ -321,8 +327,6 @@ export class NativeVideoHandle implements VideoHandle {
     this.width = data.naturalSize.width
     this.height = data.naturalSize.height
     this.state = 1
-    // A source that has loaded has not failed, or not yet.
-    this.failed = false
     // A fresh source starts where it says it does, and a seek aimed at the
     // *previous* one will never be answered now.
     this.pendingSeekTo = null
@@ -536,6 +540,8 @@ export class NativeVideoHandle implements VideoHandle {
       this.props = { ...this.props, paused: true }
       this.onPropsChange()
     }
+    // A fresh attempt, paused until somebody plays it.
+    this.failed = false
     if (this.clearBeforeReload) this.player?.setSource(undefined)
     // The whole source, not only its address: on Android the buffer and the
     // live offset travel with it, and a bare address put ExoPlayer back on

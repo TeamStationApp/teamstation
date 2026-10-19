@@ -157,13 +157,15 @@ describe('a phone watching a live game whose camera is away', function () {
 
   it('plays on after the server fails it mid-picture, without a tap', async function () {
     const { handle, player, gaveUp } = await watching()
+    const pauses: string[] = []
+    handle.addEventListener('pause', () => pauses.push('pause'))
     // A restarting server answers 502. Media3 fails the source with a minute
     // still in hand, reports the error, and then reports that it is not
     // playing — which is the failure, not the viewer pausing.
     const before = timers.length
     handle.handleError(serverDown)
     handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
-    expect(handle.paused, 'failed, not paused by anybody').equals(false)
+    expect(pauses, 'nobody paused it').deep.equals([])
     expect(timers.length, 'a reload is due').equals(before + 1)
     timers.pop()?.()
     expect(player.loads(), 'the player loaded the stream afresh').equals(1)
@@ -365,7 +367,7 @@ describe('a phone watching a live game whose camera is away', function () {
       error: { code: -11866, localizedDescription: 'Playback Stopped' }
     })
     handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
-    expect(handle.paused, 'failed, not paused').equals(false)
+    expect(handle.paused, 'not playing, so a tap plays it').equals(true)
     // A viewer who will not wait for the recovery presses play.
     await handle.play()
     expect(player.loads(), 'the press loaded the stream again').equals(1)
