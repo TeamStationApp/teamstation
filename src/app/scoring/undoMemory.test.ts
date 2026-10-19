@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { completeMotions } from '../../test/scoringHelpers'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
   copyState,
@@ -84,7 +84,7 @@ function script(
   appearances: number,
   fullCopies?: FullCopyHistory
 ): { state: ScoringState; sizes: Measure[] } {
-  let state = initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  let state = initialScoringState(scoringSession(gameFixture))
   const sizes: Measure[] = []
   for (let appearance = 0; appearance < appearances; appearance++) {
     const pitches =

@@ -4,13 +4,13 @@ import { describe, it } from 'mocha'
 import { baseIds, tiebreakerSetupError } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { copyState } from '../../common/scoring/state'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { recentRunnerIds } from './tiebreaker'
 
 const initial = (): ReturnType<typeof initialScoringState> =>
-  initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  initialScoringState(scoringSession(gameFixture))
 const place = (
   state: ReturnType<typeof initial>,
   playerId: number,

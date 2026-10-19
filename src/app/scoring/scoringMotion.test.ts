@@ -4,17 +4,15 @@ import { describe, it } from 'mocha'
 import React from 'react'
 
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { Player } from '../field/Player'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
 import { playerRef } from './scoringSelectors'
 describe('owned runner animations', function () {
   it('follows every base waypoint, reports once and survives model updates without restarting', async function () {
-    let state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+    let state = initialScoringState(scoringSession(gameFixture))
     state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Home Run' })
     state = scoringReducer(state, {
       type: 'LANDING',
@@ -66,9 +64,7 @@ describe('owned runner animations', function () {
     }
   })
   it('places home arrivals two feet apart, clears departed players and restores the correct dugout side', function () {
-    let state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+    let state = initialScoringState(scoringSession(gameFixture))
     state.session.liveData.linescore.offense.second = playerRef(
       state.session,
       3

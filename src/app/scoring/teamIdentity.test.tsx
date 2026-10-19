@@ -10,11 +10,11 @@ import {
   Vector3
 } from 'three'
 
+import { scoringSession } from '../../test/scoringSession'
 import { Dugout } from '../field/Dugout'
 import { createPlayers } from '../field/fieldModel'
 import { Player } from '../field/Player'
 import { TEAM_COLORS, uniformColor } from '../field/teamUniform'
-import { createDevelopmentSession } from './developmentSession'
 import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -25,9 +25,7 @@ const jersey = (mesh: Mesh): string =>
   `#${(mesh.material as MeshStandardMaterial).color.getHexString()}`
 describe('team identity and dugouts', () => {
   it('keeps team uniforms through half swaps, batter poses, suppression and runner reconstruction', async () => {
-    let state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+    let state = initialScoringState(scoringSession(gameFixture))
     for (const side of ['away', 'home'] as const) {
       const players = fieldPlayersFor(state.session)
       const batter = players.find(p => p.batting === true)!
@@ -147,7 +145,7 @@ describe('team identity and dugouts', () => {
       awayLogoUrl: '/away.png',
       homeLogoUrl: '/home.png'
     }
-    const teams = createDevelopmentSession(game, [], []).gameData.teams
+    const teams = scoringSession(game).gameData.teams
     const renderer = await create(
       <group>
         <Dugout side="away" team={teams.away} />

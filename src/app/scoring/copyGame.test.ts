@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { completeMotions, singleCorrection } from '../../test/scoringHelpers'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
   copyGame,
@@ -32,9 +32,7 @@ function deepFreeze(value: unknown): void {
 
 describe('copying a game for the screen', function () {
   it('copies as copyState does, sharing the finished plays a copy made', function () {
-    let state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+    let state = initialScoringState(scoringSession(gameFixture))
     for (let index = 0; index < 4; index++) state = appearance(state, index)
     const first = copyGame(state.session)
     expect(first).deep.equals(copyState(state.session))
@@ -53,9 +51,7 @@ describe('copying a game for the screen', function () {
   })
 
   it('never changes a finished play the copies share, through play and Undo', function () {
-    let state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+    let state = initialScoringState(scoringSession(gameFixture))
     for (let index = 0; index < 12; index++) {
       state = appearance(state, index)
       // Frozen, a play that anything changed would throw.

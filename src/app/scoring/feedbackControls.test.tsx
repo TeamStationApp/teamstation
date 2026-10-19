@@ -5,9 +5,9 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Mesh } from 'three'
 
+import { scoringSession } from '../../test/scoringSession'
 import { BASES } from '../field/fieldModel'
 import { MoveGuide } from '../field/MoveGuide'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { MoreMenu } from './MoreMenu'
 import { MoreMenu as NativeMore } from './MoreMenu.native'
@@ -18,9 +18,7 @@ import type { ScoringState } from './scoringTypes'
 
 describe('feedback control locking and reversible guides', () => {
   it('rejects every bottom action during an unfinished gesture, motion or decision', () => {
-    const ready = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+    const ready = initialScoringState(scoringSession(gameFixture))
     expect(bottomActionsAllowed(ready)).equals(true)
     for (const state of [
       { ...ready, activeGesture: true },
@@ -58,9 +56,7 @@ describe('feedback control locking and reversible guides', () => {
       const onChoose = (value: unknown): void => {
         chosen.push(value)
       }
-      const state = initialScoringState(
-        createDevelopmentSession(gameFixture, [], [])
-      )
+      const state = initialScoringState(scoringSession(gameFixture))
       const render = async (disabled: boolean): Promise<void> => {
         await act(async () => {
           root.render(

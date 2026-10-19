@@ -242,6 +242,7 @@ describe('the ball in play and the play begun, with the lineup changes the engin
     after(walk(game()), {
       type: 'lineup',
       kind: 'addPlayer',
+      player: 19,
       side: 'home',
       name: 'Reliever'
     })

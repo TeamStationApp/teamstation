@@ -2,9 +2,9 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { BASES } from '../field/fieldModel'
 import { sampleThrow } from '../field/playAnimationModel'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
@@ -20,10 +20,7 @@ function done(state: ScoringState): ScoringState {
   })
 }
 function hit(): ScoringState {
-  let state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], []),
-    true
-  )
+  let state = initialScoringState(scoringSession(gameFixture), true)
   state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Single' })
   state = scoringReducer(state, {
     type: 'FIELDER',
@@ -159,10 +156,7 @@ describe('defensive relay draft', function () {
       )
     })
   it('asks for a thrower when an out has no known batted-ball holder', function () {
-    let state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], []),
-      true
-    )
+    let state = initialScoringState(scoringSession(gameFixture), true)
     state.session.liveData.linescore.offense.first = playerRef(state.session, 2)
     state = scoringReducer(state, {
       type: 'RUNNER_DROP',
@@ -189,9 +183,7 @@ describe('defensive relay draft', function () {
 describe('a relay that forces the lead runner before the batter', function () {
   // Walk the first batter, then the next one grounds to short.
   function grounder(): ScoringState {
-    let state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+    let state = initialScoringState(scoringSession(gameFixture))
     for (let i = 0; i < 4; i++)
       state = completeMotions(
         scoringReducer(state, { type: 'PITCH', kind: 'ball' })

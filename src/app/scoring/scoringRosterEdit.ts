@@ -56,7 +56,7 @@ export function editRosterRows(
     }))
   for (const id of draft.liveData.boxscore.teams[side].players) {
     const player = draft.gameData.players[id]
-    if (player.userId != null) continue
+    if (!player.local || rows.some(row => row.id === id)) continue
     rows.push({
       id,
       navigationTitle: player.fullName,
@@ -69,8 +69,7 @@ export function editRosterRows(
       positions: player.positions
     })
   }
-  // Session ids and account ids are different namespaces. Virtual sort ids
-  // keep a local player's card when its session id equals an account id.
+  // Sort presentation rows without changing their persistent identities.
   rows.sort((a, b) => {
     const difference = a.id - b.id
     return difference !== 0
