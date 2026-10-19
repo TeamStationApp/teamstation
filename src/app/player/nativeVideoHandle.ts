@@ -7,6 +7,7 @@ import type {
   OnVideoAspectRatioData,
   OnVideoErrorData,
   OnVideoTracksData,
+  ReactVideoSource,
   VideoRef
 } from 'react-native-video'
 
@@ -135,6 +136,9 @@ export class NativeVideoHandle implements VideoHandle {
   /** What is playing, kept so a stalled stream can be asked for again. */
   source: string | null = null
 
+  /** The source as the view built it, buffer and live settings included. */
+  sourceConfig: ReactVideoSource | null = null
+
   /**
    * Whether `reload` has to clear the player's source before handing it the
    * same one again. Set by the view on Android.
@@ -158,6 +162,12 @@ export class NativeVideoHandle implements VideoHandle {
    * anything else happens: the buffering report that follows a stall.
    */
   private playerStoppedAt: number | null = null
+
+  /**
+   * Where the footage the player could seek to ends: for a live game, its
+   * newest moment. From the player's progress reports; null until one says.
+   */
+  private seekableEnd: number | null = null
 
   constructor(onPropsChange: () => void, clock: () => number = steadyNow) {
     this.onPropsChange = onPropsChange
@@ -302,7 +312,17 @@ export class NativeVideoHandle implements VideoHandle {
     this.emit('loadedmetadata')
   }
 
+  /** The newest moment the player could seek to, or null while unknown. */
+  get liveEdge(): number | null {
+    return this.seekableEnd
+  }
+
   handleProgress = (data: OnProgressData): void => {
+    // AVPlayer reports the length of its seekable range, which for a game's
+    // playlist starts at its first segment and so ends at the newest one.
+    if (Number.isFinite(data.seekableDuration) && data.seekableDuration > 0) {
+      this.seekableEnd = data.seekableDuration
+    }
     const adopt = shouldAdoptProgress({
       target: this.pendingSeekTo,
       reported: data.currentTime,
@@ -475,7 +495,10 @@ export class NativeVideoHandle implements VideoHandle {
       this.onPropsChange()
     }
     if (this.clearBeforeReload) this.player?.setSource(undefined)
-    this.player?.setSource({ uri: this.source })
+    // The whole source, not only its address: on Android the buffer and the
+    // live offset travel with it, and a bare address put ExoPlayer back on
+    // its defaults after every reload.
+    this.player?.setSource(this.sourceConfig ?? { uri: this.source })
   }
 
   /** A new source: everything known about the last one is now wrong. */
@@ -490,6 +513,7 @@ export class NativeVideoHandle implements VideoHandle {
     this.over = false
     this.buffering = false
     this.playerStoppedAt = null
+    this.seekableEnd = null
   }
 
   /**

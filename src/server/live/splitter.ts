@@ -694,6 +694,27 @@ function ingressUrl(entry: LiveEntry): string {
   return `rtmp://${host}:${port}/${path}`
 }
 
+/**
+ * How much sooner than a whole segment the HLS writer may cut, in seconds.
+ *
+ * FFmpeg cuts at the first keyframe at or after each multiple of
+ * `-hls_time` from the start. Publishers key on their own clocks, and a
+ * keyframe due on a four-second mark can arrive a frame early: the Director
+ * iPad's measured 123.994 s against a 124 s mark. That keyframe is passed over
+ * and the segment runs on to the next one, six seconds in all — and FFmpeg
+ * then raises the playlist's `EXT-X-TARGETDURATION` from 4 to 6 in the middle
+ * of the game, which an HLS playlist must never do. Asking for 3.95 s cuts on
+ * the early keyframe. Re-cut from a real game's own segments: the target
+ * stayed 4 and three segments in 121 came out at two seconds instead of one
+ * at six.
+ */
+export const SPLIT_EARLY_SEC = 0.05
+
+/** The `-hls_time` handed to FFmpeg for a segment length. */
+export function splitSeconds(segmentSeconds: number): number {
+  return Math.max(1, segmentSeconds - SPLIT_EARLY_SEC)
+}
+
 function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
   const base = [
     '-hide_banner',
@@ -786,7 +807,7 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     '-f',
     'hls',
     '-hls_time',
-    String(requireConfig().segmentSeconds),
+    String(splitSeconds(requireConfig().segmentSeconds)),
     '-hls_playlist_type',
     'event',
     '-hls_segment_type',

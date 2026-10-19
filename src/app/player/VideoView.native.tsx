@@ -6,6 +6,7 @@ import Video, {
   ViewType
 } from 'react-native-video'
 
+import { nativeSource } from './nativeSource'
 import { NativeVideoHandle } from './nativeVideoHandle'
 import type { VideoViewProps } from './videoViewProps'
 
@@ -52,7 +53,8 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
     muted = false,
     resizeMode = 'contain',
     opacity = 1,
-    buffer
+    buffer,
+    live = false
   } = props
 
   // A counter, not the props object: the handle owns those and mutates them,
@@ -94,36 +96,29 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
 
   // Android takes its buffer with the source, so the source is built once per
   // address and per setting rather than on every render.
+  // Whether this source was live when it was handed over, kept with it.
+  const liveFor = useRef<{ source: string | null; live: boolean } | null>(null)
+  if (liveFor.current?.source !== source) liveFor.current = { source, live }
+  const liveSource = liveFor.current.live
+
   const aheadSec = buffer?.aheadSec
   const startSec = buffer?.startSec
   const behindSec = buffer?.behindSec
   const heapShare = buffer?.heapShare
   const videoSource = useMemo(
-    () => ({
-      uri: source ?? '',
-      bufferConfig:
-        aheadSec == null ||
-        startSec == null ||
-        behindSec == null ||
-        heapShare == null
-          ? undefined
-          : {
-              // The same number twice keeps it topping up all the time, the
-              // way hls.js does, rather than filling, draining to the lower
-              // mark and filling again.
-              minBufferMs: aheadSec * 1000,
-              maxBufferMs: aheadSec * 1000,
-              bufferForPlaybackMs: startSec * 1000,
-              bufferForPlaybackAfterRebufferMs: startSec * 1000,
-              backBufferDurationMs: behindSec * 1000,
-              // Read only under `DependingOnMemory`, below: the library builds
-              // the buffer to prefer time over size, so without it nothing
-              // but the seconds above stops a player filling the heap.
-              maxHeapAllocationPercent: heapShare
-            }
-    }),
-    [source, aheadSec, startSec, behindSec, heapShare]
+    () =>
+      nativeSource(source ?? '', {
+        live: liveSource,
+        aheadSec,
+        startSec,
+        behindSec,
+        heapShare
+      }),
+    [source, liveSource, aheadSec, startSec, behindSec, heapShare]
   )
+
+  // A reload asks for exactly this again, settings and all.
+  handle.sourceConfig = source == null || source === '' ? null : videoSource
 
   if (source == null || source === '') {
     return <></>

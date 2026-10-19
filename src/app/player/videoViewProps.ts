@@ -61,4 +61,12 @@ export interface VideoViewProps {
     behindSec: number
     heapShare: number
   }
+  /**
+   * The source is a game still being written, watched on its own.
+   *
+   * Only a phone reads this. A browser's live settings are made where the
+   * source is attached (`attachHls`). Read once per source: a game that ends
+   * while it plays keeps the player it has rather than being loaded afresh.
+   */
+  live?: boolean
 }
