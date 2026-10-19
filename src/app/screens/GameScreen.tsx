@@ -915,11 +915,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     /** Asks the server, for a video that was live when it was opened. */
     isLive?: () => Promise<boolean>
   }>({})
+  // The game's own copy of the row when it has one: the selected entry is a
+  // snapshot, and a recording that has finished must not be watched as live.
+  const freshStatus = (
+    game?.videos.find(item => item.id === video?.id) ?? video
+  )?.status
   placeFor.current = {
     videoId: video?.id,
     playbackFor,
     isLive:
-      video?.status === 'live'
+      video != null && freshStatus === 'live'
         ? async () => await isStillLive(client, gameId, video.id)
         : undefined
   }
@@ -1481,6 +1486,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               onHandle={takePlayer}
               controls
               onControlsVisible={setControlsVisible}
+              live={freshStatus === 'live'}
             />
           )}
         </PlayerSurface>

@@ -1,7 +1,7 @@
 import { onExplicitSeek } from './explicitSeek'
+import { LIVE_DELAY_SEC } from './liveDelay'
 
-/** The same cushion as the single live hls.js viewer. */
-export const LIVE_DELAY_SEC = 60
+export { LIVE_DELAY_SEC }
 
 type LiveVideo = Pick<
   HTMLVideoElement,

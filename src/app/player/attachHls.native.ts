@@ -1,3 +1,6 @@
+import { onExplicitSeek } from './explicitSeek'
+import { joinLiveWithCushion } from './liveCushion'
+import { reloadStalledLive } from './liveReload'
 import { NativeVideoHandle } from './nativeVideoHandle'
 import type { PlayIntent } from './playIntent'
 import { addressIsWrong } from './videoError'
@@ -75,8 +78,52 @@ export function attachHls(
    */
   let wantsToPlay = !handle.paused
   let recovering = false
+  /**
+   * The player reported an error and has not shown a picture since. A play
+   * pressed now goes to a player that has given up: AVPlayer, once it has
+   * failed a live stream, ignores its play button for good. So the press
+   * loads the stream again first.
+   */
+  let failed = false
+  /** Where to put the playhead once a reloaded stream has opened. */
+  let resumeAtSec: number | null = null
+  const putBack = (): void => {
+    const at = resumeAtSec
+    resumeAtSec = null
+    if (at != null && at > 0) handle.currentTime = at
+  }
+  handle.addEventListener('loadedmetadata', putBack)
+  // A seek of the viewer's own while the stream reopens is where they want to be.
+  const stopExplicitSeek = onExplicitSeek(handle, () => {
+    resumeAtSec = null
+  })
+  /**
+   * Hands the player its stream again, at the moment it had reached: a bare
+   * reload opens a live game near its newest footage, which threw a viewer
+   * watching an earlier inning to the end and replayed the last seconds to
+   * one who was waiting at it.
+   */
+  const reloadKeepingPlace = (): void => {
+    if (handle.currentTime > 0) resumeAtSec = handle.currentTime
+    handle.reload()
+  }
+  /** Loads the stream again now, and plays it, in place of any reload due. */
+  const restart = (): void => {
+    failed = false
+    if (timer != null) clearTimeout(timer)
+    timer = undefined
+    reloadKeepingPlace()
+    handle.play().catch(() => undefined)
+  }
+  // Only the single live viewer: a grid owns its tiles, and a finished
+  // recording has nothing to wait for.
+  const singleLive = intent?.isLive != null && intent.buffer == null
+  const stopReloading = singleLive
+    ? reloadStalledLive(handle, () => intent.wantsToPlay(), restart)
+    : undefined
   const onPlay = (): void => {
     wantsToPlay = true
+    if (failed) restart()
   }
   const onPause = (): void => {
     if (!recovering) wantsToPlay = false
@@ -86,6 +133,11 @@ export function attachHls(
 
   /** Pictures again: the trouble has passed, and it may resume. */
   const recovered = (): void => {
+    failed = false
+    // A reload still due belongs to trouble that has passed. Left to fire, it
+    // would find no failure on the books and read that as patience run out.
+    if (timer != null) clearTimeout(timer)
+    timer = undefined
     firstFailureAt = 0
     wait = 1000
     reloads = 0
@@ -106,9 +158,14 @@ export function attachHls(
     // The address is what is wrong: asking again for it is thirty guaranteed
     // failures, and the caller can mint a new one.
     if (addressIsWrong(error)) {
+      // Asking the same address again is pointless; the live watch stops too.
+      // A give-up for want of patience leaves it running: the network may be
+      // what failed, and it is what brings the picture back when it returns.
+      stopReloading?.()
       giveUp()
       return
     }
+    failed = true
     const now = Date.now()
     if (firstFailureAt === 0) firstFailureAt = now
     if (now - firstFailureAt > patience) {
@@ -135,12 +192,24 @@ export function attachHls(
         return
       }
       wait = Math.min(wait * 2, 10_000)
-      handle.reload()
+      reloadKeepingPlace()
     }, wait)
   }
 
+  // AVPlayer has no live offset to set, so it is moved there on its first
+  // play. ExoPlayer is given the cushion as its offset where the source is
+  // built (`VideoView.native.tsx`), and starts far enough back to be left.
+  const stopJoining =
+    singleLive && intent.startAtLiveEdge !== false
+      ? joinLiveWithCushion(handle)
+      : undefined
+
   return () => {
+    stopJoining?.()
+    stopReloading?.()
+    stopExplicitSeek()
     if (timer != null) clearTimeout(timer)
+    handle.removeEventListener('loadedmetadata', putBack)
     handle.removeEventListener('play', onPlay)
     handle.removeEventListener('pause', onPause)
     handle.removeEventListener('canplay', recovered)
