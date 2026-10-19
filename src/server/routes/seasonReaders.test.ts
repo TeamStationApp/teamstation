@@ -297,7 +297,7 @@ describe('season reader projections and privacy', function () {
         [played, foreign].map(gameId => ({
           id: makeId('gamePlayerStats'),
           game_id: gameId,
-          user_id: 104,
+          gumbo_id: 104,
           team_id: f.teamA,
           pa: 4,
           ab: 3,

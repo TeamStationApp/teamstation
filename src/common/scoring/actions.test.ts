@@ -56,7 +56,7 @@ export function sampleGame(): GameState {
     for (const id of ids)
       players[id] = {
         id,
-        userId: id,
+
         teamId,
         fullName: `Player ${id}`,
         jersey: String(id),
@@ -974,7 +974,7 @@ describe('game state and setup', function () {
     const setup = setupOf(game)
     expect(asGameSetup(copyState(setup))).deep.equals(setup)
     expect(setup.sides.home.defense.SS).equals(14)
-    expect(setup.players[4].userId).equals(4)
+    expect(setup.players[4].id).equals(4)
   })
 
   it('keeps a setup apart from the game it came from', function () {

@@ -15,7 +15,7 @@ describe('atBatFromCurrentPlay', function () {
         },
         matchup: { batter: { id: 42 } }
       })
-    ).deep.equals({ side: 'home', userId: 42 })
+    ).deep.equals({ side: 'home', gumboId: 42 })
     expect(
       atBatFromCurrentPlay({
         about: {
@@ -26,7 +26,7 @@ describe('atBatFromCurrentPlay', function () {
         },
         matchup: { batter: { id: null, fullName: 'Guest' } }
       })
-    ).deep.equals({ side: 'away', userId: null })
+    ).deep.equals({ side: 'away', gumboId: null })
   })
 
   it('is none when nothing is in progress, or the document is not a play', function () {

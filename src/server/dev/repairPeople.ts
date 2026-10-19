@@ -71,6 +71,7 @@ async function main(): Promise<void> {
     const plays = new Map<number, number>()
     for (const row of await db
       .selectFrom('event_players')
+      .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'event_players.gumbo_id')
       .select(['user_id'])
       .select(eb => eb.fn.countAll<number>().as('plays'))
       .groupBy('user_id')
@@ -170,6 +171,11 @@ async function main(): Promise<void> {
     const playedFor = new Set<string>()
     for (const row of await db
       .selectFrom('game_player_stats')
+      .innerJoin(
+        'gumbo_ids',
+        'gumbo_ids.gumbo_id',
+        'game_player_stats.gumbo_id'
+      )
       .select(['user_id', 'team_id'])
       .where('team_id', 'is not', null)
       .execute()) {

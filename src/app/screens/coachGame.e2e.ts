@@ -489,7 +489,7 @@ describe('Coach Game', function () {
       token: await tokenOf(fixture, 'headCoach')
     })
     const off = (await client.gameLineups(fixture.gameId)).home.current!
-    expect(off.batters.some(player => player.userId === id)).equals(false)
+    expect(off.batters.some(player => player.gumboId === id)).equals(false)
     expect(off.defense.P).equals(null)
     await coach.coachGame(fixture.gameId)
     await coach.tap('Roster', 'tab')
@@ -497,7 +497,7 @@ describe('Coach Game', function () {
     await coach.session.m.tapOn({ css: selector })
     await checked(true)
     const on = (await client.gameLineups(fixture.gameId)).home.current!
-    expect(on.batters.some(player => player.userId === id)).equals(false)
+    expect(on.batters.some(player => player.gumboId === id)).equals(false)
     expect(on.defense.P).equals(null)
     const scorer = new TeamStationClient({
       baseUrl: API,

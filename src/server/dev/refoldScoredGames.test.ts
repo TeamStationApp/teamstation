@@ -54,21 +54,29 @@ const TEAMS = {
   home: { id: home, name: 'Home', logoUrl: null }
 }
 const setup = newSetup(TEAMS, {
-  away: AWAY.map((userId, i) => ({ userId, shortName: `Away ${i + 1}` })),
-  home: HOME.map((userId, i) => ({ userId, shortName: `Home ${i + 1}` }))
+  away: AWAY.map((userId, i) => ({
+    userId,
+    gumboId: userId,
+    shortName: `Away ${i + 1}`
+  })),
+  home: HOME.map((userId, i) => ({
+    userId,
+    gumboId: userId,
+    shortName: `Home ${i + 1}`
+  }))
 })
 
 const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
 const ball: ScoringAction = { type: 'pitch', call: 'B' }
 const strike: ScoringAction = { type: 'pitch', call: 'C' }
 const single: ScoringAction[] = [
-  { type: 'ballInPlay', contact: 'swing', fielder: 14 },
+  { type: 'ballInPlay', contact: 'swing', fielder: HOME[4] },
   { type: 'result', eventType: 'single' }
 ]
 const double: ScoringAction[] = [
-  { type: 'ballInPlay', contact: 'swing', fielder: 17 },
+  { type: 'ballInPlay', contact: 'swing', fielder: HOME[7] },
   { type: 'result', eventType: 'double' },
-  { type: 'runnerMovement', runner: 1, to: 'home' }
+  { type: 'runnerMovement', runner: AWAY[0], to: 'home' }
 ]
 const strikeout = [strike, strike, strike, close]
 
@@ -265,7 +273,7 @@ describe('refolding the stored plays (U11)', function () {
     await score(midPlay, [
       ...single,
       close,
-      { type: 'baseRunning', kind: 'steal', runner: 1 },
+      { type: 'baseRunning', kind: 'steal', runner: AWAY[0] },
       ball,
       ball
     ])
@@ -280,7 +288,7 @@ describe('refolding the stored plays (U11)', function () {
         currentPlay: JSON.stringify({
           ...((await store.load(broken)).currentPlay as object),
           teamStation: {
-            version: 1,
+            version: 2,
             setupBefore: (
               (await store.load(broken)).plays[0] as unknown as {
                 teamStation: { setupBefore: unknown }
@@ -580,12 +588,28 @@ describe('refolding the stored plays (U11)', function () {
     // Today the new man runs for Away 3 and bats third, so the tenth plate
     // appearance of the visitors would be Away 1's.
     const old = await newGame()
+    const guest = mintUserId(id => held.has(id))
+    held.add(guest.userId)
+    await db
+      .insertInto('users')
+      .values({
+        id: guest.userId,
+        legacyId: guest.legacyId,
+        display_name: 'Bench'
+      })
+      .execute()
     const first: ScoringAction[] = [
       ...strikeout,
       ...strikeout,
       ...single,
       close,
-      { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'Bench' }
+      {
+        type: 'lineup',
+        kind: 'addPlayer',
+        side: 'away',
+        name: 'Bench',
+        player: guest.userId
+      }
     ]
     let state = freshGame(old, TEAMS, setup)
     for (const action of first) state = applyAction(state, action).state
@@ -646,7 +670,7 @@ describe('refolding the stored plays (U11)', function () {
       {
         type: 'ballInPlay',
         contact: 'swing',
-        fielder: 14,
+        fielder: HOME[4],
         speed: 66,
         pitchLocation: { height: 'high', side: 'inside', inZone: false }
       },
@@ -679,7 +703,7 @@ describe('refolding the stored plays (U11)', function () {
     const gameId = await newGame()
     await score(gameId, [
       { type: 'pitch', call: 'B' },
-      { type: 'ballInPlay', contact: 'swing', fielder: 14 },
+      { type: 'ballInPlay', contact: 'swing', fielder: HOME[4] },
       { type: 'result', eventType: 'single' },
       close,
       { type: 'pitch', call: 'C' }
