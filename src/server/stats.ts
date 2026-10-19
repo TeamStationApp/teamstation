@@ -217,7 +217,11 @@ export function battingLines(rows: StatRow[]): BattingLine[] {
         line.cs > 0 ||
         (line.pik ?? 0) > 0
     )
-    .sort((a, b) => b.pa - a.pa)
+    .sort((a, b) => {
+      const byPa = b.pa - a.pa
+      if (byPa !== 0) return byPa
+      return a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0
+    })
 }
 
 /** One per pitcher, most outs first; the starter is recorded separately. */
@@ -273,7 +277,11 @@ export function pitchingLines(rows: StatRow[]): PitchingLine[] {
     if (line == null || sum.outs === 0) continue
     line.eraInnings = sum.product / sum.outs
   }
-  return [...byPlayer.values()].sort((a, b) => b.outs - a.outs)
+  return [...byPlayer.values()].sort((a, b) => {
+    const byOuts = b.outs - a.outs
+    if (byOuts !== 0) return byOuts
+    return a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0
+  })
 }
 
 export interface BattingRates {

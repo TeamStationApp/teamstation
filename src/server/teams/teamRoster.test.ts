@@ -555,6 +555,30 @@ describe('roster sections', function () {
       .execute()
   }
 
+  it('orders identical roster labels by user id while retaining section priority', async function () {
+    const ids = [35, 34, 33]
+    for (const id of ids) {
+      await user(id, 'Mookie Betts')
+      await f.h.db
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: id,
+          team_id: f.teamA,
+          is_player: true
+        })
+        .execute()
+    }
+    const { roster } = await read()
+    const added = roster.filter(row => ids.includes(row.userId))
+    expect(added.map(row => row.userId)).deep.equals([33, 34, 35])
+    expect(new Set(added.map(row => row.shortName)).size).equals(1)
+    expect(added.every(row => row.section === 'player')).equals(true)
+    expect(roster.findIndex(row => row.section === 'admin')).lessThan(
+      roster.findIndex(row => row.userId === 33)
+    )
+  })
+
   it('lists admins, staff, players, family, spectators and followers, each once', async function () {
     // A member who neither plays nor holds a role.
     await user(230, 'Pat Lane')
