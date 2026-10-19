@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Platform,
   ScrollView,
+  Switch,
   Text,
   View
 } from 'react-native'
@@ -25,6 +26,9 @@ export function EditRosterList({
   onRetry,
   onEdit,
   onEditLocal,
+  unrostered = [],
+  rosterBusy = false,
+  onRosteredChange,
   visible = true,
   initialScrollOffset,
   onScrollOffset
@@ -35,6 +39,9 @@ export function EditRosterList({
   onRetry?: () => void
   onEdit?: (userId: number, name: string) => void
   onEditLocal?: (id: number) => void
+  unrostered?: readonly number[]
+  rosterBusy?: boolean
+  onRosteredChange?: (userId: number, rostered: boolean) => void
   visible?: boolean
   initialScrollOffset?: number
   onScrollOffset?: (offset: number) => void
@@ -103,6 +110,19 @@ export function EditRosterList({
           <ScoringPlayerCard
             key={row.key}
             label={editRosterLabel(row)}
+            trailing={
+              row.userId == null || onRosteredChange == null ? undefined : (
+                <Switch
+                  accessibilityLabel="Rostered for this game"
+                  testID={`Rostered ${row.userId}`}
+                  value={!unrostered.includes(row.userId)}
+                  disabled={rosterBusy}
+                  onValueChange={value => {
+                    onRosteredChange(row.userId!, value)
+                  }}
+                />
+              )
+            }
             disabled={row.userId == null ? onEditLocal == null : onEdit == null}
             onPress={() => {
               if (row.userId != null) onEdit?.(row.userId, row.navigationTitle)

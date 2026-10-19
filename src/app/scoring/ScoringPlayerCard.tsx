@@ -1,5 +1,5 @@
 import React from 'react'
-import { Pressable, Text, type ViewStyle } from 'react-native'
+import { Pressable, Text, View, type ViewStyle } from 'react-native'
 
 import type { Theme } from '../theme/types'
 import { useScoringSheetTheme } from './scoringSheetTheme'
@@ -32,6 +32,7 @@ export function ScoringPlayerCard({
   disabled = false,
   onPress,
   children,
+  trailing,
   width
 }: {
   label: string
@@ -40,10 +41,11 @@ export function ScoringPlayerCard({
   disabled?: boolean
   onPress: () => void
   children?: React.ReactNode
+  trailing?: React.ReactNode
   width?: ViewStyle['width']
 }): React.ReactElement {
   const theme = useScoringSheetTheme()
-  return (
+  const card = (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -53,6 +55,7 @@ export function ScoringPlayerCard({
       style={({ pressed }) => ({
         ...scoringPlayerCardStyle(theme, pressed || selected),
         width,
+        ...(trailing == null ? {} : { flex: 1 }),
         opacity: disabled ? 0.4 : 1
       })}
     >
@@ -70,5 +73,13 @@ export function ScoringPlayerCard({
         </Text>
       )}
     </Pressable>
+  )
+  return trailing == null ? (
+    card
+  ) : (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+      {card}
+      {trailing}
+    </View>
   )
 }

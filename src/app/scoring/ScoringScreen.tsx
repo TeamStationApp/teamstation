@@ -267,11 +267,11 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
             ['unauthorized', 'forbidden', 'notFound'].includes(caught.code)
           ) {
             rights[teamId] = false
-            return withoutPrivateNames(
-              await props.client.roster(teamId).catch(() => [])
-            )
+            return withoutPrivateNames(await props.client.roster(teamId))
           }
-          return []
+          // An unavailable roster is not an empty team: reconciliation would
+          // otherwise remove the saved lineup and defense. Offer load retry.
+          throw caught
         }
       }
       const [away, home, defaults] = await Promise.all([
