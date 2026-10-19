@@ -142,6 +142,13 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
       // whatever the person was already listening to.
       disableFocus={!controls}
       ignoreSilentSwitch={controls ? 'ignore' : 'obey'}
+      // Pulling down Control Center or Notification Center only makes the app
+      // inactive, and react-native-video pauses AVPlayer for that unless told
+      // not to. It means to resume on the way back, but the pause has already
+      // told it the player stopped, so it never does: a viewer who toggled
+      // Wi-Fi to cellular in Control Center came back to a live game standing
+      // still until they pressed play. Leaving the app still pauses it.
+      playWhenInactive
       viewType={Platform.OS === 'android' ? ViewType.TEXTURE : undefined}
       onLoad={handle.handleLoad}
       onProgress={handle.handleProgress}
