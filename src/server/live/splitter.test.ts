@@ -51,6 +51,8 @@ import {
   restartDelay,
   setLive,
   settleLastSegment,
+  SPLIT_EARLY_SEC,
+  splitSeconds,
   statusFor,
   type TestSession,
   tickSamplerForTest,
@@ -876,6 +878,8 @@ describe('a live playlist through a reconnect', function () {
     expect(flags).not.includes('discont_start')
     expect(argAfter(args, '-start_number')).equals('0')
     expect(args).not.includes('-output_ts_offset')
+    // A keyframe a frame early still cuts the segment.
+    expect(argAfter(args, '-hls_time')).equals('3.95')
   })
 
   it('carries on the playlist it finds, under the same numbers, from where it stopped', async function () {
@@ -2117,5 +2121,13 @@ describe('a live playlist through a reconnect', function () {
       expect(loudestAt(file, 16), file).equals(0)
       expect(loudestAt(file, 0.2), file).greaterThan(1000)
     }
+  })
+})
+
+describe('where the live HLS writer cuts', function () {
+  it('cuts a little before each whole segment, and never under a second', function () {
+    expect(splitSeconds(4)).equals(4 - SPLIT_EARLY_SEC)
+    expect(splitSeconds(6)).equals(5.95)
+    expect(splitSeconds(1)).equals(1)
   })
 })
