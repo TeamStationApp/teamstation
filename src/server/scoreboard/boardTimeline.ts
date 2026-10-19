@@ -16,6 +16,7 @@ import { recordOf, replayPlays } from '../../common/scoring/gumbo'
 import { forPlayback } from '../../common/scoring/playbackTimes'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
 import type { Database } from '../db/database'
+import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 
 /**
@@ -45,7 +46,7 @@ export interface BoardStep {
 
 export interface BoardTimeline {
   /**
-   * `"<games.updated_at in µs>:<newest log version, or 0>:<team names>"`,
+   * `"<game update>:<newest log>:<team names>:<account merges>"`,
    * the last a hash of the two teams' names: what changes whenever anything
    * the timeline reads does.
    */
@@ -95,10 +96,10 @@ export async function computeBoardTimeline(
         .where('gameId', '=', gameId)
         .orderBy('atBatIndex')
         .execute()
-      const stored = {
+      const stored = await resolveScoringGame(trx, {
         plays: plays.map(row => row.gumbo as GumboPlay),
         currentPlay: game.currentPlay as CurrentPlay | null
-      }
+      })
       const context =
         stored.plays.length === 0 && stored.currentPlay == null
           ? null
@@ -149,7 +150,18 @@ export async function computeBoardTimeline(
       const names = new Map(
         [...short].map(([id, name]) => [Number(id), name] as const)
       )
-      return { version, game, plays, stored, context, rows, names }
+      return {
+        version,
+        game,
+        plays: plays.map((row, index) => ({
+          ...row,
+          gumbo: stored.plays[index]
+        })),
+        stored,
+        context,
+        rows,
+        names
+      }
     })
   if (read == null) return undefined
   const { game, plays, stored, context, names } = read
@@ -274,7 +286,8 @@ export async function computeBoardTimeline(
  * game's `updated_at`, which every play post moves (and which the game
  * source writes as its `sourceVersion`), the newest log row's version, and
  * the two teams' names, which every step shows and which a rename or a merge
- * changes without touching the game. Undefined when there is no such game.
+ * changes without touching the game. The merge graph also invalidates cached
+ * player identities even when no new play follows a merge. Undefined for no game.
  */
 export async function timelineVersion(
   db: Kysely<Database>,
@@ -285,7 +298,7 @@ export async function timelineVersion(
     .innerJoin('teams as home', 'home.id', 'games.home_team_id')
     .innerJoin('teams as away', 'away.id', 'games.away_team_id')
     .select(
-      sql<string>`(extract(epoch from games.updated_at) * 1000000)::bigint::text || ':' || coalesce((select max(version) from scoreboard_log where game_id = games.id), 0)::text || ':' || left(md5(home.name || chr(10) || away.name), 16)`.as(
+      sql<string>`(extract(epoch from games.updated_at) * 1000000)::bigint::text || ':' || coalesce((select max(version) from scoreboard_log where game_id = games.id), 0)::text || ':' || left(md5(home.name || chr(10) || away.name), 16) || ':' || (select md5(coalesce(string_agg(id::text || ':' || merged_into::text, ',' order by id), '')) from users where merged_into is not null)`.as(
         'version'
       )
     )

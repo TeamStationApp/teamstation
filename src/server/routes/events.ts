@@ -7,7 +7,11 @@ import {
   notFound,
   unauthorized
 } from '../../common/errors'
-import { asPostEventsBody } from '../../common/gumboPlay'
+import {
+  asPostEventsBody,
+  type CurrentPlay,
+  type GumboPlay
+} from '../../common/gumboPlay'
 import { halfOutcomes } from '../../common/scoring/linescore'
 import { canScore, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
@@ -29,6 +33,7 @@ import { requireVisibleGame } from '../events/requireVisibleGame'
 import { storedLineupsDigest } from '../events/teamLineups'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { resolveScoringGame } from '../scoring/openRow'
 import { notifyGameChange } from '../socket/gameChanges'
 
 export interface EventRouteOptions {
@@ -251,9 +256,16 @@ export function eventRoutes(
           ])
           .where('id', '=', gameId)
           .executeTakeFirstOrThrow()
+        const resolved = await resolveScoringGame(trx, {
+          plays: stored.map(row => row.gumbo as GumboPlay),
+          currentPlay: game.currentPlay as CurrentPlay | null
+        })
         return {
-          plays: stored.map(playJson),
-          currentPlay: game.currentPlay ?? null,
+          plays: stored.map((row, index) => ({
+            ...playJson(row),
+            gumbo: resolved.plays[index]
+          })),
+          currentPlay: resolved.currentPlay,
           playsDigest: playsDigest(stored, game.currentPlay),
           lineupsDigest: await storedLineupsDigest(trx, {
             id: gameId,

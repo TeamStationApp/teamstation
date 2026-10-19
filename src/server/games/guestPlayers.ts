@@ -12,6 +12,7 @@ import { canManageRoster, canScore, roleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
+import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { mintFreeUserId } from '../teams/addPlayers'
 
@@ -43,10 +44,10 @@ export async function createGuestPlayer(
       )
     if (game.status === 'final' || game.status === 'cancelled')
       throw conflict('This game cannot accept players')
-    const stored = {
+    const stored = await resolveScoringGame(trx, {
       plays: (await readPlays(trx, gameId)).map(row => row.gumbo as GumboPlay),
       currentPlay: game.currentPlay as CurrentPlay | null
-    }
+    })
     const context = await contextOf(trx, gameId, game, stored)
     if (context != null) {
       const replay = replayPlays(stored, context)
