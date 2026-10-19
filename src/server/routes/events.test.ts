@@ -3678,7 +3678,7 @@ describe('the team default lineup a live post keeps (U10)', function () {
     expect(await defaultOf(awayTeam)).equals(null)
   })
 
-  it('leaves the default alone, answers 200 and warns once when the record does not replay', async function () {
+  it('refuses an unresolved scoring identity without changing history or the default', async function () {
     const g7 = games[6]
     const session = await scoring(g7)
     await apply(session, ball)
@@ -3715,9 +3715,9 @@ describe('the team default lineup a live post keeps (U10)', function () {
     } finally {
       console.warn = warn
     }
-    expect(answer.status).equals(200)
-    expect(warned).length(1)
-    expect(String(warned[0][0])).includes(g7)
+    expect(answer.status).equals(409)
+    expect(warned).length(0)
+    expect(await store(g7).load(g7)).deep.equals(stored)
     expect(await defaultOf(awayTeam)).equals(null)
     expect((await gameRow(g7)).lineup_started_at).equals(null)
   })
