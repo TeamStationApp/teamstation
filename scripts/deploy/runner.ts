@@ -22,6 +22,7 @@ import {
   State
 } from './state'
 import { type Target, target } from './targets'
+import { apiKey, uploadToTestFlight } from './testflight'
 import { fingerprint, upload } from './upload'
 import {
   appId,
@@ -100,6 +101,8 @@ export interface BuildContext {
 export interface BuiltPackage {
   file: string
   buildNumber: string
+  /** The same iOS build exported for App Store Connect, for TestFlight. */
+  testflight?: string
 }
 export type Builder = (context: BuildContext) => Promise<BuiltPackage>
 export type Builders = Partial<Record<Platform, Builder>>
@@ -241,6 +244,19 @@ export async function run(
             copyFileSync(built.file, destination, 1)
           chmodSync(destination, 0o400)
           const checksum = await fingerprint(destination)
+          let testflight: Artifact['testflight']
+          if (built.testflight != null) {
+            const store = path.join(directory, `${os}-appstore.${format}`)
+            noSymlinks(built.testflight)
+            if (path.resolve(built.testflight) !== store)
+              copyFileSync(built.testflight, store, 1)
+            chmodSync(store, 0o400)
+            testflight = {
+              file: path.basename(store),
+              published: undefined,
+              ...(await fingerprint(store))
+            }
+          }
           record.artifacts.push({
             platform: os,
             file: name,
@@ -248,7 +264,8 @@ export async function run(
             buildNumber,
             published: undefined,
             error: undefined,
-            ...checksum
+            ...checksum,
+            testflight
           })
         } catch (error) {
           record.failed.push(os)
@@ -275,38 +292,77 @@ export async function run(
         item => item.platform === os
       )
       if (artifact == null || signal.aborted) continue
-      if (artifact.published != null) {
-        output(`${os} was already published`)
-        continue
-      }
-      try {
-        if (path.basename(artifact.file) !== artifact.file)
+      const buildNumber =
+        record.buildNumberFormat === 'date'
+          ? nativeNumber(os, artifact.buildNumber)
+          : legacyNativeNumber(os, artifact.buildNumber)
+      const saved = (name: string): string => {
+        if (path.basename(name) !== name)
           throw new Error('Invalid saved artifact path')
-        const file = path.join(directory, artifact.file)
+        const file = path.join(directory, name)
         if (!existsSync(file)) throw new Error('Saved package has expired')
-        artifact.published = await upload(
-          configured[os]!.upload,
-          {
-            file,
-            bundleId: record.app,
-            version: artifact.version,
-            buildNumber:
-              record.buildNumberFormat === 'date'
-                ? nativeNumber(os, artifact.buildNumber)
-                : legacyNativeNumber(os, artifact.buildNumber),
-            branch: record.branch,
-            commit: record.commit,
-            buildTime: new Date(record.createdAt).toISOString(),
-            size: artifact.size,
-            digest: artifact.digest
-          },
-          signal
+        return file
+      }
+      if (artifact.published != null) output(`${os} was already published`)
+      else {
+        try {
+          artifact.published = await upload(
+            configured[os]!.upload,
+            {
+              file: saved(artifact.file),
+              bundleId: record.app,
+              version: artifact.version,
+              buildNumber,
+              branch: record.branch,
+              commit: record.commit,
+              buildTime: new Date(record.createdAt).toISOString(),
+              size: artifact.size,
+              digest: artifact.digest
+            },
+            signal
+          )
+          delete artifact.error
+          output(`${os} uploaded`)
+        } catch (error) {
+          artifact.error = 'Upload failed; retry this run with publish-only'
+          output(`${os} upload failed; package retained for retry`)
+          for (const line of describeFailure(error)) output(line)
+        }
+        state.save(record)
+      }
+      // The App Store IPA goes to TestFlight only after the ad-hoc IPA is
+      // on builds.teamstation.app.
+      const store = artifact.testflight
+      if (
+        store == null ||
+        store.published === true ||
+        artifact.published == null ||
+        signal.aborted
+      )
+        continue
+      try {
+        const testflight = configured[os]!.testflight
+        if (testflight == null) throw new Error('TestFlight is not configured')
+        const file = saved(store.file)
+        const actual = await fingerprint(file)
+        if (actual.digest !== store.digest || actual.size !== store.size)
+          throw new Error('Artifact changed after verification')
+        const result = await uploadToTestFlight({
+          ipa: file,
+          apiKey: apiKey(testflight.apiKeyFile),
+          appleId: testflight.appleId,
+          bundleId: record.app,
+          version: artifact.version,
+          buildNumber,
+          processes,
+          tools: settings.tools
+        })
+        store.published = true
+        output(
+          `${os} testflight ${result.alreadyPublished ? 'already published' : 'uploaded'} ${artifact.version} (${buildNumber})`
         )
-        delete artifact.error
-        output(`${os} uploaded`)
       } catch (error) {
-        artifact.error = 'Upload failed; retry this run with publish-only'
-        output(`${os} upload failed; package retained for retry`)
+        output(`${os} testflight upload failed; package retained for retry`)
         for (const line of describeFailure(error)) output(line)
       }
       state.save(record)
@@ -314,7 +370,10 @@ export async function run(
     return !signal.aborted &&
       options.platforms.every(os =>
         record.artifacts.some(
-          item => item.platform === os && item.published != null
+          item =>
+            item.platform === os &&
+            item.published != null &&
+            (item.testflight == null || item.testflight.published === true)
         )
       )
       ? 0

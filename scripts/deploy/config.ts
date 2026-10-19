@@ -42,16 +42,32 @@ const asApple = object({
   teamId: text(32),
   identity: text(256),
   profileNames: record(text(256)),
+  /** The App Store distribution profile for each identifier, for TestFlight. */
+  appStoreProfileNames: asOptional(record(text(256))),
   architectures: asArray(text(32)),
   requiredDevices: asOptional(asArray(text(128)), []),
   notarizationProfile: asOptional(text(256)),
   notarizationKeychain: asOptional(text())
 })
+/**
+ * Where an iOS app's App Store build goes: the private App Store Connect API
+ * key file (`{ keyId, issuerId, keyFile }`, keyFile naming the `.p8`) and the
+ * app's numeric Apple ID.
+ */
+const asTestFlight = object({
+  apiKeyFile: text(),
+  appleId: (value: unknown): string => {
+    const out = text(20)(value)
+    if (!/^\d+$/.test(out)) throw new Error('Invalid Apple ID')
+    return out
+  }
+})
 const asPlatform = object({
   upload: asUpload,
   seedBuildNumber: asOptional(integer(1, 2100000000)),
   android: asOptional(asAndroid),
-  apple: asOptional(asApple)
+  apple: asOptional(asApple),
+  testflight: asOptional(asTestFlight)
 })
 /** Where an app's crash reports go, and the private file holding the upload token. */
 const asSentry = object({
@@ -61,7 +77,7 @@ const asSentry = object({
   dsn: sentryDsn,
   tokenFile: text()
 })
-const asApp = object({
+const asAppFields = object({
   repository: asOptional(text()),
   apiOrigin: asOptional(httpsOrigin),
   version: asOptional(text(80)),
@@ -70,6 +86,19 @@ const asApp = object({
   macos: asOptional(asPlatform),
   sentry: asOptional(asSentry)
 })
+const asApp: Cleaner<ReturnType<typeof asAppFields>> = value => {
+  const out = asAppFields(value)
+  // Only iOS goes to TestFlight, and only with the App Store profiles to sign it.
+  if (
+    out.android?.testflight != null ||
+    out.macos?.testflight != null ||
+    out.android?.apple?.appStoreProfileNames != null ||
+    out.macos?.apple?.appStoreProfileNames != null ||
+    (out.ios?.testflight != null && out.ios.apple?.appStoreProfileNames == null)
+  )
+    throw new Error('TestFlight needs iOS App Store profiles')
+  return out
+}
 /**
  * The sentry-cli this repository's own dependencies install (`@sentry/cli`),
  * so a build machine needs none of its own; `sentry-cli` on PATH otherwise.
@@ -115,7 +144,8 @@ const asMatch = object({
       object({
         certificate: text(),
         privateKey: text(),
-        profile: asOptional(text())
+        profile: asOptional(text()),
+        appStoreProfile: asOptional(text())
       })
     ),
     {}
@@ -139,6 +169,7 @@ export const asSettings = object({
 })
 export type Settings = ReturnType<typeof asSettings>
 export type Upload = ReturnType<typeof asUpload>
+export type TestFlight = ReturnType<typeof asTestFlight>
 
 function clone(value: unknown, depth = 0): unknown {
   if (depth > 16) throw new Error('Configuration nesting too deep')
@@ -269,6 +300,8 @@ export function loadSettings(file: string, branch: string): Settings {
         platform.apple.notarizationKeychain = resolve(
           platform.apple.notarizationKeychain
         )
+      if (platform.testflight != null)
+        platform.testflight.apiKeyFile = resolve(platform.testflight.apiKeyFile)
     }
   }
   if (out.match != null) {
@@ -284,6 +317,8 @@ export function loadSettings(file: string, branch: string): Settings {
       entry.certificate = resolve(entry.certificate)
       entry.privateKey = resolve(entry.privateKey)
       if (entry.profile != null) entry.profile = resolve(entry.profile)
+      if (entry.appStoreProfile != null)
+        entry.appStoreProfile = resolve(entry.appStoreProfile)
     }
   }
   for (const key of Object.keys(out.tools) as Array<keyof Settings['tools']>) {

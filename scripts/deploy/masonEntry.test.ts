@@ -236,7 +236,9 @@ describe('TeamStation Mason entrypoint', () => {
     )
     assert.equal(result.messages.includes('android uploaded'), true)
     assert.equal(
-      result.messages.includes('ios build failed; no package was published'),
+      result.messages.includes(
+        'ios build failed (missing-bundle could not start); no package was published'
+      ),
       true
     )
   })
