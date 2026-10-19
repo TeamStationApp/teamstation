@@ -52,7 +52,11 @@ const tsSuites = [
   'src/app/player/**/*.test.ts',
   'src/common/api.test.ts',
   'src/common/wallTimeline.test.ts',
-  'src/server/openapi.test.ts'
+  'src/server/openapi.test.ts',
+  // The line score from game events (M1).
+  'src/common/scoring/boardLine.test.ts',
+  'src/server/scoring/lineTimeline.test.ts',
+  'src/server/routes/lineScore.test.ts'
 ]
 
 /** The `.test.tsx` suites, each bundled alone. */

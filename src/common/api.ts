@@ -104,6 +104,7 @@ import {
   type Problem,
   type ScoringAction
 } from './scoring/actions'
+import type { BoardLine } from './scoring/boardLineTypes'
 import {
   asDefaultLineup,
   asSideLineups,
@@ -1627,6 +1628,40 @@ export interface BoardStep {
   state: ScoreboardState
 }
 
+/** One side's row of a line score at a moment: `BoardLineSide`. */
+const asLineSide = asObject({
+  innings: asArray(asNullable(asNumber)),
+  r: asNumber,
+  h: asNullable(asNumber),
+  e: asNullable(asNumber)
+})
+
+/** One step of a game's line score: what it was from `at` until the next. */
+export interface LineScoreStep {
+  /** Milliseconds, on the server's clock. */
+  at: number
+  line: BoardLine
+}
+
+/** `GET /games/:gameId/line-score`. */
+export interface LineScoreTimeline {
+  /** Changes whenever the game's events or its team names do. */
+  version: string
+  teams: { away: string; home: string }
+  steps: LineScoreStep[]
+}
+
+export const asLineScoreTimeline: Cleaner<LineScoreTimeline> = asObject({
+  version: asString,
+  teams: asObject({ away: asString, home: asString }),
+  steps: asArray(
+    asObject({
+      at: asNumber,
+      line: asObject({ away: asLineSide, home: asLineSide })
+    })
+  )
+})
+
 /** `GET /games/:gameId/scoreboard-timeline`. */
 export interface BoardTimelineWindow {
   /** Changes whenever anything the timeline is built from does. */
@@ -2684,6 +2719,32 @@ export class TeamStationClient {
         text === '' ? '' : `?${text}`
       }`,
       asBoardTimelineWindow
+    )
+  }
+
+  /**
+   * A game's line score from its events alone: every step, the one in effect
+   * at an instant (`at`), or those in a window, with the one in effect at
+   * `fromMs`.
+   */
+  async lineScore(
+    gameId: string,
+    query: { at?: number; fromMs?: number; toMs?: number } = {}
+  ): Promise<LineScoreTimeline> {
+    const params = new URLSearchParams()
+    if (query.at != null)
+      params.set('at', String(Math.max(0, Math.floor(query.at))))
+    if (query.fromMs != null)
+      params.set('from', String(Math.max(0, Math.floor(query.fromMs))))
+    if (query.toMs != null)
+      params.set('to', String(Math.max(0, Math.ceil(query.toMs))))
+    const text = params.toString()
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/line-score${
+        text === '' ? '' : `?${text}`
+      }`,
+      asLineScoreTimeline
     )
   }
 

@@ -4869,6 +4869,61 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games/{gameId}/line-score': {
+        get: {
+          summary: "A game's line score at every moment, from its events",
+          description:
+            '`{ version, teams, steps }`. `teams` is `{ away, home }`, the ' +
+            "game's team names. Each step is `{ at, line }`: `line` is " +
+            '`{ away, home }`, each `{ innings, r, h, e }`, from `at` (epoch ' +
+            'ms, on the server clock) until the next step. `innings[i]` is ' +
+            "the side's runs in inning `i + 1`, null for a half not started; " +
+            '`h` and `e` are null when the plays cannot say. It is rebuilt ' +
+            "from the game's stored plays and the play in progress alone, " +
+            'each scoring action at the time it was taken (a play scored ' +
+            'before actions carried times puts its actions at its own end, ' +
+            'and a play imported before TeamStation scored at its end), and ' +
+            'never from the scoreboard log or the overrides. A game with no ' +
+            'events has no steps. `version` changes whenever the events or ' +
+            'the team names do. 404 when there is no such game; 403 ' +
+            '`membersOnly` for somebody who cannot see it.',
+          security: [{ bearer: [] }],
+          parameters: [
+            gameIdParam,
+            {
+              name: 'at',
+              in: 'query',
+              schema: { type: 'integer', minimum: 0 },
+              description:
+                'Epoch ms. Only the step in effect at that instant, or none before the first event. Omitted, every step (or the window `from` and `to` give). 400 with `from` or `to`.'
+            },
+            {
+              name: 'from',
+              in: 'query',
+              schema: { type: 'integer', minimum: 0 },
+              description:
+                'Epoch ms. Steps before it are left out, except the one in effect at it. Omitted, from the first step.'
+            },
+            {
+              name: 'to',
+              in: 'query',
+              schema: { type: 'integer', minimum: 0 },
+              description:
+                'Epoch ms. Steps after it are left out. Omitted, to the last step. 400 when it is before `from`.'
+            }
+          ],
+          responses: {
+            200: {
+              description:
+                '`{ version, teams: { away, home }, steps: [{ at, line }] }`'
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/games/{gameId}/halves': {
         get: {
           summary: 'One outcome per half inning',
