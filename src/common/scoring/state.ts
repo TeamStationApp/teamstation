@@ -306,8 +306,6 @@ export type GamePlay = ReturnType<typeof asGamePlay>
 
 export interface GamePlayer {
   id: number
-  /** The server's identity for this person, or null for one made up here. */
-  userId: number | null
   teamId: string
   fullName: string
   firstName?: string
@@ -580,9 +578,8 @@ const asSide = asObject({
   defense: asDefense,
   pitchCounts: asObject(asNumber)
 })
-const asPlayer = asObject({
+const playerShape = {
   id: asSessionId,
-  userId: asEither(asNull, asNumber),
   teamId: asString,
   fullName: asString,
   firstName: asOptional(asString),
@@ -592,6 +589,11 @@ const asPlayer = asObject({
   throws: asEither(asNull, asLiteral('left', 'right')),
   positions: asArray(asString),
   local: asBoolean
+}
+const asPlayer = asObject(playerShape)
+const asLegacyPlayer = asObject({
+  ...playerShape,
+  userId: asEither(asNull, asNumber)
 })
 const asIdentities = asObject({
   sourceToSession: asObject(asNumber),
@@ -612,7 +614,7 @@ export interface GameSetup {
 /** The historical session-id shape, used only by the version 1 reader. */
 export const asLegacyGameSetup = exactly(
   asObject({
-    players: asObject(asPlayer),
+    players: asObject(asLegacyPlayer),
     sides: asObject({ away: asSide, home: asSide }),
     identities: asIdentities
   })
@@ -630,11 +632,7 @@ export const asGameSetup: Cleaner<GameSetup> = raw => {
     throw new Error('Duplicate player tag')
   for (const [key, player] of Object.entries(setup.players)) {
     asGumboId(player.id)
-    if (
-      String(player.id) !== key ||
-      !setup.tagOrder.includes(player.id) ||
-      player.userId !== player.id
-    )
+    if (String(player.id) !== key || !setup.tagOrder.includes(player.id))
       throw new Error('Invalid scoring player identity')
   }
   for (const side of Object.values(setup.sides)) {

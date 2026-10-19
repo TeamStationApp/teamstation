@@ -86,12 +86,12 @@ describe('created roster players saved into coach lineups', function () {
     if ('problem' in result) throw new Error(result.problem)
     expect(created).length(2)
     const players = Object.values(result.draft.gameData.players).filter(
-      player => created.includes(player.userId!)
+      player => created.includes(player.id)
     )
     expect(players).length(2)
     expect(
       players.some(
-        player => player.userId === firstId && player.firstName === 'Shohei'
+        player => player.id === firstId && player.firstName === 'Shohei'
       )
     ).equals(true)
     const roster = await f.h.db
@@ -155,7 +155,7 @@ describe('created roster players saved into coach lineups', function () {
         side: 'home',
         base,
         players: side.players.map(id => ({
-          userId: setup.players[id].userId,
+          gumboId: setup.players[id].id,
           fullName: setup.players[id].fullName,
           jersey: setup.players[id].jersey
         })),
@@ -192,7 +192,7 @@ describe('created roster players saved into coach lineups', function () {
         base,
         players: [
           ...body.players,
-          { userId: player.userId, fullName: 'Untrusted label', jersey: '99' }
+          { gumboId: player.userId, fullName: 'Untrusted label', jersey: '99' }
         ],
         battingOrder: [...body.battingOrder, body.players.length]
       }
@@ -202,7 +202,7 @@ describe('created roster players saved into coach lineups', function () {
       )
       const read = await current()
       expect(
-        read.home.current?.batters.find(row => row.userId === player.userId)
+        read.home.current?.batters.find(row => row.gumboId === player.userId)
           ?.name
       ).equals('Mookie B')
       // A role holder and a player of another team cannot be injected as this team's new player.
@@ -212,7 +212,7 @@ describe('created roster players saved into coach lineups', function () {
           base: read.digest,
           players: [
             ...added.players,
-            { userId, fullName: 'Outsider', jersey: '' }
+            { gumboId: userId, fullName: 'Outsider', jersey: '' }
           ]
         })
         expect(refused.status).equals(400)

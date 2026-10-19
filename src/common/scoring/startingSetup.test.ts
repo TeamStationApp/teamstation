@@ -50,6 +50,7 @@ function roster(userIds: number[]): RosterEntry[] {
   return userIds.map(userId =>
     asRosterEntry({
       userId,
+      gumboId: userId,
       shortName: `Player ${userId}`,
       jersey: String(userId % 100),
       positions: [],
@@ -62,7 +63,7 @@ function roster(userIds: number[]): RosterEntry[] {
   )
 }
 const person = (userId: number | null, name?: string): LineupPerson => ({
-  userId,
+  gumboId: userId,
   name: name ?? `Player ${userId}`,
   jersey: userId == null ? '0' : String(userId % 100)
 })
@@ -78,7 +79,7 @@ function arranged(
   side: Side
 ): { order: Array<number | string>; defense: Record<string, number | string> } {
   const who = (id: number): number | string =>
-    setup.players[id].userId ?? setup.players[id].fullName
+    setup.players[id].id ?? setup.players[id].fullName
   const team = setup.sides[side]
   const defense: Record<string, number | string> = {}
   for (const position of POSITIONS) {
@@ -192,7 +193,7 @@ describe('the lineups a game starts from (U4b)', function () {
       defense: { P: 105, C: 104, SS: 101 }
     })
     // The roster player the default leaves out sits on the bench.
-    const bench = setup.sides.away.players.map(id => setup.players[id].userId)
+    const bench = setup.sides.away.players.map(id => setup.players[id].id)
     expect(bench).includes(110)
     // The other side is built from its roster.
     expect(arranged(setup, 'home').order).deep.equals([
@@ -265,6 +266,7 @@ describe('the lineups a game starts from (U4b)', function () {
     // Staff and anyone else who does not play is left off.
     const staff = asRosterEntry({
       userId: 300,
+      gumboId: 300,
       shortName: 'Coach',
       jersey: '',
       positions: [],

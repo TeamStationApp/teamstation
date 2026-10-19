@@ -1,5 +1,6 @@
 import type { GameDetail, RosterEntry } from '../api'
 import type { Unrostered } from '../unroster'
+import { asGumboId } from '../userId'
 import type { ScoringAction } from './actions'
 import { begun, newSetup, type RosterPlayer } from './lineup'
 import {
@@ -52,7 +53,7 @@ function rosterOf(rows: RosterEntry[]): RosterPlayer[] {
   return rows
     .filter(row => row.isPlayer)
     .map(row => ({
-      userId: row.userId,
+      gumboId: asGumboId(row.gumboId),
       shortName: row.shortName,
       jersey: row.jersey,
       bats: row.bats,
@@ -84,10 +85,18 @@ export function startingSetup(
     teamsOf(game),
     {
       away: rosterOf(
-        away.filter(row => game.unrostered?.away.includes(row.userId) !== true)
+        away.filter(
+          row =>
+            !row.isPlayer ||
+            game.unrostered?.away.includes(asGumboId(row.gumboId)) !== true
+        )
       ),
       home: rosterOf(
-        home.filter(row => game.unrostered?.home.includes(row.userId) !== true)
+        home.filter(
+          row =>
+            !row.isPlayer ||
+            game.unrostered?.home.includes(asGumboId(row.gumboId)) !== true
+        )
       )
     },
     fillRoster
@@ -123,8 +132,8 @@ function arrangeFromDefault(
   const team = setup.sides[side]
   const available = new Set(team.players)
   const idOf = (person: LineupPerson | null): number | null =>
-    person?.userId != null && available.has(person.userId)
-      ? person.userId
+    person?.gumboId != null && available.has(person.gumboId)
+      ? person.gumboId
       : null
   const order: number[] = []
   for (const person of lineup.batters) {
