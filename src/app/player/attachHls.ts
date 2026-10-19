@@ -1,5 +1,6 @@
 import Hls from 'hls.js'
 
+import { watchLivePlaylist } from './livePlaylistWatch'
 import { liveRejoin } from './liveRejoin'
 import { observeLiveStalls } from './liveStallDiagnostics'
 import { recoverLiveStalls } from './liveStallRecovery'
@@ -132,8 +133,10 @@ export interface NativeHlsVideo {
   src: string
   readonly error: { readonly code: number } | null
   readonly paused: boolean
+  readonly ended: boolean
   currentTime: number
   readonly readyState: number
+  readonly seekable: { readonly length: number; end: (index: number) => number }
   load: () => void
   play: () => Promise<void>
   removeAttribute: (name: 'src') => void
@@ -275,7 +278,27 @@ export function attachNativeHls(
   video.addEventListener('error', onError)
   video.src = url
 
+  // Safari can stop reading a live playlist without an error to say so; only
+  // the single live viewer is watched for it, as the phones are.
+  const stopWatching =
+    intent?.isLive != null && intent.buffer == null
+      ? watchLivePlaylist(video, {
+          url,
+          wantsToPlay,
+          reload: () => {
+            if (timer != null) return
+            if (!recovering && video.currentTime > 0) {
+              resumeAtSec = video.currentTime
+            }
+            recovering = true
+            reload()
+          },
+          clock
+        })
+      : undefined
+
   return () => {
+    stopWatching?.()
     if (timer != null) clock.clearTimeout(timer)
     timer = undefined
     video.removeEventListener('play', onPlay)
