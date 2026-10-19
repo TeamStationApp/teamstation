@@ -33,6 +33,7 @@ const roster = (side: string): Array<ReturnType<typeof asRosterEntry>> =>
   POSITIONS.map((position, i) =>
     asRosterEntry({
       userId: (side === 'home' ? 200 : 100) + i,
+      gumboId: (side === 'home' ? 200 : 100) + i,
       shortName: `${side === 'home' ? 'Host' : 'Visitor'} ${String(i + 1).padStart(2, '0')}`,
       jersey: String(i + 1),
       positions: [position],

@@ -77,6 +77,7 @@ const roster = (
 }> =>
   Array.from({ length: count }, (_, i) => ({
     userId: (side === 'away' ? 100 : 200) + i,
+    gumboId: (side === 'away' ? 100 : 200) + i,
     shortName:
       collisionNames && side === 'home' && i < 2
         ? ['Luis Ga', 'Luis Gi'][i]
@@ -93,8 +94,8 @@ const roster = (
   }))
 const person = (
   row: ReturnType<typeof roster>[0]
-): { userId: number; name: string; jersey: string } => ({
-  userId: row.userId,
+): { gumboId: number; name: string; jersey: string } => ({
+  gumboId: row.userId,
   name: row.shortName,
   jersey: row.jersey
 })

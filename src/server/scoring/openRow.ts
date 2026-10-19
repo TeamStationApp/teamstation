@@ -7,8 +7,9 @@ import { recordOf } from '../../common/scoring/gumbo'
 import type { StoredGame } from '../../common/scoring/session'
 import { type GameSetup, POSITIONS } from '../../common/scoring/state'
 import { asGumboId } from '../../common/userId'
-import { survivorsOf, UnresolvedAccount } from '../admin/people'
+import { UnresolvedAccount } from '../admin/people'
 import type { Database } from '../db/database'
+import { resolveGumboIds } from './gumboIds'
 
 const playerReferences = new Set([
   'batter',
@@ -39,7 +40,6 @@ function mapDocument<T>(
       players[id] = {
         ...player,
         id,
-        userId: id,
         ...(name == null
           ? {}
           : {
@@ -128,13 +128,15 @@ export async function resolveScoringGame<T extends StoredGame>(
   }
   for (const document of [...stored.plays, stored.currentPlay])
     mapDocument(document, collect, new Map())
-  const resolved = await survivorsOf(db, [...ids]).catch((error: unknown) => {
-    if (error instanceof UnresolvedAccount)
-      throw conflict(
-        'The scoring history refers to an account that cannot be resolved'
-      )
-    throw error
-  })
+  const resolved = await resolveGumboIds(db, [...ids]).catch(
+    (error: unknown) => {
+      if (error instanceof UnresolvedAccount)
+        throw conflict(
+          'The scoring history refers to an account that cannot be resolved'
+        )
+      throw error
+    }
+  )
   if ([...resolved].every(([id, survivor]) => id === survivor)) return stored
   const targets = new Set(
     [...resolved]
@@ -142,9 +144,10 @@ export async function resolveScoringGame<T extends StoredGame>(
       .map(([, survivor]) => survivor)
   )
   const rows = await db
-    .selectFrom('users')
-    .select(['id', 'display_name', 'first_name', 'last_name'])
-    .where('id', 'in', [...new Set(resolved.values())])
+    .selectFrom('gumbo_ids')
+    .innerJoin('users', 'users.id', 'gumbo_ids.user_id')
+    .select(['gumbo_id as id', 'display_name', 'first_name', 'last_name'])
+    .where('gumbo_id', 'in', [...new Set(resolved.values())])
     .execute()
   // General scoring reads also feed public scoreboards. Disambiguate against
   // everyone in the game without adding private name parts to the projection.
