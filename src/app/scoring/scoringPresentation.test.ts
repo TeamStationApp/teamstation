@@ -1,9 +1,9 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { scoringSession } from '../../test/scoringSession'
 import { BASES } from '../field/fieldModel'
 import { foulPoint, sampleHit, samplePitch } from '../field/playAnimationModel'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
@@ -15,10 +15,7 @@ import {
 } from './scoringPresentation'
 import type { ScoringState } from './scoringTypes'
 function initial(): ScoringState {
-  return initialScoringState(
-    createDevelopmentSession(gameFixture, [], []),
-    true
-  )
+  return initialScoringState(scoringSession(gameFixture), true)
 }
 describe('pitch presentation coordination', function () {
   for (const kind of ['ball', 'called', 'swing', 'foul'] as const)

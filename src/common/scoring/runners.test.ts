@@ -905,6 +905,7 @@ describe('closing and ending', function () {
     const added = after(strikeout(game()), {
       type: 'lineup',
       kind: 'addPlayer',
+      player: 19,
       side: 'away',
       name: 'Late Arrival'
     })

@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import type { MoreAction } from './moreActions'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -43,10 +43,7 @@ describe('automatic awarded bases', function () {
     ])
       it(`${action} settles safely with every occupancy (animation ${animated})`, function () {
         for (let mask = action === 'Balk' ? 1 : 0; mask < 8; mask++) {
-          let state = initialScoringState(
-            createDevelopmentSession(gameFixture, [], []),
-            animated
-          )
+          let state = initialScoringState(scoringSession(gameFixture), animated)
           for (const [index, base] of (
             ['first', 'second', 'third'] as const
           ).entries())
@@ -105,9 +102,7 @@ describe('automatic awarded bases', function () {
       })
   for (const bats of ['left', 'right', 'switch'] as const)
     it(`lets a ${bats} hitter change boxes only before a pitch`, function () {
-      let state = initialScoringState(
-        createDevelopmentSession(gameFixture, [], [])
-      )
+      let state = initialScoringState(scoringSession(gameFixture))
       state.session.gameData.players[1].bats = bats
       expect(canSwitchBatter(state.session)).equals(true)
       state = scoringReducer(state, { type: 'SWITCH_SIDE', side: 'L' })

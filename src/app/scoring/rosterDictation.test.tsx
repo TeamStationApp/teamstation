@@ -25,10 +25,11 @@ import {
   fakeDictation,
   FakeDictationSocket
 } from '../../test/dictationFakes'
+import { guestCreator } from '../../test/guestPlayers'
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { CreateRosterPlayer } from './createDictatedPlayers'
-import { createDevelopmentSession } from './developmentSession'
 import { useDictationControls } from './DictationButton'
 import { upcoming } from './dictationHook'
 import { gameFixture } from './isUnscoredGame.test'
@@ -70,7 +71,7 @@ async function settle(): Promise<void> {
 }
 
 function fresh(): ScoringState {
-  return initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  return initialScoringState(scoringSession(gameFixture))
 }
 
 interface Mounted {
@@ -112,6 +113,7 @@ async function mount(
     root!.render(
       <ThemeProvider>
         <RosterEditor
+          onCreateGuest={guestCreator()}
           state={state}
           onCreatePlayer={
             more.create ??
@@ -286,7 +288,7 @@ describe('dictation on the roster screen', function () {
       Object.values(saved[0].draft.gameData.players).find(
         player => player.firstName === 'Ohtani'
       )
-    ).includes({ userId: null, local: true })
+    ).includes({ userId: 9000000, local: true })
   })
 
   for (const failure of [new Error('Roster save refused'), 'offline'])
@@ -893,11 +895,7 @@ describe('a substitution said on the scoring screen', function () {
     const source: ScoringSource = {
       persistent: true,
       open: async game =>
-        GameSession.start(
-          store,
-          game.id,
-          createDevelopmentSession(game, [], [])
-        )
+        GameSession.start(store, game.id, scoringSession(game))
     }
     host = document.createElement('div')
     document.body.appendChild(host)

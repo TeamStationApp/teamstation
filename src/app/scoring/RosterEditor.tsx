@@ -33,6 +33,7 @@ import { withRosterDetails } from './currentSetup'
 import { DefensiveField } from './DefensiveField'
 import { EditRosterList } from './EditRosterList'
 import { addPlaceholderPlayers } from './placeholderPlayers'
+import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import {
   addRosteredPlayer,
   draftOfLocalPlayer,
@@ -169,6 +170,7 @@ export function RosterEditor({
   onRetryRoster,
   canEditTeams,
   onCreatePlayer,
+  onCreateGuest,
   onCancel,
   onReload,
   onSave
@@ -232,6 +234,7 @@ export function RosterEditor({
    * the player.
    */
   onCreatePlayer?: (teamId: string, player: PlayerDraft) => Promise<RosterEntry>
+  onCreateGuest?: (side: Side, player: PlayerDraft) => Promise<RosterEntry>
   /**
    * Save Rosters, lit when the draft validates and has changed or is
    * `unaccepted`. A scorekeeper's screen applies the draft and closes the
@@ -325,8 +328,27 @@ export function RosterEditor({
   }
   const team = draft.liveData.boxscore.teams[side]
   // Game-only players belong to this game's setup, including the opponent's
-  // placeholders. Their edits use scoring permission, like Create Player.
+  // placeholders. Their edits use scoring permission, unlike team players.
   const canEditLocal = rosterLoading !== true && state.readOnly !== true
+  const canCreateRosterPlayer =
+    canEditTeams == null || canEditTeams[draft.gameData.teams[side].id] === true
+  const creationLabel = canCreateRosterPlayer
+    ? 'Create Player'
+    : 'Create Game Guests'
+  const addPlaceholders = async (count: number): Promise<void> => {
+    if (onCreateGuest == null) throw new Error('Unable to create a guest')
+    const next = copyState(draft)
+    try {
+      await addPlaceholderPlayers(next, side, count, onCreateGuest)
+    } finally {
+      // Acknowledged guests already exist even if a later request failed.
+      edit(current => {
+        current.gameData.players = next.gameData.players
+        current.liveData.boxscore.teams = next.liveData.boxscore.teams
+        current.meta.tagOrder = next.meta.tagOrder
+      })
+    }
+  }
   const names = useMemo(
     () =>
       rosters == null
@@ -371,6 +393,7 @@ export function RosterEditor({
   // A dictated sentence is staged whole: the draft, its runners and next
   // batter, and the tab, and for a scorekeeper the team, that show it.
   const spoken = useRosterDictation({
+    onCreateGuest,
     options: dictate,
     game: state.session,
     draft,
@@ -744,16 +767,20 @@ export function RosterEditor({
           </View>
         </RosterDragGroup>
       </View>
-      {adding && (
+      {adding && !canCreateRosterPlayer && (
+        <PlaceholderPlayersSheet
+          onClose={() => {
+            setAdding(false)
+          }}
+          onAdd={addPlaceholders}
+        />
+      )}
+      {adding && canCreateRosterPlayer && (
         <PlayerEntrySheet
           onClose={() => {
             setAdding(false)
           }}
-          onAddPlaceholders={count => {
-            edit(next => {
-              addPlaceholderPlayers(next, side, count)
-            })
-          }}
+          onAddPlaceholders={addPlaceholders}
           onAdd={async player => {
             if (onCreatePlayer == null) {
               throw new Error('Unable to create the player.')
@@ -795,7 +822,7 @@ export function RosterEditor({
           <View style={{ flex: 1, alignItems: 'flex-end' }}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Create Player"
+              accessibilityLabel={creationLabel}
               hitSlop={{ top: 6, bottom: 6 }}
               onPress={() => {
                 setAdding(true)
@@ -815,7 +842,7 @@ export function RosterEditor({
                   fontSize: 16
                 }}
               >
-                Create Player
+                {creationLabel}
               </Text>
             </Pressable>
           </View>

@@ -442,7 +442,7 @@ export function reconcileShownLineup(
   const current = setupOf(state)
   const setup = action.setup
   const players = copyState(current.players)
-  const identities = copyState(current.identities)
+  const tagOrder = [...current.tagOrder]
   const sides = {
     away: copyState(current.sides.away),
     home: copyState(current.sides.home)
@@ -450,28 +450,20 @@ export function reconcileShownLineup(
   const draft = {
     gameData: { teams: state.gameData.teams, players },
     liveData: { boxscore: { teams: sides } },
-    meta: { identities }
+    meta: { tagOrder }
   }
   for (const side of replace) {
     const snap = setup.sides[side]
-    const byUser = new Map<number, number>()
-    const byName = new Map<string, number>()
-    for (const id of sides[side].players) {
-      const player = players[id]
-      if (player == null) continue
-      if (player.userId != null) byUser.set(player.userId, id)
-      else byName.set(player.fullName, id)
-    }
     const idOf = (snapId: number | null): number | null => {
       if (snapId == null) return null
       const person = setup.players[snapId]
       if (person == null) return null
-      if (person.userId != null) return byUser.get(person.userId) ?? null
-      const known = byName.get(person.fullName)
-      if (known != null) return known
-      const id = addPlayer(draft, side, person.fullName, person.jersey)
-      byName.set(person.fullName, id)
-      return id
+      if (players[snapId] != null)
+        return sides[side].players.includes(snapId) ? snapId : null
+      if (!person.local) return null
+      addPlayer(draft, side, snapId, person.fullName, person.jersey)
+      Object.assign(players[snapId], person)
+      return snapId
     }
     const order: number[] = []
     for (const id of snap.battingOrder) {
@@ -505,7 +497,7 @@ export function reconcileShownLineup(
   }
   return {
     ...action,
-    setup: { players, sides, identities },
+    setup: { players, sides, tagOrder },
     confirmed: replace
   }
 }

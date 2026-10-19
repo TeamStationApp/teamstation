@@ -4,10 +4,11 @@ import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Platform } from 'react-native'
 
+import { guestCreator } from '../../test/guestPlayers'
+import { scoringSession } from '../../test/scoringSession'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import { clampPlayerCount, countAtOffset } from './playerCount'
@@ -48,9 +49,8 @@ describe('placeholder count sheet and platform adapters', function () {
     })
     await mount(
       <RosterEditor
-        state={initialScoringState(
-          createDevelopmentSession(gameFixture, [], [])
-        )}
+        onCreateGuest={guestCreator()}
+        state={initialScoringState(scoringSession(gameFixture))}
         onSave={() => undefined}
       />
     )
@@ -62,9 +62,8 @@ describe('placeholder count sheet and platform adapters', function () {
   it('returns to player entry on cancellation and to the roster after creating placeholders', async function () {
     await mount(
       <RosterEditor
-        state={initialScoringState(
-          createDevelopmentSession(gameFixture, [], [])
-        )}
+        onCreateGuest={guestCreator()}
+        state={initialScoringState(scoringSession(gameFixture))}
         onSave={() => undefined}
       />
     )
@@ -117,6 +116,94 @@ describe('placeholder count sheet and platform adapters', function () {
       await pending
     })
     expect(closes).equals(1)
+  })
+  it('keeps acknowledged guests and retries only the remainder after a partial failure', async function () {
+    const create = guestCreator()
+    const names: string[] = []
+    let attempts = 0
+    let saved: ReturnType<typeof scoringSession> | undefined
+    await mount(
+      <RosterEditor
+        onCreateGuest={async (side, player) => {
+          if (++attempts === 2) throw new Error('Offline')
+          const entry = await create(side, player)
+          names.push(`${player.firstName} ${player.lastName}`)
+          return entry
+        }}
+        state={initialScoringState(scoringSession(gameFixture))}
+        onSave={draft => {
+          saved = draft
+        }}
+      />
+    )
+    await click('Create Player')
+    await click('Create Placeholder Player')
+    await click('Player count 3')
+    await click('Create')
+    expect(names).length(1)
+    expect(document.body.textContent).includes(
+      'Created 1 player. Please retry to create the remaining 2.'
+    )
+    expect(node('Player count 2').getAttribute('aria-selected')).equals('true')
+    await click('Create')
+    expect(names).length(3)
+    expect(new Set(names).size).equals(3)
+    expect(names.map(name => name.split(' ').at(-1))).deep.equals([
+      'A',
+      'B',
+      'C'
+    ])
+    await click('Save Rosters')
+    const savedNames = Object.values(saved!.gameData.players).map(
+      player => player.fullName
+    )
+    for (const name of names)
+      expect(savedNames.filter(value => value === name)).length(1)
+    expect(attempts).equals(4)
+  })
+  it('offers only game guests when the scorekeeper cannot manage the selected team roster', async function () {
+    const state = initialScoringState(scoringSession(gameFixture))
+    const create = guestCreator()
+    let rosterRequests = 0
+    let guests = 0
+    let saved: typeof state.session | undefined
+    await mount(
+      <RosterEditor
+        state={state}
+        canEditTeams={{ [state.session.gameData.teams.away.id]: false }}
+        onCreatePlayer={async () => {
+          rosterRequests++
+          throw new Error('Must not create an opponent team member')
+        }}
+        onCreateGuest={async (side, player) => {
+          expect(side).equals('away')
+          guests++
+          return await create(side, player)
+        }}
+        onSave={draft => {
+          saved = draft
+        }}
+      />
+    )
+    expect(node('Create Player')).equals(null)
+    await click('Create Game Guests')
+    expect(node('First Name')).equals(null)
+    await act(async () => {
+      const cancels = document.querySelectorAll<HTMLElement>(
+        '[aria-label="Cancel"]'
+      )
+      cancels[cancels.length - 1].click()
+    })
+    expect(node('Number of placeholder players')).equals(null)
+    await click('Create Game Guests')
+    await click('Player count 2')
+    await click('Create')
+    await click('Save Rosters')
+    expect(guests).equals(2)
+    expect(rosterRequests).equals(0)
+    expect(
+      Object.values(saved!.gameData.players).filter(player => player.local)
+    ).length.greaterThan(1)
   })
   it('clamps rows and commits the currently scrolled selection exactly once', async function () {
     expect(

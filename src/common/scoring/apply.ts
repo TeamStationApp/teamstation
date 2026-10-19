@@ -1887,13 +1887,16 @@ function lineup(ctx: Ctx, action: LineupAction): void {
       if (action.order == null) refuse('malformed', 'Give the whole order')
       team.battingOrder = [...action.order]
     } else if (action.kind === 'addPlayer') {
+      if (action.player == null)
+        refuse('malformed', 'Create the player before adding him to the game')
       addPlayer(
         {
           gameData: { teams: state.gameData.teams, players: setup.players },
           liveData: { boxscore: { teams: setup.sides } },
-          meta: { identities: setup.identities }
+          meta: { tagOrder: setup.tagOrder }
         },
         sideName,
+        action.player,
         action.name ?? 'New Player',
         action.jersey ?? ''
       )

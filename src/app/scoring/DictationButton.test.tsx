@@ -15,8 +15,8 @@ import {
 } from '../../common/scoring/rosterCommands'
 import { FakeDictationSocket } from '../../test/dictationFakes'
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { createDevelopmentSession } from './developmentSession'
 import { useDictationControls } from './DictationButton'
 import type { DictationButtonProps } from './dictationTypes'
 import { gameFixture } from './isUnscoredGame.test'
@@ -64,7 +64,7 @@ const healthy = async (): Promise<Health> => ({
 })
 
 function fresh(): ScoringState {
-  return initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  return initialScoringState(scoringSession(gameFixture))
 }
 
 function harness(
