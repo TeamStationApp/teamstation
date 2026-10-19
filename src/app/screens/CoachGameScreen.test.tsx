@@ -348,6 +348,107 @@ async function say(
 }
 
 describe('Coach Game (U25)', function () {
+  it('disables availability switches until the lineup save finishes refreshing', async () => {
+    const held = server()
+    const save = held.client.saveLineups.bind(held.client)
+    let finish!: () => void
+    held.client.saveLineups = async (...args) => {
+      await new Promise<void>(resolve => {
+        finish = resolve
+      })
+      return await save(...args)
+    }
+    await coach(held)
+    await click('Roster', 'tab')
+    await click('Save Rosters')
+    const toggle = (): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>(
+        '[data-testid="Rostered 201"] input'
+      )!
+    expect(toggle().disabled).equals(true)
+    await act(async () => {
+      finish()
+    })
+    await settle()
+    expect(toggle().disabled).equals(false)
+  })
+
+  it('keeps a failed switch unchanged, removes a player on success and restores him unplaced', async () => {
+    const guest = asRosterEntry({
+      ...roster('home')[0],
+      userId: 901,
+      shortName: 'Babe Ruth',
+      jersey: '99'
+    })
+    const held = server({
+      guests: { away: [], home: [901] },
+      guestPlayers: { away: [], home: [guest] }
+    })
+    let refuse = true
+    const calls: Array<{ side: string; userId: number; rostered: boolean }> = []
+    held.client.setRostered = async (_id, body) => {
+      calls.push(body)
+      if (refuse)
+        throw new HttpError('conflict', 'Finish the current play first')
+      held.game = {
+        ...held.game,
+        unrostered: { away: [], home: body.rostered ? [] : [body.userId] }
+      }
+      return held.game.unrostered
+    }
+    await coach(held)
+    await click('Roster', 'tab')
+    const toggle = (): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>(
+        '[data-testid="Rostered 201"] input'
+      )!
+    expect(
+      document.querySelectorAll('input[aria-label="Rostered for this game"]')
+    ).length(9)
+    expect(toggle().checked).equals(true)
+    await act(async () => {
+      toggle().click()
+    })
+    await settle()
+    expect(toggle().checked).equals(true)
+    expect(document.body.textContent).includes('Finish the current play first')
+    expect(node('Remove Hawk 1')).not.equals(null)
+    refuse = false
+    await act(async () => {
+      toggle().click()
+    })
+    await settle()
+    expect(toggle().checked).equals(false)
+    expect(node('Remove Hawk 1')).equals(null)
+    await click('Lineup', 'tab')
+    expect(node('Add Hawk 1 to Lineup')).equals(null)
+    await click('Defense', 'tab')
+    expect(
+      document.querySelector('[data-testid="Defense roster grid"]')!.textContent
+    ).not.includes('Hawk 1')
+    await click('Roster', 'tab')
+    await act(async () => {
+      toggle().click()
+    })
+    await settle()
+    expect(toggle().checked).equals(true)
+    await click('Lineup', 'tab')
+    expect(node('Add Hawk 1 to Lineup')).not.equals(null)
+    expect(node('Remove Hawk 1')).equals(null)
+    await click('Save Rosters')
+    const body = held.saved[0]
+    const index = body.players.findIndex(player => player.userId === 201)
+    expect(index).gte(0)
+    expect(body.players.some(player => player.userId === 901)).equals(true)
+    expect(body.battingOrder).not.includes(index)
+    expect(Object.values(body.defense)).not.includes(index)
+    expect(calls).deep.equals([
+      { side: 'home', userId: 201, rostered: false },
+      { side: 'home', userId: 201, rostered: false },
+      { side: 'home', userId: 201, rostered: true }
+    ])
+  })
+
   this.timeout(20000)
 
   it('draws its own chevron and his team’s name on the right, over Box Score, Roster, Lineup and Defense', async function () {
