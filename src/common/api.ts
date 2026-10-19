@@ -52,7 +52,6 @@ import {
   type ParentPreview
 } from './groupLinks'
 import { asGuests } from './guests'
-import { asUnrostered } from './unroster'
 import { asCurrentPlay, asGumboPlay } from './gumboPlay'
 import { asLocality, type Locality } from './locality'
 import {
@@ -120,6 +119,7 @@ import {
 } from './scoring/rosterCommands'
 import type { SaveChange, StoredGame } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
+import { asUnrostered } from './unroster'
 import { asGumboId } from './userId'
 import { asUserId } from './userIdNumber'
 import { asWalkUpSong, type WalkUpSong } from './walkUpSong'

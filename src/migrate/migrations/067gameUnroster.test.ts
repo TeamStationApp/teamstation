@@ -51,9 +51,11 @@ describe('067 game unroster', function () {
         .rows[0].unrostered
     ).deep.equals({ away: [], home: [] })
     let refused: unknown
-    await pool.query(`update games set unrostered=null`).catch(error => {
-      refused = error
-    })
+    await pool
+      .query(`update games set unrostered=null`)
+      .catch((error: unknown) => {
+        refused = error
+      })
     expect(String(refused)).includes('not-null constraint')
   })
   it('drops only the new column on down', async () => {
