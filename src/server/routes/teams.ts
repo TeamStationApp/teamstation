@@ -35,6 +35,7 @@ import { teamPlayerRsvps } from '../events/playerRsvps'
 import { whyEmpty } from '../events/whyEmpty'
 import { resolvedFenceDistance } from '../games/fenceDistance'
 import { gameIsLive } from '../games/gameLive'
+import { gameAvailability } from '../games/rosterAvailability'
 import { hasScoringEventsSql } from '../games/scoringActivity'
 import {
   HIGHLIGHT_EVENT_COLUMNS,
@@ -577,10 +578,12 @@ export function teamRoutes(
         actor == null || nonMemberView
           ? undefined
           : await givenRolesOnTeams(db, [game.away_team_id, game.home_team_id])
+      const availability = await gameAvailability(db, game)
       res.json({
         id: game.id,
-        guests: game.guests,
-        unrostered: game.unrostered,
+        guests: availability.guests,
+        unrostered: availability.unrostered,
+        guestPlayers: availability.guestPlayers,
         pendingApproval: pending.pendingApproval,
         pendingRequestId: pending.pendingRequestId,
         homeTeamId: game.home_team_id,
