@@ -144,7 +144,7 @@ describe('the result types MLB writes (U15)', function () {
         eventType: 'force_out',
         label: 'Out at 2nd: Player 4 (2B) from Player 5 (SS)',
         teamId: 'home',
-        creditUserId: null,
+        creditUserId: 13,
         credit: { name: 'Player 4', role: 'fielder', position: '2B' }
       }
     ])

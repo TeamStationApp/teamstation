@@ -3,14 +3,14 @@ import { describe, it } from 'mocha'
 
 import { asGamePlay as asEstimatedGumboPlay } from '../../common/scoring/state'
 import { completeMotions } from '../../test/scoringHelpers'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { type Outcome, outcomeEvents } from './scoringContract'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
 
 const initial = (): ReturnType<typeof initialScoringState> =>
-  initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  initialScoringState(scoringSession(gameFixture))
 
 describe('bunt contact identity', () => {
   for (const outcome of Object.keys(outcomeEvents) as Outcome[])

@@ -51,6 +51,7 @@ import {
   type ParentAction,
   type ParentPreview
 } from './groupLinks'
+import { asGuests } from './guests'
 import { asCurrentPlay, asGumboPlay } from './gumboPlay'
 import { asLocality, type Locality } from './locality'
 import {
@@ -118,6 +119,7 @@ import {
 } from './scoring/rosterCommands'
 import type { SaveChange, StoredGame } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
+import { asGumboId } from './userId'
 import { asUserId } from './userIdNumber'
 import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
 import type { WallTimeline } from './wallTimeline'
@@ -276,6 +278,7 @@ export type LineScoreSide = ReturnType<typeof asLineScoreSide>
 
 export const asGameDetail = withEventMetadata(
   asObject({
+    guests: asGuests,
     id: asString,
     homeTeamId: asString,
     awayTeamId: asString,
@@ -2924,6 +2927,19 @@ export class TeamStationClient {
     )
   }
 
+  async createGuestPlayer(
+    gameId: string,
+    side: 'away' | 'home',
+    player: NewRosterPlayer
+  ): Promise<RosterEntry> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/guest-players`,
+      asRosterEntry,
+      { side, ...player }
+    )
+  }
+
   /**
    * What a roster manager sets for one player on one team. Only the fields sent
    * change; the answer is the player's roster entry as it now reads.
@@ -3504,14 +3520,21 @@ const asStartBody = asObject({
   scope: asNonEmpty,
   target: asTarget,
   context: asNonEmpty,
+  tagOrder: asOptional(asArray(asGumboId)),
   /** Absent means the model the server is configured with. */
   model: asOptional(asDictationModel)
 })
-export type DictationStart = { kind: 'start' } & ReturnType<typeof asStartBody>
+export type DictationStart = { kind: 'start'; tagOrder?: number[] } & Omit<
+  ReturnType<typeof asStartBody>,
+  'tagOrder'
+>
 export const asDictationStart: Cleaner<DictationStart> = raw => {
   if ((raw as { kind?: unknown } | null)?.kind !== 'start')
     throw new TypeError('Expected a start frame')
-  return { kind: 'start', ...asStartBody(raw) }
+  const { tagOrder, ...body } = asStartBody(raw)
+  if (tagOrder != null && new Set(tagOrder).size !== tagOrder.length)
+    throw new TypeError('Duplicate player tag identity')
+  return { kind: 'start', ...body, ...(tagOrder == null ? {} : { tagOrder }) }
 }
 
 /** Retargets the recogniser. Sent ahead of the utterances that will use it. */
