@@ -97,6 +97,8 @@ export interface SessionContext {
   fenceDistanceFt?: number
 }
 export interface SessionOptions {
+  /** Live availability is staged on read and written with the next scoring change. */
+  reconcileSetup?: (setup: GameSetup) => GameSetup
   /** Live scorekeeping requires current setup; record replay remains compatible. */
   requireCurrentSetup?: boolean
   now?: () => Date
@@ -253,6 +255,7 @@ export class ScoringSession {
   private failure: string | null = null
   private isOffline = false
   private readonly now: () => Date
+  private readActions = new WeakSet<ScoringAction>()
   private readonly setTimer: (run: () => void, ms: number) => unknown
   private readonly clearTimer: (handle: unknown) => void
 
@@ -361,6 +364,7 @@ export class ScoringSession {
       segment => segment.playbackTimes ?? segment.actionTimes
     )
     session.rebuild()
+    if (replayed.problems.length === 0) session.reconcileCurrent()
     session.savedLog = [...session.log]
     session.savedTimes = [...session.actionTimes]
     session.savedPlaybackTimes = [...session.playbackTimes]
@@ -508,6 +512,22 @@ export class ScoringSession {
       state = this.base
       for (const action of actions) state = applyAction(state, action).state
     }
+    // An unfinished play cannot accept a roster action. Once the screen
+    // rewinds it, present today's available players there too, without
+    // changing the stored play until the scorer makes another change.
+    if (state !== this.game) {
+      const before = setupOf(state)
+      const setup = this.options.reconcileSetup?.(before)
+      if (setup != null && JSON.stringify(setup) !== JSON.stringify(before)) {
+        const action: ScoringAction = { type: 'lineup', kind: 'roster', setup }
+        const applied = applyAction(state, action)
+        if (applied.problems.length === 0) {
+          state = applied.state
+          actions.push(action)
+          this.readActions.add(action)
+        }
+      }
+    }
     return { state, actions }
   }
 
@@ -596,6 +616,10 @@ export class ScoringSession {
   }
 
   apply(action: ScoringAction): Applied {
+    return this.append(action, true)
+  }
+
+  private append(action: ScoringAction, save: boolean): Applied {
     if (this.refusal != null) {
       return {
         state: this.game,
@@ -637,8 +661,18 @@ export class ScoringSession {
     if (!this.holding) this.align()
     this.blocked = false
     this.dropped = null
-    this.changed()
+    if (save) this.changed()
     return applied
+  }
+
+  private reconcileCurrent(): void {
+    const before = setupOf(this.game)
+    const setup = this.options.reconcileSetup?.(before)
+    if (setup == null || JSON.stringify(setup) === JSON.stringify(before))
+      return
+    const action: ScoringAction = { type: 'lineup', kind: 'roster', setup }
+    if (this.append(action, false).problems.length === 0)
+      this.readActions.add(action)
   }
 
   undo(): Applied {
@@ -650,12 +684,15 @@ export class ScoringSession {
     })
     if (this.refusal != null)
       return unchanged({ code: 'notNow', message: this.refusal })
-    if (this.log.length === 0)
+    let length = this.log.length
+    while (length > 0 && this.readActions.has(this.log[length - 1])) length--
+    if (length === 0)
       return unchanged({ code: 'notNow', message: 'Nothing to undo' })
     // An Undo puts nothing back, so what it took off within the minute is let
     // go at once (`settle`).
-    this.settle(this.cut(this.log.length - 1))
+    this.settle(this.cut(length - 1))
     this.rebuild()
+    this.reconcileCurrent()
     this.blocked = false
     this.dropped = null
     this.changed()
@@ -760,6 +797,7 @@ export class ScoringSession {
 
   /** Takes up everything `fresh`, a new read of the same game, holds. */
   private adopt(fresh: ScoringSession): void {
+    this.readActions = fresh.readActions
     this.lineupsBase = fresh.lineupsBase
     this.heldPlays = fresh.heldPlays
     this.heldLineups = fresh.heldLineups
