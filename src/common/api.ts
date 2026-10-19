@@ -281,6 +281,13 @@ export const asGameDetail = withEventMetadata(
   asObject({
     guests: asGuests,
     unrostered: asUnrostered,
+    guestPlayers: asOptional(
+      asObject({
+        away: asArray((raw: unknown): RosterEntry => asRosterEntry(raw)),
+        home: asArray((raw: unknown): RosterEntry => asRosterEntry(raw))
+      }),
+      () => ({ away: [], home: [] })
+    ),
     id: asString,
     homeTeamId: asString,
     awayTeamId: asString,
@@ -1522,6 +1529,13 @@ const asSaveLineupsShape = asObject({
 })
 
 /** Cleans a lineup save, and refuses an index past the players it names. */
+export const asUnrosterBody = asObject({
+  side: asLiteral('away', 'home'),
+  userId: asUserId,
+  rostered: asBoolean
+})
+export type UnrosterBody = ReturnType<typeof asUnrosterBody>
+
 export const asSaveLineupsBody: Cleaner<SaveLineupsBody> = raw => {
   const body = asSaveLineupsShape(raw)
   const indexes = [
@@ -2926,6 +2940,18 @@ export class TeamStationClient {
       `/teams/${encodeURIComponent(teamId)}/roster-players`,
       asRosterEntry,
       player
+    )
+  }
+
+  async setRostered(
+    gameId: string,
+    body: UnrosterBody
+  ): Promise<ReturnType<typeof asUnrostered>> {
+    return await this.request(
+      'PUT',
+      `/games/${encodeURIComponent(gameId)}/unroster`,
+      asUnrostered,
+      body
     )
   }
 
