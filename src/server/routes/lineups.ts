@@ -76,6 +76,7 @@ import { createGuestPlayer } from '../games/guestPlayers'
 import { cleanBody } from '../jsonBody'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { teamRoster } from '../teams/teamRoster'
 import { teamWalkUpSongs } from './walkUpSongs'
@@ -399,10 +400,10 @@ async function saveSide(
         .executeTakeFirst()
       if (game == null) throw notFound()
       const rows = await readPlays(trx, gameId)
-      const stored: StoredGame = {
+      const stored: StoredGame = await resolveScoringGame(trx, {
         plays: rows.map(row => row.gumbo as GumboPlay),
         currentPlay: game.currentPlay as CurrentPlay | null
-      }
+      })
       const context =
         (await contextOf(trx, gameId, game, stored)) ??
         (await startingContext(trx, gameId, game, sees))

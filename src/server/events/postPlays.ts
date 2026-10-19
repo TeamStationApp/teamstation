@@ -4,7 +4,11 @@ import { type Kysely, type Selectable, sql } from 'kysely'
 
 import { badRequest, conflict, notFound } from '../../common/errors'
 import { withPreviousTagIdentities } from '../../common/eventTags'
-import type { GumboPlay, PostEventsBody } from '../../common/gumboPlay'
+import type {
+  CurrentPlay,
+  GumboPlay,
+  PostEventsBody
+} from '../../common/gumboPlay'
 import { recordOf } from '../../common/scoring/gumbo'
 import {
   halfOutcomes,
@@ -16,6 +20,7 @@ import type { Database, EventsTable } from '../db/database'
 import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
 import { scoringActivitySql } from '../games/scoringActivity'
 import { radarSettings } from '../nodeSettings'
+import { resolveScoringGame } from '../scoring/openRow'
 import { notifyGameChange } from '../socket/gameChanges'
 import { reconcileEventTags } from './eventTags'
 import {
@@ -356,9 +361,16 @@ export async function postGamePlays(
         lineups.lineups_digest !== game.lineups_digest
       )
         await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
+      const resolved = await resolveScoringGame(trx, {
+        plays: taggedStored.map(row => row.gumbo as GumboPlay),
+        currentPlay: taggedGame.currentPlay as CurrentPlay | null
+      })
       return {
-        plays: taggedStored.map(playJson),
-        currentPlay: taggedGame.currentPlay ?? null,
+        plays: taggedStored.map((row, index) => ({
+          ...playJson(row),
+          gumbo: resolved.plays[index]
+        })),
+        currentPlay: resolved.currentPlay,
         lineupsDigest: lineups.lineups_digest ?? game.lineups_digest,
         playsDigest: playsDigest(taggedStored, taggedGame.currentPlay),
         priorPlaysDigest: prior
