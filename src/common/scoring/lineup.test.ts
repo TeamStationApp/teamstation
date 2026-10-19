@@ -78,6 +78,46 @@ describe('a new game from two rosters', function () {
 })
 
 describe('roster checks', function () {
+  it('retains merged historical turns and positions without permitting new duplicates', function () {
+    const state = after(game(), { type: 'pitch', call: 'B' })
+    const away = state.liveData.boxscore.teams.away
+    away.battingOrder[1] = 1
+    away.defense.C = away.defense.P
+    away.battingIndex = 1
+    const setup = setupOf(state)
+    const applied = applyRoster(state, setup)
+    expect(applied.error).equals(undefined)
+    expect(applied.state!.liveData.boxscore.teams.away.battingIndex).equals(1)
+    expect(
+      applied.state!.liveData.boxscore.teams.away.battingOrder
+    ).deep.equals(away.battingOrder)
+    expect(applied.state!.liveData.boxscore.teams.away.defense).deep.equals(
+      away.defense
+    )
+    // The exception is bounded by existing occurrences on this same side.
+    const extraTurn = structuredClone(setup)
+    extraTurn.sides.away.battingOrder[2] = 1
+    expect(applyRoster(state, extraTurn).error).includes('duplicate lineup')
+    const extraPosition = structuredClone(setup)
+    extraPosition.sides.away.defense['1B'] = away.defense.P
+    expect(applyRoster(state, extraPosition).error).includes(
+      'duplicate defender'
+    )
+    const opposite = structuredClone(setup)
+    opposite.sides.home.battingOrder[1] = opposite.sides.home.battingOrder[0]
+    expect(applyRoster(state, opposite).error).includes('duplicate lineup')
+    // Starting a new game still requires a unique order and defense.
+    expect(validateRoster(state)).includes('duplicate lineup')
+    const corrected = structuredClone(setup)
+    corrected.sides.away.battingOrder = [...new Set(away.battingOrder)]
+    corrected.sides.away.defense.C = null
+    const correction = applyRoster(state, corrected)
+    expect(correction.error).equals(undefined)
+    expect(correction.state!.liveData.boxscore.teams.away.battingIndex).equals(
+      0
+    )
+  })
+
   it('updates a current batter’s edited hand before the first pitch without rewriting pitched appearances or manual choices', function () {
     const state = game()
     const setup = setupOf(state)

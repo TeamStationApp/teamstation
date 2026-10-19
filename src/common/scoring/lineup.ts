@@ -131,13 +131,28 @@ export function canSwitchBatter(state: GameState): boolean {
 
 const unique = (ids: number[]): boolean => new Set(ids).size === ids.length
 
+/** A merged historical lineup may retain two turns or positions for one account. */
+function noNewDuplicates(ids: number[], previous: number[] = []): boolean {
+  const allowance = new Map<number, number>()
+  for (const id of previous) allowance.set(id, (allowance.get(id) ?? 0) + 1)
+  const counts = new Map<number, number>()
+  for (const id of ids) {
+    const count = (counts.get(id) ?? 0) + 1
+    if (count > Math.max(1, allowance.get(id) ?? 0)) return false
+    counts.set(id, count)
+  }
+  return true
+}
+
 /** Why a setup cannot be played, or undefined when it can. */
 export function validateRoster(
   state: {
     gameData: GameState['gameData']
     liveData: { boxscore: GameState['liveData']['boxscore'] }
   },
-  allowIncomplete = false
+  allowIncomplete = false,
+  /** Existing merged turns may be retained, but no new duplicate is legal. */
+  previous?: GameSetup['sides']
 ): string | undefined {
   for (const side of ['away', 'home'] as const) {
     const team = state.liveData.boxscore.teams[side]
@@ -149,7 +164,7 @@ export function validateRoster(
       return `${name} needs a lineup.`
     if (
       !unique(team.players) ||
-      !unique(team.battingOrder) ||
+      !noNewDuplicates(team.battingOrder, previous?.[side].battingOrder) ||
       !team.battingOrder.every(member)
     )
       return `${name} has an invalid or duplicate lineup player.`
@@ -158,7 +173,13 @@ export function validateRoster(
     )
     if (!allowIncomplete && team.defense.P == null)
       return `${name} needs a pitcher.`
-    if (!unique(defense) || !defense.every(member))
+    const priorDefense =
+      previous == null
+        ? []
+        : POSITIONS.map(position => previous[side].defense[position]).filter(
+            (id): id is number => id != null
+          )
+    if (!noNewDuplicates(defense, priorDefense) || !defense.every(member))
       return `${name} has an invalid or duplicate defender.`
   }
 }
@@ -193,7 +214,7 @@ export function applyRoster(
     gameData: { teams: state.gameData.teams, players: setup.players },
     liveData: { boxscore: { teams: setup.sides } }
   }
-  const error = validateRoster(draft, true)
+  const error = validateRoster(draft, true, state.liveData.boxscore.teams)
   if (error != null) return { error }
   const next = copyState(state)
   next.gameData.players = copyState(setup.players)
@@ -286,7 +307,15 @@ export function applyRoster(
       return {
         error: 'Choose a next batter in the lineup who is not already on base.'
       }
-    after.battingIndex = after.battingOrder.indexOf(id)
+    // Merged accounts can occupy multiple historical turns. Keep the due
+    // occurrence instead of jumping from its second turn back to its first.
+    const occurrence = before.battingOrder
+      .slice(0, before.battingIndex)
+      .filter(player => player === id).length
+    const matching = after.battingOrder
+      .map((player, index) => (player === id ? index : -1))
+      .filter(index => index >= 0)
+    after.battingIndex = matching[occurrence] ?? matching[0]
     next.liveData.boxscore.teams[side] = after
   }
   const offense = next.liveData.linescore.offense

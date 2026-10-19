@@ -1889,17 +1889,27 @@ function lineup(ctx: Ctx, action: LineupAction): void {
     } else if (action.kind === 'addPlayer') {
       if (action.player == null)
         refuse('malformed', 'Create the player before adding him to the game')
-      addPlayer(
-        {
-          gameData: { teams: state.gameData.teams, players: setup.players },
-          liveData: { boxscore: { teams: setup.sides } },
-          meta: { tagOrder: setup.tagOrder }
-        },
-        sideName,
-        action.player,
-        action.name ?? 'New Player',
-        action.jersey ?? ''
-      )
+      const existing = setup.players[action.player]
+      if (existing == null)
+        addPlayer(
+          {
+            gameData: { teams: state.gameData.teams, players: setup.players },
+            liveData: { boxscore: { teams: setup.sides } },
+            meta: { tagOrder: setup.tagOrder }
+          },
+          sideName,
+          action.player,
+          action.name ?? 'New Player',
+          action.jersey ?? ''
+        )
+      else {
+        // A merged guest can resolve to someone already in this game.
+        // Keep that person's profile and activate them on their own side.
+        if (existing.teamId !== state.gameData.teams[sideName].id)
+          refuse('illegal', 'Player belongs to the other team')
+        if (!team.players.includes(action.player))
+          team.players.push(action.player)
+      }
     } else if (action.kind === 'position') {
       if (action.position == null || action.player == null)
         refuse('malformed', 'Give a position and a player')

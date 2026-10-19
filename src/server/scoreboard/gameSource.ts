@@ -6,6 +6,7 @@ import { replayPlays } from '../../common/scoring/gumbo'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
 import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
+import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import {
   type ScoreboardStore,
@@ -58,12 +59,12 @@ export async function scoreboardFromGame(
         .where('id', '=', gameId)
         .executeTakeFirst()
       if (game == null) return undefined
-      const stored = {
+      const stored = await resolveScoringGame(trx, {
         plays: (await readPlays(trx, gameId)).map(
           row => row.gumbo as GumboPlay
         ),
         currentPlay: game.currentPlay as CurrentPlay | null
-      }
+      })
       if (stored.plays.length === 0 && stored.currentPlay == null)
         return undefined
       const context = await contextOf(trx, gameId, game, stored)
