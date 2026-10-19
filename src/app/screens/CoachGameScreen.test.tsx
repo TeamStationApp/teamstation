@@ -104,6 +104,7 @@ function roster(teamId: string): RosterEntry[] {
   return POSITIONS.map((position, i) =>
     asRosterEntry({
       userId: first + i,
+      gumboId: first + i,
       shortName: `${teamId === 'away' ? 'Owl' : 'Hawk'} ${i + 1}`,
       jersey: String(i + 1),
       positions: [position],
@@ -377,6 +378,7 @@ describe('Coach Game (U25)', function () {
     const guest = asRosterEntry({
       ...roster('home')[0],
       userId: 901,
+      gumboId: 901,
       shortName: 'Babe Ruth',
       jersey: '99'
     })
@@ -437,9 +439,9 @@ describe('Coach Game (U25)', function () {
     expect(node('Remove Hawk 1')).equals(null)
     await click('Save Rosters')
     const body = held.saved[0]
-    const index = body.players.findIndex(player => player.userId === 201)
+    const index = body.players.findIndex(player => player.gumboId === 201)
     expect(index).gte(0)
-    expect(body.players.some(player => player.userId === 901)).equals(true)
+    expect(body.players.some(player => player.gumboId === 901)).equals(true)
     expect(body.battingOrder).not.includes(index)
     expect(Object.values(body.defense)).not.includes(index)
     expect(calls).deep.equals([
@@ -476,8 +478,8 @@ describe('Coach Game (U25)', function () {
     const rows = roster('home')
     const person = (
       row: RosterEntry
-    ): { userId: number; name: string; jersey: string } => ({
-      userId: row.userId,
+    ): { gumboId: number; name: string; jersey: string } => ({
+      gumboId: row.userId,
       name: row.shortName,
       jersey: row.jersey ?? ''
     })
@@ -522,7 +524,7 @@ describe('Coach Game (U25)', function () {
     await click('Save Rosters')
     expect(held.saved).has.length(1)
     expect(held.saved[0].side).equals('home')
-    expect(held.saved[0].players.map(player => player.userId)).deep.equals([
+    expect(held.saved[0].players.map(player => player.gumboId)).deep.equals([
       201, 202, 203, 204, 205, 206, 207, 208, 209
     ])
     expect(held.saved[0].battingOrder).deep.equals([8, 7, 6, 5, 4, 3, 2, 1, 0])
@@ -533,8 +535,8 @@ describe('Coach Game (U25)', function () {
     const rows = roster('home')
     const person = (
       row: RosterEntry
-    ): { userId: number; name: string; jersey: string } => ({
-      userId: row.userId,
+    ): { gumboId: number; name: string; jersey: string } => ({
+      gumboId: row.userId,
       name: row.shortName,
       jersey: row.jersey ?? ''
     })
@@ -638,7 +640,7 @@ describe('Coach Game (U25)', function () {
     const body = held.saved[0]
     expect(body.side).equals('home')
     expect(body.base).equals('first')
-    expect(body.players.map(player => player.userId)).deep.equals([
+    expect(body.players.map(player => player.gumboId)).deep.equals([
       201, 202, 203, 204, 205, 206, 207, 208, 209
     ])
     expect(body.players[0]).deep.include({ jersey: '1' })
@@ -856,7 +858,12 @@ describe('Coach Game (U25)', function () {
     const requests: unknown[] = []
     held.client.createGuestPlayer = async (gameId, side, player) => {
       requests.push({ gameId, side, player })
-      return { ...roster('home')[0], userId: 9000001, shortName: 'Hawks A' }
+      return {
+        ...roster('home')[0],
+        userId: 9000001,
+        gumboId: 9000001,
+        shortName: 'Hawks A'
+      }
     }
     await coach(held)
     await click('Create Player')
@@ -868,7 +875,9 @@ describe('Coach Game (U25)', function () {
     held.client.gameLineups = async () => lineups('mine', true)
     await click('Save Rosters')
     await waitFor(() => held.saved.length === 1, 'the saved guest')
-    expect(held.saved[0].players.map(player => player.userId)).includes(9000001)
+    expect(held.saved[0].players.map(player => player.gumboId)).includes(
+      9000001
+    )
   })
 
   it('creates a team roster player from the coach form', async () => {
@@ -876,7 +885,12 @@ describe('Coach Game (U25)', function () {
     const sent: unknown[] = []
     held.client.createRosterPlayer = async (teamId, player) => {
       sent.push({ teamId, player })
-      return { ...roster('home')[0], userId: 300, shortName: 'Mookie B' }
+      return {
+        ...roster('home')[0],
+        userId: 300,
+        gumboId: 300,
+        shortName: 'Mookie B'
+      }
     }
     await coach(held)
     await click('Create Player')
@@ -1110,7 +1124,7 @@ describe('a coach’s lineup save', function () {
     expect(body.side).equals('away')
     expect(body.base).equals('d1')
     expect(body.players[0]).deep.equals({
-      userId: 101,
+      gumboId: 101,
       fullName: draft.gameData.players[team.players[0]].fullName,
       jersey: '1'
     })
@@ -1133,14 +1147,18 @@ describe('a coach’s lineup save', function () {
     const draft = copyState(game)
     const made = addDevelopmentPlayer(draft, 'home', 9000000, 'Made Up')
     draft.liveData.boxscore.teams.home.battingOrder.push(made)
-    const orders = battingOrders(draft)
+    const accounts = [...roster('away'), ...roster('home')].map(row => ({
+      ...row,
+      userId: row.userId + 1000
+    }))
+    const orders = battingOrders(draft, ['away', 'home'], accounts)
     expect(orders.away!.map(batter => batter.userId)).deep.equals([
-      101, 102, 103, 104, 105, 106, 107, 108, 109
+      1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109
     ])
-    expect(orders.away![0]).deep.equals({ userId: 101, shortName: 'Owl 1' })
+    expect(orders.away![0]).deep.equals({ userId: 1101, shortName: 'Owl 1' })
     expect(orders.home).has.length(10)
     expect(orders.home![9]).deep.equals({
-      userId: 9000000,
+      userId: null,
       shortName: 'Made Up'
     })
     // One side's alone.

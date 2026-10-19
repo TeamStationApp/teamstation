@@ -1,8 +1,8 @@
 import type { Kysely } from 'kysely'
 
 import type { GumboPlay } from '../../common/gumboPlay'
-import { survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
+import { scoringUsers } from '../scoring/gumboIds'
 import type { BattingLine } from '../stats'
 import { eventTypeCounts } from './gumboStats'
 
@@ -30,7 +30,7 @@ export async function boxScoreOrder(
         ? [play.matchup.batter.id]
         : []
     )
-    const survivors = await survivorsOf(db, ids)
+    const survivors = await scoringUsers(db, ids)
     for (const play of plays) {
       const id = play.matchup?.batter?.id
       if (typeof id !== 'number') continue

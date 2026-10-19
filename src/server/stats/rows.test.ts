@@ -46,7 +46,7 @@ describe('stat rows', function () {
           id: 'gps_placeholder',
           game_id: 'gam_demo',
           team_id: 'tem_home',
-          user_id: placeholder.userId,
+          gumbo_id: placeholder.userId,
           pa: 2,
           ab: 2,
           h: 1
@@ -55,7 +55,7 @@ describe('stat rows', function () {
           id: 'gps_own',
           game_id: 'gam_demo',
           team_id: 'tem_home',
-          user_id: ids[0],
+          gumbo_id: ids[0],
           pa: 3,
           ab: 3,
           h: 2
@@ -64,7 +64,7 @@ describe('stat rows', function () {
           id: 'gps_other',
           game_id: 'gam_demo',
           team_id: 'tem_home',
-          user_id: ids[1],
+          gumbo_id: ids[1],
           pa: 1,
           ab: 1
         }
@@ -90,7 +90,7 @@ describe('stat rows', function () {
         id: 'gps_chain',
         game_id: 'gam_demo',
         team_id: 'tem_home',
-        user_id: earlier.userId,
+        gumbo_id: earlier.userId,
         pa: 4,
         ab: 4,
         h: 0,

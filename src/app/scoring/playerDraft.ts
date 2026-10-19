@@ -99,20 +99,18 @@ export function rosterPlayerBody(draft: PlayerDraft): NewRosterPlayer {
 export function addRosteredPlayer(
   session: ScoringSessionState,
   side: Side,
-  entry: Pick<RosterEntry, 'userId' | 'shortName'>,
+  entry: Pick<RosterEntry, 'gumboId' | 'shortName'>,
   draft: PlayerDraft
 ): number {
   const error = playerDraftError(draft)
   if (error != null) throw new Error(error)
   const firstName = draft.firstName.trim()
   const lastName = draft.lastName.trim()
-  const { userId } = entry
-  const id = asGumboId(userId)
+  const id = asGumboId(entry.gumboId)
   if (!session.meta.tagOrder.includes(id)) session.meta.tagOrder.push(id)
   const team = session.liveData.boxscore.teams[side]
   const player = {
     id,
-    userId,
     teamId: session.gameData.teams[side].id,
     fullName: entry.shortName,
     firstName,
