@@ -2,14 +2,15 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { PerspectiveCamera, Vector3 } from 'three'
+import { PerspectiveCamera } from 'three'
 
 import { completeMotions } from '../../test/scoringHelpers'
+import { projectBases } from '../field/baseProjection'
 import { applyFieldCamera } from '../field/cameraModel'
-import { BASES } from '../field/fieldModel'
 import type { BaseProjection } from '../field/fieldTypes'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
+import { homeDecisionFrame } from './runnerControlLayout'
 import { RunnerControls } from './RunnerControls'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
@@ -83,8 +84,15 @@ describe('runner decisions', function () {
       )
     )
     expect(cards).length(2)
-    expect(cards.every(card => card.style.position !== 'absolute')).equals(true)
-    expect(cards[0].parentElement!.style.flexDirection).equals('row')
+    expect(cards.every(card => card.style.position === 'absolute')).equals(true)
+    expect(
+      Math.abs(parseFloat(cards[0].style.top) - parseFloat(cards[1].style.top))
+    ).at.least(104)
+    expect(
+      cards.every(
+        card => getComputedStyle(card).backgroundColor === 'rgba(0, 0, 0, 0)'
+      )
+    ).equals(true)
     await click('Safe Player 7')
     expect(received.at(-1)).deep.equals({
       type: 'CHOICE_DECIDE',
@@ -128,24 +136,18 @@ describe('runner decisions', function () {
       heightOffset: 33,
       bottomExtension: 112
     })
-    await render(state, null, {
-      width,
-      height,
-      bases: BASES.map(point => {
-        const projected = new Vector3(point.x, 9, point.z).project(camera)
-        return {
-          x: ((projected.x + 1) * width) / 2,
-          y: ((1 - projected.y) * height) / 2
-        }
-      })
-    })
+    const projection = projectBases(camera, width, height)
+    await render(state, null, projection)
     const cards = Array.from(
       document.querySelectorAll<HTMLElement>(
         '[aria-label^="Fielder\'s choice decision for"]'
       )
     )
     expect(cards).length(3)
-    expect(cards.every(card => card.style.position !== 'absolute')).equals(true)
+    expect(cards.every(card => card.style.position === 'absolute')).equals(true)
+    expect(parseFloat(cards[0].style.top) + 44).lessThan(projection.heads![2].y)
+    expect(parseFloat(cards[1].style.left) + 68).lessThan(projection.feet![3].x)
+    expect(cards.every(card => card.textContent === 'SafeOut')).equals(true)
     for (const id of [6, 7, 8]) {
       await click(`Safe Player ${id}`)
       expect(received.at(-1)).includes({ id, decision: 'safe' })
@@ -243,7 +245,17 @@ describe('runner decisions', function () {
         calls: []
       }
     }
-    await render(state)
+    const projection: BaseProjection = {
+      width: 1200,
+      height: 900,
+      bases: [
+        { x: 600, y: 700 },
+        { x: 750, y: 550 },
+        { x: 600, y: 350 },
+        { x: 300, y: 550 }
+      ]
+    }
+    await render(state, null, projection)
     const name = (id: number): string =>
       state.session.gameData.players[id].fullName
     expect(
@@ -301,7 +313,7 @@ describe('runner decisions', function () {
       generation: 0
     })
     state.pendingPlay.fieldersChoice!.runners[0].decision = 'safe'
-    await render(state)
+    await render(state, null, projection)
     expect(
       document.querySelectorAll(
         '[aria-label^="Fielder\'s choice decision for"]'
@@ -428,10 +440,7 @@ describe('runner decisions', function () {
     await render(state)
     for (const label of ['Safe', 'Out']) {
       const button = document.querySelector(`[aria-label="${label}"]`)!
-      expect(button.textContent).contains('At Home')
-      const subtitle = button.lastElementChild!
-      expect(getComputedStyle(subtitle).fontSize).equals('10.5px')
-      expect(getComputedStyle(subtitle).textAlign).equals('center')
+      expect(button.textContent).equals(label)
     }
     await click('Safe')
     await click('Out')
@@ -445,6 +454,85 @@ describe('runner decisions', function () {
       true
     await render(state)
     expect(document.querySelector('[aria-label="Back"]')).equals(null)
+  })
+  it('shares transparent home placement with FC while keeping dragged-runner placement unchanged', async function () {
+    const projection: BaseProjection = {
+      width: 402,
+      height: 579,
+      bases: [
+        { x: 201, y: 403 },
+        { x: 300, y: 320 },
+        { x: 201, y: 250 },
+        { x: 100, y: 320 }
+      ]
+    }
+    const state = initial()
+    state.phase = 'homeDecision'
+    state.session.homeQueue = [8]
+    await render(state, null, projection)
+    const home = document.querySelector<HTMLElement>(
+      '[aria-label="Home plate decision for Player 8"]'
+    )!
+    const frame = homeDecisionFrame(projection, null, false)!
+    expect(home.style.left).equals(`${frame.left}px`)
+    expect(home.style.top).equals(`${frame.top}px`)
+    const homeLeft = home.style.left
+    const homeTop = home.style.top
+    expect(home.textContent).equals('SafeOut')
+    expect(getComputedStyle(home).backgroundColor).equals('rgba(0, 0, 0, 0)')
+    state.phase = 'fieldersChoice'
+    state.pendingPlay = {
+      outcome: "Fielder's Choice",
+      trajectoryAccepted: true,
+      fieldersChoice: {
+        route: [{ id: 15, point: { x: 0, z: -20 } }],
+        runners: [{ playerId: 8, from: 3, to: 4 }],
+        calls: []
+      }
+    }
+    await render(state, null, projection)
+    const choice = document.querySelector<HTMLElement>(
+      '[aria-label="Fielder\'s choice decision for Player 8"]'
+    )!
+    expect(choice.style.left).equals(homeLeft)
+    expect(choice.style.top).equals(homeTop)
+    expect(choice.textContent).equals('SafeOut')
+    state.phase = 'runnerDecision'
+    state.runnerAction = {
+      playerId: 8,
+      from: 3,
+      to: 4,
+      origin: 'current',
+      returnPhase: 'ready'
+    }
+    await render(state, null, projection)
+    const drag = document.querySelector<HTMLElement>(
+      '[aria-label="Runner decision for Player 8"]'
+    )!
+    expect(drag.style.width).equals('130px')
+    expect(drag.style.left).equals('217px')
+    expect(drag.style.top).equals('247px')
+    expect(drag.textContent).contains('Player 8')
+    expect(document.querySelector('[aria-label="Safe"]')!.textContent).equals(
+      'SafeAt Home'
+    )
+  })
+  it('waits for the first field projection rather than displaying floating FC cards', async function () {
+    const state = initial()
+    state.phase = 'fieldersChoice'
+    state.pendingPlay = {
+      outcome: "Fielder's Choice",
+      trajectoryAccepted: true,
+      fieldersChoice: {
+        route: [],
+        runners: [{ playerId: 6, from: 1, to: 2 }],
+        calls: []
+      }
+    }
+    await render(state)
+    expect(
+      document.querySelector('[aria-label^="Fielder\'s choice decision for"]')
+    ).equals(null)
   })
   it('identifies each automatic destination below Safe and Out', async () => {
     for (const [base, subtitle] of [

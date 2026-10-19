@@ -28,6 +28,9 @@ export interface FieldPlacement {
 }
 export interface BaseProjection {
   bases: Array<{ x: number; y: number }>
+  /** Standing runner silhouette, for controls that do not follow a drag. */
+  heads?: Array<{ x: number; y: number }>
+  feet?: Array<{ x: number; y: number }>
   width: number
   height: number
 }
