@@ -234,6 +234,9 @@ public final class MetalCompositor: @unchecked Sendable {
       return nil
     }
     let planar = CVPixelBufferGetPlaneCount(pixelBuffer) > 0
+    // A packed buffer has one plane. Asked for its second — a replay fallback that kept BGRA —
+    // the picture is refused and counted as a miss, rather than read as luma and chroma.
+    guard planar || plane == 0 else { return nil }
     let width = planar
       ? CVPixelBufferGetWidthOfPlane(pixelBuffer, plane)
       : CVPixelBufferGetWidth(pixelBuffer)
@@ -248,7 +251,7 @@ public final class MetalCompositor: @unchecked Sendable {
     )
     descriptor.usage = [.shaderRead, .renderTarget]
     descriptor.storageMode = .shared
-    return device.makeTexture(descriptor: descriptor, iosurface: surface, plane: planar ? plane : 0)
+    return device.makeTexture(descriptor: descriptor, iosurface: surface, plane: plane)
   }
 
   private static let shaderSource = """

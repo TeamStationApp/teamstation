@@ -24,6 +24,22 @@ struct MetalCompositorTests {
     fill(input, luma: 16, chroma: 128)
     let black = try centre(of: try #require(compositor.compose(program: input)))
     #expect(black.allSatisfy { $0 < 15 }, "black came out \(black)")
+
+    // Video-range red: the chroma plane read in the right order, Cb then Cr.
+    fill(input, luma: 63, cb: 102, cr: 240)
+    let red = try centre(of: try #require(compositor.compose(program: input)))
+    #expect(red[2] > 200 && red[1] < 60 && red[0] < 60, "red came out \(red) (BGR)")
+  }
+
+  @Test("Refuses a packed picture rather than reading it as two planes")
+  func refusesAPackedPicture() throws {
+    let compositor = try #require(MetalCompositor(width: 320, height: 180))
+    let factory = try #require(PixelBufferFactory(
+      width: 320,
+      height: 180,
+      pixelFormat: kCVPixelFormatType_32BGRA
+    ))
+    #expect(compositor.compose(program: try #require(factory.makeBuffer())) == nil)
   }
 
   @Test("Composes from a stream of fresh surfaces, as a long session hands it")
@@ -47,13 +63,25 @@ struct MetalCompositorTests {
   }
 
   private func fill(_ buffer: CVPixelBuffer, luma: UInt8, chroma: UInt8) {
+    fill(buffer, luma: luma, cb: chroma, cr: chroma)
+  }
+
+  /// Every luma sample `luma`, every chroma pair `cb, cr` (NV12 interleaves them, Cb first).
+  private func fill(_ buffer: CVPixelBuffer, luma: UInt8, cb: UInt8, cr: UInt8) {
     CVPixelBufferLockBaseAddress(buffer, [])
     defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-    for plane in 0 ..< 2 {
-      guard let base = CVPixelBufferGetBaseAddressOfPlane(buffer, plane) else { continue }
-      let bytes = CVPixelBufferGetBytesPerRowOfPlane(buffer, plane)
-        * CVPixelBufferGetHeightOfPlane(buffer, plane)
-      memset(base, Int32(plane == 0 ? luma : chroma), bytes)
+    if let base = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) {
+      memset(base, Int32(luma), CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+        * CVPixelBufferGetHeightOfPlane(buffer, 0))
+    }
+    guard let base = CVPixelBufferGetBaseAddressOfPlane(buffer, 1) else { return }
+    let row = CVPixelBufferGetBytesPerRowOfPlane(buffer, 1)
+    let bytes = base.assumingMemoryBound(to: UInt8.self)
+    for y in 0 ..< CVPixelBufferGetHeightOfPlane(buffer, 1) {
+      for x in 0 ..< CVPixelBufferGetWidthOfPlane(buffer, 1) {
+        bytes[y * row + 2 * x] = cb
+        bytes[y * row + 2 * x + 1] = cr
+      }
     }
   }
 
