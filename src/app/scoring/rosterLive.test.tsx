@@ -5,9 +5,9 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import type { GameLineupsResponse } from '../../common/api'
 import type { GameSocketEvent } from '../../common/gameSocket'
+import { scoringSession } from '../../test/scoringSession'
 import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { RosterEditor } from './RosterEditor'
 import {
@@ -135,9 +135,7 @@ describe('a roster screen following the lineups', function () {
     root = undefined
     host?.remove()
   })
-  const state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], [])
-  )
+  const state = initialScoringState(scoringSession(gameFixture))
   const node = (label: string): HTMLElement | null =>
     host.querySelector<HTMLElement>(`[aria-label="${label}"]`)
   const click = async (label: string): Promise<void> => {

@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { mintedRosterEntry } from '../test/mintedRosterEntry'
 import { testPasswordParameters } from '../test/passwordFixtures'
 import {
   asSaveLineupsBody,
@@ -44,6 +45,32 @@ function stubFetch(
 }
 
 describe('api client', function () {
+  it('posts a game guest to its side and returns the minted identity', async () => {
+    const player = {
+      firstName: 'Mike',
+      lastName: 'Trout',
+      jersey: '27',
+      positions: ['CF' as const],
+      bats: 'right' as const,
+      throws: 'right' as const
+    }
+    const set = stubFetch(201, mintedRosterEntry(player, 700001))
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: set.fetch
+    })
+    const entry = await client.createGuestPlayer('game 1', 'away', player)
+    expect(entry.userId).equals(700001)
+    expect(set.calls[0].url).equals(
+      'https://example.test/api/v1/games/game%201/guest-players'
+    )
+    expect(set.calls[0].method).equals('POST')
+    expect(JSON.parse(set.calls[0].body!)).deep.equals({
+      side: 'away',
+      ...player
+    })
+  })
+
   it('keeps node access filters on the existing users collection and escapes name/email searches', async () => {
     const response = stubFetch(200, [
       {
@@ -574,7 +601,7 @@ describe('api client', function () {
       id: 'liv_1',
       gameId: 'gam 1',
       userId: 42,
-      ownerName: 'Pat',
+      ownerName: 'Pat Neshek',
       slot: 1,
       label: 'Dugout',
       keyPrefix: 'ts_abc',
@@ -604,7 +631,7 @@ describe('api client', function () {
       id: 'liv_1',
       gameId: 'gam 1',
       userId: 42,
-      ownerName: 'Pat',
+      ownerName: 'Pat Neshek',
       slot: 1,
       label: 'Home Plate',
       keyPrefix: 'ts_abc',
@@ -777,7 +804,7 @@ describe('api client', function () {
     const session = {
       token: 'tok_abc',
       expiresAt: '2026-10-01T00:00:00.000Z',
-      user: { id: 1, displayName: 'Robin', isAdmin: false }
+      user: { id: 1, displayName: 'Robin Yount', isAdmin: false }
     }
     const { fetch, calls } = stubFetch(200, session)
     const client = new TeamStationClient({
@@ -1121,7 +1148,7 @@ describe('api client', function () {
     const session = {
       token: 'tok_code',
       expiresAt: '2026-10-01T00:00:00.000Z',
-      user: { id: 1, displayName: 'Robin', isAdmin: false }
+      user: { id: 1, displayName: 'Robin Yount', isAdmin: false }
     }
     const answers: Array<[number, unknown]> = [
       [202, { sent: true, requestId: 'req_1', clientSecret: 'secret' }],
@@ -1340,7 +1367,7 @@ describe('api client', function () {
     const session = {
       token: 'tok_abc',
       expiresAt: '2026-10-01T00:00:00.000Z',
-      user: { id: 1, displayName: 'Robin', isAdmin: false }
+      user: { id: 1, displayName: 'Robin Yount', isAdmin: false }
     }
     const { fetch, calls } = stubFetch(200, session)
     const client = new TeamStationClient({
@@ -1362,18 +1389,18 @@ describe('api client', function () {
       {
         token: 'tok',
         expiresAt: '2026-11-01T00:00:00.000Z',
-        user: { id: 1, displayName: 'Robin', isAdmin: false }
+        user: { id: 1, displayName: 'Robin Yount', isAdmin: false }
       },
       { requestId: 'emc_asked', clientSecret: 's', sent: true },
       {
         token: 'tok',
         expiresAt: '2026-11-01T00:00:00.000Z',
-        user: { id: 1, displayName: 'Robin', isAdmin: false }
+        user: { id: 1, displayName: 'Robin Yount', isAdmin: false }
       },
       {
         token: 'tok',
         expiresAt: '2026-11-01T00:00:00.000Z',
-        user: { id: 1, displayName: 'Robin', isAdmin: false }
+        user: { id: 1, displayName: 'Robin Yount', isAdmin: false }
       }
     ]
     const bodies: unknown[] = []

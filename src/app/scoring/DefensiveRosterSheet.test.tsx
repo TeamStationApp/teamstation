@@ -3,9 +3,9 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { DefensiveRosterSheet } from './DefensiveRosterSheet'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { POSITIONS } from './scoringTypes'
 
@@ -27,7 +27,7 @@ async function mount(
     root!.render(
       <ThemeProvider>
         <DefensiveRosterSheet
-          session={createDevelopmentSession(gameFixture, [], [])}
+          session={scoringSession(gameFixture)}
           side="home"
           position="P"
           onClose={() => undefined}
@@ -64,7 +64,7 @@ describe('defensive roster sheet', function () {
       expect(document.body.textContent).includes(`Assign ${title}`)
     })
   it('groups every player once with bench first, fielders-only badges and names before optional jerseys', async () => {
-    const session = createDevelopmentSession(gameFixture, [], [])
+    const session = scoringSession(gameFixture)
     const team = session.liveData.boxscore.teams.home
     const bench = team.defense.P!
     team.defense.P = null
@@ -103,7 +103,7 @@ describe('defensive roster sheet', function () {
     expect(choices).deep.equals([bench, catcher])
   })
   it('preserves distinct server roster names in tiles and accessible labels without jerseys', async () => {
-    const session = createDevelopmentSession(gameFixture, [], [])
+    const session = scoringSession(gameFixture)
     const team = session.liveData.boxscore.teams.home
     const ids = team.players.slice(0, 2)
     team.players = ids
@@ -132,7 +132,7 @@ describe('defensive roster sheet', function () {
   })
   for (const assigned of [false, true])
     it(`keeps both headers and Create Player with an empty ${assigned ? 'bench' : 'fielders'} section`, async () => {
-      const session = createDevelopmentSession(gameFixture, [], [])
+      const session = scoringSession(gameFixture)
       if (!assigned)
         for (const slot of POSITIONS)
           session.liveData.boxscore.teams.home.defense[slot] = null

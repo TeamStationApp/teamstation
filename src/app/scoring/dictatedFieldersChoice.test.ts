@@ -5,8 +5,8 @@ import type { ScoringAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/session'
 import { asGameState } from '../../common/scoring/state'
 import { choiceRelayPhrases } from '../../test/fieldersChoicePhrases'
+import { scoringSession } from '../../test/scoringSession'
 import { BASES } from '../field/fieldModel'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { atRest, initialScoringState, scoringReducer } from './scoringMachine'
 import { scoringFieldPlayers } from './scoringMotion'
@@ -14,7 +14,7 @@ import { playerRef } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
 
 function game(mask = 7, outs = 0): ScoringState {
-  const session = createDevelopmentSession(gameFixture, [], [])
+  const session = scoringSession(gameFixture)
   for (const [index, key] of (['first', 'second', 'third'] as const).entries())
     session.liveData.linescore.offense[key] =
       (mask & (1 << index)) !== 0 ? playerRef(session, index + 6) : null

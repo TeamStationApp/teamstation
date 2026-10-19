@@ -28,7 +28,19 @@ export const F = {
 } as const
 
 export function game(): GameState {
-  return freshGame('g1', TEAMS, newSetup(TEAMS, { away: [], home: [] }))
+  const roster = (
+    start: number
+  ): Array<{ userId: number; shortName: string; jersey: string }> =>
+    Array.from({ length: 9 }, (_, i) => ({
+      userId: start + i,
+      shortName: `Player ${i + 1}`,
+      jersey: String(i + 1)
+    }))
+  return freshGame(
+    'g1',
+    TEAMS,
+    newSetup(TEAMS, { away: roster(1), home: roster(10) })
+  )
 }
 
 /**

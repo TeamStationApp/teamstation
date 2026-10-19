@@ -1,15 +1,16 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { asRosterEntry } from '../../common/api'
+import { asRosterEntry, type RosterEntry } from '../../common/api'
 import {
   explicitPlaceholders,
   type RosterCommand,
   rosterSituation
 } from '../../common/scoring/rosterCommands'
 import type { GameState } from '../../common/scoring/state'
+import { guestCreator } from '../../test/guestPlayers'
+import { scoringSession } from '../../test/scoringSession'
 import { createDictatedPlayers } from './createDictatedPlayers'
-import { createDevelopmentSession } from './developmentSession'
 import { dictatedSheet } from './dictatedRoster'
 import { gameFixture } from './isUnscoredGame.test'
 
@@ -20,7 +21,7 @@ describe('persistent dictated player creation', () => {
     name: 'Shohei Ohtani',
     jersey: '17'
   }
-  const game = (): GameState => createDevelopmentSession(gameFixture, [], [])
+  const game = (): GameState => scoringSession(gameFixture)
   it('creates a real roster identity by default and leaves the source draft untouched', async () => {
     const draft = game()
     const before = JSON.stringify(draft)
@@ -64,7 +65,7 @@ describe('persistent dictated player creation', () => {
     )
     expect(JSON.stringify(draft)).equals(before)
   })
-  it('creates explicit placeholders locally without a roster request', async () => {
+  it('persists explicit placeholders as guests before staging them', async () => {
     const draft = game()
     const result = await createDictatedPlayers(
       draft,
@@ -72,14 +73,63 @@ describe('persistent dictated player creation', () => {
       rosterSituation(draft),
       async () => {
         throw new Error('Must not call')
-      }
+      },
+      () => true,
+      new Map(),
+      guestCreator()
     )
     if ('problem' in result) throw new Error(result.problem)
     expect(
       Object.values(result.draft.gameData.players).find(
         player => player.fullName === command.name
       )
-    ).includes({ userId: null, local: true })
+    ).includes({ userId: 9000000, local: true })
+  })
+  it('keeps identical guest requests distinct and reuses completed mints after a partial failure', async () => {
+    const draft = game()
+    const before = JSON.stringify(draft)
+    const completed = new Map<string, RosterEntry>()
+    const commands = [
+      { ...command, placeholder: true },
+      { ...command, placeholder: true }
+    ]
+    const mint = guestCreator()
+    let calls = 0
+    const createGuest: typeof mint = async (...args) => {
+      if (++calls === 2) throw new Error('Temporarily unavailable')
+      return await mint(...args)
+    }
+    let failed = false
+    try {
+      await createDictatedPlayers(
+        draft,
+        commands,
+        rosterSituation(draft),
+        undefined,
+        () => true,
+        completed,
+        createGuest
+      )
+    } catch {
+      failed = true
+    }
+    expect(failed).equals(true)
+    expect(JSON.stringify(draft)).equals(before)
+    const result = await createDictatedPlayers(
+      draft,
+      commands,
+      rosterSituation(draft),
+      undefined,
+      () => true,
+      completed,
+      createGuest
+    )
+    if ('problem' in result) throw new Error(result.problem)
+    expect(calls).equals(3)
+    expect(
+      result.draft.liveData.boxscore.teams.home.players.slice(-2)
+    ).deep.equals([9000000, 9000001])
+    expect(JSON.stringify(draft)).equals(before)
   })
   it('does not fall back to a placeholder when creation fails or is unavailable', async () => {
     const draft = game()

@@ -4,9 +4,9 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { dictatingHealth, fakeDictation } from '../../test/dictationFakes'
+import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
-import { createDevelopmentSession } from './developmentSession'
 import { AskCard } from './DictationButton'
 import { MESSAGE_COLOR, SAID_COLOR } from './dictationControls'
 import { gameFixture } from './isUnscoredGame.test'
@@ -126,9 +126,7 @@ describe('the roster chat', function () {
 })
 
 describe('the roster chat on the roster screen', function () {
-  const state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], [])
-  )
+  const state = initialScoringState(scoringSession(gameFixture))
 
   /** A coach's screen, which stays open through Save and Cancel. */
   async function coachScreen(): Promise<{

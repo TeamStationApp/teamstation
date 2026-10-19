@@ -2,15 +2,13 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { completeMotions, singleCorrection } from '../../test/scoringHelpers'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
 import { CORRECTION_WINDOW_MS, type ScoringState } from './scoringTypes'
 function initial(): ScoringState {
-  const state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], [])
-  )
+  const state = initialScoringState(scoringSession(gameFixture))
   state.session.liveData.linescore.offense.first = playerRef(state.session, 2)
   return scoringReducer(state, { type: 'PITCH', kind: 'ball' })
 }
@@ -74,9 +72,7 @@ describe('atomic runner drafts', function () {
       expect(restored.session).deep.equals(before.session)
     })
   it('restores paused timer on cancellation, guards Done during a grab, and resets only accepted edits', function () {
-    let state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], [])
-    )
+    let state = initialScoringState(scoringSession(gameFixture))
     state = singleCorrection(state)
     state = scoringReducer(state, {
       type: 'TIMER_TICK',
