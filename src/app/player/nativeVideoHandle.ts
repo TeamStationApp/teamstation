@@ -164,6 +164,17 @@ export class NativeVideoHandle implements VideoHandle {
   private playerStoppedAt: number | null = null
 
   /**
+   * The player has reported an error and shown no picture since.
+   *
+   * Media3 that fails a source — a server answering 502 for the seconds a
+   * restart takes — reports the error and then "not playing". Read as a
+   * pause, that told the game page the viewer had paused, and the recovery,
+   * which resumes only what the viewer wants playing, left a reloaded picture
+   * standing on Play for good. Measured on a Pixel with a minute buffered.
+   */
+  private failed = false
+
+  /**
    * Where the footage the player could seek to ends: for a live game, its
    * newest moment. From the player's progress reports; null until one says.
    */
@@ -372,6 +383,9 @@ export class NativeVideoHandle implements VideoHandle {
     // is taken for a pause here and given back by `handleBuffer` when the
     // buffering report follows it; one that comes after is ignored here.
     if (paused && this.buffering) return
+    // Nor is a player that has failed paused: the recovery reloads it, and
+    // plays it again if the viewer still wants it playing.
+    if (paused && this.failed) return
     this.rebase()
     this.props = { ...this.props, paused }
     this.onPropsChange()
@@ -381,6 +395,7 @@ export class NativeVideoHandle implements VideoHandle {
 
   handleReadyForDisplay = (): void => {
     this.rebase()
+    this.failed = false
     // A picture is up: what a browser calls `HAVE_ENOUGH_DATA`, which is what
     // the multi-camera grid asks before it believes a tile has started.
     this.state = Math.max(this.state, HAVE_ENOUGH_DATA)
@@ -469,6 +484,23 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   handleError = (error: OnVideoErrorData): void => {
+    // Held where it failed: nothing moves in a player that has given up.
+    this.rebase()
+    this.failed = true
+    // The "not playing" just before this was the failure, not a pause, as
+    // the one before a buffering report is a stall. Given back before the
+    // recovery hears of the error, so it knows the viewer still wants it.
+    const stoppedAt = this.playerStoppedAt
+    this.playerStoppedAt = null
+    if (
+      stoppedAt != null &&
+      this.props.paused &&
+      this.clock() - stoppedAt <= STALL_REPORT_MS
+    ) {
+      this.props = { ...this.props, paused: false }
+      this.onPropsChange()
+      this.emit('play')
+    }
     this.onError?.(error)
   }
 
@@ -513,6 +545,7 @@ export class NativeVideoHandle implements VideoHandle {
     this.over = false
     this.buffering = false
     this.playerStoppedAt = null
+    this.failed = false
     this.seekableEnd = null
   }
 
@@ -525,6 +558,7 @@ export class NativeVideoHandle implements VideoHandle {
   private carried(): number {
     if (
       this.props.paused ||
+      this.failed ||
       this.over ||
       this.state !== HAVE_ENOUGH_DATA ||
       this.pendingSeekTo != null
