@@ -248,6 +248,7 @@ describe('api client', function () {
   it('sets a player\u2019s settings on a team, and reads back the roster entry', async function () {
     const set = stubFetch(200, {
       userId: 7,
+      gumboId: 7,
       shortName: 'Jordan P',
       jersey: '12',
       positions: ['SS', '2B'],
@@ -282,6 +283,7 @@ describe('api client', function () {
   it('creates a roster player and reads back the roster entry', async function () {
     const set = stubFetch(201, {
       userId: 7,
+      gumboId: 7,
       shortName: 'Cliff L',
       nameDetails: {
         firstName: 'Cliff',
@@ -389,6 +391,7 @@ describe('api client', function () {
 
     const entry = {
       userId: 7,
+      gumboId: 7,
       shortName: 'Jordan P',
       jersey: '12',
       positions: [],
@@ -412,7 +415,7 @@ describe('api client', function () {
   })
 
   it("reads a team's default lineup and a game's lineups", async function () {
-    const person = { userId: 7, name: 'Jordan P', jersey: '12' }
+    const person = { gumboId: 7, name: 'Jorge P', jersey: '12' }
     const defense = {
       P: person,
       C: null,
@@ -455,7 +458,7 @@ describe('api client', function () {
           position: 'P',
           battingOrder: null,
           replaced: null,
-          description: 'Pitching Change: Jordan P replaces Ott O.'
+          description: 'Pitching Change: Jorge P replaces Mel O.'
         }
       ],
       current: { batters: [person], defense }
@@ -481,8 +484,8 @@ describe('api client', function () {
       side: 'home',
       base: 'd1',
       players: [
-        { userId: 7, fullName: 'Jordan P', jersey: '12' },
-        { userId: null, fullName: 'Guest', jersey: '' }
+        { gumboId: 7, fullName: 'Jorge P', jersey: '12' },
+        { gumboId: null, fullName: 'Guest', jersey: '' }
       ],
       battingOrder: [1, 0],
       defense: { P: 0, CF: 1 }
@@ -513,8 +516,8 @@ describe('api client', function () {
 
   it('cleans a lineup save, refusing an index past its players', function () {
     const players = [
-      { userId: 7, fullName: 'Judge', jersey: '99' },
-      { userId: null, fullName: 'Soto', jersey: '22' }
+      { gumboId: 7, fullName: 'Judge', jersey: '99' },
+      { gumboId: null, fullName: 'Soto', jersey: '22' }
     ]
     expect(
       asSaveLineupsBody({
@@ -880,11 +883,21 @@ describe('api client', function () {
 
   it('asks for the players the signed-in person is a guardian of', async function () {
     const { fetch, calls } = stubFetch(200, [
-      { userId: 7, externalIds: [], shortName: 'Avery S', avatarUrl: null }
+      {
+        userId: 7,
+        externalIds: [],
+        shortName: 'Alfonso S',
+        avatarUrl: null
+      }
     ])
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     expect(await client.guardedPlayers()).deep.equals([
-      { userId: 7, externalIds: [], shortName: 'Avery S', avatarUrl: null }
+      {
+        userId: 7,
+        externalIds: [],
+        shortName: 'Alfonso S',
+        avatarUrl: null
+      }
     ])
     expect(calls[0].url).equals('http://x/api/v1/users?guardedBy=me')
   })

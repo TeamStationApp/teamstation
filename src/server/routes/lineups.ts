@@ -52,6 +52,7 @@ import {
   setupOf,
   type Side
 } from '../../common/scoring/state'
+import { asGumboId } from '../../common/userId'
 import {
   canKeepSongs,
   canScore,
@@ -65,9 +66,9 @@ import type { Database } from '../db/database'
 import { postGamePlays, readPlays } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
 import {
-  defaultOf,
   gameLineups,
   lineupsAnswer,
+  resolvedDefaultOf,
   storedLineupsDigest,
   type TeamSideLineups
 } from '../events/teamLineups'
@@ -78,6 +79,7 @@ import { setRostered } from '../games/unroster'
 import { cleanBody } from '../jsonBody'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { scoringUsers } from '../scoring/gumboIds'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { teamWalkUpSongs } from './walkUpSongs'
@@ -200,7 +202,9 @@ export function lineupRoutes(
         .where('id', '=', teamId)
         .executeTakeFirst()
       if (team == null) throw notFound()
-      res.json(defaultOf(team.default_lineup) ?? NO_DEFAULT_LINEUP)
+      res.json(
+        (await resolvedDefaultOf(db, team.default_lineup)) ?? NO_DEFAULT_LINEUP
+      )
     })
   )
 
@@ -350,10 +354,20 @@ export function lineupRoutes(
           ...(await djBatters(db, read, canSeeTeam(scopes, read.teamId)))
         }
       }
+      const scoringAtBat = atBatFromCurrentPlay(game.currentPlay)
+      const atBatUser =
+        scoringAtBat?.gumboId == null
+          ? null
+          : (await scoringUsers(db, [scoringAtBat.gumboId])).get(
+              scoringAtBat.gumboId
+            )!
       const answer: DjGame = {
         away: await side('away'),
         home: await side('home'),
-        atBat: atBatFromCurrentPlay(game.currentPlay)
+        atBat:
+          scoringAtBat == null
+            ? null
+            : { side: scoringAtBat.side, userId: atBatUser }
       }
       res.json(answer)
     })
@@ -445,13 +459,15 @@ async function saveSide(
         guests: availability.guests[body.side].filter(
           id =>
             !availability.roster[body.side].some(
-              row => row.isPlayer && row.userId === id
+              row => row.isPlayer && row.gumboId === id
             )
         ),
         roster: availability.roster[body.side].filter(
           person =>
             person.isPlayer &&
-            !availability.unrostered[body.side].includes(person.userId)
+            !availability.unrostered[body.side].includes(
+              asGumboId(person.gumboId)
+            )
         ),
         snapshot: snapshotOf(game, rows),
         digest: await storedLineupsDigest(trx, { id: gameId, ...game })
@@ -592,10 +608,20 @@ export async function startingContext(
       availability.roster.home,
       {
         away: sees(game.away_team_id)
-          ? defaultOf(row(game.away_team_id)?.default_lineup)?.lineup
+          ? (
+              await resolvedDefaultOf(
+                db,
+                row(game.away_team_id)?.default_lineup
+              )
+            )?.lineup
           : null,
         home: sees(game.home_team_id)
-          ? defaultOf(row(game.home_team_id)?.default_lineup)?.lineup
+          ? (
+              await resolvedDefaultOf(
+                db,
+                row(game.home_team_id)?.default_lineup
+              )
+            )?.lineup
           : null
       },
       false
@@ -651,10 +677,10 @@ function sideActions(
   guests: readonly number[] = []
 ): ScoringAction[] {
   const required = new Set([
-    ...roster.map(row => row.userId),
-    ...guests.filter(id => !roster.some(row => row.userId === id))
+    ...roster.map(row => asGumboId(row.gumboId)),
+    ...guests.filter(id => !roster.some(row => asGumboId(row.gumboId) === id))
   ])
-  const sent = body.players.map(player => player.userId)
+  const sent = body.players.map(player => player.gumboId)
   if (
     sent.length !== required.size ||
     sent.some(id => id == null || !required.has(id))
@@ -672,22 +698,22 @@ function sideActions(
   }
   const ids: number[] = []
   for (const player of body.players) {
-    if (player.userId == null)
+    if (player.gumboId == null)
       throw badRequest('Create the player before saving the lineup')
-    let known = team.players.find(id => id === player.userId)
-    if (known == null && guests.includes(player.userId))
+    let known = team.players.find(id => id === player.gumboId)
+    if (known == null && guests.includes(player.gumboId))
       known = addPlayer(
         draft,
         side,
-        player.userId,
+        player.gumboId,
         player.fullName,
         player.jersey
       )
     if (known == null) {
-      const entry = roster.find(person => person.userId === player.userId)
+      const entry = roster.find(person => person.gumboId === player.gumboId)
       if (entry == null)
         throw badRequest(`${player.fullName} is not on this team's roster`)
-      const id = entry.userId
+      const id = asGumboId(entry.gumboId)
       if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
       const existing = setup.players[id]
       if (existing != null && existing.teamId !== state.gameData.teams[side].id)
@@ -695,7 +721,6 @@ function sideActions(
       // Use current roster data, never caller-provided identity/name details.
       setup.players[id] = existing ?? {
         id,
-        userId: entry.userId,
         teamId: state.gameData.teams[side].id,
         fullName: entry.shortName,
         jersey: entry.jersey ?? '',
@@ -765,24 +790,34 @@ async function djBatters(
   if (read.current == null && !maySeeTeam)
     return { source: 'roster', batters: [] }
   const songs = await teamWalkUpSongs(db, read.teamId)
-  const withSongs = (lineup: Lineup): DjBatter[] =>
-    lineup.batters.map(person => ({
-      userId: person.userId,
-      name: person.name,
-      walkUpSong:
-        person.userId == null ? null : (songs.get(person.userId) ?? null)
-    }))
+  const withSongs = async (lineup: Lineup): Promise<DjBatter[]> => {
+    const accounts = await scoringUsers(
+      db,
+      lineup.batters.flatMap(person =>
+        person.gumboId == null ? [] : [person.gumboId]
+      )
+    )
+    return lineup.batters.map(person => {
+      const userId =
+        person.gumboId == null ? null : accounts.get(person.gumboId)!
+      return {
+        userId,
+        name: person.name,
+        walkUpSong: userId == null ? null : (songs.get(userId) ?? null)
+      }
+    })
+  }
   if (read.current != null) {
-    return { source: 'lineup', batters: withSongs(read.current) }
+    return { source: 'lineup', batters: await withSongs(read.current) }
   }
   const team = await db
     .selectFrom('teams')
     .select('default_lineup')
     .where('id', '=', read.teamId)
     .executeTakeFirst()
-  const kept = defaultOf(team?.default_lineup)
+  const kept = await resolvedDefaultOf(db, team?.default_lineup)
   if (kept?.lineup != null) {
-    return { source: 'default', batters: withSongs(kept.lineup) }
+    return { source: 'default', batters: await withSongs(kept.lineup) }
   }
   const rows = await db
     .selectFrom('memberships')

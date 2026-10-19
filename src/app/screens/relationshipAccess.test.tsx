@@ -88,6 +88,7 @@ describe('relationship list access regression', () => {
             context: { kind: 'team', id: 'team', name: 'Demo Team' },
             person: {
               userId: 104,
+              gumboId: 104,
               shortName: 'Ichiro',
               fullName: 'Ichiro',
               avatarUrl: null,

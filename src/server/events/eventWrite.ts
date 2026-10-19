@@ -157,7 +157,7 @@ export async function replaceGameEvents(
     existing.length > 0
       ? await db
           .selectFrom('event_players')
-          .select(['event_id', 'user_id', 'team_id', 'role', 'position'])
+          .select(['event_id', 'gumbo_id', 'team_id', 'role', 'position'])
           .where(
             'event_id',
             'in',
@@ -208,7 +208,7 @@ export async function replaceGameEvents(
         .values({
           id: makeId('eventPlayer'),
           event_id: eventId,
-          user_id: role.user_id,
+          gumbo_id: role.gumbo_id,
           team_id: role.team_id,
           role: role.role,
           position: role.position
