@@ -5,6 +5,7 @@ import type { Kysely } from 'kysely'
 
 import {
   asSaveLineupsBody,
+  asUnrosterBody,
   type DjBatter,
   type DjGame,
   type DjSide,
@@ -21,7 +22,6 @@ import {
   notFound,
   unauthorized
 } from '../../common/errors'
-import { asGuests } from '../../common/guests'
 import {
   asPostEventsBody,
   type CurrentPlay,
@@ -73,12 +73,13 @@ import {
 } from '../events/teamLineups'
 import { fenceDistanceFor } from '../games/fenceDistance'
 import { createGuestPlayer } from '../games/guestPlayers'
+import { gameAvailability } from '../games/rosterAvailability'
+import { setRostered } from '../games/unroster'
 import { cleanBody } from '../jsonBody'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
-import { teamRoster } from '../teams/teamRoster'
 import { teamWalkUpSongs } from './walkUpSongs'
 
 type Trx = Kysely<Database>
@@ -152,6 +153,23 @@ export function lineupRoutes(
 ): Router {
   const router = Router()
 
+  router.put(
+    '/games/:gameId/unroster',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const gameId = pathParam(req.params.gameId)
+      const body = cleanBody(asUnrosterBody, req.body)
+      res.json(await setRostered(db, actor, gameId, body))
+      try {
+        options.onGameWritten?.(gameId)
+      } catch {
+        /* Notification does not fail a committed switch. */
+      }
+    })
+  )
+
   router.post(
     '/games/:gameId/guest-players',
     requireActor,
@@ -200,7 +218,9 @@ export function lineupRoutes(
           'away_team_id',
           'season_id',
           'currentPlay',
-          'lineups_digest'
+          'lineups_digest',
+          'guests',
+          'unrostered'
         ])
         .where('id', '=', gameId)
         .executeTakeFirst()
@@ -279,7 +299,9 @@ export function lineupRoutes(
           'home_team_id',
           'away_team_id',
           'currentPlay',
-          'lineups_digest'
+          'lineups_digest',
+          'guests',
+          'unrostered'
         ])
         .where('id', '=', gameId)
         .executeTakeFirstOrThrow()
@@ -349,12 +371,19 @@ class GameMoved extends Error {
 
 /** What a save replayed: the game's lineups digest, at-bat and plays. */
 function snapshotOf(
-  game: { currentPlay: unknown; lineups_digest: string | null },
+  game: {
+    currentPlay: unknown
+    lineups_digest: string | null
+    guests?: unknown
+    unrostered?: unknown
+  },
   plays: Array<{ id: string }>
 ): string {
   return JSON.stringify([
     game.lineups_digest,
     game.currentPlay,
+    game.guests,
+    game.unrostered,
     plays.map(play => play.id)
   ])
 }
@@ -394,7 +423,9 @@ async function saveSide(
           'home_team_id',
           'away_team_id',
           'currentPlay',
-          'lineups_digest'
+          'lineups_digest',
+          'guests',
+          'unrostered'
         ])
         .where('id', '=', gameId)
         .executeTakeFirst()
@@ -407,23 +438,21 @@ async function saveSide(
       const context =
         (await contextOf(trx, gameId, game, stored)) ??
         (await startingContext(trx, gameId, game, sees))
+      const availability = await gameAvailability(trx, { id: gameId, ...game })
       return {
         stored,
         context,
-        guests: asGuests(
-          (
-            await trx
-              .selectFrom('games')
-              .select('guests')
-              .where('id', '=', gameId)
-              .executeTakeFirstOrThrow()
-          ).guests
-        )[body.side],
-        roster: sees(context.teams[body.side].id)
-          ? (
-              await teamRoster(trx, undefined, context.teams[body.side].id)
-            ).filter(person => person.isPlayer)
-          : [],
+        guests: availability.guests[body.side].filter(
+          id =>
+            !availability.roster[body.side].some(
+              row => row.isPlayer && row.userId === id
+            )
+        ),
+        roster: availability.roster[body.side].filter(
+          person =>
+            person.isPlayer &&
+            !availability.unrostered[body.side].includes(person.userId)
+        ),
         snapshot: snapshotOf(game, rows),
         digest: await storedLineupsDigest(trx, { id: gameId, ...game })
       }
@@ -451,7 +480,7 @@ async function saveSide(
             await mayPost(trx, game)
             const now = await trx
               .selectFrom('games')
-              .select(['currentPlay', 'lineups_digest'])
+              .select(['currentPlay', 'lineups_digest', 'guests', 'unrostered'])
               .where('id', '=', gameId)
               .executeTakeFirstOrThrow()
             if (snapshotOf(now, await readPlays(trx, gameId)) !== read.snapshot)
@@ -529,6 +558,12 @@ export async function startingContext(
   game: { home_team_id: string; away_team_id: string },
   sees: (teamId: string) => boolean
 ): Promise<SessionContext> {
+  const gameRow = await db
+    .selectFrom('games')
+    .selectAll()
+    .where('id', '=', gameId)
+    .executeTakeFirstOrThrow()
+  const availability = await gameAvailability(db, gameRow)
   const rows = await db
     .selectFrom('teams')
     .select(['id', 'name', 'logo_path', 'default_lineup'])
@@ -548,9 +583,13 @@ export async function startingContext(
     gamePk: gameId,
     teams: teamsOf(teams),
     setup: startingSetup(
-      teams,
-      await teamRoster(db, undefined, game.away_team_id),
-      await teamRoster(db, undefined, game.home_team_id),
+      {
+        ...teams,
+        unrostered: availability.unrostered,
+        guestPlayers: availability.guestPlayers
+      },
+      availability.roster.away,
+      availability.roster.home,
       {
         away: sees(game.away_team_id)
           ? defaultOf(row(game.away_team_id)?.default_lineup)?.lineup
@@ -611,6 +650,18 @@ function sideActions(
   roster: readonly RosterEntry[] = [],
   guests: readonly number[] = []
 ): ScoringAction[] {
+  const required = new Set([
+    ...roster.map(row => row.userId),
+    ...guests.filter(id => !roster.some(row => row.userId === id))
+  ])
+  const sent = body.players.map(player => player.userId)
+  if (
+    sent.length !== required.size ||
+    sent.some(id => id == null || !required.has(id))
+  )
+    throw badRequest(
+      'The lineup must include every available roster player and game guest'
+    )
   const side = body.side
   const setup: GameSetup = setupOf(state)
   const team = setup.sides[side]
