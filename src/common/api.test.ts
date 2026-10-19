@@ -45,6 +45,21 @@ function stubFetch(
 }
 
 describe('api client', function () {
+  it('writes a game availability switch and reads the two exclusion lists', async () => {
+    const set = stubFetch(200, { away: [123], home: [] })
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: set.fetch
+    })
+    const body = { side: 'away' as const, userId: 123, rostered: false }
+    expect(await client.setRostered('game/id', body)).deep.equals({
+      away: [123],
+      home: []
+    })
+    expect(set.calls[0].url).equals('/api/v1/games/game%2Fid/unroster')
+    expect(set.calls[0].method).equals('PUT')
+    expect(JSON.parse(set.calls[0].body!)).deep.equals(body)
+  })
   it('posts a game guest to its side and returns the minted identity', async () => {
     const player = {
       firstName: 'Mike',
