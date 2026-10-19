@@ -928,6 +928,13 @@ async function spawnPrepared(
       reopenPlaylist(entry.hlsDir)
       settleLastSegment(entry.hlsDir)
       const playlist = readPlaylist(entry.hlsDir)
+      if (listedSegments(playlist ?? '').length === 0) {
+        // Segments on disk and none listed: whatever emptied the playlist,
+        // the game before this point is about to drop out of the recording.
+        log(
+          `[live:${entry.liveStreamId}] playlist lists nothing but ${String(next)} segments are on disk: the recording before this will be missing`
+        )
+      }
       output.continuation = playlistContinuation(playlist, next, new Date())
       const offsetSec = output.continuation.offsetSec
       if (offsetSec > 0) {
@@ -1582,7 +1589,22 @@ function drainOutput(output: OutputRuntime): void {
   output.drainTimer.unref?.()
 }
 
-function stopOutput(output: OutputRuntime): void {
+/**
+ * The children this process has already sent a SIGTERM.
+ *
+ * FFmpeg aborts every write once it has had a second signal (its interrupt
+ * callback is `received_nb_signals > transcode_init_done`), and the HLS
+ * writer's last playlist is one of those writes: it renames an empty file
+ * over the game's playlist. One SIGTERM lets it finish; the SIGKILL that
+ * follows a writer that will not, cannot truncate anything.
+ */
+const terminated = new WeakSet<ChildProcess>()
+
+/**
+ * `signal: false` leaves the children alone: the end of their input, or a
+ * SIGTERM that has already reached them from elsewhere, finishes them.
+ */
+function stopOutput(output: OutputRuntime, signal = true): void {
   output.stopGeneration += 1
   if (output.restartTimer != null) {
     clearTimeout(output.restartTimer)
@@ -1598,9 +1620,12 @@ function stopOutput(output: OutputRuntime): void {
   // had not exited, and nothing else would start one.
   output.state = 'stopped'
   output.bytesPerSecond = 0
+  if (!signal) return
   // SIGTERM every tracked child, not only the current one: a phantom exit may
-  // have left survivors that nothing else can reach.
+  // have left survivors that nothing else can reach. Once each.
   for (const child of output.spawned) {
+    if (terminated.has(child)) continue
+    terminated.add(child)
     try {
       child.kill('SIGTERM')
     } catch {
@@ -1627,10 +1652,14 @@ function stopOutput(output: OutputRuntime): void {
  * objects — a restart timer, an exit handler — will find it released and do
  * nothing, which is what keeps a turned-off destination turned off.
  */
-function releaseOutputs(entry: LiveEntry, reason: string): void {
+function releaseOutputs(
+  entry: LiveEntry,
+  reason: string,
+  signalHls = true
+): void {
   for (const output of entry.outputs) {
     output.released = true
-    stopOutput(output)
+    stopOutput(output, signalHls || output.kind !== 'hls')
   }
   if (entry.outputs.length > 0) {
     requireConfig().log(
@@ -2135,8 +2164,15 @@ export function stopIngest(): void {
     clearInterval(pollTimer)
     pollTimer = undefined
   }
+  // The HLS writer is not signalled. A restart under systemd has already
+  // sent it a SIGTERM (KillMode=control-group signals the whole unit), and a
+  // second makes FFmpeg write an empty playlist on its way out: the next
+  // process then appends to nothing and the game before the restart drops
+  // out of the recording. Ending its input finishes it as a publisher
+  // leaving does; this process exiting does the same.
   for (const entry of entries.values()) {
-    releaseOutputs(entry, 'shutdown')
+    if (entry.ingress.session != null) endSubscribers(entry.ingress.session)
+    releaseOutputs(entry, 'shutdown', false)
   }
   entries.clear()
   try {
@@ -2164,6 +2200,7 @@ export function attachSessionForTest(
   session: {
     id: string
     inBytes?: number
+    videoCodec?: number
     close?: () => void
     socket?: { destroy?: () => void }
     broadcast?: { donePublish?: (session: unknown) => void }
@@ -2228,6 +2265,11 @@ export function forcePublishForTest(key: string, publishing: boolean): void {
       reason: 'The stream ended'
     })
   }
+}
+
+/** Test-only: the HLS writer a key's output holds now, if any. */
+export function writerForTest(key: string): ChildProcess | undefined {
+  return entries.get(key)?.outputs.find(output => output.kind === 'hls')?.child
 }
 
 /** Test-only: forget everything, so one test cannot see another's streams. */
