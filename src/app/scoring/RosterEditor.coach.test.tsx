@@ -5,8 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
 import { copyState } from '../../common/scoring/state'
+import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
 import { initialScoringState } from './scoringMachine'
@@ -33,9 +33,7 @@ describe('the roster screen for a coach', function () {
     root = undefined
     host?.remove()
   })
-  const state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], [])
-  )
+  const state = initialScoringState(scoringSession(gameFixture))
   const home = state.session.liveData.boxscore.teams.home
   const name = (id: number): string =>
     state.session.gameData.players[id].fullName

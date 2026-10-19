@@ -125,7 +125,7 @@ describe('the lineups a game starts from (U4b)', function () {
     ])
   })
 
-  it('drops whoever has left, benches newcomers and makes placeholders again', function () {
+  it('drops departed and unpersisted default players and benches newcomers', function () {
     const lineup: Lineup = {
       batters: [
         person(101),
@@ -147,44 +147,21 @@ describe('the lineups a game starts from (U4b)', function () {
       away: lineup
     })
     expect(arranged(setup, 'away')).deep.equals({
-      order: [101, 'Guest', 102],
-      defense: { P: 'Guest', '1B': 101 }
+      order: [101, 102],
+      defense: { '1B': 101 }
     })
     const team = setup.sides.away
-    const guest = team.battingOrder[1]
-    expect(setup.players[guest]).deep.include({
-      userId: null,
-      fullName: 'Guest',
-      jersey: '0',
-      local: true,
-      teamId: 'away'
-    })
-    // No made-up "Player N" is left over from the roster's top-up.
-    expect(
-      team.players.map(
-        id => setup.players[id].userId ?? setup.players[id].fullName
-      )
-    ).deep.equals([101, 102, 103, 'Guest'])
+    expect(team.players).deep.equals([101, 102, 103])
     expect(
       Object.values(setup.players).filter(p => p.teamId === 'away')
-    ).length(4)
+    ).length(3)
     expect(setup.sides.away.battingIndex).equals(0)
   })
 
-  it('tops a short roster up to nine, or leaves it as it is', function () {
+  it('keeps a short roster without inventing players', function () {
     const short = roster([101, 102, 103])
     const filled = startingSetup(game, short, home)
-    expect(arranged(filled, 'away').order).deep.equals([
-      101,
-      102,
-      103,
-      'Player 4',
-      'Player 5',
-      'Player 6',
-      'Player 7',
-      'Player 8',
-      'Player 9'
-    ])
+    expect(arranged(filled, 'away').order).deep.equals([101, 102, 103])
     const kept = startingSetup(game, short, home, {}, false)
     expect(arranged(kept, 'away').order).deep.equals([101, 102, 103])
     expect(arranged(kept, 'away').defense).deep.equals({
@@ -194,7 +171,7 @@ describe('the lineups a game starts from (U4b)', function () {
     })
   })
 
-  it('starts an empty roster with nobody, or with nine made up', function () {
+  it('starts an empty roster with nobody', function () {
     const empty = startingSetup(game, [], home, {}, false)
     expect(empty.sides.away).deep.include({
       players: [],
@@ -205,8 +182,8 @@ describe('the lineups a game starts from (U4b)', function () {
       Object.values(empty.sides.away.defense).every(id => id == null)
     ).equals(true)
     const made = startingSetup(game, [], [])
-    expect(made.sides.away.battingOrder).length(9)
-    expect(made.sides.home.battingOrder).length(9)
+    expect(made.sides.away.battingOrder).length(0)
+    expect(made.sides.home.battingOrder).length(0)
     expect(
       made.sides.home.battingOrder.every(id => made.players[id].local)
     ).equals(true)

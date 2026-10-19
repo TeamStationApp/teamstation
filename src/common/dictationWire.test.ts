@@ -23,6 +23,21 @@ const start = {
 const ball = { type: 'pitch', call: 'B' }
 
 describe('dictation wire', function () {
+  it('accepts an ordered list of persistent scoring ids and refuses ambiguous tags', function () {
+    const tagOrder = [Number.MAX_SAFE_INTEGER, 1, 9000000]
+    expect(asDictationStart({ ...start, tagOrder }).tagOrder).deep.equals(
+      tagOrder
+    )
+    for (const invalid of [
+      [1, 1],
+      [0],
+      [-1],
+      [1.5],
+      ['1'],
+      [Number.MAX_SAFE_INTEGER + 1]
+    ])
+      expect(() => asDictationStart({ ...start, tagOrder: invalid })).throws()
+  })
   it('cleans a start, and refuses one with no context or an unknown model', function () {
     expect(asDictationStart(start)).deep.equals(start)
     expect(() => asDictationStart({ ...start, context: undefined })).throws()

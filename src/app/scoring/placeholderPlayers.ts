@@ -1,4 +1,9 @@
-import { addPlayerDraft, emptyPlayerDraft } from './playerDraft'
+import type { RosterEntry } from '../../common/api'
+import {
+  addPlayerDraft,
+  emptyPlayerDraft,
+  type PlayerDraft
+} from './playerDraft'
 import type { ScoringSessionState, Side } from './scoringTypes'
 
 /** The only abbreviation policy for roster placeholders. Length includes spaces. */
@@ -39,11 +44,12 @@ export function placeholderSuffix(index: number): string {
     result = String.fromCharCode(65 + ((value - 1) % 26)) + result
   return result
 }
-export function addPlaceholderPlayers(
+export async function addPlaceholderPlayers(
   session: ScoringSessionState,
   side: Side,
-  count: number
-): number[] {
+  count: number,
+  create: (side: Side, player: PlayerDraft) => Promise<RosterEntry>
+): Promise<number[]> {
   if (!Number.isInteger(count) || count < 1 || count > 16)
     throw new Error('Choose between 1 and 16 players.')
   const prefix = placeholderTeamName(session.gameData.teams[side].name)
@@ -58,13 +64,13 @@ export function addPlaceholderPlayers(
     const lastName = placeholderSuffix(suffix++)
     const name = `${prefix} ${lastName}`
     if (names.has(name.toLowerCase())) continue
-    ids.push(
-      addPlayerDraft(session, side, {
-        ...emptyPlayerDraft(),
-        firstName: prefix,
-        lastName
-      })
-    )
+    const draft = {
+      ...emptyPlayerDraft(),
+      firstName: prefix,
+      lastName
+    }
+    const entry = await create(side, draft)
+    ids.push(addPlayerDraft(session, side, draft, entry.userId))
     names.add(name.toLowerCase())
   }
   return ids

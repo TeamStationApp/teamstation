@@ -4,7 +4,7 @@ import { describe, it } from 'mocha'
 import React from 'react'
 import { type Mesh, Vector3 } from 'three'
 
-import { createDevelopmentSession } from '../scoring/developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { scoringAudio } from '../scoring/scoringAudio'
 import { initialScoringState, scoringReducer } from '../scoring/scoringMachine'
@@ -14,7 +14,7 @@ import { Player } from './Player'
 describe('rendered pitch timeline', function () {
   it('moves a visible ball and player poses from one clock, pauses, and completes once', async function () {
     const sequence = pitchPresentation(
-      initialScoringState(createDevelopmentSession(gameFixture, [], []), true),
+      initialScoringState(scoringSession(gameFixture), true),
       'foul'
     )
     const players = sequence.players
@@ -73,10 +73,7 @@ describe('rendered pitch timeline', function () {
 describe('rendered hit timeline', function () {
   for (const outcome of ['Single', 'Ball Caught'] as const)
     it(`samples ${outcome} while the fielder and batter run from their original positions`, async function () {
-      let state = initialScoringState(
-        createDevelopmentSession(gameFixture, [], []),
-        true
-      )
+      let state = initialScoringState(scoringSession(gameFixture), true)
       state = scoringReducer(state, { type: 'OUTCOME', outcome })
       state = scoringReducer(state, {
         type: 'FIELDER',
@@ -154,10 +151,7 @@ describe('rendered hit timeline', function () {
 describe('rendered defensive transfers', function () {
   for (const unassisted of [false, true])
     it(`animates ${unassisted ? 'a touch without a self-throw' : 'a visible throw to a receiver'}`, async function () {
-      let state = initialScoringState(
-        createDevelopmentSession(gameFixture, [], []),
-        true
-      )
+      let state = initialScoringState(scoringSession(gameFixture), true)
       state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Throw Out' })
       state = scoringReducer(state, {
         type: 'FIELDER',
@@ -241,10 +235,7 @@ describe('rendered defensive transfers', function () {
 
 describe('presentation mounted over an existing field', () => {
   it('updates persistent player meshes in the same frame as the ball landing', async () => {
-    let state = initialScoringState(
-      createDevelopmentSession(gameFixture, [], []),
-      true
-    )
+    let state = initialScoringState(scoringSession(gameFixture), true)
     state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Single' })
     state = scoringReducer(state, {
       type: 'FIELDER',
@@ -306,10 +297,7 @@ describe('presentation mounted over an existing field', () => {
 describe('rendered bunt timeline', () => {
   for (const side of ['R', 'L'] as const) {
     it(`selects and pauses the ${side} bunt pose from scoring contact identity`, async () => {
-      let state = initialScoringState(
-        createDevelopmentSession(gameFixture, [], []),
-        true
-      )
+      let state = initialScoringState(scoringSession(gameFixture), true)
       state.session.liveData.plays.currentPlay!.matchup.batSide.code = side
       state = scoringReducer(state, {
         type: 'OUTCOME',
