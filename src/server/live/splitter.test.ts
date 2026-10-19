@@ -2163,6 +2163,11 @@ describe('signalling the live HLS writer', function () {
     throw new Error('the writer never started')
   }
 
+  before(function () {
+    writeFileSync(FAKE_FFMPEG, '#!/bin/sh\nexec sleep 30\n')
+    chmodSync(FAKE_FFMPEG, 0o755)
+  })
+
   beforeEach(function () {
     rmSync(dir, { recursive: true, force: true })
     mkdirSync(dir, { recursive: true })
@@ -2198,11 +2203,30 @@ describe('signalling the live HLS writer', function () {
     forcePublishForTest(KEY, true)
     const child = await writer()
     const pid = child.pid ?? 0
+    // The writer reads the publisher through the RTMP server.
+    let inputEnded = 0
+    attachSessionForTest(KEY, {
+      id: 's1',
+      inBytes: 1,
+      broadcast: {
+        subscribers: new Map([
+          [
+            'writer',
+            {
+              close: () => {
+                inputEnded += 1
+              }
+            }
+          ]
+        ])
+      }
+    })
     // `systemctl restart`: KillMode=control-group signals node and ffmpeg alike.
     process.kill(pid, 'SIGTERM')
     sent.set(pid, sigterms(pid) + 1)
     stopIngest()
-    expect(sigterms(pid)).equals(1)
+    expect(sigterms(pid), "systemd's, and no second").equals(1)
+    expect(inputEnded, 'its input ended instead').equals(1)
     expect(logs.join('\n')).contains('outputs released (shutdown)')
   })
 

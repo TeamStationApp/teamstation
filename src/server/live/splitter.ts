@@ -2203,7 +2203,10 @@ export function attachSessionForTest(
     videoCodec?: number
     close?: () => void
     socket?: { destroy?: () => void }
-    broadcast?: { donePublish?: (session: unknown) => void }
+    broadcast?: {
+      donePublish?: (session: unknown) => void
+      subscribers?: Map<string, { close?: () => void }>
+    }
   }
 ): void {
   const entry = entries.get(key)
