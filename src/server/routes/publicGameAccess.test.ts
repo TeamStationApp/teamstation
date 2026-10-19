@@ -167,6 +167,77 @@ describe('public game access', function () {
         expect(denied.status, route).oneOf([401, 403, 404])
       }
     })
+  it('opens on Primary when the cameras of a take started together', async () => {
+    const start = new Date('2026-10-18T16:00:00.000Z')
+    const earlier = new Date('2026-10-18T15:00:00.000Z')
+    const gameId = 'gam_settings3_scheduled'
+    const rows = [
+      {
+        id: 'vid_lead_a_1st',
+        title: 'Demo Hawks at Demo Jets 1st'
+      },
+      {
+        id: 'vid_lead_b_home',
+        title: 'Demo Hawks at Demo Jets Home'
+      },
+      {
+        id: 'vid_lead_c_3rd',
+        title: 'Demo Hawks at Demo Jets 3rd'
+      },
+      {
+        id: 'vid_lead_d_primary',
+        title: 'Demo Hawks at Demo Jets Primary'
+      }
+    ]
+    await f.h.db
+      .insertInto('videos')
+      .values([
+        ...rows.map(row => ({
+          ...row,
+          game_id: gameId,
+          kind: 'program' as const,
+          status: 'ready' as const,
+          storage: 'local' as const,
+          duration_sec: 30,
+          start_at: start
+        })),
+        {
+          id: 'vid_lead_z_early',
+          title: 'Demo Hawks at Demo Jets earlier take',
+          game_id: gameId,
+          kind: 'program' as const,
+          status: 'ready' as const,
+          storage: 'local' as const,
+          duration_sec: 30,
+          start_at: earlier
+        }
+      ])
+      .execute()
+    try {
+      const response = await f.h.request(
+        'GET',
+        `/games/${gameId}`,
+        undefined,
+        null
+      )
+      expect(response.status).equals(200)
+      const game = await response.json()
+      expect(game.videos.map((video: { id: string }) => video.id)).deep.equals([
+        'vid_lead_z_early',
+        'vid_lead_d_primary',
+        'vid_lead_a_1st',
+        'vid_lead_b_home',
+        'vid_lead_c_3rd'
+      ])
+    } finally {
+      await f.h.db
+        .deleteFrom('videos')
+        .where('game_id', '=', gameId)
+        .where('id', 'like', 'vid_lead_%')
+        .execute()
+    }
+  })
+
   it('retains member game details, statistics and playback authorization', async () => {
     const response = await f.h.request(
       'GET',

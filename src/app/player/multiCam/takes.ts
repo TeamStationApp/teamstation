@@ -343,9 +343,9 @@ function withoutDate(title: string): string {
  * The four ticked when the picker opens.
  *
  * **The angles of one take**, in the order the server sent them — which is
- * `coalesce(start_at, created_at), id`, the nearest thing to "as they
- * arrived" that survives a camera being backfilled later. The biggest group
- * wins, and a take's own cameras fill the grid before anything outside it.
+ * `coalesce(start_at, created_at)`, then a Primary ahead of the cameras that
+ * started with it, then `id`. The biggest group wins, and a take's own
+ * cameras fill the grid before anything outside it.
  *
  * Taking the first four of everything instead put a whole second recording of
  * the same game into a quadrant and pushed a real camera out: a game that
