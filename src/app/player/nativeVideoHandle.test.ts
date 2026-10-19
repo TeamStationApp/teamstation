@@ -278,6 +278,94 @@ describe('NativeVideoHandle', function () {
     expect(heard).deep.equals(['once', 'always'])
   })
 
+  it('says no pause for its own failure, whichever it reports first', async function () {
+    let now = 0
+    const handle = new NativeVideoHandle(
+      () => undefined,
+      () => now
+    )
+    handle.attach(fakePlayer().ref)
+    handle.source = 'https://media.example.test/a/index.m3u8'
+    await handle.play()
+    handle.handleReadyForDisplay()
+    const events: string[] = []
+    handle.addEventListener('pause', () => events.push('pause'))
+    handle.addEventListener('play', () => events.push('play'))
+    const error = { error: { code: -1 } } as unknown as Parameters<
+      NativeVideoHandle['handleError']
+    >[0]
+    // Media3: the error, then "not playing".
+    handle.handleError(error)
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    expect(events, 'nobody paused it').deep.equals([])
+    expect(handle.paused, 'but it is not playing').equals(true)
+    // A picture again, and a "not playing" is a pause once more.
+    handle.handleReadyForDisplay()
+    expect(handle.paused).equals(false)
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    expect(events).deep.equals(['pause'])
+    // The other way round: "not playing", then the error that caused it.
+    await handle.play()
+    events.length = 0
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    now += 20
+    handle.handleError(error)
+    expect(events, 'given back').deep.equals(['pause', 'play'])
+    // A pause long before an error stays a pause.
+    handle.handleReadyForDisplay()
+    events.length = 0
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    now += 5000
+    handle.handleError(error)
+    expect(events).deep.equals(['pause'])
+  })
+
+  it('gives a stop back before the error is heard, so the recovery knows it is wanted', async function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.attach(fakePlayer().ref)
+    await handle.play()
+    handle.handleReadyForDisplay()
+    const heard: string[] = []
+    handle.addEventListener('play', () => heard.push('play'))
+    handle.onError = () => heard.push('error')
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    handle.handleError({ error: { code: -1 } })
+    expect(heard).deep.equals(['play', 'error'])
+  })
+
+  it('says play when pressed while failed, and forgets a failure when reloaded, playing or given a new source', async function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.attach(fakePlayer().ref)
+    handle.source = 'https://media.example.test/a/index.m3u8'
+    await handle.play()
+    handle.handleReadyForDisplay()
+    const events: string[] = []
+    handle.addEventListener('play', () => events.push('play'))
+    handle.addEventListener('pause', () => events.push('pause'))
+    const error = { error: { code: -1 } }
+    handle.handleError(error)
+    // A press is passed on for the recovery.
+    await handle.play()
+    expect(events).deep.equals(['play'])
+    // A reload is a fresh attempt, paused until it is played.
+    handle.reload()
+    expect(handle.paused).equals(true)
+    await handle.play()
+    expect(handle.paused).equals(false)
+    expect(events).deep.equals(['play', 'play'])
+    // Reporting that it plays clears it as a picture does.
+    handle.handleError(error)
+    handle.handlePlaybackState({ isPlaying: true, isSeeking: false })
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    expect(events).deep.equals(['play', 'play', 'pause'])
+    // So does a new source.
+    await handle.play()
+    handle.handleError(error)
+    handle.reset()
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    expect(events).deep.equals(['play', 'play', 'pause', 'play', 'pause'])
+  })
+
   it('hands an error to whoever is watching for one', function () {
     const handle = new NativeVideoHandle(() => undefined)
     const errors: unknown[] = []
@@ -405,6 +493,18 @@ describe('the native playhead between reports (U37)', function () {
     expect(handle.currentTime).closeTo(10.2, 1e-9)
     handle.handleEnd()
     advance(500)
+    expect(handle.currentTime).closeTo(10.2, 1e-9)
+  })
+
+  it('stands still once the player has failed, until it shows a picture', async function () {
+    const { handle, advance } = await playing()
+    progress(handle, 10)
+    advance(100)
+    handle.handleError({ error: { code: -1 } })
+    advance(500)
+    expect(handle.currentTime).closeTo(10.1, 1e-9)
+    handle.handleReadyForDisplay()
+    advance(100)
     expect(handle.currentTime).closeTo(10.2, 1e-9)
   })
 

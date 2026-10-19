@@ -50,6 +50,22 @@ const playlistStuck = {
   }
 } as unknown as OnVideoErrorData
 
+/**
+ * What media3 reports when the server answers a playlist with a 502, as it
+ * does for the seconds a restart takes: a deploy, or a worker the kernel
+ * killed for memory.
+ */
+const serverDown = {
+  error: {
+    errorString: 'ExoPlaybackException: ERROR_CODE_IO_BAD_HTTP_STATUS',
+    errorException:
+      'androidx.media3.exoplayer.ExoPlaybackException: Source error',
+    errorStackTrace:
+      'Caused by: androidx.media3.datasource.HttpDataSource$InvalidResponseCodeException: Response code: 502',
+    errorCode: '22004'
+  }
+} as unknown as OnVideoErrorData
+
 describe('a phone watching a live game whose camera is away', function () {
   const realSetTimeout = globalThis.setTimeout
   const realClearTimeout = globalThis.clearTimeout
@@ -134,6 +150,25 @@ describe('a phone watching a live game whose camera is away', function () {
     expect(player.loads(), 'the player loaded the stream afresh').equals(1)
     // The fresh player has a picture.
     handle.handleBuffer({ isBuffering: false })
+    handle.handleReadyForDisplay()
+    expect(handle.paused, 'playing again by itself').equals(false)
+    expect(gaveUp()).equals(false)
+  })
+
+  it('plays on after the server fails it mid-picture, without a tap', async function () {
+    const { handle, player, gaveUp } = await watching()
+    const pauses: string[] = []
+    handle.addEventListener('pause', () => pauses.push('pause'))
+    // A restarting server answers 502. Media3 fails the source with a minute
+    // still in hand, reports the error, and then reports that it is not
+    // playing — which is the failure, not the viewer pausing.
+    const before = timers.length
+    handle.handleError(serverDown)
+    handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
+    expect(pauses, 'nobody paused it').deep.equals([])
+    expect(timers.length, 'a reload is due').equals(before + 1)
+    timers.pop()?.()
+    expect(player.loads(), 'the player loaded the stream afresh').equals(1)
     handle.handleReadyForDisplay()
     expect(handle.paused, 'playing again by itself').equals(false)
     expect(gaveUp()).equals(false)
@@ -332,7 +367,8 @@ describe('a phone watching a live game whose camera is away', function () {
       error: { code: -11866, localizedDescription: 'Playback Stopped' }
     })
     handle.handlePlaybackState({ isPlaying: false, isSeeking: false })
-    expect(handle.paused).equals(true)
+    expect(handle.paused, 'not playing, so a tap plays it').equals(true)
+    // A viewer who will not wait for the recovery presses play.
     await handle.play()
     expect(player.loads(), 'the press loaded the stream again').equals(1)
     expect(handle.paused, 'and asked it to play').equals(false)
