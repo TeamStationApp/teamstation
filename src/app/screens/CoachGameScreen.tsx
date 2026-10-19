@@ -598,6 +598,34 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
               initialDraft={held}
               onDraftChange={setHeld}
               rosters={opened.rosters}
+              unrostered={(detail ?? opened.game).unrostered}
+              onRosteredChange={async (side, userId, rostered) => {
+                const posted = client.setRostered(gameId, {
+                  side,
+                  userId,
+                  rostered
+                })
+                live.saving(
+                  posted
+                    .then(async () => {
+                      const lineups = await client.gameLineups(gameId)
+                      heard(lineups, side)
+                      return lineups.digest
+                    })
+                    .catch(() => digest.current)
+                )
+                const unrostered = await posted
+                setDetail(current => ({
+                  ...(current ?? opened.game),
+                  unrostered
+                }))
+                setOpened(current =>
+                  current == null
+                    ? current
+                    : { ...current, game: { ...current.game, unrostered } }
+                )
+                return unrostered
+              }}
               onEditPlayer={(userId, name, id) => {
                 if (id === teamId)
                   setEditingPlayer({ userId, name, teamId: id })
