@@ -3,10 +3,10 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { scoringSession } from '../../test/scoringSession'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { MORE_GROUPS, type MoreInput } from './moreActions'
 import { MoreMenu } from './MoreMenu'
@@ -30,7 +30,7 @@ async function mount(
   occupied = false,
   pristine = false
 ): Promise<void> {
-  let state = initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  let state = initialScoringState(scoringSession(gameFixture))
   if (occupied)
     state.session.liveData.linescore.offense.first = playerRef(state.session, 2)
   if (!pristine) {

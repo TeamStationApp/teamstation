@@ -33,6 +33,8 @@ export type RosterCommand =
       type: 'addPlayer'
       side: Side
       name: string
+      /** Minted by the caller before this command reaches the pure engine. */
+      player?: number
       jersey?: string
       placeholder?: boolean
     }
@@ -307,17 +309,9 @@ export function applyRosterCommands(
   commands: readonly RosterCommand[],
   situation: RosterSituation
 ): StagedRoster | { problem: string } {
-  if (commands.length === 0) return { problem: 'Nothing to change' }
-  const categories = new Set(
-    commands.map(command => ROSTER_CATEGORY[command.type])
-  )
-  if (categories.size > 1) return { problem: ONE_CATEGORY_AT_A_TIME }
-  const sideOf = (command: RosterCommand): Side =>
-    'side' in command ? command.side : situation.battingSide
-  const sides = new Set(commands.map(sideOf))
-  if (sides.size > 1) return { problem: ONE_TEAM_AT_A_TIME }
-  const [category] = categories
-  const [side] = sides
+  const scope = rosterCommandScope(commands, situation)
+  if ('problem' in scope) return scope
+  const { category, side } = scope
   const next = copyState(draft)
   const staged: Staging = {
     state: next,
@@ -347,6 +341,25 @@ export function applyRosterCommands(
     runners: staged.runners,
     ...(nextBatter == null ? {} : { nextBatter })
   }
+}
+
+/** Validate a sentence's scope before its persistent player creations begin. */
+export function rosterCommandScope(
+  commands: readonly RosterCommand[],
+  situation: RosterSituation
+): { category: RosterCategory; side: Side } | { problem: string } {
+  if (commands.length === 0) return { problem: 'Nothing to change' }
+  const categories = new Set(
+    commands.map(command => ROSTER_CATEGORY[command.type])
+  )
+  if (categories.size > 1) return { problem: ONE_CATEGORY_AT_A_TIME }
+  const sideOf = (command: RosterCommand): Side =>
+    'side' in command ? command.side : situation.battingSide
+  const sides = new Set(commands.map(sideOf))
+  if (sides.size > 1) return { problem: ONE_TEAM_AT_A_TIME }
+  const [category] = categories
+  const [side] = sides
+  return { category, side }
 }
 
 interface Staging {
@@ -386,7 +399,15 @@ const APPLY: {
     const jersey = command.jersey?.trim() ?? ''
     if (name === '') refuse("Say the new player's name")
     if (!/^\d*$/.test(jersey)) refuse('Use digits for the jersey number.')
-    const id = addPlayer(staging.state, staging.side, name, jersey)
+    if (command.player == null)
+      refuse('Create the player before adding him to the game')
+    const id = addPlayer(
+      staging.state,
+      staging.side,
+      command.player,
+      name,
+      jersey
+    )
     const [firstName, ...last] = name.split(' ')
     Object.assign(staging.state.gameData.players[id], {
       firstName,

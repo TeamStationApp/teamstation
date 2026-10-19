@@ -5,9 +5,9 @@ import React from 'react'
 import type { Mesh } from 'three'
 
 import { choiceRelayPhrases } from '../../test/fieldersChoicePhrases'
+import { scoringSession } from '../../test/scoringSession'
 import { BASES } from '../field/fieldModel'
 import { PlayAnimation } from '../field/PlayAnimation'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
@@ -17,7 +17,7 @@ describe('rendered dictated fielder choice relays', function () {
     for (const startingOuts of [0, 2])
       for (const runnerOnly of [false, true])
         it(`joins the actual off-base tag position to the following walk off (${unassisted}/${startingOuts}/${runnerOnly})`, async function () {
-          const session = createDevelopmentSession(gameFixture, [], [])
+          const session = scoringSession(gameFixture)
           session.liveData.linescore.offense.first = playerRef(session, 6)
           session.liveData.linescore.outs = startingOuts
           const target = { x: 4, z: -11 }
@@ -90,7 +90,7 @@ describe('rendered dictated fielder choice relays', function () {
           }
         })
   it('renders a late Safe throw after its carrier has scored without showing him again', async function () {
-    const session = createDevelopmentSession(gameFixture, [], [])
+    const session = scoringSession(gameFixture)
     session.liveData.linescore.offense.first = playerRef(session, 6)
     session.liveData.linescore.offense.third = playerRef(session, 8)
     const state = scoringReducer(initialScoringState(session, true), {
@@ -151,7 +151,7 @@ describe('rendered dictated fielder choice relays', function () {
   })
   for (const example of choiceRelayPhrases)
     it(`renders the ball and defenders through every catch: ${example.said}`, async function () {
-      const session = createDevelopmentSession(gameFixture, [], [])
+      const session = scoringSession(gameFixture)
       for (const [index, key] of (
         ['first', 'second', 'third'] as const
       ).entries())

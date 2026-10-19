@@ -169,6 +169,7 @@ export function RosterEditor({
   onRetryRoster,
   canEditTeams,
   onCreatePlayer,
+  onCreateGuest,
   onCancel,
   onReload,
   onSave
@@ -232,6 +233,7 @@ export function RosterEditor({
    * the player.
    */
   onCreatePlayer?: (teamId: string, player: PlayerDraft) => Promise<RosterEntry>
+  onCreateGuest?: (side: Side, player: PlayerDraft) => Promise<RosterEntry>
   /**
    * Save Rosters, lit when the draft validates and has changed or is
    * `unaccepted`. A scorekeeper's screen applies the draft and closes the
@@ -371,6 +373,7 @@ export function RosterEditor({
   // A dictated sentence is staged whole: the draft, its runners and next
   // batter, and the tab, and for a scorekeeper the team, that show it.
   const spoken = useRosterDictation({
+    onCreateGuest,
     options: dictate,
     game: state.session,
     draft,
@@ -749,10 +752,21 @@ export function RosterEditor({
           onClose={() => {
             setAdding(false)
           }}
-          onAddPlaceholders={count => {
-            edit(next => {
-              addPlaceholderPlayers(next, side, count)
-            })
+          onAddPlaceholders={async count => {
+            if (onCreateGuest == null)
+              throw new Error('Unable to create a guest')
+            const next = copyState(draft)
+            try {
+              await addPlaceholderPlayers(next, side, count, onCreateGuest)
+            } finally {
+              // Each acknowledged guest already exists on the server,
+              // including guests created before a later request failed.
+              edit(current => {
+                current.gameData.players = next.gameData.players
+                current.liveData.boxscore.teams = next.liveData.boxscore.teams
+                current.meta.tagOrder = next.meta.tagOrder
+              })
+            }
           }}
           onAdd={async player => {
             if (onCreatePlayer == null) {

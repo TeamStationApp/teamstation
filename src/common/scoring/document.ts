@@ -1662,7 +1662,7 @@ function documentBody(
       .map(event => event.index),
     runnerIndex: runners.map((runner, i) => i),
     teamStation: {
-      version: 1,
+      version: 2,
       setupBefore: stamp.setupBefore,
       ...recordActions(stamp),
       detail: play.source.teamstation
@@ -1794,7 +1794,7 @@ export class PlayFolder {
           hasReview: false
         },
         teamStation: {
-          version: 1,
+          version: 2,
           setupBefore: stamp.setupBefore,
           ...recordActions(stamp)
         }
@@ -1920,7 +1920,7 @@ export function finalDocumentOf(state: GameState, stamp: PlayStamp): GumboPlay {
     runnerIndex: [],
     credits: [],
     teamStation: {
-      version: 1,
+      version: 2,
       setupBefore: stamp.setupBefore,
       ...recordActions(stamp)
     }

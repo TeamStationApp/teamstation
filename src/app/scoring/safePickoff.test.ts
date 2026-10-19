@@ -4,8 +4,8 @@ import { describe, it } from 'mocha'
 import { cleanAction } from '../../common/scoring/actions'
 import { baseIds } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
+import { scoringSession } from '../../test/scoringSession'
 import { BASES } from '../field/fieldModel'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
   initialScoringState,
@@ -17,9 +17,7 @@ import { playerRef } from './scoringSelectors'
 import type { ScoringState } from './scoringTypes'
 
 function initial(base: number, animate: boolean): ScoringState {
-  const state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], [])
-  )
+  const state = initialScoringState(scoringSession(gameFixture))
   state.session.liveData.linescore.offense[
     (['first', 'second', 'third'] as const)[base - 1]
   ] = playerRef(state.session, 2)

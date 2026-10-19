@@ -12,6 +12,7 @@ import {
   type StoredGame
 } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
+import { scoringRoster } from '../../test/scoringSession'
 import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { startingSetup, teamsOf } from './developmentSession'
@@ -158,7 +159,7 @@ async function scoring(
     await GameSession.open(store, 'g1', {
       gamePk: 'g1',
       teams: teamsOf(gameFixture),
-      setup: startingSetup(gameFixture, [], [])
+      setup: startingSetup(gameFixture, scoringRoster(1), scoringRoster(10))
     })
   const source: ScoringSource = {
     persistent: true,
@@ -179,7 +180,8 @@ async function scoring(
   const digest = { value: 'd1' }
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.game = async () => gameFixture
-  client.roster = async () => []
+  client.roster = async teamId =>
+    scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
   client.gameLineups = async () =>
     ({ digest: digest.value }) as unknown as GameLineupsResponse
   const changes = new FakeChanges()

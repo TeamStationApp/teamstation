@@ -579,6 +579,7 @@ export function teamRoutes(
           : await givenRolesOnTeams(db, [game.away_team_id, game.home_team_id])
       res.json({
         id: game.id,
+        guests: game.guests,
         pendingApproval: pending.pendingApproval,
         pendingRequestId: pending.pendingRequestId,
         homeTeamId: game.home_team_id,

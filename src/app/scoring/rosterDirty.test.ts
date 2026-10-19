@@ -2,15 +2,16 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { copyState } from '../../common/scoring/state'
+import { scoringSession } from '../../test/scoringSession'
 import {
   addDevelopmentPlayer,
-  createDevelopmentSession
+  type createDevelopmentSession
 } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { rosterDirty, rosterSavable, sameValue } from './rosterDirty'
 
 const game = (): ReturnType<typeof createDevelopmentSession> =>
-  createDevelopmentSession(gameFixture, [], [])
+  scoringSession(gameFixture)
 
 describe('roster draft dirty check', function () {
   it('is clean on open', function () {
@@ -51,7 +52,7 @@ describe('roster draft dirty check', function () {
   it('is dirty after an added player', function () {
     const base = game()
     const draft = copyState(base)
-    addDevelopmentPlayer(draft, 'home', 'Freddie Freeman', '5')
+    addDevelopmentPlayer(draft, 'home', 9000000, 'Freddie Freeman', '5')
     expect(rosterDirty(base, draft)).equals(true)
   })
 

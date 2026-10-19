@@ -5,6 +5,7 @@ import {
   resolveRosterCommands,
   ROSTER_CATEGORY,
   ROSTER_TAB,
+  rosterCommandScope,
   rosterSituation,
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
@@ -87,22 +88,20 @@ export function dictatedSheet(
       question: found.question
     }
   }
-  const staged = applyRosterCommands(game, found.commands, situation)
-  if ('problem' in staged) return staged
-  if (
-    found.commands.some(
-      command => command.type === 'addPlayer' && command.placeholder !== true
-    )
-  ) {
+  const scope = rosterCommandScope(found.commands, situation)
+  if ('problem' in scope) return scope
+  if (found.commands.some(command => command.type === 'addPlayer')) {
     return {
       draft: game,
-      side: staged.side,
+      side: scope.side,
       mode: 'editRoster',
       base: game,
       pending: found.commands,
       chat: [{ key: 0, said: transcript, lines: [] }]
     }
   }
+  const staged = applyRosterCommands(game, found.commands, situation)
+  if ('problem' in staged) return staged
   return {
     draft: staged.draft,
     side: staged.side,
