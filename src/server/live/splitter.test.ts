@@ -1,6 +1,6 @@
 import { expect } from 'chai'
-import type { ChildProcess, spawn } from 'child_process'
-import { execFileSync } from 'child_process'
+import type { spawn } from 'child_process'
+import { ChildProcess, execFileSync } from 'child_process'
 import {
   appendFileSync,
   chmodSync,
@@ -54,8 +54,10 @@ import {
   SPLIT_EARLY_SEC,
   splitSeconds,
   statusFor,
+  stopIngest,
   type TestSession,
   tickSamplerForTest,
+  writerForTest,
   writerZeroCapturedAt
 } from './splitter'
 
@@ -2129,5 +2131,113 @@ describe('where the live HLS writer cuts', function () {
     expect(splitSeconds(4)).equals(4 - SPLIT_EARLY_SEC)
     expect(splitSeconds(6)).equals(5.95)
     expect(splitSeconds(1)).equals(1)
+  })
+})
+
+/**
+ * FFmpeg aborts every write once it has had a second signal: its interrupt
+ * callback answers `received_nb_signals > transcode_init_done`. An HLS writer
+ * signalled twice renames an empty playlist over the game's, and the next
+ * writer then appends to nothing. Measured with FFmpeg 9.0.1: one SIGTERM
+ * leaves the playlist whole, two leave it at 0 bytes, every time.
+ */
+describe('signalling the live HLS writer', function () {
+  this.timeout(15000)
+  const dir = join(tmpdir(), 'ts-live-test-signals')
+  // Every SIGTERM the ingest sends, by PID. Counted at the send, because the
+  // kernel folds two pending SIGTERMs into one and a stand-in could not tell.
+  const sent = new Map<number, number>()
+  // The prototype's own, put back after each test.
+  const original = Object.getOwnPropertyDescriptor(
+    ChildProcess.prototype,
+    'kill'
+  )
+  const sigterms = (pid: number): number => sent.get(pid) ?? 0
+
+  async function writer(): Promise<ChildProcess> {
+    for (let i = 0; i < 100; i++) {
+      const child = writerForTest(KEY)
+      if (child?.pid != null) return child
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    throw new Error('the writer never started')
+  }
+
+  before(function () {
+    writeFileSync(FAKE_FFMPEG, '#!/bin/sh\nexec sleep 30\n')
+    chmodSync(FAKE_FFMPEG, 0o755)
+  })
+
+  beforeEach(function () {
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir, { recursive: true })
+    resetForTest()
+    configure()
+    sent.clear()
+    ChildProcess.prototype.kill = function (
+      this: { pid?: number },
+      signal?: NodeJS.Signals
+    ): boolean {
+      if ((signal ?? 'SIGTERM') === 'SIGTERM' && this.pid != null) {
+        sent.set(this.pid, sigterms(this.pid) + 1)
+      }
+      return Reflect.apply(original?.value, this, [signal]) === true
+    }
+  })
+
+  afterEach(function () {
+    if (original != null) {
+      Object.defineProperty(ChildProcess.prototype, 'kill', original)
+    }
+    resetForTest()
+    for (const pid of sent.keys()) {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {}
+    }
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('leaves the writer to the one SIGTERM systemd sends the whole unit on a restart', async function () {
+    setLive(KEY, { ...spec(), hlsDir: dir })
+    forcePublishForTest(KEY, true)
+    const child = await writer()
+    const pid = child.pid ?? 0
+    // The writer reads the publisher through the RTMP server.
+    let inputEnded = 0
+    attachSessionForTest(KEY, {
+      id: 's1',
+      inBytes: 1,
+      broadcast: {
+        subscribers: new Map([
+          [
+            'writer',
+            {
+              close: () => {
+                inputEnded += 1
+              }
+            }
+          ]
+        ])
+      }
+    })
+    // `systemctl restart`: KillMode=control-group signals node and ffmpeg alike.
+    process.kill(pid, 'SIGTERM')
+    sent.set(pid, sigterms(pid) + 1)
+    stopIngest()
+    expect(sigterms(pid), "systemd's, and no second").equals(1)
+    expect(inputEnded, 'its input ended instead').equals(1)
+    expect(logs.join('\n')).contains('outputs released (shutdown)')
+  })
+
+  it('signals a writer once, however many times it is stopped', async function () {
+    setLive(KEY, { ...spec(), hlsDir: dir })
+    forcePublishForTest(KEY, true)
+    const child = await writer()
+    // An H.264 publish is turned away (one stop), then the key is cleared (another).
+    attachSessionForTest(KEY, { id: 's1', inBytes: 1, videoCodec: 7 })
+    tickSamplerForTest()
+    clearLive(KEY, 'revoked')
+    expect(sigterms(child.pid ?? 0)).equals(1)
   })
 })
