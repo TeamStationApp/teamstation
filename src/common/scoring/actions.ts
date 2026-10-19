@@ -718,7 +718,7 @@ export function toolSchema(): Tool[] {
         out: { type: 'boolean', description: 'The runner was put out' },
         reason: oneOf(RUNNER_REASONS, 'Why'),
         fielders: ids(
-          'For an out: the fielders who handled the ball, last one made the putout'
+          "For an out: the fielders who handled the ball, last one made the putout. For the Safe batter on a fielder's choice: the remaining relay, including late throws, starting with the current ball holder. These Safe throws award no putout or assist."
         ),
         locations: { type: 'array', items: point },
         runnerLocation: point

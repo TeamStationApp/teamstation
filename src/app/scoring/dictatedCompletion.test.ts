@@ -710,6 +710,40 @@ describe('a dictated sentence finishes the play', function () {
     })
   })
 
+  it('establishes a late fielder choice result without changing relay geometry or crossing play boundaries', function () {
+    const bip: ScoringAction = {
+      type: 'ballInPlay',
+      contact: 'swing',
+      trajectory: 'ground_ball',
+      fielder: 15
+    }
+    const choice: ScoringAction = {
+      type: 'result',
+      eventType: 'fielders_choice'
+    }
+    const move: ScoringAction = {
+      type: 'runnerMovement',
+      runner: 6,
+      to: '2B',
+      out: true,
+      fielders: [15, 13],
+      locations: [
+        { x: -10, z: 20 },
+        { x: 0, z: 30 }
+      ]
+    }
+    const before = game({ first: 6 }).session
+    const expected = playDefaults(before, [bip, choice, move])
+    expect(playDefaults(before, [bip, move, choice])).deep.equals(expected)
+    // A second ball in play or another result ends the first play's block.
+    const single: ScoringAction = { type: 'result', eventType: 'single' }
+    for (const boundary of [bip, single]) {
+      const normalized = playDefaults(before, [bip, move, boundary, choice])
+      expect(normalized.slice(0, 2)).deep.equals([expected[0], expected[2]])
+      expect(normalized[2]).deep.equals(boundary)
+    }
+  })
+
   it('gives a steal or a caught stealing to the runner who could have tried it', function () {
     const caught = (
       runner: number,

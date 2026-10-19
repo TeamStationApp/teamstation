@@ -1328,6 +1328,28 @@ function runnerMovement(
   if (decision === 'errorAttribution')
     refuse('notNow', 'Charge the error first')
   if (action.fieldingRoute != null) saveChoiceRoute(ctx, action.fieldingRoute)
+  // Choice calls may describe a home crossing after the third out. The
+  // defensive sequence still belongs to this play, but the half has ended.
+  if (
+    pending?.outcome === "Fielder's Choice" &&
+    line(ctx).outs >= 3 &&
+    action.out !== true &&
+    to === 4
+  )
+    return
+  // A late relay may repeat a Safe call without advancing that runner again.
+  if (
+    action.out !== true &&
+    action.fieldingRoute != null &&
+    pending?.outcome === "Fielder's Choice" &&
+    where > 0 &&
+    where < 4 &&
+    where === to &&
+    pending.movements.some(
+      move => move.playerId === action.runner && move.decision === 'safe'
+    )
+  )
+    return
   // The batter of a dropped third strike already stands on first, still
   // waiting for his call there: he runs from the plate.
   const droppedBatter =

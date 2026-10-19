@@ -87,6 +87,52 @@ function config(
 }
 
 describe('dictation interpreter', function () {
+  for (const reason of [
+    "Fielder's Choice",
+    'Fielders Choice',
+    'Fielder’s choice',
+    'Out at first',
+    'Out at second',
+    'Out at third'
+  ])
+    it(`keeps the FC runner call when the model labels its optional reason ${reason}`, async function () {
+      const out = reason.startsWith('Out')
+      const stub = provider([
+        call('c1', 'runnerMovement', {
+          runner: tagOf(3),
+          to: '2B',
+          out,
+          reason
+        })
+      ])
+      const turn = await new Interpretation(
+        config(stub.fetch),
+        `On first: ${writtenTag(3)}`,
+        'The runner advances on the choice.'
+      ).start()
+      expect(turn.kind, JSON.stringify(turn)).equals('actions')
+      if (turn.kind !== 'actions') return
+      expect(turn.dropped).deep.equals([])
+      expect(turn.actions).deep.equals([
+        { type: 'runnerMovement', runner: 3, to: '2B', out }
+      ])
+    })
+
+  for (const raw of [
+    { runner: tagOf(3), to: '2B', out: false, reason: 'Out at second' },
+    { runner: tagOf(3), to: '2B', reason: 'Invented reason' },
+    { runner: tagOf(3), to: 'sixth', out: true, reason: 'Out at third' },
+    { runner: tagOf(999), to: '2B', out: true, reason: 'Out at second' }
+  ])
+    it(`still rejects malformed FC movement ${JSON.stringify(raw)}`, async function () {
+      const stub = provider([call('c1', 'runnerMovement', raw)])
+      const turn = await new Interpretation(
+        config(stub.fetch),
+        `On first: ${writtenTag(3)}`,
+        'The runner advances.'
+      ).start()
+      expect(turn.kind, JSON.stringify(turn)).equals('error')
+    })
   it('offers the library tools as OpenAI functions, enums and all', function () {
     const tools = asOpenAiTools(toolSchema())
     expect(tools.map(tool => tool.function.name)).deep.equals([...ACTION_TYPES])
@@ -152,6 +198,26 @@ describe('dictation interpreter', function () {
       /^Nothing usable came back: pitch/
     )
   })
+
+  for (const gameInUserMessage of [false, true])
+    it(`scopes extra FC relay instructions to the spoken play (${gameInUserMessage})`, async function () {
+      for (const transcript of ["Fielder's choice, everyone safe", 'ball']) {
+        const stub = provider([call('c1', 'pitch', { call: 'B' })])
+        await new Interpretation(
+          { ...config(stub.fetch), gameInUserMessage },
+          'Top of the 1st.',
+          transcript
+        ).start()
+        const messages = stub.sent[0].body.messages
+        expect(messages[0].content).equals(systemPrompt())
+        expect(messages[0].content).not.includes('FIELDER CHOICE RELAYS')
+        expect(messages[1].content?.includes('FIELDER CHOICE RELAYS')).equals(
+          transcript !== 'ball'
+        )
+        if (transcript !== 'ball')
+          expect(messages[1].content).includes('including late throws')
+      }
+    })
 
   it('sends the context, the vocabulary and the rules, with the right request', async function () {
     const stub = provider([call('c1', 'pitch', { call: 'B' })])

@@ -10,6 +10,7 @@ import {
   rosterToolSchema,
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
+import { choiceRelayPhrases } from '../../test/fieldersChoicePhrases'
 import { Interpretation, type Turn } from './interpreter'
 
 /**
@@ -101,7 +102,12 @@ const owlsField = {
 
 function anthropic(): { apiKey: string; baseUrl: string } | undefined {
   try {
-    const raw = JSON.parse(readFileSync('serverConfig.json', 'utf8')) as {
+    const raw = JSON.parse(
+      readFileSync(
+        process.env.TS_DICTATION_CONFIG ?? 'serverConfig.json',
+        'utf8'
+      )
+    ) as {
       dictation?: { anthropic?: { apiKey?: string; baseUrl?: string } }
     }
     const apiKey = raw.dictation?.anthropic?.apiKey
@@ -357,6 +363,54 @@ const live = keys != null
   'dictation prompt cases, Haiku 5.5',
   function () {
     this.timeout(180_000)
+
+    for (const example of choiceRelayPhrases)
+      it(`preserves each fielder-choice throw: ${example.said}`, async function () {
+        const turn = await say(
+          'scoring',
+          game({
+            half: 'Top',
+            inning: 'first',
+            outs: 0,
+            count: '0-0',
+            batting: 'Hawks',
+            fielding: 'Owls',
+            batter: alex,
+            pitcher: rio,
+            first: (example.mask & 1) !== 0 ? evan : undefined,
+            second: (example.mask & 2) !== 0 ? fran : undefined,
+            third: (example.mask & 4) !== 0 ? glen : undefined,
+            next: blake,
+            fielders: owlsField
+          }),
+          example.said
+        )
+        expect(turn.kind, JSON.stringify(turn)).equals('actions')
+        if (turn.kind !== 'actions') return
+        expect(problems(turn)).deep.equals([])
+        expect(
+          turn.actions.some(
+            a => a.type === 'result' && a.eventType === 'fielders_choice'
+          )
+        ).equals(true)
+        expect(
+          turn.actions.filter(
+            a => a.type === 'runnerMovement' && a.out === true
+          )
+        ).length(example.outs)
+        const safe = turn.actions.find(
+          a => a.type === 'runnerMovement' && a.runner === 1 && a.out !== true
+        )
+        // The game repairs omitted relay details from these explicit words;
+        // the app integration suite checks the complete animated/stored chain.
+        if (safe?.type === 'runnerMovement' && safe.fielders != null)
+          expect(safe.fielders.every(id => id >= 11 && id <= 19)).equals(true)
+        expect(
+          turn.actions.some(
+            a => a.type === 'runnerMovement' && a.runner === 1 && a.out === true
+          )
+        ).equals(false)
+      })
 
     for (const placeholder of [false, true]) {
       const phrase = `Create a ${placeholder ? 'placeholder ' : ''}player named Shohei Ohtani, number 17`
