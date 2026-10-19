@@ -59,7 +59,6 @@ describe('local player entry', function () {
     })
     expect(edited.gameData.players[id]).includes({
       id,
-      userId: id,
       fullName: 'Jose Altuve',
       jersey: '00',
       bats: 'switch',
@@ -186,10 +185,10 @@ describe('local player entry', function () {
       positions: ['SS', 'EH']
     }
     expect(rosterPlayerBody(draft).positions).deep.equals(['SS'])
-    const entry = { userId: 8800001, shortName: 'Cliff L' }
+    const entry = { userId: 8800001, gumboId: 8800001, shortName: 'Cliff L' }
     const id = addRosteredPlayer(session, 'home', entry, draft)
     const player = session.gameData.players[id]
-    expect(player.userId).equals(8800001)
+    expect(player.id).equals(8800001)
     expect(player.local).equals(false)
     expect(player.fullName).equals('Cliff L')
     expect(player.positions).deep.equals(['SS', 'EH'])

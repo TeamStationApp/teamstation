@@ -42,6 +42,7 @@ function lineup(value: Json): Json {
   }
   return {
     ...value,
+    ...(Object.hasOwn(value, 'lineup') ? { lineup: lineup(value.lineup) } : {}),
     ...(Array.isArray(value.batters)
       ? { batters: value.batters.map(rename) }
       : {}),

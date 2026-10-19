@@ -35,6 +35,7 @@ const initial = (): EventInfo =>
     attendees: [
       {
         userId: 101,
+        gumboId: 101,
         name: 'Babe R',
         avatarUrl: null,
         response: null,
@@ -44,6 +45,7 @@ const initial = (): EventInfo =>
       },
       {
         userId: 103,
+        gumboId: 103,
         name: 'Mike T',
         avatarUrl: null,
         response: null,
@@ -53,6 +55,7 @@ const initial = (): EventInfo =>
       },
       {
         userId: 104,
+        gumboId: 104,
         name: 'Ichiro',
         avatarUrl: null,
         response: null,
@@ -62,6 +65,7 @@ const initial = (): EventInfo =>
       },
       {
         userId: 102,
+        gumboId: 102,
         name: 'Lou G',
         avatarUrl: null,
         response: 'no',

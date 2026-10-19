@@ -11,6 +11,7 @@ import {
 
 export const battingFixture = asBattingRow({
   userId: 101,
+  gumboId: 101,
   shortName: 'Alex L',
   teamId: 'demo-hawks',
   g: 2,
@@ -37,7 +38,8 @@ export const battingFixture = asBattingRow({
 })
 export const pitchingFixture = asPitchingRow({
   userId: 102,
-  shortName: 'Blair R',
+  gumboId: 102,
+  shortName: 'Babe R',
   teamId: 'demo-hawks',
   g: 2,
   gs: 1,
