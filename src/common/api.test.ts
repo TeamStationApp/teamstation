@@ -50,7 +50,7 @@ describe('api client', function () {
       firstName: 'Mike',
       lastName: 'Trout',
       jersey: '27',
-      positions: ['CF'],
+      positions: ['CF' as const],
       bats: 'right' as const,
       throws: 'right' as const
     }
