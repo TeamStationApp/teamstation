@@ -122,6 +122,7 @@ async function mount(
               if (more.createFailure != null) throw more.createFailure
               return asRosterEntry({
                 userId: 7001,
+                gumboId: 7001,
                 shortName: player.firstName,
                 jersey: player.jersey,
                 isPlayer: true,
@@ -230,7 +231,7 @@ describe('dictation on the roster screen', function () {
       player => player.firstName === 'Ohtani'
     )
     expect(named).length(1)
-    expect(named[0]).includes({ userId: 7001, local: false })
+    expect(named[0]).includes({ id: 7001, local: false })
   })
 
   it('reuses successful player creations when retrying a failed dictated sentence', async () => {
@@ -245,6 +246,7 @@ describe('dictation on the roster screen', function () {
         created.push(player.firstName)
         return asRosterEntry({
           userId: 7000 + created.length,
+          gumboId: 7000 + created.length,
           shortName: player.firstName,
           jersey: player.jersey,
           isPlayer: true,
@@ -271,7 +273,7 @@ describe('dictation on the roster screen', function () {
     })
     expect(
       Object.values(saved[0].draft.gameData.players).filter(player =>
-        [7001, 7002].includes(player.userId!)
+        [7001, 7002].includes(player.id)
       )
     ).length(2)
   })
@@ -288,7 +290,7 @@ describe('dictation on the roster screen', function () {
       Object.values(saved[0].draft.gameData.players).find(
         player => player.firstName === 'Ohtani'
       )
-    ).includes({ userId: 9000000, local: true })
+    ).includes({ id: 9000000, local: true })
   })
 
   for (const failure of [new Error('Roster save refused'), 'offline'])
@@ -401,7 +403,7 @@ describe('dictation on the roster screen', function () {
     })
     expect(
       Object.values(saved[0].draft.gameData.players).find(
-        player => player.userId === 7001
+        player => player.id === 7001
       )
     ).includes({ local: false, firstName: 'Ohtani' })
   })

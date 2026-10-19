@@ -82,7 +82,7 @@ describe('raw guest game DJ fallback privacy', function () {
               fromGameId: 'gam_unrelated_private',
               setAt: new Date().toISOString(),
               lineup: {
-                batters: [{ userId: 106, name: 'Private Guest', jersey: '1' }],
+                batters: [{ gumboId: 106, name: 'Private Guest', jersey: '1' }],
                 defense: Object.fromEntries(
                   POSITIONS.map(position => [position, null])
                 )

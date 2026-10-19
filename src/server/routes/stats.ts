@@ -281,6 +281,7 @@ export function statsRoutes(
 
       let query = db
         .selectFrom('event_players')
+        .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'event_players.gumbo_id')
         .innerJoin('events', 'events.id', 'event_players.event_id')
         .innerJoin('games', 'games.id', 'events.gameId')
         .select([
@@ -297,7 +298,7 @@ export function statsRoutes(
           'event_players.team_id as teamId',
           'event_players.role as role'
         ])
-        .where('event_players.user_id', 'in', person.userIds)
+        .where('gumbo_ids.user_id', 'in', person.userIds)
         .where('events.hidden', '=', false)
 
       const seasonId = req.query.seasonId

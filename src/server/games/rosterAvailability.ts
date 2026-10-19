@@ -5,9 +5,9 @@ import { asGuests, type Guests } from '../../common/guests'
 import { recordOf } from '../../common/scoring/gumbo'
 import type { Side } from '../../common/scoring/state'
 import { asUnrostered, type Unrostered } from '../../common/unroster'
-import { survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
+import { resolveGumboIds } from '../scoring/gumboIds'
 import { teamRoster } from '../teams/teamRoster'
 
 export interface GameAvailability {
@@ -37,23 +37,31 @@ export async function gameAvailability(
     ...unrostered.away,
     ...unrostered.home
   ]
-  const resolved = await survivorsOf(db, all)
+  const resolved = await resolveGumboIds(db, all)
   const resolve = (id: number): number => resolved.get(id)!
   const originalGuests = [...new Set([...guests.away, ...guests.home])]
   const profiles =
     originalGuests.length === 0
       ? []
       : await db
-          .selectFrom('users')
-          .selectAll()
-          .where('id', 'in', [...new Set(originalGuests.map(resolve))])
+          .selectFrom('gumbo_ids')
+          .innerJoin('users', 'users.id', 'gumbo_ids.user_id')
+          .selectAll('users')
+          .select('gumbo_id')
+          .where('gumbo_id', 'in', [...new Set(originalGuests.map(resolve))])
           .execute()
   const details =
     originalGuests.length === 0
       ? []
       : await db
           .selectFrom('game_guest_details')
-          .selectAll()
+          .innerJoin(
+            'gumbo_ids',
+            'gumbo_ids.user_id',
+            'game_guest_details.user_id'
+          )
+          .selectAll('game_guest_details')
+          .select('gumbo_id')
           .where('game_id', '=', game.id)
           .execute()
   // Older guests keep the jersey/positions from their most recent stored setup.
@@ -70,17 +78,18 @@ export async function gameAvailability(
   for (const side of ['away', 'home'] as const) {
     for (const original of guests[side]) {
       const id = resolve(original)
-      if (guestPlayers[side].some(row => row.userId === id)) continue
-      const user = profiles.find(row => row.id === id)!
+      if (guestPlayers[side].some(row => row.gumboId === id)) continue
+      const user = profiles.find(row => row.gumbo_id === id)!
       const held = records
         .map(record => record.setupBefore.players[original])
         .find(player => player != null)
       const detail =
-        details.find(row => row.user_id === id) ??
-        details.find(row => row.user_id === original)
+        details.find(row => row.gumbo_id === id) ??
+        details.find(row => row.gumbo_id === original)
       guestPlayers[side].push(
         asRosterEntry({
-          userId: id,
+          userId: user.id,
+          gumboId: id,
           shortName: user.display_name,
           jersey: detail?.jersey ?? held?.jersey ?? null,
           positions: detail?.positions ?? held?.positions ?? [],

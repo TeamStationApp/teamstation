@@ -82,7 +82,8 @@ export async function teamRoster(
   )
   const followers = await followersOf(db, teamId)
 
-  return sectionPeople(
+  return await sectionPeople(
+    db,
     space,
     [
       ...members,
@@ -207,7 +208,8 @@ export async function levelPeople(
       .execute()
   ).map(row => row.user_id)
 
-  return sectionPeople(
+  return await sectionPeople(
+    db,
     space,
     [
       ...players.values(),
@@ -311,7 +313,8 @@ async function outsiders(
  * highest level above `ownLevel` that put them there, and sorts the list:
  * by section, the level's own people before those from above, then by name.
  */
-function sectionPeople(
+async function sectionPeople(
+  db: Kysely<Database>,
   space: MediaContext['space'] | undefined,
   rows: PeopleRow[],
   facts: {
@@ -329,7 +332,20 @@ function sectionPeople(
      */
     includeFullNames?: boolean
   }
-): RosterEntry[] {
+): Promise<RosterEntry[]> {
+  const mappings =
+    rows.length === 0
+      ? []
+      : await db
+          .selectFrom('gumbo_ids')
+          .selectAll()
+          .where(
+            'user_id',
+            'in',
+            rows.map(row => row.userId)
+          )
+          .execute()
+  const gumboIds = new Map(mappings.map(row => [row.user_id, row.gumbo_id]))
   const { ownLevel, given, memberLevels, family, songs, includeFullNames } =
     facts
   // First name, last initial, worked out across the whole list so two
@@ -410,6 +426,7 @@ function sectionPeople(
       const place = placed(row)
       return {
         userId: row.userId,
+        gumboId: gumboIds.get(row.userId) ?? null,
         nameDetails:
           includeFullNames === true && row.isPlayer
             ? {

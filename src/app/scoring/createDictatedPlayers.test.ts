@@ -34,6 +34,7 @@ describe('persistent dictated player creation', () => {
         requests.push({ teamId, player })
         return asRosterEntry({
           userId: 7001,
+          gumboId: 7001,
           shortName: 'Shohei O',
           isPlayer: true,
           role: 'member',
@@ -52,7 +53,7 @@ describe('persistent dictated player creation', () => {
     expect('problem' in result).equals(false)
     if ('problem' in result) return
     const player = Object.values(result.draft.gameData.players).find(
-      player => player.userId === 7001
+      player => player.id === 7001
     )!
     expect(player).includes({
       local: false,
@@ -65,6 +66,34 @@ describe('persistent dictated player creation', () => {
     )
     expect(JSON.stringify(draft)).equals(before)
   })
+  it('refuses an identity already held by the other team', async () => {
+    const draft = game()
+    const gumboId = draft.liveData.boxscore.teams.away.players[0]
+    const result = await createDictatedPlayers(
+      draft,
+      [command],
+      rosterSituation(draft),
+      async () =>
+        asRosterEntry({
+          userId: 7001,
+          gumboId,
+          shortName: 'Shohei O',
+          isPlayer: true,
+          role: 'member',
+          section: 'player',
+          staffRoles: [],
+          inheritedFrom: null,
+          jersey: '17',
+          positions: [],
+          bats: 'right',
+          throws: 'right'
+        })
+    )
+    expect(result).deep.equals({
+      problem: 'The player belongs to the other team.'
+    })
+  })
+
   it('persists explicit placeholders as guests before staging them', async () => {
     const draft = game()
     const result = await createDictatedPlayers(
@@ -83,7 +112,7 @@ describe('persistent dictated player creation', () => {
       Object.values(result.draft.gameData.players).find(
         player => player.fullName === command.name
       )
-    ).includes({ userId: 9000000, local: true })
+    ).includes({ id: 9000000, local: true })
   })
   it('keeps identical guest requests distinct and reuses completed mints after a partial failure', async () => {
     const draft = game()
