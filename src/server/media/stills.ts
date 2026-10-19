@@ -115,6 +115,48 @@ export async function stillInSpace(
 const inFlight = new Map<string, Promise<string>>()
 
 /**
+ * How many stills one server process cuts at once, whoever asked.
+ *
+ * Each cut is an FFmpeg decoding a frame of the original, and a phone's 4K
+ * HEVC recording costs about 80 MB a frame. `warmStills` bounded its own runs,
+ * but the still route cuts on demand for every `<img>` a page shows, and a
+ * game page opened on a freshly uploaded video asks for every highlight's
+ * still at once: 43 of them, spread over the workers, put 25 FFmpegs on the
+ * droplet together, and the kernel killed a worker for memory. Two at a time
+ * per process keeps that to eight on four cores; the rest wait their turn, and
+ * a thumbnail that arrives late is still a thumbnail.
+ */
+export const MAX_CONCURRENT_CUTS = 2
+
+/**
+ * The longest a cut may hold its slot at any one step: a fetch from the Space,
+ * FFmpeg, the upload. Bounded, because two that hang would otherwise keep
+ * every still in the process waiting behind them for as long as the network
+ * cared to take.
+ */
+export const CUT_STEP_TIMEOUT_MS = 30_000
+let cutting = 0
+const waitingToCut: Array<() => void> = []
+
+async function inCutSlot<T>(run: () => Promise<T>): Promise<T> {
+  if (cutting < MAX_CONCURRENT_CUTS) {
+    cutting += 1
+  } else {
+    // Handed a slot by a cut that finishes, already counted.
+    await new Promise<void>(resolve => {
+      waitingToCut.push(resolve)
+    })
+  }
+  try {
+    return await run()
+  } finally {
+    const next = waitingToCut.shift()
+    if (next != null) next()
+    else cutting -= 1
+  }
+}
+
+/**
  * Makes sure the Space holds this still, and returns its key.
  *
  * Two requests for the same still arriving together must not both run FFmpeg.
@@ -135,7 +177,11 @@ export async function ensureStill(options: StillOptions): Promise<string> {
     if (isReadOnlySourceKey(space, key)) {
       throw new Error('Read-only source still is not available')
     }
-    await cutAndKeep(options, key)
+    await inCutSlot(async () => {
+      // Another worker may have kept it while this one waited its turn.
+      if (await stillInSpace(space, videoId, atSec)) return
+      await cutAndKeep(options, key)
+    })
     return key
   })().finally(() => {
     inFlight.delete(key)
@@ -162,7 +208,8 @@ async function cutAndKeep(options: StillOptions, key: string): Promise<void> {
       space,
       key,
       body: await readFile(path),
-      contentType: 'image/jpeg'
+      contentType: 'image/jpeg',
+      signal: AbortSignal.timeout(CUT_STEP_TIMEOUT_MS)
     })
   } finally {
     await rm(scratch, { recursive: true, force: true })
@@ -194,7 +241,12 @@ async function openFrame(
     space: source.space,
     videoId: source.videoId,
     atSec,
-    workDir: scratch
+    workDir: scratch,
+    fetch: async (input, init) =>
+      await fetch(input, {
+        ...init,
+        signal: AbortSignal.timeout(CUT_STEP_TIMEOUT_MS)
+      })
   })
 }
 
@@ -227,7 +279,7 @@ async function cutFrame(
       '4',
       path
     ],
-    { maxBuffer: 1 << 22 }
+    { maxBuffer: 1 << 22, timeout: CUT_STEP_TIMEOUT_MS }
   )
 
   const size = await fileSize(path)

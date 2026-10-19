@@ -207,13 +207,16 @@ export async function putObject(options: {
   key: string
   body: Buffer
   contentType: string
+  /** Gives up on the upload, for a caller that cannot wait for ever. */
+  signal?: AbortSignal
 }): Promise<void> {
-  const { space, key, body, contentType } = options
+  const { space, key, body, contentType, signal } = options
 
   const response = await fetch(signedPutUrl(space, key), {
     method: 'PUT',
     body: new Uint8Array(body),
-    headers: { 'content-type': contentType }
+    headers: { 'content-type': contentType },
+    signal
   })
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
