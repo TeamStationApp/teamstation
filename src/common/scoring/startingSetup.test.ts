@@ -166,6 +166,40 @@ describe('the lineups a game starts from (U4b)', function () {
     ).throws('both teams')
   })
 
+  it('retains merged historical turns and fielding assignments until that player is unavailable', () => {
+    const held = startingSetup(game, away, home)
+    held.sides.away.battingOrder[1] = 101
+    held.sides.away.defense.C = 101
+    held.sides.away.battingIndex = 2
+    const available = { away: away.filter((_, index) => index !== 1), home }
+    const next = reconcileRoster(
+      held,
+      teamsOf(game),
+      available,
+      { away: [], home: [] },
+      { away: [], home: [] }
+    )
+    expect(next.sides.away.battingOrder).deep.equals(
+      held.sides.away.battingOrder
+    )
+    expect(next.sides.away.battingIndex).equals(2)
+    expect(next.sides.away.defense.P).equals(101)
+    expect(next.sides.away.defense.C).equals(101)
+    const removed = reconcileRoster(
+      next,
+      teamsOf(game),
+      available,
+      { away: [], home: [] },
+      { away: [101], home: [] }
+    )
+    expect(removed.sides.away.battingOrder).deep.equals(
+      held.sides.away.battingOrder.filter(id => id !== 101)
+    )
+    expect(removed.sides.away.battingIndex).equals(0)
+    expect(removed.sides.away.defense.P).equals(null)
+    expect(removed.sides.away.defense.C).equals(null)
+  })
+
   it('keeps roster order without a default', function () {
     const setup = startingSetup(game, away, home)
     expect(arranged(setup, 'away').order).deep.equals([

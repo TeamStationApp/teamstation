@@ -56,19 +56,16 @@ export function reconcileRoster(
     const beforeDue = team.battingOrder
       .slice(0, team.battingIndex)
       .filter(id => available.has(id))
-    team.battingOrder = [
-      ...new Set(team.battingOrder.filter(id => available.has(id)))
-    ]
+    // Account merges can make distinct historical turns share one identity.
+    // Availability removes people; it must not collapse their saved placements.
+    team.battingOrder = team.battingOrder.filter(id => available.has(id))
     team.battingIndex =
       team.battingOrder.length === 0
         ? 0
-        : new Set(beforeDue).size % team.battingOrder.length
-    const fielding = new Set<number>()
+        : beforeDue.length % team.battingOrder.length
     for (const position of POSITIONS) {
       const id = team.defense[position]
-      if (id == null || !available.has(id) || fielding.has(id))
-        team.defense[position] = null
-      else fielding.add(id)
+      if (id == null || !available.has(id)) team.defense[position] = null
     }
   }
   return next
