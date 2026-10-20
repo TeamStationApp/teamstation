@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import {
   canSeePerson,
   guardedPlayers,
@@ -21,7 +21,8 @@ import { externalIdsAsked } from './seasons'
 
 /** One person another service knows, and which of the asked ids are theirs. */
 export interface UserMatch {
-  userId: number
+  userId: string
+  gumboId: number | null
   externalIds: string[]
   /** `Jordan P`, told apart from anybody else in the same answer. */
   shortName: string
@@ -71,7 +72,7 @@ export function userRoutes(
         res.json(
           people.sort((a, b) => {
             const byName = a.shortName.localeCompare(b.shortName)
-            return byName === 0 ? a.userId - b.userId : byName
+            return byName === 0 ? a.userId.localeCompare(b.userId) : byName
           })
         )
         return
@@ -81,7 +82,16 @@ export function userRoutes(
       const asked = externalIdsAsked(req.query.externalId)
       if (asked == null) throw badRequest('externalId is required')
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
-      const matches = await usersByExternalId(db, asked, scopes, actor.userId)
+      const system = req.query.system
+      if (system != null && (typeof system !== 'string' || system === ''))
+        throw badRequest('system must be a nonempty string')
+      const matches = await usersByExternalId(
+        db,
+        asked,
+        scopes,
+        actor.userId,
+        system
+      )
       res.json(await describe(db, space, matches))
     })
   )
@@ -98,7 +108,9 @@ async function describe(
   if (people.length === 0) return []
   const rows = await db
     .selectFrom('users')
+    .leftJoin('gumbo_ids', 'gumbo_ids.user_id', 'users.id')
     .select([
+      'gumbo_ids.gumbo_id as gumboId',
       'id',
       'display_name as displayName',
       'first_name as firstName',
@@ -117,6 +129,7 @@ async function describe(
     const row = byId.get(person.userId)
     return {
       ...person,
+      gumboId: row?.gumboId ?? null,
       shortName: names.get(person.userId) ?? '',
       avatarUrl: space == null ? null : imageUrl(space, row?.avatarPath ?? null)
     }
@@ -127,19 +140,21 @@ async function usersByExternalId(
   db: Kysely<Database>,
   externalIds: string[],
   scopes: VisibleScopes,
-  actorUserId: number
+  actorUserId: string,
+  system?: string
 ): Promise<Array<Pick<UserMatch, 'userId' | 'externalIds'>>> {
-  const rows = await db
+  let query = db
     .selectFrom('external_ids')
     .select(['entity_id as entityId', 'external_id as externalId'])
     .where('entity_type', '=', 'user')
     .where('external_id', 'in', externalIds)
-    .execute()
+  if (system != null) query = query.where('system', '=', system)
+  const rows = await query.execute()
 
-  const held: Array<{ userId: number; externalId: string }> = []
+  const held: Array<{ userId: string; externalId: string }> = []
   for (const row of rows) {
     // A row that does not hold a user id points at nobody to answer with.
-    let userId: number
+    let userId: string
     try {
       userId = asUserId(row.entityId)
     } catch {
@@ -152,7 +167,7 @@ async function usersByExternalId(
     held.map(row => row.userId)
   )
 
-  const bySurvivor = new Map<number, Set<string>>()
+  const bySurvivor = new Map<string, Set<string>>()
   for (const row of held) {
     const survivor = survivors.get(row.userId)
     if (survivor == null) continue
@@ -169,5 +184,5 @@ async function usersByExternalId(
     if (!canSeePerson(scopes, isSelf, teams)) continue
     out.push({ userId, externalIds: [...ids].sort() })
   }
-  return out.sort((a, b) => a.userId - b.userId)
+  return out.sort((a, b) => a.userId.localeCompare(b.userId))
 }

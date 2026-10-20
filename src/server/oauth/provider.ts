@@ -1,7 +1,8 @@
 import type { Request } from 'express'
 import { type Kysely, sql } from 'kysely'
-import Provider, { interactionPolicy } from 'oidc-provider'
+import Provider, { type Account, interactionPolicy } from 'oidc-provider'
 
+import { asGumboId, asUserId } from '../../common/userId'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { makeOAuthAdapter, oauthHash } from './adapter'
@@ -24,6 +25,57 @@ export async function activeHuman(
     .where('users.merged_into', 'is', null)
     .executeTakeFirst()
   return row == null ? undefined : actor
+}
+
+/** Legacy grants resolve through their retained scoring identity without rewriting payloads. */
+export async function findOAuthAccount(
+  db: Kysely<Database>,
+  id: string
+): Promise<Account | undefined> {
+  let userId: string
+  try {
+    if (/^[1-9][0-9]*$/.test(id)) {
+      const mapping = await db
+        .selectFrom('gumbo_ids')
+        .select('user_id')
+        .where('gumbo_id', '=', asGumboId(Number(id)))
+        .executeTakeFirst()
+      if (mapping == null) return undefined
+      userId = mapping.user_id
+    } else userId = asUserId(id)
+  } catch (error) {
+    if (error instanceof TypeError) return undefined
+    throw error
+  }
+  const user = await db
+    .selectFrom('users')
+    .select(['id', 'display_name'])
+    .where('id', '=', userId)
+    .where('login_enabled', '=', true)
+    .where('merged_into', 'is', null)
+    .executeTakeFirst()
+  if (user == null) return undefined
+  return {
+    accountId: user.id,
+    claims: async () => {
+      const email = await db
+        .selectFrom('user_emails')
+        .select(['email', 'verified_at'])
+        .where('user_id', '=', user.id)
+        .where('is_primary', '=', true)
+        .executeTakeFirst()
+      return {
+        sub: user.id,
+        name: user.display_name,
+        ...(email == null
+          ? {}
+          : {
+              email: email.email,
+              email_verified: email.verified_at != null
+            })
+      }
+    }
+  }
 }
 
 export function createOAuthProvider(
@@ -92,39 +144,7 @@ export function createOAuthProvider(
       policy,
       url: (_ctx, interaction) => `${origin}/oauth/approve/${interaction.uid}`
     },
-    findAccount: async (_ctx, id) => {
-      if (!/^[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id)))
-        return undefined
-      const user = await db
-        .selectFrom('users')
-        .select(['id', 'display_name'])
-        .where('id', '=', Number(id))
-        .where('login_enabled', '=', true)
-        .where('merged_into', 'is', null)
-        .executeTakeFirst()
-      if (user == null) return undefined
-      return {
-        accountId: id,
-        claims: async () => {
-          const email = await db
-            .selectFrom('user_emails')
-            .select(['email', 'verified_at'])
-            .where('user_id', '=', user.id)
-            .where('is_primary', '=', true)
-            .executeTakeFirst()
-          return {
-            sub: id,
-            name: user.display_name,
-            ...(email == null
-              ? {}
-              : {
-                  email: email.email,
-                  email_verified: email.verified_at != null
-                })
-          }
-        }
-      }
-    },
+    findAccount: async (_ctx, id) => await findOAuthAccount(db, id),
     renderError: (ctx, _out, error) => {
       ctx.status =
         'status' in error && typeof error.status === 'number'

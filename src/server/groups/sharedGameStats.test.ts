@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 
 describe('game-bounded historical box-score averages', function () {
@@ -13,7 +14,7 @@ describe('game-bounded historical box-score averages', function () {
       .values({
         id: 'mem_demo_game_viewer',
         team_id: f.teamA,
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         role: 'member'
       })
       .execute()
@@ -115,7 +116,7 @@ describe('game-bounded historical box-score averages', function () {
             seasonAvg: number | null
           }>
         }
-        expect(body.batting[0]).includes({ userId: 104, h: 0 })
+        expect(body.batting[0]).includes({ userId: userIdOfGumbo(104), h: 0 })
         return body.batting[0].seasonAvg
       }
       expect(await average(106)).equals(0)

@@ -18,7 +18,7 @@ const song: WalkUpSong = {
   startMs: 5000,
   endMs: 20000
 }
-const owner = { teamId: 't1', userId: '7' }
+const owner = { teamId: 't1', userId: 'usr_1111111111111111111118' }
 
 function memory(): PreferenceStorage & { items: Map<string, string> } {
   const items = new Map<string, string>()
@@ -75,7 +75,7 @@ describe('resolveSong', function () {
     const links = deviceLinkStore(storage)
     await links.write(owner, song.providerId, 'content://picked/1')
     expect([...storage.items.keys()]).deep.equals([
-      'walkUp:t1:7:lf:110f83a3e9419109'
+      'walkUp:t1:usr_1111111111111111111118:lf:110f83a3e9419109'
     ])
     const phone = music(async () => [])
     expect(await resolveSong(phone, song, owner, links)).equals(

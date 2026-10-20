@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { grantInformation, roleList } from './requestInformation'
 
@@ -525,7 +526,7 @@ describe('invitation display snapshots', function () {
           .insertInto('user_emails')
           .values({
             id: 'email_snapshot_person',
-            user_id: 106,
+            user_id: userIdOfGumbo(106),
             email: 'snapshot-person@example.com',
             verified_at: new Date()
           })

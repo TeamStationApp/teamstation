@@ -12,6 +12,7 @@ import {
 import { HttpError } from '../../common/errors'
 import { ScoringSession } from '../../common/scoring/session'
 import { type Position, POSITIONS } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { deviceStorage } from '../platform/deviceStorage'
 import { startingSetup, teamsOf } from './developmentSession'
 import {
@@ -42,7 +43,7 @@ const game = asGameDetail({
 const roster = (first: number): RosterEntry[] =>
   Array.from({ length: 9 }, (_, i) =>
     asRosterEntry({
-      userId: first + i,
+      userId: userIdOfGumbo(first + i),
       gumboId: first + i,
       shortName: `Player ${first + i}`,
       jersey: String(i + 1),
@@ -139,7 +140,7 @@ describe('the server scoring source with default lineups (U12)', function () {
     const { client: fake } = client(async () => none, store)
     const guest = asRosterEntry({
       ...away[0],
-      userId: 901,
+      userId: userIdOfGumbo(901),
       gumboId: 901,
       shortName: 'Babe Ruth'
     })
@@ -287,9 +288,9 @@ describe('the server scoring source’s clock (U43)', function () {
     const rows = teamId === 'away' ? away : home
     return {
       lineup: {
-        batters: rows.map(row => person(row.userId)),
+        batters: rows.map(row => person(row.gumboId!)),
         defense: Object.fromEntries(
-          POSITIONS.map((position, i) => [position, person(rows[i].userId)])
+          POSITIONS.map((position, i) => [position, person(rows[i].gumboId!)])
         ) as Record<Position, LineupPerson | null>
       },
       fromGameId: 'g0',

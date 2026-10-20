@@ -7,12 +7,14 @@ import { createInterface } from 'node:readline'
 
 import express from 'express'
 
+import { userIdOfGumbo } from '../common/userId'
 import { googlePlaces } from '../server/location/googlePlaces'
 import { devMediaRoutes } from '../server/routes/devMedia'
 import { healthRoutes } from '../server/routes/health'
 import { mediaRoutes } from '../server/routes/media'
 import { googlePlacesStub } from './googlePlacesStub'
 import { groupFixture } from './groupFixtures'
+import { insertFixtureUsers } from './insertFixtureUsers'
 import { seedSettingsCleanup3 } from './settingsCleanup3Fixture'
 
 /** Isolated real API/database/mail fixture, supplied explicitly per platform. */
@@ -113,24 +115,21 @@ async function main(): Promise<void> {
           status: 'scheduled'
         })
         .execute()
-    await f.h.db
-      .insertInto('users')
-      .values({
-        id: 109,
-        legacyId: 'usr_settings3_native_no_email',
-        display_name: 'Rickey Henderson',
-        first_name: 'Rickey',
-        last_name: 'Henderson',
-        login_enabled: false,
-        is_admin: false
-      })
-      .execute()
+    await insertFixtureUsers(f.h.db, {
+      id: userIdOfGumbo(109),
+      legacyId: 'usr_settings3_native_no_email',
+      display_name: 'Rickey Henderson',
+      first_name: 'Rickey',
+      last_name: 'Henderson',
+      login_enabled: false,
+      is_admin: false
+    })
     await f.h.db
       .insertInto('memberships')
       .values({
         id: 'mem_settings3_native_no_email',
         team_id: f.teamA,
-        user_id: 109,
+        user_id: userIdOfGumbo(109),
         is_player: true
       })
       .execute()
@@ -153,24 +152,21 @@ async function main(): Promise<void> {
     for (const [index, name] of attendanceNames.entries()) {
       const id = 110 + index
       const [first, last] = name.split(' ')
-      await f.h.db
-        .insertInto('users')
-        .values({
-          id,
-          legacyId: `usr_settings3_attendance_${index}`,
-          display_name: name,
-          first_name: first,
-          last_name: last,
-          login_enabled: false,
-          is_admin: false
-        })
-        .execute()
+      await insertFixtureUsers(f.h.db, {
+        id,
+        legacyId: `usr_settings3_attendance_${index}`,
+        display_name: name,
+        first_name: first,
+        last_name: last,
+        login_enabled: false,
+        is_admin: false
+      })
       await f.h.db
         .insertInto('memberships')
         .values({
           id: `mem_settings3_attendance_${index}`,
           team_id: f.teamA,
-          user_id: id,
+          user_id: userIdOfGumbo(id),
           is_player: true
         })
         .execute()

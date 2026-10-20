@@ -7,7 +7,7 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -15,6 +15,8 @@ import {
   type GuardianFixture,
   guardianFixture
 } from '../../test/guardianFixture'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -90,25 +92,23 @@ describe('teams by external id, and making one', function () {
     await pool.end()
     db = makeDatabase(scratchUrl)
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values(
-        [
-          { made: admin, name: 'Ada', isAdmin: true },
-          { made: member, name: 'Cam', isAdmin: false },
-          { made: seasonAdmin, name: 'Sam', isAdmin: false },
-          { made: leagueAdmin, name: 'Lee', isAdmin: false }
-        ].map(person => ({
-          id: person.made.userId,
-          legacyId: person.made.legacyId,
-          display_name: person.name,
-          login_enabled: true,
-          is_admin: person.isAdmin,
-          created_at: now,
-          updated_at: now
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      [
+        { made: admin, name: 'Adam Dunn', isAdmin: true },
+        { made: member, name: 'Cam Bedrosian', isAdmin: false },
+        { made: seasonAdmin, name: 'Sam Fuld', isAdmin: false },
+        { made: leagueAdmin, name: 'Lee Smith', isAdmin: false }
+      ].map(person => ({
+        id: person.made.userId,
+        legacyId: person.made.legacyId,
+        display_name: person.name,
+        login_enabled: true,
+        is_admin: person.isAdmin,
+        created_at: now,
+        updated_at: now
+      }))
+    )
     await db
       .insertInto('auth_sessions')
       .values(
@@ -121,7 +121,7 @@ describe('teams by external id, and making one', function () {
           ] as Array<[string, number]>
         ).map(([token, userId]) => ({
           id: makeId('authSession'),
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           token_hash: hashToken(token),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
@@ -151,7 +151,7 @@ describe('teams by external id, and making one', function () {
       .values([
         {
           id: makeId('scopeRole'),
-          user_id: seasonAdmin.userId,
+          user_id: userIdOfGumbo(seasonAdmin.userId),
           scope_type: 'season',
           scope_id: force,
           role: 'admin',
@@ -159,7 +159,7 @@ describe('teams by external id, and making one', function () {
         },
         {
           id: makeId('scopeRole'),
-          user_id: leagueAdmin.userId,
+          user_id: userIdOfGumbo(leagueAdmin.userId),
           scope_type: 'league',
           scope_id: circuit,
           role: 'admin',
@@ -187,7 +187,7 @@ describe('teams by external id, and making one', function () {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: member.userId,
+        user_id: userIdOfGumbo(member.userId),
         team_id: hawks
       })
       .execute()
@@ -629,7 +629,7 @@ describe('teams by external id, and making one', function () {
     async function adminsOf(
       scopeType: 'season' | 'team',
       scopeId: string
-    ): Promise<Array<{ user_id: number; granted_by: number | null }>> {
+    ): Promise<Array<{ user_id: string; granted_by: string | null }>> {
       return await database()
         .selectFrom('scope_roles')
         .select(['user_id', 'granted_by'])
@@ -666,7 +666,10 @@ describe('teams by external id, and making one', function () {
         .execute()
       expect(seasons).deep.equals([])
       expect(await adminsOf('team', made.body.id)).deep.equals([
-        { user_id: member.userId, granted_by: member.userId }
+        {
+          user_id: userIdOfGumbo(member.userId),
+          granted_by: userIdOfGumbo(member.userId)
+        }
       ])
       // Its owner, so it is among their teams.
       const owners = await database()
@@ -674,7 +677,9 @@ describe('teams by external id, and making one', function () {
         .select(['user_id', 'role'])
         .where('team_id', '=', made.body.id)
         .execute()
-      expect(owners).deep.equals([{ user_id: member.userId, role: 'owner' }])
+      expect(owners).deep.equals([
+        { user_id: userIdOfGumbo(member.userId), role: 'owner' }
+      ])
       expect(ids(await list(MEMBER))).includes(made.body.id)
 
       // Theirs to post again.
@@ -727,7 +732,7 @@ describe('teams by external id, and making one', function () {
           .execute()
         expect(joined).deep.equals([{ season_id: season }])
         expect(await adminsOf('team', made.body.id)).deep.equals([
-          { user_id: userId, granted_by: userId }
+          { user_id: userIdOfGumbo(userId), granted_by: userIdOfGumbo(userId) }
         ])
         // Nothing is given on a season this call did not make.
         expect(await adminsOf('season', season), token).deep.equals(
@@ -753,7 +758,10 @@ describe('teams by external id, and making one', function () {
         .executeTakeFirstOrThrow()
       expect(season.league_id).equals(null)
       expect(await adminsOf('season', mine.body.season.id)).deep.equals([
-        { user_id: member.userId, granted_by: member.userId }
+        {
+          user_id: userIdOfGumbo(member.userId),
+          granted_by: userIdOfGumbo(member.userId)
+        }
       ])
 
       // The member's own season is theirs to reuse; the Force is its
@@ -959,7 +967,10 @@ describe('teams by external id, and making one', function () {
       expect(joined).deep.equals([{ season_id: made.body.season.id }])
       // A site administrator administers it, and belongs to no team.
       expect(await adminsOf('team', made.body.id)).deep.equals([
-        { user_id: admin.userId, granted_by: admin.userId }
+        {
+          user_id: userIdOfGumbo(admin.userId),
+          granted_by: userIdOfGumbo(admin.userId)
+        }
       ])
       const members = await database()
         .selectFrom('memberships')
@@ -1014,7 +1025,7 @@ describe('teams by external id, and making one', function () {
         if (audit == null) await new Promise(resolve => setTimeout(resolve, 20))
       }
       expect(audit).deep.include({
-        actor_user_id: admin.userId,
+        actor_user_id: userIdOfGumbo(admin.userId),
         method: 'POST',
         path: '/api/v1/teams',
         entity_type: 'team'
@@ -1313,7 +1324,7 @@ describe('teams by external id, and making one', function () {
 /**
  * A guardian is a member of every team their child plays on now: `GET /teams`
  * lists them, and stops listing one the child leaves. On `guardianFixture`,
- * where Avery plays for Demo Hawks and Demo Comets and Tim Raines is his
+ * where Alfonso plays for Demo Hawks and Demo Comets and Tim Raines is his
  * guardian with no membership of his own.
  */
 describe('GET /teams for a guardian', function () {
@@ -1346,7 +1357,7 @@ describe('GET /teams for a guardian', function () {
     expect(await teamsOf(f.people.teamCoach)).deep.equals([f.teamA])
     await f.h.db
       .deleteFrom('memberships')
-      .where('user_id', '=', f.players[0].id)
+      .where('user_id', '=', userIdOfGumbo(f.players[0].id))
       .where('team_id', '=', f.secondTeam)
       .execute()
     expect(await teamsOf(f.people.guardian)).deep.equals([f.teamA])

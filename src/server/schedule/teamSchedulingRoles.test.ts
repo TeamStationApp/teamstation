@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   type GroupFixture,
@@ -23,21 +24,21 @@ describe('team scheduling by coaches and assistants', function () {
           id: 'role_schedule_coach',
           scope_type: 'team',
           scope_id: f.teamA,
-          user_id: 103,
+          user_id: userIdOfGumbo(103),
           role: 'coach'
         },
         {
           id: 'role_schedule_assistant',
           scope_type: 'team',
           scope_id: f.teamA,
-          user_id: 104,
+          user_id: userIdOfGumbo(104),
           role: 'assistant'
         },
         {
           id: 'role_schedule_scorekeeper',
           scope_type: 'team',
           scope_id: f.teamA,
-          user_id: 106,
+          user_id: userIdOfGumbo(106),
           role: 'scorekeeper'
         }
       ])
@@ -241,7 +242,7 @@ describe('team scheduling by coaches and assistants', function () {
         id: 'role_schedule_inherited',
         scope_type: 'season',
         scope_id: f.seasonA,
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         role: 'coach'
       })
       .execute()
@@ -293,7 +294,7 @@ describe('team scheduling by coaches and assistants', function () {
   it('requires a participating team scheduler and refuses representing an unmanaged inviting team', async () => {
     await f.h.db
       .deleteFrom('scope_roles')
-      .where('user_id', '=', 103)
+      .where('user_id', '=', userIdOfGumbo(103))
       .where('scope_id', '=', f.teamA)
       .execute()
     const unrelatedSource = await request(
@@ -339,7 +340,7 @@ describe('team scheduling by coaches and assistants', function () {
     }
     await f.h.db
       .deleteFrom('scope_roles')
-      .where('user_id', '=', 103)
+      .where('user_id', '=', userIdOfGumbo(103))
       .where('scope_type', '=', 'team')
       .where('scope_id', '=', f.teamA)
       .execute()
@@ -350,7 +351,7 @@ describe('team scheduling by coaches and assistants', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_plain_scheduler',
-        user_id: 103,
+        user_id: userIdOfGumbo(103),
         team_id: f.teamA,
         role: 'member',
         is_player: false

@@ -3,11 +3,13 @@ import { createServer } from 'node:http'
 import { extname } from 'node:path'
 
 import type { StoredGame } from '../../common/scoring/session'
+import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { POSITIONS } from './scoringTypes'
 
 interface FixturePlayer {
-  userId: number
+  userId: string
+  gumboId: number
   shortName: string
   jersey: string
   positions: string[]
@@ -20,7 +22,7 @@ interface FixturePlayer {
   throws: string
 }
 interface LineupPerson {
-  userId: number
+  gumboId: number
   name: string
   jersey: string
 }
@@ -47,7 +49,8 @@ const names = [
 ]
 const roster = (side: string): FixturePlayer[] =>
   names.map((name, i) => ({
-    userId: (side === 'away' ? 100 : 200) + i,
+    userId: userIdOfGumbo((side === 'away' ? 100 : 200) + i),
+    gumboId: (side === 'away' ? 100 : 200) + i,
     shortName: name,
     jersey: String(i + 1),
     positions: [POSITIONS[i % 9]],
@@ -68,7 +71,7 @@ const lineup = (
 } => {
   const rows = roster(side)
   const person = (i: number): LineupPerson => ({
-    userId: rows[i].userId,
+    gumboId: rows[i].gumboId,
     name: rows[i].shortName,
     jersey: rows[i].jersey
   })

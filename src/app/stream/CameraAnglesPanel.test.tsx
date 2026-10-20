@@ -10,6 +10,7 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import { TextField } from '../components/TextField'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
@@ -40,7 +41,7 @@ function stream(patch: Partial<LiveStream> = {}): LiveStream {
   return {
     id: 'liv_00000000000000000001',
     gameId: 'gam_1',
-    userId: 7,
+    userId: userIdOfGumbo(7),
     ownerName: 'Mookie Betts',
     slot: 1,
     label: 'Home Plate',
