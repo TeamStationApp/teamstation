@@ -140,6 +140,7 @@ export const enUs = {
   /** The Videos tab of a game nothing was recorded of, in place of a player. */
   game_no_video: 'No videos.',
   game_video_unavailable: 'This video is not available right now.',
+  game_video_open: 'Watch full screen',
   /** Marks a video in the picker whose file is no longer on the server. */
   game_video_gone_suffix: '(unavailable)',
   /**

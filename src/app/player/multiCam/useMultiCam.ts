@@ -8,7 +8,13 @@ import type { BufferControl, PlayIntent } from '../playIntent'
 import { SLOW_RATE } from '../slowMotion'
 import { useKeyboardShortcuts } from '../useKeyboardShortcuts'
 import { HAVE_CURRENT_DATA } from '../videoHandle'
-import { secondsAt, wallAt, type Window, windowOf } from '../wallClock'
+import {
+  placedAlone,
+  secondsAt,
+  wallAt,
+  type Window,
+  windowOf
+} from '../wallClock'
 import {
   type AngleZone,
   angleZoneFor,
@@ -83,7 +89,11 @@ export interface MultiCamProps {
   }) => void
   /** Where the viewer now is, so the address can say so. */
   onMoment?: (wallMs: number) => void
-  onClose: () => void
+  /**
+   * The viewer left, with the wall time the grid had got to, for the videos
+   * page's player to pick up at; null before any tile has placed it.
+   */
+  onClose: (atWallMs: number | null) => void
   /**
    * Whether the server still lists a video as live, for a tile whose live
    * playlist was closed under it (`PlayIntent.isLive`).
@@ -208,6 +218,12 @@ export interface MultiCam {
   waiting: boolean
   /** The heard tile is playing without sound until the next touch. */
   soundBlocked: boolean
+  /**
+   * A tile's player was left playing silent because its sound needs a tap
+   * (`PlayIntent.onSoundHeld`): the heard one's is then held as a refused
+   * play's is, until the next touch.
+   */
+  soundHeld: (id: string) => void
   heardId: string | null
   /** Where each tile rests. */
   rects: Rect[]
@@ -293,10 +309,13 @@ export function useMultiCam(
 
   const chosen = useMemo(
     () =>
-      order
-        .map(id => videos.find(video => video.id === id))
-        .filter((video): video is VideoSummary => video != null)
-        .slice(0, MAX_TILES),
+      // A lone angle with no start of its own plays on its own media time.
+      placedAlone(
+        order
+          .map(id => videos.find(video => video.id === id))
+          .filter((video): video is VideoSummary => video != null)
+          .slice(0, MAX_TILES)
+      ),
     [order, videos]
   )
   const names = useMemo(() => {
@@ -449,12 +468,15 @@ export function useMultiCam(
     // same as "cannot play".
     () =>
       soundAngle(
-        videos.filter(one => urls[one.id] !== null),
+        videos
+          // As the grid places them: a lone unplaced angle on its media time.
+          .map(one => chosen.find(placed => placed.id === one.id) ?? one)
+          .filter(one => urls[one.id] !== null),
         order,
         audioId,
         atWallMs
       ),
-    [atWallMs, audioId, order, urls, videos]
+    [atWallMs, audioId, chosen, order, urls, videos]
   )
 
   /**
@@ -1866,6 +1888,13 @@ export function useMultiCam(
     ended,
     waiting,
     soundBlocked,
+    soundHeld: (id: string): void => {
+      // The heard angle now: a tile's prime calls this from the render that
+      // attached it, and the viewer may have chosen another since.
+      if (id !== heardRef.current) return
+      soundBlockedRef.current = true
+      setSoundBlocked(true)
+    },
     heardId,
     rects,
     zoomed,

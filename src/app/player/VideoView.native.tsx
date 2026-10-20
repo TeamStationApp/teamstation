@@ -8,7 +8,7 @@ import Video, {
 
 import { nativeSource } from './nativeSource'
 import { NativeVideoHandle } from './nativeVideoHandle'
-import type { VideoViewProps } from './videoViewProps'
+import { audioSession, type VideoViewProps } from './videoViewProps'
 
 export type { VideoViewProps }
 
@@ -20,6 +20,15 @@ export type { VideoViewProps }
  * interval would leave it up too long.
  */
 const PROGRESS_MS = 250
+
+/**
+ * ExoPlayer's own LIVE badge, which it draws over a live picture with or
+ * without its controls, is turned off: the app says live itself (`LivePill`),
+ * and in a grid tile the badge sat under the tile's name, the two words on top
+ * of each other. One object, so the player is not handed new styles on every
+ * render.
+ */
+const CONTROLS_STYLES = { hideLiveBadge: true }
 
 /**
  * The picture, on a phone.
@@ -49,6 +58,7 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
     source,
     onHandle,
     controls = false,
+    primary = controls,
     onControlsVisible,
     muted = false,
     resizeMode = 'contain',
@@ -131,6 +141,7 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
       style={[StyleSheet.absoluteFill, { opacity }]}
       resizeMode={resizeMode}
       controls={controls}
+      controlsStyles={CONTROLS_STYLES}
       onControlsVisibilityChange={event => {
         onControlsVisible?.(event.isVisible)
       }}
@@ -140,8 +151,7 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
       progressUpdateInterval={PROGRESS_MS}
       // A card's silent preview must not take the audio session away from
       // whatever the person was already listening to.
-      disableFocus={!controls}
-      ignoreSilentSwitch={controls ? 'ignore' : 'obey'}
+      {...audioSession(primary)}
       // Pulling down Control Center or Notification Center only makes the app
       // inactive, and react-native-video pauses AVPlayer for that unless told
       // not to. It means to resume on the way back, but the pause has already

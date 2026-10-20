@@ -3,6 +3,7 @@ import { after, describe, it } from 'mocha'
 
 import { type LineScoreStep, TeamStationClient } from '../../common/api'
 import type { BoardLine } from '../../common/scoring/boardLineTypes'
+import { lstrings } from '../locales/strings'
 import type { Rect } from './multiCam/layout'
 import { GAP, playerLayout } from './multiCam/playerLayout'
 import {
@@ -365,5 +366,147 @@ describe('player layouts in a browser', function () {
       if (!landscape)
         expect(bare.tiles[0].y, 'N0 tiles at the top').closeTo(0, 1)
     }
+  })
+
+  it('opens the one-angle player from the videos page, and comes back to the same moment (E1)', async function () {
+    const { S, U } = fixture().games
+    const session = await webSession('e1', 402, 874)
+    const { page } = session
+    const inlineTime = async (): Promise<{ t: number; paused: boolean }> =>
+      (await page.evaluate(
+        `(() => { const v = document.querySelector('#root video'); return { t: v.currentTime, paused: v.paused } })()`
+      )) as { t: number; paused: boolean }
+    const tiles = async (): Promise<
+      Array<{ t: number; paused: boolean; ready: boolean }>
+    > =>
+      (await page.evaluate(
+        `(() => ${GRID_VIDEOS}.map(v => ({ t: v.currentTime, paused: v.paused, ready: v.readyState >= 2 })))()`
+      )) as Array<{ t: number; paused: boolean; ready: boolean }>
+    const inlineReady = async (): Promise<void> => {
+      await page.waitForFunction(
+        `(() => { const v = document.querySelector('#root video'); return v != null && v.readyState >= 1 && ${GRID_VIDEOS}.length === 0 })()`,
+        { timeout: 60_000 }
+      )
+    }
+    /** Taps the picture, and answers the one tile's first reading. */
+    const openPlayer = async (): Promise<{ t: number }> => {
+      await page.click('[data-testid="gameVideoOpen"]')
+      await page.waitForFunction(
+        `(() => { const v = ${GRID_VIDEOS}; return v.length === 1 && v[0].readyState >= 2 })()`,
+        { timeout: 60_000 }
+      )
+      return (await tiles())[0]
+    }
+    const closePlayer = async (): Promise<number> => {
+      const [tile] = await tiles()
+      await page.evaluate(
+        `(() => { [...document.querySelectorAll('[aria-label="${lstrings.angles_close}"]')].find(node => node.closest('#root') == null).click() })()`
+      )
+      await inlineReady()
+      return tile.t
+    }
+    const settled = async (): Promise<{ t: number; paused: boolean }> => {
+      // The resume seeks once the source is attached again.
+      await page.waitForFunction(
+        `(() => { const v = document.querySelector('#root video'); return v != null && v.readyState >= 1 && !v.seeking })()`,
+        { timeout: 30_000 }
+      )
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      return await inlineTime()
+    }
+
+    for (const game of [S, U]) {
+      const video = game === S ? game.videos[1] : game.videos[0]
+      await open(session, `/games/${game.id}?tab=watch&video=${video}&t=30`)
+      await inlineReady()
+      if (game === S)
+        await page.waitForFunction(
+          `document.querySelectorAll('#root [data-testid="scoreboard-overlay"]').length === 1`,
+          { timeout: 30_000 }
+        )
+      // No controls and nothing to press but the one way in; the board on
+      // it where the game is scored.
+      const inline = (await page.evaluate(`(() => {
+        const v = document.querySelector('#root video')
+        return {
+          controls: v.controls,
+          opens: document.querySelectorAll('#root [data-testid="gameVideoOpen"]').length,
+          board: document.querySelectorAll('#root [data-testid="scoreboard-overlay"]').length
+        }
+      })()`)) as { controls: boolean; opens: number; board: number }
+      expect(inline.controls, `${game.id} inline controls`).equals(false)
+      expect(inline.opens).equals(1)
+      if (game === S) expect(inline.board, 'the board inline').equals(1)
+      await page.evaluate(`document.querySelector('#root video').pause()`)
+      const before = await inlineTime()
+      const opened = await openPlayer()
+      expect(opened.t, `${game.id} opens at the inline time`).closeTo(
+        before.t,
+        0.5
+      )
+      await new Promise(resolve => setTimeout(resolve, 3000))
+      const [playingTile] = await tiles()
+      expect(playingTile.paused, `${game.id} playing`).equals(false)
+      if (game === U) {
+        const bar = (await page.evaluate(
+          `(() => document.querySelectorAll('[role="slider"], [aria-valuenow]').length)()`
+        )) as number
+        expect(bar, 'U has a bar').greaterThan(0)
+      }
+      await shot(
+        session,
+        `web-one-angle-${game === S ? 'scored' : 'nostart'}-after.png`
+      )
+      const last = await closePlayer()
+      const back = await settled()
+      expect(back.t, `${game.id} back at the player's time`).closeTo(last, 0.5)
+      expect(back.paused, `${game.id} paused`).equals(true)
+    }
+
+    // A highlight opens the player at its own time.
+    await open(session, `/games/${S.id}?tab=watch&video=${S.videos[1]}`)
+    await inlineReady()
+    const firstHighlight = await page.waitForSelector(
+      '#root [aria-label^="Play highlight: "]',
+      { timeout: 30_000 }
+    )
+    // The label as the page has it; trimmed here, where `??` is safe.
+    const label = await firstHighlight!.evaluate(node =>
+      node.getAttribute('aria-label')
+    )
+    const title = String(label).replace('Play highlight: ', '')
+    const { highlights } = await new TeamStationClient({
+      baseUrl: API,
+      token: await signedIn()
+    }).highlights(S.videos[1])
+    const chosen = highlights.find(one => one.title === title)!
+    await firstHighlight!.click()
+    await page.waitForFunction(
+      `(() => { const v = ${GRID_VIDEOS}; return v.length === 1 && v[0].readyState >= 2 })()`,
+      { timeout: 60_000 }
+    )
+    expect((await tiles())[0].t, 'the player at the highlight').closeTo(
+      chosen.startOffsetSec,
+      0.5
+    )
+
+    // Reloaded, the address names the angle and nothing of where it came
+    // from; Back is the videos page, and forward the player again.
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(
+      `(() => { const v = ${GRID_VIDEOS}; return v.length === 1 })()`,
+      { timeout: 60_000 }
+    )
+    const search = (await page.evaluate('location.search')) as string
+    expect(search).includes('angles=')
+    expect(search).not.includes('from')
+    await page.goBack({ waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(`(() => ${GRID_VIDEOS}.length === 0)()`, {
+      timeout: 30_000
+    })
+    await page.goForward({ waitUntil: 'domcontentloaded' })
+    await page.waitForFunction(`(() => ${GRID_VIDEOS}.length === 1)()`, {
+      timeout: 30_000
+    })
   })
 })

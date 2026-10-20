@@ -184,7 +184,7 @@ describe('a live video whose first segment is not written yet', function () {
 })
 
 describe('starting a live game at the latest footage', function () {
-  it('plays a highlight selected before the first Play at that highlight', async function () {
+  it('puts the picture at a highlight selected before the first Play, for the player it opens', async function () {
     const prototype = window.HTMLMediaElement.prototype
     const original = Object.getOwnPropertyDescriptor(prototype, 'canPlayType')!
     prototype.canPlayType = () => 'maybe'
@@ -211,7 +211,9 @@ describe('starting a live game at the latest footage', function () {
       await act(async () => {
         highlight!.click()
       })
-      expect(video.paused).equals(false)
+      // Watched in the full-screen player, which opens there: the picture
+      // behind it waits at the play rather than jumping to the live edge.
+      expect(video.paused).equals(true)
       expect(video.currentTime).equals(300)
     } finally {
       Object.defineProperty(prototype, 'canPlayType', original)

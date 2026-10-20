@@ -393,7 +393,9 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       />
       <ExitButton
         visible={mc.controlsShown}
-        onPress={onClose}
+        onPress={() => {
+          onClose(mc.atWallMs)
+        }}
         top={exitTop - theme.rem(theme.spaceSmRem)}
         right={insets.right}
       />
@@ -556,6 +558,15 @@ function Tile(props: {
     }
   }, [props.url])
 
+  // Its sound as the view wants it, set before its source is attached: the
+  // first play of WebKit's own player is a silent one, and it puts back the
+  // sound the view wants (`PlayIntent.muted`).
+  const mutedNow = useRef(props.muted)
+  mutedNow.current = props.muted
+  useEffect(() => {
+    if (element.current != null) element.current.muted = props.muted
+  }, [props.muted])
+
   // This tile's own source, attached when it has one and detached with it.
   // The play intent is injected rather than read off the element's pause
   // events: the view pauses tiles itself — holding them while another stalls,
@@ -597,10 +608,6 @@ function Tile(props: {
     // elsewhere; including them here would reset the element on every change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.url, props.videoId])
-
-  useEffect(() => {
-    if (element.current != null) element.current.muted = props.muted
-  }, [props.muted])
 
   /**
    * The press the view turns into a square's action, and — after a finger has

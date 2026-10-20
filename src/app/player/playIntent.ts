@@ -53,6 +53,18 @@ export interface PlayIntent {
   isLive?: () => boolean | Promise<boolean>
   /** False for a highlight link or an explicitly restored playback position. */
   startAtLiveEdge?: boolean
+  /**
+   * This player was left playing silent because its sound needs a tap here:
+   * WebKit's own player, started silently to its first frame and wanted
+   * playing by then, which iOS pauses if it is unmuted without one.
+   */
+  onSoundHeld?: () => void
+  /**
+   * Whether the owner wants this player silent now: the sound a silent first
+   * play (`primeSilently`) puts back is this, not the element's at the start,
+   * which can be from before the owner had set it.
+   */
+  muted?: () => boolean
 }
 
 /** Moves a running player's limit on how far ahead it loads. */

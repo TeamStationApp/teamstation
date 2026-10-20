@@ -134,11 +134,13 @@ export interface NativeHlsVideo {
   readonly error: { readonly code: number } | null
   readonly paused: boolean
   readonly ended: boolean
+  muted: boolean
   currentTime: number
   readonly readyState: number
   readonly seekable: { readonly length: number; end: (index: number) => number }
   load: () => void
   play: () => Promise<void>
+  pause: () => void
   removeAttribute: (name: 'src') => void
   addEventListener: (
     type: 'error' | 'canplay' | 'loadedmetadata' | 'play' | 'pause',
@@ -277,6 +279,10 @@ export function attachNativeHls(
   video.addEventListener('canplay', recovered)
   video.addEventListener('error', onError)
   video.src = url
+  const stopPriming =
+    intent?.buffer == null
+      ? undefined
+      : primeSilently(video, wantsToPlay, intent.onSoundHeld, intent.muted)
 
   // Safari can stop reading a live playlist without an error to say so; only
   // the single live viewer is watched for it, as the phones are.
@@ -298,6 +304,7 @@ export function attachNativeHls(
       : undefined
 
   return () => {
+    stopPriming?.()
     stopWatching?.()
     if (timer != null) clock.clearTimeout(timer)
     timer = undefined
@@ -308,6 +315,55 @@ export function attachNativeHls(
     video.removeEventListener('loadedmetadata', seekBack)
     video.removeAttribute('src')
     video.load()
+  }
+}
+
+/**
+ * Plays a grid tile on WebKit's own player once, silently, to its first frame,
+ * and stops it there unless the grid wants it playing by then — then silent,
+ * its sound left for a tap (`onSoundHeld`).
+ *
+ * An iPhone loads nothing into an element that has not been played, and the
+ * grid holds a tile paused until it holds a few seconds: opened without a tap
+ * — a reload of the player, a shared address — the tile said it was loading
+ * for ever. A silent play is one Safari allows without a tap. A tile it stops
+ * gets its sound back as it was; the grid asks for that again when it starts
+ * it.
+ */
+function primeSilently(
+  video: NativeHlsVideo,
+  wantsToPlay: () => boolean,
+  onSoundHeld?: () => void,
+  wantsMuted?: () => boolean
+): () => void {
+  if (!video.paused) return () => undefined
+  const before = video.muted
+  /** The sound to put back: what the owner wants now, else what it had. */
+  const sound = (): boolean => wantsMuted?.() ?? before
+  let done = false
+  const finish = (reached: boolean): void => {
+    if (done) return
+    done = true
+    video.removeEventListener('canplay', primed)
+    if (reached && wantsToPlay()) {
+      // Left playing, and silent: an iPhone pauses a player that started
+      // silently and is unmuted without a tap, so its sound waits for one.
+      if (!sound()) onSoundHeld?.()
+      return
+    }
+    if (reached) video.pause()
+    video.muted = sound()
+  }
+  const primed = (): void => {
+    finish(true)
+  }
+  video.addEventListener('canplay', primed)
+  video.muted = true
+  video.play().catch(() => {
+    finish(false)
+  })
+  return () => {
+    finish(false)
   }
 }
 

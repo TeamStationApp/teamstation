@@ -24,6 +24,13 @@ export interface VideoViewProps {
   /** The platform's own control bar. Off for the silent preview on a card. */
   controls?: boolean
   /**
+   * The picture somebody is watching and listening to: the videos page's
+   * player, or the heard tile of the grid. Only a phone reads it: it takes the
+   * audio session and plays through the silent switch. Off, as for a card's
+   * silent preview, it leaves whatever was already playing alone.
+   */
+  primary?: boolean
+  /**
    * The control bar appeared or faded away.
    *
    * Only a phone answers this. The gesture layer above the picture is cut
@@ -69,4 +76,18 @@ export interface VideoViewProps {
    * while it plays keeps the player it has rather than being loaded afresh.
    */
   live?: boolean
+}
+
+/**
+ * How a phone's player shares the audio session: the primary picture takes
+ * the focus and plays with the ring switch on silent; anything else obeys the
+ * switch and leaves the session to whatever had it.
+ */
+export function audioSession(primary: boolean): {
+  disableFocus: boolean
+  ignoreSilentSwitch: 'ignore' | 'obey'
+} {
+  return primary
+    ? { disableFocus: false, ignoreSilentSwitch: 'ignore' }
+    : { disableFocus: true, ignoreSilentSwitch: 'obey' }
 }

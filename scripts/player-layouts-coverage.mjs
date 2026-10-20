@@ -57,7 +57,8 @@ const tsSuites = [
   // The line score from game events (M1).
   'src/common/scoring/boardLine.test.ts',
   'src/server/scoring/lineTimeline.test.ts',
-  'src/server/routes/lineScore.test.ts'
+  'src/server/routes/lineScore.test.ts',
+  'src/app/navigation/gameAngles.test.ts'
 ]
 
 /**
@@ -66,7 +67,11 @@ const tsSuites = [
  */
 const appSuites = [
   ...globSync('src/app/player/**/*.test.tsx').sort(),
-  'src/app/App.membershipAccess.test.tsx'
+  'src/app/App.membershipAccess.test.tsx',
+  'src/app/App.player.test.tsx',
+  'src/app/navigation/stepBackNative.test.ts',
+  'src/app/screens/GameScreen.player.test.tsx',
+  'src/app/screens/gameLivePlayback.test.tsx'
 ]
 
 const base = process.env.TS_COVERAGE_BASE

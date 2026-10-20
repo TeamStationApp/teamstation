@@ -112,6 +112,9 @@ function tileAt(rects: Rect[], x: number, y: number): number | null {
  */
 export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   const { onClose } = props
+  // Where the grid had got to, for Android's Back, which the modal hears
+  // rather than the grid inside it.
+  const atRef = useRef<number | null>(null)
   return (
     <Modal
       visible
@@ -119,7 +122,9 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       supportedOrientations={['portrait', 'landscape']}
       statusBarTranslucent
       navigationBarTranslucent
-      onRequestClose={onClose}
+      onRequestClose={() => {
+        onClose(atRef.current)
+      }}
     >
       <StatusBar hidden />
       {/* Its own safe area, measured in the modal's window. The app's is
@@ -127,15 +132,19 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           sideways it still gave the upright insets: room kept for a Dynamic
           Island at the top that was at the side. */}
       <SafeAreaProvider>
-        <MultiCamGrid {...props} />
+        <MultiCamGrid {...props} atRef={atRef} />
       </SafeAreaProvider>
     </Modal>
   )
 }
 
 /** The grid itself, inside the modal and its safe area. */
-function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
-  const { onClose } = props
+function MultiCamGrid(
+  props: MultiCamViewProps & {
+    atRef: React.RefObject<number | null>
+  }
+): React.ReactElement {
+  const { onClose, atRef } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   // Sideways the pictures have the whole screen; upright, all of it below the
@@ -182,6 +191,7 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
     beforeShuffle: shuffle
   })
   board.follow(mc)
+  atRef.current = mc.atWallMs
   const {
     askAgain,
     attaching,
@@ -363,7 +373,9 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
           />
           <ExitButton
             visible={mc.controlsShown}
-            onPress={onClose}
+            onPress={() => {
+              onClose(mc.atWallMs)
+            }}
             // In the safe area's coordinates, as the controls are.
             top={exitTop - safe.y - theme.rem(theme.spaceSmRem)}
           />
@@ -533,6 +545,9 @@ function Tile(props: {
         onHandle={takeHandle}
         resizeMode="contain"
         buffer={TILE_BUFFER}
+        // The heard tile takes the audio session, as the videos page's
+        // player does: sound with the ring switch on silent.
+        primary={heard}
       />
       {armed ? <View style={styles.tileArmed} /> : null}
       <View

@@ -30,6 +30,11 @@ import { StandaloneField } from './field/StandaloneField'
 import { useForegroundRefresh } from './hooks/useForegroundRefresh'
 import { lstrings, sprintf } from './locales/strings'
 import {
+  anglesOpenPage,
+  type PlayerFrom,
+  withAngles
+} from './navigation/gameAngles'
+import {
   type CreationRoute,
   isCreationRoute,
   parseRoute,
@@ -57,6 +62,8 @@ import {
   popRoute,
   scoringOriginHistory,
   showRoute,
+  stepBackTo,
+  steppingBack,
   useBrowserBack
 } from './navigation/useAddressBar'
 import { passwordKdf } from './platform/passwordKdf'
@@ -171,6 +178,13 @@ type Pushed =
       /** Which angle is heard, and which fills the picture. */
       audio?: string
       zoom?: string
+      /**
+       * The videos page's picture the full-screen player was opened from,
+       * and where it was, so the player opens on the same moment. Kept here
+       * and never written to the address: a reload opens at the address's
+       * `t` instead.
+       */
+      from?: PlayerFrom
     }
   | { name: 'account' }
   /**
@@ -682,6 +696,11 @@ function Shell(props: AppProps): React.ReactElement {
     if (route.name === 'oauthApprove' || route.name === 'oauthNative') return
     // Nor between a team or season link arriving and its screen being pushed.
     if (resolvingLink.current) return
+    // Nor while a step back is landing: it writes the address it lands on.
+    if (steppingBack()) {
+      inPlace.current = false
+      return
+    }
     showRoute(
       routeOf(tab, top, filters),
       firstRender.current || inPlace.current
@@ -2055,35 +2074,23 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         angles={top.angles}
         audioId={top.audio}
+        from={top.from}
         onAngles={next => {
-          // In place: arranging the tiles is not a new page, and a history
-          // entry per drag would make Back mean "undo one drag".
-          inPlace.current = true
+          inPlace.current = !anglesOpenPage(next)
           setStacks(current => {
             const held = current[tab]
             const last = held[held.length - 1]
             if (last?.name !== 'game') return current
             return {
               ...current,
-              [tab]: [
-                ...held.slice(0, -1),
-                {
-                  ...last,
-                  angles: next.angles ?? last.angles,
-                  // `null` clears, `undefined` leaves alone.
-                  audio:
-                    next.audio === undefined
-                      ? last.audio
-                      : (next.audio ?? undefined),
-                  zoom:
-                    next.zoom === undefined
-                      ? last.zoom
-                      : (next.zoom ?? undefined),
-                  at: next.at === undefined ? last.at : (next.at ?? undefined)
-                }
-              ]
+              [tab]: [...held.slice(0, -1), withAngles(last, next)]
             }
           })
+          // A player opened as a page of its own, closed by its ✕: back to
+          // the step it was opened over, so Back then leaves the videos page
+          // instead of walking into a copy of it.
+          if (next.from === null && top.from != null)
+            stepBackTo(routeOf(tab, withAngles(top, next), filters))
         }}
         onMoment={(videoId, atSec) => {
           inPlace.current = true

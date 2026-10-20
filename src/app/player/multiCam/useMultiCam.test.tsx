@@ -104,6 +104,8 @@ async function grid(
   mc: () => MultiCam
   tiles: Record<string, FakeTile>
   changes: Array<{ order?: string[] }>
+  /** Renders the grid again with these props changed. */
+  rerender: (next: Partial<MultiCamProps>) => Promise<void>
 }> {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.playback = async (id: string) => ({
@@ -116,7 +118,7 @@ async function grid(
   })
   const changes: Array<{ order?: string[] }> = []
   let latest: MultiCam | undefined
-  const props: MultiCamProps = {
+  let props: MultiCamProps = {
     client,
     // A starts at the take's beginning; B a minute later.
     videos: [video('A', 0), video('B', 60)],
@@ -158,7 +160,17 @@ async function grid(
       mc().attached(id, tile, mc().attaching(id))
     }
   })
-  return { mc, tiles, changes }
+  const rerender = async (next: Partial<MultiCamProps>): Promise<void> => {
+    props = { ...props, ...next }
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <Probe />
+        </ThemeProvider>
+      )
+    })
+  }
+  return { mc, tiles, changes, rerender }
 }
 
 /** Four angles, A to D, all from the take's beginning. */

@@ -357,3 +357,72 @@ describe('the phone’s grid and the browser’s place the board alike (U39)', f
     })
   }
 })
+
+describe('leaving either grid says where it had got to (U12)', function () {
+  afterEach(unmount)
+
+  for (const [name, Grid] of [
+    ['browser', BrowserGrid],
+    ['phone', PhoneGrid]
+  ] as const) {
+    it(`in the ${name}'s`, async function () {
+      const server = overlayServer()
+      const client = new TeamStationClient({
+        baseUrl: '/api/v1',
+        fetch: server.fetch
+      })
+      client.playback = async () => await new Promise(() => undefined)
+      const closed: Array<number | null> = []
+      const at = OVERLAY_T0 + 65_000
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <Grid
+              client={client}
+              gameId="g1"
+              videos={IDS.map(angle)}
+              order={['a']}
+              audioId="a"
+              zoomedId={null}
+              atMs={at}
+              onChange={() => undefined}
+              onClose={atWallMs => {
+                closed.push(atWallMs)
+              }}
+            />
+          </ThemeProvider>
+        )
+      })
+      await settle()
+      const exit = document.querySelector<HTMLElement>(
+        `[aria-label="${lstrings.angles_close}"]`
+      )!
+      await act(async () => {
+        exit.click()
+      })
+      expect(closed).deep.equals([at])
+      // The phone's Back button, which its full-screen sheet is told of.
+      if (name === 'phone') {
+        // The sheet hears it once its fade-in has ended, which the test DOM
+        // does not run: the end is sent to the sheet's own element.
+        let sheet: Element = exit
+        while (sheet.parentElement?.parentElement !== document.body)
+          sheet = sheet.parentElement!
+        await act(async () => {
+          // Under its WebKit name where the DOM has no AnimationEvent.
+          for (const type of ['animationend', 'webkitAnimationEnd'])
+            sheet.dispatchEvent(new window.Event(type, { bubbles: true }))
+        })
+        await act(async () => {
+          document.dispatchEvent(
+            new window.KeyboardEvent('keyup', { key: 'Escape' })
+          )
+        })
+        expect(closed).deep.equals([at, at])
+      }
+    })
+  }
+})

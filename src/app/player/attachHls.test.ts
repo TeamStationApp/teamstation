@@ -12,6 +12,7 @@ import {
   hlsEngine,
   type RetryClock
 } from './attachHls'
+import type { PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
 import type { VideoHandle } from './videoHandle'
 
@@ -105,6 +106,7 @@ class FakeVideo {
   src = ''
   error: { code: number } | null = null
   paused = true
+  muted = false
   ended = false
   currentTime = 0
   seekable = { length: 0, start: () => 0, end: () => 0 }
@@ -467,6 +469,131 @@ describe('attaching in a browser', function () {
     expect(video.src).equals('')
     expect(video.loads).equals(0)
     expect(video.attached()).equals(0)
+  })
+})
+
+describe('a grid tile on the browser’s own player', function () {
+  const url = 'https://example.com/media/vid_example/master.m3u8'
+  const tile = (wants: () => boolean): PlayIntent => ({
+    wantsToPlay: wants,
+    buffer: { aheadSec: 30 }
+  })
+
+  it('is played silently to its first frame, so an iPhone loads it, and held there', async function () {
+    const video = new FakeVideo()
+    attachNativeHls(
+      video,
+      url,
+      undefined,
+      tile(() => false),
+      manualClock()
+    )
+    expect(video.plays).equals(1)
+    expect(video.muted).equals(true)
+    video.emit('canplay')
+    expect(video.paused).equals(true)
+    expect(video.muted).equals(false)
+    // Once: a later stall's recovery is not taken for the first frame.
+    video.emit('canplay')
+    expect(video.plays).equals(1)
+  })
+
+  it('plays on from its first frame when the grid wants it playing by then', function () {
+    const video = new FakeVideo()
+    video.muted = true
+    attachNativeHls(
+      video,
+      url,
+      undefined,
+      tile(() => true),
+      manualClock()
+    )
+    video.emit('canplay')
+    expect(video.paused).equals(false)
+    // Its sound as it was: muted.
+    expect(video.muted).equals(true)
+  })
+
+  it('leaves a heard tile it keeps playing silent, and says its sound waits for a tap', function () {
+    const video = new FakeVideo()
+    let held = 0
+    attachNativeHls(
+      video,
+      url,
+      undefined,
+      { ...tile(() => true), onSoundHeld: () => (held += 1) },
+      manualClock()
+    )
+    video.emit('canplay')
+    expect(video.paused).equals(false)
+    // Unmuted without a tap, an iPhone would pause it.
+    expect(video.muted).equals(true)
+    expect(held).equals(1)
+  })
+
+  it('puts back the sound the owner wants now, not what the element had at the start', function () {
+    // An angle nobody hears, its element not yet told so when it attached.
+    const video = new FakeVideo()
+    attachNativeHls(
+      video,
+      url,
+      undefined,
+      { ...tile(() => false), muted: () => true },
+      manualClock()
+    )
+    video.emit('canplay')
+    expect(video.paused).equals(true)
+    expect(video.muted).equals(true)
+  })
+
+  it('puts the sound back if Safari refuses the play, or the tile goes first', async function () {
+    const refused = new FakeVideo()
+    refused.play = async () => {
+      throw new Error('NotAllowedError')
+    }
+    attachNativeHls(
+      refused,
+      url,
+      undefined,
+      tile(() => false),
+      manualClock()
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(refused.muted).equals(false)
+    const gone = new FakeVideo()
+    const detach = attachNativeHls(
+      gone,
+      url,
+      undefined,
+      tile(() => false),
+      manualClock()
+    )
+    detach()
+    expect(gone.muted).equals(false)
+  })
+
+  it('is left alone when already playing, and a single player is never primed', function () {
+    const playing = new FakeVideo()
+    playing.paused = false
+    attachNativeHls(
+      playing,
+      url,
+      undefined,
+      tile(() => true),
+      manualClock()
+    )
+    expect(playing.plays).equals(0)
+    const single = new FakeVideo()
+    attachNativeHls(
+      single,
+      url,
+      undefined,
+      { wantsToPlay: () => false },
+      manualClock()
+    )
+    expect(single.plays).equals(0)
+    expect(single.muted).equals(false)
   })
 })
 

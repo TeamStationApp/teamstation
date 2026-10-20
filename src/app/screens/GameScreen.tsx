@@ -74,7 +74,12 @@ import {
 } from '../player/useVideoListRefresh'
 import { HAVE_METADATA, type VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
-import { windowOf } from '../player/wallClock'
+import {
+  placedAlone,
+  resumeSecondsAt,
+  wallAt,
+  windowOf
+} from '../player/wallClock'
 import type { GameRecording } from '../stream/gameRecording'
 import { StreamFooter } from '../stream/StreamFooter'
 import { useGameRecording } from '../stream/useGameRecording'
@@ -118,8 +123,7 @@ export interface GameScreenProps {
   onSettings?: () => void
   /** An explicit section. Bare addresses use the event's current default. */
   initialTab?: Tab
-  /** Start the video. Arriving here by pressing `Watch Replay` is a gesture a
-   * browser accepts, which is what makes an unmuted autoplay legal. */
+  /** Start the video, silent, as the videos page's picture always plays. */
   autoPlay?: boolean
   /**
    * Tells the shell what this game is called once it is known.
@@ -168,7 +172,14 @@ export interface GameScreenProps {
      * single player to a number that means nothing in it.
      */
     at?: number | null
+    /**
+     * The videos page's picture the player is opened from, and where it was:
+     * the player opens on that moment. `null` clears it, on the way out.
+     */
+    from?: { videoId: string; sec: number } | null
   }) => void
+  /** Where the open player was opened from (`onAngles`'s `from`). */
+  from?: { videoId: string; sec: number }
   /** Opens one of the two teams, from its name or its mark on the card. */
   onOpenTeam?: (team: TeamSummary) => void
   /** Opens one player, from their line in the box score. */
@@ -306,6 +317,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     angles,
     audioId,
     onAngles,
+    from,
     onOpenTeam,
     onOpenPlayer
   } = props
@@ -519,7 +531,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * new video loaded there was nothing left to restore and it started at zero.
    */
   const [resumeAt, setResumeAt] = useState<
-    { videoId: string; sec: number; playing: boolean } | undefined
+    | {
+        videoId: string
+        /** Seconds into the video, or */
+        sec?: number
+        /** the wall time to put it at, from the full-screen player. */
+        wallMs?: number
+        playing: boolean
+      }
+    | undefined
   >(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   /** Open while saying the grid is not offered in this browser. */
@@ -534,7 +554,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * shell renders only the top of its stack: a pushed screen would unmount
    * this one, taking the `<video>` with it and stopping playback dead.
    */
-  const anglesOffered = useMemo(() => multiAngleSupported(playerEngine()), [])
+  const engine = useMemo(() => playerEngine(), [])
+  /** "All angles": several at once. */
+  const anglesOffered = multiAngleSupported(engine, 2)
   /**
    * A guest or somebody who is a member of neither team: the score, the line
    * score and the highlights' pictures, and not the video, the box score's
@@ -543,7 +565,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const nonMemberView = game?.nonMemberView === true
   const showAngles =
-    anglesOffered && !nonMemberView && angles != null && angles.length > 0
+    !nonMemberView &&
+    angles != null &&
+    angles.length > 0 &&
+    multiAngleSupported(engine, angles.length)
 
   // The card's own content goes up into the header as the card scrolls away:
   // the away team over the home team, small, with their scores beside them.
@@ -608,15 +633,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   useHeaderHandoff(headerScore)
 
   const playerRef = useRef<VideoHandle | null>(null)
-  /**
-   * Whether the player is currently drawing its own controls over the picture.
-   *
-   * `true` to begin with, and a browser never changes it: it has no way to
-   * say, and its control rectangles were measured rather than guessed at. A
-   * phone tells us, and while the bar is faded away the gesture squares get
-   * the whole picture back.
-   */
-  const [controlsVisible, setControlsVisible] = useState(true)
 
   // The box takes the video's own shape, read from the file, so there is
   // nothing left over for a black bar to fill. Until the browser knows, 16:9.
@@ -910,6 +926,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const autoPlayRef = useRef(props.autoPlay)
   autoPlayRef.current = props.autoPlay
   const placeFor = useRef<{
+    video?: VideoSummary
     videoId?: string
     playbackFor?: string
     /** Asks the server, for a video that was live when it was opened. */
@@ -921,6 +938,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     game?.videos.find(item => item.id === video?.id) ?? video
   )?.status
   placeFor.current = {
+    video,
     videoId: video?.id,
     playbackFor,
     isLive:
@@ -1020,8 +1038,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
     // Picking up where the other angle was, once the new source is attached.
     if (resume != null && resume.videoId === videoId && forId === videoId) {
+      const placed = placeFor.current.video
       const apply = (): void => {
-        element.currentTime = resume.sec
+        element.currentTime =
+          resume.sec ?? resumeSecondsAt(placed, resume.wallMs, element.duration)
         if (resume.playing) element.play().catch(() => undefined)
         setResumeAt(undefined)
       }
@@ -1046,9 +1066,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
 
     if (autoPlayRef.current === true) {
-      // The tap that opened this screen is a gesture the browser counts, so an
-      // unmuted start is allowed. If it refuses anyway the controls are right
-      // there, and saying so would be noise.
+      // Silent, which every browser lets start on its own. If it refuses
+      // anyway, a tap opens the player, and saying so would be noise.
       const start = (): void => {
         element.play().catch(() => undefined)
       }
@@ -1093,6 +1112,22 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     onMoment?.(next.id, Math.round(sec))
   }
 
+  /**
+   * The full-screen player, with this picture alone, at `sec` into it: the
+   * videos page's picture has no controls of its own, and a tap on it is
+   * what watching it means.
+   */
+  const openPlayer = (sec: number): void => {
+    if (video == null) return
+    onAngles?.({
+      angles: [video.id],
+      audio: video.id,
+      zoom: null,
+      at: null,
+      from: { videoId: video.id, sec }
+    })
+  }
+
   const jumpTo = (highlight: Highlight): void => {
     if (nonMemberView) {
       setMembershipWarning(true)
@@ -1104,14 +1139,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // they can send to somebody else.
     if (video != null)
       onMoment?.(video.id, Math.round(highlight.startOffsetSec))
+    // The picture behind goes there too, so it is there on the way back.
     const player = playerRef.current
-    if (player == null) return
-    // Seek and keep playing: the point is to watch on from here, not to show
-    // a clip.
-    seekTo(player, highlight.startOffsetSec)
-    // A browser may refuse to start playing without a gesture it recognises;
-    // the seek has already happened, so that refusal is not worth reporting.
-    player.play().catch(() => undefined)
+    if (player != null) seekTo(player, highlight.startOffsetSec)
+    // Watched in the player, from the play on.
+    openPlayer(highlight.startOffsetSec)
   }
 
   // The chosen play's full account clears itself a minute and a half after the
@@ -1463,9 +1495,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           videoRef={playerRef}
           width={layout.videoWidth}
           height={layout.videoHeight}
-          controlsVisible={controlsVisible}
           active={!showAngles}
           scoreboard={pictureBoard}
+          onOpen={
+            playback?.url == null
+              ? undefined
+              : () => {
+                  openPlayer(playerRef.current?.currentTime ?? lastTime.current)
+                }
+          }
         >
           {isLive && <LivePill />}
           {playback == null ? (
@@ -1477,15 +1515,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               {lstrings.game_video_unavailable}
             </Text>
           ) : (
-            // The platform's own controls stay: they scrub, mute and go
-            // fullscreen well, and the gesture layer is cut around them rather
-            // than replacing them — `controlGeometry.ts` knows where each
-            // platform puts them.
+            // No controls of its own: a tap opens the full-screen player,
+            // which has them, and its sound. This one always plays silent, so
+            // it leaves the phone's audio session to whatever was playing.
             <VideoView
               source={playback.url}
               onHandle={takePlayer}
-              controls
-              onControlsVisible={setControlsVisible}
+              controls={false}
+              muted
               live={freshStatus === 'live'}
             />
           )}
@@ -1665,11 +1702,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const takeWindow = showAngles
     ? windowOf(
-        (angles ?? [])
-          .map(id => game.videos.find(one => one.id === id))
-          .filter((one): one is VideoSummary => one != null)
+        placedAlone(
+          (angles ?? [])
+            .map(id => game.videos.find(one => one.id === id))
+            .filter((one): one is VideoSummary => one != null)
+        )
       )
     : null
+  /**
+   * The moment the videos page's picture was at, for the player opened from
+   * it: its own wall time there, or its media time for a lone recording with
+   * no start. Without it, the address's `t` says where.
+   */
+  const fromVideo =
+    from == null ? undefined : game.videos.find(one => one.id === from.videoId)
+  const fromMs =
+    from == null || fromVideo == null
+      ? null
+      : wallAt(placedAlone([fromVideo])[0], from.sec)
 
   const multiCam = showAngles ? (
     <MultiCamView
@@ -1684,9 +1734,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       // fought them. An address that still names one is ignored.
       zoomedId={null}
       atMs={
-        takeWindow != null && startAtSec != null && startAtSec > 0
+        fromMs ??
+        (takeWindow != null && startAtSec != null && startAtSec > 0
           ? takeWindow.fromMs + startAtSec * 1000
-          : undefined
+          : undefined)
       }
       onMoment={wallMs => {
         if (takeWindow == null) return
@@ -1701,8 +1752,26 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           zoom: next.zoomedId
         })
       }}
-      onClose={() => {
-        onAngles?.({ angles: [], audio: null, zoom: null, at: null })
+      onClose={atWallMs => {
+        // The videos page's picture goes back to the moment the player had
+        // reached, paused, and nothing that recovers a stalled player is to
+        // start it again.
+        viewerWants.current = false
+        if (video != null)
+          setResumeAt(current =>
+            atWallMs != null
+              ? { videoId: video.id, wallMs: atWallMs, playing: false }
+              : current == null
+                ? undefined
+                : { ...current, playing: false }
+          )
+        onAngles?.({
+          angles: [],
+          audio: null,
+          zoom: null,
+          at: null,
+          from: null
+        })
       }}
     />
   ) : null
