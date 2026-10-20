@@ -57,7 +57,7 @@ export function EventRsvpPill({
   value: RsvpChoice
   onChange: (response: Rsvp) => void
   name: string
-  userId: number
+  userId?: string
   disabled?: boolean
   labels?: readonly [string, string, string]
   groupLabel?: string

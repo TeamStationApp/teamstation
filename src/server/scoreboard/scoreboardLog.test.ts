@@ -221,7 +221,7 @@ describe('the scoreboard log', function () {
       publisher: { state: { balls: 2, strikes: 1 }, receivedAt: at },
       overrides: NO_OVERRIDES
     })
-    expect(row.actor_id).is.a('number')
+    expect(row.actor_id).is.a('string')
   })
 
   it('keeps repeated radar packets, but never treats held fields or dashboard writes as measurements', async function () {

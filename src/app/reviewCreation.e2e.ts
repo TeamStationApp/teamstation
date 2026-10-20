@@ -5,6 +5,7 @@ import { expect } from 'chai'
 import puppeteer, { type Page } from 'puppeteer'
 
 import { asParentActions } from '../common/groupLinks'
+import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { applyParents, previewParents } from '../server/groups/relationships'
 import { rolesAt } from '../server/invites/people'
@@ -152,7 +153,7 @@ async function main(): Promise<void> {
         await f.h.db
           .selectFrom('users')
           .select('picture_catalog_id')
-          .where('id', '=', 101)
+          .where('id', '=', userIdOfGumbo(101))
           .executeTakeFirstOrThrow()
       ).picture_catalog_id
     ).equals('baseball')
@@ -165,7 +166,7 @@ async function main(): Promise<void> {
       await f.h.db
         .selectFrom('users')
         .select(['avatar_path', 'picture_catalog_id'])
-        .where('id', '=', 101)
+        .where('id', '=', userIdOfGumbo(101))
         .executeTakeFirstOrThrow()
     ).deep.equals({ avatar_path: null, picture_catalog_id: null })
     lines.push(
@@ -562,9 +563,9 @@ async function main(): Promise<void> {
           id: `role_browser_extra_${index}`,
           scope_type: 'season' as const,
           scope_id: `season_browser_extra_${index}`,
-          user_id: 101,
+          user_id: userIdOfGumbo(101),
           role: 'admin' as const,
-          granted_by: 101,
+          granted_by: userIdOfGumbo(101),
           granted_at: new Date()
         }))
       )
@@ -638,7 +639,7 @@ async function main(): Promise<void> {
     await f.h.db
       .updateTable('users')
       .set({ login_enabled: false })
-      .where('id', '=', 106)
+      .where('id', '=', userIdOfGumbo(106))
       .execute()
     await f.h.db
       .updateTable('user_emails')
@@ -647,7 +648,7 @@ async function main(): Promise<void> {
         verified_at: null,
         source: 'import'
       })
-      .where('user_id', '=', 106)
+      .where('user_id', '=', userIdOfGumbo(106))
       .execute()
     const invited = await f.h.request(
       'POST',
@@ -669,7 +670,7 @@ async function main(): Promise<void> {
       .insertInto('memberships')
       .values({
         id: 'membership_browser_role_player',
-        user_id: 104,
+        user_id: userIdOfGumbo(104),
         team_id: f.teamA,
         role: 'member',
         is_player: true
@@ -690,7 +691,9 @@ async function main(): Promise<void> {
     await text(imported, 'Your Home')
     // Proving the address applied the invitation waiting for it, with only
     // the role it named; nothing is left to accept.
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals(['coach'])
+    expect(
+      await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
+    ).deep.equals(['coach'])
     expect(
       (
         await f.h.db
@@ -734,19 +737,17 @@ async function main(): Promise<void> {
     // The address is proved now, so Songkeeper is given at once, and told.
     expect(songInvite.status).equals(201)
     expect(await songInvite.json()).deep.include({ added: true })
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals([
-      'coach',
-      'songkeeper'
-    ])
+    expect(
+      await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
+    ).deep.equals(['coach', 'songkeeper'])
     await press(imported, 'Notifications')
     await text(imported, 'added you as Songkeeper of Demo Hawks')
     await press(imported, 'Back')
     await press(imported, 'Walk-up', 'tab')
     await text(imported, 'No walk-up song yet')
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals([
-      'coach',
-      'songkeeper'
-    ])
+    expect(
+      await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
+    ).deep.equals(['coach', 'songkeeper'])
     lines.push(
       'E8/E9 review PASS: a coach invitation applied on sign-in and a songkeeper role added at once refresh shared roles; player Settings saves and the authorized Walk-up tab opens in the same app session without a reload; native music editing retains its existing platform requirement'
     )
@@ -875,7 +876,7 @@ async function main(): Promise<void> {
     const savedPicture = await f.h.db
       .selectFrom('users')
       .select('avatar_path')
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .executeTakeFirstOrThrow()
     expect(savedPicture.avatar_path).not.equals(null)
     lines.push(

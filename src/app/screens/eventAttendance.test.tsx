@@ -2,13 +2,14 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { EventAttendee } from '../../common/eventInfo'
+import { userIdOfGumbo } from '../../common/userId'
 import { attendanceSections, attendanceSubtitle } from './eventAttendance'
 
 const person = (
   userId: number,
   fields: Partial<EventAttendee> = {}
 ): EventAttendee => ({
-  userId,
+  userId: userIdOfGumbo(userId),
   name: 'Babe R',
   avatarUrl: null,
   response: null,
@@ -39,7 +40,17 @@ describe('direct attendance sections and profiles', () => {
     ])
     expect(
       sections.map(section => section.rows.map(row => row.userId))
-    ).deep.equals([[1, 2], [2], [3], [], [], [1], [], [4], [5]])
+    ).deep.equals([
+      [userIdOfGumbo(1), userIdOfGumbo(2)],
+      [userIdOfGumbo(2)],
+      [userIdOfGumbo(3)],
+      [],
+      [],
+      [userIdOfGumbo(1)],
+      [],
+      [userIdOfGumbo(4)],
+      [userIdOfGumbo(5)]
+    ])
   })
   it('labels actual roles, both hands/positions and abbreviated guardian relationships', () => {
     expect(

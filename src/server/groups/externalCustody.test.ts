@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   demoLocality,
@@ -50,7 +51,7 @@ describe('explicit external custody and verified promotion', function () {
             kind: 'person',
             scope,
             recipientEmail: 'fixture103@example.com',
-            recipientUserId: 103,
+            recipientUserId: userIdOfGumbo(103),
             admin: false,
             flags: []
           }
@@ -85,7 +86,7 @@ describe('explicit external custody and verified promotion', function () {
       {
         kind: 'promotion',
         teamId: placeholderId,
-        recipientUserId: 103,
+        recipientUserId: userIdOfGumbo(103),
         sender: scope,
         idempotencyKey: 'verified-placeholder-administrator'
       },
@@ -122,7 +123,7 @@ describe('explicit external custody and verified promotion', function () {
         .where('scope_id', '=', placeholderId)
         .where('role', '=', 'admin')
         .execute()
-    ).deep.equals([{ user_id: 103 }])
+    ).deep.equals([{ user_id: userIdOfGumbo(103) }])
   })
   it('creates a custodian-held opponent without an invented account, parent or competition enrollment', async () => {
     const body = {
@@ -142,9 +143,9 @@ describe('explicit external custody and verified promotion', function () {
         f.h.db,
         'team',
         externalId,
-        103,
+        userIdOfGumbo(103),
         { admin: true, flags: [] },
-        105
+        userIdOfGumbo(105)
       )
     } catch (error) {
       rejected = error
@@ -224,7 +225,7 @@ describe('explicit external custody and verified promotion', function () {
     const body = {
       kind: 'promotion',
       teamId: externalId,
-      recipientUserId: 103,
+      recipientUserId: userIdOfGumbo(103),
       sender: { kind: 'team', id: externalId },
       idempotencyKey: 'promote-opponent'
     }
@@ -266,7 +267,7 @@ describe('explicit external custody and verified promotion', function () {
         .where('scope_id', '=', externalId)
         .where('role', '=', 'admin')
         .execute()
-    ).deep.equals([{ user_id: 103 }])
+    ).deep.equals([{ user_id: userIdOfGumbo(103) }])
     expect(
       await f.h.db
         .selectFrom('games')

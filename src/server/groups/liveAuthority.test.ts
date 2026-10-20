@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   type GroupFixture,
@@ -83,7 +84,7 @@ describe('live publishing credentials and current filming rights', function () {
     return await createLiveStream(f.h.db, {
       gameId,
       teamId: f.teamA,
-      userId,
+      userId: userIdOfGumbo(userId),
       slot,
       startAt: new Date(),
       videoTitle: 'Demo game',
@@ -114,9 +115,9 @@ describe('live publishing credentials and current filming rights', function () {
       f.h.db,
       'team',
       f.teamA,
-      106,
+      userIdOfGumbo(106),
       { admin: false, flags: ['videographer'] },
-      101
+      userIdOfGumbo(101)
     )
     const stream = await issue(106)
     const closed = await connect(stream.key)
@@ -130,9 +131,14 @@ describe('live publishing credentials and current filming rights', function () {
           .executeTakeFirstOrThrow()
       ).state
     ).equals('publishing')
-    await changeNodeAccount(f.h.db, { ...actor(105), isAdmin: true }, 106, {
-      suspended: true
-    })
+    await changeNodeAccount(
+      f.h.db,
+      { ...actor(105), isAdmin: true },
+      userIdOfGumbo(106),
+      {
+        suspended: true
+      }
+    )
     const revoked = await f.h.db
       .selectFrom('live_streams')
       .select('state')
@@ -154,18 +160,23 @@ describe('live publishing credentials and current filming rights', function () {
     expect(closed()).equals(true)
     expect(liveKeys()).not.includes(stream.key)
     expect(typeof (await resolveKey(stream.key, options))).equals('string')
-    await changeNodeAccount(f.h.db, { ...actor(105), isAdmin: true }, 106, {
-      suspended: false
-    })
+    await changeNodeAccount(
+      f.h.db,
+      { ...actor(105), isAdmin: true },
+      userIdOfGumbo(106),
+      {
+        suspended: false
+      }
+    )
     await beganPublishing(options, stream.id)
     expect(typeof (await resolveKey(stream.key, options))).equals('string')
     expect(await actorForToken(f.h.db, f.h.tokens.get(106)!)).equals(undefined)
     expect(
       await actorForToken(
         f.h.db,
-        (await createSession(f.h.db, 106, 'fresh-fixture')).token
+        (await createSession(f.h.db, userIdOfGumbo(106), 'fresh-fixture')).token
       )
-    ).property('userId', 106)
+    ).property('userId', userIdOfGumbo(106))
     expect(typeof (await resolveKey((await issue(106)).key, options))).equals(
       'object'
     )
@@ -177,9 +188,9 @@ describe('live publishing credentials and current filming rights', function () {
           f.h.db,
           loss === 'parent' ? 'season' : 'team',
           loss === 'parent' ? f.seasonA : f.teamA,
-          106,
+          userIdOfGumbo(106),
           { admin: false, flags: ['videographer'] },
-          101
+          userIdOfGumbo(101)
         )
         const stream = await issue(106)
         const closed = await connect(stream.key)
@@ -188,9 +199,9 @@ describe('live publishing credentials and current filming rights', function () {
             f.h.db,
             'team',
             f.teamA,
-            106,
+            userIdOfGumbo(106),
             { admin: false, flags: [] },
-            101
+            userIdOfGumbo(101)
           )
         if (loss === 'parent') {
           const actions = [
