@@ -45,7 +45,6 @@ export async function insertUser(
         .returning('id')
         .executeTakeFirst()
       if (row == null) continue
-      await ensureGumboId(trx, id)
       return id
     }
     throw unavailable('Five account identity allocations exhausted')
