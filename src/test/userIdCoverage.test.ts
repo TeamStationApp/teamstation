@@ -1,12 +1,173 @@
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 const {
   auditCoverage,
-  readCounters
+  readCounters,
+  swiftTestResult
 } = require('../../scripts/user-id-coverage.cjs')
+const { spmCounts } = require('../../scripts/swift-changed-line-coverage.cjs')
 
 describe('user identity combined coverage gate', () => {
+  it('collects fresh failed-suite profiles and continues later packages with failures retained', () => {
+    const root = mkdtempSync(join(tmpdir(), 'identity-swift-'))
+    const failures: string[] = []
+    const measured = []
+    try {
+      for (const [name, status] of [
+        ['Identity', 1],
+        ['Next', 0]
+      ] as const) {
+        const path = join(root, name)
+        const directory = join(path, 'codecov')
+        mkdirSync(directory, { recursive: true })
+        writeFileSync(join(directory, 'stale.profraw'), 'old counters')
+        writeFileSync(
+          join(directory, 'default.profdata'),
+          'old merged counters'
+        )
+        let merged = false
+        measured.push(
+          spmCounts(
+            path,
+            (_command: string, args: string[]) => {
+              if (args.includes('--show-codecov-path'))
+                return join(directory, name + '.json')
+              if (args.includes('--enable-code-coverage')) {
+                expect(existsSync(directory)).equals(false)
+                mkdirSync(directory)
+                writeFileSync(
+                  join(directory, 'fresh.profraw'),
+                  'current counters'
+                )
+                const output =
+                  status === 1
+                    ? '✘ Test storage() failed after 0.1s.\n✘ Test run with 2 tests failed after 1s.'
+                    : '✔ Test run with 3 tests passed after 1s.'
+                const result = swiftTestResult(name, status, output)
+                failures.push(...result.failures)
+                return output
+              }
+              if (args[0] === 'llvm-profdata') {
+                expect(args).deep.equals([
+                  'llvm-profdata',
+                  'merge',
+                  '-sparse',
+                  join(directory, 'fresh.profraw'),
+                  '-o',
+                  join(directory, 'default.profdata')
+                ])
+                merged = true
+                return ''
+              }
+              if (args.includes('--show-bin-path')) return path
+              if (args.includes('describe')) return JSON.stringify({ name })
+              expect(merged).equals(true)
+              expect(args[0]).equals('llvm-cov')
+              return `SF:/repo/${name}.swift\nDA:1,2\nDA:2,0\nend_of_record\n`
+            },
+            { mergeRawProfiles: true }
+          )
+        )
+      }
+      expect(measured).deep.equals([
+        { '/repo/Identity.swift': { 1: 2, 2: 0 } },
+        { '/repo/Next.swift': { 1: 2, 2: 0 } }
+      ])
+      expect(failures).deep.equals(['Identity: storage()'])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+  it('refuses missing profiles, failed merges and incomplete runs without using old counters', () => {
+    for (const path of ['', '/repo/source.json'])
+      expect(() =>
+        spmCounts('/repo', () => path, { mergeRawProfiles: true })
+      ).throws('Unexpected Swift coverage directory')
+    const root = mkdtempSync(join(tmpdir(), 'identity-swift-'))
+    try {
+      for (const mode of ['missing', 'merge', 'crash', 'export']) {
+        const directory = join(root, mode, 'codecov')
+        mkdirSync(directory, { recursive: true })
+        writeFileSync(join(directory, 'stale.profraw'), 'old')
+        expect(() =>
+          spmCounts(
+            join(root, mode),
+            (_command: string, args: string[]) => {
+              if (args.includes('--show-codecov-path'))
+                return join(directory, 'Identity.json')
+              if (args.includes('--enable-code-coverage')) {
+                expect(existsSync(directory)).equals(false)
+                mkdirSync(directory)
+                if (mode !== 'missing')
+                  writeFileSync(join(directory, 'fresh.profraw'), 'new')
+                if (mode === 'crash')
+                  swiftTestResult(
+                    'Identity',
+                    null,
+                    'Test run with 2 tests failed after 1s.'
+                  )
+                return ''
+              }
+              if (args[0] === 'llvm-profdata') {
+                if (mode === 'merge') throw new Error('merge failed')
+                return ''
+              }
+              if (args.includes('--show-bin-path')) return root
+              if (args.includes('describe')) return '{"name":"Identity"}'
+              throw new Error('export failed')
+            },
+            { mergeRawProfiles: true }
+          )
+        ).throws(
+          mode === 'missing'
+            ? 'No fresh'
+            : mode === 'crash'
+              ? 'did not complete'
+              : mode + ' failed'
+        )
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+  it('retains completed Swift failures without claiming a passing suite', () => {
+    expect(
+      swiftTestResult('Identity', 0, '✔ Test run with 2 tests passed after 1s.')
+    ).deep.equals({ tests: 2, failures: [] })
+    expect(
+      swiftTestResult(
+        'Identity',
+        1,
+        '✘ Test storage() failed after 0.1s.\n✘ Test run with 2 tests failed after 1s.'
+      )
+    ).deep.equals({ tests: 2, failures: ['Identity: storage()'] })
+    expect(
+      swiftTestResult('Identity', 1, '✘ Test run with 2 tests failed after 1s.')
+        .failures
+    ).deep.equals(['Identity: host test run failed'])
+    for (const [status, text] of [
+      [1, 'Build failed'],
+      [0, 'Test run with 0 tests passed after 1s.'],
+      [0, 'Test run with 2 tests failed after 1s.'],
+      [1, 'Test run with 2 tests passed after 1s.'],
+      [null, 'Test run with 2 tests failed after 1s.'],
+      [139, 'Test run with 2 tests failed after 1s.']
+    ])
+      expect(() => swiftTestResult('Identity', status, text)).throws(
+        'did not complete'
+      )
+  })
   const snapshot = {
     base: 'base',
     head: 'head',

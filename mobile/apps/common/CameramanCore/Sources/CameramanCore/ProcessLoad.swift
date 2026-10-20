@@ -47,9 +47,13 @@ public enum ProcessLoad {
     ProcessInfo.processInfo.activeProcessorCount
   }
 
-  /// What the app is allowed to allocate before iOS kills it.
+  /// The iOS process memory allowance; zero on hosts without an iOS jetsam budget.
   public static func availableMemoryMB() -> Int {
+    #if os(iOS)
     Int(os_proc_available_memory() / (1024 * 1024))
+    #else
+    0
+    #endif
   }
 
   /// Jetsam's bill for this process. `availableMemoryMB` shrinks for other reasons too, so this
