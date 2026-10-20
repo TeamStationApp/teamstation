@@ -8,6 +8,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { asCatalogId, pictureCatalog } from '../../common/pictureCatalog'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   type AccountHarness,
   accountHarness,
@@ -60,8 +61,8 @@ describe('shared sports picture catalog', function () {
       await publishPictureCatalog(h.space, resolve('src/app/assets/sports'))
     ).equals(0)
     const count = h.objects.size
-    await selectAccountCatalogPicture(h.db, 101, 'baseball')
-    await selectAccountCatalogPicture(h.db, 102, 'baseball')
+    await selectAccountCatalogPicture(h.db, userIdOfGumbo(101), 'baseball')
+    await selectAccountCatalogPicture(h.db, userIdOfGumbo(102), 'baseball')
     const users = await h.db
       .selectFrom('users')
       .select(['avatar_path', 'picture_catalog_id'])
@@ -71,7 +72,7 @@ describe('shared sports picture catalog', function () {
     expect(h.objects.size).equals(count)
     const first = (await availablePictures(h.space)).entries[0]
     expect((await fetch(first.url)).status).equals(200)
-    await selectAccountCatalogPicture(h.db, 102, 'basketball')
+    await selectAccountCatalogPicture(h.db, userIdOfGumbo(102), 'basketball')
     expect(h.objects.size).equals(count)
     expect(
       await availablePictures({ ...h.space, accessKeyId: '' }).then(
@@ -80,7 +81,7 @@ describe('shared sports picture catalog', function () {
       )
     ).instanceOf(Error)
     expect(
-      await selectAccountCatalogPicture(h.db, 101, 'flag').then(
+      await selectAccountCatalogPicture(h.db, userIdOfGumbo(101), 'flag').then(
         () => null,
         (error: unknown) => error
       )
@@ -230,21 +231,21 @@ describe('shared sports picture catalog', function () {
       source: 'import'
     })
     expect(
-      await storePlayerAvatar(h.db, store, 101, picture, false)
+      await storePlayerAvatar(h.db, store, userIdOfGumbo(101), picture, false)
     ).deep.equals({ stored: false, kept: 'upload' })
     expect(
       (
         await h.db
           .selectFrom('users')
           .select('picture_catalog_id')
-          .where('id', '=', 101)
+          .where('id', '=', userIdOfGumbo(101))
           .executeTakeFirstOrThrow()
       ).picture_catalog_id
     ).equals('baseball')
     await storePlayerAvatar(
       h.db,
       store,
-      101,
+      userIdOfGumbo(101),
       { ...picture, source: 'upload' },
       true
     )
@@ -253,7 +254,7 @@ describe('shared sports picture catalog', function () {
         await h.db
           .selectFrom('users')
           .select('picture_catalog_id')
-          .where('id', '=', 101)
+          .where('id', '=', userIdOfGumbo(101))
           .executeTakeFirstOrThrow()
       ).picture_catalog_id
     ).equals(null)

@@ -11,7 +11,7 @@ export interface PlayerRemoveFromTeamProps {
   client: TeamStationClient
   teamId: string
   teamName: string
-  userId: number
+  userId: string
   /** The player's short name, as the page shows it. */
   shortName: string
   /**

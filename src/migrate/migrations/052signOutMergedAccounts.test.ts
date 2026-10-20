@@ -2,10 +2,15 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
-import { mintUserId } from '../../common/mintUserId'
-import { migrations } from '../migrations'
+import { mintUserId } from '../../test/historicalUserIds'
+import { migrations as allMigrations } from '../migrations'
 import { migrateDown, migrateUp } from '../runner'
 import { testDatabaseUrl } from '../testDatabase'
+
+// Exercise this historical migration independently of later identity changes.
+const migrations = allMigrations.filter(
+  m => m.name <= '052signOutMergedAccounts'
+)
 
 describe('052 signs out accounts that were already merged', function () {
   this.timeout(60000)

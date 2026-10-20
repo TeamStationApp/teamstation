@@ -4,6 +4,7 @@ import React, { act } from 'react'
 
 import { asSessionUser, asVideoSummary, TeamStationClient } from '../common/api'
 import { HttpError } from '../common/errors'
+import { userIdOfGumbo } from '../common/userId'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, mount, press, settle, text, unmount } from '../test/gameFormDom'
 import { App } from './App'
@@ -35,7 +36,7 @@ describe('actual app game return navigation', () => {
   const media = window.HTMLMediaElement.prototype
   const originalMedia = Object.getOwnPropertyDescriptors(media)
   const user = asSessionUser({
-    id: 101,
+    id: userIdOfGumbo(101),
     displayName: 'Babe Ruth',
     isAdmin: false
   })

@@ -1,5 +1,6 @@
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { deviceStorage } from '../platform/deviceStorage'
+import { readUserSetting } from '../platform/userSetting'
 import type { PreferenceStorage } from '../scoring/scoringPreferenceStore'
 import { matchSong, normaliseSongText } from './songMatch'
 import type { WalkUpMusic } from './walkUpMusicTypes'
@@ -30,7 +31,9 @@ export function deviceLinkStore(storage: PreferenceStorage): DeviceLinks {
   return {
     async read(owner, providerId) {
       try {
-        const handle = await storage.getItem(key(owner, providerId))
+        const handle = await readUserSetting(storage, owner.userId, id =>
+          key({ ...owner, userId: id }, providerId)
+        )
         return handle == null || handle === '' ? null : handle
       } catch {
         return null

@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { dictatingHealth } from '../../test/dictationFakes'
 import { guardianFixture } from '../../test/guardianFixture'
 import { capture, maestro } from '../../test/refinementsMaestro.e2e'
@@ -46,7 +47,7 @@ async function main(): Promise<void> {
     await f.h.db
       .updateTable('users')
       .set({ onboarding_step: 'complete', onboarding_completed_at: new Date() })
-      .where('id', '=', user)
+      .where('id', '=', userIdOfGumbo(user))
       .execute()
     const game = f.games[0]
     const path = `/games/${game.id}/coach/${f.teamA}`

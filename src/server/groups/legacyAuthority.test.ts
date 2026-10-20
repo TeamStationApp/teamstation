@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { setScopeRoles } from '../invites/people'
 import { directAdminIds } from './adminGuard'
@@ -61,7 +62,7 @@ describe('legacy creation and person reads respect current authority', function 
       let resolved = false
       suspension = f.h.request(
         'PATCH',
-        '/users/104/administration',
+        '/users/usr_111111111111111111112o/administration',
         { suspended: true },
         105
       )
@@ -85,7 +86,9 @@ describe('legacy creation and person reads respect current authority', function 
         { kind: 'team' as const, id: made.id },
         { kind: 'season' as const, id: made.season.id }
       ])
-        expect(await directAdminIds(f.h.db, ref)).deep.equals([104])
+        expect(await directAdminIds(f.h.db, ref)).deep.equals(
+          [104].map(userIdOfGumbo)
+        )
     } finally {
       release()
       await holder
@@ -99,7 +102,7 @@ describe('legacy creation and person reads respect current authority', function 
       (
         await f.h.request(
           'PATCH',
-          '/users/104/administration',
+          '/users/usr_111111111111111111112o/administration',
           { suspended: true },
           105
         )
@@ -109,7 +112,7 @@ describe('legacy creation and person reads respect current authority', function 
     const result = await createTeam(
       f.h.db,
       { name: 'Demo Refused', externalIds: [] },
-      { userId: 104, isAdmin: true }
+      { userId: userIdOfGumbo(104), isAdmin: true }
     ).then(
       () => null,
       (error: unknown) => error
@@ -129,7 +132,7 @@ describe('legacy creation and person reads respect current authority', function 
       .insertInto('memberships')
       .values({
         id: 'membership_demo_player',
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         team_id: f.teamA,
         role: 'member',
         is_player: true
@@ -140,14 +143,21 @@ describe('legacy creation and person reads respect current authority', function 
       .values({
         id: 'ext_demo_player',
         entity_type: 'user',
-        entity_id: '106',
+        entity_id: userIdOfGumbo(106),
         system: 'demo',
         kind: 'player',
         external_id: 'demo-player'
       })
       .execute()
     const profile = async (user: number): Promise<number> =>
-      (await f.h.request('GET', '/players/106', undefined, user)).status
+      (
+        await f.h.request(
+          'GET',
+          '/players/usr_111111111111111111112q',
+          undefined,
+          user
+        )
+      ).status
     const lookup = async (user: number): Promise<unknown> =>
       await (
         await f.h.request(
@@ -168,7 +178,7 @@ describe('legacy creation and person reads respect current authority', function 
       .insertInto('season_members')
       .values({
         id: 'membership_demo_spectator',
-        user_id: 104,
+        user_id: userIdOfGumbo(104),
         season_id: f.seasonB
       })
       .execute()
@@ -206,7 +216,7 @@ describe('legacy creation and person reads respect current authority', function 
       .insertInto('season_members')
       .values({
         id: 'membership_demo_parent_coach',
-        user_id: 103,
+        user_id: userIdOfGumbo(103),
         season_id: f.seasonA
       })
       .execute()
@@ -214,15 +224,16 @@ describe('legacy creation and person reads respect current authority', function 
       f.h.db,
       'season',
       f.seasonA,
-      103,
+      userIdOfGumbo(103),
       { admin: false, flags: ['coach'] },
-      101
+      userIdOfGumbo(101)
     )
     for (const user of [101, 103, 105, 106])
       expect(await profile(user)).equals(200)
     expect(await lookup(103)).deep.equals([
       {
-        userId: 106,
+        userId: userIdOfGumbo(106),
+        gumboId: 106,
         externalIds: ['demo-player'],
         shortName: 'Tim R',
         avatarUrl: null

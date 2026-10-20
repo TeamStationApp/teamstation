@@ -82,7 +82,7 @@ export function scoreboardRoutes(
    * somebody signed in who cannot see it is told it is for members.
    */
   const visibleGame = async (
-    actor: { userId: number; isAdmin: boolean },
+    actor: { userId: string; isAdmin: boolean },
     gameId: string
   ): Promise<{ startAt: Date }> => {
     const game = await db

@@ -3,6 +3,7 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BackHandler, Platform } from 'react-native'
 
+import { userIdOfGumbo } from '../../common/userId'
 import type { Route } from './routes'
 import {
   backFromScoringPlayer,
@@ -35,7 +36,7 @@ describe('retained scoring native Back', function () {
     const origin = scoringOriginHistory()
     showRoute({
       name: 'player',
-      userId: '100',
+      userId: userIdOfGumbo(100),
       onTeam: 'away',
       tab: 'settings'
     })

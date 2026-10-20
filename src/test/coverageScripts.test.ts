@@ -433,6 +433,23 @@ function swiftCheck(
 }
 
 describe('the Swift changed-line coverage', function () {
+  it('exports the measured original-source counters for the combined gate', () => {
+    const output = join(
+      mkdtempSync(join(tmpdir(), 'swift-export-')),
+      'counts.json'
+    )
+    const run = swiftCheck(
+      ['--spm', 'Tally', '--export-counts', output, 'Tally'],
+      { [TALLY]: [2, 3] }
+    )
+    expect(run.code).equals(0)
+    const counts = JSON.parse(readFileSync(output, 'utf8'))
+    expect(Object.keys(counts)).includes(TALLY)
+    expect(Object.values(counts[TALLY]).some(hits => Number(hits) > 0)).equals(
+      true
+    )
+    expect(swiftCheck(['--spm', 'Tally', '--export-counts'], {}).code).equals(2)
+  })
   it("runs a package's tests with coverage and reads the exported lcov", function () {
     const run = swiftCheck(['--spm', 'Tally', 'Tally'], {
       [TALLY]: [2, 3, 4, 5, 6, 7, 8]
