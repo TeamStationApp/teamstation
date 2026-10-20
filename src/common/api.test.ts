@@ -667,7 +667,7 @@ describe('api client', function () {
       id: 'liv_1',
       gameId: 'gam 1',
       userId: userIdOfGumbo(42),
-      ownerName: 'Pat',
+      ownerName: 'Pat Neshek',
       slot: 1,
       label: 'Dugout',
       keyPrefix: 'ts_abc',
@@ -697,7 +697,7 @@ describe('api client', function () {
       id: 'liv_1',
       gameId: 'gam 1',
       userId: userIdOfGumbo(42),
-      ownerName: 'Pat',
+      ownerName: 'Pat Neshek',
       slot: 1,
       label: 'Home Plate',
       keyPrefix: 'ts_abc',
@@ -873,7 +873,7 @@ describe('api client', function () {
       user: {
         id: userIdOfGumbo(1),
         gumboId: null,
-        displayName: 'Robin',
+        displayName: 'Robin Yount',
         isAdmin: false
       }
     }
@@ -1236,7 +1236,7 @@ describe('api client', function () {
       user: {
         id: userIdOfGumbo(1),
         gumboId: null,
-        displayName: 'Robin',
+        displayName: 'Robin Yount',
         isAdmin: false
       }
     }
@@ -1460,7 +1460,7 @@ describe('api client', function () {
       user: {
         id: userIdOfGumbo(1),
         gumboId: null,
-        displayName: 'Robin',
+        displayName: 'Robin Yount',
         isAdmin: false
       }
     }
@@ -1487,7 +1487,7 @@ describe('api client', function () {
         user: {
           id: userIdOfGumbo(1),
           gumboId: null,
-          displayName: 'Robin',
+          displayName: 'Robin Yount',
           isAdmin: false
         }
       },
@@ -1498,7 +1498,7 @@ describe('api client', function () {
         user: {
           id: userIdOfGumbo(1),
           gumboId: null,
-          displayName: 'Robin',
+          displayName: 'Robin Yount',
           isAdmin: false
         }
       },
@@ -1508,7 +1508,7 @@ describe('api client', function () {
         user: {
           id: userIdOfGumbo(1),
           gumboId: null,
-          displayName: 'Robin',
+          displayName: 'Robin Yount',
           isAdmin: false
         }
       }

@@ -174,14 +174,14 @@ describe('dictation route', function () {
       {
         id: userIdOfGumbo(member.userId),
         legacyId: member.legacyId,
-        display_name: 'Cam',
+        display_name: 'Cam Bedrosian',
         created_at: now,
         updated_at: now
       },
       {
         id: userIdOfGumbo(stranger.userId),
         legacyId: stranger.legacyId,
-        display_name: 'Bea',
+        display_name: 'Babe Ruth',
         created_at: now,
         updated_at: now
       },
