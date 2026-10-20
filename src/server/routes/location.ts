@@ -30,7 +30,7 @@ export function locationRoutes(
   cities?: { db: Kysely<Database>; googlePlaces?: GooglePlaces }
 ): Router {
   const router = Router()
-  async function limit(userId: number, details: boolean): Promise<void> {
+  async function limit(userId: string, details: boolean): Promise<void> {
     if (cities == null) return
     await limitGoogleLookup(cities.db, userId, details)
   }

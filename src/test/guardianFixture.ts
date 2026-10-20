@@ -3,26 +3,28 @@ import { resolve } from 'node:path'
 
 import { makeId } from '../common/ids'
 import type { Role } from '../common/roles'
+import { userIdOfGumbo } from '../common/userId'
 import { createSession } from '../server/auth/sessions'
 import { posterSecond } from '../server/media/posters'
 import { stillKey } from '../server/media/stills'
 import { mediaRoutes } from '../server/routes/media'
 import type { MountExtra } from './accountHarness'
 import { demoLocality, type GroupFixture, groupFixture } from './groupFixtures'
+import { insertFixtureUsers } from './insertFixtureUsers'
 
 /**
  * The guardians-and-roles world, on `groupFixture`'s leagues, seasons and
  * teams, with the media routes mounted and stills already in the Space.
  *
  * Demo Hawks (`teamA`, in Demo Regular of Demo League A) has five players.
- * A guardian is linked to Avery, with no membership of his own. Demo Regular
+ * A guardian is linked to Alfonso, with no membership of his own. Demo Regular
  * has a coach; the team has a coach, an assistant and a scorekeeper, each a
  * member who does not play. A follower follows the team and belongs to
  * nothing. Two final games of the team each have a ready video in the Space
  * and credited plays, so highlights list, and every still those lists and the
  * schedule's posters point at is the checked-in `fixtures/still.jpg`: the
  * pages draw thumbnails without FFmpeg. A last user runs one standalone team
- * of their own, for Home. Avery also plays for Demo Comets, in Demo
+ * of their own, for Home. Alfonso also plays for Demo Comets, in Demo
  * Playoffs, which nobody else here belongs to.
  *
  * Users from `groupFixture`: 101 Babe Ruth (alex@example.com) created and
@@ -41,23 +43,23 @@ export interface GuardianFixture extends GroupFixture {
     seasonCoach: number
     /** Ichiro, coach of Demo Hawks. */
     teamCoach: number
-    /** Owen Pratt, assistant of Demo Hawks. */
+    /** Owen Miller, assistant of Demo Hawks. */
     assistant: number
-    /** Nora Quinn, scorekeeper of Demo Hawks. */
+    /** Nick Punto, scorekeeper of Demo Hawks. */
     scorekeeper: number
-    /** Tim Raines, guardian of Avery. */
+    /** Tim Raines, guardian of Alfonso. */
     guardian: number
-    /** Grace Hill, who follows Demo Hawks. */
+    /** Grant Hartwig, who follows Demo Hawks. */
     follower: number
-    /** Hank Moss, who runs Demo Rookies and nothing else. */
+    /** Hank Majeski, who runs Demo Rookies and nothing else. */
     oneTeam: number
   }
   players: GuardianPlayer[]
   emails: Record<number, string>
-  /** Demo Rookies, Hank Moss's team. */
+  /** Demo Rookies, Hank Majeski's team. */
   rookies: string
   /**
-   * Demo Comets, in Demo Playoffs, a second team Avery plays on (#9, P) and
+   * Demo Comets, in Demo Playoffs, a second team Alfonso plays on (#9, P) and
    * nobody else does: the team a guardian gains through the child, and loses
    * when the child leaves it.
    */
@@ -83,19 +85,19 @@ interface Person {
 export const guardianPlayers: GuardianPlayer[] = [
   {
     id: 201,
-    first: 'Avery',
-    last: 'Stone',
+    first: 'Alfonso',
+    last: 'Soriano',
     jersey: '7',
     positions: ['SS', '2B']
   },
   {
     id: 202,
     first: 'Ben',
-    last: 'Carter',
+    last: 'Chapman',
     jersey: '12',
     positions: ['P', '1B']
   },
-  { id: 203, first: 'Cody', last: 'Diaz', jersey: '23', positions: ['C'] },
+  { id: 203, first: 'Cody', last: 'Decker', jersey: '23', positions: ['C'] },
   {
     id: 204,
     first: 'Drew',
@@ -103,7 +105,7 @@ export const guardianPlayers: GuardianPlayer[] = [
     jersey: '4',
     positions: ['CF', 'LF']
   },
-  { id: 205, first: 'Eli', last: 'Fox', jersey: '15', positions: ['3B'] }
+  { id: 205, first: 'Elijah', last: 'Dukes', jersey: '15', positions: ['3B'] }
 ]
 
 export async function guardianFixture(
@@ -133,38 +135,38 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
     106: 'fixture106@example.com'
   }
   const adults: Person[] = [
-    { id: 207, first: 'Grace', last: 'Hill', email: 'follower@example.com' },
-    { id: 208, first: 'Hank', last: 'Moss', email: 'oneteam@example.com' },
-    { id: 209, first: 'Nora', last: 'Quinn', email: 'scorekeeper@example.com' },
-    { id: 210, first: 'Owen', last: 'Pratt', email: 'assistant@example.com' }
+    { id: 207, first: 'Grant', last: 'Hartwig', email: 'follower@example.com' },
+    { id: 208, first: 'Hank', last: 'Majeski', email: 'oneteam@example.com' },
+    { id: 209, first: 'Nick', last: 'Punto', email: 'scorekeeper@example.com' },
+    { id: 210, first: 'Owen', last: 'Miller', email: 'assistant@example.com' }
   ]
   const players = guardianPlayers.map(p => ({ ...p, email: null }))
   for (const p of [...players, ...adults]) {
-    await db
-      .insertInto('users')
-      .values({
-        id: p.id,
-        legacyId: `usr_guardian_${p.id}`,
-        display_name: `${p.first} ${p.last}`,
-        first_name: p.first,
-        last_name: p.last,
-        login_enabled: p.email != null
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(p.id),
+      legacyId: `usr_guardian_${p.id}`,
+      display_name: `${p.first} ${p.last}`,
+      first_name: p.first,
+      last_name: p.last,
+      login_enabled: p.email != null
+    })
     if (p.email == null) continue
     emails[p.id] = p.email
     await db
       .insertInto('user_emails')
       .values({
         id: `email_guardian_${p.id}`,
-        user_id: p.id,
+        user_id: userIdOfGumbo(p.id),
         email: p.email,
         is_primary: true,
         verified_at: new Date(),
         source: 'manual'
       })
       .execute()
-    f.h.tokens.set(p.id, (await createSession(db, p.id, 'guardian')).token)
+    f.h.tokens.set(
+      p.id,
+      (await createSession(db, userIdOfGumbo(p.id), 'guardian')).token
+    )
   }
 
   for (const p of guardianPlayers)
@@ -172,7 +174,7 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: p.id,
+        user_id: userIdOfGumbo(p.id),
         team_id: f.teamA,
         role: 'member',
         is_player: true,
@@ -185,8 +187,8 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
     .insertInto('user_links')
     .values({
       id: makeId('userLink'),
-      user_id: 106,
-      related_user_id: 201,
+      user_id: userIdOfGumbo(106),
+      related_user_id: userIdOfGumbo(201),
       kind: 'guardian',
       can_manage: true,
       created_at: new Date()
@@ -203,11 +205,11 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
       .insertInto('scope_roles')
       .values({
         id: makeId('scopeRole'),
-        user_id: userId,
+        user_id: userIdOfGumbo(userId),
         scope_type: scopeType,
         scope_id: scopeId,
         role: name,
-        granted_by: 101,
+        granted_by: userIdOfGumbo(101),
         granted_at: new Date()
       })
       .execute()
@@ -221,7 +223,7 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: userId,
+        user_id: userIdOfGumbo(userId),
         team_id: f.teamA,
         role: 'member',
         is_player: false
@@ -230,7 +232,11 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
 
   await db
     .insertInto('follows')
-    .values({ user_id: 207, group_type: 'team', group_id: f.teamA })
+    .values({
+      user_id: userIdOfGumbo(207),
+      group_type: 'team',
+      group_id: f.teamA
+    })
     .execute()
 
   const created = await f.h.request(
@@ -265,7 +271,7 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
     .insertInto('memberships')
     .values({
       id: makeId('membership'),
-      user_id: 201,
+      user_id: userIdOfGumbo(201),
       team_id: secondTeam,
       role: 'member',
       is_player: true,

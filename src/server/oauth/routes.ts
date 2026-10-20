@@ -193,7 +193,7 @@ export function oauthInteractionRoutes(
       const interaction = await details(req, res)
       const found = await sql<{
         decision: string
-        user_id: number
+        user_id: string
         session_id: string
       }>`
       update oauth_approvals set consumed_at = now()

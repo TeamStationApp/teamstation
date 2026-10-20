@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import {
   demoLocality,
   type GroupFixture,
@@ -98,7 +99,7 @@ describe('parent-safe team identity merging', function () {
       expect(retained.status).equals('cancelled')
       expect(retained.cancellation_reason).equals('withdrawal')
       expect(retained.withdrawn_by_team_id).equals(f.teamA)
-      expect(retained.withdrawn_by_user_id).equals(102)
+      expect(retained.withdrawn_by_user_id).equals(userIdOfGumbo(102))
       expect(retained.withdrawn_at!.getTime()).equals(
         withdrawn.withdrawn_at!.getTime()
       )
@@ -173,8 +174,18 @@ describe('parent-safe team identity merging', function () {
     await f.h.db
       .insertInto('memberships')
       .values([
-        { id: 'mergeOwner', user_id: 101, team_id: f.teamA, role: 'owner' },
-        { id: 'mergeMember', user_id: 101, team_id: into, role: 'member' }
+        {
+          id: 'mergeOwner',
+          user_id: userIdOfGumbo(101),
+          team_id: f.teamA,
+          role: 'owner'
+        },
+        {
+          id: 'mergeMember',
+          user_id: userIdOfGumbo(101),
+          team_id: into,
+          role: 'member'
+        }
       ])
       .execute()
     await f.h.db
@@ -211,7 +222,7 @@ describe('parent-safe team identity merging', function () {
           .selectFrom('memberships')
           .select('role')
           .where('team_id', '=', into)
-          .where('user_id', '=', 101)
+          .where('user_id', '=', userIdOfGumbo(101))
           .executeTakeFirstOrThrow()
       ).role
     ).equals('owner')
@@ -233,7 +244,7 @@ describe('parent-safe team identity merging', function () {
         .where('scope_id', '=', into)
         .where('role', '=', 'admin')
         .execute()
-    ).deep.equals([{ user_id: 101 }])
+    ).deep.equals([{ user_id: userIdOfGumbo(101) }])
     await rejects(mergeParents(f.h.db, f.teamA, into), 'conflict')
   })
   it('keeps the full team lineage when an external duplicate is resolved and closes old placeholder requests', async () => {
@@ -253,7 +264,7 @@ describe('parent-safe team identity merging', function () {
       {
         kind: 'promotion',
         teamId: 'mergePlaceholder',
-        recipientUserId: 103,
+        recipientUserId: userIdOfGumbo(103),
         sender: { kind: 'team', id: 'mergePlaceholder' },
         idempotencyKey: 'merge-placeholder-invite'
       },
@@ -288,7 +299,7 @@ describe('parent-safe team identity merging', function () {
         .selectFrom('scope_roles')
         .select('id')
         .where('scope_id', '=', f.teamA)
-        .where('user_id', '=', 102)
+        .where('user_id', '=', userIdOfGumbo(102))
         .execute()
     ).length(0)
   })

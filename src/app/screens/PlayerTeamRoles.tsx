@@ -12,7 +12,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 export interface PlayerTeamRolesProps {
   client: TeamStationClient
   teamId: string
-  userId: number
+  userId: string
 }
 
 /**

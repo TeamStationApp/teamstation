@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { completionNotice } from '../notifications/completionNotice'
 
@@ -26,7 +27,7 @@ describe('team membership requests', function () {
         teamId: teamId ?? f.teamA,
         idempotencyKey: key,
         // A client cannot name a different requester or grant itself staff rights.
-        userId: 104,
+        userId: userIdOfGumbo(104),
         admin: true,
         flags: ['coach'],
         confirmBoth: true
@@ -76,7 +77,7 @@ describe('team membership requests', function () {
     expect(row.terms).deep.equals({
       kind: 'membership',
       teamId: f.teamA,
-      userId: 103
+      userId: userIdOfGumbo(103)
     })
     expect(
       (
@@ -127,7 +128,7 @@ describe('team membership requests', function () {
     const roles = await f.h.db
       .selectFrom('scope_roles')
       .select('role')
-      .where('user_id', '=', 103)
+      .where('user_id', '=', userIdOfGumbo(103))
       .where('scope_id', '=', f.teamA)
       .execute()
     expect(roles).deep.equals([])
@@ -135,7 +136,7 @@ describe('team membership requests', function () {
       .selectFrom('memberships')
       .select(['role', 'is_player'])
       .where('team_id', '=', f.teamA)
-      .where('user_id', '=', 103)
+      .where('user_id', '=', userIdOfGumbo(103))
       .executeTakeFirstOrThrow()
     expect(membership).deep.equals({ role: 'member', is_player: false })
     const team = await f.h.db
@@ -147,7 +148,7 @@ describe('team membership requests', function () {
       await completionNotice(f.h.db, {
         kind: 'membership',
         teamId: f.teamA,
-        userId: 103
+        userId: userIdOfGumbo(103)
       })
     ).equals(`${team.name}: membership approved`)
   })

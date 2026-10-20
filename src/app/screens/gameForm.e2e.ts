@@ -13,6 +13,7 @@ import puppeteer, {
 } from 'puppeteer'
 
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   demoLocality,
   type GroupFixture,
@@ -135,9 +136,9 @@ async function seed(f: GroupFixture): Promise<Seeded> {
       id: makeId('scopeRole'),
       scope_type: 'team',
       scope_id: sameSeason,
-      user_id: 104,
+      user_id: userIdOfGumbo(104),
       role: 'coach',
-      granted_by: 101,
+      granted_by: userIdOfGumbo(101),
       granted_at: new Date()
     })
     .execute()
@@ -202,9 +203,9 @@ async function seed(f: GroupFixture): Promise<Seeded> {
       id: makeId('scopeRole'),
       scope_type: 'team',
       scope_id: f.teamB,
-      user_id: 101,
+      user_id: userIdOfGumbo(101),
       role: 'admin',
-      granted_by: 102,
+      granted_by: userIdOfGumbo(102),
       granted_at: new Date()
     })
     .execute()

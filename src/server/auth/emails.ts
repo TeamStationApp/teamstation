@@ -20,7 +20,7 @@ import type { Database } from '../db/database'
  */
 
 export interface FoundUser {
-  id: number
+  id: string
   displayName: string
   /** The address that was asked for, not necessarily the primary one. */
   email: string
@@ -66,7 +66,7 @@ export async function findUserByEmail(
 /** A person's primary address, for showing back to them. */
 export async function primaryEmail(
   db: Kysely<Database>,
-  userId: number
+  userId: string
 ): Promise<string | undefined> {
   const row = await db
     .selectFrom('user_emails')
@@ -93,10 +93,10 @@ export interface AddEmailOptions {
  */
 export async function addEmail(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   email: string,
   options: AddEmailOptions = {}
-): Promise<{ added: boolean; heldBy?: number }> {
+): Promise<{ added: boolean; heldBy?: string }> {
   const wanted = email.trim()
   const existing = await db
     .selectFrom('user_emails')

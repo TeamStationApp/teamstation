@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { emptyStatExtras } from '../common/statExtras'
+import { userIdOfGumbo } from '../common/userId'
 import {
   battingLines,
   battingRates,
@@ -18,7 +19,7 @@ const TEAM = 'tem_one'
 /** One game's stored line, with only the figures a test is about. */
 function game(over: Partial<StatRow> = {}): StatRow {
   return {
-    userId: ROBIN,
+    userId: userIdOfGumbo(ROBIN),
     teamId: TEAM,
     pa: 0,
     ab: 0,
@@ -77,8 +78,13 @@ describe('stats', function () {
   })
 
   it('keeps players apart, and sorts by who batted most', function () {
-    const lines = battingLines([game({ pa: 2 }), game({ userId: SAM, pa: 1 })])
-    expect(lines.map(line => line.userId)).deep.equals([ROBIN, SAM])
+    const lines = battingLines([
+      game({ pa: 2 }),
+      game({ userId: userIdOfGumbo(SAM), pa: 1 })
+    ])
+    expect(lines.map(line => line.userId)).deep.equals(
+      [ROBIN, SAM].map(userIdOfGumbo)
+    )
   })
 
   it('drops the team when a total spans two of them', function () {
@@ -87,6 +93,32 @@ describe('stats', function () {
       game({ teamId: 'tem_two', pa: 1 })
     ])
     expect(line.teamId).equals(null)
+  })
+
+  it('breaks equal batting and pitching ranks by case-sensitive canonical id', function () {
+    // These Base58 suffixes straddle uppercase/lowercase ordering.
+    const ids = [33, 34, 35].map(userIdOfGumbo)
+    const rows = ids.map((userId, index) =>
+      game({ userId, pa: 3, h: index, pitchBf: 4, pitchOuts: 3 })
+    )
+    for (const order of [
+      rows,
+      [...rows].reverse(),
+      [rows[1], rows[2], rows[0]]
+    ]) {
+      expect(battingLines(order)).deep.equals(battingLines(rows))
+      expect(pitchingLines(order)).deep.equals(pitchingLines(rows))
+      expect(battingLines(order).map(line => line.userId)).deep.equals(ids)
+      expect(pitchingLines(order).map(line => line.userId)).deep.equals(ids)
+    }
+    const leader = game({
+      userId: userIdOfGumbo(100),
+      pa: 5,
+      pitchOuts: 6,
+      pitchBf: 8
+    })
+    expect(battingLines([...rows, leader])[0].userId).equals(leader.userId)
+    expect(pitchingLines([...rows, leader])[0].userId).equals(leader.userId)
   })
 
   it('works out the usual rates from the counts', function () {
@@ -118,9 +150,11 @@ describe('stats', function () {
   it('adds a pitcher’s games together, most work first', function () {
     const lines = pitchingLines([
       game({ pitchBf: 10, pitchOuts: 6, pitchEr: 1, pitchR: 2, pitchH: 3 }),
-      game({ userId: SAM, pitchBf: 4, pitchOuts: 3 })
+      game({ userId: userIdOfGumbo(SAM), pitchBf: 4, pitchOuts: 3 })
     ])
-    expect(lines.map(line => line.userId)).deep.equals([ROBIN, SAM])
+    expect(lines.map(line => line.userId)).deep.equals(
+      [ROBIN, SAM].map(userIdOfGumbo)
+    )
     expect(lines[0].outs).equals(6)
     expect(lines[0].er).equals(1)
     expect(lines[0].r).equals(2)

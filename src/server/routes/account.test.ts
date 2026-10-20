@@ -7,6 +7,7 @@ import {
 } from '../../common/accountSettings'
 import { asPlayerDetail, asSession, TeamStationClient } from '../../common/api'
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   type AccountHarness,
   accountHarness,
@@ -35,7 +36,7 @@ describe('account settings HTTP API', function () {
         avatar_path: prefix,
         avatar_source: 'upload'
       })
-      .where('id', 'in', [101, 102])
+      .where('id', 'in', [userIdOfGumbo(101), userIdOfGumbo(102)])
       .execute()
     const cleared = await h.request('DELETE', ROOT + '/photo')
     expect(cleared.status).equals(200)
@@ -45,7 +46,7 @@ describe('account settings HTTP API', function () {
         await h.db
           .selectFrom('users')
           .select('avatar_path')
-          .where('id', '=', 102)
+          .where('id', '=', userIdOfGumbo(102))
           .executeTakeFirstOrThrow()
       ).avatar_path
     ).equals(prefix)
@@ -54,7 +55,7 @@ describe('account settings HTTP API', function () {
     await h.db
       .updateTable('users')
       .set({ picture_catalog_id: null, avatar_path: null, avatar_source: null })
-      .where('id', '=', 102)
+      .where('id', '=', userIdOfGumbo(102))
       .execute()
   })
   before(async () => {
@@ -108,7 +109,7 @@ describe('account settings HTTP API', function () {
       .insertInto('api_tokens')
       .values({
         id: makeId('apiToken'),
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         token_hash: hashToken(token),
         label: 'fixture',
         scopes: []
@@ -128,13 +129,15 @@ describe('account settings HTTP API', function () {
       ).equals(400)
     }
     const response = await h.request('PUT', ROOT + '/name', {
-      displayName: '  Alex   Rivera  ',
-      userId: 102
+      displayName: '  Alex   Rodriguez  ',
+      userId: userIdOfGumbo(102)
     })
     expect(response.status).equals(200)
-    expect((await read()).user.displayName).equals('Alex Rivera')
+    expect((await read()).user.displayName).equals('Alex Rodriguez')
     const player = asPlayerDetail(
-      await (await h.request('GET', '/players/101')).json()
+      await (
+        await h.request('GET', '/players/usr_111111111111111111112k')
+      ).json()
     )
     expect(player.name).equals('Alex R')
     const team = await (
@@ -144,7 +147,7 @@ describe('account settings HTTP API', function () {
     const other = await h.db
       .selectFrom('users')
       .select('display_name')
-      .where('id', '=', 102)
+      .where('id', '=', userIdOfGumbo(102))
       .executeTakeFirstOrThrow()
     expect(other.display_name).equals('Lou Gehrig')
     expect(
@@ -155,7 +158,7 @@ describe('account settings HTTP API', function () {
         await h.db
           .selectFrom('users')
           .select('last_name')
-          .where('id', '=', 101)
+          .where('id', '=', userIdOfGumbo(101))
           .executeTakeFirstOrThrow()
       ).last_name
     ).equals(null)
@@ -179,7 +182,7 @@ describe('account settings HTTP API', function () {
       await h.db
         .selectFrom('users')
         .selectAll()
-        .where('id', '=', 101)
+        .where('id', '=', userIdOfGumbo(101))
         .executeTakeFirstOrThrow()
     ).avatar_path
     expect(
@@ -216,7 +219,7 @@ describe('account settings HTTP API', function () {
     await h.db
       .updateTable('users')
       .set({ avatar_sha256: null })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     h.controls.failPut = true
     expect(
@@ -228,7 +231,7 @@ describe('account settings HTTP API', function () {
         await h.db
           .selectFrom('users')
           .select('avatar_path')
-          .where('id', '=', 101)
+          .where('id', '=', userIdOfGumbo(101))
           .executeTakeFirstOrThrow()
       ).avatar_path
     ).equals(original)
@@ -269,7 +272,7 @@ describe('account settings HTTP API', function () {
     const held = await h.db
       .selectFrom('users')
       .select('password_hash')
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .executeTakeFirstOrThrow()
     const record = readPasswordRecord(held.password_hash)!
     expect(record.server.iterations).equals(record.client.iterations * 4)
@@ -492,7 +495,7 @@ describe('account settings HTTP API', function () {
       h.db,
       'bound@example.com',
       'verify',
-      { next: JSON.stringify({ userId: 101 }) }
+      { next: JSON.stringify({ userId: userIdOfGumbo(101) }) }
     )
     expect(
       (
@@ -575,7 +578,7 @@ describe('account settings HTTP API', function () {
       .insertInto('user_emails')
       .values({
         id: makeId('userEmail'),
-        user_id: 102,
+        user_id: userIdOfGumbo(102),
         email: 'claimedlater@example.com',
         source: 'manual'
       })
@@ -603,7 +606,10 @@ describe('account settings HTTP API', function () {
         })
       ).status
     ).equals(429)
-    await h.db.deleteFrom('user_emails').where('user_id', '=', 102).execute()
+    await h.db
+      .deleteFrom('user_emails')
+      .where('user_id', '=', userIdOfGumbo(102))
+      .execute()
     const first = await requestEmail('first@example.com', undefined, 102)
     expect((await confirm(first, 102)).status).equals(200)
     const state = asAccountSettings(
@@ -620,9 +626,9 @@ describe('account settings HTTP API', function () {
       passwordCosts: testPasswordCosts,
       passwordTargetMs: 1
     })
-    expect((await client.accountSettings()).user.id).equals(102)
-    expect((await client.setAccountName('Casey Reed')).user.displayName).equals(
-      'Casey Reed'
+    expect((await client.accountSettings()).user.id).equals(userIdOfGumbo(102))
+    expect((await client.setAccountName('Casey Mize')).user.displayName).equals(
+      'Casey Mize'
     )
     expect(
       (await client.setAccountPhoto(accountTestPicture)).user.avatarUrl
