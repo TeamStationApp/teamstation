@@ -354,7 +354,7 @@ async function roster(run: Run): Promise<void> {
       last_name: last
     })
   }
-  await adult(270, 'Sadie', 'Lake')
+  await adult(270, 'Sandy', 'Leon')
   await f.h.db
     .insertInto('season_members')
     .values({
@@ -363,7 +363,7 @@ async function roster(run: Run): Promise<void> {
       season_id: f.seasonA
     })
     .execute()
-  await adult(271, 'Leo', 'Grant')
+  await adult(271, 'Leo', 'Gomez')
   await f.h.db
     .insertInto('league_members')
     .values({
@@ -372,7 +372,7 @@ async function roster(run: Run): Promise<void> {
       league_id: f.leagueA
     })
     .execute()
-  await adult(272, 'Fern', 'Ash')
+  await adult(272, 'Felipe', 'Alou')
   await f.h.db
     .insertInto('follows')
     .values({
@@ -442,10 +442,10 @@ async function roster(run: Run): Promise<void> {
   expect(row('Alfonso S')).includes('#7')
   expect(row('Tim R')).not.includes('#')
   expect(row('Hank M')).not.includes('#')
-  expect(row('Sadie L')).includes('Season spectator')
+  expect(row('Sandy L')).includes('Season spectator')
   expect(row('Leo G')).includes('League spectator')
   // The team's own spectator and the followers carry no pill.
-  for (const name of ['Hank M', 'Grant H', 'Fern A'])
+  for (const name of ['Hank M', 'Grant H', 'Felipe A'])
     expect(row(name), name).not.match(/Season|League/)
   // For the team's admin every row opens, with a chevron: a player's page,
   // and staff, family, spectators and followers their profile.
@@ -458,8 +458,8 @@ async function roster(run: Run): Promise<void> {
     'Tim R',
     'Hank M',
     'Leo G',
-    'Sadie L',
-    'Fern A',
+    'Sandy L',
+    'Felipe A',
     'Grant H',
     'Alfonso S',
     'Ben C',
@@ -478,10 +478,10 @@ async function roster(run: Run): Promise<void> {
   // then the followers by name.
   expect(page.indexOf('Hank M')).greaterThan(page.indexOf('SPECTATORS'))
   expect(page.indexOf('Hank M')).lessThan(page.indexOf('Leo G'))
-  expect(page.indexOf('Leo G')).lessThan(page.indexOf('Sadie L'))
-  expect(page.indexOf('Sadie L')).lessThan(page.indexOf('FOLLOWERS'))
-  expect(page.indexOf('FOLLOWERS')).lessThan(page.indexOf('Fern A'))
-  expect(page.indexOf('Fern A')).lessThan(page.indexOf('Grant H'))
+  expect(page.indexOf('Leo G')).lessThan(page.indexOf('Sandy L'))
+  expect(page.indexOf('Sandy L')).lessThan(page.indexOf('FOLLOWERS'))
+  expect(page.indexOf('FOLLOWERS')).lessThan(page.indexOf('Felipe A'))
+  expect(page.indexOf('Felipe A')).lessThan(page.indexOf('Grant H'))
   await run.shot(admin, 'roster-after.png', { fit: true })
   // The place and the gear share the card's right-hand column without
   // touching, and "Demo Hawks" keeps its words whole, on this phone and on a
@@ -1187,10 +1187,10 @@ async function guardian(run: Run): Promise<void> {
   }
   const api = run.api('api-guardian.log', summarize)
 
-  // The people this stage needs, each signing in with an address: Faye, who
-  // is invited; Gil and Ivy, members of the Hawks who ask; and Ben's own
+  // The people this stage needs, each signing in with an address: Freddie, who
+  // is invited; Gil and Ivan, members of the Hawks who ask; and Ben's own
   // account. Hank, who runs another team, joins the Hawks without a role.
-  // Finn is a sixth Hawk, so Gil has a sixth player to ask about.
+  // Frank is a sixth Hawk, so Gil has a sixth player to ask about.
   const signsIn = async (id: number, email: string): Promise<void> => {
     await db
       .updateTable('users')
@@ -1252,11 +1252,11 @@ async function guardian(run: Run): Promise<void> {
   const declined = 213
   const first = 214
   const finn = 206
-  await person(invitee, 'Faye', 'Grant', 'invitee@example.com')
-  await person(asker, 'Gil', 'Hart', 'asker@example.com')
-  await person(declined, 'Ivy', 'Jones', 'declined@example.com')
-  await person(first, 'Jade', 'Kim', 'first@example.com')
-  await person(finn, 'Finn', 'Gray', null)
+  await person(invitee, 'Freddie', 'Freeman', 'invitee@example.com')
+  await person(asker, 'Gil', 'Hodges', 'asker@example.com')
+  await person(declined, 'Ivan', 'Rodriguez', 'declined@example.com')
+  await person(first, 'Jason', 'Kipnis', 'first@example.com')
+  await person(finn, 'Frank', 'Thomas', null)
   await signsIn(ben.id, 'player@example.com')
   for (const id of [people.oneTeam, asker, declined]) await joinsHawks(id)
   await joinsHawks(finn, { jersey: '31', positions: ['RF'] })
@@ -1350,7 +1350,7 @@ async function guardian(run: Run): Promise<void> {
     (await session.page.evaluate(() => document.body.textContent)) ?? ''
 
   // The coach invites the first guardian of Cody, who has none, from his
-  // Settings beside the Hawks. Jade accepts.
+  // Settings beside the Hawks. Jason accepts.
   const coach = await run.signIn('guardian-coach', people.teamCoach)
   await openSettings(coach, cody.id)
   await contains(coach.page, 'Invite a guardian')
@@ -1402,7 +1402,7 @@ async function guardian(run: Run): Promise<void> {
     'Cody D has a guardian already. Ask them to invite another guardian.'
   )
 
-  // Tim, Alfonso's guardian, invites Faye from Alfonso's Settings beside the
+  // Tim, Alfonso's guardian, invites Freddie from Alfonso's Settings beside the
   // Hawks, in his own name.
   const tim = await run.signIn('guardian-tim', people.guardian)
   await openSettings(tim, avery.id)
@@ -1428,7 +1428,7 @@ async function guardian(run: Run): Promise<void> {
   const beforeTeams = await api('GET', '/teams', invitee)
   expect(beforeTeams.body).deep.equals([])
 
-  // Faye accepts in her notifications.
+  // Freddie accepts in his notifications.
   const faye = await run.signIn('guardian-invitee', invitee)
   await faye.m.openBrowser({ url: `${f.h.origin}/notifications` })
   await contains(faye.page, 'Be a guardian of Alfonso S')
@@ -1491,7 +1491,7 @@ async function guardian(run: Run): Promise<void> {
   })
 
   // The web app has no song picker, so the song goes in through the API as
-  // Faye; the Walk-up tab then shows it.
+  // Freddie; the Walk-up tab then shows it.
   const song = await api(
     'PUT',
     `/teams/${f.teamA}/players/${avery.id}/walk-up-song`,
@@ -1516,7 +1516,7 @@ async function guardian(run: Run): Promise<void> {
   expect(new URL(faye.page.url()).searchParams.get('tab')).equals('walkup')
   await run.shot(faye, 'guardian-walkup.png')
 
-  // Alfonso leaves the Comets, and Faye, who is there only through him, loses
+  // Alfonso leaves the Comets, and Freddie, who is there only through him, loses
   // the team.
   const comets = await api('GET', `/teams/${f.secondTeam}`, invitee)
   expect(comets.body.canViewPrivate).equals(true)
@@ -1586,8 +1586,8 @@ async function guardian(run: Run): Promise<void> {
     expect(answer.status, `Gil asks about ${p.first}`).equals(201)
   }
   const gil = await run.signIn('guardian-asker', asker)
-  await openFromRoster(gil, 'Finn G', finn)
-  await ask(gil, 'Finn G')
+  await openFromRoster(gil, 'Frank T', finn)
+  await ask(gil, 'Frank T')
   await contains(gil.page, limit)
   expect(await requestLabel(gil)).equals('Request to be a guardian')
   await run.shot(gil, 'guardian-limit.png')
@@ -1596,8 +1596,8 @@ async function guardian(run: Run): Promise<void> {
   expect(sixth.body).deep.include({ code: 'rateLimited', message: limit })
   expect(await requestsBy(asker, 'pending')).has.length(5)
 
-  // Ivy has three requests declined, by those with a say: Tim for Alfonso,
-  // and the coach for Drew and Finn, who have no guardian. The fourth is
+  // Ivan has three requests declined, by those with a say: Tim for Alfonso,
+  // and the coach for Drew and Frank, who have no guardian. The fourth is
   // refused until a week after the third decline.
   for (const [p, decider] of [
     [avery.id, people.guardian],
@@ -1605,7 +1605,7 @@ async function guardian(run: Run): Promise<void> {
     [finn, people.teamCoach]
   ] as const) {
     const answer = await request(declined, p)
-    expect(answer.status, `Ivy asks about ${p}`).equals(201)
+    expect(answer.status, `Ivan asks about ${p}`).equals(201)
     const decided = await api(
       'POST',
       `/relationship-requests/${answer.body.id}/decline`,
@@ -1660,7 +1660,7 @@ async function guardian(run: Run): Promise<void> {
   expect(ivySent.body.items).deep.equals([
     {
       ...ivySent.body.items[0],
-      title: "Ivy Jones asks to be Elijah D's guardian",
+      title: "Ivan Rodriguez asks to be Elijah D's guardian",
       status: 'pending'
     }
   ])

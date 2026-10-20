@@ -48,8 +48,8 @@ function profile(fields: Partial<PersonProfile> = {}): PersonProfile {
     person: {
       userId: userIdOfGumbo(203),
       gumboId: 203,
-      shortName: 'Pat Y',
-      fullName: 'Pat Young',
+      shortName: 'Pat N',
+      fullName: 'Pat Neshek',
       avatarUrl: null,
       canHoldRoles: true
     },
@@ -57,7 +57,7 @@ function profile(fields: Partial<PersonProfile> = {}): PersonProfile {
       {
         userId: userIdOfGumbo(202),
         gumboId: 202,
-        shortName: 'Avery Y',
+        shortName: 'Alex Y',
         avatarUrl: null,
         teamId: 'tem_hawks'
       }
@@ -164,17 +164,17 @@ describe('the person profile', function () {
 
   it('puts the photo, the whole name and the level it is for in the hero, then the players they guard', async function () {
     const calls = await render([profile()])
-    expect(text()).includes('Pat Young')
+    expect(text()).includes('Pat Neshek')
     expect(text()).includes('Team · Demo Hawks')
     expect(text().indexOf('PARENT/GUARDIAN OF')).lessThan(
       text().indexOf('TEAM ROLES')
     )
     const child = [
       ...document.querySelectorAll<HTMLElement>('[role="button"]')
-    ].find(node => node.textContent?.includes('Avery Y') === true)
+    ].find(node => node.textContent?.includes('Alex Y') === true)
     await click(child!)
     expect(calls.players).deep.equals([
-      [userIdOfGumbo(202), 'Avery Y', { onTeam: 'tem_hawks' }]
+      [userIdOfGumbo(202), 'Alex Y', { onTeam: 'tem_hawks' }]
     ])
   })
 

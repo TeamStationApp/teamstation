@@ -255,7 +255,7 @@ describe('a person’s profile, through the app', () => {
       asRosterEntry({
         userId: userIdOfGumbo(203),
         gumboId: 203,
-        shortName: 'Pat Y',
+        shortName: 'Pat N',
         jersey: null,
         positions: [],
         isPlayer: false,
@@ -272,8 +272,8 @@ describe('a person’s profile, through the app', () => {
         person: {
           userId: userIdOfGumbo(203),
           gumboId: 203,
-          shortName: 'Pat Y',
-          fullName: 'Pat Young',
+          shortName: 'Pat N',
+          fullName: 'Pat Neshek',
           avatarUrl: null,
           canHoldRoles: true
         },
@@ -298,7 +298,7 @@ describe('a person’s profile, through the app', () => {
       await settle()
       const row = [
         ...document.querySelectorAll<HTMLElement>('[role="button"]')
-      ].find(node => node.textContent?.includes('Pat Y') === true)
+      ].find(node => node.textContent?.includes('Pat N') === true)
       expect(row).not.equals(undefined)
       await act(async () => {
         row!.click()
@@ -308,7 +308,7 @@ describe('a person’s profile, through the app', () => {
       expect(window.location.pathname).equals(
         '/teams/canonical/people/usr_111111111111111111114W'
       )
-      expect(document.body.textContent).includes('Pat Young')
+      expect(document.body.textContent).includes('Pat Neshek')
       expect(document.body.textContent).includes('Team · Demo Hawks')
       await act(async () => {
         root.unmount()
@@ -395,7 +395,7 @@ describe('a season’s and a league’s People tab, however the page is opened',
     asRosterEntry({
       userId: userIdOfGumbo(203),
       gumboId: 203,
-      shortName: 'Pat Y',
+      shortName: 'Pat N',
       jersey: null,
       positions: [],
       isPlayer: false,
@@ -511,7 +511,7 @@ describe('a season’s and a league’s People tab, however the page is opened',
       expect(seen.asked).deep.include(['group', 'season', 'sea_spring'])
       // The address asked for People, and People is what opened.
       expect(seen.asked).deep.include(['people', 'season', 'sea_spring'])
-      expect(document.body.textContent).includes('Pat Y')
+      expect(document.body.textContent).includes('Pat N')
       expect(window.location.search).includes('tab=people')
     } finally {
       await seen.done()

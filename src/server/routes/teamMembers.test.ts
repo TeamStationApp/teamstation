@@ -142,12 +142,12 @@ describe('a team’s people by external id', function () {
     await insertFixtureUsers(
       db,
       [
-        { made: admin, name: 'Ada', isAdmin: true },
-        { made: teamAdmin, name: 'Tess', isAdmin: false },
-        { made: seasonAdmin, name: 'Sam', isAdmin: false },
-        { made: leagueAdmin, name: 'Lee', isAdmin: false },
-        { made: member, name: 'Cam', isAdmin: false },
-        { made: stranger, name: 'Sol', isAdmin: false }
+        { made: admin, name: 'Adam Dunn', isAdmin: true },
+        { made: teamAdmin, name: 'Ted Williams', isAdmin: false },
+        { made: seasonAdmin, name: 'Sam Fuld', isAdmin: false },
+        { made: leagueAdmin, name: 'Lee Smith', isAdmin: false },
+        { made: member, name: 'Cam Bedrosian', isAdmin: false },
+        { made: stranger, name: 'Sal Bando', isAdmin: false }
       ].map(one => ({
         id: one.made.userId,
         legacyId: one.made.legacyId,
@@ -546,7 +546,7 @@ describe('a team’s people by external id', function () {
       .executeTakeFirst()
 
   describe('the players body', function () {
-    const row = { firstName: 'Ann', lastName: 'Lee', externalId: ext('x') }
+    const row = { firstName: 'Cliff', lastName: 'Lee', externalId: ext('x') }
     const refusals: Array<[unknown, string]> = [
       [null, 'The body must be { players: [...] }'],
       [{ players: 'many' }, 'players must be an array'],
@@ -555,7 +555,7 @@ describe('a team’s people by external id', function () {
         { players: new Array(201).fill(row) },
         'players holds at most 200 players per call'
       ],
-      [{ players: ['Ann'] }, 'players[0] must be an object'],
+      [{ players: ['Cliff'] }, 'players[0] must be an object'],
       [
         { players: [{ ...row, firstName: 7 }] },
         'players[0].firstName must be a string'
@@ -608,7 +608,7 @@ describe('a team’s people by external id', function () {
         asTeamPlayersBody({
           players: [
             {
-              firstName: '  Ann ',
+              firstName: '  Cliff ',
               jersey: ' ',
               bats: null,
               externalId: ext('x')
@@ -618,7 +618,7 @@ describe('a team’s people by external id', function () {
       ).deep.equals({
         players: [
           {
-            firstName: 'Ann',
+            firstName: 'Cliff',
             lastName: '',
             jersey: null,
             bats: null,
@@ -632,7 +632,7 @@ describe('a team’s people by external id', function () {
 
   describe('POST /teams/:teamId/players', function () {
     const one = (id: string): unknown => ({
-      players: [{ firstName: 'Ann', lastName: 'Lee', externalId: ext(id) }]
+      players: [{ firstName: 'Cliff', lastName: 'Lee', externalId: ext(id) }]
     })
 
     it('answers 401 without a session', async function () {
@@ -770,7 +770,7 @@ describe('a team’s people by external id', function () {
       const answer = await ask('POST', `/teams/${team}/players`, ADMIN, {
         players: [
           {
-            firstName: ' Ann ',
+            firstName: ' Cliff ',
             lastName: 'Lee',
             jersey: '7',
             bats: 'left',
@@ -796,8 +796,8 @@ describe('a team’s people by external id', function () {
         .selectAll()
         .where('id', '=', first.userId)
         .executeTakeFirstOrThrow()
-      expect(user.display_name).equals('Ann Lee')
-      expect(user.first_name).equals('Ann')
+      expect(user.display_name).equals('Cliff Lee')
+      expect(user.first_name).equals('Cliff')
       expect(user.last_name).equals('Lee')
       expect(user.login_enabled).equals(false)
       expect(user.bats).equals('left')
@@ -1204,8 +1204,8 @@ describe('a team’s people by external id', function () {
       const answer = await ask('POST', `/teams/${team}/players`, ADMIN, {
         players: [
           {
-            firstName: 'Kai',
-            lastName: 'Moe',
+            firstName: 'Ken',
+            lastName: 'Macha',
             jersey: '11',
             externalId: ext('found-1')
           }
@@ -1237,7 +1237,7 @@ describe('a team’s people by external id', function () {
           userId,
           gumboId: players[0].gumboId,
           externalIds: ['found-1'],
-          shortName: 'Kai M',
+          shortName: 'Ken M',
           avatarUrl: null
         }
       ])
@@ -1482,8 +1482,8 @@ describe('a team’s people by external id', function () {
       const answer = await adults(teamId, [
         {
           firstName: 'Pat',
-          lastName: 'Lee',
-          email: ' Pat.Lee@Example.TEST ',
+          lastName: 'Neshek',
+          email: ' Pat.Neshek@Example.TEST ',
           externalId: ext('parent-1', 'member'),
           guardianOf: [ext('kid-1'), ext('kid-2')],
           staff: false
@@ -1517,14 +1517,14 @@ describe('a team’s people by external id', function () {
         .where('id', '=', row.userId)
         .executeTakeFirstOrThrow()
       expect(user).deep.include({
-        display_name: 'Pat Lee',
+        display_name: 'Pat Neshek',
         first_name: 'Pat',
-        last_name: 'Lee',
+        last_name: 'Neshek',
         login_enabled: true
       })
       expect(await emailsOf(row.userId)).deep.equals([
         {
-          email: 'pat.lee@example.test',
+          email: 'pat.neshek@example.test',
           is_primary: true,
           source: 'import',
           verified_at: null
@@ -1555,7 +1555,7 @@ describe('a team’s people by external id', function () {
           }))
       )
       signIns.push({
-        email: 'pat.lee@example.test',
+        email: 'pat.neshek@example.test',
         userId: row.userId,
         teamId
       })

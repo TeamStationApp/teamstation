@@ -74,7 +74,7 @@ const everybody: RosterEntry[] = [
     section: 'spectator',
     inheritedFrom: { level: 'league', role: 'member' }
   }),
-  entry(251, 'Sid S', {
+  entry(251, 'Sid F', {
     section: 'spectator',
     inheritedFrom: { level: 'season', role: 'member' }
   }),
@@ -180,7 +180,7 @@ describe('a team’s roster in sections', function () {
     // Within a section, in the order the server sent.
     expect(text().indexOf('Owen M')).lessThan(text().indexOf('Mike T'))
     expect(text().indexOf('Hank M')).lessThan(text().indexOf('Lou L'))
-    expect(text().indexOf('Lou L')).lessThan(text().indexOf('Sid S'))
+    expect(text().indexOf('Lou L')).lessThan(text().indexOf('Sid F'))
     expect(text().indexOf('FOLLOWERS')).lessThan(text().indexOf('Grant H'))
     // The old headings are gone.
     expect(text()).not.includes('COACHES')
@@ -262,7 +262,7 @@ describe('a team’s roster in sections', function () {
     expect(text().split('League admin').length - 1).equals(1)
     // A member of the season or the league; the team's own and a follower
     // carry no pill.
-    expect(row('Sid S')).equals('SSSid SSeason spectator')
+    expect(row('Sid F')).equals('SFSid FSeason spectator')
     expect(row('Lou L')).equals('LLLou LLeague spectator')
     expect(row('Hank M')).equals('HMHank M')
     expect(row('Grant H')).equals('GHGrant H')

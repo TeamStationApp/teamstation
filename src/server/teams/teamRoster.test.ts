@@ -85,23 +85,23 @@ describe('scoring roster HTTP contract', function () {
       {
         id: userIdOfGumbo(child),
         legacyId: 'usr_child',
-        display_name: 'Jordan King',
+        display_name: 'Jordan Pacheco',
         first_name: 'Jordan',
-        last_name: 'King',
+        last_name: 'Pacheco',
         bats: 'switch',
         throws: 'left'
       },
       {
         id: userIdOfGumbo(coach),
         legacyId: 'usr_coach',
-        display_name: 'Alex Coach',
+        display_name: 'Alex Cora',
         bats: null,
         throws: null
       },
       {
         id: userIdOfGumbo(seasonMember),
         legacyId: 'usr_season_member',
-        display_name: 'Frank Fan',
+        display_name: 'Frank Francisco',
         bats: 'left',
         throws: 'right'
       },
@@ -192,7 +192,7 @@ describe('scoring roster HTTP contract', function () {
         gameId: game,
         startTime: new Date('2026-09-22T10:00:30Z'),
         battingTeamId: team,
-        titleOverride: 'Single: Jordan K',
+        titleOverride: 'Single: Jordan P',
         gumbo: JSON.stringify({
           about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
           result: { eventType: 'single', description: 'Jordan singles.' }
@@ -268,7 +268,7 @@ describe('scoring roster HTTP contract', function () {
     expect(roster[1].inheritedFrom).equals(null)
     expect(roster[1]).includes({
       userId: userIdOfGumbo(child),
-      shortName: 'Jordan K',
+      shortName: 'Jordan P',
       jersey: '00',
       bats: 'switch',
       throws: 'left',
@@ -357,7 +357,7 @@ describe('scoring roster HTTP contract', function () {
     const box = asBoxScore(await get(`/games/${game}/box-score`))
     expect(box.batting[0]).includes({
       userId: userIdOfGumbo(child),
-      shortName: 'Jordan K',
+      shortName: 'Jordan P',
       h: 1,
       ab: 2,
       seasonAvg: 0.5
@@ -595,7 +595,7 @@ describe('roster sections', function () {
 
   it('lists admins, staff, players, family, spectators and followers, each once', async function () {
     // A member who neither plays nor holds a role.
-    await user(230, 'Pat Lane')
+    await user(230, 'Pat Neshek')
     await f.h.db
       .insertInto('memberships')
       .values({
@@ -696,7 +696,7 @@ describe('roster sections', function () {
           .execute()
     }
     // One of the team's own, and a member of each level above it.
-    await user(230, 'Pat Lane')
+    await user(230, 'Pat Neshek')
     await f.h.db
       .insertInto('memberships')
       .values({
@@ -706,20 +706,20 @@ describe('roster sections', function () {
         role: 'member'
       })
       .execute()
-    await user(250, 'Sid Stone')
+    await user(250, 'Sid Fernandez')
     await member(250, 'season')
-    await user(251, 'Lou Lark')
+    await user(251, 'Lou Limmer')
     await member(251, 'league')
     // Both: the league is the higher.
-    await user(252, 'Bea Bell')
+    await user(252, 'Brett Butler')
     await member(252, 'season')
     await member(252, 'league')
     // Through a row since closed into the one they sign in as.
-    await user(254, 'Cy Cole')
-    await user(253, 'Cy Cole', 254)
+    await user(254, 'Cy Young')
+    await user(253, 'Cy Young', 254)
     await member(253, 'season')
     // A disabled member is nobody's spectator.
-    await user(255, 'Di Dorn')
+    await user(255, 'Don Drysdale')
     await member(255, 'season')
     await f.h.db
       .updateTable('users')
@@ -736,7 +736,7 @@ describe('roster sections', function () {
     ).deep.equals(
       [
         [230, 'spectator', null],
-        // Then by name: Bea B, Cy C, Lou L, Sid S.
+        // Then by name: Brett B, Cy Y, Lou L, Sid F.
         [252, 'spectator', { level: 'league', role: 'member' }],
         [254, 'spectator', { level: 'season', role: 'member' }],
         [251, 'spectator', { level: 'league', role: 'member' }],
@@ -787,17 +787,17 @@ describe('roster sections', function () {
         })
         .execute()
     }
-    await user(260, 'Fay Ford')
+    await user(260, 'Freddie Freeman')
     await follow(260, f.teamA)
     // A follow of a team since merged into this one.
     await f.h.db
       .insertInto('teams')
       .values({ id: 'tem_roster_old', name: 'Old Hawks', merged_into: f.teamA })
       .execute()
-    await user(261, 'Mo Marsh')
+    await user(261, 'Mo Vaughn')
     await follow(261, 'tem_roster_old')
     // A member who follows too is a spectator, and a player a player.
-    await user(230, 'Pat Lane')
+    await user(230, 'Pat Neshek')
     await f.h.db
       .insertInto('memberships')
       .values({
@@ -810,21 +810,21 @@ describe('roster sections', function () {
     await follow(230, f.teamA)
     await follow(201, f.teamA)
     // Nobody disabled, no closed row, and no follower of the season alone.
-    await user(262, 'Dee Dale')
+    await user(262, 'Dizzy Dean')
     await follow(262, f.teamA)
     await f.h.db
       .updateTable('users')
       .set({ disabled_at: new Date() })
       .where('id', '=', userIdOfGumbo(262))
       .execute()
-    await user(264, 'Gus Gray')
-    await user(263, 'Gus Gray', 264)
+    await user(264, 'Gus Triandos')
+    await user(263, 'Gus Triandos', 264)
     await follow(263, f.teamA)
-    await user(265, 'Sue Shaw')
+    await user(265, 'Sammy Sosa')
     await follow(265, f.seasonA, 'season')
 
     const { roster } = await read()
-    // By name: Fay F, Grant H, Mo M; and last.
+    // By name: Freddie F, Grant H, Mo V; and last.
     expect(placed(roster.slice(-3))).deep.equals(
       [
         [260, 'follower', null],
@@ -907,11 +907,11 @@ describe('roster sections', function () {
 
   it('lists a player\u2019s guardians across merged rows, by the row each signs in as', async function () {
     // A guardian whose link was made from a row since closed into another.
-    await user(241, 'Rae Moon')
-    await user(240, 'Rae Moon', 241)
+    await user(241, 'Randy Myers')
+    await user(240, 'Randy Myers', 241)
     await link(240, 203)
     // A link to a row of Drew's that was closed into him.
-    await user(243, 'Sam Vale')
+    await user(243, 'Sam Fuld')
     await user(242, 'Drew Ellis', 204)
     await link(243, 242)
     // A row of Eli's linked to Eli is Eli, not a parent of his.
@@ -919,7 +919,7 @@ describe('roster sections', function () {
     await link(244, 205)
 
     const { roster } = await read()
-    // By name: Rae M, Sam V, Tim R.
+    // By name: Randy M, Sam F, Tim R.
     expect(
       roster.filter(row => row.section === 'family').map(row => row.userId)
     ).deep.equals([241, 243, f.people.guardian].map(userIdOfGumbo))
