@@ -14,7 +14,7 @@ import { livePlaybackRetryDelay } from '../liveRejoin'
 import type { BufferControl, PlayIntent } from '../playIntent'
 import { SLOW_RATE } from '../slowMotion'
 import { useKeyboardShortcuts } from '../useKeyboardShortcuts'
-import { HAVE_CURRENT_DATA, seekableEndOf } from '../videoHandle'
+import { HAVE_CURRENT_DATA, HAVE_METADATA, seekableEndOf } from '../videoHandle'
 import {
   type AngleVideo,
   placedAlone,
@@ -47,17 +47,21 @@ import {
   masterOf,
   NUDGE_MAX_SEC,
   nudgeRate,
+  type ParkReason,
   type Placeable,
   WATCHDOG_MS,
   worthCorrecting
 } from './align'
 import {
+  acrossStartHole,
   canStart,
   ceilingSec,
   heldAhead,
   isDry,
   isReady,
   LEAD_SEC,
+  START_GAP_SEC,
+  strayed,
   type TileBuffer,
   toLeaveOut
 } from './buffering'
@@ -162,6 +166,9 @@ export const DRY_CHECK_MS = 250
 /** How often a joining tile looks to see whether the game has reached it. */
 const JOIN_POLL_MS = 30
 
+/** How far past the seekable end a tile's place may be and still count. */
+const SEEKABLE_SLACK_SEC = 0.25
+
 /** How long the bar stays up after the last touch of it. */
 const BAR_HIDE_MS = 3000
 
@@ -180,7 +187,7 @@ export function beyondSlop(dx: number, dy: number): boolean {
 }
 
 export interface TileState {
-  parked: 'beforeStart' | 'afterEnd' | null
+  parked: ParkReason | null
   stalledSince: number | null
   ended: boolean
 }
@@ -521,6 +528,8 @@ export function useMultiCam(
   const flowing = useRef(false)
   /** When each tile the grid is waiting for was first seen short of enough. */
   const shortSince = useRef(new Map<string, number>())
+  /** Where each held tile was last moved to by the gate (`placeHeld`). */
+  const heldPlace = useRef(new Map<string, number>())
   /** When the first live tile had a picture, for a grid with no moment yet. */
   const liveSince = useRef<number | null>(null)
   /**
@@ -766,10 +775,13 @@ export function useMultiCam(
       const restore = atWallRef.current
       if (video == null || restore == null) return null
       const toSec = secondsAt(video, restore)
+      const newest = newestSecOf(video)
       const inRange =
         toSec != null &&
         toSec >= 0 &&
-        (video.durationSec == null || toSec <= video.durationSec)
+        (video.durationSec == null || toSec <= video.durationSec) &&
+        // Not yet at a live camera: it is not sent past its newest footage.
+        (newest == null || toSec <= newest)
       if (!inRange || toSec == null) return null
       restoring.current.add(id)
       return toSec
@@ -790,7 +802,8 @@ export function useMultiCam(
               follower: {
                 video,
                 atSec: toSec ?? element.currentTime,
-                mediaSec: endOfTile(video, element)
+                mediaSec: endOfTile(video, element),
+                newestSec: newestSecOf(video)
               }
             })
 
@@ -800,10 +813,12 @@ export function useMultiCam(
       // started — and to play half a second of it out loud when it held the
       // sound.
       if (correction?.kind === 'park') {
-        element.currentTime =
-          correction.reason === 'beforeStart'
-            ? 0
-            : (mediaLengthOf(element) ?? element.currentTime)
+        // A live camera behind the game waits where it opened.
+        if (correction.reason !== 'notYet')
+          element.currentTime =
+            correction.reason === 'beforeStart'
+              ? 0
+              : (mediaLengthOf(element) ?? element.currentTime)
         intents.current.set(id, false)
         element.pause()
         setTiles(current => ({
@@ -1006,13 +1021,30 @@ export function useMultiCam(
           follower: {
             video,
             atSec: element.currentTime,
-            mediaSec: endOfTile(video, element)
+            mediaSec: endOfTile(video, element),
+            newestSec: newestSecOf(video)
           },
           toleranceSec
         })
         if (correction.kind === 'park') {
           intents.current.set(video.id, false)
           element.pause()
+          // Waiting for its live footage to reach the game: left where it is,
+          // with nothing sought, until its mapping says the footage is there.
+          if (correction.reason === 'notYet') {
+            setTiles(current =>
+              current[video.id]?.parked === 'notYet'
+                ? current
+                : {
+                    ...current,
+                    [video.id]: {
+                      ...(current[video.id] ?? freshTile()),
+                      parked: 'notYet'
+                    }
+                  }
+            )
+            continue
+          }
           // Its own first or last frame, rather than whatever it happened to
           // be showing when the viewer scrubbed out of its stretch of the
           // game: a scene from an hour later under a label saying this camera
@@ -1140,7 +1172,8 @@ export function useMultiCam(
           follower: {
             video,
             atSec: element?.currentTime ?? 0,
-            mediaSec: endOfTile(video, element)
+            mediaSec: endOfTile(video, element),
+            newestSec: newestSecOf(video)
           }
         })
         return correction.kind !== 'park'
@@ -1211,6 +1244,57 @@ export function useMultiCam(
   }, [chosen, heardId])
 
   /**
+   * Moves a held tile that holds nothing where the gate measures it to that
+   * place, once for each place (`strayed`), and says whether it did: its
+   * player loads around where it stands, so left there it never comes to hold
+   * enough where it is wanted, or — within `START_GAP_SEC` of it — opens the
+   * grid a segment past the moment.
+   *
+   * Only a browser's tile, which says what it holds, once it knows its
+   * stream, and never past what can be sought to — a live tile ahead of its
+   * footage waits as `notYet` instead. Once for each place, because a player
+   * that steps over a hole at the start (`START_GAP_SEC`) lands a little past
+   * where it was sent, and sending it back would be a loop.
+   */
+  const placeHeld = useCallback(
+    (video: VideoSummary, instant: number): boolean => {
+      const element = elements.current.get(video.id)
+      if (element?.buffered == null || element.seeking === true) return false
+      if (element.readyState < HAVE_METADATA) return false
+      const target = secondsAt(video, instant)
+      if (target == null || target < 0) return false
+      const end = mediaLengthOf(element)
+      if (end != null && target > end) return false
+      // A recording's player steps over only a short hole where it starts:
+      // one standing in a wider one, near the moment, is sent across it, or
+      // it stays there frozen once the grid plays.
+      const across =
+        video.status === 'live'
+          ? null
+          : acrossStartHole(heldRanges(element), element.currentTime)
+      if (
+        across != null &&
+        Math.abs(element.currentTime - target) <= START_GAP_SEC
+      ) {
+        // And not sent back into the hole for this place.
+        heldPlace.current.set(video.id, target)
+        seekedAt.current.set(video.id, Date.now())
+        element.currentTime = across
+        return true
+      }
+      if (heldPlace.current.get(video.id) === target) return false
+      if (!strayed(heldRanges(element), element.currentTime, target)) {
+        return false
+      }
+      heldPlace.current.set(video.id, target)
+      seekedAt.current.set(video.id, Date.now())
+      element.currentTime = target
+      return true
+    },
+    []
+  )
+
+  /**
    * Lets the grid play from this instant if every tile it waits for holds
    * enough there, and says whether it did.
    *
@@ -1223,9 +1307,10 @@ export function useMultiCam(
     (instant: number, finished?: Map<string, boolean>): boolean => {
       const now = Date.now()
       const waits = awaited(instant, finished).map(video => {
-        const ready = isReady(
-          bufferAt(video, elements.current.get(video.id), instant)
-        )
+        // One just moved holds nothing yet where it was sent.
+        const ready =
+          !placeHeld(video, instant) &&
+          isReady(bufferAt(video, elements.current.get(video.id), instant))
         if (ready) shortSince.current.delete(video.id)
         else if (!shortSince.current.has(video.id)) {
           shortSince.current.set(video.id, now)
@@ -1280,7 +1365,7 @@ export function useMultiCam(
       alignTo(startAt, undefined, undefined, 'open')
       return true
     },
-    [alignTo, awaited, heardId]
+    [alignTo, awaited, heardId, placeHeld]
   )
   gateRef.current = gate
 
@@ -1331,6 +1416,7 @@ export function useMultiCam(
             `buf ${bufferAhead(element).toFixed(1)}s  ` +
             `ready ${element.readyState}  ` +
             `at ${element.currentTime.toFixed(1)}  ` +
+            `to ${secondsAt(video, clockMs)?.toFixed(1) ?? '—'}  ` +
             `${element.paused ? 'paused' : 'playing'}  ${stalled}` +
             (tile?.parked != null ? `  parked ${tile.parked}` : '') +
             (leftOut.current.has(video.id) ? '  left out' : '')
@@ -2293,15 +2379,31 @@ function mediaLengthOf(element: TileHandle): number | null {
   return Math.min(declared, seekable)
 }
 
-/** Seconds of stream ahead of where a tile is playing (`heldAhead`). */
-function bufferAhead(element: TileHandle, at = element.currentTime): number {
+/** The stretches a tile holds, in order; none where its player does not say. */
+function heldRanges(element: TileHandle): Array<[number, number]> {
   const ranges = element.buffered
-  if (ranges == null) return 0
+  if (ranges == null) return []
   const held: Array<[number, number]> = []
   for (let index = 0; index < ranges.length; index++) {
     held.push([ranges.start(index), ranges.end(index)])
   }
-  return heldAhead(held, at)
+  return held
+}
+
+/** Seconds of stream ahead of where a tile is playing (`heldAhead`). */
+function bufferAhead(element: TileHandle, at = element.currentTime): number {
+  return heldAhead(heldRanges(element), at)
+}
+
+/**
+ * A live tile's newest footage, in its own seconds, by its mapping onto the
+ * wall clock; null for a recording, or a tile whose mapping cannot say.
+ */
+function newestSecOf(video: VideoSummary & AngleVideo): number | null {
+  if (video.status !== 'live') return null
+  const mapping = video.clock?.()
+  const newest = mapping?.newestWall()
+  return mapping == null || newest == null ? null : mapping.secAt(newest)
 }
 
 /**
@@ -2315,6 +2417,11 @@ function bufferOf(element: TileHandle | undefined, atSec?: number): TileBuffer {
   if (element == null) return { aheadSec: 0, leftSec: null, readyState: 0 }
   const at = atSec ?? element.currentTime
   const end = mediaLengthOf(element)
+  // A place past what can be sought to holds nothing, and is not a tile at
+  // the end of everything there is: it is not ready.
+  if (end != null && at > end + SEEKABLE_SLACK_SEC) {
+    return { aheadSec: 0, leftSec: null, readyState: element.readyState }
+  }
   return {
     aheadSec: element.buffered == null ? null : bufferAhead(element, at),
     leftSec: end == null ? null : Math.max(0, end - at),

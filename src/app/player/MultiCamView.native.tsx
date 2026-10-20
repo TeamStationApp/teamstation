@@ -16,6 +16,7 @@ import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
+import type { ParkReason } from './multiCam/align'
 import {
   ExitButton,
   exitClearance,
@@ -402,7 +403,7 @@ function Tile(props: {
   /** Picked up, and waiting to be dropped. */
   armed: boolean
   name: string
-  parked: 'beforeStart' | 'afterEnd' | null
+  parked: ParkReason | null
   waiting: boolean
   unplaceable: boolean
   takeRef: (node: TileHandle | null) => void
@@ -551,9 +552,11 @@ function Tile(props: {
                   ? lstrings.angles_not_recording_yet
                   : parked === 'afterEnd'
                     ? lstrings.angles_stopped
-                    : waiting
-                      ? lstrings.angles_tile_catching_up
-                      : lstrings.angles_tile_loading}
+                    : parked === 'notYet'
+                      ? lstrings.angles_tile_waiting_live
+                      : waiting
+                        ? lstrings.angles_tile_catching_up
+                        : lstrings.angles_tile_loading}
           </Text>
         </View>
       ) : null}

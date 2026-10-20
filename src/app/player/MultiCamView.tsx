@@ -7,6 +7,7 @@ import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
+import type { ParkReason } from './multiCam/align'
 import {
   ExitButton,
   exitClearance,
@@ -463,7 +464,7 @@ function Tile(props: {
    */
   standingAside: boolean
   name: string
-  parked: 'beforeStart' | 'afterEnd' | null
+  parked: ParkReason | null
   unplaceable: boolean
   /** Its media is not there — the server answered, and there is nothing to play. */
   unavailable: boolean
@@ -646,8 +647,21 @@ function Tile(props: {
     else props.onDrop(0, 0)
   }
 
+  // What the tile is doing, as its label says it, for the e2e readings.
+  const tileState =
+    parked ??
+    (unavailable
+      ? 'unavailable'
+      : unplaceable
+        ? 'unplaceable'
+        : waiting
+          ? 'waiting'
+          : hasPicture
+            ? 'playing'
+            : 'loading')
   return (
     <View
+      dataSet={{ tileState }}
       style={[
         styles.tile,
         {
@@ -716,9 +730,11 @@ function Tile(props: {
                   ? lstrings.angles_not_recording_yet
                   : parked === 'afterEnd'
                     ? lstrings.angles_stopped
-                    : waiting
-                      ? lstrings.angles_tile_catching_up
-                      : lstrings.angles_tile_loading}
+                    : parked === 'notYet'
+                      ? lstrings.angles_tile_waiting_live
+                      : waiting
+                        ? lstrings.angles_tile_catching_up
+                        : lstrings.angles_tile_loading}
           </Text>
         </View>
       ) : null}

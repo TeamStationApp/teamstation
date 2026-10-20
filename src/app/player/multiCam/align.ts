@@ -176,7 +176,13 @@ export function worthCorrecting(readyState: number, errorSec: number): boolean {
 export type Correction =
   | { kind: 'hold' }
   | { kind: 'seek'; toSec: number }
-  | { kind: 'park'; reason: 'beforeStart' | 'afterEnd' }
+  | { kind: 'park'; reason: ParkReason }
+
+/**
+ * Why a tile is held where it is: the moment is before its camera started,
+ * after it stopped, or — live — past the newest footage it has yet.
+ */
+export type ParkReason = 'beforeStart' | 'afterEnd' | 'notYet'
 
 export interface FollowerState {
   video: AngleVideo
@@ -192,6 +198,12 @@ export interface FollowerState {
    * for a moment that never comes.
    */
   mediaSec?: number | null
+  /**
+   * A live tile's newest footage, in its own seconds, by its mapping onto the
+   * wall clock; null when it is not live or cannot say. A moment past it has
+   * not reached this camera yet.
+   */
+  newestSec?: number | null
 }
 
 /**
@@ -210,6 +222,12 @@ export function correctionFor(options: {
   const target = secondsAt(follower.video, wallMs)
   if (target == null) return { kind: 'hold' }
   if (target < 0) return { kind: 'park', reason: 'beforeStart' }
+  if (
+    follower.newestSec != null &&
+    target > follower.newestSec + toleranceSec
+  ) {
+    return { kind: 'park', reason: 'notYet' }
+  }
   // What the file holds wins over what the row says.
   const durationSec =
     follower.mediaSec != null && Number.isFinite(follower.mediaSec)

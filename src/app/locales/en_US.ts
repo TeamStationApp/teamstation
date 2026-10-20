@@ -186,6 +186,7 @@ export const enUs = {
   angles_tap_for_sound: 'Tap for sound',
   angles_tile_loading: 'Camera loading…',
   angles_tile_catching_up: 'Camera catching up…',
+  angles_tile_waiting_live: 'Waiting for this camera to catch up to the game…',
   angles_close: 'Close',
   angles_play: 'Play',
   angles_pause: 'Pause',

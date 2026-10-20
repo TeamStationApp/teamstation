@@ -11,6 +11,7 @@ import {
 import { ThemeProvider } from '../../theme/ThemeContext'
 import { SLOW_RATE } from '../slowMotion'
 import type { VideoEventName } from '../videoHandle'
+import type { AngleVideo } from '../wallClock'
 import {
   fromFragments,
   MAPPING_WAIT_MS,
@@ -989,6 +990,23 @@ describe('useMultiCam buffering', function () {
     expect(tiles.B.paused).equals(false)
   })
 
+  it('sends a lone recording across a start hole wider than its player jumps, and plays it', async function () {
+    this.timeout(5000)
+    // Three seconds of nothing where it is to start, then the footage.
+    const { mc, tiles } = await grid(
+      { videos: [video('A', 0)], order: ['A'], atMs: T0 + 300_000 },
+      {},
+      tiles => {
+        fill(tiles.A, [303, 340])
+      }
+    )
+    await ticks(2)
+    // Sent to 300 s, the moment, and from there to the footage at 303 s.
+    expect(tiles.A.currentTime).equals(303)
+    expect(tiles.A.paused).equals(false)
+    expect(mc().waiting).equals(false)
+  })
+
   it('stops every tile the moment one is about to run dry, and starts them once it has filled', async function () {
     this.timeout(5000)
     const { mc, tiles } = await grid({}, {}, tiles => {
@@ -1312,5 +1330,385 @@ describe('useMultiCam on each tile’s own dates (U22)', function () {
     })
     expect(tiles.A.currentTime).closeTo(100, 0.01)
     expect(tiles.B.currentTime).closeTo(70, 0.01)
+  })
+})
+
+describe('useMultiCam with a lone recording that has no start (M5, M8)', function () {
+  it('plays it on its own media time, whatever dates its player hands over', async function () {
+    const lone = { ...video('A', 0), startAt: null }
+    const { mc, tiles } = await grid({
+      videos: [lone],
+      order: ['A'],
+      atMs: 40_000
+    })
+    await act(async () => {
+      mc().takeMapping('A')(
+        fromFragments([
+          { start: 0, duration: 600, programDateTime: T0 + 30_000 }
+        ])
+      )
+      mc().goTo(70_000)
+    })
+    expect(tiles.A.currentTime).closeTo(70, 0.01)
+  })
+})
+
+describe('useMultiCam with a live camera behind the game (U27)', function () {
+  /** Four-second fragments from the take's start, `seconds` of them in all. */
+  const dated = (seconds: number): WallMapping =>
+    fromFragments(
+      Array.from({ length: seconds / 4 }, (unused, index) => ({
+        start: index * 4,
+        duration: 4,
+        programDateTime: T0 + index * 4000
+      }))
+    )
+
+  it('holds a tile whose newest footage is behind the moment, labelled, out of the gate, never sought, and puts it back once it has caught up', async function () {
+    this.timeout(10_000)
+    // Each tile's dates, as its playlist gives them before its pictures.
+    const held: Record<string, WallMapping> = {
+      A: dated(300),
+      B: dated(100)
+    }
+    const { mc, tiles } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => held[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles))
+          tile.duration = Number.POSITIVE_INFINITY
+        fill(tiles.A, [100, 300])
+        Object.assign(tiles.A, { seekable: { length: 1, end: () => 300 } })
+        fill(tiles.B, [60, 100])
+        Object.assign(tiles.B, { seekable: { length: 1, end: () => 100 } })
+        tiles.B.currentTime = 99
+      }
+    )
+    await ticks(2)
+    expect(mc().tiles.B?.parked).equals('notYet')
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime, 'never sought').equals(99)
+    // The other plays on, and the grid is not held for it.
+    expect(tiles.A.paused).equals(false)
+    expect(mc().waiting).equals(false)
+
+    // B's playlist grows past the moment: it is put back on it.
+    fill(tiles.B, [60, 260])
+    Object.assign(tiles.B, { seekable: { length: 1, end: () => 260 } })
+    held.B = dated(260)
+    await ticks(2)
+    expect(mc().tiles.B?.parked ?? null).equals(null)
+    expect(tiles.B.currentTime).greaterThan(140)
+  })
+  it('runs a live game’s bar from its first camera to the newest footage any angle has, and lands a move past live at the live point', async function () {
+    const served: Record<string, WallMapping | null> = {
+      A: dated(300),
+      B: dated(300)
+    }
+    const { mc } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => served[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          // B's player can reach less than A's: the slower angle sets it.
+          Object.assign(tile, {
+            seekable: { length: 1, end: () => (tile === tiles.B ? 250 : 260) }
+          })
+          fill(tile, [140, 200])
+        }
+      }
+    )
+    // From the first camera's first picture to the newest footage either
+    // angle has, A's 260 s, though the viewer has played only to 150 s.
+    expect(mc().take?.fromMs).equals(T0)
+    expect(mc().take?.toMs).equals(T0 + 260_000)
+    // Dragged to the end, the grid goes to the live point: 45 s behind the
+    // slower angle's newest footage, B's 250 s.
+    await act(async () => {
+      mc().goTo(T0 + 260_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 205_000)
+    // Back is anywhere in the take.
+    await act(async () => {
+      mc().goTo(T0 + 60_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 60_000)
+  })
+
+  it('never sends a forward move back, when the grid already plays past the live point', async function () {
+    // The live point moves a segment at a time, and an angle whose camera
+    // has just gone holds it still: the pictures can be past it.
+    const served: Record<string, WallMapping | null> = {
+      A: dated(300),
+      B: dated(300)
+    }
+    const { mc } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 230_000
+      },
+      { fallbackMapping: id => served[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          // B's footage reaches 250 s: the live point is 205 s.
+          Object.assign(tile, {
+            seekable: { length: 1, end: () => (tile === tiles.B ? 250 : 260) }
+          })
+          fill(tile, [200, 260])
+        }
+      }
+    )
+    expect(mc().atWallMs).equals(T0 + 230_000)
+    // Ten seconds on, past the live point: it stays where it is.
+    await act(async () => {
+      mc().goTo(T0 + 240_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 230_000)
+    // Back is still back.
+    await act(async () => {
+      mc().goTo(T0 + 220_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 220_000)
+  })
+
+  it('keeps the bar’s end and the live point while every tile seeks out of what it holds', async function () {
+    this.timeout(5000)
+    const served: Record<string, WallMapping | null> = {
+      A: dated(300),
+      B: dated(300)
+    }
+    const { mc, tiles } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => served[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          Object.assign(tile, { seekable: { length: 1, end: () => 260 } })
+          fill(tile, [140, 200])
+        }
+      }
+    )
+    // A move out of what they hold: a browser's tiles keep only their
+    // metadata until the new place loads.
+    await act(async () => {
+      mc().goTo(T0 + 100_000)
+    })
+    for (const tile of Object.values(tiles)) tile.readyState = 1
+    await ticks(1)
+    expect(mc().take?.toMs).equals(T0 + 260_000)
+    // And a move past live still lands at the live point.
+    await act(async () => {
+      mc().goTo(T0 + 260_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 215_000)
+  })
+
+  it('lets no angle whose camera has stopped hold the live point back once the grid has played past it', async function () {
+    // B keeps its address and its picture, but its footage stopped at 150 s,
+    // and the grid already plays at 170 s.
+    const served: Record<string, WallMapping | null> = {
+      A: dated(300),
+      B: dated(300)
+    }
+    const { mc } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 170_000
+      },
+      { fallbackMapping: id => served[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          Object.assign(tile, {
+            seekable: { length: 1, end: () => (tile === tiles.B ? 150 : 260) }
+          })
+          fill(tile, [140, 260])
+        }
+      }
+    )
+    await act(async () => {
+      mc().goTo(T0 + 260_000)
+    })
+    // A's live point, not B's last picture less the delay.
+    expect(mc().atWallMs).equals(T0 + 215_000)
+  })
+
+  it('ends a live bar at an angle’s seekable end where it has no mapping yet', async function () {
+    // A phone's tile has no dates of its own, and the server's timeline has
+    // not arrived: its player's seekable end, placed by its start.
+    const { mc } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      {},
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          Object.assign(tile, { seekable: { length: 1, end: () => 260 } })
+          fill(tile, [140, 200])
+        }
+      }
+    )
+    expect(mc().take?.toMs).equals(T0 + 260_000)
+  })
+
+  it('lets no angle it cannot play hold the live point back at its own last footage', async function () {
+    // B's camera has gone: the server still lists it as live, its timeline
+    // ends at 100 s, and there is no address for it.
+    const served: Record<string, WallMapping | null> = {
+      A: dated(300),
+      B: dated(100)
+    }
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.playback = async (id: string) => ({
+      videoId: id,
+      storage: 'spaces',
+      url: id === 'B' ? null : `https://media/${id}.m3u8`,
+      expiresAt: null,
+      durationSec: null,
+      unavailable: id === 'B'
+    })
+    const { mc } = await grid(
+      {
+        client,
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => served[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          // B's player stopped at its last footage.
+          Object.assign(tile, {
+            seekable: { length: 1, end: () => (tile === tiles.B ? 100 : 260) }
+          })
+          fill(tile, [140, 200])
+        }
+      }
+    )
+    await until(() => mc().urls.B === null)
+    await act(async () => {
+      mc().goTo(T0 + 260_000)
+    })
+    // A's live point, 45 s behind its newest footage: not B's, minutes back.
+    expect(mc().atWallMs).equals(T0 + 215_000)
+  })
+
+  it('places a tile by the server’s wall timeline before its own stream’s dates, and reaches its newest footage by it', async function () {
+    // The server's, by the frames' own clocks; the stream's dates 4.57 s
+    // later, as a live ingest writes them.
+    const served: Record<string, WallMapping | null> = {
+      A: dated(300),
+      B: dated(300)
+    }
+    const { mc } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => served[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          Object.assign(tile, { seekable: { length: 1, end: () => 260 } })
+          fill(tile, [140, 200])
+        }
+      }
+    )
+    const own = fromFragments(
+      Array.from({ length: 75 }, (unused, index) => ({
+        start: index * 4,
+        duration: 4,
+        programDateTime: T0 + index * 4000 + 4570
+      }))
+    )
+    await act(async () => {
+      mc().takeMapping('A')(own)
+    })
+    const clockOf = (index: number): WallMapping =>
+      (mc().chosen[index] as AngleVideo).clock!()!
+    const clockA = clockOf(0)
+    expect(clockA.wallAt(150)).equals(T0 + 150_000)
+    expect(clockA.newestWall()).equals(T0 + 260_000)
+    // With no timeline from the server, the stream's own dates.
+    served.A = null
+    expect(clockOf(0).wallAt(150)).equals(T0 + 154_570)
+  })
+
+  it('moves a held tile to where its dates put the moment once they arrive, once for each place', async function () {
+    this.timeout(10_000)
+    const held: Record<string, WallMapping> = {
+      A: dated(300),
+      B: dated(300)
+    }
+    const { mc, tiles } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => held[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          Object.assign(tile, { seekable: { length: 1, end: () => 300 } })
+        }
+        fill(tiles.A, [148, 190])
+        fill(tiles.B, [150, 152])
+      }
+    )
+    await ticks(1)
+    expect(mc().waiting).equals(true)
+    expect(tiles.A.currentTime).equals(150)
+
+    // A's own dates put the moment 4.6 s earlier than its start did, where
+    // it holds nothing — within a start hole of what it holds, so it would
+    // count as ready there — and it is sent there; B, which holds where it
+    // stands, is not.
+    held.A = fromFragments(
+      Array.from({ length: 75 }, (unused, index) => ({
+        start: index * 4,
+        duration: 4,
+        programDateTime: T0 + index * 4000 + 4600
+      }))
+    )
+    await ticks(1)
+    expect(tiles.A.currentTime).closeTo(145.4, 1e-6)
+    expect(tiles.B.currentTime).equals(150)
+
+    // Its player steps over a hole there, and short of enough it is not
+    // sent back for it.
+    tiles.A.currentTime = 147
+    fill(tiles.A, [147, 149])
+    await ticks(1)
+    expect(tiles.A.currentTime).equals(147)
+    expect(mc().waiting).equals(true)
+
+    fill(tiles.A, [147, 170])
+    fill(tiles.B, [150, 200])
+    await ticks(1)
+    expect(mc().waiting).equals(false)
+    expect(tiles.A.paused).equals(false)
+    expect(tiles.A.currentTime).equals(147)
   })
 })

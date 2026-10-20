@@ -82,12 +82,15 @@ export function attachHls(
     engine === 'native'
       ? attachNativeHls(video, url, onGiveUp, intent)
       : attachHlsJs(handle, video, url, onGiveUp, intent)
-  // A grid owns its tiles' positions and buffering; only the single live
-  // viewer may step across a missing stretch on its own.
+  // A live grid tile only crosses a hole: where it plays is the grid's.
   const stopRecovery =
-    intent?.isLive != null && intent.buffer == null
-      ? recoverLiveStalls(video, intent.wantsToPlay)
-      : undefined
+    intent?.isLive == null
+      ? undefined
+      : intent.buffer == null
+        ? recoverLiveStalls(video, intent.wantsToPlay)
+        : recoverLiveStalls(video, intent.wantsToPlay, undefined, {
+            holesOnly: true
+          })
   const stopJoining =
     intent?.isLive != null &&
     intent.buffer == null &&

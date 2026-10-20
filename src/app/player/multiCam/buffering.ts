@@ -101,15 +101,77 @@ export function heldAhead(
   holeSec: number = HOLE_SEC
 ): number {
   let end: number | null = null
+  let from = atSec
   for (const [start, stop] of ranges) {
     if (end == null) {
       if (start - holeSec <= atSec && atSec <= stop) end = stop
+      else if (atSec < start && start - atSec <= START_GAP_SEC) {
+        // A hole at the very place it starts, which its player steps over:
+        // it holds what is past the hole.
+        end = stop
+        from = start
+      }
       continue
     }
     if (start - end > holeSec) break
     end = Math.max(end, stop)
   }
-  return end == null ? 0 : Math.max(0, end - atSec)
+  return end == null ? 0 : Math.max(0, end - from)
+}
+
+/**
+ * A held tile that holds nothing where it is measured, and stands somewhere
+ * else: one to move there, since its player only loads around where it is.
+ *
+ * A live tile is placed by its recording's start until its stream's own dates
+ * arrive, and the two can disagree by more than a segment. The grid then
+ * measures it at the place the dates say, and a tile left where it stood
+ * holds nothing there for ever.
+ */
+export function strayed(
+  ranges: Array<[number, number]>,
+  atSec: number,
+  targetSec: number,
+  holeSec: number = HOLE_SEC
+): boolean {
+  if (Math.abs(atSec - targetSec) <= holeSec) return false
+  return !ranges.some(
+    ([start, stop]) => start - holeSec <= targetSec && targetSec <= stop
+  )
+}
+
+/**
+ * A hole where a tile is to start that its player steps over on its own:
+ * hls.js moves a start in a gap to the footage after it. A live stream that
+ * was cut and carried on can begin its first segment's pictures a segment
+ * late, and a grid waiting for the hole to fill waited for ever.
+ */
+export const START_GAP_SEC = 5
+
+/**
+ * The hole a recording's player steps over where it starts. hls.js allows
+ * twice the target duration only on a live level; on a recording, once a
+ * parsed fragment's start has moved to its first picture, the hole is no
+ * longer inside it and only `MAX_START_GAP_JUMP` is jumped.
+ */
+export const RECORDED_START_GAP_SEC = 2
+
+/**
+ * Where a recording's tile standing in a start hole its player will not jump
+ * — wider than `RECORDED_START_GAP_SEC`, up to `START_GAP_SEC` — is to be
+ * sent: the start of the footage after it. Null when it is not in one.
+ */
+export function acrossStartHole(
+  ranges: Array<[number, number]>,
+  atSec: number,
+  holeSec: number = HOLE_SEC
+): number | null {
+  for (const [start, stop] of ranges) {
+    if (start - holeSec <= atSec && atSec <= stop) return null
+    const gap = start - atSec
+    if (gap > RECORDED_START_GAP_SEC && gap <= START_GAP_SEC) return start
+  }
+  return null
 }
 
 /** `HAVE_FUTURE_DATA`: the next frame is there, if not much after it. */

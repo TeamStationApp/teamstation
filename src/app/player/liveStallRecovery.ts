@@ -25,7 +25,13 @@ export function recoverLiveStalls(
     clearTimeout: timer => {
       clearTimeout(timer as ReturnType<typeof setTimeout>)
     }
-  }
+  },
+  /**
+   * `holesOnly`: cross a missing stretch into footage already held, and never
+   * move the position otherwise. A grid's live tile, whose position the grid
+   * owns.
+   */
+  options: { holesOnly?: boolean } = {}
 ): () => void {
   let lastTime = video.currentTime
   let lastProgress = clock.now()
@@ -56,6 +62,8 @@ export function recoverLiveStalls(
           (index === 0 || Math.abs(ranges.end(index - 1) - at) > 0.5)
         )
           break
+        // Inside a range is not a hole: the grid's to move, not this.
+        if (options.holesOnly === true && start <= at + 0.5) break
         // The first usable range either contains this moment or begins after
         // a missing stretch. A seek into it must leave a second to play.
         const next = Math.max(at, start) + 0.05
