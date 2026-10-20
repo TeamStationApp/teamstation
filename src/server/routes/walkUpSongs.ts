@@ -1,8 +1,8 @@
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import { notFound, unauthorized } from '../../common/errors'
-import { asUserId } from '../../common/userIdNumber'
+import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { asUserId } from '../../common/userId'
 import { asWalkUpSong, type WalkUpSong } from '../../common/walkUpSong'
 import { canKeepSongs, guardsPlayer, roleScopes } from '../access'
 import type { Database, WalkUpSongsTable } from '../db/database'
@@ -31,9 +31,9 @@ export function walkUpSongRoutes(db: Kysely<Database>): Router {
 
   /** The team and player a request names, once the caller may change them. */
   const songPlace = async (
-    actor: { userId: number; isAdmin: boolean },
+    actor: { userId: string; isAdmin: boolean },
     params: Record<string, string | string[] | undefined>
-  ): Promise<{ teamId: string; userId: number }> => {
+  ): Promise<{ teamId: string; userId: string }> => {
     const teamId = pathParam(params.teamId)
     const userId = userIdParam(params.userId)
     const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
@@ -193,7 +193,7 @@ function songOfRow(row: WalkUpSongRow): WalkUpSong {
 export async function readWalkUpSong(
   db: Kysely<Database>,
   teamId: string,
-  userId: number
+  userId: string
 ): Promise<WalkUpSong | null> {
   const row = await db
     .selectFrom('walk_up_songs')
@@ -208,7 +208,7 @@ export async function readWalkUpSong(
 export async function teamWalkUpSongs(
   db: Kysely<Database>,
   teamId: string
-): Promise<Map<number, WalkUpSong>> {
+): Promise<Map<string, WalkUpSong>> {
   const rows = await db
     .selectFrom('walk_up_songs')
     .select(['user_id', ...SONG_COLUMNS])
@@ -222,10 +222,10 @@ function pathParam(value: string | string[] | undefined): string {
   return value
 }
 
-function userIdParam(value: string | string[] | undefined): number {
+function userIdParam(value: string | string[] | undefined): string {
   try {
     return asUserId(pathParam(value))
   } catch {
-    throw notFound()
+    throw badRequest('Expected a canonical user id')
   }
 }

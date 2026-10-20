@@ -9,10 +9,12 @@ import { Pool } from 'pg'
 import { asGameDetail } from '../../common/api'
 import { asPostEventsBody } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { postGamePlays } from '../events/postPlays'
@@ -97,17 +99,14 @@ describe('the fence a game is played to', function () {
     await pool.end()
     db = makeDatabase(scratchUrl)
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values({
-        id: viewer.userId,
-        legacyId: viewer.legacyId,
-        display_name: 'Viewer',
-        is_admin: true,
-        created_at: now,
-        updated_at: now
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(viewer.userId),
+      legacyId: viewer.legacyId,
+      display_name: 'Viewer',
+      is_admin: true,
+      created_at: now,
+      updated_at: now
+    })
     await db.insertInto('leagues').values({ id: league, name: 'L' }).execute()
     await db
       .insertInto('seasons')
@@ -147,7 +146,11 @@ describe('the fence a game is played to', function () {
 
     const app = express()
     app.use((req, _res, next) => {
-      req.actor = { userId: viewer.userId, isAdmin: true, scopes: [] }
+      req.actor = {
+        userId: userIdOfGumbo(viewer.userId),
+        isAdmin: true,
+        scopes: []
+      }
       next()
     })
     app.use('/api/v1', teamRoutes(db, media))

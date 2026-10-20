@@ -28,7 +28,7 @@ export async function resolveGumboIds(
 export async function scoringUsers(
   db: Kysely<Database>,
   ids: readonly number[]
-): Promise<Map<number, number>> {
+): Promise<Map<number, string>> {
   const wanted = [...new Set(ids)]
   if (wanted.length === 0) return new Map()
   const originals = await db
@@ -50,7 +50,7 @@ export async function scoringUsers(
 /** Historical scoring identities for an already expanded set of account aliases. */
 export async function gumboIdsOfUsers(
   db: Kysely<Database>,
-  userIds: readonly number[]
+  userIds: readonly string[]
 ): Promise<number[]> {
   if (userIds.length === 0) return []
   const rows = await db

@@ -9,7 +9,6 @@ import {
   type GumboPlay
 } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import { defaultRadarSettings } from '../../common/nodeSettings'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/apply'
@@ -21,9 +20,12 @@ import {
   type SessionContext
 } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { type Database, makeDatabase } from '../db/database'
 import { replaceGameEvents } from '../events/eventWrite'
 import { postGamePlays } from '../events/postPlays'
@@ -55,12 +57,12 @@ const TEAMS = {
 }
 const setup = newSetup(TEAMS, {
   away: AWAY.map((userId, i) => ({
-    userId,
+    userId: userIdOfGumbo(userId),
     gumboId: userId,
     shortName: `Away ${i + 1}`
   })),
   home: HOME.map((userId, i) => ({
-    userId,
+    userId: userIdOfGumbo(userId),
     gumboId: userId,
     shortName: `Home ${i + 1}`
   }))
@@ -241,18 +243,16 @@ describe('refolding the stored plays (U11)', function () {
         { id: away, name: 'Away', kind: 'full' }
       ])
       .execute()
-    await db
-      .insertInto('users')
-      .values(
-        minted.map((made, i) => ({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: `Player ${i}`,
-          created_at: now,
-          updated_at: now
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      minted.map((made, i) => ({
+        id: made.userId,
+        legacyId: made.legacyId,
+        display_name: `Player ${i}`,
+        created_at: now,
+        updated_at: now
+      }))
+    )
 
     // A finished game: a run on a double, then three out, then End Game.
     finished = await newGame()
@@ -590,14 +590,11 @@ describe('refolding the stored plays (U11)', function () {
     const old = await newGame()
     const guest = mintUserId(id => held.has(id))
     held.add(guest.userId)
-    await db
-      .insertInto('users')
-      .values({
-        id: guest.userId,
-        legacyId: guest.legacyId,
-        display_name: 'Bench'
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(guest.userId),
+      legacyId: guest.legacyId,
+      display_name: 'Bench'
+    })
     const first: ScoringAction[] = [
       ...strikeout,
       ...strikeout,

@@ -9,6 +9,7 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { asEventInfo, type EventInfo } from '../../common/eventInfo'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { canScheduleRsvp, ScheduleRsvpControl } from './ScheduleRsvpControl'
 
@@ -46,10 +47,10 @@ const info = (): EventInfo =>
     longitude: null,
     status: 'scheduled',
     canManage: false,
-    replyUserIds: [101, 103],
+    replyUserIds: [userIdOfGumbo(101), userIdOfGumbo(103)],
     attendees: [
       {
-        userId: 101,
+        userId: userIdOfGumbo(101),
         gumboId: 101,
         name: 'Babe R',
         response: null,
@@ -59,7 +60,7 @@ const info = (): EventInfo =>
         avatarUrl: null
       },
       {
-        userId: 103,
+        userId: userIdOfGumbo(103),
         gumboId: 103,
         name: 'Mike T',
         response: null,
@@ -119,8 +120,8 @@ describe('compact upcoming schedule RSVP control', () => {
     )!
     expect(getComputedStyle(button).paddingTop).equals('3px')
     await click('schedule-rsvp-control-game_demo')
-    await click('event-rsvp-101-0')
-    await click('event-rsvp-103-2')
+    await click('event-rsvp-usr_111111111111111111112k-0')
+    await click('event-rsvp-usr_111111111111111111112n-2')
     await act(async () => {
       ;[...document.querySelectorAll<HTMLElement>('[role="button"]')]
         .find(row => row.textContent === 'Done')!
@@ -131,21 +132,27 @@ describe('compact upcoming schedule RSVP control', () => {
     ).equals(null)
     expect(
       getComputedStyle(
-        document.querySelector('[data-testid="schedule-rsvp-avatar-101"]')!
+        document.querySelector(
+          '[data-testid="schedule-rsvp-avatar-usr_111111111111111111112k"]'
+        )!
       ).borderColor
     ).equals('rgb(32, 138, 75)')
     expect(
       getComputedStyle(
-        document.querySelector('[data-testid="schedule-rsvp-avatar-103"]')!
+        document.querySelector(
+          '[data-testid="schedule-rsvp-avatar-usr_111111111111111111112n"]'
+        )!
       ).borderColor
     ).equals('rgb(203, 57, 65)')
     await click('schedule-rsvp-control-game_demo')
     expect(
       document
-        .querySelector('[data-testid="event-rsvp-103-2"]')!
+        .querySelector(
+          '[data-testid="event-rsvp-usr_111111111111111111112n-2"]'
+        )!
         .getAttribute('aria-checked')
     ).equals('true')
-    await click('event-rsvp-103-1')
+    await click('event-rsvp-usr_111111111111111111112n-1')
     await act(async () => {
       ;[...document.querySelectorAll<HTMLElement>('[role="button"]')]
         .find(row => row.textContent === 'Done')!
@@ -153,7 +160,9 @@ describe('compact upcoming schedule RSVP control', () => {
     })
     expect(
       getComputedStyle(
-        document.querySelector('[data-testid="schedule-rsvp-avatar-103"]')!
+        document.querySelector(
+          '[data-testid="schedule-rsvp-avatar-usr_111111111111111111112n"]'
+        )!
       ).borderColor
     ).equals('rgb(35, 118, 207)')
     await act(async () => {

@@ -5,11 +5,12 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
-import { asUserId } from '../../common/userIdNumber'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { asUserId, mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { statRows } from '../stats/rows'
@@ -105,28 +106,25 @@ describe('one player’s figures', function () {
         { id: ravens, name: 'Ravens' }
       ])
       .execute()
-    await db
-      .insertInto('users')
-      .values([
-        {
-          id: jordan,
-          legacyId: legacyId(jordan),
-          display_name: 'Jordan Pacheco'
-        },
-        // The same child, on another team, closed into the row above.
-        {
-          id: jordanClosed,
-          legacyId: legacyId(jordanClosed),
-          display_name: 'Jordan Pacheco',
-          merged_into: jordan
-        },
-        {
-          id: stranger,
-          legacyId: legacyId(stranger),
-          display_name: 'Somebody Else'
-        }
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(jordan),
+        legacyId: legacyId(jordan),
+        display_name: 'Jordan Pacheco'
+      },
+      // The same child, on another team, closed into the row above.
+      {
+        id: userIdOfGumbo(jordanClosed),
+        legacyId: legacyId(jordanClosed),
+        display_name: 'Jordan Pacheco',
+        merged_into: userIdOfGumbo(jordan)
+      },
+      {
+        id: userIdOfGumbo(stranger),
+        legacyId: legacyId(stranger),
+        display_name: 'Somebody Else'
+      }
+    ])
 
     // One game in each season, for a different one of his two rows.
     const games = [
@@ -176,7 +174,11 @@ describe('one player’s figures', function () {
     app.use((req, _res, next) => {
       const id = req.header('x-test-actor')
       if (id != null) {
-        req.actor = { userId: asUserId(id), isAdmin: false, scopes: [] }
+        req.actor = {
+          userId: userIdOfGumbo(asUserId(id)),
+          isAdmin: false,
+          scopes: []
+        }
       }
       next()
     })
@@ -201,7 +203,7 @@ describe('one player’s figures', function () {
 
   it('adds up every row of one person, across the teams they played for', async function () {
     if (db == null) this.skip()
-    const { body } = await ask(`/players/${jordan}/stats`)
+    const { body } = await ask(`/players/${userIdOfGumbo(jordan)}/stats`)
     expect(body.games).equals(2)
     expect(body.batting.ab).equals(6)
     expect(body.batting.h).equals(4)
@@ -211,14 +213,14 @@ describe('one player’s figures', function () {
   it('answers a closed row as the person it became', async function () {
     if (db == null) this.skip()
     // A link sent before the merge still has to land on the whole child.
-    const { body } = await ask(`/players/${jordanClosed}/stats`)
-    expect(body.userId).equals(jordan)
+    const { body } = await ask(`/players/${userIdOfGumbo(jordanClosed)}/stats`)
+    expect(body.userId).equals(userIdOfGumbo(jordan))
     expect(body.games).equals(2)
   })
 
   it('offers every season, team and year they have, newest first', async function () {
     if (db == null) this.skip()
-    const { body } = await ask(`/players/${jordan}/stats`)
+    const { body } = await ask(`/players/${userIdOfGumbo(jordan)}/stats`)
     expect(body.options.seasons.map((s: any) => s.name)).deep.equals([
       'Spring 2026',
       'Fall 2025'
@@ -232,7 +234,9 @@ describe('one player’s figures', function () {
 
   it('narrows to a season, and keeps offering the others', async function () {
     if (db == null) this.skip()
-    const { body } = await ask(`/players/${jordan}/stats?seasonId=${spring}`)
+    const { body } = await ask(
+      `/players/${userIdOfGumbo(jordan)}/stats?seasonId=${spring}`
+    )
     expect(body.games).equals(1)
     expect(body.batting.ab).equals(3)
     // The choice on offer must not collapse to the one already made, or there
@@ -242,16 +246,22 @@ describe('one player’s figures', function () {
 
   it('narrows to a team and to a year', async function () {
     if (db == null) this.skip()
-    const byTeam = await ask(`/players/${jordan}/stats?teamId=${ravens}`)
+    const byTeam = await ask(
+      `/players/${userIdOfGumbo(jordan)}/stats?teamId=${ravens}`
+    )
     expect(byTeam.body.games).equals(1)
-    const byYear = await ask(`/players/${jordan}/stats?year=2025`)
+    const byYear = await ask(
+      `/players/${userIdOfGumbo(jordan)}/stats?year=2025`
+    )
     expect(byYear.body.games).equals(1)
     expect(byYear.body.filter.year).equals(2025)
   })
 
   it('says nothing rather than something wrong when a filter matches nothing', async function () {
     if (db == null) this.skip()
-    const { body } = await ask(`/players/${jordan}/stats?year=2019`)
+    const { body } = await ask(
+      `/players/${userIdOfGumbo(jordan)}/stats?year=2019`
+    )
     expect(body.games).equals(0)
     expect(body.batting).equals(null)
     expect(body.pitching).equals(null)
@@ -261,14 +271,19 @@ describe('one player’s figures', function () {
 
   it('ignores a year that is not a year', async function () {
     if (db == null) this.skip()
-    const { body } = await ask(`/players/${jordan}/stats?year=nonsense`)
+    const { body } = await ask(
+      `/players/${userIdOfGumbo(jordan)}/stats?year=nonsense`
+    )
     expect(body.games).equals(2)
     expect(body.filter.year).equals(null)
   })
 
   it('keeps one player’s figures from another reader who cannot see them', async function () {
     if (db == null) this.skip()
-    const { status } = await ask(`/players/${jordan}/stats`, stranger)
+    const { status } = await ask(
+      `/players/${userIdOfGumbo(jordan)}/stats`,
+      stranger
+    )
     expect(status).equals(404)
   })
 
@@ -322,26 +337,23 @@ describe('one player’s figures', function () {
     before(async function () {
       if (db == null) return this.skip()
       const now = new Date()
-      await db
-        .insertInto('users')
-        .values([
-          {
-            id: teammate,
-            legacyId: legacyId(teammate),
-            display_name: 'Hawks Parent'
-          },
-          {
-            id: seasonFan,
-            legacyId: legacyId(seasonFan),
-            display_name: 'Fall Watcher'
-          }
-        ])
-        .execute()
+      await insertFixtureUsers(db, [
+        {
+          id: userIdOfGumbo(teammate),
+          legacyId: legacyId(teammate),
+          display_name: 'Hawks Parent'
+        },
+        {
+          id: userIdOfGumbo(seasonFan),
+          legacyId: legacyId(seasonFan),
+          display_name: 'Fall Watcher'
+        }
+      ])
       await db
         .insertInto('memberships')
         .values({
           id: makeId('membership'),
-          user_id: teammate,
+          user_id: userIdOfGumbo(teammate),
           team_id: hawks,
           role: 'member'
         })
@@ -350,7 +362,7 @@ describe('one player’s figures', function () {
         .insertInto('season_members')
         .values({
           id: makeId('seasonMember'),
-          user_id: seasonFan,
+          user_id: userIdOfGumbo(seasonFan),
           season_id: fall,
           joined_at: now
         })
@@ -415,7 +427,10 @@ describe('one player’s figures', function () {
       query = '',
       actor = jordan
     ): Promise<{ status: number; ids: string[]; body: any }> => {
-      const answer = await ask(`/players/${jordan}/plays${query}`, actor)
+      const answer = await ask(
+        `/players/${userIdOfGumbo(jordan)}/plays${query}`,
+        actor
+      )
       return {
         status: answer.status,
         ids: Array.isArray(answer.body)
@@ -450,10 +465,88 @@ describe('one player’s figures', function () {
       expect((await plays()).ids).not.include(hiddenOut)
     })
 
+    it('orders plays within a game by at-bat sequence regardless of insertion order', async function () {
+      if (db == null) throw new Error('Fixture database is required')
+      const later = makeId('event')
+      const earlier = makeId('event')
+      try {
+        await db
+          .insertInto('events')
+          .values(
+            [
+              [later, 3],
+              [earlier, 2]
+            ].map(([id, atBatIndex]) => ({
+              id,
+              gameId: springGame,
+              battingTeamId: hawks,
+              hidden: false,
+              gumbo: JSON.stringify({
+                about: { atBatIndex, inning: 1, halfInning: 'bottom' },
+                result: { eventType: 'single', rbi: 0 },
+                matchup: { batter: { id: jordan }, pitcher: { id: jordan } }
+              })
+            })) as never
+          )
+          .execute()
+        const answer = await plays()
+        expect(answer.status).equals(200)
+        expect(
+          answer.body.map((row: { eventId: string; role: string }) => [
+            row.eventId,
+            row.role
+          ])
+        ).deep.equals([
+          [single, 'batter'],
+          [earlier, 'batter'],
+          [earlier, 'pitcher'],
+          [later, 'batter'],
+          [later, 'pitcher'],
+          [double, 'batter']
+        ])
+        expect((await plays('?role=batter')).ids).deep.equals([
+          single,
+          earlier,
+          later,
+          double
+        ])
+      } finally {
+        await db
+          .deleteFrom('events')
+          .where('id', 'in', [later, earlier])
+          .execute()
+      }
+    })
+
     it('narrows to a season and to an event type', async function () {
       expect((await plays(`?seasonId=${fall}`)).ids).deep.equals([double])
       expect((await plays('?eventType=single')).ids).deep.equals([single])
       expect((await plays('?role=pitcher')).ids).deep.equals([])
+    })
+
+    it('keeps games with equal start times grouped in case-sensitive id order', async function () {
+      if (db == null) throw new Error('Fixture database is required')
+      try {
+        await db
+          .updateTable('games')
+          .set({
+            start_at: new Date('2026-05-20T18:00:00Z')
+          })
+          .where('id', '=', fallGame)
+          .execute()
+        const answer = await plays()
+        expect(
+          answer.body.map((row: { gameId: string }) => row.gameId)
+        ).deep.equals([springGame, fallGame].sort())
+      } finally {
+        await db
+          .updateTable('games')
+          .set({
+            start_at: new Date('2025-10-10T18:00:00Z')
+          })
+          .where('id', '=', fallGame)
+          .execute()
+      }
     })
 
     it('shows another reader only the plays of teams and seasons they see', async function () {
@@ -464,9 +557,9 @@ describe('one player’s figures', function () {
       expect(hidden.ids).deep.equals([])
     })
 
-    it('answers 404 for a user id that is not a number', async function () {
+    it('answers 400 for a malformed user id', async function () {
       if (db == null) return this.skip()
-      expect((await ask('/players/usr_notanumber/plays')).status).equals(404)
+      expect((await ask('/players/usr_notanumber/plays')).status).equals(400)
     })
   })
 })

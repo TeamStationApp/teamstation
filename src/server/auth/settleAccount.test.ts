@@ -1,7 +1,9 @@
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { createSession } from './sessions'
 import { onboardingFor, settleAccount } from './settleAccount'
 
@@ -47,31 +49,78 @@ describe('verified account settlement', function () {
       step: 'name',
       completedAt: null
     })
-    expect((await onboardingFor(h.db, 101)).step).equals('complete')
+    expect((await onboardingFor(h.db, userIdOfGumbo(101))).step).equals(
+      'complete'
+    )
+  })
+  it('refuses an address trapped in an unresolved merge cycle and rolls back the new account', async () => {
+    await insertFixtureUsers(h.db, [
+      { id: 7001, display_name: 'Hank Aaron' },
+      { id: 7002, display_name: 'Babe Ruth' }
+    ])
+    await h.db
+      .updateTable('users')
+      .set({ merged_into: userIdOfGumbo(7002) })
+      .where('id', '=', userIdOfGumbo(7001))
+      .execute()
+    await h.db
+      .updateTable('users')
+      .set({ merged_into: userIdOfGumbo(7001) })
+      .where('id', '=', userIdOfGumbo(7002))
+      .execute()
+    await h.db
+      .insertInto('user_emails')
+      .values({
+        id: 'email_cycle',
+        user_id: userIdOfGumbo(7001),
+        email: 'cycle@example.test'
+      })
+      .execute()
+    const error = await settleAccount(h.db, 'cycle@example.test', {
+      mint: () => userIdOfGumbo(7003)
+    }).then(
+      () => null,
+      (error: unknown) => error
+    )
+    expect(error).property('code', 'conflict')
+    expect(
+      await h.db
+        .selectFrom('users')
+        .select('id')
+        .where('id', '=', userIdOfGumbo(7003))
+        .execute()
+    ).length(0)
+    expect(
+      await h.db
+        .selectFrom('gumbo_ids')
+        .select('gumbo_id')
+        .where('user_id', '=', userIdOfGumbo(7003))
+        .execute()
+    ).length(0)
   })
   it('verifies only the proved normalized imported address on an existing account', async () => {
     await h.db
       .updateTable('user_emails')
       .set({ verified_at: null, source: 'import' })
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .execute()
     await h.db
       .insertInto('user_emails')
       .values({
         id: 'email_unproved_alias',
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         email: 'unproved@example.com',
         source: 'import',
         verified_at: null
       })
       .execute()
     const settled = await settleAccount(h.db, ' ALEX@EXAMPLE.COM ')
-    expect(settled.userId).equals(101)
+    expect(settled.userId).equals(userIdOfGumbo(101))
     expect(settled.createdAccount).equals(false)
     const addresses = await h.db
       .selectFrom('user_emails')
       .select(['email', 'verified_at'])
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .execute()
     expect(
       addresses.find(row => row.email === 'alex@example.com')!.verified_at
@@ -84,16 +133,13 @@ describe('verified account settlement', function () {
     let calls = 0
     const settled = await settleAccount(h.db, 'collision@example.com', {
       displayName: 'Mike Trout',
-      mint: () =>
-        ++calls === 1
-          ? { userId: 101, legacyId: 'usr_collision_existing' }
-          : { userId: 303, legacyId: 'usr_collision_new' }
+      mint: () => (++calls === 1 ? userIdOfGumbo(101) : userIdOfGumbo(303))
     })
-    expect(settled.userId).equals(303)
+    expect(settled.userId).equals(userIdOfGumbo(303))
     expect(calls).equals(2)
     expect(settled.displayName).equals('Mike Trout')
     const exhausted = await settleAccount(h.db, 'exhausted@example.com', {
-      mint: () => ({ userId: 101, legacyId: 'usr_existing' })
+      mint: () => userIdOfGumbo(101)
     }).then(
       () => null,
       (error: unknown) => error
@@ -111,17 +157,17 @@ describe('verified account settlement', function () {
     await h.db
       .updateTable('users')
       .set({ login_enabled: false })
-      .where('id', '=', 102)
+      .where('id', '=', userIdOfGumbo(102))
       .execute()
     expect(await settleAccount(h.db, 'casey@example.com')).property(
       'createdAccount',
       false
     )
-    expect((await onboardingFor(h.db, 102)).step).equals('name')
+    expect((await onboardingFor(h.db, userIdOfGumbo(102))).step).equals('name')
     await h.db
       .updateTable('users')
       .set({ disabled_at: new Date() })
-      .where('id', '=', 102)
+      .where('id', '=', userIdOfGumbo(102))
       .execute()
     expect(
       await settleAccount(h.db, 'casey@example.com').then(
@@ -130,18 +176,18 @@ describe('verified account settlement', function () {
       )
     ).property('code', 'unauthorized')
     expect(
-      await createSession(h.db, 102, 'test').then(
+      await createSession(h.db, userIdOfGumbo(102), 'test').then(
         () => null,
         (error: unknown) => error
       )
     ).property('code', 'unauthorized')
     await h.db
       .updateTable('users')
-      .set({ merged_into: 101 })
-      .where('id', '=', 303)
+      .set({ merged_into: userIdOfGumbo(101) })
+      .where('id', '=', userIdOfGumbo(303))
       .execute()
     expect(
-      await createSession(h.db, 303, 'test').then(
+      await createSession(h.db, userIdOfGumbo(303), 'test').then(
         () => null,
         (error: unknown) => error
       )
@@ -150,7 +196,7 @@ describe('verified account settlement', function () {
     // and creates nobody.
     const before = await h.db.selectFrom('users').select('id').execute()
     expect((await settleAccount(h.db, 'collision@example.com')).userId).equals(
-      101
+      userIdOfGumbo(101)
     )
     expect(await h.db.selectFrom('users').select('id').execute()).length(
       before.length

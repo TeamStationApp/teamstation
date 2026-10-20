@@ -8,7 +8,7 @@ import type { Database } from '../db/database'
 /** City and event lookups share a paid-provider budget for each account. */
 export async function limitGoogleLookup(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   details: boolean
 ): Promise<void> {
   await atomic(db, async trx => {

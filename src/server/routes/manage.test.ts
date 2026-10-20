@@ -7,10 +7,12 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -132,27 +134,24 @@ describe('the manage page', function () {
     const now = new Date()
     for (const [id, name, email] of [
       [bossId, 'Sam Boss', bossEmail],
-      [coachId, 'Robin Coach', coachEmail],
-      [parentId, 'Jo Parent', parentEmail],
+      [coachId, 'Robin Yount', coachEmail],
+      [parentId, 'Joe Morgan', parentEmail],
       // No session, ever: the PeerTube import brought many of these.
-      [ghostId, 'Pat Ghost', ghostEmail]
+      [ghostId, 'Pat Neshek', ghostEmail]
     ] as Array<[number, string, string]>) {
-      await db
-        .insertInto('users')
-        .values({
-          id,
-          legacyId: legacyId(id),
-          display_name: name,
-          login_enabled: true,
-          created_at: now,
-          updated_at: now
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id,
+        legacyId: legacyId(id),
+        display_name: name,
+        login_enabled: true,
+        created_at: now,
+        updated_at: now
+      })
       await db
         .insertInto('user_emails')
         .values({
           id: makeId('userEmail'),
-          user_id: id,
+          user_id: userIdOfGumbo(id),
           email,
           is_primary: true,
           verified_at: now
@@ -168,7 +167,7 @@ describe('the manage page', function () {
         .insertInto('auth_sessions')
         .values({
           id,
-          user_id: user,
+          user_id: userIdOfGumbo(user),
           token_hash: hashToken(token),
           expires_at: new Date(now.getTime() + 3_600_000),
           created_at: now
@@ -222,7 +221,7 @@ describe('the manage page', function () {
       .insertInto('scope_roles')
       .values({
         id: 'adm_boss',
-        user_id: bossId,
+        user_id: userIdOfGumbo(bossId),
         scope_type: 'season',
         scope_id: 'sea_spring'
       })
@@ -231,7 +230,7 @@ describe('the manage page', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_coach',
-        user_id: coachId,
+        user_id: userIdOfGumbo(coachId),
         team_id: 'tem_hawks',
         role: 'manager'
       })
@@ -240,7 +239,7 @@ describe('the manage page', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_parent',
-        user_id: parentId,
+        user_id: userIdOfGumbo(parentId),
         team_id: 'tem_hawks',
         role: 'member'
       })
@@ -249,7 +248,7 @@ describe('the manage page', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_ghost',
-        user_id: ghostId,
+        user_id: userIdOfGumbo(ghostId),
         team_id: 'tem_hawks',
         role: 'member'
       })
@@ -259,7 +258,7 @@ describe('the manage page', function () {
       .insertInto('season_members')
       .values({
         id: 'smb_parent',
-        user_id: parentId,
+        user_id: userIdOfGumbo(parentId),
         season_id: 'sea_spring',
         role: 'member',
         source: 'peertube'
@@ -290,7 +289,7 @@ describe('the manage page', function () {
   }
 
   interface Person {
-    userId: number
+    userId: string
     displayName: string
     emails: string[]
     createdAt: string
@@ -326,7 +325,7 @@ describe('the manage page', function () {
       (reply.body.invited as { code: string }).code
     )
     expect(invite).not.equals(undefined)
-    await redeemInvite(db!, invite!, userId)
+    await redeemInvite(db!, invite!, userIdOfGumbo(userId))
   }
 
   it('shows every level a person\u2019s access comes through', async function () {
@@ -334,7 +333,7 @@ describe('the manage page', function () {
     const page = await ask('/manage/team/tem_hawks', COACH)
     expect(page.status).equals(200)
     const parent = peopleOf(page.body).find(
-      person => person.userId === parentId
+      person => person.userId === userIdOfGumbo(parentId)
     )
     expect(parent?.emails).deep.equals([parentEmail])
     // Both grants, not the strongest of the two.
@@ -352,7 +351,9 @@ describe('the manage page', function () {
     if (db == null) this.skip()
     const page = await ask('/manage/team/tem_hawks', COACH)
     const people = peopleOf(page.body)
-    const coach = people.find(person => person.userId === coachId)
+    const coach = people.find(
+      person => person.userId === userIdOfGumbo(coachId)
+    )
     // The seeded session is this suite's own, so the coach has signed in and
     // has been here; the sign-in is a real date, not the empty string.
     expect(Number.isNaN(Date.parse(coach?.createdAt ?? ''))).equals(false)
@@ -361,7 +362,9 @@ describe('the manage page', function () {
 
     // Somebody with no session has never signed in, which is null and not a
     // date at the beginning of time.
-    const ghost = people.find(person => person.userId === ghostId)
+    const ghost = people.find(
+      person => person.userId === userIdOfGumbo(ghostId)
+    )
     expect(Number.isNaN(Date.parse(ghost?.createdAt ?? ''))).equals(false)
     expect(ghost?.lastSignInAt).equals(null)
     expect(ghost?.lastSeenAt).equals(null)
@@ -376,7 +379,7 @@ describe('the manage page', function () {
   it('removes what this level grants and leaves the level above', async function () {
     if (db == null) this.skip()
     const gone = await ask(
-      `/manage/team/tem_hawks/people/${parentId}`,
+      `/manage/team/tem_hawks/people/${userIdOfGumbo(parentId)}`,
       COACH,
       'DELETE'
     )
@@ -385,7 +388,7 @@ describe('the manage page', function () {
 
     const page = await ask('/manage/team/tem_hawks', COACH)
     const parent = peopleOf(page.body).find(
-      person => person.userId === parentId
+      person => person.userId === userIdOfGumbo(parentId)
     )
     // Still there, still able to watch — through the season, which a team's
     // administrator has no business taking away.
@@ -402,8 +405,8 @@ describe('the manage page', function () {
     expect(added.body).deep.equals({
       added: true,
       person: {
-        userId: parentId,
-        displayName: 'Jo Parent',
+        userId: userIdOfGumbo(parentId),
+        displayName: 'Joe Morgan',
         email: parentEmail
       }
     })
@@ -411,7 +414,7 @@ describe('the manage page', function () {
     const membership = await db
       .selectFrom('memberships')
       .select(['role'])
-      .where('user_id', '=', parentId)
+      .where('user_id', '=', userIdOfGumbo(parentId))
       .where('team_id', '=', 'tem_hawks')
       .executeTakeFirst()
     expect(membership?.role).equals('member')
@@ -419,10 +422,16 @@ describe('the manage page', function () {
       .selectFrom('notification_events')
       .select(['id', 'metadata', 'recorded_recipients'])
       .where('source_type', '=', 'grant')
-      .where(eb => eb(eb.val(parentId), '=', eb.fn.any('recorded_recipients')))
+      .where(eb =>
+        eb(
+          eb.val(userIdOfGumbo(parentId)),
+          '=',
+          eb.fn.any('recorded_recipients')
+        )
+      )
       .executeTakeFirstOrThrow()
     expect(notice.metadata).includes({
-      title: 'Robin Coach added you to Demo Hawks'
+      title: 'Robin Yount added you to Demo Hawks'
     })
     expect(told.at(-1)).deep.equals({
       email: parentEmail,
@@ -465,7 +474,7 @@ describe('the manage page', function () {
     if (db == null) this.skip()
     await join('season', 'sea_spring', coachId, coachEmail)
     const made = await ask(
-      `/manage/season/sea_spring/people/${coachId}/role`,
+      `/manage/season/sea_spring/people/${userIdOfGumbo(coachId)}/role`,
       BOSS,
       'PUT',
       { role: 'admin' }
@@ -481,13 +490,13 @@ describe('the manage page', function () {
     const membership = await db
       .selectFrom('season_members')
       .select(['role'])
-      .where('user_id', '=', coachId)
+      .where('user_id', '=', userIdOfGumbo(coachId))
       .where('season_id', '=', 'sea_spring')
       .executeTakeFirst()
     expect(membership?.role).equals('member')
 
     const back = await ask(
-      `/manage/season/sea_spring/people/${coachId}/role`,
+      `/manage/season/sea_spring/people/${userIdOfGumbo(coachId)}/role`,
       BOSS,
       'PUT',
       { role: 'member' }
@@ -502,7 +511,7 @@ describe('the manage page', function () {
     // The coach administers their own team and nothing above it, so the
     // season's page is the door they might try.
     const refused = await ask(
-      `/manage/season/sea_spring/people/${coachId}/role`,
+      `/manage/season/sea_spring/people/${userIdOfGumbo(coachId)}/role`,
       COACH,
       'PUT',
       { role: 'admin' }
@@ -511,7 +520,7 @@ describe('the manage page', function () {
 
     // On their own team's page it works, and what it writes is a *team* role.
     const made = await ask(
-      `/manage/team/tem_hawks/people/${parentId}/role`,
+      `/manage/team/tem_hawks/people/${userIdOfGumbo(parentId)}/role`,
       COACH,
       'PUT',
       { role: 'admin' }
@@ -520,7 +529,7 @@ describe('the manage page', function () {
     const roles = await db
       .selectFrom('scope_roles')
       .select(['scope_type', 'scope_id'])
-      .where('user_id', '=', parentId)
+      .where('user_id', '=', userIdOfGumbo(parentId))
       .execute()
     expect(roles.map(row => `${row.scope_type}:${row.scope_id}`)).deep.equals([
       'team:tem_hawks'
@@ -530,7 +539,7 @@ describe('the manage page', function () {
   it('will not let an administrator demote themselves', async function () {
     if (db == null) this.skip()
     const refused = await ask(
-      `/manage/season/sea_spring/people/${bossId}/role`,
+      `/manage/season/sea_spring/people/${userIdOfGumbo(bossId)}/role`,
       BOSS,
       'PUT',
       { role: 'member' }
@@ -579,7 +588,7 @@ describe('the manage page', function () {
       .insertInto('scope_roles')
       .values({
         id: 'adm_boss_field',
-        user_id: bossId,
+        user_id: userIdOfGumbo(bossId),
         scope_type: 'league',
         scope_id: 'lea_field'
       })
@@ -661,7 +670,7 @@ describe('the manage page', function () {
       await db!
         .selectFrom('scope_roles')
         .select(['role'])
-        .where('user_id', '=', userId)
+        .where('user_id', '=', userIdOfGumbo(userId))
         .where('scope_type', '=', scopeType as 'team')
         .where('scope_id', '=', scopeId)
         .orderBy('role')
@@ -672,22 +681,19 @@ describe('the manage page', function () {
     if (db == null) this.skip()
     // A league's administrator, who runs everything on this page.
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values({
-        id: chiefId,
-        legacyId: legacyId(chiefId),
-        display_name: 'Lee Chief',
-        login_enabled: true,
-        created_at: now,
-        updated_at: now
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(chiefId),
+      legacyId: legacyId(chiefId),
+      display_name: 'Lee Smith',
+      login_enabled: true,
+      created_at: now,
+      updated_at: now
+    })
     await db
       .insertInto('auth_sessions')
       .values({
         id: 'ses_chief',
-        user_id: chiefId,
+        user_id: userIdOfGumbo(chiefId),
         token_hash: hashToken(CHIEF),
         expires_at: new Date(now.getTime() + 3_600_000),
         created_at: now
@@ -697,7 +703,7 @@ describe('the manage page', function () {
       .insertInto('scope_roles')
       .values({
         id: 'rol_chief',
-        user_id: chiefId,
+        user_id: userIdOfGumbo(chiefId),
         scope_type: 'league',
         scope_id: 'lea_npll',
         role: 'admin'
@@ -707,33 +713,33 @@ describe('the manage page', function () {
     await join('league', 'lea_npll', ghostId, ghostEmail, CHIEF)
     await join('season', 'sea_spring', ghostId, ghostEmail)
     const league = await ask(
-      `/manage/league/lea_npll/people/${ghostId}/roles`,
+      `/manage/league/lea_npll/people/${userIdOfGumbo(ghostId)}/roles`,
       CHIEF,
       'PUT',
       { admin: false, flags: ['scorekeeper'] }
     )
     expect(league).deep.equals({
       status: 200,
-      body: { userId: ghostId, roles: ['scorekeeper'] }
+      body: { userId: userIdOfGumbo(ghostId), roles: ['scorekeeper'] }
     })
     // And able to see what they keep score of.
     const joined = await db
       .selectFrom('league_members')
       .select(['role'])
-      .where('user_id', '=', ghostId)
+      .where('user_id', '=', userIdOfGumbo(ghostId))
       .where('league_id', '=', 'lea_npll')
       .executeTakeFirst()
     expect(joined?.role).equals('member')
 
     const season = await ask(
-      `/manage/season/sea_spring/people/${ghostId}/roles`,
+      `/manage/season/sea_spring/people/${userIdOfGumbo(ghostId)}/roles`,
       BOSS,
       'PUT',
       { admin: true, flags: ['songkeeper', 'coach', 'coach'] }
     )
     expect(season.body.roles).deep.equals(['admin', 'coach', 'songkeeper'])
     const team = await ask(
-      `/manage/team/tem_hawks/people/${ghostId}/roles`,
+      `/manage/team/tem_hawks/people/${userIdOfGumbo(ghostId)}/roles`,
       COACH,
       'PUT',
       { admin: false, flags: ['videographer', 'assistant'] }
@@ -757,12 +763,12 @@ describe('the manage page', function () {
     const kept = await db
       .selectFrom('scope_roles')
       .select(['id'])
-      .where('user_id', '=', ghostId)
+      .where('user_id', '=', userIdOfGumbo(ghostId))
       .where('scope_id', '=', 'sea_spring')
       .where('role', '=', 'songkeeper')
       .executeTakeFirstOrThrow()
     const replaced = await ask(
-      `/manage/season/sea_spring/people/${ghostId}/roles`,
+      `/manage/season/sea_spring/people/${userIdOfGumbo(ghostId)}/roles`,
       BOSS,
       'PUT',
       { admin: false, flags: ['songkeeper'] }
@@ -771,13 +777,13 @@ describe('the manage page', function () {
     const still = await db
       .selectFrom('scope_roles')
       .select(['id'])
-      .where('user_id', '=', ghostId)
+      .where('user_id', '=', userIdOfGumbo(ghostId))
       .where('scope_id', '=', 'sea_spring')
       .executeTakeFirstOrThrow()
     expect(still.id).equals(kept.id)
 
     const cleared = await ask(
-      `/manage/team/tem_hawks/people/${ghostId}/roles`,
+      `/manage/team/tem_hawks/people/${userIdOfGumbo(ghostId)}/roles`,
       COACH,
       'PUT',
       { admin: false, flags: [] }
@@ -793,7 +799,7 @@ describe('the manage page', function () {
         .selectFrom('audit_log')
         .select(['after'])
         .where('entity_type', '=', 'scopeRoles')
-        .where('entity_id', '=', String(ghostId))
+        .where('entity_id', '=', userIdOfGumbo(ghostId))
         .execute()
     }
     expect(audited.length).equals(7)
@@ -814,33 +820,45 @@ describe('the manage page', function () {
       .insertInto('auth_sessions')
       .values({
         id: 'ses_ghost',
-        user_id: ghostId,
+        user_id: userIdOfGumbo(ghostId),
         token_hash: hashToken(GHOST),
         expires_at: new Date(now.getTime() + 3_600_000),
         created_at: now
       })
       .execute()
     expect(
-      await put(`/manage/team/tem_hawks/people/${parentId}/roles`, GHOST, body)
+      await put(
+        `/manage/team/tem_hawks/people/${userIdOfGumbo(parentId)}/roles`,
+        GHOST,
+        body
+      )
     ).equals(404)
     expect((await ask('/manage/team/tem_hawks', GHOST)).status).equals(404)
     // A team's manager does not run its season.
     expect(
       await put(
-        `/manage/season/sea_spring/people/${ghostId}/roles`,
+        `/manage/season/sea_spring/people/${userIdOfGumbo(ghostId)}/roles`,
         COACH,
         body
       )
     ).equals(404)
     // The season's and the league's administrators run the team below them.
     expect(
-      await put(`/manage/team/tem_hawks/people/${ghostId}/roles`, BOSS, body)
+      await put(
+        `/manage/team/tem_hawks/people/${userIdOfGumbo(ghostId)}/roles`,
+        BOSS,
+        body
+      )
     ).equals(200)
     expect(
-      await put(`/manage/team/tem_hawks/people/${ghostId}/roles`, CHIEF, {
-        admin: false,
-        flags: []
-      })
+      await put(
+        `/manage/team/tem_hawks/people/${userIdOfGumbo(ghostId)}/roles`,
+        CHIEF,
+        {
+          admin: false,
+          flags: []
+        }
+      )
     ).equals(200)
     // `admin` is not a flag, and an unknown flag is not either.
     for (const bad of [
@@ -850,33 +868,37 @@ describe('the manage page', function () {
       { admin: 'yes', flags: [] }
     ]) {
       expect(
-        await put(`/manage/team/tem_hawks/people/${ghostId}/roles`, COACH, bad),
+        await put(
+          `/manage/team/tem_hawks/people/${userIdOfGumbo(ghostId)}/roles`,
+          COACH,
+          bad
+        ),
         JSON.stringify(bad)
       ).equals(400)
     }
     expect(
       await put(
-        `/manage/team/tem_hawks/people/${mintUser()}/roles`,
+        `/manage/team/tem_hawks/people/${userIdOfGumbo(mintUser())}/roles`,
         COACH,
         body
       )
     ).equals(404)
     expect(
       await put('/manage/team/tem_hawks/people/nobody/roles', COACH, body)
-    ).equals(404)
+    ).equals(400)
   })
 
   it('will not let an administrator clear their own admin, and lets them add flags', async function () {
     if (db == null) this.skip()
     const refused = await ask(
-      `/manage/season/sea_spring/people/${bossId}/roles`,
+      `/manage/season/sea_spring/people/${userIdOfGumbo(bossId)}/roles`,
       BOSS,
       'PUT',
       { admin: false, flags: ['coach'] }
     )
     expect(refused.status).equals(409)
     const kept = await ask(
-      `/manage/season/sea_spring/people/${bossId}/roles`,
+      `/manage/season/sea_spring/people/${userIdOfGumbo(bossId)}/roles`,
       BOSS,
       'PUT',
       { admin: true, flags: ['coach'] }
@@ -888,7 +910,7 @@ describe('the manage page', function () {
       .insertInto('user_emails')
       .values({
         id: makeId('userEmail'),
-        user_id: chiefId,
+        user_id: userIdOfGumbo(chiefId),
         email: 'chief@example.com',
         is_primary: true,
         verified_at: new Date()
@@ -896,7 +918,7 @@ describe('the manage page', function () {
       .execute()
     await join('season', 'sea_spring', chiefId, 'chief@example.com')
     const flags = await ask(
-      `/manage/season/sea_spring/people/${chiefId}/roles`,
+      `/manage/season/sea_spring/people/${userIdOfGumbo(chiefId)}/roles`,
       CHIEF,
       'PUT',
       { admin: false, flags: ['scorekeeper'] }
@@ -906,24 +928,32 @@ describe('the manage page', function () {
 
   it('keeps the old role route, which leaves flags alone', async function () {
     if (db == null) this.skip()
-    await ask(`/manage/team/tem_hawks/people/${ghostId}/roles`, COACH, 'PUT', {
-      admin: false,
-      flags: ['scorekeeper', 'songkeeper']
-    })
+    await ask(
+      `/manage/team/tem_hawks/people/${userIdOfGumbo(ghostId)}/roles`,
+      COACH,
+      'PUT',
+      {
+        admin: false,
+        flags: ['scorekeeper', 'songkeeper']
+      }
+    )
     const made = await ask(
-      `/manage/team/tem_hawks/people/${ghostId}/role`,
+      `/manage/team/tem_hawks/people/${userIdOfGumbo(ghostId)}/role`,
       COACH,
       'PUT',
       { role: 'admin' }
     )
-    expect(made.body).deep.equals({ userId: ghostId, role: 'admin' })
+    expect(made.body).deep.equals({
+      userId: userIdOfGumbo(ghostId),
+      role: 'admin'
+    })
     expect(await rowsOf(ghostId, 'team', 'tem_hawks')).deep.equals([
       'admin',
       'scorekeeper',
       'songkeeper'
     ])
     const back = await ask(
-      `/manage/team/tem_hawks/people/${ghostId}/role`,
+      `/manage/team/tem_hawks/people/${userIdOfGumbo(ghostId)}/role`,
       COACH,
       'PUT',
       { role: 'member' }
@@ -938,7 +968,9 @@ describe('the manage page', function () {
   it('lists every role by the level it is set on, named', async function () {
     if (db == null) this.skip()
     const page = await ask('/manage/team/tem_hawks', COACH)
-    const ghost = peopleOf(page.body).find(person => person.userId === ghostId)
+    const ghost = peopleOf(page.body).find(
+      person => person.userId === userIdOfGumbo(ghostId)
+    )
     const height = { league: 0, season: 1, team: 2 }
     const byHeight = (a: { kind: string }, b: { kind: string }): number =>
       height[a.kind as keyof typeof height] -
@@ -965,7 +997,9 @@ describe('the manage page', function () {
     ])
     // An administrator's levels are still listed on their own, for the apps
     // that read nothing else.
-    const boss = peopleOf(page.body).find(person => person.userId === bossId)
+    const boss = peopleOf(page.body).find(
+      person => person.userId === userIdOfGumbo(bossId)
+    )
     expect(boss?.adminOf).deep.equals([
       { kind: 'season', id: 'sea_spring', name: 'Demo Spring 2026' }
     ])
@@ -986,22 +1020,19 @@ describe('the manage page', function () {
     const watcherId = mintUser()
     const watcherEmail = exampleEmail()
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values({
-        id: watcherId,
-        legacyId: legacyId(watcherId),
-        display_name: 'Lou Watcher',
-        login_enabled: true,
-        created_at: now,
-        updated_at: now
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(watcherId),
+      legacyId: legacyId(watcherId),
+      display_name: 'Lou Gehrig',
+      login_enabled: true,
+      created_at: now,
+      updated_at: now
+    })
     await db
       .insertInto('user_emails')
       .values({
         id: makeId('userEmail'),
-        user_id: watcherId,
+        user_id: userIdOfGumbo(watcherId),
         email: watcherEmail,
         is_primary: true,
         verified_at: now
@@ -1011,7 +1042,7 @@ describe('the manage page', function () {
       .insertInto('season_members')
       .values({
         id: 'smb_watcher',
-        user_id: watcherId,
+        user_id: userIdOfGumbo(watcherId),
         season_id: 'sea_spring',
         role: 'member',
         source: 'peertube'
@@ -1019,14 +1050,14 @@ describe('the manage page', function () {
       .execute()
     const page = await ask('/manage/team/tem_hawks', COACH)
     const listed = peopleOf(page.body).find(
-      person => person.userId === watcherId
+      person => person.userId === userIdOfGumbo(watcherId)
     )
     expect(listed?.seasons.map(season => season.id)).deep.equals(['sea_spring'])
     expect(listed?.teams).deep.equals([])
 
     // Nothing to accept: they are the team's coach, and a member of it, now.
     const made = await ask(
-      `/manage/team/tem_hawks/people/${watcherId}/roles`,
+      `/manage/team/tem_hawks/people/${userIdOfGumbo(watcherId)}/roles`,
       COACH,
       'PUT',
       { admin: false, flags: ['coach'] }
@@ -1036,7 +1067,7 @@ describe('the manage page', function () {
     const membership = await db
       .selectFrom('memberships')
       .select('role')
-      .where('user_id', '=', watcherId)
+      .where('user_id', '=', userIdOfGumbo(watcherId))
       .where('team_id', '=', 'tem_hawks')
       .executeTakeFirst()
     expect(membership?.role).equals('member')
@@ -1044,29 +1075,32 @@ describe('the manage page', function () {
       .selectFrom('notification_events')
       .select('metadata')
       .where('source_type', '=', 'grant')
-      .where(eb => eb(eb.val(watcherId), '=', eb.fn.any('recorded_recipients')))
+      .where(eb =>
+        eb(
+          eb.val(userIdOfGumbo(watcherId)),
+          '=',
+          eb.fn.any('recorded_recipients')
+        )
+      )
       .executeTakeFirstOrThrow()
     expect(notice.metadata).includes({
-      title: 'Robin Coach added you as Coach of Demo Hawks'
+      title: 'Robin Yount added you as Coach of Demo Hawks'
     })
 
     // Somebody on no list of the team is not given anything by id.
     const stranger = mintUser()
-    await db
-      .insertInto('users')
-      .values({
-        id: stranger,
-        legacyId: legacyId(stranger),
-        display_name: 'Stranger',
-        login_enabled: true,
-        created_at: now,
-        updated_at: now
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(stranger),
+      legacyId: legacyId(stranger),
+      display_name: 'Stranger',
+      login_enabled: true,
+      created_at: now,
+      updated_at: now
+    })
     expect(
       (
         await ask(
-          `/manage/team/tem_hawks/people/${stranger}/roles`,
+          `/manage/team/tem_hawks/people/${userIdOfGumbo(stranger)}/roles`,
           COACH,
           'PUT',
           { admin: false, flags: ['coach'] }
