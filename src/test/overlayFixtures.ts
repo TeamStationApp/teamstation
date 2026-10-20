@@ -1,6 +1,6 @@
 import { act } from 'react'
 
-import type { BoardStep } from '../common/api'
+import type { BoardStep, LineScoreStep } from '../common/api'
 import {
   defaultScoreboardSettings,
   type ScoreboardOverlay
@@ -67,6 +67,8 @@ export function overlayServer(): {
     WallTimeline | ((afterMs: number | null) => WallTimeline)
   >
   steps: Map<string, BoardStep[]>
+  /** Each game's line score; a game with none has no steps. */
+  lines: Map<string, LineScoreStep[]>
   fail: Set<string>
   /** The status a path in `fail` answers with; 503 unless a test says. */
   failStatus: number
@@ -82,6 +84,7 @@ export function overlayServer(): {
     WallTimeline | ((afterMs: number | null) => WallTimeline)
   >()
   const steps = new Map<string, BoardStep[]>()
+  const lines = new Map<string, LineScoreStep[]>()
   const fail = new Set<string>()
   const overlays = new Map<string, ScoreboardOverlay>()
   const json = (body: unknown, status = 200): Response =>
@@ -127,6 +130,13 @@ export function overlayServer(): {
       }
       return json({ version: '1:0', steps: all.slice(first) })
     }
+    const line = /^\/games\/([^/]+)\/line-score$/.exec(path)
+    if (line != null)
+      return json({
+        version: '1',
+        teams: { away: 'Visitors', home: 'Hosts' },
+        steps: lines.get(decodeURIComponent(line[1])) ?? []
+      })
     return json({ error: 'notFound', message: `no ${path}` }, 404)
   }
   const server = {
@@ -134,6 +144,7 @@ export function overlayServer(): {
     asked,
     timelines,
     steps,
+    lines,
     fail,
     failStatus: 503,
     overlays

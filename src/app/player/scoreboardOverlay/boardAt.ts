@@ -1,17 +1,17 @@
 import type { BoardStep } from '../../../common/api'
 
 /**
- * The step of a game's board in effect at `wallMs`: the last whose `at` is at
- * or before it. Null before the first step, and for no instant at all, which
+ * The step of a game's board in effect at `wallMs` (or of any timeline of
+ * steps, such as its line score): the last whose `at` is at or before it. Null before the first step, and for no instant at all, which
  * is when nothing is drawn.
  *
  * By halving: a game's timeline is a step per action, and this runs on every
  * frame.
  */
-export function boardAt(
-  steps: readonly BoardStep[],
+export function boardAt<Step extends { at: number } = BoardStep>(
+  steps: readonly Step[],
   wallMs: number | null
-): BoardStep | null {
+): Step | null {
   if (wallMs == null || steps.length === 0 || steps[0].at > wallMs) return null
   let low = 0
   let high = steps.length - 1

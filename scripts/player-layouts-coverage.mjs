@@ -25,6 +25,7 @@ import { spawnSync } from 'node:child_process'
 import {
   cpSync,
   existsSync,
+  globSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -59,13 +60,12 @@ const tsSuites = [
   'src/server/routes/lineScore.test.ts'
 ]
 
-/** The `.test.tsx` suites, each bundled alone. */
+/**
+ * The `.test.tsx` suites, each bundled alone: every one of the player's, and
+ * those of the screens that open it.
+ */
 const appSuites = [
-  'src/app/player/PlayerSurface.test.tsx',
-  'src/app/player/MultiCamView.test.tsx',
-  'src/app/player/MultiCamView.native.test.tsx',
-  'src/app/player/scoreboardOverlay/ScoreboardOverlay.test.tsx',
-  'src/app/player/scoreboardOverlay/liveBoard.test.tsx',
+  ...globSync('src/app/player/**/*.test.tsx').sort(),
   'src/app/App.membershipAccess.test.tsx'
 ]
 
