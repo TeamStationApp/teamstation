@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { type Session, TeamStationClient } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   type AccountHarness,
   accountHarness,
@@ -190,7 +191,7 @@ describe('signup and onboarding in the real HTTP service', function () {
       .insertInto('api_tokens')
       .values({
         id: 'api_onboarding',
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         label: 'Fixture',
         token_hash: hashToken(token)
       })
@@ -221,7 +222,7 @@ describe('signup and onboarding in the real HTTP service', function () {
     await h.db
       .updateTable('users')
       .set({ disabled_at: new Date() })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     expect((await h.request('GET', '/me/account')).status).equals(401)
     expect(
@@ -230,19 +231,19 @@ describe('signup and onboarding in the real HTTP service', function () {
     await h.db
       .updateTable('users')
       .set({ disabled_at: null })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
   })
   it('verifies a plain account after its invitation is revoked, and fails mail delivery without an account', async () => {
     await h.db
       .updateTable('memberships')
       .set({ role: 'manager' })
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .execute()
     const invite = await createInvite(h.db, {
       scopeType: 'team',
       scopeId: 'tem_account',
-      createdBy: 101
+      createdBy: userIdOfGumbo(101)
     })
     const claim = await createEmailCode(h.db, 'revoked@example.com', 'login', {
       inviteId: invite.id

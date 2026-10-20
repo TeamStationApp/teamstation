@@ -2,8 +2,12 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { asRosterEntry, TeamStationClient } from '../../common/api'
+import { asNewRosterPlayer } from '../../common/playerSettings'
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { seedSettingsCleanup3 } from '../../test/settingsCleanup3Fixture'
+import { closeInto } from '../admin/people'
+import { createGuestPlayer } from '../games/guestPlayers'
 import { receivingVideoIds } from '../live/receiving'
 import { mediaRoutes } from './media'
 
@@ -58,12 +62,12 @@ describe('public game access', function () {
     await f.h.db
       .updateTable('users')
       .set({ avatar_path: 'public-staff.png' })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     await f.h.db
       .updateTable('users')
       .set({ avatar_path: 'private-player.png' })
-      .where('id', '=', 104)
+      .where('id', '=', userIdOfGumbo(104))
       .execute()
     const anonymous = await f.h.request(
       'GET',
@@ -87,7 +91,8 @@ describe('public game access', function () {
       const roster = (await response.json()).map(asRosterEntry)
       expect(
         roster.find(
-          (person: ReturnType<typeof asRosterEntry>) => person.userId === 101
+          (person: ReturnType<typeof asRosterEntry>) =>
+            person.userId === userIdOfGumbo(101)
         )?.avatarUrl
       ).is.a('string')
       if (userId === 103)
@@ -193,6 +198,87 @@ describe('public game access', function () {
         .status
     ).equals(200)
   })
+  it('withholds guest profiles from public viewers and shortens member and scorer names, including merged guests', async () => {
+    const db = f.h.db
+    const gameId = 'gam_settings3_scheduled'
+    const scorer = { userId: userIdOfGumbo(101), isAdmin: true, scopes: [] }
+    const guest = await createGuestPlayer(
+      db,
+      scorer,
+      gameId,
+      'home',
+      asNewRosterPlayer({
+        firstName: 'Babe',
+        lastName: 'Ruth',
+        jersey: null,
+        positions: [],
+        bats: null,
+        throws: null
+      })
+    )
+    const merged = await createGuestPlayer(
+      db,
+      scorer,
+      gameId,
+      'away',
+      asNewRosterPlayer({
+        firstName: 'Willie',
+        lastName: 'Mays',
+        jersey: null,
+        positions: [],
+        bats: null,
+        throws: null
+      })
+    )
+    await db
+      .updateTable('users')
+      .set({
+        display_name: 'Hank Aaron',
+        first_name: 'Hank',
+        last_name: 'Aaron'
+      })
+      .where('id', '=', userIdOfGumbo(104))
+      .execute()
+    await closeInto(db, merged.userId, userIdOfGumbo(104))
+    await db
+      .insertInto('memberships')
+      .values({
+        id: 'mem_guest_viewer',
+        team_id: f.teamA,
+        user_id: userIdOfGumbo(106)
+      })
+      .execute()
+    for (const viewer of [null, 103, 106, 101]) {
+      const response = await f.h.request(
+        'GET',
+        `/games/${gameId}`,
+        undefined,
+        viewer
+      )
+      expect(response.status).equals(200)
+      const game = await response.json()
+      expect(JSON.stringify(game.guestPlayers)).not.includes('Babe Ruth')
+      expect(JSON.stringify(game.guestPlayers)).not.includes('Hank Aaron')
+      if (viewer == null || viewer === 103) {
+        expect(game.guestPlayers).deep.equals({ away: [], home: [] })
+      } else {
+        expect(game.guestPlayers.home).length(1)
+        expect(game.guestPlayers.home[0]).includes({
+          userId: guest.userId,
+          shortName: 'Babe R'
+        })
+        expect(game.guestPlayers.away[0]).includes({
+          userId: userIdOfGumbo(104),
+          shortName: 'Hank A'
+        })
+        for (const entry of [
+          ...game.guestPlayers.home,
+          ...game.guestPlayers.away
+        ])
+          expect(entry.nameDetails).equals(undefined)
+      }
+    }
+  })
   it('creates a roster player through the typed client', async () => {
     const api = new TeamStationClient({
       baseUrl: f.h.origin + '/api/v1',
@@ -235,7 +321,7 @@ describe('public game access', function () {
         id: 'liv_public',
         game_id: 'gam_settings3_final',
         team_id: f.teamA,
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         label: 'Demo camera',
         key_hash: '0'.repeat(64),
         key_prefix: 'demo',
@@ -250,7 +336,7 @@ describe('public game access', function () {
         first_published_at: now,
         last_published_at: now,
         ended_at: null,
-        created_by: 101,
+        created_by: userIdOfGumbo(101),
         created_at: now,
         updated_at: now
       })

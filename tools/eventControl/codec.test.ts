@@ -233,12 +233,11 @@ describe('event-control codec details', function () {
   })
 
   it('reads the server reply, and refuses a malformed one', function () {
-    const good = fixtureCredentials('one')
-    expect(asCredentials({ ...good, version: 1, userId: 1001 })).deep.equals(
-      good
-    )
+    const good = { ...fixtureCredentials('one'), version: 2 }
+    expect(asCredentials(good)).deep.equals(fixtureCredentials('one'))
+    for (const userId of [1001, '1001', 'usr_1111111111111111111111']) expect(() => asCredentials({ ...good, userId })).throws(/userId/)
     expect(() => asCredentials(null)).throws(/not a key reply/)
-    expect(() => asCredentials({ ...good, version: 2 })).throws(/version/)
+    expect(() => asCredentials({ ...good, version: 1 })).throws(/version/)
     expect(() => asCredentials({ ...good, issuer: '' })).throws(/issuer/)
     expect(() => asCredentials({ ...good, userId: 'x' })).throws(/userId/)
     expect(() => asCredentials({ ...good, accountTag: 'AB' })).throws(/accountTag/)

@@ -11,7 +11,7 @@ import type {
   TeamMemberExternalId
 } from '../../common/teamMembers'
 import { guardiansOf, guardiansWhoCanAct } from '../access'
-import { onePerson, survivorsOf } from '../admin/people'
+import { lockPlayerEdits, onePerson, survivorsOf } from '../admin/people'
 import { addEmail } from '../auth/emails'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
@@ -52,9 +52,10 @@ export async function addAdults(
   db: Kysely<Database>,
   teamId: string,
   rows: TeamAdultRow[],
-  caller: { userId: number; isAdmin: boolean }
+  caller: { userId: string; isAdmin: boolean }
 ): Promise<TeamAdultsResponse> {
   return await db.transaction().execute(async trx => {
+    await lockPlayerEdits(trx)
     await lockKeys(
       trx,
       rows.flatMap(row => [
@@ -95,13 +96,13 @@ export async function addAdults(
  * read the first time the call names them, before it links anybody to them.
  */
 interface GuardianLinking {
-  caller: { userId: number; isAdmin: boolean }
-  callerId: number
+  caller: { userId: string; isAdmin: boolean }
+  callerId: string
   /**
    * Each player's guardians when the call first came to them: everyone
    * linked, and those of them who can sign in, who alone hold the say.
    */
-  guardedBefore: Map<number, { linked: readonly number[]; acting: number }>
+  guardedBefore: Map<string, { linked: readonly string[]; acting: number }>
 }
 
 async function addAdult(
@@ -131,7 +132,7 @@ async function addAdult(
     })
   }
 
-  let userId: number
+  let userId: string
   let created = false
   let externalIdNotAttached = false
   let gained = false
@@ -221,7 +222,7 @@ async function addAdult(
 async function addressHolder(
   trx: Transaction<Database>,
   email: string
-): Promise<number | undefined> {
+): Promise<string | undefined> {
   const row = await trx
     .selectFrom('user_emails')
     .select(['user_id'])
@@ -241,7 +242,7 @@ async function addressHolder(
  */
 export async function attachEmail(
   trx: Transaction<Database>,
-  userId: number,
+  userId: string,
   email: string,
   about: { created: boolean; callerIsAdmin: boolean },
   add: typeof addEmail = addEmail
@@ -296,7 +297,7 @@ function isAddressTaken(error: unknown): boolean {
 async function joinTeam(
   trx: Transaction<Database>,
   teamId: string,
-  userId: number
+  userId: string
 ): Promise<boolean> {
   const made = await trx
     .insertInto('memberships')
@@ -323,7 +324,7 @@ async function joinTeam(
 async function linkGuardian(
   trx: Transaction<Database>,
   teamId: string,
-  userId: number,
+  userId: string,
   guardianOf: TeamMemberExternalId[],
   linking: GuardianLinking
 ): Promise<{ made: number; missing: number; refused: number }> {
@@ -386,8 +387,8 @@ async function linkGuardian(
 async function addStaffRoles(
   trx: Transaction<Database>,
   teamId: string,
-  userId: number,
-  grantedBy: number
+  userId: string,
+  grantedBy: string
 ): Promise<RoleFlag[]> {
   const added: RoleFlag[] = []
   for (const role of STAFF_ROLES) {

@@ -11,7 +11,6 @@ import {
   type GumboPlay
 } from '../common/gumboPlay'
 import { makeId } from '../common/ids'
-import { mintUserId } from '../common/mintUserId'
 import {
   cleanAction,
   mapPlayers,
@@ -23,6 +22,7 @@ import {
   ScoringSession,
   type SessionContext
 } from '../common/scoring/session'
+import { userIdOfGumbo } from '../common/userId'
 import { migrations } from '../migrate/migrations'
 import { migrateUp } from '../migrate/runner'
 import { testDatabaseUrl } from '../migrate/testDatabase'
@@ -35,6 +35,8 @@ import {
   type ScoreboardClient,
   type ScoreboardStore
 } from '../server/scoreboard/scoreboardStore'
+import { mintUserId } from './historicalUserIds'
+import { insertFixtureUsers } from './insertFixtureUsers'
 
 /**
  * What the scoreboard's server tests share: a real Redis, a random prefix per
@@ -121,7 +123,8 @@ export async function scratchDatabase(
 }
 
 export interface Person {
-  userId: number
+  userId: string
+  gumboId: number
   token: string
 }
 
@@ -133,23 +136,20 @@ export async function addPerson(
 ): Promise<Person> {
   const made = mintUserId(() => false)
   const now = new Date()
-  await db
-    .insertInto('users')
-    .values({
-      id: made.userId,
-      legacyId: made.legacyId,
-      display_name: label,
-      is_admin: options.isAdmin === true,
-      created_at: now,
-      updated_at: now
-    })
-    .execute()
+  await insertFixtureUsers(db, {
+    id: userIdOfGumbo(made.userId),
+    legacyId: made.legacyId,
+    display_name: label,
+    is_admin: options.isAdmin === true,
+    created_at: now,
+    updated_at: now
+  })
   const token = `tok_scoreboard_${label}_${randomBytes(8).toString('hex')}`
   await db
     .insertInto('auth_sessions')
     .values({
       id: makeId('authSession'),
-      user_id: made.userId,
+      user_id: userIdOfGumbo(made.userId),
       token_hash: hashToken(token),
       created_at: now,
       expires_at: new Date(now.getTime() + 3_600_000)
@@ -160,13 +160,13 @@ export async function addPerson(
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: made.userId,
+        user_id: userIdOfGumbo(made.userId),
         team_id: options.owns,
         role: 'owner'
       })
       .execute()
   }
-  return { userId: made.userId, token }
+  return { userId: userIdOfGumbo(made.userId), gumboId: made.userId, token }
 }
 
 export async function addTeam(
@@ -272,27 +272,24 @@ export async function addScorableTeams(
     for (let i = 0; i < 9; i++) {
       const made = mintUserId(id => held.has(id))
       held.add(made.userId)
-      await db
-        .insertInto('users')
-        .values({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: `${names[side]} ${i + 1}`,
-          created_at: now,
-          updated_at: now
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(made.userId),
+        legacyId: made.legacyId,
+        display_name: `${names[side]} ${i + 1}`,
+        created_at: now,
+        updated_at: now
+      })
       roster[side].push(made.userId)
     }
   }
   const setup = newSetup(teams, {
     away: roster.away.map((userId, i) => ({
-      userId,
+      userId: userIdOfGumbo(userId),
       gumboId: userId,
       shortName: `Away ${i + 1}`
     })),
     home: roster.home.map((userId, i) => ({
-      userId,
+      userId: userIdOfGumbo(userId),
       gumboId: userId,
       shortName: `Home ${i + 1}`
     }))
