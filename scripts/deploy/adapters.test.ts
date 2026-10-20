@@ -985,6 +985,21 @@ describe('Native build and signing adapters', () => {
     assert.equal(readFileSync(result.file, 'utf8'), 'export')
     assert.deepEqual(readdirSync(context.output), ['ios.ipa'])
   })
+  it('keeps a build of any branch but master off TestFlight', async () => {
+    testflight()
+    const plists: Array<{ name: string; text: string }> = []
+    recordExports(plists)
+    const result = await ios(
+      { ...context, branch: 'paul/feature' },
+      path.join(root, 'home')
+    )
+    assert.deepEqual(
+      plists.map(p => p.name),
+      ['ExportOptions.plist']
+    )
+    assert.equal(result.testflight, undefined)
+    assert.deepEqual(readdirSync(context.output), ['ios.ipa'])
+  })
   it('exports the same archive again for App Store Connect when the app goes to TestFlight', async () => {
     testflight()
     const plists: Array<{ name: string; text: string }> = []
