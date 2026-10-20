@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import express from 'express'
 
 import { asGameDetail, TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { googlePlaces } from '../server/location/googlePlaces'
 import { googlePlacesStub } from '../test/googlePlacesStub'
@@ -595,7 +596,7 @@ async function main(): Promise<void> {
             longitude: null,
             canManage: true,
             attendees: Array.from({ length: 28 }, (_, i) => ({
-              userId: i + 400,
+              userId: userIdOfGumbo(i + 400),
               gumboId: i + 400,
               name: `Player ${i + 1}`,
               avatarUrl: null,

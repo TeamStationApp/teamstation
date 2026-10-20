@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { asRosterEntry, TeamStationClient } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { seedSettingsCleanup3 } from '../../test/settingsCleanup3Fixture'
 import { receivingVideoIds } from '../live/receiving'
@@ -58,12 +59,12 @@ describe('public game access', function () {
     await f.h.db
       .updateTable('users')
       .set({ avatar_path: 'public-staff.png' })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     await f.h.db
       .updateTable('users')
       .set({ avatar_path: 'private-player.png' })
-      .where('id', '=', 104)
+      .where('id', '=', userIdOfGumbo(104))
       .execute()
     const anonymous = await f.h.request(
       'GET',
@@ -87,7 +88,8 @@ describe('public game access', function () {
       const roster = (await response.json()).map(asRosterEntry)
       expect(
         roster.find(
-          (person: ReturnType<typeof asRosterEntry>) => person.userId === 101
+          (person: ReturnType<typeof asRosterEntry>) =>
+            person.userId === userIdOfGumbo(101)
         )?.avatarUrl
       ).is.a('string')
       if (userId === 103)
@@ -235,7 +237,7 @@ describe('public game access', function () {
         id: 'liv_public',
         game_id: 'gam_settings3_final',
         team_id: f.teamA,
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         label: 'Demo camera',
         key_hash: '0'.repeat(64),
         key_prefix: 'demo',
@@ -250,7 +252,7 @@ describe('public game access', function () {
         first_published_at: now,
         last_published_at: now,
         ended_at: null,
-        created_by: 101,
+        created_by: userIdOfGumbo(101),
         created_at: now,
         updated_at: now
       })

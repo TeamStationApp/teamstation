@@ -1,4 +1,5 @@
 import { safeNext } from '../../common/signInReturn'
+import { asUserId, userIdOfGumbo } from '../../common/userId'
 export { safeNext } from '../../common/signInReturn'
 /**
  * Every screen has an address.
@@ -230,13 +231,27 @@ function present<T extends object>(fields: T): Partial<T> {
  * address opens the group's Settings, where adding people now is. Anything
  * else under a group opens the group.
  */
+function personId(raw: string | undefined): string | undefined {
+  try {
+    if (raw != null && /^[1-9][0-9]*$/.test(raw))
+      return userIdOfGumbo(Number(raw))
+    return asUserId(raw)
+  } catch {
+    return undefined
+  }
+}
+
 function peopleRoute(
   kind: 'league' | 'season' | 'team',
   id: string,
   parts: string[]
 ): Route {
-  if (parts[2] === 'people' && parts[3] != null && parts[3] !== '')
-    return { name: 'person', kind, id, userId: parts[3] }
+  if (parts[2] === 'people') {
+    const userId = personId(parts[3])
+    return userId == null
+      ? { name: 'home' }
+      : { name: 'person', kind, id, userId }
+  }
   if (parts[2] === 'manage') return { name: 'groupSettings', kind, id }
   if (kind === 'team') return { name: 'team', teamId: id }
   if (kind === 'season') return { name: 'season', seasonId: id }
@@ -378,7 +393,8 @@ export function parseRoute(path: string, search = ''): Route {
       if (id == null) return { name: 'signIn' }
       return signInLinkRoute(id, query.get('server'))
     case 'players': {
-      if (id == null) return { name: 'home' }
+      const userId = personId(id)
+      if (userId == null) return { name: 'home' }
       const onTeam = query.get('onTeam') ?? undefined
       const asked = query.get('tab')
       // Walk-up edits the player's song on the team the page was opened for,
@@ -394,7 +410,7 @@ export function parseRoute(path: string, search = ''): Route {
       if (tab === 'videos') {
         return {
           name: 'player',
-          userId: id,
+          userId,
           ...present({
             videoSeasonId: query.get('vseason') ?? undefined,
             videoTeamId: query.get('vteam') ?? undefined,
@@ -403,10 +419,10 @@ export function parseRoute(path: string, search = ''): Route {
           ...on
         }
       }
-      if (tab !== 'stats') return { name: 'player', userId: id, tab, ...on }
+      if (tab !== 'stats') return { name: 'player', userId, tab, ...on }
       return {
         name: 'player',
-        userId: id,
+        userId,
         tab,
         seasonId: query.get('season') ?? undefined,
         teamId: query.get('team') ?? undefined,

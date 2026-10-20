@@ -61,7 +61,7 @@ export interface DjGameScreenProps {
   /** Opens the song picker for one batter on one team. */
   onEditSong?: (
     teamId: string,
-    batter: { userId: number; name: string },
+    batter: { userId: string; name: string },
     song: WalkUpSong | null
   ) => void
   /**
@@ -545,7 +545,7 @@ function startingSide(game: DjGame): DjTeamSide {
   return game.away.canEditWalkUp && !game.home.canEditWalkUp ? 'away' : 'home'
 }
 
-function songKey(teamId: string, userId: number, song: WalkUpSong): string {
+function songKey(teamId: string, userId: string, song: WalkUpSong): string {
   return `${teamId}:${userId}:${song.provider}:${song.providerId}`
 }
 
@@ -553,7 +553,7 @@ function songKey(teamId: string, userId: number, song: WalkUpSong): string {
 function patchSong(
   game: DjGame,
   teamId: string,
-  userId: number,
+  userId: string,
   song: WalkUpSong | null
 ): DjGame {
   const side = (team: DjSide): DjSide =>

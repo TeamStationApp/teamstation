@@ -2,13 +2,14 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asRosterEntry } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { withoutPrivateNames } from './scoringRosterCache'
 
 // Permission changes remove private presentation data, preserving settings.
 describe('private roster presentation cache', function () {
   it('removes name metadata without changing player settings or its input', function () {
     const row = asRosterEntry({
-      userId: 100,
+      userId: userIdOfGumbo(100),
       gumboId: 100,
       shortName: 'Mookie B',
       jersey: '12',
