@@ -31,6 +31,8 @@
  * - `play` / `pause` — what it is doing now, including when it was not asked
  * - `canplay` / `loadeddata` — there are pictures to show
  * - `resize` — the stream switched to a rendition of a different shape
+ * - `progress` — more of the stream has arrived, so the seekable end may move
+ * - `durationchange` — the length is known, or a live one has grown
  */
 export type VideoEventName =
   | 'loadedmetadata'
@@ -40,6 +42,8 @@ export type VideoEventName =
   | 'canplay'
   | 'loadeddata'
   | 'resize'
+  | 'progress'
+  | 'durationchange'
 
 export interface VideoListenerOptions {
   /** Remove the listener the first time it fires. */

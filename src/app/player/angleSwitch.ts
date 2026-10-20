@@ -23,8 +23,56 @@
 
 import type { AngleVideo } from './wallClock'
 import { secondsAt, wallAt } from './wallClock'
+import type { WallMapping } from './wallMapping'
 
 export type { AngleVideo } from './wallClock'
+
+/** Kept inside the recording, which may have started late or stopped early. */
+function inside(to: AngleVideo, sec: number): number {
+  if (sec < 0) return 0
+  if (to.durationSec != null && sec > to.durationSec) return to.durationSec
+  return sec
+}
+
+/**
+ * The wall time the old angle is showing at `atSec`, by the old source's own
+ * mapping where it has one (`wallMapping.ts`), by its start otherwise.
+ */
+export function switchTarget(
+  from: AngleVideo,
+  fromMapping: WallMapping | null,
+  atSec: number
+): number | null {
+  return fromMapping?.wallAt(atSec) ?? wallAt(from, atSec)
+}
+
+/**
+ * Where in `to` a wall time falls, by its mapping where it has one, kept
+ * inside the recording. A live angle whose newest footage is behind that
+ * moment lands on its newest footage instead: the moment has not reached it
+ * yet. Null when `to` cannot be placed at all.
+ */
+export function landingSec(
+  to: AngleVideo,
+  toMapping: WallMapping | null,
+  wallMs: number,
+  live = false
+): number | null {
+  let target = toMapping?.secAt(wallMs) ?? secondsAt(to, wallMs)
+  if (target == null) return null
+  if (live && toMapping != null) {
+    const newest = toMapping.newestWall()
+    if (newest != null && wallMs > newest) {
+      target = toMapping.secAt(newest) ?? target
+    }
+  }
+  return inside(to, target)
+}
+
+/** A recording with no start, which only its own media time places. */
+function unplaced(video: AngleVideo, mapping: WallMapping | null): boolean {
+  return video.startAt == null || mapping?.source === 'media'
+}
 
 /**
  * The position in `to` that is the same instant as `atSec` in `from`.
@@ -37,13 +85,15 @@ export type { AngleVideo } from './wallClock'
 export function sameMoment(
   from: AngleVideo,
   to: AngleVideo,
-  atSec: number
+  atSec: number,
+  mappings: { from?: WallMapping | null; to?: WallMapping | null } = {}
 ): number {
-  const wallMs = wallAt(from, atSec)
-  const there = wallMs == null ? null : secondsAt(to, wallMs)
-  const target = there ?? atSec
-
-  if (target < 0) return 0
-  if (to.durationSec != null && target > to.durationSec) return to.durationSec
-  return target
+  const fromMapping = mappings.from ?? null
+  const toMapping = mappings.to ?? null
+  if (unplaced(from, fromMapping) || unplaced(to, toMapping)) {
+    return inside(to, atSec)
+  }
+  const wallMs = switchTarget(from, fromMapping, atSec)
+  const there = wallMs == null ? null : landingSec(to, toMapping, wallMs)
+  return there ?? inside(to, atSec)
 }

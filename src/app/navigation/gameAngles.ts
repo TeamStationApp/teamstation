@@ -2,6 +2,11 @@
 export interface PlayerFrom {
   videoId: string
   sec: number
+  /**
+   * The wall time of that moment, by the picture's own mapping (its stream's
+   * dates, the server's timeline, or its start), when it could say.
+   */
+  wallMs?: number | null
 }
 
 /** What a game's frame holds of the full-screen player. */

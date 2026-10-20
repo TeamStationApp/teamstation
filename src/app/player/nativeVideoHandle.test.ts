@@ -524,3 +524,34 @@ describe('the native playhead between reports (U37)', function () {
     expect(handle.currentTime).closeTo(10.2, 1e-9)
   })
 })
+
+describe('NativeVideoHandle’s seekable end, for a resume that waits on it (U23)', function () {
+  it('reports progress and a new length, and the newest footage it could seek to', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.attach(fakePlayer().ref)
+    const heard: string[] = []
+    for (const name of ['progress', 'durationchange', 'timeupdate'] as const)
+      handle.addEventListener(name, () => heard.push(name))
+    expect(handle.seekableEnd).equals(null)
+    handle.handleLoad({
+      currentTime: 0,
+      duration: 600,
+      naturalSize: { width: 1920, height: 1080, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    expect(heard).deep.equals(['durationchange'])
+    // The same length again is no change.
+    handle.handleLoad({
+      currentTime: 0,
+      duration: 600,
+      naturalSize: { width: 1920, height: 1080, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    expect(heard).deep.equals(['durationchange'])
+    handle.handleProgress({
+      currentTime: 3,
+      seekableDuration: 64
+    } as unknown as Parameters<NativeVideoHandle['handleProgress']>[0])
+    expect(heard).deep.equals(['durationchange', 'progress', 'timeupdate'])
+    expect(handle.seekableEnd).equals(64)
+    expect(handle.liveEdge).equals(64)
+  })
+})

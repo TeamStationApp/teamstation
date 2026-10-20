@@ -178,7 +178,7 @@ export class NativeVideoHandle implements VideoHandle {
    * Where the footage the player could seek to ends: for a live game, its
    * newest moment. From the player's progress reports; null until one says.
    */
-  private seekableEnd: number | null = null
+  private seekableTo: number | null = null
 
   constructor(onPropsChange: () => void, clock: () => number = steadyNow) {
     this.onPropsChange = onPropsChange
@@ -323,7 +323,9 @@ export class NativeVideoHandle implements VideoHandle {
     // with `Number.isFinite`. Left as nought, `zones.seekBy` clamps every seek
     // to the range `[0, 0]`, so tapping ten-seconds-forward during a live game
     // sends the picture to the top of the stream.
-    this.length = data.duration > 0 ? data.duration : Number.POSITIVE_INFINITY
+    const length = data.duration > 0 ? data.duration : Number.POSITIVE_INFINITY
+    const lengthChanged = length !== this.length
+    this.length = length
     this.width = data.naturalSize.width
     this.height = data.naturalSize.height
     this.state = 1
@@ -333,18 +335,24 @@ export class NativeVideoHandle implements VideoHandle {
     this.time = data.currentTime
     this.timeAt = this.clock()
     this.emit('loadedmetadata')
+    if (lengthChanged) this.emit('durationchange')
   }
 
   /** The newest moment the player could seek to, or null while unknown. */
   get liveEdge(): number | null {
-    return this.seekableEnd
+    return this.seekableTo
+  }
+
+  /** The same, by the name `seekableEndOf` reads on every platform. */
+  get seekableEnd(): number | null {
+    return this.seekableTo
   }
 
   handleProgress = (data: OnProgressData): void => {
     // AVPlayer reports the length of its seekable range, which for a game's
     // playlist starts at its first segment and so ends at the newest one.
     if (Number.isFinite(data.seekableDuration) && data.seekableDuration > 0) {
-      this.seekableEnd = data.seekableDuration
+      this.seekableTo = data.seekableDuration
     }
     const adopt = shouldAdoptProgress({
       target: this.pendingSeekTo,
@@ -357,6 +365,7 @@ export class NativeVideoHandle implements VideoHandle {
       this.time = data.currentTime
       this.timeAt = this.clock()
     }
+    this.emit('progress')
     this.emit('timeupdate')
   }
 
@@ -562,7 +571,7 @@ export class NativeVideoHandle implements VideoHandle {
     this.buffering = false
     this.playerStoppedAt = null
     this.failed = false
-    this.seekableEnd = null
+    this.seekableTo = null
   }
 
   /**

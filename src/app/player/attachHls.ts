@@ -8,7 +8,7 @@ import { joinLiveOnFirstPlay, LIVE_DELAY_SEC } from './liveStart'
 import { BEHIND_SEC } from './multiCam/buffering'
 import type { BufferControl, PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
-import type { VideoHandle } from './videoHandle'
+import { seekableEndOf, type VideoHandle } from './videoHandle'
 import {
   type DatedFragment,
   fromFragments,
@@ -192,12 +192,6 @@ export function mappingOfFragments(
     })
   }
   return dated.length === 0 ? null : fromFragments(dated)
-}
-
-/** The end of what a native player can seek to, or null for nothing yet. */
-function seekableEndOf(video: NativeHlsVideo): number | null {
-  const { seekable } = video
-  return seekable.length > 0 ? seekable.end(seekable.length - 1) : null
 }
 
 /**
