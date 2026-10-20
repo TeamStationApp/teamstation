@@ -485,6 +485,152 @@ describe('scoring browser', function () {
   after(async function () {
     await browser?.close()
   })
+  it('opens full-width undo history above its button and preserves a short undo', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await page.setViewport({ width: 402, height: 874 })
+      for (const pitch of [
+        'Ball',
+        'Called Strike',
+        'Foul Ball',
+        'Foul Ball',
+        'Foul Ball',
+        'Foul Ball'
+      ]) {
+        await click(page, pitch)
+        await waitReady(page)
+      }
+      const undo = await page.$('[aria-label^="Undo "]')
+      expect(undo).not.equals(null)
+      const before = await undo!.evaluate(node =>
+        node.getAttribute('aria-label')
+      )
+      await undo!.hover()
+      await page.mouse.down()
+      await new Promise(resolve => setTimeout(resolve, 650))
+      await page.mouse.up()
+      await page.waitForSelector('[data-testid="scoring-tag-history"]')
+      await page.waitForFunction(() => {
+        const panel = document
+          .querySelector('[data-testid="scoring-tag-history"]')!
+          .getBoundingClientRect()
+        const button = document
+          .querySelector('[aria-label^="Undo "]')!
+          .getBoundingClientRect()
+        return panel.bottom <= button.top - 3
+      })
+      const panel = await page.$eval(
+        '[data-testid="scoring-tag-history"]',
+        node => node.getBoundingClientRect().toJSON()
+      )
+      expect(panel.left).closeTo(12, 1)
+      expect(panel.right).closeTo(390, 1)
+      expect(await page.$$('[data-testid^="tag-history-"]')).length(6)
+      await page.waitForSelector(
+        '[aria-label*="1 balls 2 strikes 0 outs · Pitches 6"]'
+      )
+      // Click the visible backdrop margin, outside the full-width rows.
+      await page.mouse.click(6, 100)
+      await page.waitForSelector('[data-testid="scoring-tag-history"]', {
+        hidden: true
+      })
+      expect(
+        await undo!.evaluate(node => node.getAttribute('aria-label'))
+      ).equals(before)
+      await click(page, before!)
+      await page.waitForSelector(
+        '[aria-label*="1 balls 2 strikes 0 outs · Pitches 5"]'
+      )
+      await waitReady(page)
+      expect(
+        await page.$eval('[aria-label^="Undo "]', node =>
+          node.getAttribute('aria-label')
+        )
+      ).equals(before)
+      // One short press removes one pitch, even when the previous label repeats.
+      await undo!.hover()
+      await page.mouse.down()
+      await new Promise(resolve => setTimeout(resolve, 650))
+      await page.mouse.up()
+      await page.waitForSelector('[data-testid="scoring-tag-history"]')
+      // The history opens without taking back another pitch.
+      await page.waitForSelector(
+        '[aria-label*="1 balls 2 strikes 0 outs · Pitches 5"]'
+      )
+      await page.setViewport({ width: 844, height: 390 })
+      await page.waitForSelector('[data-testid="scoring-tag-history"]', {
+        hidden: true
+      })
+      // A larger heading shrinks the scroll viewport after content measurement.
+      await page.addStyleTag({
+        content:
+          '[data-testid="scoring-tag-history"]>div:first-child{font-size:40px!important}'
+      })
+      const holdUndo = async (): Promise<void> => {
+        await undo!.hover()
+        await page.mouse.down()
+        await new Promise(resolve => setTimeout(resolve, 650))
+        await page.mouse.up()
+        await page.waitForSelector('[data-testid="scoring-tag-history"]')
+      }
+      const newestIsVisible = async (): Promise<void> => {
+        await page.waitForFunction(() => {
+          const scroll = document.querySelector(
+            '[data-testid="scoring-history-older-scroll"]'
+          )!
+          const rows = document.querySelectorAll(
+            '[data-testid^="tag-history-"]'
+          )
+          const newest = rows[rows.length - 1].getBoundingClientRect()
+          const visible = scroll.getBoundingClientRect()
+          return (
+            newest.top >= visible.top &&
+            newest.bottom <= visible.bottom + 1 &&
+            Math.abs(
+              scroll.scrollTop + scroll.clientHeight - scroll.scrollHeight
+            ) < 1
+          )
+        })
+      }
+      // Scoring fills the screen on web, including the browser's unsafe strips.
+      const cdp = await page.createCDPSession()
+      await cdp.send('Emulation.setSafeAreaInsetsOverride', {
+        insets: { left: 44, right: 44, top: 30, bottom: 21 }
+      })
+      await holdUndo()
+      await newestIsVisible()
+      const safePanel = await page.$eval(
+        '[data-testid="scoring-tag-history"]',
+        node => node.getBoundingClientRect().toJSON()
+      )
+      expect(safePanel.left).closeTo(44, 1)
+      expect(safePanel.right).closeTo(800, 1)
+      expect(safePanel.top).at.least(29)
+      await cdp.send('Emulation.setSafeAreaInsetsOverride', {
+        insets: { left: 0, right: 0, top: 0, bottom: 0 }
+      })
+      await page.keyboard.press('Escape')
+      await page.waitForSelector('[data-testid="scoring-tag-history"]', {
+        hidden: true
+      })
+      // Some modal hosts start at an offset while retaining the window width.
+      await page.addStyleTag({
+        content:
+          '[role="dialog"]{left:62px!important;width:844px!important;right:auto!important}'
+      })
+      await holdUndo()
+      await page.waitForFunction(() => {
+        const panel = document
+          .querySelector('[data-testid="scoring-tag-history"]')!
+          .getBoundingClientRect()
+        return panel.left >= 12 && panel.right <= innerWidth - 12
+      })
+      await newestIsVisible()
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
   for (const loaded of [false, true])
     it(`advances and credits an Error with ${loaded ? 'loaded' : 'empty'} bases`, async function () {
       const { page } = await open('/games/g1/score')

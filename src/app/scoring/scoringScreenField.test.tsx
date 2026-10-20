@@ -1980,8 +1980,12 @@ describe('scoring screen field wiring', function () {
       expect(timers.size).greaterThan(0)
       await step(() => props().onHistoryOpen?.())
       const detail = props().historyDetail?.primary
-      if (detail != null)
+      if (detail != null) {
         expect(props().historyRows?.at(-1)?.description).includes(detail)
+        expect(props().historyRows?.at(-1)?.display).deep.equals(
+          props().historyDetail
+        )
+      }
       expect(timers.size).equals(0)
       await advance(10000)
       expect(props().remainingMs).equals(remaining)
@@ -2023,6 +2027,7 @@ describe('scoring screen field wiring', function () {
       const older = props().historyRows?.find(row => row.completed === true)
       expect(detail).to.be.a('string')
       expect(older?.description).includes(detail!)
+      expect(older?.display?.primary).equals(detail)
       expect(props().historyRows?.at(-1)?.completed).not.equals(true)
       await step(() => {
         props().onHistoryClose?.()
