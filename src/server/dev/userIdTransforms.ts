@@ -755,4 +755,31 @@ export function expectedRebuiltStats(
     row.computed_at = next.computed_at
     manifest.push(`stats-rebuild ${key}: id,computed_at`)
   }
+  for (const [path, body] of Object.entries(before.api)) {
+    const next = after.api[path]
+    if (
+      !/^\/games\/[^/]+\/box-score$/.test(path) ||
+      !object(body) ||
+      !object(next)
+    )
+      continue
+    const priorStatus = body.stats
+    const nextStatus = next.stats
+    if (
+      !object(priorStatus) ||
+      !object(nextStatus) ||
+      !Object.hasOwn(priorStatus, 'builtAt') ||
+      !Object.hasOwn(nextStatus, 'builtAt') ||
+      priorStatus.builtAt === nextStatus.builtAt
+    )
+      continue
+    const builtAt =
+      typeof nextStatus.builtAt === 'string'
+        ? Date.parse(nextStatus.builtAt)
+        : NaN
+    if (!Number.isFinite(builtAt) || builtAt < start || builtAt > end)
+      throw new Error('API stats build timestamp outside rebuild window')
+    priorStatus.builtAt = nextStatus.builtAt
+    manifest.push(`stats-rebuild api:${path}.stats.builtAt`)
+  }
 }

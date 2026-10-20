@@ -698,6 +698,67 @@ describe('rebuilt statistics storage metadata', () => {
       ).throws()
     }
   })
+  it('validates the exact box-score build timestamp without relaxing status, statistics or other timestamps', () => {
+    const before = fixture()
+    const path = '/games/gam_one/box-score'
+    before.api[path] = {
+      batting: [],
+      stats: { status: 'built', detail: null, builtAt: '2025-01-01T00:00:00Z' }
+    }
+    const after = rebuilt(before)
+    const status = (after.api[path] as JsonObject).stats as JsonObject
+    status.builtAt = '2026-01-01T00:30:00Z'
+    const result = compareUserIds(before, after, { allowRebuiltStats: true })
+    expect(result.equal).equals(true)
+    expect(result.transformations).includes(
+      `stats-rebuild api:${path}.stats.builtAt`
+    )
+    expect(compareUserIds(before, after).equal).equals(false)
+    for (const value of [
+      null,
+      1,
+      'invalid',
+      '2025-01-01T00:00:01Z',
+      '2026-01-02T00:00:00Z'
+    ]) {
+      const changed = structuredClone(after)
+      ;((changed.api[path] as JsonObject).stats as JsonObject).builtAt = value
+      expect(() =>
+        compareUserIds(before, changed, { allowRebuiltStats: true })
+      ).throws('outside rebuild window')
+    }
+    for (const change of [
+      (s: JsonObject) => {
+        ;(s.stats as JsonObject).status = 'failed'
+      },
+      (s: JsonObject) => {
+        ;(s.stats as JsonObject).detail = 'unexpected'
+      },
+      (s: JsonObject) => {
+        s.batting = [{ h: 1 }]
+      },
+      (s: JsonObject) => {
+        s.updatedAt = '2026-01-01T00:30:00Z'
+      },
+      (s: JsonObject) => {
+        delete (s.stats as JsonObject).builtAt
+      },
+      (s: JsonObject) => {
+        s.stats = null
+      }
+    ]) {
+      const changed = structuredClone(after)
+      change(changed.api[path] as JsonObject)
+      expect(
+        compareUserIds(before, changed, { allowRebuiltStats: true }).equal
+      ).equals(false)
+    }
+    before.api['/other'] = { stats: { builtAt: 'old' } }
+    after.api['/other'] = { stats: { builtAt: '2026-01-01T00:30:00Z' } }
+    expect(
+      compareUserIds(before, after, { allowRebuiltStats: true }).equal
+    ).equals(false)
+  })
   it('keeps every statistic, extra field, API response and gumbo mapping in the comparison', () => {
     const before = fixture()
     for (const change of [
