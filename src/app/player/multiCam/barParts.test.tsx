@@ -9,6 +9,7 @@ import {
   clock,
   ExitButton,
   exitClearance,
+  exitTopClear,
   fractionOf,
   TrackStrips,
   TransportButtons
@@ -268,5 +269,23 @@ describe('the multi-camera bar’s parts', function () {
       await touch('pointerup', 102, 10)
       expect(scrubs).deep.equals([50_000, 51_000])
     })
+  })
+})
+
+describe('the way out, clear of the board (exitTopClear)', function () {
+  const spot = { x: 350, y: 8, w: 44, h: 44 }
+
+  it('stays in the top right when nothing reaches there', function () {
+    expect(
+      exitTopClear(spot, [null, { x: 0, y: 0, w: 300, h: 120 }], 8)
+    ).equals(8)
+  })
+
+  it('goes under the board, and on under the box score below it', function () {
+    const board = { x: 8, y: 0, w: 386, h: 120 }
+    expect(exitTopClear(spot, [board, null], 8)).equals(128)
+    // The box is under the board: the ✕ goes under both, whatever the order.
+    const box = { x: 8, y: 125, w: 386, h: 60 }
+    expect(exitTopClear(spot, [box, board], 8)).equals(193)
   })
 })

@@ -25,6 +25,12 @@ export interface MultiCamBarProps extends SharedBarProps {
    * drag through and scrubs only on a sideways drag or a tap.
    */
   panPage?: boolean
+  /**
+   * What the hardware takes out of the screen: the bar sits just above the
+   * home indicator and inside the corners, over the pictures that run on
+   * under them.
+   */
+  insets?: { bottom: number; left: number; right: number }
 }
 
 /**
@@ -59,7 +65,8 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
     onInteract,
     visible,
     rootRef,
-    panPage = false
+    panPage = false,
+    insets
   } = props
   const styles = getBarStyles(useTheme())
   const span = Math.max(1, take.toMs - take.fromMs)
@@ -96,9 +103,9 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
       ref={rootRef}
       style={{
         position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: 0,
+        left: insets?.left ?? 0,
+        right: insets?.right ?? 0,
+        bottom: insets?.bottom ?? 0,
         zIndex: 5,
         // However it comes or goes — a tap, a hover, the timer — it fades.
         opacity: visible ? 1 : 0,

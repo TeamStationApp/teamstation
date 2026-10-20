@@ -13,11 +13,15 @@ import {
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import { lstrings } from '../locales/strings'
-import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
-import { ExitButton, exitClearance } from './multiCam/barParts'
+import {
+  ExitButton,
+  exitClearance,
+  exitSize,
+  exitTopClear
+} from './multiCam/barParts'
 import { TILE_BUFFER } from './multiCam/buffering'
 import { clearOf, edgeToEdge, type Rect } from './multiCam/layout'
 import {
@@ -43,6 +47,7 @@ import {
   useGridBoard
 } from './scoreboardOverlay/GridScoreboard'
 import type { Size } from './scoreboardOverlay/overlayLayout'
+import { useScreenInsets } from './useScreenInsets'
 import type { VideoHandle } from './videoHandle'
 import { VideoView } from './VideoView'
 
@@ -136,7 +141,7 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
   // Sideways the pictures have the whole screen; upright, all of it below the
   // top of the safe area. The controls and the board keep to the safe area.
   const { width, height } = useWindowDimensions()
-  const insets = useInsets()
+  const insets = useScreenInsets()
   const landscape = width > height
   // The board, the box score and the angles around them, the board and the
   // box inside the safe area (`playerLayout`).
@@ -157,6 +162,17 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
       zoomed: zoomedIndex != null && zoomedIndex >= 0 ? zoomedIndex : null
     })
   const layout = layoutFor(board.natural)
+  // The way out, in the top right, or under the board where it reaches there.
+  const exitTop = exitTopClear(
+    {
+      x: safe.x + safe.w - theme.rem(theme.spaceSmRem) - exitSize(theme),
+      y: safe.y + theme.rem(theme.spaceSmRem),
+      w: exitSize(theme),
+      h: exitSize(theme)
+    },
+    [layout.board, layout.box],
+    theme.rem(theme.spaceSmRem)
+  )
   const mc = useMultiCam(props, {
     width,
     height,
@@ -345,7 +361,12 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
                 : undefined
             }
           />
-          <ExitButton visible={mc.controlsShown} onPress={onClose} />
+          <ExitButton
+            visible={mc.controlsShown}
+            onPress={onClose}
+            // In the safe area's coordinates, as the controls are.
+            top={exitTop - safe.y - theme.rem(theme.spaceSmRem)}
+          />
 
           {/* On the pictures, below the board's band: over the band it would
             hide the score. */}

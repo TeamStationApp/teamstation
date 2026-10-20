@@ -7,10 +7,19 @@ import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { attachHls } from './attachHls'
 import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
-import { ExitButton, exitClearance } from './multiCam/barParts'
+import {
+  ExitButton,
+  exitClearance,
+  exitSize,
+  exitTopClear
+} from './multiCam/barParts'
 import { useFullScreen } from './multiCam/fullScreen'
-import type { Rect } from './multiCam/layout'
-import { type PlayerLayout, playerLayout } from './multiCam/playerLayout'
+import { edgeToEdge, type Rect } from './multiCam/layout'
+import {
+  type PlayerLayout,
+  playerLayout,
+  topOfAngles
+} from './multiCam/playerLayout'
 import {
   beyondSlop,
   type MultiCamProps,
@@ -25,6 +34,7 @@ import {
   useGridBoard
 } from './scoreboardOverlay/GridScoreboard'
 import type { Size } from './scoreboardOverlay/overlayLayout'
+import { useScreenInsets } from './useScreenInsets'
 
 export type MultiCamViewProps = MultiCamProps
 
@@ -89,12 +99,17 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   // The game's board and box score, at the wall time of the master tile's
   // frame, and the angles around them (`playerLayout`).
   const board = useGridBoard(props, landscape)
+  // Under the rounded corners and the camera while the grid is up: the
+  // pictures run to the edges, and the board, the box and the controls keep
+  // to what the hardware leaves.
+  const insets = useScreenInsets()
+  const { safe } = edgeToEdge({ width, height }, insets, 0, landscape)
   const zoomedIndex =
     props.zoomedId == null ? null : props.order.indexOf(props.zoomedId)
   const layoutFor = (natural: Size): PlayerLayout =>
     playerLayout({
       screen: { width, height },
-      safe: { x: 0, y: 0, w: width, h: height },
+      safe,
       count: board.count,
       aspect: board.aspect,
       landscape,
@@ -104,6 +119,17 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       zoomed: zoomedIndex != null && zoomedIndex >= 0 ? zoomedIndex : null
     })
   const layout = layoutFor(board.natural)
+  // The way out, in the top right, or under the board where it reaches there.
+  const exitTop = exitTopClear(
+    {
+      x: width - insets.right - theme.rem(theme.spaceSmRem) - exitSize(theme),
+      y: insets.top + theme.rem(theme.spaceSmRem),
+      w: exitSize(theme),
+      h: exitSize(theme)
+    },
+    [layout.board, layout.box],
+    theme.rem(theme.spaceSmRem)
+  )
   const mc = useMultiCam(props, {
     width,
     height,
@@ -361,11 +387,16 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         rate={mc.slow}
         right={
           mc.controlsShown
-            ? exitClearance(theme) + theme.rem(theme.spaceSmRem)
+            ? insets.right + exitClearance(theme) + theme.rem(theme.spaceSmRem)
             : undefined
         }
       />
-      <ExitButton visible={mc.controlsShown} onPress={onClose} />
+      <ExitButton
+        visible={mc.controlsShown}
+        onPress={onClose}
+        top={exitTop - theme.rem(theme.spaceSmRem)}
+        right={insets.right}
+      />
 
       {/* One at a time, most specific first: they share a place on the screen
           and two of them printed over each other unreadably. The swipe for
@@ -378,8 +409,11 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           style={[
             styles.notice,
             {
+              // At the top of the highest angle: under the band upright, and
+              // sideways with two angles, whose board rests on them; at the
+              // top of the pictures otherwise.
               top:
-                (landscape ? 0 : (layout.tiles[0]?.y ?? 0)) +
+                Math.max(safe.y, topOfAngles(layout)) +
                 theme.rem(theme.spaceSmRem)
             }
           ]}
@@ -412,6 +446,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           visible={mc.barShown}
           rootRef={barRoot}
           panPage={swipeToHide}
+          insets={insets}
         />
       ) : null}
     </View>,

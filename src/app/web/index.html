@@ -10,7 +10,8 @@
       either: the layout sizes itself from `window.innerWidth`, which under
       `cover` is the whole screen and not the part of it that can be seen. The
       default insets the page to the safe area and reports that width, so the
-      two agree.
+      two agree. The full-screen grid alone asks for `cover`, while it is up,
+      and reads the insets itself (`src/app/player/useScreenInsets.ts`).
     -->
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />

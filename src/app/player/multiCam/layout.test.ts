@@ -13,6 +13,7 @@ import {
   swap,
   tileRects
 } from './layout'
+import { playerLayout } from './playerLayout'
 
 const area = (rect: Rect): number => rect.w * rect.h
 const round = (value: number): number => Math.round(value * 100) / 100
@@ -148,6 +149,44 @@ describe('the grid on a phone, edge to edge', function () {
     expect(round(rects[3].y + rects[3].h)).equals(390)
     // Under the home indicator, which the safe area leaves out.
     expect(rects[3].y + rects[3].h).greaterThan(390 - 21)
+  })
+
+  it('puts the board flush with the top of the safe area, and the angles on into the bottom of it (U10)', function () {
+    const settings = {
+      show: true,
+      single: { x: 0.01, y: 0.01, height: 0.15 },
+      landscape: { x: 0.01, y: 0.01, height: 0.15 },
+      portraitHeight: 0.15
+    }
+    const { safe } = edgeToEdge(UPRIGHT, UPRIGHT_INSETS, 0, false)
+    for (const count of [1, 2, 3, 4]) {
+      const layout = playerLayout({
+        screen: UPRIGHT,
+        safe,
+        count,
+        aspect: 16 / 9,
+        landscape: false,
+        settings,
+        board: { width: 744, height: 247 },
+        line: true
+      })
+      expect(layout.board!.y, `${count}`).equals(UPRIGHT_INSETS.top)
+    }
+    // Four fill the height: the last runs to the screen's bottom edge, past
+    // the home indicator.
+    const four = playerLayout({
+      screen: UPRIGHT,
+      safe,
+      count: 4,
+      aspect: 16 / 9,
+      landscape: false,
+      settings,
+      board: { width: 744, height: 247 },
+      line: true
+    })
+    const last = four.tiles[3]
+    expect(last.y + last.h).closeTo(UPRIGHT.height, 0.01)
+    expect(last.y + last.h).greaterThan(safe.y + safe.h)
   })
 
   it('keeps the controls to what the hardware leaves', function () {

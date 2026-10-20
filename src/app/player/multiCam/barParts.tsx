@@ -4,7 +4,9 @@ import { Pressable, Text, View } from 'react-native'
 import { Icon, type IconName } from '../../components/Icon'
 import { lstrings } from '../../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../../theme/ThemeContext'
+import { intersects } from '../scoreboardOverlay/overlayLayout'
 import type { Window } from '../wallClock'
+import type { Rect } from './layout'
 
 /**
  * What the two multi-camera bars share — the browser's and the phone's.
@@ -205,6 +207,34 @@ export function ExitButton(props: {
  */
 export function exitClearance(theme: Theme): number {
   return theme.rem(BUTTON_REM + theme.spaceSmRem)
+}
+
+/** The way out's side, square. */
+export function exitSize(theme: Theme): number {
+  return theme.rem(BUTTON_REM)
+}
+
+/**
+ * Where the way out's top goes, in the screen's coordinates: at `spot`, the
+ * top right of the area it is kept inside, unless the board or its box score
+ * reaches there — upright, and sideways with two angles, the board's right
+ * end does, and the ✕ hid its count — in which case `gap` under them.
+ */
+export function exitTopClear(
+  spot: Rect,
+  covers: Array<Rect | null>,
+  gap: number
+): number {
+  let y = spot.y
+  for (let moved = true; moved;) {
+    moved = false
+    for (const cover of covers) {
+      if (cover == null || !intersects({ ...spot, y }, cover)) continue
+      y = cover.y + cover.h + gap
+      moved = true
+    }
+  }
+  return y
 }
 
 /** `1:04:11` into the take, counted from when the first camera started. */
