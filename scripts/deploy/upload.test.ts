@@ -163,8 +163,40 @@ describe('Portable Zealot and Mason uploader', () => {
   })
   afterEach(async () => {
     delete process.env.FIXTURE_UPLOAD_CREDENTIAL
+    delete process.env.MASON_UPLOAD_CREDENTIAL
     await service.close()
     rmSync(root, { recursive: true, force: true })
+  })
+  it('uses the Mason stored secret ahead of a legacy file without changing Zealot credentials', async () => {
+    const credential = readFileSync(config.tokenFile!, 'utf8')
+    process.env.MASON_UPLOAD_CREDENTIAL = '{invalid'
+    assert.equal(
+      await upload({ ...config, kind: 'zealot' }, file, signal(), fast),
+      7
+    )
+    process.env.MASON_UPLOAD_CREDENTIAL = credential
+    rmSync(config.tokenFile!)
+    assert.equal(await upload(config, file, signal(), fast), 7)
+    process.env.MASON_UPLOAD_CREDENTIAL = ''
+    await assert.rejects(
+      upload(config, file, signal(), fast),
+      /Missing upload credential secret/
+    )
+    process.env.MASON_UPLOAD_CREDENTIAL = '{invalid'
+    process.env.FIXTURE_UPLOAD_CREDENTIAL = credential
+    assert.equal(
+      await upload(
+        {
+          ...config,
+          tokenFile: undefined,
+          credentialEnv: 'FIXTURE_UPLOAD_CREDENTIAL'
+        },
+        file,
+        signal(),
+        fast
+      ),
+      7
+    )
   })
   it('uploads with a stored environment credential and no credential file', async () => {
     process.env.FIXTURE_UPLOAD_CREDENTIAL = readFileSync(

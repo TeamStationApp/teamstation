@@ -159,13 +159,20 @@ export async function upload(
     })
   }
 ): Promise<number> {
+  // Existing Mason configurations may still name the former credential file.
+  // A database-backed Mason secret takes precedence without recreating that file.
+  const credentialEnv =
+    config.credentialEnv ??
+    (config.kind === 'mason' && process.env.MASON_UPLOAD_CREDENTIAL != null
+      ? 'MASON_UPLOAD_CREDENTIAL'
+      : undefined)
   const credential = (() => {
-    if (config.credentialEnv == null) {
+    if (credentialEnv == null) {
       if (config.tokenFile == null)
         throw new Error('Missing upload credential source')
       return privateJson(config.tokenFile, asTokenFile)
     }
-    const encoded = process.env[config.credentialEnv]
+    const encoded = process.env[credentialEnv]
     if (encoded == null || encoded === '')
       throw new Error('Missing upload credential secret')
     rememberSecret(encoded)
