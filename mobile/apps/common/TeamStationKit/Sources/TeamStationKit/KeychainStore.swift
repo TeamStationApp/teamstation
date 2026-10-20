@@ -72,6 +72,14 @@ public struct KeychainStore: Sendable {
 
   public func token() -> String? {
     guard let data = read(Self.tokenKey) else { return nil }
+    // Pre-production accounts without a current identity must sign in again.
+    // Never use their token, even if the keychain cannot persist the removal.
+    guard accountScope() != nil else {
+      setToken(nil)
+      setChosenEvent(nil)
+      setAccountScope(nil)
+      return nil
+    }
     return String(data: data, encoding: .utf8)
   }
 
@@ -102,10 +110,8 @@ public struct KeychainStore: Sendable {
   public func accountScope() -> TeamStationAccountScope? {
     guard let data = read(Self.scopeKey) else { return nil }
     guard let stored = try? JSONDecoder().decode(TeamStationAccountScope.self, from: data),
-          let userId = TeamStationUserID.upgradingStored(stored.userId) else { return nil }
-    let upgraded = TeamStationAccountScope(server: stored.server, userId: userId)
-    if upgraded != stored { setAccountScope(upgraded) }
-    return upgraded
+          TeamStationUserID.canonical(stored.userId) != nil else { return nil }
+    return stored
   }
 
   public func setAccountScope(_ scope: TeamStationAccountScope?) {

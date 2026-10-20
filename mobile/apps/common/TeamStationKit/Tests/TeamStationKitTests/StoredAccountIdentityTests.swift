@@ -35,7 +35,7 @@ private final class SecurityStorage: @unchecked Sendable {
   }
 }
 
-@Suite("Stored account identity upgrade")
+@Suite("Stored account identity reset")
 @MainActor
 struct StoredAccountIdentityTests {
   @Test func aFreshSecurityServiceHasNoStoredAccount() {
@@ -61,7 +61,7 @@ struct StoredAccountIdentityTests {
     #expect(security.data == nil)
     #expect(security.deletes == 1)
   }
-  @Test func reloadUpgradesOnlyTheIdentityAndWritesItOnce() throws {
+  @Test func canonicalAccountReloadPreservesCredentialsWithoutWrites() throws {
     let control = WriteControl()
     let store = KeychainStore.inMemory(acceptWrites: { control.accept() })
     let server = URL(string: "https://app.example.test")!
@@ -71,45 +71,61 @@ struct StoredAccountIdentityTests {
       streamURL: nil, streamId: nil
     )
     store.setChosenEvent(chosen)
-    store.write("teamStationAccountScope", data: Data(#"{"server":"https://app.example.test","userId":"9007199254740991"}"#.utf8))
+    store.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "usr_1111111111112DLNrMSKug"))
     let before = control.count
     let account = TeamStationAccount(serverURL: server, deviceName: "fixture", keychain: store)
     #expect(account.scope?.userId == "usr_1111111111112DLNrMSKug")
     #expect(account.isEventControlEligible)
     #expect(account.chosen == chosen)
     #expect(store.token() == "fixture-token")
-    #expect(control.count == before + 1)
+    #expect(control.count == before)
     #expect(store.accountScope() == account.scope)
-    #expect(control.count == before + 1)
+    #expect(control.count == before)
     let raw = try #require(store.read("teamStationAccountScope"))
     #expect(String(decoding: raw, as: UTF8.self).contains("usr_1111111111112DLNrMSKug"))
     account.serverURL = URL(string: "https://other.example.test")!
     #expect(!account.isEventControlEligible)
   }
 
-  @Test func failedWritePreservesTheSerializedLegacyScopeForRetry() throws {
+  @Test func failedRemovalNeverExposesTheOldTokenAndRetriesOnReload() throws {
     let control = WriteControl()
     let store = KeychainStore.inMemory(acceptWrites: { control.accept() })
     let old = Data(#"{"server":"https://app.example.test","userId":"1"}"#.utf8)
     store.write("teamStationAccountScope", data: old)
+    store.setToken("fixture-token")
     control.allow(false)
-    #expect(store.accountScope()?.userId == "usr_1111111111111111111112")
+    let account = TeamStationAccount(serverURL: URL(string: "https://app.example.test")!, deviceName: "fixture", keychain: store)
+    #expect(!account.hasToken)
+    #expect(!account.isEventControlEligible)
+    #expect(account.chosen == nil)
     #expect(store.read("teamStationAccountScope") == old)
+    #expect(store.read("teamStationToken") != nil)
     control.allow(true)
-    #expect(store.accountScope()?.userId == "usr_1111111111111111111112")
-    #expect(store.read("teamStationAccountScope") != old)
+    #expect(store.token() == nil)
+    #expect(store.read("teamStationAccountScope") == nil)
+    #expect(store.read("teamStationToken") == nil)
   }
 
-  @Test func malformedAndMissingIdentitiesNeverBecomeEligible() throws {
+  @Test func oldMalformedAndMissingIdentitiesClearTheAccountAndChosenEvent() throws {
     let store = KeychainStore.inMemory()
     #expect(store.accountScope() == nil)
-    for raw in ["{}", #"{"server":"https://app.example.test","userId":1}"#,
+    for raw: String? in [nil, "{}", #"{"server":"https://app.example.test","userId":1}"#,
+                #"{"server":"https://app.example.test","userId":"1"}"#,
+                #"{"server":"https://app.example.test","userId":"9007199254740991"}"#,
                 #"{"server":"https://app.example.test","userId":"01"}"#,
                 #"{"server":"https://app.example.test","userId":"9007199254740992"}"#] {
-      let data = Data(raw.utf8)
-      store.write("teamStationAccountScope", data: data)
+      store.write("teamStationAccountScope", data: raw.map { Data($0.utf8) })
+      store.setToken("fixture-token")
+      store.setChosenEvent(.init(gameId: "gam_fixture", title: "Visitors at Hosts", startAt: Date(), streamURL: nil))
+      let account = TeamStationAccount(serverURL: URL(string: "https://app.example.test")!, deviceName: "fixture", keychain: store)
+      #expect(!account.hasToken)
+      #expect(!account.isSignedIn)
+      #expect(account.scope == nil)
+      #expect(account.chosen == nil)
       #expect(store.accountScope() == nil)
-      #expect(store.read("teamStationAccountScope") == data)
+      #expect(store.read("teamStationAccountScope") == nil)
+      #expect(store.token() == nil)
+      #expect(store.chosenEvent() == nil)
     }
     for raw in ["1", "\"1\"", "\"usr_1111111111111111111111\""] {
       let data = Data("{\"id\":\(raw),\"displayName\":\"Hank Aaron\",\"isAdmin\":false}".utf8)

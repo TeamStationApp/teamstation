@@ -44,6 +44,20 @@ private let keyReply = """
 """
 private let me = #"{"id":"usr_11111111111111111111JG","displayName":"Mookie Betts","email":null,"isAdmin":false}"#
 
+private final class SignInWriteControl: @unchecked Sendable {
+  private let lock = NSLock()
+  private let refusedWrite: Int
+  private var writes = 0
+
+  init(refusedWrite: Int) { self.refusedWrite = refusedWrite }
+  func accept() -> Bool {
+    lock.withLock {
+      writes += 1
+      return writes != refusedWrite
+    }
+  }
+}
+
 @MainActor
 private func account(
   _ keychain: KeychainStore,
@@ -70,6 +84,8 @@ struct EventControlIdentityTests {
 
   @Test func aSignInRemembersWhoAndWhere() async throws {
     let keychain = KeychainStore.inMemory()
+    keychain.setToken("old-token")
+    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "1001"))
     IdentityServer.answers["/api/v1/auth/email-code/verify"] = (
       200,
       #"{"token":"tok_one","expiresAt":"2027-01-01T00:00:00Z","user":\#(me)}"#
@@ -84,6 +100,61 @@ struct EventControlIdentityTests {
     // Pointed at another server, the identity proved on this one does not count.
     signedIn.serverURL = URL(string: "https://develop9.example.test")!
     #expect(!signedIn.isEventControlEligible)
+  }
+
+  @Test(arguments: [1, 2])
+  func aSignInRetriesAfterEitherCredentialWriteFails(refusedWrite: Int) async throws {
+    let control = SignInWriteControl(refusedWrite: refusedWrite)
+    let keychain = KeychainStore.inMemory(acceptWrites: { control.accept() })
+    let signedIn = account(keychain)
+    IdentityServer.answers["/api/v1/auth/email-code/verify"] = (
+      200,
+      #"{"token":"tok_one","expiresAt":"2027-01-01T00:00:00Z","user":\#(me)}"#
+    )
+    do {
+      try await signedIn.completeSignIn(email: "one@example.test", code: "123456")
+      Issue.record("A sign-in that cannot be saved must report failure")
+    } catch {
+      #expect(error as? TeamStationError == .accountStorageUnavailable)
+    }
+    #expect(!signedIn.isSignedIn)
+    #expect(!signedIn.hasToken)
+    #expect(signedIn.scope == nil)
+    #expect(signedIn.lastError == TeamStationError.accountStorageUnavailable.localizedDescription)
+
+    try await signedIn.completeSignIn(email: "one@example.test", code: "123456")
+    #expect(signedIn.isSignedIn)
+    #expect(signedIn.hasToken)
+    #expect(signedIn.lastError == nil)
+    #expect(keychain.accountScope() == signedIn.scope)
+    #expect(account(keychain).isEventControlEligible)
+    IdentityServer.answers["/api/v1/device-event-control/key"] = (200, keyReply)
+    _ = try await signedIn.deviceEventControlKey()
+    #expect(IdentityServer.asked.last == "GET /api/v1/device-event-control/key Bearer tok_one")
+  }
+
+  @Test func aClaimedSignInReportsStorageFailureAndCanBeRestarted() async throws {
+    let control = SignInWriteControl(refusedWrite: 2)
+    let keychain = KeychainStore.inMemory(acceptWrites: { control.accept() })
+    let signedIn = account(keychain)
+    IdentityServer.answers["/api/v1/auth/email-code"] = (
+      200, #"{"requestId":"fixture-request","clientSecret":"fixture-secret"}"#
+    )
+    IdentityServer.answers["/api/v1/auth/request/claim"] = (
+      200,
+      #"{"token":"tok_one","expiresAt":"2027-01-01T00:00:00Z","user":\#(me)}"#
+    )
+    try await signedIn.startSignIn(email: "one@example.test")
+    #expect(await signedIn.pollSignIn() == false)
+    #expect(!signedIn.isSignedIn)
+    #expect(!signedIn.hasToken)
+    #expect(signedIn.waiting == nil)
+    #expect(signedIn.lastError == TeamStationError.accountStorageUnavailable.localizedDescription)
+    try await signedIn.startSignIn(email: "one@example.test")
+    #expect(await signedIn.pollSignIn())
+    #expect(signedIn.isSignedIn)
+    #expect(signedIn.hasToken)
+    #expect(signedIn.lastError == nil)
   }
 
   @Test func anOfflineRelaunchStaysEligibleAndAnExplicit401Clears() async {
@@ -131,6 +202,7 @@ struct EventControlIdentityTests {
   @Test func fetchesItsOwnKeyWithItsOwnToken() async throws {
     let keychain = KeychainStore.inMemory()
     keychain.setToken("tok_one")
+    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "usr_11111111111111111111JG"))
     let signedIn = account(keychain)
     IdentityServer.answers["/api/v1/device-event-control/key"] = (200, keyReply)
     let key = try await signedIn.deviceEventControlKey()
@@ -188,13 +260,15 @@ struct EventControlIdentityTests {
   @Test func aKeyAnsweredAfterTheTokenChangedIsThrownAway() async {
     let keychain = KeychainStore.inMemory()
     keychain.setToken("tok_one")
+    let scope = TeamStationAccountScope(server: "https://app.example.test", userId: "usr_11111111111111111111JG")
+    keychain.setAccountScope(scope)
     let signedIn = account(keychain)
     // The operator signs in as someone else while the first account's key is on its way.
     IdentityServer.whileAsking = { keychain.setToken("tok_two") }
     IdentityServer.answers["/api/v1/device-event-control/key"] = (200, keyReply)
     await #expect(throws: TeamStationError.accountChanged) { try await signedIn.deviceEventControlKey() }
-    #expect(signedIn.scope == nil)
-    #expect(keychain.accountScope() == nil)
+    #expect(signedIn.scope == scope)
+    #expect(keychain.accountScope() == scope)
     // The first token's rejection, arriving late, does not sign the second session out.
     keychain.setToken("tok_one")
     IdentityServer.answers["/api/v1/device-event-control/key"] = (401, #"{"code":"unauthorized","message":"Sign in to continue"}"#)

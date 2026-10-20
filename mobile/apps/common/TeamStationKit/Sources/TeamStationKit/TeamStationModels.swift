@@ -172,6 +172,8 @@ public enum TeamStationError: Error, LocalizedError, Equatable {
   /// The request never left the iPad: no network, or the wrong address.
   case offline
   case notSignedIn
+  /// The device could not keep both the sign-in token and its account identity.
+  case accountStorageUnavailable
   /// The server answered, and said why.
   case server(String)
   /// The server does not offer what was asked for, and says why: asking again will not change
@@ -189,6 +191,8 @@ public enum TeamStationError: Error, LocalizedError, Equatable {
       return "Cannot reach TeamStation. Check the network and try again."
     case .notSignedIn:
       return "Sign in to TeamStation first."
+    case .accountStorageUnavailable:
+      return "Could not save your sign-in on this device. Please sign in again."
     case let .server(message), let .unavailable(message):
       return message
     case .accountChanged:
