@@ -17,7 +17,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import kotlin.coroutines.CoroutineContext
 
-/** The signed-in account a key is fetched for: its server, its user ID in decimal, its own token. */
+/** The signed-in account a key is fetched for: its server, its canonical user ID, its own token. */
 internal data class EventControlAccount(val server: String, val userId: String, val token: String) {
     override fun toString(): String = "EventControlAccount(server=$server, userId=$userId, token=<redacted>)"
 }
