@@ -90,8 +90,8 @@ public final class TeamStationAccount: TeamStationEventService {
     self.deviceModel = deviceModel
     self.keychain = keychain
     self.session = session
-    chosen = keychain.chosenEvent()
     scope = keychain.token() == nil ? nil : keychain.accountScope()
+    chosen = scope == nil ? nil : keychain.chosenEvent()
   }
 
   /// What was picked, kept whole so the app can show the row and stream to it

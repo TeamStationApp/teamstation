@@ -376,8 +376,8 @@ class ScoreboardDeskEventControlTest {
     }
 
     @Test
-    fun `an existing login is given its user ID, and a refused one loses it`() = runTest(UnconfinedTestDispatcher()) {
-        val store = store(saved(userId = ""))
+    fun `a current login refreshes its identity and a refused account is cleared on reload`() = runTest(UnconfinedTestDispatcher()) {
+        val store = store(saved())
         val account = Account()
         val host = host(store, account)
         val desk = desk(store, Recorder(), account, host)
@@ -400,12 +400,12 @@ class ScoreboardDeskEventControlTest {
         desk.start()
         assertEquals("usr_11111111111111111111JG", ScoreboardTarget.load(store).userId)
 
-        // Refused: the identity and the key go; the token is the operator's to sign out.
+        // Refused: the identity and key go, and loading an account without its identity signs out.
         account.me = { throw ScoreboardWireException("Signed out", 401) }
         desk.start()
         runCurrent()
         assertEquals("", ScoreboardTarget.load(store).userId)
-        assertEquals("token-one", ScoreboardTarget.load(store).token)
+        assertEquals("", ScoreboardTarget.load(store).token)
         assertFalse(host.state.value.eligible)
         assertNull(keys.credentials(server))
         desk.start()
@@ -471,7 +471,7 @@ class ScoreboardDeskEventControlTest {
     }
 
     @Test
-    fun `a stored login from before event control loads with no user ID`() {
+    fun `a stored login from before event control is cleared and requires sign-in`() {
         val legacy = InMemorySettingsStore(
             mapOf(
                 "app.teamstation.cameraman.scoreboard.route" to "event",
@@ -481,7 +481,9 @@ class ScoreboardDeskEventControlTest {
         )
         val loaded = ScoreboardTarget.load(legacy)
         assertEquals("", loaded.userId)
-        assertEquals(ScoreboardRoute.Event, loaded.route)
+        assertEquals(ScoreboardRoute.V1, loaded.route)
+        assertEquals("", loaded.token)
+        assertEquals("", ScoreboardTarget.load(legacy).token)
         // A user ID left without a token is not read.
         val orphan = InMemorySettingsStore(mapOf("app.teamstation.cameraman.scoreboard.userId" to "usr_11111111111111111111JG"))
         assertEquals("", ScoreboardTarget.load(orphan).userId)

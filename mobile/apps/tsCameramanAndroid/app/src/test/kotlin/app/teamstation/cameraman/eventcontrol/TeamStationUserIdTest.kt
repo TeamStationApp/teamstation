@@ -13,7 +13,7 @@ import java.io.File
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class TeamStationUserIdTest {
-    @Test fun `shared vectors validate exactly and derive safe legacy values`() {
+    @Test fun `shared vectors validate exactly and reject decimal values`() {
         var root = File(System.getProperty("user.dir"))
         while (!File(root, "src/common/userId.vectors.json").exists()) {
             root = root.parentFile ?: error("Shared identity corpus not found")
@@ -23,19 +23,13 @@ class TeamStationUserIdTest {
         for (i in 0 until accepted.length()) {
             val row = accepted.getJSONObject(i)
             val id = row.getString("userId")
-            val decimal = row.getString("value")
             assertEquals(id, TeamStationUserId.canonical(id))
-            assertEquals(id, TeamStationUserId.upgradingStored(id))
-            if (decimal.toLongOrNull()?.let { it <= 9_007_199_254_740_991L } == true) {
-                assertEquals(id, TeamStationUserId.fromLegacyDecimal(decimal))
-                assertEquals(id, TeamStationUserId.upgradingStored(decimal))
-            } else assertNull(TeamStationUserId.fromLegacyDecimal(decimal))
+            assertNull(TeamStationUserId.canonical(row.getString("value")))
         }
         val rejected = vectors.getJSONArray("rejected")
         for (i in 0 until rejected.length()) assertNull(TeamStationUserId.canonical(rejected.getString(i)))
         for (bad in listOf("", "0", "01", "-1", "1.0", " 1", "1\n", "9007199254740992")) {
-            assertNull(TeamStationUserId.fromLegacyDecimal(bad))
-            assertNull(TeamStationUserId.upgradingStored(bad))
+            assertNull(TeamStationUserId.canonical(bad))
         }
     }
 
@@ -51,33 +45,37 @@ class TeamStationUserIdTest {
         }
     }
 
-    @Test fun `real scoreboard load persists upgrades once and keeps failed writes for retry`() {
-        val store = Store()
+    @Test fun `old or missing account IDs sign out and current accounts survive reload`() {
         val prefix = "app.teamstation.cameraman.scoreboard."
-        store.values.putAll(mapOf(prefix + "token" to "fixture-token", prefix + "gameId" to "gam_fixture",
-            prefix + "accountServer" to "https://app.example.test", prefix + "userId" to "1"))
-        val old = store.values.toMap()
-        store.refuse = true
-        assertEquals("usr_1111111111111111111112", ScoreboardTarget.load(store).userId)
-        assertEquals(old, store.values)
-        store.refuse = false
-        val upgraded = ScoreboardTarget.load(store)
-        assertEquals("fixture-token", upgraded.token)
-        assertEquals("gam_fixture", upgraded.gameId)
-        assertEquals("https://app.example.test", upgraded.accountServer)
-        assertEquals(old + (prefix + "userId" to upgraded.userId), store.values)
-        val writes = store.writes
-        assertEquals(upgraded, ScoreboardTarget.load(store))
-        assertEquals(writes, store.writes)
-        for (bad in listOf("", "0", "01", "9007199254740992", "usr_invalid")) {
-            store.values[prefix + "userId"] = bad
-            assertEquals("", ScoreboardTarget.load(store).userId)
-            assertEquals(bad, store.values[prefix + "userId"])
+        for (id in listOf("1", "9007199254740991", "", "0", "01", "9007199254740992", "usr_invalid")) {
+            val store = Store()
+            store.values.putAll(mapOf(prefix + "token" to "fixture-token", prefix + "gameId" to "gam_fixture",
+                prefix + "accountServer" to "https://app.example.test", prefix + "userId" to id,
+                prefix + "displayName" to "Hank Aaron", prefix + "email" to "fixture@example.test"))
+            val old = store.values.toMap()
+            store.refuse = true
+            assertEquals("", ScoreboardTarget.load(store).token)
+            assertEquals(old, store.values)
+            store.refuse = false
+            val cleared = ScoreboardTarget.load(store)
+            assertEquals("", cleared.token)
+            assertEquals("", cleared.userId)
+            assertEquals("", cleared.displayName)
+            assertEquals("", cleared.email)
+            assertEquals("gam_fixture", cleared.gameId)
+            assertEquals("https://app.example.test", cleared.accountServer)
+            assertEquals("", store.values[prefix + "token"])
+            assertEquals("", store.values[prefix + "userId"])
+            assertEquals(cleared, ScoreboardTarget.load(store))
+            val fresh = cleared.copy(token = "new-token", userId = "usr_1111111111111111111112")
+            ScoreboardTarget.save(store, fresh)
+            val writes = store.writes
+            assertEquals(fresh, ScoreboardTarget.load(store))
+            assertEquals(writes, store.writes)
         }
+        val missing = Store()
+        missing.values[prefix + "token"] = "fixture-token"
+        assertEquals("", ScoreboardTarget.load(missing).token)
         assertEquals("", ScoreboardTarget.load(Store()).userId)
-        store.values[prefix + "userId"] = "1"
-        store.values.remove(prefix + "token")
-        assertEquals("", ScoreboardTarget.load(store).userId)
-        assertEquals("1", store.values[prefix + "userId"])
     }
 }
