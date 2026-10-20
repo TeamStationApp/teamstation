@@ -163,8 +163,8 @@ export async function upload(
   // A database-backed Mason secret takes precedence without recreating that file.
   const credentialEnv =
     config.credentialEnv ??
-    (config.kind === 'mason' && process.env.MASON_UPLOAD_CREDENTIAL != null
-      ? 'MASON_UPLOAD_CREDENTIAL'
+    (config.kind === 'mason' && process.env.DEPLOY_UPLOAD_CREDENTIAL != null
+      ? 'DEPLOY_UPLOAD_CREDENTIAL'
       : undefined)
   const credential = (() => {
     if (credentialEnv == null) {
