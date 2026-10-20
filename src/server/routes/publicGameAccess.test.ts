@@ -9,6 +9,7 @@ import { seedSettingsCleanup3 } from '../../test/settingsCleanup3Fixture'
 import { closeInto } from '../admin/people'
 import { createGuestPlayer } from '../games/guestPlayers'
 import { receivingVideoIds } from '../live/receiving'
+import { insertUser } from '../users/insertUser'
 import { mediaRoutes } from './media'
 
 describe('public game access', function () {
@@ -230,16 +231,15 @@ describe('public game access', function () {
         throws: null
       })
     )
-    await db
-      .updateTable('users')
-      .set({
-        display_name: 'Hank Aaron',
-        first_name: 'Hank',
-        last_name: 'Aaron'
-      })
-      .where('id', '=', userIdOfGumbo(104))
-      .execute()
-    await closeInto(db, merged.userId, userIdOfGumbo(104))
+    // Use an adult with no opposing roster membership: conflicting merges are
+    // refused, while this valid guest-to-adult merge still exercises privacy.
+    const survivor = await insertUser(db, {
+      display_name: 'Hank Aaron',
+      first_name: 'Hank',
+      last_name: 'Aaron',
+      login_enabled: false
+    })
+    await closeInto(db, merged.userId, survivor)
     await db
       .insertInto('memberships')
       .values({
@@ -268,7 +268,7 @@ describe('public game access', function () {
           shortName: 'Babe R'
         })
         expect(game.guestPlayers.away[0]).includes({
-          userId: userIdOfGumbo(104),
+          userId: survivor,
           shortName: 'Hank A'
         })
         for (const entry of [

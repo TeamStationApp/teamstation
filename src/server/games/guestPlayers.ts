@@ -9,6 +9,7 @@ import { recordOf, replayPlays } from '../../common/scoring/gumbo'
 import { awaitingResult } from '../../common/scoring/rules'
 import type { Side } from '../../common/scoring/state'
 import { canManageRoster, canScore, roleScopes } from '../access'
+import { lockPlayerEdits } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
@@ -25,6 +26,7 @@ export async function createGuestPlayer(
   player: NewRosterPlayer
 ): Promise<RosterEntry> {
   return await db.transaction().execute(async trx => {
+    await lockPlayerEdits(trx)
     const game = await trx
       .selectFrom('games')
       .selectAll()
