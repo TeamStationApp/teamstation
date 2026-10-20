@@ -50,7 +50,7 @@ describe('statsBuilder request', function () {
     await insertFixtureUsers(db, {
       id: userIdOfGumbo(player.userId),
       legacyId: player.legacyId,
-      display_name: 'Ada',
+      display_name: 'Adam Dunn',
       created_at: now,
       updated_at: now
     })

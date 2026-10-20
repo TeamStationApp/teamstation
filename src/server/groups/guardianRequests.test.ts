@@ -237,7 +237,7 @@ describe('guardian invitations and requests', function () {
         ])
       ).deep.equals([[id, true, false]])
 
-      await person(301, 'Pat Newman', 'new.parent@example.com')
+      await person(301, 'Pat Neshek', 'new.parent@example.com')
       const waiting = await inbox(301)
       expect(waiting.hasPending).equals(true)
       expect(
@@ -469,7 +469,7 @@ describe('guardian invitations and requests', function () {
     })
 
     it('is approved by a coach, an assistant, and an assistant inherited from the season', async () => {
-      await person(302, 'Sam Season', null)
+      await person(302, 'Sam Fuld', null)
       await role(302, 'season', f.seasonA, 'assistant')
       for (const [player, approver] of [
         [202, f.people.teamCoach],
@@ -491,11 +491,11 @@ describe('guardian invitations and requests', function () {
     })
 
     it('reaches the coach of a team the player plays on under a closed row, and no coach of another team', async () => {
-      // Eli's place on the Hawks is held by an older row, closed into him.
+      // Elijah's place on the Hawks is held by an older row, closed into him.
       await insertFixtureUsers(f.h.db, {
         id: userIdOfGumbo(307),
         legacyId: 'usr_guardian_request_307',
-        display_name: 'Eli Closed',
+        display_name: 'Elijah Dukes',
         merged_into: userIdOfGumbo(205)
       })
       await f.h.db
@@ -516,7 +516,7 @@ describe('guardian invitations and requests', function () {
     })
 
     it('is not approved by a songkeeper, or a player whose account cannot sign in', async () => {
-      await person(303, 'Sid Song', null)
+      await person(303, 'Sid Fernandez', null)
       await role(303, 'team', f.teamA, 'songkeeper')
       const sent = await ask(203, f.people.scorekeeper)
       expect(sent.status).equals(201)
@@ -611,7 +611,7 @@ describe('guardian invitations and requests', function () {
       const sent = await invite(202, { email: 'late@example.com' })
       expect(sent.status).equals(201)
       await link(f.people.follower, 202)
-      await person(311, 'Lee Late', 'late@example.com')
+      await person(311, 'Lee Smith', 'late@example.com')
       expect((await inbox(311)).items.map(item => item.requestId)).deep.equals([
         sent.body.id
       ])
@@ -760,9 +760,9 @@ describe('guardian invitations and requests', function () {
       await insertFixtureUsers(f.h.db, {
         id: userIdOfGumbo(320),
         legacyId: 'usr_guardian_request_320',
-        display_name: 'Pat Noaddress',
+        display_name: 'Pat Neshek',
         first_name: 'Pat',
-        last_name: 'Noaddress',
+        last_name: 'Neshek',
         login_enabled: false
       })
       await link(320, 202)
@@ -792,7 +792,7 @@ describe('guardian invitations and requests', function () {
       expect(refused.body.message).equals(
         'Ben C has a guardian already. Ask them to invite another guardian.'
       )
-      await person(312, 'Fay First', 'first@example.com')
+      await person(312, 'Freddie Freeman', 'first@example.com')
       expect((await decide(sent.body.id, 'accept', 312)).status).equals(403)
       const again = await ask(202, f.people.assistant)
       expect(again.status).equals(201)
@@ -861,7 +861,7 @@ describe('guardian invitations and requests', function () {
         )
       ).not.includes(id)
 
-      await person(312, 'Sue Second', 'second@example.com')
+      await person(312, 'Sammy Sosa', 'second@example.com')
       const waiting = await inbox(312)
       expect(
         waiting.items.map(({ requestId, title, description }) => ({
@@ -967,7 +967,7 @@ describe('guardian invitations and requests', function () {
       )
 
       // Nobody accepts one whose sender is no longer a guardian.
-      await person(313, 'Ola Orphan', 'orphan@example.com')
+      await person(313, 'Orlando Cepeda', 'orphan@example.com')
       const orphan = await byGuardian(
         201,
         { userId: userIdOfGumbo(313) },
@@ -987,7 +987,7 @@ describe('guardian invitations and requests', function () {
     })
 
     it('counts toward the guardian’s five waiting, and its declines never block them', async () => {
-      await person(306, 'Finn Gray', null)
+      await person(306, 'Frank Thomas', null)
       await f.h.db
         .insertInto('memberships')
         .values({
@@ -1496,7 +1496,7 @@ describe('guardian invitations and requests', function () {
       await insertFixtureUsers(f.h.db, {
         id: userIdOfGumbo(305),
         legacyId: 'usr_guardian_request_305',
-        display_name: 'Ben Closed',
+        display_name: 'Ben Chapman',
         merged_into: userIdOfGumbo(202)
       })
       await f.h.db
@@ -1576,7 +1576,7 @@ describe('guardian invitations and requests', function () {
         expect(sent.status).equals(201)
         ids.push(sent.body.id)
       }
-      await person(306, 'Finn Gray', null)
+      await person(306, 'Frank Thomas', null)
       await f.h.db
         .insertInto('memberships')
         .values({

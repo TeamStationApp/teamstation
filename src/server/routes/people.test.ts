@@ -70,13 +70,13 @@ describe('people at a team, a season and a league', function () {
         (await createSession(db, userIdOfGumbo(id), 'people')).token
       )
     }
-    await person(SCOREKEEPER, 'Sky', 'Keeper')
-    await person(PLAYER, 'Avery', 'Young')
-    await person(GUARDIAN, 'Pat', 'Young')
-    await person(NO_LOGIN, 'Nolan', 'Quiet', false)
-    await person(FOLLOWER, 'Fran', 'Follows')
-    await person(SEASON_MEMBER, 'Sam', 'Season')
-    await person(LEAGUE_MEMBER, 'Lee', 'League')
+    await person(SCOREKEEPER, 'Sandy', 'Koufax')
+    await person(PLAYER, 'Alex', 'Young')
+    await person(GUARDIAN, 'Pat', 'Neshek')
+    await person(NO_LOGIN, 'Nolan', 'Ryan', false)
+    await person(FOLLOWER, 'Frank', 'Francisco')
+    await person(SEASON_MEMBER, 'Sam', 'Fuld')
+    await person(LEAGUE_MEMBER, 'Lee', 'Smith')
     const role = async (
       userId: number,
       kind: 'team' | 'season' | 'league',
@@ -370,9 +370,9 @@ describe('people at a team, a season and a league', function () {
       await insertFixtureUsers(db, {
         id: userIdOfGumbo(LATE),
         legacyId: `usr_people_${LATE}`,
-        display_name: 'Riley Late',
+        display_name: 'Riley Greene',
         first_name: 'Riley',
-        last_name: 'Late',
+        last_name: 'Greene',
         login_enabled: false
       })
       await db
@@ -422,7 +422,7 @@ describe('people at a team, a season and a league', function () {
       const refused = await removal
       expect(refused?.status).equals(409)
       expect(refused?.body.message).equals(
-        'Riley Late plays for Demo Hawks, so stays a member while on its roster.'
+        'Riley Greene plays for Demo Hawks, so stays a member while on its roster.'
       )
       // Nothing changed: the membership and the role stay.
       expect(
@@ -460,7 +460,7 @@ describe('people at a team, a season and a league', function () {
         const refused = await role('DELETE', PLAYER, 'member', actor)
         expect(refused.status).equals(409)
         expect(refused.body.message).equals(
-          'Avery Young plays for Demo Hawks, so stays a member while on its roster.'
+          'Alex Young plays for Demo Hawks, so stays a member while on its roster.'
         )
       }
       const still = await f.h.db
@@ -482,9 +482,9 @@ describe('people at a team, a season and a league', function () {
       await insertFixtureUsers(db, {
         id: userIdOfGumbo(KEEPER),
         legacyId: `usr_people_${KEEPER}`,
-        display_name: 'Kim Keeper',
-        first_name: 'Kim',
-        last_name: 'Keeper',
+        display_name: 'Kevin Kiermaier',
+        first_name: 'Kevin',
+        last_name: 'Kiermaier',
         login_enabled: true
       })
       await db
@@ -731,14 +731,14 @@ describe('people at a team, a season and a league', function () {
       })
       expect(body.person).includes({
         userId: userIdOfGumbo(GUARDIAN),
-        shortName: 'Pat Y',
-        fullName: 'Pat Young',
+        shortName: 'Pat N',
+        fullName: 'Pat Neshek',
         canHoldRoles: true
       })
       expect(body.guardianOf).deep.equals([
         {
           userId: userIdOfGumbo(PLAYER),
-          shortName: 'Avery Y',
+          shortName: 'Alex Y',
           avatarUrl: null,
           teamId: f.teamA
         }
@@ -858,7 +858,7 @@ describe('people at a team, a season and a league', function () {
         .where('user_id', '=', userIdOfGumbo(userId))
         .executeTakeFirst()) != null
 
-    // Last in the suite: Avery leaves the Hawks.
+    // Last in the suite: Alex leaves the Hawks.
     it('lets only the team’s administrators take off a player who can sign in, with every role they hold there', async () => {
       expect((await role('PUT', PLAYER, 'scorekeeper', 101)).status).equals(200)
       expect((await role('PUT', PLAYER, 'videographer', COACH)).status).equals(

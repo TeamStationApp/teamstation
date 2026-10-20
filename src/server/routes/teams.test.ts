@@ -95,10 +95,10 @@ describe('teams by external id, and making one', function () {
     await insertFixtureUsers(
       db,
       [
-        { made: admin, name: 'Ada', isAdmin: true },
-        { made: member, name: 'Cam', isAdmin: false },
-        { made: seasonAdmin, name: 'Sam', isAdmin: false },
-        { made: leagueAdmin, name: 'Lee', isAdmin: false }
+        { made: admin, name: 'Adam Dunn', isAdmin: true },
+        { made: member, name: 'Cam Bedrosian', isAdmin: false },
+        { made: seasonAdmin, name: 'Sam Fuld', isAdmin: false },
+        { made: leagueAdmin, name: 'Lee Smith', isAdmin: false }
       ].map(person => ({
         id: person.made.userId,
         legacyId: person.made.legacyId,

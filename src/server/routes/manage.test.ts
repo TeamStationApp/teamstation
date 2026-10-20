@@ -134,10 +134,10 @@ describe('the manage page', function () {
     const now = new Date()
     for (const [id, name, email] of [
       [bossId, 'Sam Boss', bossEmail],
-      [coachId, 'Robin Coach', coachEmail],
-      [parentId, 'Jo Parent', parentEmail],
+      [coachId, 'Robin Yount', coachEmail],
+      [parentId, 'Joe Morgan', parentEmail],
       // No session, ever: the PeerTube import brought many of these.
-      [ghostId, 'Pat Ghost', ghostEmail]
+      [ghostId, 'Pat Neshek', ghostEmail]
     ] as Array<[number, string, string]>) {
       await insertFixtureUsers(db, {
         id,
@@ -406,7 +406,7 @@ describe('the manage page', function () {
       added: true,
       person: {
         userId: userIdOfGumbo(parentId),
-        displayName: 'Jo Parent',
+        displayName: 'Joe Morgan',
         email: parentEmail
       }
     })
@@ -431,7 +431,7 @@ describe('the manage page', function () {
       )
       .executeTakeFirstOrThrow()
     expect(notice.metadata).includes({
-      title: 'Robin Coach added you to Demo Hawks'
+      title: 'Robin Yount added you to Demo Hawks'
     })
     expect(told.at(-1)).deep.equals({
       email: parentEmail,
@@ -684,7 +684,7 @@ describe('the manage page', function () {
     await insertFixtureUsers(db, {
       id: userIdOfGumbo(chiefId),
       legacyId: legacyId(chiefId),
-      display_name: 'Lee Chief',
+      display_name: 'Lee Smith',
       login_enabled: true,
       created_at: now,
       updated_at: now
@@ -1023,7 +1023,7 @@ describe('the manage page', function () {
     await insertFixtureUsers(db, {
       id: userIdOfGumbo(watcherId),
       legacyId: legacyId(watcherId),
-      display_name: 'Lou Watcher',
+      display_name: 'Lou Gehrig',
       login_enabled: true,
       created_at: now,
       updated_at: now
@@ -1084,7 +1084,7 @@ describe('the manage page', function () {
       )
       .executeTakeFirstOrThrow()
     expect(notice.metadata).includes({
-      title: 'Robin Coach added you as Coach of Demo Hawks'
+      title: 'Robin Yount added you as Coach of Demo Hawks'
     })
 
     // Somebody on no list of the team is not given anything by id.

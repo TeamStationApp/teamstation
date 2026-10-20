@@ -145,10 +145,10 @@ describe('a game’s stream key over the API', function () {
     const now = new Date()
     for (const [id, name] of [
       [managerId, 'Casey Manager'],
-      [coachId, 'Robin Coach'],
+      [coachId, 'Robin Yount'],
       [parentId, 'Parent'],
-      [filmerId, 'Vic Filmer'],
-      [scorerId, 'Kim Scorer']
+      [filmerId, 'Vic Power'],
+      [scorerId, 'Kevin Kiermaier']
     ] as Array<[number, string]>) {
       await insertFixtureUsers(db, {
         id,

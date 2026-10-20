@@ -168,16 +168,16 @@ describe('a player, and who may change their name', function () {
       {
         id: userIdOfGumbo(bothTeamsId),
         legacyId: legacyId(bothTeamsId),
-        display_name: 'Avery Both',
-        first_name: 'Avery',
-        last_name: 'Both'
+        display_name: 'Alfonso Soriano',
+        first_name: 'Alfonso',
+        last_name: 'Soriano'
       },
       {
         id: userIdOfGumbo(legendId),
         legacyId: legacyId(legendId),
-        display_name: 'Lee Legend',
+        display_name: 'Lee Smith',
         first_name: 'Lee',
-        last_name: 'Legend'
+        last_name: 'Smith'
       },
       {
         id: userIdOfGumbo(coachId),

@@ -87,10 +87,10 @@ describe('every game somebody can see', function () {
     await insertFixtureUsers(
       db,
       [
-        { made: admin, name: 'Ada', isAdmin: true },
-        { made: member, name: 'Cam', isAdmin: false },
-        { made: loner, name: 'Lou', isAdmin: false },
-        { made: teammate, name: 'Tam', isAdmin: false }
+        { made: admin, name: 'Adam Dunn', isAdmin: true },
+        { made: member, name: 'Cam Bedrosian', isAdmin: false },
+        { made: loner, name: 'Lou Gehrig', isAdmin: false },
+        { made: teammate, name: 'Tom Seaver', isAdmin: false }
       ].map(person => ({
         id: person.made.userId,
         legacyId: person.made.legacyId,

@@ -77,7 +77,7 @@ const RECORDING = new Date('2026-05-02T18:00:00.000Z')
 const minutesIn = (minutes: number, start = RECORDING): string =>
   new Date(start.getTime() + minutes * 60_000).toISOString()
 
-/** Dee's three games, for the season, team and year filters. */
+/** Dee Gordon's three games, for the season, team and year filters. */
 const DEE_AWAY = new Date('2026-05-09T18:00:00.000Z')
 const DEE_SEASON = new Date('2026-06-06T18:00:00.000Z')
 const DEE_LAST_YEAR = new Date('2025-05-03T18:00:00.000Z')
@@ -322,21 +322,21 @@ describe('the highlight routes', function () {
   })
 
   /**
-   * Ada is credited on three plays, Bea on one under Bee, a row merged into
-   * her, and Cal on none; and an older game holds a play from before credits.
+   * Adam is credited on three plays, Brett on one under a row merged into
+   * him, and Cal on none; and an older game holds a play from before credits.
    */
   async function seed(db: Kysely<Database>): Promise<void> {
     const now = new Date()
     await insertFixtureUsers(
       db,
       [
-        { made: admin, name: 'Ada Admin', isAdmin: true },
-        { made: ada, name: 'Ada Lovelace', isAdmin: false },
-        { made: bea, name: 'Bea Brown', isAdmin: false },
-        { made: cal, name: 'Cal Carter', isAdmin: false },
-        { made: bee, name: 'Bea B', isAdmin: false },
-        { made: dee, name: 'Dee Dodd', isAdmin: false },
-        { made: eve, name: 'Eve Ennis', isAdmin: false }
+        { made: admin, name: 'Adam Dunn', isAdmin: true },
+        { made: ada, name: 'Adam LaRoche', isAdmin: false },
+        { made: bea, name: 'Brett Butler', isAdmin: false },
+        { made: cal, name: 'Cal Ripken', isAdmin: false },
+        { made: bee, name: 'Brett B', isAdmin: false },
+        { made: dee, name: 'Dee Gordon', isAdmin: false },
+        { made: eve, name: 'Evan Longoria', isAdmin: false }
       ].map(person => ({
         id: person.made.userId,
         legacyId: person.made.legacyId,
@@ -441,16 +441,16 @@ describe('the highlight routes', function () {
         atBatIndex: 0,
         minutes: 10,
         start: DEE_AWAY,
-        credits: [credit('Dee D', dee.userId)]
+        credits: [credit('Dee G', dee.userId)]
       },
-      // Credited to Eve on a team we do not know.
+      // Credited to Evan on a team we do not know.
       {
         id: 'evt_eve',
         gameId: deeGames.away.gameId,
         atBatIndex: 1,
         minutes: 20,
         start: DEE_AWAY,
-        credits: [credit('Eve E', eve.userId, null)]
+        credits: [credit('Evan L', eve.userId, null)]
       },
       {
         id: 'evt_dee_season',
@@ -458,7 +458,7 @@ describe('the highlight routes', function () {
         atBatIndex: 0,
         minutes: 10,
         start: DEE_SEASON,
-        credits: [credit('Dee D', dee.userId)]
+        credits: [credit('Dee G', dee.userId)]
       },
       {
         id: 'evt_dee_last_year',
@@ -466,35 +466,35 @@ describe('the highlight routes', function () {
         atBatIndex: 0,
         minutes: 10,
         start: DEE_LAST_YEAR,
-        credits: [credit('Dee D', dee.userId, other)]
+        credits: [credit('Dee G', dee.userId, other)]
       },
       {
         id: 'evt_ada1',
         gameId: creditedGame,
         atBatIndex: 0,
         minutes: 10,
-        credits: [credit('Ada L', ada.userId)]
+        credits: [credit('Adam L', ada.userId)]
       },
       {
         id: 'evt_bea',
         gameId: creditedGame,
         atBatIndex: 1,
         minutes: 20,
-        credits: [credit('Bea B', bee.userId)]
+        credits: [credit('Brett B', bee.userId)]
       },
       {
         id: 'evt_ada2',
         gameId: creditedGame,
         atBatIndex: 2,
         minutes: 30,
-        credits: [credit('Ada L', ada.userId)]
+        credits: [credit('Adam L', ada.userId)]
       },
       {
         id: 'evt_ada3',
         gameId: creditedGame,
         atBatIndex: 3,
         minutes: 40,
-        credits: [credit('Ada L', ada.userId)]
+        credits: [credit('Adam L', ada.userId)]
       },
       // Stored before credits existed: no `credits` key at all.
       { id: 'evt_old', gameId: oldGame, atBatIndex: 0, minutes: 15 }

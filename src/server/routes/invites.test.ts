@@ -134,7 +134,7 @@ describe('invite codes', function () {
     const now = new Date()
     for (const [id, name] of [
       [bossId, 'Sam Boss'],
-      [coachId, 'Robin Coach'],
+      [coachId, 'Robin Yount'],
       [parentId, 'Parent']
     ] as Array<[number, string]>) {
       await insertFixtureUsers(db, {
@@ -446,7 +446,7 @@ describe('invite codes', function () {
     await db
       .insertInto('leagues')
       .values({
-        id: 'lea_npll',
+        id: 'lea_fixture',
         name: 'Demo League',
         created_at: now,
         updated_at: now
@@ -458,13 +458,13 @@ describe('invite codes', function () {
         id: 'adm_boss_league',
         user_id: userIdOfGumbo(bossId),
         scope_type: 'league',
-        scope_id: 'lea_npll'
+        scope_id: 'lea_fixture'
       })
       .execute()
 
     const made = await ask('/invites', BOSS, 'POST', {
       scopeType: 'league',
-      scopeId: 'lea_npll',
+      scopeId: 'lea_fixture',
       code: 'league26'
     })
     expect(made.status).equals(201)
@@ -475,7 +475,7 @@ describe('invite codes', function () {
       .selectFrom('league_members')
       .select(['role'])
       .where('user_id', '=', userIdOfGumbo(coachId))
-      .where('league_id', '=', 'lea_npll')
+      .where('league_id', '=', 'lea_fixture')
       .executeTakeFirst()
     expect(row?.role).equals('member')
 
@@ -492,7 +492,7 @@ describe('invite codes', function () {
         id: 'sea_autumn',
         name: 'Demo Autumn 2026',
         year: 2026,
-        league_id: 'lea_npll',
+        league_id: 'lea_fixture',
         created_at: now,
         updated_at: now
       })
