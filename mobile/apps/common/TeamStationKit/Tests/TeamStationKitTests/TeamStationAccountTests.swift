@@ -119,6 +119,7 @@ private func makeAccount(
 ) -> TeamStationAccount {
   StreamServer.reset()
   keychain.setToken("tok")
+  keychain.setAccountScope(TeamStationAccountScope(server: server, userId: "usr_1111111111111111111112"))
   let configuration = URLSessionConfiguration.ephemeral
   configuration.protocolClasses = [ StreamServer.self ]
   return TeamStationAccount(

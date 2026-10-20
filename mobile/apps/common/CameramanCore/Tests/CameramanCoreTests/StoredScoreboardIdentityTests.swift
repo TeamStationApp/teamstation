@@ -34,45 +34,43 @@ struct StoredScoreboardIdentityTests {
       gameStartAt: "2026-01-01T00:00:00Z", userId: userId, allowDirectorOverride: true)
   }
 
-  @Test func upgradesDecimalOnlyAndPreservesTokenServerAndChosenGame() {
-    for decimal in ["1", "9007199254740991"] {
+  @Test func legacyAndMalformedAccountsAreSignedOutAndStaySignedOut() {
+    for value in ["1", "9007199254740991", "", "0", "01", "9007199254740992", "usr_invalid"] {
       let store = RecordingStore()
-      let original = saved(decimal)
+      let original = saved(value)
       ScoreboardTarget.save(original, to: store)
-      let before = store.count
-      var expected = original
-      expected.userId = TeamStationUserID.fromLegacyDecimal(decimal)!
+      let expected = ScoreboardTarget.signedOut(original)
       #expect(ScoreboardTarget.load(store) == expected)
-      #expect(store.string(forKey: userKey) == expected.userId)
-      #expect(store.count == before + 1)
+      #expect(store.string(forKey: userKey) == "")
       #expect(ScoreboardTarget.load(store) == expected)
-      #expect(store.count == before + 1)
-      #expect(ScoreboardTarget.target(expected)?.authorization == "Bearer fixture-token")
+      #expect(ScoreboardTarget.target(expected)?.authorization == nil)
     }
   }
 
-  @Test func refusedWriteKeepsTheOldValueForRetry() {
+  @Test func refusedRemovalStillReturnsSignedOutAndRetriesNextLoad() {
     let store = RecordingStore()
-    ScoreboardTarget.save(saved("1"), to: store)
+    let original = saved("1")
+    ScoreboardTarget.save(original, to: store)
     store.refuse(true)
-    #expect(ScoreboardTarget.load(store).userId == "usr_1111111111111111111112")
+    #expect(ScoreboardTarget.load(store) == ScoreboardTarget.signedOut(original))
     #expect(store.string(forKey: userKey) == "1")
     store.refuse(false)
-    #expect(ScoreboardTarget.load(store).userId == "usr_1111111111111111111112")
-    #expect(store.string(forKey: userKey) == "usr_1111111111111111111112")
+    #expect(ScoreboardTarget.load(store) == ScoreboardTarget.signedOut(original))
+    #expect(store.string(forKey: userKey) == "")
   }
 
-  @Test func canonicalAndInvalidStoredValuesAreNotRewritten() {
+  @Test func canonicalAccountsIncludingANewSignInArePreservedWithoutWrites() {
     let store = RecordingStore()
-    #expect(ScoreboardTarget.load(store).userId == "")
-    for value in ["usr_1111111111111111111112", "", "0", "01", "9007199254740992", "usr_invalid"] {
-      ScoreboardTarget.save(saved(value), to: store)
-      let before = store.count
-      #expect(ScoreboardTarget.load(store).userId == (TeamStationUserID.canonical(value) ?? ""))
-      #expect(store.count == before)
-      #expect(store.string(forKey: userKey) == value)
-    }
-    #expect(ScoreboardTarget.decimalUserId("usr_1111111111111111111112") == "usr_1111111111111111111112")
+    #expect(ScoreboardTarget.load(store).token == "")
+    ScoreboardTarget.save(saved("1"), to: store)
+    #expect(ScoreboardTarget.load(store).token == "")
+    let current = saved("usr_1111111111111111111112")
+    ScoreboardTarget.save(current, to: store)
+    let before = store.count
+    #expect(ScoreboardTarget.load(store) == current)
+    #expect(store.count == before)
+    #expect(ScoreboardTarget.target(current)?.authorization == "Bearer fixture-token")
+    #expect(ScoreboardTarget.decimalUserId(current.userId) == current.userId)
     for raw in [1, true, "1", "usr_invalid"] as [Any] {
       #expect(ScoreboardTarget.decimalUserId(raw) == nil)
     }

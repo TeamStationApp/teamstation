@@ -90,8 +90,8 @@ public final class TeamStationAccount: TeamStationEventService {
     self.deviceModel = deviceModel
     self.keychain = keychain
     self.session = session
-    chosen = keychain.chosenEvent()
     scope = keychain.token() == nil ? nil : keychain.accountScope()
+    chosen = scope == nil ? nil : keychain.chosenEvent()
   }
 
   /// What was picked, kept whole so the app can show the row and stream to it
@@ -312,7 +312,7 @@ public final class TeamStationAccount: TeamStationEventService {
         requestId: waiting?.requestId
       )
       waiting = nil
-      adopt(session)
+      try adopt(session)
       return .signedIn(displayName: session.user.displayName)
     } catch {
       let why = error.localizedDescription
@@ -327,7 +327,7 @@ public final class TeamStationAccount: TeamStationEventService {
       code: code,
       deviceName: deviceName
     )
-    adopt(session)
+    try adopt(session)
   }
 
   /**
@@ -346,7 +346,7 @@ public final class TeamStationAccount: TeamStationEventService {
         deviceName: deviceName
       )
       guard let session else { return false }
-      adopt(session)
+      try adopt(session)
       return true
     } catch {
       // Offline, most likely. The next tick asks again; saying so on every
@@ -355,10 +355,21 @@ public final class TeamStationAccount: TeamStationEventService {
     }
   }
 
-  private func adopt(_ session: TeamStationSession) {
+  private func adopt(_ session: TeamStationSession) throws {
     keychain.setToken(session.token)
+    let savedToken = keychain.containsToken(session.token)
+    // Clear an orphan before publishing the identity that makes this session usable.
+    if savedToken && chosen == nil { keychain.setChosenEvent(nil) }
+    let savedSelection = chosen != nil || keychain.chosenEvent() == nil
+    if savedToken && savedSelection { remember(session.user.id) }
+    guard savedToken, savedSelection, keychain.accountScope() == scope,
+          keychain.token() == session.token else {
+      signOut()
+      let error = TeamStationError.accountStorageUnavailable
+      lastError = error.localizedDescription
+      throw error
+    }
     user = session.user
-    remember(session.user.id)
     waiting = nil
     lastError = nil
   }
