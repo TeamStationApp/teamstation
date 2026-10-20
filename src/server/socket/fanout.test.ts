@@ -5,10 +5,12 @@ import { Client, Pool } from 'pg'
 
 import type { GameChange } from '../../common/gameSocket'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { GameScope } from '../access'
 import { type Database, makeDatabase } from '../db/database'
 import { playsDigest } from '../events/postPlays'
@@ -116,18 +118,16 @@ describe('the game socket fan-out (U15)', function () {
     await pool.end()
     db = makeDatabase(scratchUrl)
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values(
-        [first, second].map(user => ({
-          id: user.userId,
-          legacyId: user.legacyId,
-          display_name: `User ${user.userId}`,
-          created_at: now,
-          updated_at: now
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      [first, second].map(user => ({
+        id: user.userId,
+        legacyId: user.legacyId,
+        display_name: `User ${user.userId}`,
+        created_at: now,
+        updated_at: now
+      }))
+    )
     await db
       .insertInto('teams')
       .values([
@@ -167,7 +167,7 @@ describe('the game socket fan-out (U15)', function () {
       .insertInto('walk_up_songs')
       .values({
         team_id: team,
-        user_id: first.userId,
+        user_id: userIdOfGumbo(first.userId),
         provider: 'appleMusic',
         provider_id: '1440857781',
         isrc: 'USFI86900049',
@@ -178,7 +178,7 @@ describe('the game socket fan-out (U15)', function () {
         duration_ms: 230000,
         start_ms: 10000,
         end_ms: 25000,
-        set_by: first.userId
+        set_by: userIdOfGumbo(first.userId)
       })
       .execute()
     poker = new Client({ connectionString: scratchUrl })
@@ -261,8 +261,16 @@ describe('the game socket fan-out (U15)', function () {
     one.watch(today, scopeOf(team, rival), onToday)
     one.watch(later, scopeOf(rival, team), onLater)
     one.watch(elsewhere, scopeOf(other, rival), onElsewhere)
-    await notify({ team, kind: 'walkUpSong', userId: first.userId })
-    await notify({ team, kind: 'walkUpSong', userId: second.userId })
+    await notify({
+      team,
+      kind: 'walkUpSong',
+      userId: userIdOfGumbo(first.userId)
+    })
+    await notify({
+      team,
+      kind: 'walkUpSong',
+      userId: userIdOfGumbo(second.userId)
+    })
     await until(
       () => onToday.sent.length === 2 && onLater.sent.length === 2,
       'both songs on both games'
@@ -272,12 +280,12 @@ describe('the game socket fan-out (U15)', function () {
     const songs = onToday.sent.map(message => message.data)
     expect(songs).to.deep.include({
       teamId: team,
-      userId: second.userId,
+      userId: userIdOfGumbo(second.userId),
       song: null
     })
     expect(songs).to.deep.include({
       teamId: team,
-      userId: first.userId,
+      userId: userIdOfGumbo(first.userId),
       song: {
         provider: 'appleMusic',
         providerId: '1440857781',
@@ -353,7 +361,11 @@ describe('the game socket fan-out (U15)', function () {
     // Nobody watches it here, so it is not read at all.
     await one.deliver(JSON.stringify({ game: elsewhere, kind: 'game' }))
     await one.deliver(
-      JSON.stringify({ team: other, kind: 'walkUpSong', userId: 1 })
+      JSON.stringify({
+        team: other,
+        kind: 'walkUpSong',
+        userId: userIdOfGumbo(1)
+      })
     )
     expect(sees.sent).lengthOf(1)
     one.unwatch(today, sees)
@@ -400,7 +412,9 @@ describe('the game socket fan-out (U15)', function () {
     })
     one.watch(today, scopeOf(team, rival), subscriber())
     logs.length = 0
-    one.notified(JSON.stringify({ team, kind: 'walkUpSong', userId: 1 }))
+    one.notified(
+      JSON.stringify({ team, kind: 'walkUpSong', userId: userIdOfGumbo(1) })
+    )
     await until(() => logs.length > 0, 'the log')
     expect(logs[0]).match(/no songs today/)
     await one.close()
@@ -450,6 +464,8 @@ describe('the game socket fan-out (U15)', function () {
   })
 
   it('reads no song for a player who has none', async function () {
-    expect(await readWalkUpSong(db!, rival, first.userId)).equals(null)
+    expect(
+      await readWalkUpSong(db!, rival, userIdOfGumbo(first.userId))
+    ).equals(null)
   })
 })

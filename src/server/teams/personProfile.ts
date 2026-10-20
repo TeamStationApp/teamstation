@@ -46,7 +46,7 @@ export async function personProfile(
   space: MediaContext['space'] | undefined,
   viewer: Actor,
   ref: GroupRef,
-  userId: number
+  userId: string
 ): Promise<PersonProfile> {
   const fresh = await currentActor(db, viewer)
   const name = await levelName(db, ref)
@@ -118,12 +118,12 @@ async function guardianRows(
   db: Kysely<Database>,
   space: MediaContext['space'] | undefined,
   ref: GroupRef,
-  userId: number
+  userId: string
 ): Promise<PersonProfile['guardianOf']> {
   const children = await guardedPlayers(db, userId)
   if (children.length === 0) return []
   const reach = await teamsUnder(db, ref)
-  const found: Array<{ userId: number; teamId: string }> = []
+  const found: Array<{ userId: string; teamId: string }> = []
   for (const child of children) {
     const plays = await teamsPlayedOnNow(
       db,
@@ -206,7 +206,7 @@ async function levelsOf(
 async function sections(
   db: Kysely<Database>,
   ref: GroupRef,
-  userId: number,
+  userId: string,
   manages: boolean
 ): Promise<ProfileSection[]> {
   const found: ProfileSection[] = []

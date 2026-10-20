@@ -1041,7 +1041,7 @@ function Shell(props: AppProps): React.ReactElement {
    */
   const openPlayer = useCallback(
     (
-      userId: number,
+      userId: string,
       title: string,
       from: { seasonId?: string; teamId?: string; onTeam?: string } = {}
     ): void => {
@@ -1062,7 +1062,7 @@ function Shell(props: AppProps): React.ReactElement {
   /** Somebody on a people list, as the level it was opened from sees them. */
   const openPerson = (
     group: { kind: 'league' | 'season' | 'team'; id: string },
-    userId: number,
+    userId: string,
     title: string
   ): void => {
     push({
@@ -1872,7 +1872,7 @@ function Shell(props: AppProps): React.ReactElement {
         client={client}
         kind={top.kind}
         id={top.id}
-        userId={Number(top.userId)}
+        userId={top.userId}
         onOpenPlayer={openPlayer}
         onChanged={refreshRoles}
         onTitle={title => {

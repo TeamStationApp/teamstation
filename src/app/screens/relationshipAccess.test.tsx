@@ -10,6 +10,7 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import { find, press, settle, text } from '../../test/gameFormDom'
 import { RoleRows } from '../components/RoleRows'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -87,7 +88,7 @@ describe('relationship list access regression', () => {
           return asPersonProfile({
             context: { kind: 'team', id: 'team', name: 'Demo Team' },
             person: {
-              userId: 104,
+              userId: userIdOfGumbo(104),
               gumboId: 104,
               shortName: 'Ichiro',
               fullName: 'Ichiro',
@@ -111,17 +112,21 @@ describe('relationship list access regression', () => {
         api.removeRole = async (_kind, _id, _userId, role) => {
           expect(role).equals(player ? 'coach' : 'member')
           writes++
-          return { userId: 104, roles: [], member: false }
+          return { userId: userIdOfGumbo(104), roles: [], member: false }
         }
         await render(
           player ? (
-            <PlayerTeamRoles client={api} teamId="team" userId={104} />
+            <PlayerTeamRoles
+              client={api}
+              teamId="team"
+              userId={userIdOfGumbo(104)}
+            />
           ) : (
             <PersonProfileScreen
               client={api}
               kind="team"
               id="team"
-              userId={104}
+              userId={userIdOfGumbo(104)}
               onChanged={() => notices++}
             />
           )

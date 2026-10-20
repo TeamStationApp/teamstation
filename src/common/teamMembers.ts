@@ -60,7 +60,7 @@ export type TeamPlayerResult =
        * here. `unchanged`: already a player here.
        */
       result: 'created' | 'joined' | 'unchanged'
-      userId: number
+      userId: string
     }
   | { index: number; result: 'error'; error: TeamMemberError }
 
@@ -119,7 +119,7 @@ export type TeamAdultResult =
        * something here. `unchanged`: an existing user who gained nothing.
        */
       result: 'created' | 'matched' | 'unchanged'
-      userId: number
+      userId: string
       /** The row's address belongs to somebody else, and was left there. */
       emailHeldElsewhere?: true
       /**

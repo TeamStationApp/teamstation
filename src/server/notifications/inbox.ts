@@ -25,7 +25,7 @@ async function informationFor(
 ): Promise<Notification | null> {
   if (
     event.source_type === 'groupRequest' ||
-    !event.recorded_recipients.map(Number).includes(actor.userId)
+    !event.recorded_recipients.includes(actor.userId)
   )
     return null
   const receipt = await db
@@ -176,7 +176,7 @@ export async function notificationFor(
   const historical =
     status !== 'pending' &&
     (request.sender_id === fresh.userId ||
-      event?.recorded_recipients.map(Number).includes(fresh.userId) === true ||
+      event?.recorded_recipients.includes(fresh.userId) === true ||
       receipt != null)
   if (!eligible && !senderAdmin && !historical) return null
   const display = await titleAndDescription(db, request)

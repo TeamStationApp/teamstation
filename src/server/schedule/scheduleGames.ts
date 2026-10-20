@@ -46,7 +46,7 @@ export interface ScheduleRights {
 
 export async function scheduleRights(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   isAdmin: boolean
 ): Promise<ScheduleRights> {
   const scopes = await adminScopes(db, userId, isAdmin)
@@ -154,12 +154,11 @@ export async function scheduleGames(
     .select(['id', 'name'])
     .where('id', '=', teamId)
     .executeTakeFirstOrThrow()
-  const context: Context = {
+  const context: Omit<Context, 'actor'> = {
     teamId,
     teamName: team.name,
     seasons: [],
-    rights: { siteAdmin: false, teamAdminIds: new Set(), seasonIds: new Set() },
-    actor: options.actor ?? { userId: 0, isAdmin: false, scopes: [] }
+    rights: { siteAdmin: false, teamAdminIds: new Set(), seasonIds: new Set() }
   }
 
   // Opponent name key to team id, for the whole call. A team a row

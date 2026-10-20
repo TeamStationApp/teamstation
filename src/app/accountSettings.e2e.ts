@@ -5,6 +5,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { userIdOfGumbo } from '../common/userId'
 import { readPasswordRecord } from '../server/auth/passwords'
 import { makeToken, SESSION_COOKIE } from '../server/auth/tokens'
 import {
@@ -184,7 +185,7 @@ describe('account settings in the finished desktop application', function () {
     await h.db
       .updateTable('users')
       .set({ password_hash: '$2b$11$legacy-synthetic-fixture' })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     await page.reload({ waitUntil: 'networkidle0' })
     await press('Verify email and set password')
@@ -220,7 +221,7 @@ describe('account settings in the finished desktop application', function () {
         await h.db
           .selectFrom('users')
           .select('password_hash')
-          .where('id', '=', 101)
+          .where('id', '=', userIdOfGumbo(101))
           .executeTakeFirstOrThrow()
       ).password_hash
     )!
@@ -258,7 +259,7 @@ describe('account settings in the finished desktop application', function () {
                   await h.db
                     .selectFrom('users')
                     .select('password_hash')
-                    .where('id', '=', 101)
+                    .where('id', '=', userIdOfGumbo(101))
                     .executeTakeFirstOrThrow()
                 ).password_hash
               )!.client
@@ -294,7 +295,7 @@ describe('account settings in the finished desktop application', function () {
                   await h.db
                     .selectFrom('users')
                     .select('password_hash')
-                    .where('id', '=', 101)
+                    .where('id', '=', userIdOfGumbo(101))
                     .executeTakeFirstOrThrow()
                 ).password_hash
               )!.client
@@ -321,7 +322,7 @@ describe('account settings in the finished desktop application', function () {
                   await h.db
                     .selectFrom('users')
                     .select('password_hash')
-                    .where('id', '=', 101)
+                    .where('id', '=', userIdOfGumbo(101))
                     .executeTakeFirstOrThrow()
                 ).password_hash
               )!.client
