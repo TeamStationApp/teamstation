@@ -35,7 +35,7 @@ describe('a new game from two rosters', function () {
       away: [
         {
           gumboId: 501,
-          shortName: 'Ace P',
+          shortName: 'Albert P',
           positions: ['SS', 'P'],
           bats: 'left',
           throws: 'left',
@@ -49,7 +49,7 @@ describe('a new game from two rosters', function () {
     expect(away.players).deep.equals([501, 502])
     expect(setup.players[501]).includes({
       id: 501,
-      fullName: 'Ace P',
+      fullName: 'Albert P',
       bats: 'left',
       local: false
     })
