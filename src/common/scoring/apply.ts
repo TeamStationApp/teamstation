@@ -116,6 +116,7 @@ function refuse(code: Problem['code'], message: string): never {
 interface Ctx {
   state: GameState
   out: Transition[]
+  replay: boolean
   /** What each runner is charged with, while the action lands. */
   charges: ChargeBook
 }
@@ -1933,7 +1934,13 @@ function lineup(ctx: Ctx, action: LineupAction): void {
       replaced[leaving] = incoming
     } else refuse('malformed', 'A roster change carries its setup')
   }
-  const applied = applyRoster(state, setup, action.nextBatter, replaced)
+  const applied = applyRoster(
+    state,
+    setup,
+    action.nextBatter,
+    replaced,
+    ctx.replay
+  )
   if (applied.state == null)
     refuse('illegal', applied.error ?? 'Invalid lineup')
   ctx.state = applied.state
@@ -2121,12 +2128,15 @@ export function applyAction(
   {
     inPlace = false,
     requireCurrentSetup = false,
-    acceptedLineup
+    acceptedLineup,
+    replay = false
   }: {
     inPlace?: boolean
     requireCurrentSetup?: boolean
     /** Transient UI acceptance; undefined leaves partial-order policy to the caller. */
     acceptedLineup?: string | null
+    /** Reapply stored actions; newly authored actions must use the default. */
+    replay?: boolean
   } = {}
 ): Applied {
   const cleaned = cleanAction(raw)
@@ -2151,7 +2161,7 @@ export function applyAction(
   }
   const played = state.liveData.plays.allPlays.length
   const copy = inPlace ? state : copyState(state)
-  const ctx: Ctx = { state: copy, out: [], charges: chargeBook(copy) }
+  const ctx: Ctx = { state: copy, out: [], charges: chargeBook(copy), replay }
   const mound = copy.liveData.linescore.defense.P
   errorlessOuts(copy)
   try {

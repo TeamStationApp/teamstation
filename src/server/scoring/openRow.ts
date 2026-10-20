@@ -20,6 +20,17 @@ const playerReferences = new Set([
   'player',
   'replacedPlayer'
 ])
+
+/** Internal diagnostics: only the authorized merge caller exposes them. */
+export class ScoringProjectionConflict extends Error {
+  constructor(
+    message: string,
+    readonly details: Record<string, unknown>
+  ) {
+    super(message)
+  }
+}
+
 /** Change only scoring identity fields. Positions, counts, clocks and event ids stay intact. */
 function mapDocument<T>(
   document: T,
@@ -28,14 +39,26 @@ function mapDocument<T>(
 ): T {
   const setup = (held: GameSetup): GameSetup => {
     const players: GameSetup['players'] = {}
+    const originals = new Map<number, GameSetup['players'][number]>()
     // Prefer the surviving account's saved player details when both aliases occur.
     const entries = Object.values(held.players).sort(
       (a, b) => Number(resolve(a.id) === a.id) - Number(resolve(b.id) === b.id)
     )
     for (const player of entries) {
       const id = resolve(player.id)
-      if (players[id] != null && players[id].teamId !== player.teamId)
-        throw new Error('Merged scoring identities belong to opposing teams')
+      const previous = originals.get(id)
+      if (previous != null && previous.teamId !== player.teamId)
+        throw new ScoringProjectionConflict(
+          'Merged scoring identities belong to opposing teams',
+          {
+            participants: [previous, player].map(person => ({
+              gumboId: person.id,
+              teamId: person.teamId,
+              name: person.fullName
+            }))
+          }
+        )
+      originals.set(id, player)
       const name = names.get(id)
       players[id] = {
         ...player,
@@ -116,11 +139,8 @@ function mapDocument<T>(
   return visit(document) as T
 }
 
-/** A read-only projection: callers keep raw documents and digests for writes and concurrency. */
-export async function resolveScoringGame<T extends StoredGame>(
-  db: Kysely<Database>,
-  stored: T
-): Promise<T> {
+/** Every scoring identity referenced by a saved setup, action, or play. */
+export function scoringIdsIn(stored: StoredGame): number[] {
   const ids = new Set<number>()
   const collect = (id: number): number => {
     ids.add(id)
@@ -128,7 +148,43 @@ export async function resolveScoringGame<T extends StoredGame>(
   }
   for (const document of [...stored.plays, stored.currentPlay])
     mapDocument(document, collect, new Map())
-  const resolved = await resolveGumboIds(db, [...ids]).catch(
+  return [...ids]
+}
+
+/** The same pure projection is used for reads and for a proposed merge. */
+export function projectScoringGame<T extends StoredGame>(
+  stored: T,
+  resolve: (id: number) => number,
+  names = new Map<number, string>()
+): T {
+  const project = <D extends GumboDocument>(document: D): D => {
+    try {
+      return mapDocument(document, resolve, names)
+    } catch (error) {
+      if (!(error instanceof ScoringProjectionConflict)) throw error
+      throw new ScoringProjectionConflict(error.message, {
+        ...error.details,
+        atBatIndex: document?.about.atBatIndex,
+        inning: document?.about.inning,
+        halfInning: document?.about.halfInning
+      })
+    }
+  }
+  return {
+    ...stored,
+    plays: stored.plays.map(project),
+    currentPlay: project(stored.currentPlay)
+  }
+}
+
+type GumboDocument = StoredGame['plays'][number] | StoredGame['currentPlay']
+
+/** A read-only projection: callers keep raw documents and digests for writes and concurrency. */
+export async function resolveScoringGame<T extends StoredGame>(
+  db: Kysely<Database>,
+  stored: T
+): Promise<T> {
+  const resolved = await resolveGumboIds(db, scoringIdsIn(stored)).catch(
     (error: unknown) => {
       if (error instanceof UnresolvedAccount)
         throw conflict(
@@ -169,9 +225,5 @@ export async function resolveScoringGame<T extends StoredGame>(
     if (survivor == null) throw new Error('Missing scoring identity')
     return survivor
   }
-  return {
-    ...stored,
-    plays: stored.plays.map(play => mapDocument(play, resolve, names)),
-    currentPlay: mapDocument(stored.currentPlay, resolve, names)
-  }
+  return projectScoringGame(stored, resolve, names)
 }
