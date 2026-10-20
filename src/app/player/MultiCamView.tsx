@@ -10,6 +10,7 @@ import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
 import { ExitButton, exitClearance } from './multiCam/barParts'
 import { useFullScreen } from './multiCam/fullScreen'
 import type { Rect } from './multiCam/layout'
+import { type PlayerLayout, playerLayout } from './multiCam/playerLayout'
 import {
   beyondSlop,
   type MultiCamProps,
@@ -23,6 +24,7 @@ import {
   GridScoreboard,
   useGridBoard
 } from './scoreboardOverlay/GridScoreboard'
+import type { Size } from './scoreboardOverlay/overlayLayout'
 
 export type MultiCamViewProps = MultiCamProps
 
@@ -84,15 +86,29 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     []
   )
 
-  // The game's board, at the wall time of the master tile's frame: in a
-  // band above the column upright, over the top-left angle sideways.
-  const board = useGridBoard(props, { width, height }, landscape)
+  // The game's board and box score, at the wall time of the master tile's
+  // frame, and the angles around them (`playerLayout`).
+  const board = useGridBoard(props, landscape)
+  const zoomedIndex =
+    props.zoomedId == null ? null : props.order.indexOf(props.zoomedId)
+  const layoutFor = (natural: Size): PlayerLayout =>
+    playerLayout({
+      screen: { width, height },
+      safe: { x: 0, y: 0, w: width, h: height },
+      count: board.count,
+      aspect: board.aspect,
+      landscape,
+      settings: board.settings,
+      board: board.hasBoard ? natural : null,
+      line: board.hasLine,
+      zoomed: zoomedIndex != null && zoomedIndex >= 0 ? zoomedIndex : null
+    })
+  const layout = layoutFor(board.natural)
   const mc = useMultiCam(props, {
     width,
     height,
     debug,
-    top: board.band,
-    boardCell: board.boardCell
+    rects: layout.tiles
   })
   board.follow(mc)
   const {
@@ -336,13 +352,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         />
       ))}
 
-      <GridScoreboard
-        board={board}
-        box={{ width, height }}
-        landscape={landscape}
-        rects={mc.rects}
-        zoomed={mc.zoomed}
-      />
+      <GridScoreboard board={board} layout={layoutFor} />
 
       <SeekFlashView flash={mc.flash} />
       {/* Top right, clear of the finger holding the crawl on the right, and
@@ -367,7 +377,11 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         <View
           style={[
             styles.notice,
-            { top: board.band + theme.rem(theme.spaceSmRem) }
+            {
+              top:
+                (landscape ? 0 : (layout.tiles[0]?.y ?? 0)) +
+                theme.rem(theme.spaceSmRem)
+            }
           ]}
           pointerEvents="none"
         >

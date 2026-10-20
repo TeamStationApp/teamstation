@@ -284,3 +284,33 @@ describe('moving a tile by hand', function () {
     })
   })
 })
+
+describe('where a grid sits up and down its box (U7)', function () {
+  it('is in the middle by default, at the top or at the bottom when asked, the arrangement the same', function () {
+    const middle = tileRects({ width: 874, height: 402, count: 2 })
+    const top = tileRects({ width: 874, height: 402, count: 2, align: 'top' })
+    const bottom = tileRects({
+      width: 874,
+      height: 402,
+      count: 2,
+      align: 'bottom'
+    })
+    expect(middle[0].y).closeTo((402 - middle[0].h) / 2, 1e-6)
+    expect(top[0].y).equals(0)
+    expect(bottom[0].y + bottom[0].h).closeTo(402, 1e-6)
+    for (const rects of [top, bottom])
+      rects.forEach((rect, index) => {
+        expect(rect.x).closeTo(middle[index].x, 1e-6)
+        expect(rect.w).closeTo(middle[index].w, 1e-6)
+      })
+    // Below a band, at the top of what is left.
+    const stacked = tileRects({
+      width: 402,
+      height: 874,
+      count: 2,
+      top: 100,
+      align: 'top'
+    })
+    expect(stacked[0].y).equals(100)
+  })
+})

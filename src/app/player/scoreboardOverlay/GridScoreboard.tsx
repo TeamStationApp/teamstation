@@ -1,26 +1,19 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { StyleSheet, View } from 'react-native'
 
-import type { BoardStep } from '../../../common/api'
+import type { BoardStep, LineScoreStep } from '../../../common/api'
 import type { ScoreboardOverlay as OverlaySettings } from '../../../common/nodeSettings'
 import { SCOREBOARD_BOARD_SIZE } from '../../../common/scoreboard'
 import { aspectOf, MAX_TILES, type Rect } from '../multiCam/layout'
+import type { PlayerLayout } from '../multiCam/playerLayout'
 import type { MultiCam, MultiCamProps } from '../multiCam/useMultiCam'
 import { stepsInFrame, zeroedStep } from './boardAt'
 import { keptBoard } from './keptBoard'
-import {
-  aboveBoardRect,
-  bandBoardRect,
-  bandHeight,
-  cellBoardRect,
-  keptClear,
-  singleBoardRect,
-  type Size,
-  tileBoardRect,
-  tileNameTop
-} from './overlayLayout'
+import { LineScoreBox } from './LineScoreBox'
+import { type Size, tileNameTop } from './overlayLayout'
 import { ScoreboardOverlay } from './ScoreboardOverlay'
 import { useBoardTimeline } from './useBoardTimeline'
+import { useLineScore } from './useLineScore'
 import { usePlayheadStep } from './usePlayheadStep'
 import { useScoreboardOverlay } from './useScoreboardOverlay'
 import { useWallTimelines } from './useWallTimeline'
@@ -44,18 +37,20 @@ export interface GridBoard {
   count: number
   /** The angles' shared shape, as the grid lays them out. */
   aspect: number
-  /**
-   * Three angles sideways with a board: the angles leave it the top-left
-   * quadrant. Handed to `useMultiCam` as its `boardCell`.
-   */
-  boardCell: boolean
-  /**
-   * The band across the top the tiles stay below: the board's, upright and
-   * with a board; 0 otherwise. Handed to `useMultiCam` as its `top`.
-   */
-  band: number
+  /** The board's natural size, as last measured (the full board's at first). */
+  natural: Size
   /** The board for the master tile's frame, or null. */
   step: BoardStep | null
+  /**
+   * The game has a line score: it has events. Decided by the whole
+   * timeline, not the playhead, so the layout never jumps as the box score
+   * comes and goes.
+   */
+  hasLine: boolean
+  /** The line score at the master tile's frame; null before the first step. */
+  line: LineScoreStep | null
+  /** The rows' names; null until the line score is in. */
+  teams: { away: string; home: string } | null
   /** The board's natural size, each time it measures itself. */
   handleNaturalSize: (natural: Size) => void
   /**
@@ -91,8 +86,6 @@ export interface GridBoard {
  */
 export function useGridBoard(
   props: Pick<MultiCamProps, 'client' | 'gameId' | 'order' | 'videos'>,
-  /** The box the tiles are laid out in. */
-  box: Size,
   landscape: boolean
 ): GridBoard {
   const angles = useMemo(
@@ -138,17 +131,40 @@ export function useGridBoard(
   const wall = useRef(masterWall)
   wall.current = masterWall
 
+  const live = angles.some(angle => angle.live)
+  /** The box score's ask, for the board's change notices to make. */
+  const refetchLines = useRef<() => void>(() => undefined)
+  const fromMs = starts.length === 0 ? null : Math.min(...starts)
   const board = useBoardTimeline({
     client: props.client,
     gameId: shows ? props.gameId : null,
-    fromMs: starts.length === 0 ? null : Math.min(...starts),
-    live: angles.some(angle => angle.live),
-    playheadWall: () => wall.current()
+    fromMs,
+    live,
+    playheadWall: () => wall.current(),
+    onChange: () => {
+      refetchLines.current()
+    }
   })
+  /** The board watches the game's changes while it is up and live. */
+  const boardWatches = live && shows && props.gameId != null && fromMs != null
   const step = usePlayheadStep({
     steps: board.steps,
     wallNow: () => wall.current(),
     onSeek: board.refetchAround
+  })
+  // The line score is the game's events', whatever the overlay's settings
+  // or the board's log say.
+  const lines = useLineScore({
+    client: props.client,
+    gameId: props.gameId,
+    // Its own socket and poll only when the board's are not watching.
+    live: live && !boardWatches
+  })
+  refetchLines.current = lines.refetch
+  const line = usePlayheadStep({
+    steps: lines.steps,
+    wallNow: () => wall.current(),
+    onSeek: lines.refetch
   })
   const [natural, setNatural] = useState<Size>(SCOREBOARD_BOARD_SIZE)
   const measured = useCallback((size: Size) => {
@@ -196,12 +212,11 @@ export function useGridBoard(
     settings,
     count,
     aspect,
-    boardCell: hasBoard && landscape && count === 3,
-    band:
-      hasBoard && !landscape && settings != null
-        ? bandHeight(box, natural, count, settings.portraitHeight, aspect)
-        : 0,
+    natural,
     step: shown,
+    hasLine: (lines.steps?.length ?? 0) > 0,
+    line,
+    teams: lines.teams,
     handleNaturalSize: measured,
     follow: mc => {
       grid.current = mc
@@ -223,106 +238,66 @@ export function useGridBoard(
 }
 
 /**
- * Draws the grid's board in the box the tiles are laid out in. Upright, in
- * the band above the topmost angle. Sideways, by how many angles there are:
- * two, centred in the space above them; three, in the top-left quadrant they
- * leave it; four, over the top-left angle where the node's landscape setting
- * puts it, cut off by that angle. Sideways with one angle filling the box,
- * zoomed or the only one, that angle is a single picture, and the board sits
- * on it where the single-camera setting puts it. It takes no touches.
+ * Draws the grid's board and its box score where the player's layout puts
+ * them (`playerLayout`): the board at the rect `layout` answers for the size
+ * it measured, and the box score at the rect for the board's natural size,
+ * so neither moves as the batter and pitcher rows come and go. Over the
+ * top-left angle of four, sideways, the board is cut off by that angle. It
+ * takes no touches.
  */
 export function GridScoreboard(props: {
   board: GridBoard
-  box: Size
-  landscape: boolean
-  /** The angles' rectangles, in reading order. */
-  rects: Rect[]
-  /** The angle zoomed to the whole box, by its index in `rects`, or null. */
-  zoomed?: number | null
-  /**
-   * The part of the box the hardware leaves, when the pictures run under a
-   * notch or the rounded corners: the board is kept inside it.
-   */
-  safe?: Rect
+  /** Where everything goes, for a board of the given natural size. */
+  layout: (natural: Size) => PlayerLayout
 }): React.ReactElement | null {
-  const { board, box, landscape, rects } = props
-  const { safe } = props
-  const { settings, count } = board
-  if (!board.hasBoard || settings == null) return null
-  // Kept clear of the hardware, and still inside the area it was placed in.
-  const clear = (rect: Rect | null, area: Rect): Rect | null =>
-    rect == null || safe == null ? rect : keptClear(rect, safe, area)
-  const whole = { x: 0, y: 0, w: box.width, h: box.height }
-  const layer = (
-    place: (size: Size) => Rect | null,
-    area: Rect = whole
-  ): React.ReactElement => (
-    <View pointerEvents="none" style={styles.layer}>
-      <ScoreboardOverlay
-        step={board.step}
-        place={size => clear(place(size), area)}
-        onNaturalSize={board.handleNaturalSize}
-      />
-    </View>
+  const { board, layout } = props
+  const placed = layout(board.natural)
+  const boardShown = board.hasBoard && board.settings != null
+  const box =
+    board.hasLine && placed.box != null && board.teams != null ? (
+      <View pointerEvents="none" style={styles.layer}>
+        <LineScoreBox
+          rect={placed.box}
+          line={board.line?.line ?? null}
+          teams={board.teams}
+          at={board.line?.at ?? null}
+        />
+      </View>
+    ) : null
+  if (!boardShown) return box
+  const clip = placed.boardClip
+  const drawn = (
+    <ScoreboardOverlay
+      step={board.step}
+      place={size => {
+        const rect = layout(size).board
+        if (rect == null || clip == null) return rect
+        // In the clipping angle's own coordinates.
+        return { ...rect, x: rect.x - clip.x, y: rect.y - clip.y }
+      }}
+      onNaturalSize={board.handleNaturalSize}
+    />
   )
-  if (!landscape)
-    return layer(size =>
-      bandBoardRect(box, size, count, settings.portraitHeight, board.aspect)
-    )
-  // One angle filling the box is a single picture: zoomed, or alone.
-  const zoomed =
-    props.zoomed != null
-      ? rects[props.zoomed]
-      : count === 1
-        ? rects[0]
-        : undefined
-  if (zoomed != null)
-    return layer(
-      size =>
-        singleBoardRect({
-          picture: zoomed,
-          placement: settings.single,
-          natural: size
-        }),
-      zoomed
-    )
-  if (count === 2 && rects.length === 2)
-    return layer(size =>
-      aboveBoardRect(box, Math.min(rects[0].y, rects[1].y), size)
-    )
-  if (count === 3 && rects.length === 3) {
-    // The quadrant the three leave: left of the top-right angle, above the
-    // bottom-left one.
-    const cell = { x: rects[1].x, y: rects[0].y, w: rects[1].w, h: rects[0].h }
-    return layer(size => cellBoardRect(cell, size), cell)
-  }
-  const corner = rects[0]
-  if (corner == null) return null
   return (
-    <View
-      pointerEvents="none"
-      style={[
-        styles.layer,
-        styles.clip,
-        { left: corner.x, top: corner.y, width: corner.w, height: corner.h }
-      ]}
-    >
-      <ScoreboardOverlay
-        step={board.step}
-        place={size => {
-          // In the angle's own coordinates, kept clear in the box's.
-          const rect = tileBoardRect(corner, settings.landscape, size)
-          if (rect == null || safe == null) return rect
-          const kept = keptClear(
-            { ...rect, x: corner.x + rect.x, y: corner.y + rect.y },
-            safe,
-            corner
-          )
-          return { ...kept, x: kept.x - corner.x, y: kept.y - corner.y }
-        }}
-        onNaturalSize={board.handleNaturalSize}
-      />
-    </View>
+    <>
+      {clip == null ? (
+        <View pointerEvents="none" style={styles.layer}>
+          {drawn}
+        </View>
+      ) : (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.layer,
+            styles.clip,
+            { left: clip.x, top: clip.y, width: clip.w, height: clip.h }
+          ]}
+        >
+          {drawn}
+        </View>
+      )}
+      {box}
+    </>
   )
 }
 

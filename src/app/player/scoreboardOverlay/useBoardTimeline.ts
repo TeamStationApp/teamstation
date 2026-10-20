@@ -38,6 +38,13 @@ export interface BoardTimelineOptions {
   live: boolean
   /** The wall-clock instant of the frame on screen, or null. */
   playheadWall: () => number | null
+  /**
+   * The game may have changed: after each change notice (gathered), each
+   * time the socket opens, and each poll while it is down — when the board
+   * asks again itself. For a box score of the same game, so one socket and
+   * one poll serve both.
+   */
+  onChange?: () => void
   /** A test's socket and clock; the platform's otherwise. */
   WebSocketImpl?: SocketConstructor
   schedule?: Schedule
@@ -88,6 +95,8 @@ export function useBoardTimeline(
   const kept = useRef<{ gameId: string; steps: BoardStep[] } | null>(null)
   const playhead = useRef(options.playheadWall)
   playhead.current = options.playheadWall
+  const changed = useRef(options.onChange)
+  changed.current = options.onChange
   const origin = useRef(options.origin)
   origin.current = options.origin
   const refetch = useRef<(wallMs: number | null) => void>(() => undefined)
@@ -149,6 +158,7 @@ export function useBoardTimeline(
           onOpen: () => {
             open = true
             around(playhead.current())
+            changed.current?.()
           },
           onClose: () => {
             open = false
@@ -159,6 +169,7 @@ export function useBoardTimeline(
             gathering = schedule(() => {
               gathering = undefined
               around(playhead.current())
+              changed.current?.()
             }, NOTICE_DEBOUNCE_MS)
           },
           onStop: () => {
@@ -171,7 +182,10 @@ export function useBoardTimeline(
       }
       const poll = (): void => {
         polling = schedule(() => {
-          if (!open) around(playhead.current())
+          if (!open) {
+            around(playhead.current())
+            changed.current?.()
+          }
           poll()
         }, BOARD_POLL_MS)
       }

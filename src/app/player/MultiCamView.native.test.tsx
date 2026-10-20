@@ -14,19 +14,16 @@ import {
   OVERLAY_T0,
   overlayServer,
   settle,
+  SHOWN_OVERLAY,
   wallTimelineOf
 } from '../../test/overlayFixtures'
 import { lstrings } from '../locales/strings'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tileRects } from './multiCam/layout'
+import { GAP, playerLayout } from './multiCam/playerLayout'
 import { MultiCamView as BrowserGrid } from './MultiCamView'
 import { MultiCamView as PhoneGrid } from './MultiCamView.native'
-import {
-  bandBoardRect,
-  bandHeight,
-  tileBoardRect,
-  tileNameTop
-} from './scoreboardOverlay/overlayLayout'
+import { tileBoardRect, tileNameTop } from './scoreboardOverlay/overlayLayout'
 
 /**
  * The phone's grid, bundled for the browser: its own file, drawn with React
@@ -213,23 +210,28 @@ function placed(): {
 describe('the board over the phone’s grid (C5)', function () {
   afterEach(unmount)
 
-  it('draws one board in a band above the stacked angles, upright', async function () {
+  it('draws one board on the top of the screen, the stacked angles butted under it, upright', async function () {
     await grid({ Grid: PhoneGrid, width: 402, height: 874 })
     const { at, board } = placed()
     expect(at).equals(String(OVERLAY_T0 + 95_000))
-    const screen = { width: 402, height: 874 }
-    const natural = { width: 607, height: 247 }
-    const expected = bandBoardRect(screen, natural, 4, 0.15)!
-    expect(board.x).closeTo(expected.x, 0.01)
-    expect(board.y).closeTo(expected.y, 0.01)
-    expect(board.h).closeTo(expected.h, 0.01)
-    const band = bandHeight(screen, natural, 4, 0.15)
-    const rects = tileRects({ ...screen, count: 4, top: band })
+    const layout = playerLayout({
+      screen: { width: 402, height: 874 },
+      safe: { x: 0, y: 0, w: 402, h: 874 },
+      count: 4,
+      aspect: 16 / 9,
+      landscape: false,
+      settings: SHOWN_OVERLAY,
+      board: { width: 607, height: 247 },
+      line: false
+    })
+    expect(board.x).closeTo(layout.board!.x, 0.01)
+    expect(board.y).closeTo(0, 0.01)
+    expect(board.h).closeTo(layout.board!.h, 0.01)
     const tiles = tileBoxes()
     expect(tiles).length(4)
     tiles.forEach((tile, index) => {
-      expect(tile.y).closeTo(rects[index].y, 0.01)
-      expect(tile.y).at.least(band)
+      expect(tile.y).closeTo(layout.tiles[index].y, 0.01)
+      expect(tile.y).at.least(board.y + board.h + GAP - 0.01)
     })
   })
 
@@ -272,56 +274,58 @@ describe('the board over the phone’s grid (C5)', function () {
     }
   })
 
-  it('keeps its notice on the angles, below the band', async function () {
-    // The test DOM's players neither play nor pause.
-    const media = window.HTMLMediaElement.prototype
-    const held = (['play', 'pause'] as const).map(
-      name => [name, Object.getOwnPropertyDescriptor(media, name)!] as const
-    )
-    Object.defineProperty(media, 'play', {
-      configurable: true,
-      value: async () => undefined
-    })
-    Object.defineProperty(media, 'pause', {
-      configurable: true,
-      value: () => undefined
-    })
-    try {
-      await grid({ Grid: PhoneGrid, width: 402, height: 874, playable: true })
-      // Every angle has a picture up and nothing ahead of it, so the grid
-      // waits for them to catch up, and says so.
-      await act(async () => {
-        for (const video of document.querySelectorAll('video')) {
-          for (const [name, value] of [
-            ['readyState', 4],
-            ['buffered', { length: 0, start: () => 0, end: () => 0 }]
-          ] as const)
-            Object.defineProperty(video, name, { configurable: true, value })
-          video.dispatchEvent(new window.Event('loadedmetadata'))
-          video.dispatchEvent(new window.Event('loadeddata'))
-        }
+  for (const [width, height] of [
+    [402, 874],
+    [874, 402]
+  ] as const)
+    it(`keeps its notice on the angles, below the band, at ${width}×${height}`, async function () {
+      // The test DOM's players neither play nor pause.
+      const media = window.HTMLMediaElement.prototype
+      const held = (['play', 'pause'] as const).map(
+        name => [name, Object.getOwnPropertyDescriptor(media, name)!] as const
+      )
+      Object.defineProperty(media, 'play', {
+        configurable: true,
+        value: async () => undefined
       })
-      await settle(1500)
-      await layOutBoards(607, 247)
-      // The outermost element holding just the words: the notice's box.
-      const notice = [...document.querySelectorAll('div')].find(
-        node => node.textContent === lstrings.angles_waiting
-      )
-      if (notice == null) throw new Error('No notice of waiting')
-      const band = bandHeight(
-        { width: 402, height: 874 },
-        { width: 607, height: 247 },
-        4,
-        0.15
-      )
-      expect(px(notice.style.top)).greaterThan(band)
-      const { board } = placed()
-      expect(board.y + board.h).lessThan(px(notice.style.top))
-    } finally {
-      for (const [name, descriptor] of held)
-        Object.defineProperty(media, name, descriptor)
-    }
-  })
+      Object.defineProperty(media, 'pause', {
+        configurable: true,
+        value: () => undefined
+      })
+      try {
+        await grid({ Grid: PhoneGrid, width, height, playable: true })
+        // Every angle has a picture up and nothing ahead of it, so the grid
+        // waits for them to catch up, and says so.
+        await act(async () => {
+          for (const video of document.querySelectorAll('video')) {
+            for (const [name, value] of [
+              ['readyState', 4],
+              ['buffered', { length: 0, start: () => 0, end: () => 0 }]
+            ] as const)
+              Object.defineProperty(video, name, { configurable: true, value })
+            video.dispatchEvent(new window.Event('loadedmetadata'))
+            video.dispatchEvent(new window.Event('loadeddata'))
+          }
+        })
+        await settle(1500)
+        await layOutBoards(607, 247)
+        // The outermost element holding just the words: the notice's box.
+        const notice = [...document.querySelectorAll('div')].find(
+          node => node.textContent === lstrings.angles_waiting
+        )
+        if (notice == null) throw new Error('No notice of waiting')
+        const { board } = placed()
+        if (width > height) {
+          // Sideways the band is over the angles, and the notice at their top.
+          expect(px(notice.style.top)).lessThan(board.y + board.h)
+        } else {
+          expect(px(notice.style.top)).greaterThan(board.y + board.h)
+        }
+      } finally {
+        for (const [name, descriptor] of held)
+          Object.defineProperty(media, name, descriptor)
+      }
+    })
 })
 
 describe('the phone’s grid and the browser’s place the board alike (U39)', function () {

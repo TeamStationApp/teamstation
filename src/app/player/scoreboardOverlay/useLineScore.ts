@@ -21,7 +21,12 @@ export interface LineScoreOptions {
   client: TeamStationClient
   /** The game the angles are of; no game, no box score. */
   gameId: string | null | undefined
-  /** Streaming now: the game may still be scored. */
+  /**
+   * Streaming now, and nothing else watching the game for it: the box score
+   * opens its own change-notice socket and poll. A grid whose board already
+   * watches the game says false, and calls `refetch` on the board's changes,
+   * so one socket and one poll serve both.
+   */
   live: boolean
   WebSocketImpl?: SocketConstructor
   schedule?: Schedule

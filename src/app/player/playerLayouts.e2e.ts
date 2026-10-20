@@ -1,13 +1,88 @@
 import { expect } from 'chai'
 import { after, describe, it } from 'mocha'
 
+import { type LineScoreStep, TeamStationClient } from '../../common/api'
+import type { BoardLine } from '../../common/scoring/boardLineTypes'
+import type { Rect } from './multiCam/layout'
+import { GAP, playerLayout } from './multiCam/playerLayout'
 import {
+  API,
   finish,
   fixture,
+  type FixtureGame,
+  GRID_VIDEOS,
+  gridState,
   open,
+  shot,
+  signedIn,
   type WebSession,
   webSession
 } from './playerLayoutsRig.e2e'
+import { currentInning } from './scoreboardOverlay/lineScoreLayout'
+
+const PORTRAIT: [number, number] = [402, 874]
+const LANDSCAPE: [number, number] = [874, 402]
+
+const grid = (game: FixtureGame, count: number, t: number): string =>
+  `/games/${game.id}?angles=${game.videos.slice(0, count).join(',')}&audio=${game.videos[0]}&t=${t}`
+
+/** Waits for `count` tiles with pictures, and the board and box when due. */
+async function gridReady(
+  session: WebSession,
+  count: number,
+  wants: { board: boolean; box: boolean }
+): Promise<void> {
+  await session.page.waitForFunction(
+    `(() => {
+      const v = ${GRID_VIDEOS}
+      if (v.length !== ${count} || !v.every(one => one.readyState >= 2)) return false
+      const outside = node => node.closest('#root') == null
+      const board = [...document.querySelectorAll('[data-testid="scoreboard-overlay"]')].some(outside)
+      const box = [...document.querySelectorAll('[data-testid="line-score-box"]')].find(outside)
+      return board === ${wants.board} && (box != null && box.getAttribute('data-at') !== '') === ${wants.box}
+    })()`,
+    { timeout: 60_000 }
+  )
+}
+
+/** The grid's master picture: its time, and whether it is playing. */
+async function master(
+  session: WebSession
+): Promise<{ currentTime: number; paused: boolean; aspect: number }> {
+  return (await session.page.evaluate(`(() => {
+    const v = ${GRID_VIDEOS}[0]
+    return { currentTime: v.currentTime, paused: v.paused, aspect: v.videoWidth / v.videoHeight }
+  })()`)) as { currentTime: number; paused: boolean; aspect: number }
+}
+
+/** The box score's rows as text, header first, and which cells are bold. */
+async function boxRows(
+  session: WebSession
+): Promise<{ rows: string[][]; bold: string[] }> {
+  return (await session.page.evaluate(`(() => {
+    const line = [...document.querySelectorAll('[data-testid="line-score-box"]')].find(node => node.closest('#root') == null)
+    const leaves = row => [...row.querySelectorAll('div')].filter(cell => cell.childElementCount === 0)
+    const rows = [...line.firstElementChild.children]
+    return {
+      rows: rows.map(row => leaves(row).map(cell => cell.textContent)),
+      bold: rows.slice(1).flatMap(row => leaves(row).filter(cell => Number(getComputedStyle(cell).fontWeight) >= 700).map(cell => cell.textContent))
+    }
+  })()`)) as { rows: string[][]; bold: string[] }
+}
+
+const near = (
+  actual: Rect | null,
+  expected: Rect | null,
+  what: string
+): void => {
+  if (expected == null) {
+    expect(actual, what).equals(null)
+    return
+  }
+  expect(actual, what).not.equals(null)
+  for (const key of ['x', 'y', 'w', 'h'] as const)
+    expect(actual![key], `${what}.${key}`).closeTo(expected[key], 1)
+}
 
 /**
  * The player-layouts scenarios in a browser (E1–E4, and E9's full pass):
@@ -39,5 +114,256 @@ describe('player layouts in a browser', function () {
       { timeout: 60_000 }
     )
     expect(await session.page.$$eval('video', all => all.length)).at.least(1)
+  })
+
+  it('places the angles, the board and the box score by playerLayout (E2)', async function () {
+    const S = fixture().games.S
+    const overlay = await new TeamStationClient({
+      baseUrl: API,
+      token: await signedIn()
+    }).scoreboardOverlay(S.id)
+    for (const [width, height] of [PORTRAIT, LANDSCAPE]) {
+      const session = await webSession(`e2-${width}`, width, height)
+      const landscape = width > height
+      for (const count of [1, 2, 3, 4]) {
+        await open(session, grid(S, count, 60))
+        const box = landscape ? count === 2 || count === 3 : count <= 3
+        await gridReady(session, count, { board: true, box })
+        // The board's natural size: its rect undone by the scale it is
+        // drawn at, read until the board holds still across the reads.
+        const scaleNow = async (): Promise<number> =>
+          Number(
+            await session.page.evaluate(`(() => {
+            const board = [...document.querySelectorAll('[data-testid="scoreboard-overlay"]')].find(node => node.closest('#root') == null)
+            const scaled = [...board.querySelectorAll('div')].find(node => /scale\\(/.test(node.style.transform))
+            return /scale\\(([0-9.]+)\\)/.exec(scaled.style.transform)[1]
+          })()`)
+          )
+        let scale = await scaleNow()
+        let state = await gridState(session)
+        for (let tries = 0; tries < 10; tries++) {
+          const again = await scaleNow()
+          const settled = await gridState(session)
+          if (
+            again === scale &&
+            JSON.stringify(settled.tiles) === JSON.stringify(state.tiles)
+          )
+            break
+          scale = again
+          state = settled
+          await new Promise(resolve => setTimeout(resolve, 200))
+        }
+        const { aspect } = await master(session)
+        const screen = { width: state.window.w, height: state.window.h }
+        const natural =
+          state.board == null
+            ? null
+            : { width: state.board.w / scale, height: state.board.h / scale }
+        const layout = playerLayout({
+          screen,
+          safe: { x: 0, y: 0, w: screen.width, h: screen.height },
+          count,
+          aspect,
+          landscape,
+          settings: overlay,
+          board: natural,
+          line: true
+        })
+        const what = `${count} ${landscape ? 'sideways' : 'upright'}`
+        expect(state.tiles, what).length(count)
+        state.tiles.forEach((tile, index) => {
+          near(tile, layout.tiles[index], `${what} tile ${index}`)
+        })
+        near(state.box, layout.box, `${what} box`)
+        if (count !== 4) near(state.board, layout.board, `${what} board`)
+        // What the spec says, in its own terms.
+        const [first] = state.tiles
+        if (!landscape) {
+          const above = state.box ?? state.board!
+          if (count < 4)
+            expect(first.y, `${what} tiles under`).closeTo(
+              (state.box != null
+                ? above.y + above.h
+                : layout.tiles[0].y - GAP) + GAP,
+              1
+            )
+        } else if (count === 2) {
+          for (const tile of state.tiles)
+            expect(tile.y + tile.h, `${what} on the bottom`).closeTo(
+              screen.height,
+              1
+            )
+          expect(state.board!.x, `${what} board left`).closeTo(
+            screen.width / 2 + GAP,
+            1
+          )
+          expect(state.box!.x + state.box!.w, `${what} box right`).closeTo(
+            screen.width / 2 - GAP,
+            1
+          )
+        } else if (count === 3) {
+          // The top-right angle is the first; the bottom-left one the second.
+          const right = state.tiles[0].x - GAP
+          expect(state.board!.x + state.board!.w, `${what} board`).closeTo(
+            right,
+            1
+          )
+          expect(state.box!.x + state.box!.w, `${what} box`).closeTo(right, 1)
+          expect(state.box!.y, `${what} box under the board`).greaterThan(
+            state.board!.y
+          )
+          expect(state.box!.y + state.box!.h, `${what} in the cell`).at.most(
+            state.tiles[1].y
+          )
+        } else if (count === 4) {
+          expect(state.board!.x).at.least(first.x - 1)
+          expect(state.board!.y).at.least(first.y - 1)
+        }
+        await shot(
+          session,
+          `web-${landscape ? 'landscape' : 'portrait'}-${count}-after.png`
+        )
+      }
+    }
+  })
+
+  it('shows the line score at the playhead, and only for a scored game (E3)', async function () {
+    const f = fixture()
+    const { S, L, N, N0 } = f.games
+    const client = new TeamStationClient({
+      baseUrl: API,
+      token: await signedIn()
+    })
+    const { steps } = await client.lineScore(S.id)
+    expect(steps.length).greaterThan(10)
+    /** The first step of inning `n`, by when it was in effect. */
+    const inning = (n: number): LineScoreStep =>
+      steps.find(step => currentInning(step.line) >= n)!
+    const stepAt = (wall: number): LineScoreStep | undefined =>
+      steps.filter(step => step.at <= wall).at(-1)
+
+    for (const [width, height] of [PORTRAIT, LANDSCAPE]) {
+      const landscape = width > height
+      const session = await webSession(`e3-${width}`, width, height)
+      const size = landscape ? 'landscape' : 'portrait'
+
+      // Where the take's clock is: the board's wall time less the picture's.
+      await open(session, grid(S, 2, 30))
+      await gridReady(session, 2, { board: true, box: true })
+      const offsetOf = async (): Promise<number> => {
+        const state = await gridState(session)
+        return state.board!.at - (await master(session)).currentTime * 1000
+      }
+      const offset = await offsetOf()
+      const tFor = (wall: number): number => Math.max(0, (wall - offset) / 1000)
+
+      /** The box against the step in effect at the playhead. */
+      const check = async (what: string): Promise<BoardLine> => {
+        const state = await gridState(session)
+        const playhead = (await master(session)).currentTime * 1000 + offset
+        const expected = stepAt(state.box!.at)!
+        expect(state.box!.at, `${what} box at`).at.most(playhead + 1000)
+        expect(
+          stepAt(playhead + 1000)?.at ?? 0,
+          `${what} the latest step`
+        ).at.most(state.box!.at + 1000)
+        expect(
+          Math.max(...state.box!.innings),
+          `${what} no later inning`
+        ).at.most(currentInning(expected.line))
+        const { rows, bold } = await boxRows(session)
+        expect(rows[0].slice(-3), `${what} totals`).deep.equals(['R', 'H', 'E'])
+        expect(rows[1][0]).length.greaterThan(0)
+        expect(bold, `${what} R bold`).include.members([
+          String(expected.line.away.r),
+          String(expected.line.home.r)
+        ])
+        expect(rows[1].at(-3), `${what} away R`).equals(
+          String(expected.line.away.r)
+        )
+        expect(rows[2].at(-3), `${what} home R`).equals(
+          String(expected.line.home.r)
+        )
+        return expected.line
+      }
+
+      // Inning 1, played into inning 3: the box follows.
+      await open(session, grid(S, 2, tFor(inning(1).at)))
+      await gridReady(session, 2, { board: true, box: true })
+      await session.page.evaluate(
+        `(() => { const v = ${GRID_VIDEOS}; v[0].muted = true; return v[0].play() })()`
+      )
+      const seen = new Set<number>()
+      const until = Date.now() + 120_000
+      while (Date.now() < until) {
+        const state = await gridState(session)
+        seen.add(Math.max(...state.box!.innings))
+        if (state.box!.at >= inning(3).at) break
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+      expect([...seen], 'innings as it played').include.members([1, 2, 3])
+      await check(`${size} into 3`)
+
+      // Back into inning 2, then into inning 11.
+      await open(session, grid(S, 2, tFor(inning(2).at) + 2))
+      await gridReady(session, 2, { board: true, box: true })
+      const second = await check(`${size} back into 2`)
+      expect(currentInning(second)).equals(2)
+      // The query for that moment answers the line the box showed.
+      const shown = (await gridState(session)).box!.at
+      const asked = await client.lineScore(S.id, { at: shown })
+      expect(asked.steps).length(1)
+      expect(asked.steps[0].line).deep.equals(second)
+
+      await open(session, grid(S, 2, tFor(inning(11).at) + 2))
+      await gridReady(session, 2, { board: true, box: true })
+      await check(`${size} into 11`)
+      const latest = (await gridState(session)).box!.innings
+      // Shaped for six, it shows the latest six, at either size.
+      expect(latest, 'the latest six innings').deep.equals([6, 7, 8, 9, 10, 11])
+      await shot(
+        session,
+        landscape
+          ? `web-${size}-2-inning11.png`
+          : 'web-boxscore-extra-innings.png'
+      )
+
+      // L: logs and no events, so a board and no box.
+      await open(session, grid(L, 2, 30))
+      await gridReady(session, 2, { board: true, box: false })
+      const logs = await gridState(session)
+      if (landscape)
+        expect(logs.board!.x + logs.board!.w / 2, 'L board centred').closeTo(
+          logs.window.w / 2,
+          1
+        )
+      else
+        expect(logs.tiles[0].y, 'L tiles under the board').greaterThan(
+          logs.board!.y + logs.board!.h
+        )
+      await shot(session, `web-${size}-2-logonly.png`)
+
+      // N: events before the overlay's start, so a box and no board.
+      await open(session, grid(N, 1, 0))
+      if (landscape) {
+        await gridReady(session, 1, { board: false, box: false })
+      } else {
+        await gridReady(session, 1, { board: false, box: true })
+        const events = await gridState(session)
+        expect(events.box!.y, 'N box at the top').closeTo(0, 1)
+        expect(events.tiles[0].y, 'N tile under the box').closeTo(
+          events.box!.y + events.box!.h + GAP,
+          1
+        )
+        await shot(session, `web-portrait-1-noboard.png`)
+      }
+
+      // N0: neither, so the tiles from the top.
+      await open(session, grid(N0, 1, 0))
+      await gridReady(session, 1, { board: false, box: false })
+      const bare = await gridState(session)
+      if (!landscape)
+        expect(bare.tiles[0].y, 'N0 tiles at the top').closeTo(0, 1)
+    }
   })
 })

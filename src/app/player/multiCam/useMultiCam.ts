@@ -98,16 +98,12 @@ export interface MultiCamOptions {
   /** Draw what each tile is doing (`?debug=1` on the web). */
   debug?: boolean
   /**
-   * A band this tall across the top of the box that the tiles stay below:
-   * the scoreboard's, in a column. Drags and drops measure against the tiles
-   * where they are, below it.
-   */
-  top?: number
-  /**
-   * Three angles sideways leave the top-left quadrant to the scoreboard
+   * Each tile's rectangle, in reading order, as the player's layout puts
+   * them around the board and the box score (`playerLayout`). Drags and
+   * drops measure against them. Without them the tiles fill the box
    * (`tileRects`).
    */
-  boardCell?: boolean
+  rects?: Rect[]
   /**
    * Called just before the tiles stand aside for a dragged one, so a phone
    * can animate the change it is about to draw.
@@ -292,8 +288,6 @@ export function useMultiCam(
     height,
     debug = false,
     beforeShuffle,
-    top = 0,
-    boardCell = false,
     liveRetryDelay = livePlaybackRetryDelay
   } = options
 
@@ -489,15 +483,15 @@ export function useMultiCam(
   const zoomedAt =
     zoomedId == null ? -1 : chosen.findIndex(video => video.id === zoomedId)
   const zoomed = zoomedAt >= 0 ? zoomedAt : null
-  const rects = tileRects({
-    width,
-    height,
-    top,
-    boardCell,
-    count: chosen.length,
-    aspect: aspectOf(chosen),
-    zoomed
-  })
+  const rects =
+    options.rects ??
+    tileRects({
+      width,
+      height,
+      count: chosen.length,
+      aspect: aspectOf(chosen),
+      zoomed
+    })
 
   /**
    * The moment the grid opens on.

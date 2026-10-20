@@ -43,8 +43,14 @@ export function gridBox(options: {
    * screen, of which this is what the scoreboard's band leaves.
    */
   shape?: { columns: number; rows: number }
+  /**
+   * Where the grid goes up and down a box taller than it: in the middle, at
+   * the top (the portrait stack, butted against what is above it), or at the
+   * bottom (two angles sideways, leaving the space above them whole).
+   */
+  align?: VerticalAlign
 }): Rect {
-  const { width, height, count, aspect } = options
+  const { width, height, count, aspect, align = 'centre' } = options
   const { columns, rows } = options.shape ?? gridShape(width, height, count)
   const wanted = (aspect * columns) / rows
 
@@ -54,8 +60,13 @@ export function gridBox(options: {
     h = height
     w = height * wanted
   }
-  return { x: (width - w) / 2, y: (height - h) / 2, w, h }
+  const y =
+    align === 'top' ? 0 : align === 'bottom' ? height - h : (height - h) / 2
+  return { x: (width - w) / 2, y, w, h }
 }
+
+/** Where a grid goes up and down the box it is laid out in. */
+export type VerticalAlign = 'centre' | 'top' | 'bottom'
 
 /**
  * Each tile's rectangle inside the grid box, in reading order.
@@ -86,6 +97,8 @@ export function tileRects(options: {
    * scoreboard: they take the other three, in reading order.
    */
   boardCell?: boolean
+  /** Where the grid goes up and down the box (`gridBox`). */
+  align?: VerticalAlign
 }): Rect[] {
   const {
     width,
@@ -106,8 +119,8 @@ export function tileRects(options: {
     }).map(rect => ({ ...rect, y: rect.y + top }))
   }
 
-  const { shape } = options
-  const box = gridBox({ width, height, count: tiles, aspect, shape })
+  const { shape, align } = options
+  const box = gridBox({ width, height, count: tiles, aspect, shape, align })
   if (zoomed != null && zoomed >= 0 && zoomed < tiles) {
     // Zoomed, the big tile takes the whole box — and the others keep a
     // rectangle rather than being unmounted or hidden, because a `<video>`

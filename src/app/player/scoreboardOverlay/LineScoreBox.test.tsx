@@ -16,7 +16,11 @@ import {
   LINE_SIDE,
   LINE_TOTAL_WIDTH
 } from './lineScoreLayout'
-import { BOARD_POLL_MS, NOTICE_DEBOUNCE_MS } from './useBoardTimeline'
+import {
+  BOARD_POLL_MS,
+  NOTICE_DEBOUNCE_MS,
+  useBoardTimeline
+} from './useBoardTimeline'
 import { useLineScore } from './useLineScore'
 
 let root: Root | undefined
@@ -313,5 +317,61 @@ describe("a game's line score, fetched (U5)", function () {
     const before = asks()
     await advance(BOARD_POLL_MS)
     expect(asks()).equals(before)
+  })
+})
+
+describe("the board's changes, for the box score of the same game (U5)", function () {
+  it('says the game may have changed when its socket opens, on a burst of notices once, and on each poll while the socket is down', async function () {
+    const server = overlayServer()
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: server.fetch
+    })
+    const sockets = fakeSockets()
+    const clock = fakeClock()
+    let changes = 0
+    function Board(): null {
+      useBoardTimeline({
+        client,
+        gameId: 'g1',
+        fromMs: 0,
+        live: true,
+        playheadWall: () => null,
+        onChange: () => {
+          changes += 1
+        },
+        WebSocketImpl: sockets.Impl,
+        schedule: clock.schedule,
+        origin: { protocol: 'http:', host: 'localhost' }
+      })
+      return null
+    }
+    const advance = async (ms: number): Promise<void> => {
+      await act(async () => {
+        clock.advance(ms)
+      })
+      await settle(5)
+    }
+    await render(<Board />)
+    await settle()
+    expect(changes).equals(0)
+    await act(async () => {
+      sockets.latest().open()
+    })
+    expect(changes).equals(1)
+    await act(async () => {
+      sockets.latest().receive({ type: 'changed' })
+      sockets.latest().receive({ type: 'changed' })
+    })
+    await advance(NOTICE_DEBOUNCE_MS)
+    expect(changes).equals(2)
+    // An open socket's poll says nothing; a closed one's says it each time.
+    await advance(BOARD_POLL_MS)
+    expect(changes).equals(2)
+    await act(async () => {
+      sockets.latest().drop(4403)
+    })
+    await advance(BOARD_POLL_MS)
+    expect(changes).equals(3)
   })
 })

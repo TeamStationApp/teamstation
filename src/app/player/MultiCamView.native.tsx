@@ -25,6 +25,11 @@ import {
   orientationLock
 } from './multiCam/orientationLock'
 import {
+  type PlayerLayout,
+  playerLayout,
+  topOfAngles
+} from './multiCam/playerLayout'
+import {
   beyondSlop,
   type MultiCamProps,
   REORDER_HOLD_MS,
@@ -37,6 +42,7 @@ import {
   GridScoreboard,
   useGridBoard
 } from './scoreboardOverlay/GridScoreboard'
+import type { Size } from './scoreboardOverlay/overlayLayout'
 import type { VideoHandle } from './videoHandle'
 import { VideoView } from './VideoView'
 
@@ -132,23 +138,29 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
   const { width, height } = useWindowDimensions()
   const insets = useInsets()
   const landscape = width > height
-  // Upright, the board's band is sized for the height below the top of the
-  // safe area, which is all the angles stacked under it have.
-  const boardBox = landscape
-    ? { width, height }
-    : { width, height: Math.max(0, height - insets.top) }
-  const board = useGridBoard(props, boardBox, landscape)
-  const { safe, top } = edgeToEdge(
-    { width, height },
-    insets,
-    board.band,
-    landscape
-  )
+  // The board, the box score and the angles around them, the board and the
+  // box inside the safe area (`playerLayout`).
+  const board = useGridBoard(props, landscape)
+  const { safe } = edgeToEdge({ width, height }, insets, 0, landscape)
+  const zoomedIndex =
+    props.zoomedId == null ? null : props.order.indexOf(props.zoomedId)
+  const layoutFor = (natural: Size): PlayerLayout =>
+    playerLayout({
+      screen: { width, height },
+      safe,
+      count: board.count,
+      aspect: board.aspect,
+      landscape,
+      settings: board.settings,
+      board: board.hasBoard ? natural : null,
+      line: board.hasLine,
+      zoomed: zoomedIndex != null && zoomedIndex >= 0 ? zoomedIndex : null
+    })
+  const layout = layoutFor(board.natural)
   const mc = useMultiCam(props, {
     width,
     height,
-    top,
-    boardCell: board.boardCell,
+    rects: layout.tiles,
     // The others slide aside rather than jump when a dragged tile changes
     // the place it would land in.
     beforeShuffle: shuffle
@@ -301,14 +313,7 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
           />
         ))}
 
-        <GridScoreboard
-          board={board}
-          box={boardBox}
-          landscape={landscape}
-          rects={mc.rects}
-          zoomed={mc.zoomed}
-          safe={safe}
-        />
+        <GridScoreboard board={board} layout={layoutFor} />
 
         {/* Every touch on the grid, over the tiles and under the bar. */}
         <View
@@ -348,7 +353,14 @@ function MultiCamGrid(props: MultiCamViewProps): React.ReactElement {
             <View
               style={[
                 styles.notice,
-                { top: board.band + theme.rem(theme.spaceSmRem) }
+                {
+                  // In the safe area's coordinates, as the controls are; at
+                  // the top of the highest angle, as the browser's grid puts
+                  // it, so it is never over the board.
+                  top:
+                    Math.max(0, topOfAngles(layout) - safe.y) +
+                    theme.rem(theme.spaceSmRem)
+                }
               ]}
               pointerEvents="none"
             >
