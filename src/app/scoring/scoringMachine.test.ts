@@ -42,7 +42,7 @@ const roster = [
   asRosterEntry({
     userId: userIdOfGumbo(1),
     gumboId: 1,
-    shortName: 'Jordan K.',
+    shortName: 'Jason K.',
     jersey: '00',
     positions: ['P'],
     isPlayer: true,
@@ -87,7 +87,7 @@ describe('local scoring sessions', function () {
     })
     expect(session.gameData.players[1]).includes({
       id: 1,
-      fullName: 'Jordan K.',
+      fullName: 'Jason K.',
       jersey: '00',
       bats: 'switch'
     })
@@ -115,9 +115,14 @@ describe('local scoring sessions', function () {
         createDevelopmentSession(gameFixture, [ignored], []).gameData.players
       )
     ).deep.equals([])
-    const local = addDevelopmentPlayer(session, 'away', 9000000, '  Casey  ')
+    const local = addDevelopmentPlayer(
+      session,
+      'away',
+      9000000,
+      '  Casey Mize  '
+    )
     expect(session.gameData.players[local]).includes({
-      fullName: 'Casey',
+      fullName: 'Casey Mize',
       id: 9000000,
       jersey: '',
       local: true
@@ -127,14 +132,14 @@ describe('local scoring sessions', function () {
     const session = initial().session
     const batter = session.liveData.linescore.offense.batter
     if (batter == null) throw new Error('Missing batter')
-    batter.fullName = 'Alex Rivera'
+    batter.fullName = 'Anthony Rizzo'
     expect(scoreboardFor(session).batter).deep.equals({
-      firstName: 'Alex',
+      firstName: 'Anthony',
       lastName: 'R'
     })
-    batter.fullName = 'Jordan K.'
+    batter.fullName = 'Jason K.'
     expect(scoreboardFor(session).batter).deep.equals({
-      firstName: 'Jordan',
+      firstName: 'Jason',
       lastName: 'K'
     })
   })

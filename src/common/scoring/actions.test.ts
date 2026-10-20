@@ -806,7 +806,7 @@ describe('scoring actions', function () {
     expect(
       shortName({ fullName: 'Noah Dean', firstName: 'Noah', lastName: 'Dean' })
     ).equals('Noah D.')
-    expect(shortName({ fullName: 'Marcus Kaczmarek' })).equals('Marcus K.')
+    expect(shortName({ fullName: 'Marcus Semien' })).equals('Marcus S.')
     expect(shortName({ fullName: 'Mary Ann Smith' })).equals('Mary Ann S.')
     expect(shortName({ fullName: "Liam O'Brien" })).equals('Liam O.')
     expect(shortName({ fullName: 'Sam P.' })).equals('Sam P.')
@@ -817,13 +817,13 @@ describe('scoring actions', function () {
     const game = sampleGame()
     for (const player of Object.values(game.gameData.players)) {
       player.firstName = 'Chase'
-      player.lastName = `Kaczmarek${player.id}`
-      player.fullName = `Chase Kaczmarek${player.id}`
+      player.lastName = `Utley${player.id}`
+      player.fullName = `Chase Utley${player.id}`
     }
     const text = promptContext(game)
-    expect(text).includes(`Batter: Chase K. #4 (tag ${tagOf(3)}).`)
-    expect(text).not.match(/Kaczmarek/)
-    expect(keyterms(game).join(' ')).not.match(/Kaczmarek/)
+    expect(text).includes(`Batter: Chase U. #4 (tag ${tagOf(3)}).`)
+    expect(text).not.match(/Utley/)
+    expect(keyterms(game).join(' ')).not.match(/Utley/)
   })
 
   it('biases the recogniser toward who is in the play first', function () {
