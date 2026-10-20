@@ -32,7 +32,7 @@ import type {
 import { asCatalogId, catalogPicture } from '../../common/pictureCatalog'
 import type { PublicGroup } from '../../common/publicGroups'
 import { asRoleFlags } from '../../common/roles'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import { adminScopes, roleScopes, visibleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
@@ -99,7 +99,7 @@ function actorOf(req: Request): Actor {
 async function invitation(
   db: Kysely<Database>,
   raw: unknown,
-  userId?: number
+  userId?: string
 ): Promise<RelationshipInvitation> {
   if (
     !isRecord(raw) ||
@@ -213,12 +213,14 @@ async function invitation(
     raw.kind === 'promotion' &&
     typeof raw.teamId === 'string' &&
     (typeof raw.recipientEmail === 'string' ||
-      (typeof raw.recipientUserId === 'number' &&
-        Number.isSafeInteger(raw.recipientUserId)))
+      typeof raw.recipientUserId === 'string')
   ) {
     if (raw.recipientEmail != null && raw.recipientUserId != null)
       throw badRequest('Choose one recipient')
-    let recipientUserId = raw.recipientUserId as number
+    let recipientUserId =
+      raw.recipientUserId == null
+        ? undefined
+        : clean(asUserId, raw.recipientUserId)
     if (raw.recipientEmail != null) {
       const recipient = await db
         .selectFrom('user_emails')
@@ -240,6 +242,7 @@ async function invitation(
         )
       recipientUserId = recipient.id
     }
+    if (recipientUserId == null) throw badRequest('Choose a valid recipient')
     return {
       sender,
       terms: {
@@ -460,13 +463,12 @@ export function groupRoutes(
             throw badRequest('Invalid administrator replacements')
           for (const replacement of req.body.administrators) {
             const ref = clean(asGroupRef, replacement?.group)
-            if (!Number.isSafeInteger(replacement?.userId))
-              throw badRequest('Choose a verified replacement account')
+            const replacementUserId = clean(asUserId, replacement?.userId)
             await setScopeRoles(
               trx,
               ref.kind,
               ref.id,
-              replacement.userId,
+              replacementUserId,
               { admin: true, flags: [] },
               actor.userId
             )

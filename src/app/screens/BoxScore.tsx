@@ -56,7 +56,7 @@ export interface BoxScoreProps {
    * team a coach's Settings tab edits the player on.
    */
   onOpenPlayer?: (
-    userId: number,
+    userId: string,
     name: string,
     from?: { seasonId?: string; teamId?: string; onTeam?: string }
   ) => void
@@ -65,7 +65,7 @@ export interface BoxScoreProps {
 /** A batter in a side's batting order as it stands. */
 export interface LineupBatter {
   /** Null for a player the scorer made up, who has no user. */
-  userId: number | null
+  userId: string | null
   shortName: string
 }
 
@@ -74,7 +74,7 @@ export interface LineupBatter {
  * the order who has not come to the plate, who may have no user.
  */
 export type BattingLine = Omit<BattingRow, 'userId'> & {
-  userId: number | null
+  userId: string | null
 }
 
 /**
@@ -134,7 +134,7 @@ export function BoxScore(props: BoxScoreProps): React.ReactElement {
     const open =
       onOpenPlayer == null
         ? undefined
-        : (userId: number, name: string) => {
+        : (userId: string, name: string) => {
             onOpenPlayer(userId, name, {
               seasonId: game.seasonId ?? undefined,
               teamId: side.teamId,
@@ -425,7 +425,7 @@ function BattingTable(props: {
   name: string
   rows: BattingLine[]
   theme: Theme
-  onOpenPlayer?: (userId: number, name: string) => void
+  onOpenPlayer?: (userId: string, name: string) => void
 }): React.ReactElement | null {
   const { name, rows, theme, onOpenPlayer } = props
   const { fontScale } = useWindowDimensions()
@@ -493,7 +493,7 @@ function PitchingTable(props: {
   name: string
   rows: PitchingRow[]
   theme: Theme
-  onOpenPlayer?: (userId: number, name: string) => void
+  onOpenPlayer?: (userId: string, name: string) => void
 }): React.ReactElement | null {
   const { name, rows, theme, onOpenPlayer } = props
   const { fontScale } = useWindowDimensions()

@@ -460,7 +460,7 @@ describe('the Director emitter against a peer over TCP', function () {
     const tokenFile = join(dir, 'token')
     writeFileSync(tokenFile, 'tok_one\n')
     const fetcher = (async () =>
-      new Response(JSON.stringify(one), { status: 200 })) as unknown as typeof fetch
+      new Response(JSON.stringify({ version: 2, ...one }), { status: 200 })) as unknown as typeof fetch
     const lines: Array<Record<string, unknown>> = []
     const status = await main(
       [

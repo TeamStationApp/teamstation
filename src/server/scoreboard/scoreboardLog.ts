@@ -34,7 +34,7 @@ export interface ScoreboardLogRow {
   at: number
   cause: ScoreboardLogCause
   /** Whoever's socket sent the write; null for the server's own. */
-  actorId: number | null
+  actorId: string | null
   /** The publisher's slot after the write; none after a reset. */
   publisher: SourceState | undefined
   overrides: DashboardOverrides
