@@ -121,7 +121,7 @@ class ScoreboardTargetTest {
         assertEquals(ScoreboardTarget.DEFAULT_ACCOUNT_SERVER, fresh.accountServer)
         assertEquals("", fresh.token)
 
-        val chosen = sample().copy(route = ScoreboardRoute.Event, token = "tok")
+        val chosen = sample().copy(route = ScoreboardRoute.Event, token = "tok", userId = "usr_1111111111111111111112")
         ScoreboardTarget.save(store, chosen)
         assertEquals(chosen, ScoreboardTarget.load(store))
 

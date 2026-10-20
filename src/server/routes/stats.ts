@@ -1,10 +1,10 @@
 import { Router } from 'express'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
 import { seasonStandings } from '../../common/seasonStandings'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import { guardsPerson, visibleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
@@ -281,6 +281,7 @@ export function statsRoutes(
 
       let query = db
         .selectFrom('event_players')
+        .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'event_players.gumbo_id')
         .innerJoin('events', 'events.id', 'event_players.event_id')
         .innerJoin('games', 'games.id', 'events.gameId')
         .select([
@@ -297,7 +298,7 @@ export function statsRoutes(
           'event_players.team_id as teamId',
           'event_players.role as role'
         ])
-        .where('event_players.user_id', 'in', person.userIds)
+        .where('gumbo_ids.user_id', 'in', person.userIds)
         .where('events.hidden', '=', false)
 
       const seasonId = req.query.seasonId
@@ -317,7 +318,13 @@ export function statsRoutes(
         query = query.where('event_players.role', '=', role)
       }
 
-      const rows = await query.orderBy('games.start_at', 'desc').execute()
+      const rows = await query
+        .orderBy('games.start_at', 'desc')
+        .orderBy(sql`games.id collate "C"`)
+        .orderBy('events.atBatIndex')
+        .orderBy(sql`events.id collate "C"`)
+        .orderBy(sql`event_players.role collate "C"`)
+        .execute()
 
       // The same rule as everywhere else, applied row by row: a play is
       // visible if its game is.
@@ -362,11 +369,11 @@ function pathParam(value: string | string[] | undefined): string {
   return value
 }
 
-function userIdParam(value: string | string[] | undefined): number {
+function userIdParam(value: string | string[] | undefined): string {
   try {
     return asUserId(pathParam(value))
   } catch {
-    throw notFound()
+    throw badRequest('Expected a canonical user id')
   }
 }
 

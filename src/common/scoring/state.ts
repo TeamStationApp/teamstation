@@ -11,12 +11,12 @@ import {
 } from 'cleaners'
 
 import { asLiteral } from '../asLiteral'
+import { asGumboId } from '../userId'
 
 /**
  * A game as the scoring library holds it: GUMBO's own `gameData` and
- * `liveData`, with every player named by a **session id** — a small integer
- * the game hands out — and each player's server identity kept beside it as
- * `userId`. Nothing here is geometry, timing or presentation.
+ * `liveData`, with every player named by his persistent numeric scoring id.
+ * Nothing here is geometry, timing or presentation.
  */
 
 export const POSITIONS = [
@@ -306,8 +306,6 @@ export type GamePlay = ReturnType<typeof asGamePlay>
 
 export interface GamePlayer {
   id: number
-  /** The server's identity for this person, or null for one made up here. */
-  userId: number | null
   teamId: string
   fullName: string
   firstName?: string
@@ -329,12 +327,6 @@ export interface GameSide {
   battingIndex: number
   defense: Record<Position, number | null>
   pitchCounts: Record<number, number>
-}
-export interface PlayerIdentityMap {
-  /** Type-prefixed source identities, `number:123`, to their session ids. */
-  sourceToSession: Record<string, number>
-  sessionToSource: Record<number, string | number | null>
-  nextId: number
 }
 
 export const BASE_KEYS = ['first', 'second', 'third'] as const
@@ -512,7 +504,7 @@ export interface GameState {
   meta: {
     source?: 'local-development' | 'api'
     sequence: number
-    identities: PlayerIdentityMap
+    tagOrder: number[]
     /** Some plays were rebuilt from their documents rather than their actions. */
     derived?: boolean
   }
@@ -586,9 +578,8 @@ const asSide = asObject({
   defense: asDefense,
   pitchCounts: asObject(asNumber)
 })
-const asPlayer = asObject({
+const playerShape = {
   id: asSessionId,
-  userId: asEither(asNull, asNumber),
   teamId: asString,
   fullName: asString,
   firstName: asOptional(asString),
@@ -598,6 +589,11 @@ const asPlayer = asObject({
   throws: asEither(asNull, asLiteral('left', 'right')),
   positions: asArray(asString),
   local: asBoolean
+}
+const asPlayer = asObject(playerShape)
+const asLegacyPlayer = asObject({
+  ...playerShape,
+  userId: asEither(asNull, asNumber)
 })
 const asIdentities = asObject({
   sourceToSession: asObject(asNumber),
@@ -613,21 +609,51 @@ const asIdentities = asObject({
 export interface GameSetup {
   players: Record<number, GamePlayer>
   sides: Record<Side, GameSide>
-  identities: PlayerIdentityMap
+  tagOrder: number[]
 }
-export const asGameSetup: Cleaner<GameSetup> = exactly(
+/** The historical session-id shape, used only by the version 1 reader. */
+export const asLegacyGameSetup = exactly(
   asObject({
-    players: asObject(asPlayer),
+    players: asObject(asLegacyPlayer),
     sides: asObject({ away: asSide, home: asSide }),
     identities: asIdentities
   })
 )
+const cleanSetup = exactly(
+  asObject({
+    players: asObject(asPlayer),
+    sides: asObject({ away: asSide, home: asSide }),
+    tagOrder: asArray(asGumboId)
+  })
+)
+export const asGameSetup: Cleaner<GameSetup> = raw => {
+  const setup = cleanSetup(raw)
+  if (new Set(setup.tagOrder).size !== setup.tagOrder.length)
+    throw new Error('Duplicate player tag')
+  for (const [key, player] of Object.entries(setup.players)) {
+    asGumboId(player.id)
+    if (String(player.id) !== key || !setup.tagOrder.includes(player.id))
+      throw new Error('Invalid scoring player identity')
+  }
+  for (const side of Object.values(setup.sides)) {
+    for (const id of [
+      ...side.players,
+      ...side.battingOrder,
+      ...Object.values(side.defense)
+    ])
+      if (id != null) asGumboId(id)
+    for (const key of Object.keys(side.pitchCounts))
+      if (String(asGumboId(Number(key))) !== key)
+        throw new Error('Invalid pitch-count player identity')
+  }
+  return setup
+}
 
 export function setupOf(state: GameState): GameSetup {
   return {
     players: copyState(state.gameData.players),
     sides: copyState(state.liveData.boxscore.teams),
-    identities: copyState(state.meta.identities)
+    tagOrder: [...state.meta.tagOrder]
   }
 }
 
@@ -758,7 +784,7 @@ export const asGameState: Cleaner<GameState> = exactly(
     meta: asObject({
       source: asOptional(asLiteral('local-development', 'api')),
       sequence: asNumber,
-      identities: asIdentities,
+      tagOrder: asArray(asGumboId),
       derived: asOptional(asBoolean)
     })
   })

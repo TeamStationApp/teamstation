@@ -10,6 +10,7 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { asGroupDetail, type GroupDetail } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ManagementCard } from './ManagementCard'
 import { TeamPage } from './TeamPage'
@@ -261,8 +262,9 @@ describe('restored access-aware team presentation', () => {
         asked.push(`roster ${id}`)
         return [
           asRosterEntry({
-            userId: 201,
-            shortName: 'Avery S',
+            userId: userIdOfGumbo(201),
+            gumboId: 201,
+            shortName: 'Alfonso S',
             jersey: '7',
             positions: ['SS'],
             isPlayer: true,
@@ -296,12 +298,12 @@ describe('restored access-aware team presentation', () => {
         [...document.querySelectorAll('[role="tab"]')].map(n => n.textContent)
       ).deep.equals(['Videos', 'Schedule', 'Team', 'Stats'])
       // The members' roster, not the public page's staff list.
-      expect(document.body.textContent).includes('Avery S')
+      expect(document.body.textContent).includes('Alfonso S')
       expect(document.body.textContent).not.includes('Standalone team')
       expect(document.body.textContent).not.includes(
         'No game has a video attached yet.'
       )
-      expect(document.querySelector('[aria-label^="Avery S"]')).equals(null)
+      expect(document.querySelector('[aria-label^="Alfonso S"]')).equals(null)
       await press('Stats')
       expect(document.body.textContent).includes('SEASON PERFORMANCE')
       expect(document.body.textContent).includes(

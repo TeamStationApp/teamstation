@@ -17,8 +17,7 @@ import type { Database } from '../db/database'
  * share a half, and a game where one holds an empty line beside the other is
  * the re-added shape rather than two boys.
  *
- * A number settles nothing here, whatever it looks like: eleven numbers on the
- * server are worn by two different children on one team.
+ * A jersey number alone does not identify a player: teammates can share one.
  *
  * The figures are asked as well, because a game whose plays we never tagged
  * has no half-innings to compare — two rows that both batted in one game are
@@ -28,18 +27,18 @@ import type { Database } from '../db/database'
  * a candidate without another query. Ask about **every** pair in a group and
  * not just the two rows in front of you: `Casey Mize` was closed into
  * another `Casey Mize` and that one into `Casey`, and the two ends of the
- * chain both batted on 11 April — a pairwise test at each step saw nothing.
+ * chain both batted in the same game — a pairwise test at each step saw nothing.
  */
 export async function bothPlayedTogether(
   db: Kysely<Database>,
-  userIds: number[]
+  userIds: string[]
 ): Promise<Set<string>> {
   const together = new Set<string>()
   if (userIds.length < 2) return together
 
   const wanted = [...new Set(userIds)]
-  const byGame = new Map<string, number[]>()
-  const note = (gameId: string, userId: number): void => {
+  const byGame = new Map<string, string[]>()
+  const note = (gameId: string, userId: string): void => {
     const held = byGame.get(gameId) ?? []
     if (!held.includes(userId)) held.push(userId)
     byGame.set(gameId, held)
@@ -50,14 +49,15 @@ export async function bothPlayedTogether(
   // in one place in.
   for (const row of await db
     .selectFrom('event_players')
+    .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'event_players.gumbo_id')
     .innerJoin('events', 'events.id', 'event_players.event_id')
     .select([
       'events.gameId as gameId',
       'events.inning as inning',
       'events.halfInning as half',
-      'event_players.user_id as userId'
+      'gumbo_ids.user_id as userId'
     ])
-    .where('event_players.user_id', 'in', wanted)
+    .where('gumbo_ids.user_id', 'in', wanted)
     .execute()) {
     note(`${row.gameId} ${row.inning ?? ''} ${row.half ?? ''}`, row.userId)
   }
@@ -66,6 +66,7 @@ export async function bothPlayedTogether(
   // tagged. An empty line is a lineup slot rather than an appearance.
   for (const row of await db
     .selectFrom('game_player_stats')
+    .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'game_player_stats.gumbo_id')
     .select(['game_id', 'user_id', 'pa', 'pitch_outs'])
     .where('user_id', 'in', wanted)
     .execute()) {

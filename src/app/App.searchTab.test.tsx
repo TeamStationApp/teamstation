@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 
 import { asRosterEntry, asSessionUser, TeamStationClient } from '../common/api'
 import { asGroupDetail, asPublicGroup } from '../common/publicGroups'
+import { userIdOfGumbo } from '../common/userId'
 import { App, stackFor } from './App'
 
 describe('the Search tab', () => {
@@ -19,7 +20,11 @@ describe('the Search tab', () => {
       locality: null
     })
     proto.whoAmI = async () =>
-      asSessionUser({ id: 1, displayName: 'Demo Fan', isAdmin: false })
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo Fan',
+        isAdmin: false
+      })
     // Roles that cannot be read leave the app as somebody holding none.
     proto.myRoles = async () => {
       throw new Error('offline')
@@ -112,7 +117,11 @@ describe('the Search tab', () => {
     })
     const asked: string[] = []
     proto.whoAmI = async () =>
-      asSessionUser({ id: 1, displayName: 'Demo Fan', isAdmin: false })
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo Fan',
+        isAdmin: false
+      })
     proto.myRoles = async () => {
       throw new Error('offline')
     }
@@ -139,8 +148,9 @@ describe('the Search tab', () => {
     proto.teamGames = async () => []
     proto.roster = async () => [
       asRosterEntry({
-        userId: 201,
-        shortName: 'Avery S',
+        userId: userIdOfGumbo(201),
+        gumboId: 201,
+        shortName: 'Alfonso S',
         jersey: '7',
         positions: ['SS'],
         isPlayer: true,
@@ -193,7 +203,7 @@ describe('the Search tab', () => {
       // The members' page, less what is kept for members: the roster, and
       // not the public summary's staff list or its membership notes.
       expect(text).includes('PLAYERS')
-      expect(text).includes('Avery S')
+      expect(text).includes('Alfonso S')
       expect(text).not.includes('Standalone team')
       expect(text).not.includes('membership is required')
       expect(control('Follow Demo Hawks')).not.equals(undefined)

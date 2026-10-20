@@ -1,4 +1,5 @@
 import Foundation
+import EventControl
 
 /// Which scoreboard a radar reading is aimed at.
 public enum ScoreboardRoute: String, Equatable, Sendable {
@@ -31,8 +32,8 @@ public struct ScoreboardSaved: Equatable, Sendable {
   public var gameId: String
   public var gameTitle: String
   public var gameStartAt: String
-  /// The signed-in user's ID on the account server, in decimal. Empty until the server has said
-  /// who the token belongs to; a login saved by an older build fills it in through `auth/me`.
+  /// The signed-in user's canonical ID on the account server. Empty until the server has said
+  /// who the token belongs to. Stored accounts without a canonical ID require a new sign-in.
   public var userId: String
   /// "Allow Director Override". Off until the operator turns it on, and kept across sign-outs.
   public var allowDirectorOverride: Bool
@@ -247,9 +248,11 @@ public enum ScoreboardTarget {
   public static func load(_ store: SettingsStore) -> ScoreboardSaved {
     let token = store.string(forKey: Keys.token) ?? ""
     let game = loadGame(store)
+    let storedId = store.string(forKey: Keys.userId) ?? ""
+    let userId = TeamStationUserID.canonical(storedId) ?? ""
     let route: ScoreboardRoute =
       store.string(forKey: Keys.route) == "event" && !token.isEmpty ? .event : .v1
-    return ScoreboardSaved(
+    let saved = ScoreboardSaved(
       route: route,
       apiServer: store.string(forKey: Keys.apiServer) ?? defaultV1Server,
       v1EventId: store.string(forKey: Keys.v1Event) ?? "",
@@ -260,9 +263,15 @@ public enum ScoreboardTarget {
       gameId: game.gameId,
       gameTitle: game.title,
       gameStartAt: game.startAt,
-      userId: decimalUserId(store.string(forKey: Keys.userId)) ?? "",
+      userId: userId,
       allowDirectorOverride: store.string(forKey: Keys.allowOverride) == "true"
     )
+    if !token.isEmpty && userId.isEmpty {
+      let cleared = signedOut(saved)
+      save(cleared, to: store)
+      return cleared
+    }
+    return saved
   }
 
   /// The chosen game as one value: the record written in one go when there is one, otherwise the
@@ -286,22 +295,10 @@ public enum ScoreboardTarget {
     var startAt: String
   }
 
-  /// A user ID as the server may send it, a string or a JSON number, in decimal. Nil for anything
-  /// that is not a positive whole number.
+  /// Current server identities are canonical strings. The method name is retained for callers.
   public static func decimalUserId(_ value: Any?) -> String? {
-    let text: String
-    switch value {
-    case let string as String:
-      text = string.trimmingCharacters(in: .whitespaces)
-    case let number as NSNumber where CFGetTypeID(number) != CFBooleanGetTypeID():
-      guard number.doubleValue == number.doubleValue.rounded(), number.int64Value > 0 else { return nil }
-      text = String(number.int64Value)
-    default:
-      return nil
-    }
-    guard !text.isEmpty, text.count <= 32, text.allSatisfy({ ("0" ... "9").contains($0) }) else { return nil }
-    let digits = text.drop { $0 == "0" }
-    return digits.isEmpty ? nil : String(digits)
+    guard let text = value as? String else { return nil }
+    return TeamStationUserID.canonical(text)
   }
 
   public static func save(_ saved: ScoreboardSaved, to store: SettingsStore) {

@@ -4,8 +4,8 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
+import { scoringSession } from '../../test/scoringSession'
 import { getTheme, ThemeProvider } from '../theme/ThemeContext'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
   ROSTER_MODE_LABELS,
@@ -55,7 +55,7 @@ const tabs = (): string[] =>
 const testId = (id: string): HTMLElement | null =>
   host.querySelector<HTMLElement>(`[data-testid="${id}"]`)
 const fresh = (): ReturnType<typeof initialScoringState> =>
-  initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  initialScoringState(scoringSession(gameFixture))
 /** The rgb() a browser computes for a #rrggbb colour. */
 const rgb = (hex: string): string =>
   `rgb(${[1, 3, 5].map(at => parseInt(hex.slice(at, at + 2), 16)).join(', ')})`
@@ -271,8 +271,8 @@ describe('roster screen bottom bar and slider', function () {
   it('keeps Save Rosters dim for a lineup not yet accepted that does not validate', async function () {
     const state = fresh()
     const defense = state.session.liveData.boxscore.teams.away.defense
-    // One player at two positions: there is no defense to accept.
-    defense.C = defense.P
+    // A saved duplicate can come from a merge; an opposing defender is invalid.
+    defense.C = state.session.liveData.boxscore.teams.home.defense.P
     await render(
       <RosterEditor
         state={state}
@@ -282,5 +282,24 @@ describe('roster screen bottom bar and slider', function () {
       />
     )
     expect(node('Save Rosters')!.getAttribute('aria-disabled')).equals('true')
+  })
+  it('accepts retained defensive placements that share a merged identity', async function () {
+    const state = fresh()
+    const defense = state.session.liveData.boxscore.teams.away.defense
+    defense.C = defense.P
+    let saved = false
+    await render(
+      <RosterEditor
+        state={state}
+        defaultSide="away"
+        unaccepted
+        onSave={() => {
+          saved = true
+        }}
+      />
+    )
+    expect(node('Save Rosters')!.getAttribute('aria-disabled')).equals(null)
+    await click('Save Rosters')
+    expect(saved).equals(true)
   })
 })

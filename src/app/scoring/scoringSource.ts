@@ -11,6 +11,7 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
+import { reconcileRoster } from '../../common/scoring/startingSetup'
 import { deviceStorage } from '../platform/deviceStorage'
 import {
   type DefaultLineups,
@@ -114,8 +115,22 @@ export class ServerScoringSource implements ScoringSource {
     home: RosterEntry[]
   ): Promise<ScoringSession> {
     const client = this.client
+    let currentGame = game
+    let rosters = { away, home }
+    let first = true
     const store: EventStore = {
-      load: async gameId => await client.gameEvents(gameId),
+      load: async gameId => {
+        if (!first) {
+          currentGame = await client.game(gameId)
+          const [away, home] = await Promise.all([
+            client.roster(currentGame.awayTeamId),
+            client.roster(currentGame.homeTeamId)
+          ])
+          rosters = { away, home }
+        }
+        first = false
+        return await client.gameEvents(gameId)
+      },
       save: async (gameId, change) =>
         await client.saveGameEvents(gameId, change)
     }
@@ -126,7 +141,18 @@ export class ServerScoringSource implements ScoringSource {
       store,
       game.id,
       context(game, away, home, defaults, false),
-      { requireCurrentSetup: true, now: () => this.clock.now() }
+      {
+        requireCurrentSetup: true,
+        now: () => this.clock.now(),
+        reconcileSetup: setup =>
+          reconcileRoster(
+            setup,
+            teamsOf(currentGame),
+            rosters,
+            currentGame.guestPlayers,
+            currentGame.unrostered
+          )
+      }
     )
   }
 }

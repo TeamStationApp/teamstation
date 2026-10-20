@@ -10,6 +10,7 @@ import {
   type TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { PersonProfileScreen } from './PersonProfileScreen'
 
@@ -45,16 +46,18 @@ function profile(fields: Partial<PersonProfile> = {}): PersonProfile {
   return asPersonProfile({
     context: { kind: 'team', id: 'tem_hawks', name: 'Demo Hawks' },
     person: {
-      userId: 203,
-      shortName: 'Pat Y',
-      fullName: 'Pat Young',
+      userId: userIdOfGumbo(203),
+      gumboId: 203,
+      shortName: 'Pat N',
+      fullName: 'Pat Neshek',
       avatarUrl: null,
       canHoldRoles: true
     },
     guardianOf: [
       {
-        userId: 202,
-        shortName: 'Avery Y',
+        userId: userIdOfGumbo(202),
+        gumboId: 202,
+        shortName: 'Alex Y',
         avatarUrl: null,
         teamId: 'tem_hawks'
       }
@@ -77,7 +80,7 @@ function profile(fields: Partial<PersonProfile> = {}): PersonProfile {
 }
 
 interface Calls {
-  changes: Array<[string, string, string, number, string]>
+  changes: Array<[string, string, string, string, string]>
   players: unknown[]
   loads: number
 }
@@ -89,20 +92,24 @@ async function render(
   const calls: Calls = { changes: [], players: [], loads: 0 }
   const kind = options.kind ?? 'team'
   const client = {
-    personProfile: async (asked: string, id: string, userId: number) => {
-      expect([asked, id, userId]).deep.equals([kind, 'grp_one', 203])
+    personProfile: async (asked: string, id: string, userId: string) => {
+      expect([asked, id, userId]).deep.equals([
+        kind,
+        'grp_one',
+        userIdOfGumbo(203)
+      ])
       const answer = answers[Math.min(calls.loads, answers.length - 1)]
       calls.loads++
       if (answer instanceof Error) throw answer
       return answer
     },
-    addRole: async (k: string, id: string, userId: number, role: string) => {
+    addRole: async (k: string, id: string, userId: string, role: string) => {
       calls.changes.push(['add', k, id, userId, role])
       if (options.failChange === true)
         throw new HttpError('forbidden', 'Only an administrator can')
       return { userId, roles: [], member: true }
     },
-    removeRole: async (k: string, id: string, userId: number, role: string) => {
+    removeRole: async (k: string, id: string, userId: string, role: string) => {
       calls.changes.push(['remove', k, id, userId, role])
       return { userId, roles: [], member: false }
     }
@@ -117,7 +124,7 @@ async function render(
           client={client}
           kind={kind}
           id="grp_one"
-          userId={203}
+          userId={userIdOfGumbo(203)}
           onOpenPlayer={(userId, name, from) => {
             calls.players.push([userId, name, from])
           }}
@@ -157,17 +164,17 @@ describe('the person profile', function () {
 
   it('puts the photo, the whole name and the level it is for in the hero, then the players they guard', async function () {
     const calls = await render([profile()])
-    expect(text()).includes('Pat Young')
+    expect(text()).includes('Pat Neshek')
     expect(text()).includes('Team · Demo Hawks')
     expect(text().indexOf('PARENT/GUARDIAN OF')).lessThan(
       text().indexOf('TEAM ROLES')
     )
     const child = [
       ...document.querySelectorAll<HTMLElement>('[role="button"]')
-    ].find(node => node.textContent?.includes('Avery Y') === true)
+    ].find(node => node.textContent?.includes('Alex Y') === true)
     await click(child!)
     expect(calls.players).deep.equals([
-      [202, 'Avery Y', { onTeam: 'tem_hawks' }]
+      [userIdOfGumbo(202), 'Alex Y', { onTeam: 'tem_hawks' }]
     ])
   })
 
@@ -215,8 +222,8 @@ describe('the person profile', function () {
       document.querySelector<HTMLElement>('[aria-label="Confirm removal"]')!
     )
     expect(calls.changes).deep.equals([
-      ['add', 'team', 'grp_one', 203, 'admin'],
-      ['remove', 'team', 'grp_one', 203, 'coach']
+      ['add', 'team', 'grp_one', userIdOfGumbo(203), 'admin'],
+      ['remove', 'team', 'grp_one', userIdOfGumbo(203), 'coach']
     ])
     // Each change reads the profile again.
     expect(calls.loads).equals(3)
@@ -289,7 +296,7 @@ describe('the person profile', function () {
       document.querySelector<HTMLElement>('[aria-label="Confirm removal"]')!
     )
     expect(calls.changes).deep.equals([
-      ['remove', 'team', 'grp_one', 203, 'scorekeeper']
+      ['remove', 'team', 'grp_one', userIdOfGumbo(203), 'scorekeeper']
     ])
     expect(rowOf('team', 'songkeeper').textContent).not.includes('With')
     expect(
@@ -331,8 +338,8 @@ describe('the person profile', function () {
         buttonIn(rowOf('team', 'admin'))?.getAttribute('aria-checked')
       ).equals('true')
       expect(calls.changes).deep.equals([
-        ['add', 'team', 'grp_one', 203, role],
-        ['remove', 'team', 'grp_one', 203, role]
+        ['add', 'team', 'grp_one', userIdOfGumbo(203), role],
+        ['remove', 'team', 'grp_one', userIdOfGumbo(203), role]
       ])
     })
 
@@ -357,7 +364,7 @@ describe('the person profile', function () {
     await render([
       profile({
         person: {
-          userId: 203,
+          userId: userIdOfGumbo(203),
           shortName: 'Nolan Q',
           fullName: null,
           avatarUrl: null,
@@ -397,7 +404,7 @@ describe('the person profile', function () {
     expect(buttonIn(rowOf('league', 'coach'))).equals(null)
     await click(buttonIn(rowOf('season', 'videographer'))!)
     expect(calls.changes).deep.equals([
-      ['add', 'season', 'grp_one', 203, 'videographer']
+      ['add', 'season', 'grp_one', userIdOfGumbo(203), 'videographer']
     ])
     // The server's refusal is said on the page.
     expect(document.querySelector('[role="alert"]')?.textContent).includes(

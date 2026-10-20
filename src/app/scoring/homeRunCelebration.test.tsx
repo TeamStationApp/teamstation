@@ -6,10 +6,10 @@ import { createRoot } from 'react-dom/client'
 import type { InstancedMesh, Mesh, MeshBasicMaterial } from 'three'
 
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { FIREWORK_BULBS, fireworkBulb } from '../field/homeRunFireworks'
 import { Scoreboard } from '../field/Scoreboard'
 import { DEMO_SCOREBOARD } from '../field/scoreboardModel'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import type { ScoringClock } from './scoringClock'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -27,10 +27,7 @@ function acceptedHomeRun(
   animate = false,
   loaded = false
 ): ScoringState {
-  let state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], []),
-    animate
-  )
+  let state = initialScoringState(scoringSession(gameFixture), animate)
   if (loaded) {
     const offense = state.session.liveData.linescore.offense
     offense.first = playerRef(state.session, 3)

@@ -20,7 +20,6 @@ export type {
   Position,
   Side
 } from '../../common/scoring/state'
-export type { PlayerIdentityMap } from '../../common/scoring/state'
 
 /**
  * The game the screen shows is the scoring library's: it changes only by the

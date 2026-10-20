@@ -8,6 +8,7 @@ import {
   type RosterEntry,
   type TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { ThemeProvider } from '../theme/ThemeContext'
 import webMusic, {
@@ -38,7 +39,7 @@ async function render(props: Partial<WalkUpTabProps> = {}): Promise<void> {
         <WalkUpTab
           client={songClient()}
           teamId="t1"
-          userId="7"
+          userId={userIdOfGumbo(7)}
           music={webMusic}
           {...props}
         />
@@ -98,7 +99,8 @@ const fixture: WalkUpSong = {
 
 function entry(song: WalkUpSong | null, userId = 7): RosterEntry {
   return asRosterEntry({
-    userId,
+    userId: userIdOfGumbo(userId),
+    gumboId: userId,
     shortName: 'Jordan P',
     jersey: '4',
     positions: ['CF'],
@@ -401,7 +403,7 @@ describe('the Walk-up tab on a phone', function () {
     expect(cleared).deep.equals([])
     expect(labels()).includes('Tap again to remove')
     await press('Tap again to remove')
-    expect(cleared).deep.equals(['t1/7'])
+    expect(cleared).deep.equals([`t1/${userIdOfGumbo(7)}`])
     expect(text()).includes('No walk-up song yet')
     expect(labels()).deep.equals([])
   })

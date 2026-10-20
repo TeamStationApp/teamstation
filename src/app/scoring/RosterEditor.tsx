@@ -24,7 +24,12 @@ import {
   type StagedRunner
 } from '../../common/scoring/rosterCommands'
 import { rosterError } from '../../common/scoring/rules'
+import {
+  reconcileRoster,
+  type ScoringRosterEntry
+} from '../../common/scoring/startingSetup'
 import { setupOf } from '../../common/scoring/state'
+import type { Unrostered } from '../../common/unroster'
 import { Button } from '../components/Button'
 import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
@@ -33,6 +38,7 @@ import { withRosterDetails } from './currentSetup'
 import { DefensiveField } from './DefensiveField'
 import { EditRosterList } from './EditRosterList'
 import { addPlaceholderPlayers } from './placeholderPlayers'
+import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import {
   addRosteredPlayer,
   draftOfLocalPlayer,
@@ -164,11 +170,14 @@ export function RosterEditor({
   onDraftChange,
   onDirtyChange,
   onEditPlayer,
+  unrostered,
+  onRosteredChange,
   rosterLoading,
   rosterError: editError,
   onRetryRoster,
   canEditTeams,
   onCreatePlayer,
+  onCreateGuest,
   onCancel,
   onReload,
   onSave
@@ -221,7 +230,13 @@ export function RosterEditor({
   onDraftChange?: (draft: RosterEditorDraft) => void
   /** Whether the draft differs from the game it was opened over, as it changes. */
   onDirtyChange?: (dirty: boolean) => void
-  onEditPlayer?: (userId: number, name: string, teamId: string) => void
+  onEditPlayer?: (userId: string, name: string, teamId: string) => void
+  unrostered?: Unrostered
+  onRosteredChange?: (
+    side: Side,
+    userId: string,
+    rostered: boolean
+  ) => Promise<Unrostered>
   rosterLoading?: boolean
   rosterError?: string
   onRetryRoster?: () => void
@@ -232,6 +247,7 @@ export function RosterEditor({
    * the player.
    */
   onCreatePlayer?: (teamId: string, player: PlayerDraft) => Promise<RosterEntry>
+  onCreateGuest?: (side: Side, player: PlayerDraft) => Promise<RosterEntry>
   /**
    * Save Rosters, lit when the draft validates and has changed or is
    * `unaccepted`. A scorekeeper's screen applies the draft and closes the
@@ -293,9 +309,84 @@ export function RosterEditor({
   // The game as the editor opened: a newer one shown behind the sheet (the
   // scoring screen following another device) leaves the draft clean until
   // the screen opens the editor again over it.
-  const [opened] = useState(() => state.session)
-  const base = initialDraft?.base ?? opened
-  const openedOver = initialDraft?.base
+  const [base, setBase] = useState(() => initialDraft?.base ?? state.session)
+  const openedOver = base
+  const [exclusions, setExclusions] = useState(
+    unrostered ?? { away: [], home: [] }
+  )
+  const [rosterBusy, setRosterBusy] = useState(false)
+  const [savingRoster, setSavingRoster] = useState(false)
+  const [rosterProblem, setRosterProblem] = useState<string>()
+  useEffect(() => {
+    if (unrostered != null) setExclusions(unrostered)
+  }, [unrostered])
+  const applyAvailability = (
+    previous: ScoringSessionState,
+    lists: Unrostered
+  ): ScoringSessionState => {
+    const next = copyState(previous)
+    const entries = (of: Side, local: boolean): ScoringRosterEntry[] =>
+      next.liveData.boxscore.teams[of].players
+        .map(id => next.gameData.players[id])
+        .filter(player => player.local === local)
+        .map(player => ({
+          gumboId: player.id,
+          shortName: player.fullName,
+          jersey: player.jersey,
+          positions: player.positions,
+          bats: player.bats,
+          throws: player.throws,
+          isPlayer: true,
+          role: 'player',
+          section: 'player',
+          staffRoles: [],
+          inheritedFrom: null
+        }))
+    const roster = (of: Side): readonly ScoringRosterEntry[] =>
+      rosters?.[next.gameData.teams[of].id] ?? entries(of, false)
+    const setup = reconcileRoster(
+      setupOf(next),
+      next.gameData.teams,
+      { away: roster('away'), home: roster('home') },
+      { away: entries('away', true), home: entries('home', true) },
+      lists
+    )
+    next.gameData.players = setup.players
+    next.liveData.boxscore.teams[side] = setup.sides[side]
+    next.meta.tagOrder = setup.tagOrder
+    return next
+  }
+  const toggleRostered = async (
+    userId: string,
+    rostered: boolean
+  ): Promise<void> => {
+    if (onRosteredChange == null || rosterBusy || savingRoster) return
+    setRosterBusy(true)
+    setRosterProblem(undefined)
+    try {
+      const lists = await onRosteredChange(side, userId, rostered)
+      setExclusions(lists)
+      setDraft(previous => applyAvailability(previous, lists))
+      setBase(previous => applyAvailability(previous, lists))
+      if (!rostered) {
+        const gumboId = rosters?.[draft.gameData.teams[side].id]?.find(
+          row => row.userId === userId
+        )?.gumboId
+        setNextBatter(previous => (previous === gumboId ? undefined : previous))
+        setRunners(previous =>
+          previous.filter(runner => runner.player !== gumboId)
+        )
+      }
+    } catch (error) {
+      setRosterProblem(
+        error instanceof Error
+          ? error.message
+          : 'Could not change game availability'
+      )
+    } finally {
+      setRosterBusy(false)
+    }
+  }
   useEffect(() => {
     onDraftChange?.({
       draft,
@@ -325,8 +416,35 @@ export function RosterEditor({
   }
   const team = draft.liveData.boxscore.teams[side]
   // Game-only players belong to this game's setup, including the opponent's
-  // placeholders. Their edits use scoring permission, like Create Player.
+  // placeholders. Their edits use scoring permission, unlike team players.
   const canEditLocal = rosterLoading !== true && state.readOnly !== true
+  const canCreateRosterPlayer =
+    canEditTeams == null || canEditTeams[draft.gameData.teams[side].id]
+  const creationLabel = canCreateRosterPlayer
+    ? 'Create Player'
+    : 'Create Game Guests'
+  const addPlaceholders = async (count: number): Promise<void> => {
+    if (onCreateGuest == null) throw new Error('Unable to create a guest')
+    const next = copyState(draft)
+    try {
+      await addPlaceholderPlayers(next, side, count, onCreateGuest)
+    } finally {
+      // Merge only acknowledged additions, preserving intervening draft edits
+      // and successes even when a later request fails.
+      const added = next.liveData.boxscore.teams[side].players.filter(
+        id => !draft.liveData.boxscore.teams[side].players.includes(id)
+      )
+      edit(current => {
+        for (const id of added) {
+          current.gameData.players[id] = next.gameData.players[id]
+          const players = current.liveData.boxscore.teams[side].players
+          if (!players.includes(id)) players.push(id)
+          if (!current.meta.tagOrder.includes(id))
+            current.meta.tagOrder.push(id)
+        }
+      })
+    }
+  }
   const names = useMemo(
     () =>
       rosters == null
@@ -371,6 +489,7 @@ export function RosterEditor({
   // A dictated sentence is staged whole: the draft, its runners and next
   // batter, and the tab, and for a scorekeeper the team, that show it.
   const spoken = useRosterDictation({
+    onCreateGuest,
     options: dictate,
     game: state.session,
     draft,
@@ -530,7 +649,16 @@ export function RosterEditor({
           }}
           rows={rosterRows}
           loading={rosterLoading}
-          error={editError}
+          error={rosterProblem ?? editError}
+          unrostered={exclusions[side]}
+          rosterBusy={rosterBusy || savingRoster}
+          onRosteredChange={
+            coach && onRosteredChange != null
+              ? (userId, rostered) => {
+                  toggleRostered(userId, rostered).catch(() => undefined)
+                }
+              : undefined
+          }
           onRetry={onRetryRoster}
           onEditLocal={
             canEditLocal
@@ -744,16 +872,20 @@ export function RosterEditor({
           </View>
         </RosterDragGroup>
       </View>
-      {adding && (
+      {adding && !canCreateRosterPlayer && (
+        <PlaceholderPlayersSheet
+          onClose={() => {
+            setAdding(false)
+          }}
+          onAdd={addPlaceholders}
+        />
+      )}
+      {adding && canCreateRosterPlayer && (
         <PlayerEntrySheet
           onClose={() => {
             setAdding(false)
           }}
-          onAddPlaceholders={count => {
-            edit(next => {
-              addPlaceholderPlayers(next, side, count)
-            })
-          }}
+          onAddPlaceholders={addPlaceholders}
           onAdd={async player => {
             if (onCreatePlayer == null) {
               throw new Error('Unable to create the player.')
@@ -795,7 +927,7 @@ export function RosterEditor({
           <View style={{ flex: 1, alignItems: 'flex-end' }}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Create Player"
+              accessibilityLabel={creationLabel}
               hitSlop={{ top: 6, bottom: 6 }}
               onPress={() => {
                 setAdding(true)
@@ -815,7 +947,7 @@ export function RosterEditor({
                   fontSize: 16
                 }}
               >
-                Create Player
+                {creationLabel}
               </Text>
             </Pressable>
           </View>
@@ -844,7 +976,10 @@ export function RosterEditor({
               accessibilityLabel="Save Rosters"
               label="Save Rosters"
               disabled={
-                spoken.busy || !rosterSavable(dirty, unaccepted, validation)
+                rosterBusy ||
+                savingRoster ||
+                spoken.busy ||
+                !rosterSavable(dirty, unaccepted, validation)
               }
               onPress={() => {
                 const saving = onSave(
@@ -852,18 +987,21 @@ export function RosterEditor({
                   nextBatter,
                   runners.length === 0 ? undefined : runners
                 )
-                if (saving instanceof Promise)
+                if (saving instanceof Promise) {
+                  setSavingRoster(true)
                   saving.then(
                     () => {
+                      setSavingRoster(false)
                       spoken.clear()
                     },
                     (error: unknown) => {
+                      setSavingRoster(false)
                       const message =
                         error instanceof Error ? error.message : ''
                       if (message !== '') spoken.problem(message)
                     }
                   )
-                else spoken.clear()
+                } else spoken.clear()
               }}
             />
           </View>

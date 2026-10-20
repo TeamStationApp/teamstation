@@ -1,5 +1,6 @@
 package app.teamstation.cameraman.radar
 
+import app.teamstation.cameraman.eventcontrol.TeamStationUserId
 import app.teamstation.streamcore.core.SettingsStore
 import java.net.URLEncoder
 import java.time.DayOfWeek
@@ -33,7 +34,7 @@ internal data class ScoreboardSaved(
     val gameId: String,
     val gameTitle: String,
     val gameStartAt: String,
-    /** The account's canonical ID in decimal. Empty until established, and after sign-out. */
+    /** The account's canonical ID. Empty until established, and after sign-out. */
     val userId: String = ""
 )
 
@@ -178,12 +179,14 @@ internal object ScoreboardTarget {
 
     fun load(store: SettingsStore): ScoreboardSaved {
         val token = store.string(KEY_TOKEN).orEmpty()
+        val storedId = store.string(KEY_USER_ID).orEmpty()
+        val userId = if (token.isEmpty()) "" else TeamStationUserId.canonical(storedId).orEmpty()
         val route = if (store.string(KEY_ROUTE) == "event" && token.isNotEmpty()) {
             ScoreboardRoute.Event
         } else {
             ScoreboardRoute.V1
         }
-        return ScoreboardSaved(
+        val saved = ScoreboardSaved(
             route = route,
             apiServer = store.string(KEY_API_SERVER) ?: DEFAULT_V1_SERVER,
             v1EventId = store.string(KEY_V1_EVENT).orEmpty(),
@@ -195,8 +198,15 @@ internal object ScoreboardTarget {
             gameTitle = store.string(KEY_GAME_TITLE).orEmpty(),
             gameStartAt = store.string(KEY_GAME_START).orEmpty(),
             // Absent before device event control, and kept only beside a token.
-            userId = if (token.isEmpty()) "" else store.string(KEY_USER_ID).orEmpty()
+            userId = userId
         )
+        if (token.isNotEmpty() && userId.isEmpty()) {
+            val cleared = signedOut(saved)
+            // Stay signed out even if persistent storage is temporarily unavailable.
+            runCatching { save(store, cleared) }
+            return cleared
+        }
+        return saved
     }
 
     /** Every field in one write, so a game's ID, title and start time are never stored apart. */

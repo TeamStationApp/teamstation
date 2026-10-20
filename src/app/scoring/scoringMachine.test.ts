@@ -3,7 +3,6 @@ import { describe, it } from 'mocha'
 
 import { asRosterEntry } from '../../common/api'
 import { lineupOf } from '../../common/scoring/lineupHistory'
-import { allocatePlayer, createIdentityMap } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { shownWithDefault } from '../../common/scoring/startingSetup'
 import {
@@ -12,7 +11,9 @@ import {
   lineupsOf,
   setupOf
 } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { completeMotions, singleCorrection } from '../../test/scoringHelpers'
+import { scoringRoster } from '../../test/scoringSession'
 import { advancePlayer } from '../field/fieldModel'
 import {
   addDevelopmentPlayer,
@@ -25,7 +26,8 @@ import {
   initialScoringState,
   resumedScoringState,
   rosterRefusal,
-  scoringReducer
+  scoringReducer,
+  sessionAt
 } from './scoringMachine'
 import { scoringPreferenceStore } from './scoringPreferenceStore'
 import {
@@ -39,8 +41,9 @@ import { CORRECTION_WINDOW_MS, type ScoringState } from './scoringTypes'
 
 const roster = [
   asRosterEntry({
-    userId: 102,
-    shortName: 'Jordan K.',
+    userId: userIdOfGumbo(1),
+    gumboId: 1,
+    shortName: 'Jason K.',
     jersey: '00',
     positions: ['P'],
     isPlayer: true,
@@ -50,11 +53,35 @@ const roster = [
     inheritedFrom: null,
     bats: 'switch',
     throws: 'left'
-  })
+  }),
+  ...scoringRoster(1).slice(1)
 ]
 function initial(): ScoringState {
-  return initialScoringState(createDevelopmentSession(gameFixture, roster, []))
+  return initialScoringState(
+    createDevelopmentSession(gameFixture, roster, scoringRoster(10))
+  )
 }
+
+it('reconstructs saved merged roster additions for history without permitting a new duplicate', () => {
+  const base = initial().session
+  const home = base.liveData.boxscore.teams.home
+  home.defense.C = null
+  const setup = setupOf(base)
+  setup.sides.home.defense.C = home.defense.P
+  const roster: ScoringState['log'][number] = {
+    type: 'lineup',
+    kind: 'roster',
+    setup
+  }
+  expect(applyAction(base, roster).problems).not.deep.equals([])
+  const history = sessionAt(
+    { log: [roster, { type: 'pitch', call: 'B' }], checkpoints: [] },
+    2,
+    () => base
+  )
+  expect(history.liveData.boxscore.teams.home.defense.C).equals(home.defense.P)
+  expect(history.liveData.linescore.balls).equals(1)
+})
 function pitch(
   state: ScoringState,
   kind: 'ball' | 'called' | 'swing' | 'foul',
@@ -73,7 +100,7 @@ function frozen<T>(value: T): T {
   return value
 }
 describe('local scoring sessions', function () {
-  it('retains real teams, exact ids, string jerseys, preferences and deterministic fallback players', function () {
+  it('retains teams, persistent ids, string jerseys and preferences', function () {
     const session = initial().session
     expect(session).deep.equals(initial().session)
     expect(session.gameData.teams).deep.equals({
@@ -81,8 +108,8 @@ describe('local scoring sessions', function () {
       home: { id: 'home', name: 'Hawks', logoUrl: null }
     })
     expect(session.gameData.players[1]).includes({
-      userId: 102,
-      fullName: 'Jordan K.',
+      id: 1,
+      fullName: 'Jason K.',
       jersey: '00',
       bats: 'switch'
     })
@@ -100,18 +127,25 @@ describe('local scoring sessions', function () {
     expect(session.liveData.plays.currentPlay?.matchup.batSide.code).equals('R')
     const ignored = asRosterEntry({
       ...roster[0],
-      userId: 104,
+      userId: userIdOfGumbo(104),
+      gumboId: 104,
       isPlayer: false,
       section: 'spectator'
     })
     expect(
-      createDevelopmentSession(gameFixture, [ignored], []).gameData.players[1]
-        .local
-    ).equals(true)
-    const local = addDevelopmentPlayer(session, 'away', '  Casey  ')
+      Object.keys(
+        createDevelopmentSession(gameFixture, [ignored], []).gameData.players
+      )
+    ).deep.equals([])
+    const local = addDevelopmentPlayer(
+      session,
+      'away',
+      9000000,
+      '  Casey Mize  '
+    )
     expect(session.gameData.players[local]).includes({
-      fullName: 'Casey',
-      userId: null,
+      fullName: 'Casey Mize',
+      id: 9000000,
       jersey: '',
       local: true
     })
@@ -120,30 +154,18 @@ describe('local scoring sessions', function () {
     const session = initial().session
     const batter = session.liveData.linescore.offense.batter
     if (batter == null) throw new Error('Missing batter')
-    batter.fullName = 'Alex Rivera'
+    batter.fullName = 'Anthony Rizzo'
     expect(scoreboardFor(session).batter).deep.equals({
-      firstName: 'Alex',
+      firstName: 'Anthony',
       lastName: 'R'
     })
-    batter.fullName = 'Jordan K.'
+    batter.fullName = 'Jason K.'
     expect(scoreboardFor(session).batter).deep.equals({
-      firstName: 'Jordan',
+      firstName: 'Jason',
       lastName: 'K'
     })
   })
-  it('allocates local identities without parsing or conflating persisted ids', function () {
-    const map = createIdentityMap()
-    const ids = ['123', 123, 'usr_one', null, null].map(id =>
-      allocatePlayer(map, id)
-    )
-    expect(new Set(ids).size).equals(5)
-    expect(allocatePlayer(map, '123')).equals(ids[0])
-    expect(map.sessionToSource[ids[0]]).equals('123')
-    expect(map.sessionToSource[ids[1]]).equals(123)
-    map.nextId = ids[0]
-    expect(allocatePlayer(map, null)).equals(6)
-    map.nextId = Number.MAX_SAFE_INTEGER + 1
-    expect(() => allocatePlayer(map, null)).throws()
+  it('rejects invalid scoring ids and duplicate roster players', function () {
     for (const invalid of [-1, 1.5, Infinity, '2', Number.MAX_SAFE_INTEGER + 1])
       expect(() => asSessionId(invalid)).throws()
     expect(() =>
@@ -194,7 +216,7 @@ describe('local scoring sessions', function () {
     const left = createDevelopmentSession(
       gameFixture,
       [{ ...roster[0], bats: 'left', jersey: null }],
-      []
+      scoringRoster(10)
     )
     expect(left.liveData.plays.currentPlay?.matchup.batSide.code).equals('L')
     expect(
@@ -251,7 +273,11 @@ describe('local scoring sessions', function () {
   })
 
   it('retreats an auto-advanced unforced runner on a single without Safe/Out', function () {
-    let session = createDevelopmentSession(gameFixture, roster, [])
+    let session = createDevelopmentSession(
+      gameFixture,
+      roster,
+      scoringRoster(10)
+    )
     for (const action of [
       { type: 'ballInPlay' as const, contact: 'swing' as const },
       { type: 'result' as const, eventType: 'single' as const },
@@ -290,7 +316,7 @@ describe('local scoring sessions', function () {
 
   it('puts a hit-offer re-take out instead of forcing safe', function () {
     let state = initialScoringState(
-      createDevelopmentSession(gameFixture, roster, [])
+      createDevelopmentSession(gameFixture, roster, scoringRoster(10))
     )
     for (const [base, id] of [
       ['second', 3],
@@ -339,7 +365,7 @@ describe('local scoring sessions', function () {
   it('waits out trailer retreat motion before homeDecision and allows re-take', function () {
     // Second and third occupied (unforced trailer on a single).
     let state = initialScoringState(
-      createDevelopmentSession(gameFixture, roster, [])
+      createDevelopmentSession(gameFixture, roster, scoringRoster(10))
     )
     for (const [base, id] of [
       ['second', 3],
@@ -501,13 +527,13 @@ describe('local scoring sessions', function () {
   })
   it('keeps a local game in memory and picks it up again without any transport', async function () {
     const source = new DevelopmentScoringSource()
-    const game = await source.open(gameFixture, roster, [])
+    const game = await source.open(gameFixture, roster, scoringRoster(10))
     game.apply({ type: 'pitch', call: 'B' })
     await game.flush()
     expect(game.pending).equals(0)
-    const again = await source.open(gameFixture, roster, [])
+    const again = await source.open(gameFixture, roster, scoringRoster(10))
     expect(again.state.liveData.linescore.balls).equals(1)
-    expect(again.state.gameData.players[1].userId).equals(102)
+    expect(again.state.gameData.players[1].id).equals(1)
   })
   it('stores per-user help, bounds counts, handles unavailable storage and resets', async function () {
     const items = new Map<string, string>()
@@ -591,7 +617,7 @@ describe('a saved roster with pinch runners', function () {
     const walked = pitch(initial(), 'ball', 4)
     const onFirst = walked.session.liveData.linescore.offense.first!.id
     const draft = copyState(walked.session)
-    const runner = addDevelopmentPlayer(draft, 'away', 'Betts', '50')
+    const runner = addDevelopmentPlayer(draft, 'away', 9000000, 'Betts', '50')
     const saved = completeMotions(
       scoringReducer(walked, {
         type: 'ROSTER',
@@ -626,7 +652,7 @@ describe('a saved roster with pinch runners', function () {
   it('saves nothing when a runner is refused', function () {
     const state = initial()
     const draft = copyState(state.session)
-    const runner = addDevelopmentPlayer(draft, 'away', 'Betts', '50')
+    const runner = addDevelopmentPlayer(draft, 'away', 9000000, 'Betts', '50')
     expect(
       scoringReducer(state, {
         type: 'ROSTER',
@@ -642,7 +668,11 @@ describe('a saved roster with pinch runners', function () {
 
 describe('a decided play picked up by the screen', function () {
   function decided(): ScoringState {
-    let session = createDevelopmentSession(gameFixture, roster, [])
+    let session = createDevelopmentSession(
+      gameFixture,
+      roster,
+      scoringRoster(10)
+    )
     for (const action of [
       { type: 'ballInPlay', contact: 'swing' },
       { type: 'result', eventType: 'single' }
@@ -770,7 +800,8 @@ describe('a scorekeeper and a side left unseen', function () {
   function players(first: number): Array<ReturnType<typeof asRosterEntry>> {
     return Array.from({ length: 9 }, (_, index) =>
       asRosterEntry({
-        userId: first + index,
+        userId: userIdOfGumbo(first + index),
+        gumboId: first + index,
         shortName: `Owl ${first + index}`,
         jersey: String(index + 1),
         positions: [],

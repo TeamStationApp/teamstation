@@ -3,7 +3,7 @@ import { describe, it } from 'mocha'
 
 import { homeBackProposal } from '../../common/scoring/rules'
 import { completeMotions } from '../../test/scoringHelpers'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { runnerReasons } from './scoringFlow'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -11,9 +11,7 @@ import { basePath, homeQueuePoint } from './scoringMotion'
 import { baseIds, playerRef } from './scoringSelectors'
 import { CORRECTION_WINDOW_MS, type ScoringState } from './scoringTypes'
 function initial(mask = 0): ScoringState {
-  const state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], [])
-  )
+  const state = initialScoringState(scoringSession(gameFixture))
   for (let base = 0; base < 3; base++)
     if ((mask & (1 << base)) !== 0)
       state.session.liveData.linescore.offense[

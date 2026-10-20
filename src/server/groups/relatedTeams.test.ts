@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   demoLocality,
   type GroupFixture,
@@ -94,7 +95,7 @@ describe('team suggestions and search rows', function () {
     await f.h.db
       .updateTable('users')
       .set({ onboarding_step: 'name' })
-      .where('id', '=', 106)
+      .where('id', '=', userIdOfGumbo(106))
       .execute()
     for (const [userId, role] of [
       [104, 'coach'],
@@ -106,9 +107,9 @@ describe('team suggestions and search rows', function () {
           id: makeId('scopeRole'),
           scope_type: 'team',
           scope_id: ids.owls,
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           role,
-          granted_by: 101,
+          granted_by: userIdOfGumbo(101),
           granted_at: new Date()
         })
         .execute()

@@ -4,10 +4,12 @@ import { after, before, describe, it } from 'mocha'
 import { Client, Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
@@ -45,16 +47,13 @@ describe('statsBuilder request', function () {
         { id: away, name: 'Away', kind: 'full' }
       ])
       .execute()
-    await db
-      .insertInto('users')
-      .values({
-        id: player.userId,
-        legacyId: player.legacyId,
-        display_name: 'Ada',
-        created_at: now,
-        updated_at: now
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(player.userId),
+      legacyId: player.legacyId,
+      display_name: 'Adam Dunn',
+      created_at: now,
+      updated_at: now
+    })
     await db
       .insertInto('games')
       .values([

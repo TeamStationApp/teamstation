@@ -7,6 +7,7 @@ import { asAccountSettings } from '../common/accountSettings'
 import { asAddedPerson, asSessionUser, TeamStationClient } from '../common/api'
 import { asNotification } from '../common/notifications'
 import { asGroupDetail, asPublicGroup } from '../common/publicGroups'
+import { userIdOfGumbo } from '../common/userId'
 import { fill, press, settle } from '../test/gameFormDom'
 import { App } from './App'
 
@@ -25,7 +26,11 @@ describe('direct action app completion navigation', () => {
         const proto = TeamStationClient.prototype
         const originals = Object.getOwnPropertyDescriptors(proto)
         proto.whoAmI = async () =>
-          asSessionUser({ id: 101, displayName: 'Babe Ruth', isAdmin: false })
+          asSessionUser({
+            id: userIdOfGumbo(101),
+            displayName: 'Babe Ruth',
+            isAdmin: false
+          })
         proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
         proto.hasNotifications = async () => false
         proto.teams = async () => []
@@ -46,7 +51,7 @@ describe('direct action app completion navigation', () => {
         proto.accountSettings = async () =>
           asAccountSettings({
             user: {
-              id: 101,
+              id: userIdOfGumbo(101),
               displayName: 'Babe Ruth',
               avatarUrl: null,
               isAdmin: false
@@ -116,7 +121,7 @@ describe('direct action app completion navigation', () => {
           asAddedPerson({
             added: true,
             person: {
-              userId: 102,
+              userId: userIdOfGumbo(102),
               displayName: 'Lou Gehrig',
               email: 'recipient@example.test'
             }

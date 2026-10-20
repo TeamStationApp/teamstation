@@ -239,7 +239,7 @@ async function recordedAuthorities(
 
 async function currentAdministrator(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   ref: GroupRef
 ): Promise<boolean> {
   try {
@@ -255,7 +255,7 @@ async function currentAdministrator(
 }
 async function originalAdministrator(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   game: GameIntent
 ): Promise<boolean> {
   for (const id of [game.homeTeamId, game.awayTeamId])

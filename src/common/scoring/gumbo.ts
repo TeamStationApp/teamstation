@@ -13,6 +13,7 @@ import {
   PlayFolder,
   type PlayStamp
 } from './document'
+import { upgradeRecord } from './legacyRecord'
 import {
   freshGame,
   ordinal,
@@ -41,7 +42,7 @@ import {
  */
 
 export interface TeamStationRecord {
-  version: 1
+  version: 2
   /** The rosters and lineups as they stood before this play's first action. */
   setupBefore: GameSetup
   /** The actions of this play, in order, lineup changes included. */
@@ -59,7 +60,7 @@ export interface TeamStationRecord {
 }
 
 const asRecord: Cleaner<TeamStationRecord> = asObject({
-  version: asLiteral(1),
+  version: asLiteral(2),
   setupBefore: asGameSetup,
   actions: asArray(asUnknown),
   actionTimes: asUnknown,
@@ -86,7 +87,9 @@ export function recordOf(play: unknown): TeamStationRecord | null {
 
 function cleanRecord(raw: unknown): TeamStationRecord | null {
   try {
-    const { actionTimes, playbackTimes, ...record } = asRecord(raw)
+    const { actionTimes, playbackTimes, ...record } = asRecord(
+      upgradeRecord(raw)
+    )
     const actions: ScoringAction[] = []
     for (const action of record.actions) {
       const cleaned = cleanAction(action)
@@ -241,8 +244,11 @@ export function replayPlays(
   onAction?: (
     state: GameState,
     atBatIndex: number,
-    actionTime: string | undefined
-  ) => void
+    actionTime: string | undefined,
+    action: ScoringAction,
+    before: GameState
+  ) => void,
+  beforeAction?: (state: GameState, action: ScoringAction) => void
 ): Replayed {
   const reopened = stored.currentPlay?.about.atBatIndex
   const plays = [...stored.plays]
@@ -283,11 +289,16 @@ export function replayPlays(
     const times: Array<string | undefined> = []
     for (const [i, action] of record.actions.entries()) {
       if (problems.length > 0) break
+      beforeAction?.(state, action)
       // `copyGame` shares the finished plays an earlier copy made, where
       // `applyAction`'s own copy copies every one of them again: at 85 plate
       // appearances that made a replay 330 ms, and every save replays the
       // game to keep its lineups. A refused action leaves `state` whole.
-      const applied = applyAction(copyGame(state), action, { inPlace: true })
+      const before = state
+      const applied = applyAction(copyGame(state), action, {
+        inPlace: true,
+        replay: true
+      })
       if (applied.problems.length > 0) {
         problems.push(...applied.problems)
         break
@@ -295,7 +306,7 @@ export function replayPlays(
       state = applied.state
       kept.push(action)
       times.push(record.actionTimes?.[i])
-      onAction?.(state, atBatIndex, record.actionTimes?.[i])
+      onAction?.(state, atBatIndex, record.actionTimes?.[i], action, before)
     }
     segments.push({
       atBatIndex,
@@ -314,7 +325,7 @@ function sessionId(state: GameState, raw: unknown): number | null {
   if (raw == null || typeof raw !== 'object') return null
   const id = (raw as { id?: unknown }).id
   if (typeof id !== 'number') return null
-  return state.meta.identities.sourceToSession[`number:${id}`] ?? null
+  return state.gameData.players[id] == null ? null : id
 }
 
 /** A base as a document names it: a number, or `'1B'` to `'3B'`. */

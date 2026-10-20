@@ -1,7 +1,6 @@
 import type { Kysely, Transaction } from 'kysely'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import type {
   TeamMemberError,
@@ -11,18 +10,19 @@ import type {
   TeamPlayersCounts,
   TeamPlayersResponse
 } from '../../common/teamMembers'
-import { asUserId } from '../../common/userIdNumber'
-import { survivorsOf } from '../admin/people'
+import { asUserId } from '../../common/userId'
+import { lockPlayerEdits, survivorsOf } from '../admin/people'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { externalIdLockKey, recordExternalId } from '../db/externalIds'
+import { insertUser } from '../users/insertUser'
 
 /** Who holds an external id, as far as a person's row is concerned. */
 export type ExternalIdHolder =
   /** Nobody. */
   | { held: false }
   /** A user, after following merges. */
-  | { held: true; userId: number }
+  | { held: true; userId: string }
   /** Something that is not a user, which no person can take over. */
   | { held: true; entityType: string }
   /** A user row that is gone: the id names nobody, and is taken over. */
@@ -43,13 +43,20 @@ export async function externalIdHolder(
   if (row.entity_type !== 'user') {
     return { held: true, entityType: row.entity_type }
   }
-  let heldBy: number
+  let heldBy: string
   try {
     heldBy = asUserId(row.entity_id)
   } catch {
     return { held: true, orphanRowId: row.id }
   }
-  // Merges followed; no answer when the user row is gone.
+  // An orphaned external reference is reclaimable. Once a user exists,
+  // however, an invalid merge chain must still fail rather than be reclaimed.
+  const existing = await trx
+    .selectFrom('users')
+    .select('id')
+    .where('id', '=', heldBy)
+    .executeTakeFirst()
+  if (existing == null) return { held: true, orphanRowId: row.id }
   const userId = (await survivorsOf(trx, [heldBy])).get(heldBy)
   return userId == null
     ? { held: true, orphanRowId: row.id }
@@ -59,7 +66,7 @@ export async function externalIdHolder(
 /** Records the id on the user, or moves an orphaned row onto them. */
 export async function claimExternalId(
   trx: Transaction<Database>,
-  userId: number,
+  userId: string,
   externalId: TeamMemberExternalId,
   holder: ExternalIdHolder
 ): Promise<boolean> {
@@ -82,31 +89,6 @@ export function displayNameOf(
 ): string {
   const name = [firstName, lastName].filter(part => part !== '').join(' ')
   return name === '' ? fallback : name
-}
-
-/** A fresh user id and its legacy id. */
-export type MintedUserId = ReturnType<typeof mintUserId>
-
-/**
- * A user id nobody holds: drawn by `mintUserId`, then checked against
- * `users` alone, and drawn again on the rare hit. A user made earlier in the
- * same transaction is already a row, so it is checked too. `draw` is for a
- * test that needs a collision.
- */
-export async function mintFreeUserId(
-  trx: Transaction<Database>,
-  draw: () => MintedUserId = () => mintUserId(() => false)
-): Promise<MintedUserId> {
-  for (let tries = 0; tries < 5; tries += 1) {
-    const minted = draw()
-    const taken = await trx
-      .selectFrom('users')
-      .select('id')
-      .where('id', '=', minted.userId)
-      .executeTakeFirst()
-    if (taken == null) return minted
-  }
-  throw new Error('Five user ids drawn were all taken')
 }
 
 /** What a new user row is made of. */
@@ -133,51 +115,36 @@ export function heldIdError(externalId: TeamMemberExternalId): TeamMemberError {
   }
 }
 
-/**
- * A new user holding the row's external id: the id is claimed first, under
- * the id's own minted user id, and the user is made only when the claim
- * took. Undefined when something else holds the id after all — a writer
- * that took no lock — and then nobody is made.
- */
+/** Create the identity before claiming its external reference in the same transaction. */
 export async function insertUserWithId(
   trx: Transaction<Database>,
   externalId: TeamMemberExternalId,
   holder: ExternalIdHolder,
   values: NewUser
-): Promise<number | undefined> {
-  const minted = await mintFreeUserId(trx)
-  if (!(await claimExternalId(trx, minted.userId, externalId, holder))) {
+): Promise<string | undefined> {
+  const userId = await insertRosterUser(trx, values)
+  if (!(await claimExternalId(trx, userId, externalId, holder))) {
+    await trx.deleteFrom('users').where('id', '=', userId).execute()
     return undefined
   }
-  await insertUser(trx, minted, values)
-  return minted.userId
+  return userId
 }
 
-/** A new user row, under an id from `mintFreeUserId`. */
-async function insertUser(
+async function insertRosterUser(
   trx: Transaction<Database>,
-  minted: MintedUserId,
   values: NewUser
-): Promise<void> {
+): Promise<string> {
   const handed = values.bats != null || values.throws != null
-  const now = new Date()
-  await trx
-    .insertInto('users')
-    .values({
-      id: minted.userId,
-      legacyId: minted.legacyId,
-      display_name: values.displayName,
-      first_name: values.firstName === '' ? null : values.firstName,
-      last_name: values.lastName === '' ? null : values.lastName,
-      login_enabled: values.loginEnabled,
-      is_admin: false,
-      bats: values.bats ?? null,
-      throws: values.throws ?? null,
-      bats_source: handed ? (values.batsSource ?? 'import') : null,
-      created_at: now,
-      updated_at: now
-    })
-    .execute()
+  return await insertUser(trx, {
+    display_name: values.displayName,
+    first_name: values.firstName === '' ? null : values.firstName,
+    last_name: values.lastName === '' ? null : values.lastName,
+    login_enabled: values.loginEnabled,
+    is_admin: false,
+    bats: values.bats ?? null,
+    throws: values.throws ?? null,
+    bats_source: handed ? (values.batsSource ?? 'import') : null
+  })
 }
 
 /**
@@ -194,10 +161,29 @@ export async function addPlayers(
   rows: TeamPlayerRow[]
 ): Promise<TeamPlayersResponse> {
   return await db.transaction().execute(async trx => {
+    await lockPlayerEdits(trx)
+    // Adult and player batches can reach the same memberships through aliases.
+    await lockKeys(trx, [`teamRoster:${teamId}`])
     await lockKeys(
       trx,
       rows.map(row => externalIdLockKey(row.externalId))
     )
+    // Different aliases can name the same accounts in opposite roster order.
+    // Lock every existing account before a membership trigger locks any one.
+    // Foreign-key readers may still join adults without changing those accounts.
+    const accounts = new Set<string>()
+    for (const row of rows) {
+      const holder = await externalIdHolder(trx, row.externalId)
+      if (holder.held && 'userId' in holder) accounts.add(holder.userId)
+    }
+    if (accounts.size > 0)
+      await trx
+        .selectFrom('users')
+        .select('id')
+        .where('id', 'in', [...accounts])
+        .orderBy('id')
+        .forNoKeyUpdate()
+        .execute()
     const results: TeamPlayerResult[] = []
     const counts: TeamPlayersCounts = {
       created: 0,
@@ -233,7 +219,7 @@ async function addPlayer(
     }
   }
 
-  let userId: number
+  let userId: string
   let created = false
   if (holder.held && 'userId' in holder) {
     userId = holder.userId
@@ -270,7 +256,7 @@ async function addPlayer(
  */
 async function importHands(
   trx: Transaction<Database>,
-  userId: number,
+  userId: string,
   row: TeamPlayerRow
 ): Promise<void> {
   if (row.bats == null && row.throws == null) return
@@ -295,7 +281,7 @@ async function importHands(
 async function makePlayer(
   trx: Transaction<Database>,
   teamId: string,
-  userId: number,
+  userId: string,
   jersey: string | null,
   positions?: readonly string[]
 ): Promise<boolean> {
@@ -341,11 +327,10 @@ export async function createRosterPlayer(
   db: Kysely<Database>,
   teamId: string,
   player: NewRosterPlayer
-): Promise<number> {
+): Promise<string> {
   return await db.transaction().execute(async trx => {
-    const minted = await mintFreeUserId(trx)
     const handed = player.bats != null || player.throws != null
-    await insertUser(trx, minted, {
+    const userId = await insertRosterUser(trx, {
       displayName: displayNameOf(player.firstName, player.lastName, 'Player'),
       firstName: player.firstName,
       lastName: player.lastName,
@@ -354,13 +339,7 @@ export async function createRosterPlayer(
       ...(player.throws == null ? {} : { throws: player.throws }),
       ...(handed ? { batsSource: 'manual' as const } : {})
     })
-    await makePlayer(
-      trx,
-      teamId,
-      minted.userId,
-      player.jersey,
-      player.positions
-    )
-    return minted.userId
+    await makePlayer(trx, teamId, userId, player.jersey, player.positions)
+    return userId
   })
 }

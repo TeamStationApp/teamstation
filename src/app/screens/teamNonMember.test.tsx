@@ -11,6 +11,7 @@ import {
   asVideoSummary,
   TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -117,7 +118,8 @@ const game = asGameSummary({
 
 const roster = [
   asRosterEntry({
-    userId: 104,
+    userId: userIdOfGumbo(104),
+    gumboId: 104,
     shortName: 'Ichiro',
     jersey: null,
     positions: [],
@@ -129,8 +131,9 @@ const roster = [
     avatarUrl: null
   }),
   asRosterEntry({
-    userId: 201,
-    shortName: 'Avery S',
+    userId: userIdOfGumbo(201),
+    gumboId: 201,
+    shortName: 'Alfonso S',
     jersey: '7',
     positions: ['SS', '2B'],
     isPlayer: true,
@@ -142,7 +145,8 @@ const roster = [
   }),
   // A family member as a non-member is answered: no `guardianOf`.
   asRosterEntry({
-    userId: 106,
+    userId: userIdOfGumbo(106),
+    gumboId: 106,
     shortName: 'Tim R',
     jersey: null,
     positions: [],
@@ -199,11 +203,11 @@ describe('a non-member’s team page', function () {
   ): Promise<{
     asked: string[]
     opened: Array<{ gameId: string; options: unknown }>
-    players: number[]
+    players: string[]
   }> {
     const { client, asked } = nonMemberClient(follows)
     const opened: Array<{ gameId: string; options: unknown }> = []
-    const players: number[] = []
+    const players: string[] = []
     await render(
       <TeamScreen
         client={client}
@@ -234,7 +238,7 @@ describe('a non-member’s team page', function () {
 
   it('lists every name with initials and no photo, and opens nobody', async function () {
     const { players } = await team('team')
-    for (const name of ['Ichiro', 'Avery S', 'Coach', 'SS · 2B', '#7'])
+    for (const name of ['Ichiro', 'Alfonso S', 'Coach', 'SS · 2B', '#7'])
       expect(text()).includes(name)
     // A family member by name, without whom they are a guardian of.
     expect(text()).includes('Tim R')
@@ -251,7 +255,7 @@ describe('a non-member’s team page', function () {
 
   it('is the same page for somebody who does not follow the team, bar the Follow button', async function () {
     const { players } = await team('team', false)
-    for (const name of ['Ichiro', 'Avery S', 'Coach', 'SS · 2B', '#7'])
+    for (const name of ['Ichiro', 'Alfonso S', 'Coach', 'SS · 2B', '#7'])
       expect(text()).includes(name)
     expect(document.querySelector('img')).equals(null)
     expect(players).deep.equals([])
@@ -457,13 +461,13 @@ describe('a non-member’s game page', function () {
           {
             eventId: 'e1',
             atBatIndex: 1,
-            title: 'Avery S doubles',
+            title: 'Alfonso S doubles',
             startOffsetSec: 20,
             playOffsetSec: 23,
             eventType: 'double',
             isScoringPlay: true,
             stillUrl: STILL,
-            description: 'Avery S doubles to left.'
+            description: 'Alfonso S doubles to left.'
           }
         ]
       })
@@ -523,7 +527,7 @@ describe('a non-member’s game page', function () {
       expect(document.querySelector('[data-testid="warningSheet"]')).not.equals(
         null
       )
-      expect(text()).not.includes('Avery S doubles to left.')
+      expect(text()).not.includes('Alfonso S doubles to left.')
       if (!signedIn) {
         expect(text()).includes(
           'Log in or create an account first to request membership.'

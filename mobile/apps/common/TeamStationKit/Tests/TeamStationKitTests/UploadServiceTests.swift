@@ -275,6 +275,7 @@ struct UploadServiceTests {
   private func account() -> TeamStationAccount {
     let keychain = KeychainStore.inMemory()
     keychain.setToken("tok")
+    keychain.setAccountScope(TeamStationAccountScope(server: "https://develop.example", userId: "usr_1111111111111111111112"))
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [ FlakyServer.self ]
     return TeamStationAccount(

@@ -51,6 +51,7 @@ import {
   type ParentAction,
   type ParentPreview
 } from './groupLinks'
+import { asGuests } from './guests'
 import { asCurrentPlay, asGumboPlay } from './gumboPlay'
 import { asLocality, type Locality } from './locality'
 import {
@@ -118,7 +119,8 @@ import {
 } from './scoring/rosterCommands'
 import type { SaveChange, StoredGame } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
-import { asUserId } from './userIdNumber'
+import { asUnrostered } from './unroster'
+import { asGumboId, asUserId } from './userId'
 import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
 import type { WallTimeline } from './wallTimeline'
 
@@ -276,6 +278,15 @@ export type LineScoreSide = ReturnType<typeof asLineScoreSide>
 
 export const asGameDetail = withEventMetadata(
   asObject({
+    guests: asGuests,
+    unrostered: asUnrostered,
+    guestPlayers: asOptional(
+      asObject({
+        away: asArray((raw: unknown): RosterEntry => asRosterEntry(raw)),
+        home: asArray((raw: unknown): RosterEntry => asRosterEntry(raw))
+      }),
+      () => ({ away: [], home: [] })
+    ),
     id: asString,
     homeTeamId: asString,
     awayTeamId: asString,
@@ -602,6 +613,7 @@ const cleanRosterEntry = asObject({
   bats: asOptional(asBats, null),
   throws: asOptional(asThrows, null),
   userId: asUserId,
+  gumboId: asOptional(asNullable(asGumboId), null),
   /**
    * First name, last initial. The field is named for what it is so a full
    * name cannot be shipped here by accident — the compiler visits every call
@@ -711,6 +723,7 @@ export type PlayerName = ReturnType<typeof asPlayerName>
 
 export const asPlayerDetail = asObject({
   userId: asUserId,
+  gumboId: asOptional(asNullable(asGumboId), null),
   name: asString,
   /** Whether to offer this person the name field. A parent or an admin. */
   canEditName: asOptional(asBoolean, false),
@@ -878,6 +891,7 @@ export type SeasonGame = ReturnType<typeof asSeasonGame>
 /** A person another service knows, and which of the asked ids are theirs. */
 export const asUserMatch = asObject({
   userId: asUserId,
+  gumboId: asOptional(asNullable(asGumboId), null),
   externalIds: asArray(asString),
   /** `Jordan P`, told apart from anybody else in the same answer. */
   shortName: asOptional(asString),
@@ -1053,6 +1067,7 @@ export type LiveNow = ReturnType<typeof asLiveNow>
 
 const cleanSessionUser = asObject({
   id: asUserId,
+  gumboId: asOptional(asNullable(asGumboId), null),
   displayName: asString,
   email: asOptional(asString),
   isAdmin: asBoolean,
@@ -1462,7 +1477,7 @@ export const asGameLineupsResponse: Cleaner<GameLineupsResponse> = asObject({
 /** A player in a saved lineup, named by who he is, never by a session id. */
 export interface LineupPlayer {
   /** Null for a player made up at the field. */
-  userId: number | null
+  gumboId: number | null
   fullName: string
   jersey: string
 }
@@ -1470,7 +1485,7 @@ export interface LineupPlayer {
 /**
  * `POST /games/:gameId/lineups`: one side's players, batting order and
  * defence, as its head coach or a scorekeeper saves them. Every number but a
- * `userId` is an index into `players`, so the server never depends on the
+ * `gumboId` is an index into `players`, so the server never depends on the
  * client numbering players as it does. `base` is the lineups digest the
  * client last read; the last save wins, and the client uses it only to tell
  * its own save from somebody else's.
@@ -1499,7 +1514,7 @@ const asSaveLineupsShape = asObject({
   base: asString,
   players: asArray(
     asObject({
-      userId: asNullable(asUserId),
+      gumboId: asNullable(asGumboId),
       fullName: asString,
       jersey: asString
     })
@@ -1517,6 +1532,13 @@ const asSaveLineupsShape = asObject({
 })
 
 /** Cleans a lineup save, and refuses an index past the players it names. */
+export const asUnrosterBody = asObject({
+  side: asLiteral('away', 'home'),
+  userId: asUserId,
+  rostered: asBoolean
+})
+export type UnrosterBody = ReturnType<typeof asUnrosterBody>
+
 export const asSaveLineupsBody: Cleaner<SaveLineupsBody> = raw => {
   const body = asSaveLineupsShape(raw)
   const indexes = [
@@ -1627,7 +1649,7 @@ export class TeamStationClient {
   }
 
   async changeNodeAccount(
-    userId: number,
+    userId: string,
     change: NodeAccountChange
   ): Promise<void> {
     await this.request(
@@ -2460,10 +2482,16 @@ export class TeamStationClient {
    * The people another service knows by these ids, as far as this person may
    * see them. A merged row answers as whoever it was merged into.
    */
-  async users(options: { externalIds: string[] }): Promise<UserMatch[]> {
-    const query = options.externalIds
-      .map(id => `externalId=${encodeURIComponent(id)}`)
-      .join('&')
+  async users(options: {
+    externalIds: string[]
+    system?: string
+  }): Promise<UserMatch[]> {
+    const params = options.externalIds.map(
+      id => `externalId=${encodeURIComponent(id)}`
+    )
+    if (options.system != null)
+      params.push(`system=${encodeURIComponent(options.system)}`)
+    const query = params.join('&')
     return await this.request('GET', `/users?${query}`, asArray(asUserMatch))
   }
 
@@ -2567,13 +2595,13 @@ export class TeamStationClient {
 
   async saveRsvp(
     eventId: string,
-    userId: number,
+    userId: string,
     response: Rsvp
-  ): Promise<{ userId: number; response: Rsvp }> {
+  ): Promise<{ userId: string; response: Rsvp }> {
     return await this.request(
       'PUT',
       `/events/${encodeURIComponent(eventId)}/rsvps/${userId}`,
-      asObject({ userId: asNumber, response: asRsvp }),
+      asObject({ userId: asUserId, response: asRsvp }),
       { response }
     )
   }
@@ -2924,13 +2952,38 @@ export class TeamStationClient {
     )
   }
 
+  async setRostered(
+    gameId: string,
+    body: UnrosterBody
+  ): Promise<ReturnType<typeof asUnrostered>> {
+    return await this.request(
+      'PUT',
+      `/games/${encodeURIComponent(gameId)}/unroster`,
+      asUnrostered,
+      body
+    )
+  }
+
+  async createGuestPlayer(
+    gameId: string,
+    side: 'away' | 'home',
+    player: NewRosterPlayer
+  ): Promise<RosterEntry> {
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/guest-players`,
+      asRosterEntry,
+      { side, ...player }
+    )
+  }
+
   /**
    * What a roster manager sets for one player on one team. Only the fields sent
    * change; the answer is the player's roster entry as it now reads.
    */
   async setPlayerSettings(
     teamId: string,
-    userId: number | string,
+    userId: string,
     settings: PlayerSettings
   ): Promise<RosterEntry> {
     return await this.request(
@@ -2946,7 +2999,7 @@ export class TeamStationClient {
    * player, or a coach of a team they play on. Only the fields sent change.
    */
   async setPlayerBatsThrows(
-    userId: number | string,
+    userId: string,
     settings: PersonSettings
   ): Promise<PersonSettingsAnswer> {
     return await this.request(
@@ -2963,7 +3016,7 @@ export class TeamStationClient {
    */
   async setWalkUpSong(
     teamId: string,
-    userId: number | string,
+    userId: string,
     song: WalkUpSong
   ): Promise<WalkUpSong> {
     return await this.request(
@@ -2975,10 +3028,7 @@ export class TeamStationClient {
   }
 
   /** Removes a player's walk-up song on one team. Removing none is fine. */
-  async clearWalkUpSong(
-    teamId: string,
-    userId: number | string
-  ): Promise<void> {
+  async clearWalkUpSong(teamId: string, userId: string): Promise<void> {
     await this.request('DELETE', walkUpSongPath(teamId, userId), asUnknownOk)
   }
 
@@ -3211,7 +3261,7 @@ export class TeamStationClient {
   async removePerson(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: number
+    userId: string
   ): Promise<{ removed: boolean }> {
     return await this.request(
       'DELETE',
@@ -3230,7 +3280,7 @@ export class TeamStationClient {
   async setRole(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: number,
+    userId: string,
     role: 'admin' | 'member'
   ): Promise<void> {
     await this.request(
@@ -3248,7 +3298,7 @@ export class TeamStationClient {
   async setRoles(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: number,
+    userId: string,
     roles: { admin: boolean; flags: RoleFlag[] }
   ): Promise<Role[]> {
     const answer = await this.request(
@@ -3276,7 +3326,7 @@ export class TeamStationClient {
   async personProfile(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: number
+    userId: string
   ): Promise<PersonProfile> {
     return await this.request(
       'GET',
@@ -3292,7 +3342,7 @@ export class TeamStationClient {
   async addRole(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: number,
+    userId: string,
     role: Role | 'member'
   ): Promise<HeldAt> {
     return await this.request(
@@ -3310,7 +3360,7 @@ export class TeamStationClient {
   async removeRole(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: number,
+    userId: string,
     role: Role | 'member'
   ): Promise<HeldAt> {
     return await this.request(
@@ -3415,7 +3465,7 @@ export class TeamStationClient {
   }
 }
 
-function walkUpSongPath(teamId: string, userId: number | string): string {
+function walkUpSongPath(teamId: string, userId: string): string {
   return `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/walk-up-song`
 }
 
@@ -3504,14 +3554,21 @@ const asStartBody = asObject({
   scope: asNonEmpty,
   target: asTarget,
   context: asNonEmpty,
+  tagOrder: asOptional(asArray(asGumboId)),
   /** Absent means the model the server is configured with. */
   model: asOptional(asDictationModel)
 })
-export type DictationStart = { kind: 'start' } & ReturnType<typeof asStartBody>
+export type DictationStart = { kind: 'start'; tagOrder?: number[] } & Omit<
+  ReturnType<typeof asStartBody>,
+  'tagOrder'
+>
 export const asDictationStart: Cleaner<DictationStart> = raw => {
   if ((raw as { kind?: unknown } | null)?.kind !== 'start')
     throw new TypeError('Expected a start frame')
-  return { kind: 'start', ...asStartBody(raw) }
+  const { tagOrder, ...body } = asStartBody(raw)
+  if (tagOrder != null && new Set(tagOrder).size !== tagOrder.length)
+    throw new TypeError('Duplicate player tag identity')
+  return { kind: 'start', ...body, ...(tagOrder == null ? {} : { tagOrder }) }
 }
 
 /** Retargets the recogniser. Sent ahead of the utterances that will use it. */

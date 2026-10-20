@@ -8,6 +8,7 @@ import {
   type RosterEntry,
   type TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { LevelPeopleTab } from './LevelPeopleTab'
 import { inheritedPill, TeamScreen } from './TeamScreen'
@@ -33,7 +34,8 @@ function entry(
   fields: Partial<RosterEntry>
 ): RosterEntry {
   return asRosterEntry({
-    userId,
+    userId: userIdOfGumbo(userId),
+    gumboId: userId,
     shortName,
     jersey: null,
     positions: [],
@@ -53,37 +55,37 @@ const everybody: RosterEntry[] = [
     inheritedFrom: { level: 'league', role: 'admin' }
   }),
   entry(104, 'Ichiro', { section: 'staff', staffRoles: ['coach'] }),
-  entry(209, 'Nora Q', { section: 'staff', staffRoles: ['scorekeeper'] }),
-  entry(210, 'Owen P', { section: 'staff', staffRoles: ['assistant'] }),
+  entry(209, 'Nick P', { section: 'staff', staffRoles: ['scorekeeper'] }),
+  entry(210, 'Owen M', { section: 'staff', staffRoles: ['assistant'] }),
   entry(103, 'Mike T', {
     section: 'staff',
     staffRoles: ['coach'],
     inheritedFrom: { level: 'season', role: 'coach' }
   }),
-  entry(201, 'Avery S', {
+  entry(201, 'Alfonso S', {
     section: 'player',
     isPlayer: true,
     jersey: '7',
     positions: ['SS', '2B']
   }),
-  entry(106, 'Tim R', { section: 'family', guardianOf: ['Avery S'] }),
+  entry(106, 'Tim R', { section: 'family', guardianOf: ['Alfonso S'] }),
   entry(208, 'Hank M', { section: 'spectator' }),
   entry(250, 'Lou L', {
     section: 'spectator',
     inheritedFrom: { level: 'league', role: 'member' }
   }),
-  entry(251, 'Sid S', {
+  entry(251, 'Sid F', {
     section: 'spectator',
     inheritedFrom: { level: 'season', role: 'member' }
   }),
-  entry(207, 'Grace H', { section: 'follower' })
+  entry(207, 'Grant H', { section: 'follower' })
 ]
 
 async function render(
   roster: RosterEntry[],
-  manager?: { people: number[] }
-): Promise<number[]> {
-  const opened: number[] = []
+  manager?: { people: string[] }
+): Promise<string[]> {
+  const opened: string[] = []
   const client = {
     teamGames: async () => [],
     roster: async () => roster,
@@ -176,10 +178,10 @@ describe('a team’s roster in sections', function () {
     expect(text()).includes('SPECTATORS3')
     expect(text()).includes('FOLLOWERS1')
     // Within a section, in the order the server sent.
-    expect(text().indexOf('Owen P')).lessThan(text().indexOf('Mike T'))
+    expect(text().indexOf('Owen M')).lessThan(text().indexOf('Mike T'))
     expect(text().indexOf('Hank M')).lessThan(text().indexOf('Lou L'))
-    expect(text().indexOf('Lou L')).lessThan(text().indexOf('Sid S'))
-    expect(text().indexOf('FOLLOWERS')).lessThan(text().indexOf('Grace H'))
+    expect(text().indexOf('Lou L')).lessThan(text().indexOf('Sid F'))
+    expect(text().indexOf('FOLLOWERS')).lessThan(text().indexOf('Grant H'))
     // The old headings are gone.
     expect(text()).not.includes('COACHES')
     expect(text()).not.includes('OTHER MEMBERS')
@@ -206,21 +208,21 @@ describe('a team’s roster in sections', function () {
 
   it('reads staff by their roles and players by their positions', async function () {
     const opened = await render(everybody)
-    expect(row('Owen P')).includes('Assistant')
-    expect(row('Nora Q')).includes('Scorekeeper')
+    expect(row('Owen M')).includes('Assistant')
+    expect(row('Nick P')).includes('Scorekeeper')
     expect(row('Ichiro')).includes('Coach')
-    expect(row('Avery S')).includes('SS · 2B')
-    expect(row('Avery S')).includes('#7')
+    expect(row('Alfonso S')).includes('SS · 2B')
+    expect(row('Alfonso S')).includes('#7')
     // A plain admin has nothing under the name: initials, name, and the pill
     // if any. A family member has the players here they guard.
     expect(row('Babe R')).equals('BRBabe RLeague admin')
-    expect(row('Tim R')).equals('TRTim RParent/guardian of Avery S')
+    expect(row('Tim R')).equals('TRTim RParent/guardian of Alfonso S')
     // A player's row opens the player.
     await act(async () => {
-      rowNode('Avery S').click()
+      rowNode('Alfonso S').click()
       await delay(10)
     })
-    expect(opened).deep.equals([201])
+    expect(opened).deep.equals([userIdOfGumbo(201)])
   })
 
   it('opens only a player’s row, which alone has a page', async function () {
@@ -229,8 +231,8 @@ describe('a team’s roster in sections', function () {
     const pressable = everybody.filter(
       person => rowNode(person.shortName).getAttribute('role') === 'button'
     )
-    expect(pressable.map(person => person.shortName)).deep.equals(['Avery S'])
-    expect(row('Avery S')).includes('chevron_right')
+    expect(pressable.map(person => person.shortName)).deep.equals(['Alfonso S'])
+    expect(row('Alfonso S')).includes('chevron_right')
     expect(text().split('chevron_right').length - 1).equals(1)
     // Family, inherited staff, the team's own staff who do not play,
     // spectators and followers open nothing when tapped.
@@ -241,7 +243,7 @@ describe('a team’s roster in sections', function () {
       'Ichiro',
       'Hank M',
       'Lou L',
-      'Grace H'
+      'Grant H'
     ]) {
       await act(async () => {
         rowNode(name).click()
@@ -260,10 +262,10 @@ describe('a team’s roster in sections', function () {
     expect(text().split('League admin').length - 1).equals(1)
     // A member of the season or the league; the team's own and a follower
     // carry no pill.
-    expect(row('Sid S')).equals('SSSid SSeason spectator')
+    expect(row('Sid F')).equals('SFSid FSeason spectator')
     expect(row('Lou L')).equals('LLLou LLeague spectator')
     expect(row('Hank M')).equals('HMHank M')
-    expect(row('Grace H')).equals('GHGrace H')
+    expect(row('Grant H')).equals('GHGrant H')
   })
 
   it('names the level and the role in the pill', function () {
@@ -287,19 +289,24 @@ describe('a team’s roster in sections', function () {
   })
 
   it('opens every row for the team’s administrators, coaches and assistants: a player’s page, anybody else’s profile', async function () {
-    const people: number[] = []
+    const people: string[] = []
     const opened = await render(everybody, { people })
     const pressable = everybody.filter(
       person => rowNode(person.shortName).getAttribute('role') === 'button'
     )
     expect(pressable).length(everybody.length)
-    for (const name of ['Avery S', 'Tim R', 'Babe R', 'Lou L', 'Grace H'])
+    for (const name of ['Alfonso S', 'Tim R', 'Babe R', 'Lou L', 'Grant H'])
       await act(async () => {
         rowNode(name).click()
         await delay(10)
       })
-    expect(opened).deep.equals([201])
-    expect(people).deep.equals([106, 101, 250, 207])
+    expect(opened).deep.equals([userIdOfGumbo(201)])
+    expect(people).deep.equals([
+      userIdOfGumbo(106),
+      userIdOfGumbo(101),
+      userIdOfGumbo(250),
+      userIdOfGumbo(207)
+    ])
   })
 })
 
@@ -315,9 +322,9 @@ describe('a season’s and a league’s People tab', function () {
     kind: 'season' | 'league',
     manages: boolean,
     answer?: RosterEntry[]
-  ): Promise<{ players: unknown[]; people: number[] }> {
+  ): Promise<{ players: unknown[]; people: string[] }> {
     const players: unknown[] = []
-    const people: number[] = []
+    const people: string[] = []
     const client = {
       levelPeople: async (asked: string, id: string) => {
         if (answer == null) throw new Error('People could not load here')
@@ -351,7 +358,7 @@ describe('a season’s and a league’s People tab', function () {
 
   const levelPeople = [
     entry(101, 'Babe R', { section: 'admin' }),
-    entry(201, 'Avery S', {
+    entry(201, 'Alfonso S', {
       section: 'player',
       isPlayer: true,
       teamNames: ['Demo Hawks', 'Demo Owls']
@@ -366,25 +373,27 @@ describe('a season’s and a league’s People tab', function () {
   it('lists the season’s people in sections, a player with their teams, and opens them for a manager', async function () {
     const { players, people } = await tab('season', true, levelPeople)
     expect(headings().filter(at => at >= 0)).length(4)
-    expect(row('Avery S')).includes('Demo Hawks · Demo Owls')
+    expect(row('Alfonso S')).includes('Demo Hawks · Demo Owls')
     expect(row('Lou L')).includes('League spectator')
-    for (const name of ['Avery S', 'Tim R', 'Babe R'])
+    for (const name of ['Alfonso S', 'Tim R', 'Babe R'])
       await act(async () => {
         rowNode(name).click()
         await delay(10)
       })
-    expect(players).deep.equals([[201, 'Avery S', { seasonId: 'lvl_one' }]])
-    expect(people).deep.equals([106, 101])
+    expect(players).deep.equals([
+      [userIdOfGumbo(201), 'Alfonso S', { seasonId: 'lvl_one' }]
+    ])
+    expect(people).deep.equals([userIdOfGumbo(106), userIdOfGumbo(101)])
   })
 
   it('opens only players for anybody else, and says so when nobody or nothing is there', async function () {
     const { players, people } = await tab('league', false, levelPeople)
     expect(rowNode('Tim R').getAttribute('role')).not.equals('button')
     await act(async () => {
-      rowNode('Avery S').click()
+      rowNode('Alfonso S').click()
       await delay(10)
     })
-    expect(players).deep.equals([[201, 'Avery S', undefined]])
+    expect(players).deep.equals([[userIdOfGumbo(201), 'Alfonso S', undefined]])
     expect(people).deep.equals([])
     await act(async () => {
       root?.unmount()

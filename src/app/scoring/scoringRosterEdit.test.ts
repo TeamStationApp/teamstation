@@ -3,7 +3,8 @@ import { describe, it } from 'mocha'
 
 import { asRosterEntry } from '../../common/api'
 import { ROLES } from '../../common/roles'
-import { createDevelopmentSession } from './developmentSession'
+import { userIdOfGumbo } from '../../common/userId'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
   editRosterLabel,
@@ -19,7 +20,8 @@ const entry = (
   lastName = 'Betts'
 ): ReturnType<typeof asRosterEntry> =>
   asRosterEntry({
-    userId: id,
+    userId: userIdOfGumbo(id),
+    gumboId: id,
     shortName: `${firstName} ${lastName[0]}`,
     nameDetails: {
       firstName,
@@ -60,7 +62,7 @@ describe('roster editing presentation', function () {
     expect(rosterStaffSide(undefined, 'away', 'home')).equals(undefined)
   })
   it('orders either partially split legacy name by its authorized full label', function () {
-    const state = createDevelopmentSession(gameFixture, [], [])
+    const state = scoringSession(gameFixture)
     state.liveData.boxscore.teams.away.players = []
     const rows = editRosterRows(
       [
@@ -93,8 +95,8 @@ describe('roster editing presentation', function () {
       'Bryce Harper'
     ])
   })
-  it('keeps game-only cards when a session id equals a persisted account id', function () {
-    const state = createDevelopmentSession(gameFixture, [], [])
+  it('shows one roster card when a guest has joined the team', function () {
+    const state = scoringSession(gameFixture)
     const id = state.liveData.boxscore.teams.away.players[0]
     state.liveData.boxscore.teams.away.players = [id]
     state.gameData.players[id].positions = ['C', 'DH']
@@ -103,20 +105,17 @@ describe('roster editing presentation', function () {
       state,
       'away'
     )
-    expect(rows).has.length(2)
-    expect(new Set(rows.map(row => row.key)).size).equals(2)
-    expect(rows.filter(row => row.userId == null)).has.length(1)
+    expect(rows).has.length(1)
+    expect(new Set(rows.map(row => row.key)).size).equals(1)
+    expect(rows.filter(row => row.userId == null)).has.length(0)
     expect(rows.find(row => row.userId != null)!.positions).deep.equals([
       'P',
       'SS',
       'CF'
     ])
-    const local = rows.find(row => row.userId == null)!
-    expect(local.positions).deep.equals(['C', 'DH'])
-    expect(editRosterLabel(local)).includes('positions C, DH')
   })
   it('sorts numeric, legacy and missing jerseys without changing roster or game names', function () {
-    const state = createDevelopmentSession(gameFixture, [], [])
+    const state = scoringSession(gameFixture)
     state.liveData.boxscore.teams.away.players = []
     const rows = [
       entry(1, '12'),
@@ -139,7 +138,7 @@ describe('roster editing presentation', function () {
     expect(JSON.stringify({ rows, state })).equals(before)
   })
   it('includes bench players, skips nonplayers, and uses short-name/legacy fallbacks', function () {
-    const state = createDevelopmentSession(gameFixture, [], [])
+    const state = scoringSession(gameFixture)
     state.liveData.boxscore.teams.away.players = []
     const short = { ...entry(1, null), nameDetails: undefined }
     const legacy = {

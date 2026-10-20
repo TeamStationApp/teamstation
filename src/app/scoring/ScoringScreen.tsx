@@ -158,7 +158,7 @@ import { useTiebreakerSetup } from './useTiebreakerSetup'
 
 export interface ScoringScreenProps {
   active?: boolean
-  onEditPlayer?: (userId: number, name: string, teamId: string) => void
+  onEditPlayer?: (userId: string, name: string, teamId: string) => void
   onSettingsRefresh?: (refresh: () => void) => () => void
   onBeforeLeave?: (check: () => Promise<boolean>) => () => void
   allowNavigation?: (route: Route) => boolean
@@ -267,11 +267,11 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
             ['unauthorized', 'forbidden', 'notFound'].includes(caught.code)
           ) {
             rights[teamId] = false
-            return withoutPrivateNames(
-              await props.client.roster(teamId).catch(() => [])
-            )
+            return withoutPrivateNames(await props.client.roster(teamId))
           }
-          return []
+          // An unavailable roster is not an empty team: reconciliation would
+          // otherwise remove the saved lineup and defense. Offer load retry.
+          throw caught
         }
       }
       const [away, home, defaults] = await Promise.all([
@@ -1705,8 +1705,27 @@ function ScoringPanel(props: {
     })
   }
   const createDefensivePlaceholders = async (count: number): Promise<void> => {
-    await createDefensivePlayers((_fresh, side) => draft => {
-      addPlaceholderPlayers(draft, side, count)
+    await createDefensivePlayers(async (fresh, side) => {
+      const staged = copyState(fresh)
+      await addPlaceholderPlayers(
+        staged,
+        side,
+        count,
+        async (side, player) =>
+          await props.client.createGuestPlayer(
+            fresh.gamePk,
+            side,
+            rosterPlayerBody(player)
+          )
+      )
+      return draft => {
+        for (const id of staged.liveData.boxscore.teams[side].players) {
+          if (draft.gameData.players[id] != null) continue
+          draft.gameData.players[id] = staged.gameData.players[id]
+          draft.liveData.boxscore.teams[side].players.push(id)
+          if (!draft.meta.tagOrder.includes(id)) draft.meta.tagOrder.push(id)
+        }
+      }
     })
   }
   const refreshDefensiveRoster = (): void => {
@@ -2710,6 +2729,13 @@ function ScoringPanel(props: {
                 conflict={rosterLive.conflict}
                 onDirtyChange={setRosterChanged}
                 onEditPlayer={props.onEditPlayer}
+                onCreateGuest={async (side, player) =>
+                  await props.client.createGuestPlayer(
+                    state.session.gamePk,
+                    side,
+                    rosterPlayerBody(player)
+                  )
+                }
                 onCreatePlayer={async (teamId, player) =>
                   await props.client.createRosterPlayer(
                     teamId,

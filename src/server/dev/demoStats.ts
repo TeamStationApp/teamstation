@@ -6,9 +6,10 @@ import type { Database } from '../db/database'
 export async function sampleBatter(
   db: Kysely<Database>,
   teamId: string
-): Promise<number | null> {
+): Promise<string | null> {
   const row = await db
     .selectFrom('game_player_stats')
+    .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'game_player_stats.gumbo_id')
     .select('user_id')
     .select(eb => eb.fn.sum<number>('pa').as('pa'))
     .where('team_id', '=', teamId)

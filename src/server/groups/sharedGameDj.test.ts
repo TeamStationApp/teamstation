@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { asDjGame } from '../../common/api'
 import { POSITIONS } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 
 describe('raw guest game DJ fallback privacy', function () {
@@ -16,7 +17,7 @@ describe('raw guest game DJ fallback privacy', function () {
       .values({
         id: 'mem_private_guest_player',
         team_id: f.teamB,
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         role: 'member',
         is_player: true,
         jersey: '1'
@@ -82,7 +83,7 @@ describe('raw guest game DJ fallback privacy', function () {
               fromGameId: 'gam_unrelated_private',
               setAt: new Date().toISOString(),
               lineup: {
-                batters: [{ userId: 106, name: 'Private Guest', jersey: '1' }],
+                batters: [{ gumboId: 106, name: 'Private Guest', jersey: '1' }],
                 defense: Object.fromEntries(
                   POSITIONS.map(position => [position, null])
                 )
@@ -113,7 +114,9 @@ describe('raw guest game DJ fallback privacy', function () {
         ).json()
       )
       expect(own.away.source).equals(source)
-      expect(own.away.batters.map(row => row.userId)).includes(106)
+      expect(own.away.batters.map(row => row.userId)).includes(
+        userIdOfGumbo(106)
+      )
     })
   }
 })

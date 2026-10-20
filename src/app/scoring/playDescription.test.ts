@@ -10,7 +10,7 @@ import { overrideOf } from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import { completeMotions } from '../../test/scoringHelpers'
-import { createDevelopmentSession } from './developmentSession'
+import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
   describeCompletedPlays,
@@ -31,7 +31,7 @@ import type { ScoringState } from './scoringTypes'
 
 describe('setup history descriptions', () => {
   it('identifies the runner and base, and distinguishes outs-only changes from other corrections', () => {
-    const before = createDevelopmentSession(gameFixture, [], [])
+    const before = scoringSession(gameFixture)
     const placed = applyAction(before, {
       type: 'gameFlow',
       kind: 'placeRunner',
@@ -107,10 +107,7 @@ function game(
   count?: [number, number],
   animate = false
 ): ScoringState {
-  const state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], []),
-    animate
-  )
+  const state = initialScoringState(scoringSession(gameFixture), animate)
   for (const [id, [first, last]] of Object.entries(NAMES)) {
     const player = state.session.gameData.players[Number(id)]
     player.firstName = first

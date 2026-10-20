@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import type { CreditedOutcome } from '../highlights'
+import { gumboIdsOfUsers } from '../scoring/gumboIds'
 
 /** The `eventCredits` columns a credit is read back from. */
 const CREDIT_COLUMNS = [
@@ -10,7 +11,7 @@ const CREDIT_COLUMNS = [
   'eventType',
   'label',
   'teamId',
-  'creditUserId',
+  'creditGumboId as creditUserId',
   'name',
   'role',
   'position'
@@ -48,14 +49,16 @@ function asCredit(row: {
  */
 export async function creditsForPlayer(
   db: Kysely<Database>,
-  userId: number
+  userId: string
 ): Promise<Map<string, CreditedOutcome[]>> {
   const out = new Map<string, CreditedOutcome[]>()
   const person = await onePerson(db, userId)
+  const gumboIds = await gumboIdsOfUsers(db, person.userIds)
+  if (gumboIds.length === 0) return out
   const matched = await db
     .selectFrom('eventCredits')
     .select('eventId')
-    .where('creditUserId', 'in', person.userIds)
+    .where('creditGumboId', 'in', gumboIds)
     .execute()
   const eventIds = [...new Set(matched.map(row => row.eventId))]
   if (eventIds.length === 0) return out

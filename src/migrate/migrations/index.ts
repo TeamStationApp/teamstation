@@ -65,6 +65,11 @@ import { migration062PhoneStreams } from './062phoneStreams'
 import { migration063GameStarted } from './063gameStarted'
 import { migration064MembershipRequests } from './064membershipRequests'
 import { migration065RadarReadings } from './065radarReadings'
+import { migration066GameGuests } from './066gameGuests'
+import { migration067GameUnroster } from './067gameUnroster'
+import { migration068GumboIds } from './068gumboIds'
+import { migration069UserIds } from './069userIds'
+import { migration070PlayerGumboIds } from './070playerGumboIds'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -133,5 +138,10 @@ export const migrations: Migration[] = [
   migration062PhoneStreams,
   migration063GameStarted,
   migration064MembershipRequests,
-  migration065RadarReadings
+  migration065RadarReadings,
+  migration066GameGuests,
+  migration067GameUnroster,
+  migration068GumboIds,
+  migration069UserIds,
+  migration070PlayerGumboIds
 ]

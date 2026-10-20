@@ -445,8 +445,107 @@ describe('Coach Game', function () {
     if (used.length > 0) console.log(`    models: ${used.join('; ')}`)
     if (coach != null && coach.errors.length > 0)
       console.log(`    browser errors: ${coach.errors.join('\n')}`)
-    await coach?.session.m.detach()
-    await daemon?.shutdown()
+    try {
+      await coach?.session.browser.close()
+    } finally {
+      await daemon?.shutdown()
+    }
+  })
+
+  it('C9: changes game availability independently of player settings and rejects unfinished plays', async function () {
+    const fixture = lineupFixture()
+    const id = fixture.players.home[0].userId
+    const selector = `[data-testid="Rostered ${id}"]`
+    const checked = async (value: boolean): Promise<void> => {
+      await coach.page.waitForFunction(
+        (selector, value) => {
+          const input = document.querySelector<HTMLInputElement>(
+            `${selector} input`
+          )
+          return input != null && input.checked === value
+        },
+        { timeout: 15000 },
+        selector,
+        value
+      )
+    }
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    const saved = coach.page.waitForResponse(
+      response =>
+        response.request().method() === 'POST' &&
+        response.url().endsWith('/lineups')
+    )
+    await coach.tapEnabled('Save Rosters')
+    expect((await saved).status()).equals(200)
+    await coach.coachGame(fixture.gameId)
+    await coach.tap('Roster', 'tab')
+    await checked(true)
+    await coach.session.m.tapOn({ css: selector })
+    await checked(false)
+    await coach.shot('roster-switch-off.png')
+    const client = new TeamStationClient({
+      baseUrl: API,
+      token: await tokenOf(fixture, 'headCoach')
+    })
+    const off = (await client.gameLineups(fixture.gameId)).home.current!
+    expect(
+      off.batters.some(
+        player => player.gumboId === fixture.players.home[0].gumboId
+      )
+    ).equals(false)
+    expect(off.defense.P).equals(null)
+    await coach.coachGame(fixture.gameId)
+    await coach.tap('Roster', 'tab')
+    await checked(false)
+    await coach.session.m.tapOn({ css: selector })
+    await checked(true)
+    const on = (await client.gameLineups(fixture.gameId)).home.current!
+    expect(
+      on.batters.some(
+        player => player.gumboId === fixture.players.home[0].gumboId
+      )
+    ).equals(false)
+    expect(on.defense.P).equals(null)
+    const scorer = new TeamStationClient({
+      baseUrl: API,
+      token: await tokenOf(fixture, 'scorekeeper')
+    })
+    let refusal: unknown
+    try {
+      await scorer.setRostered(fixture.gameId, {
+        side: 'home',
+        userId: id,
+        rostered: false
+      })
+    } catch (error) {
+      refusal = error
+    }
+    expect(refusal).property('code', 'forbidden')
+    await coach.as(fixture, 'scorekeeper')
+    await coach.scoreGame(fixture.gameId)
+    await coach.openRosters()
+    await coach.tap('Roster', 'tab')
+    expect(
+      await coach.page.$('input[aria-label="Rostered for this game"]')
+    ).equals(null)
+
+    const pending = lineupFixture()
+    await score(pending, [{ type: 'ballInPlay', contact: 'swing' }])
+    await coach.as(pending, 'headCoach')
+    await coach.coachGame(pending.gameId)
+    await coach.tap('Roster', 'tab')
+    const pendingSelector = `[data-testid="Rostered ${pending.players.home[0].userId}"]`
+    await coach.session.m.tapOn({ css: pendingSelector })
+    await coach.page.waitForFunction(() =>
+      String(document.body.textContent).includes(
+        'Finish the current play first'
+      )
+    )
+    expect(
+      await coach.page.$eval(`${pendingSelector} input`, input => input.checked)
+    ).equals(true)
+    expect((await client.game(pending.gameId)).unrostered.home).deep.equals([])
   })
 
   it('C1: puts Coach Game in the head coach’s pills after Videos, and in nobody else’s', async function () {

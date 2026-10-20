@@ -5,15 +5,17 @@ import { Pool } from 'pg'
 
 import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import type { PitchCall, ScoringAction } from '../../common/scoring/actions'
 import { foldPlay } from '../../common/scoring/gumbo'
 import { freshGame, newSetup } from '../../common/scoring/lineup'
 import { nextDecision } from '../../common/scoring/rules'
 import { type GameState, setupOf } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { after as played, TEAMS } from '../../test/scoringGames'
 import type { Database, GamePlayerStatsTable } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
@@ -109,16 +111,13 @@ describe('statsBuilder drain', function () {
       [pitcher, 'Pitcher'],
       [otherBatter, 'Other']
     ] as const) {
-      await db
-        .insertInto('users')
-        .values({
-          id,
-          legacyId: legacies.get(id)!,
-          display_name: name,
-          created_at: now,
-          updated_at: now
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id,
+        legacyId: legacies.get(id)!,
+        display_name: name,
+        created_at: now,
+        updated_at: now
+      })
     }
   })
 
@@ -175,14 +174,14 @@ describe('statsBuilder drain', function () {
       .where('game_id', '=', gameId)
       .execute()
     expect(rows.length).equals(2)
-    const bat = rows.find(row => Number(row.user_id) === batter)!
+    const bat = rows.find(row => Number(row.gumbo_id) === batter)!
     expect(bat.pa).equals(1)
     expect(bat.singles).equals(1)
     expect(bat.team_id).equals(away)
     expect(new Date(bat.computed_at).toISOString()).equals(
       clockNow.toISOString()
     )
-    const pit = rows.find(row => Number(row.user_id) === pitcher)!
+    const pit = rows.find(row => Number(row.gumbo_id) === pitcher)!
     expect(pit.pitch_bf).equals(1)
     expect(pit.team_id).equals(home)
   })
@@ -195,8 +194,12 @@ describe('statsBuilder drain', function () {
     const gameId = await seedGame([play])
     await drain(db, clock)
     let rows = await statRows(db, { gameId })
-    expect(rows.find(row => row.userId === batter)!.extra?.roe).equals(1)
-    expect(rows.find(row => row.userId === pitcher)!.extra?.pitches).equals(1)
+    expect(
+      rows.find(row => row.userId === userIdOfGumbo(batter))!.extra?.roe
+    ).equals(1)
+    expect(
+      rows.find(row => row.userId === userIdOfGumbo(pitcher))!.extra?.pitches
+    ).equals(1)
     await replaceGameEvents(db, {
       gameId,
       homeTeamId: home,
@@ -205,10 +208,12 @@ describe('statsBuilder drain', function () {
     })
     await drain(db, clock)
     rows = await statRows(db, { gameId })
-    expect(rows.find(row => row.userId === batter)!.extra?.roe).equals(0)
-    expect(rows.find(row => row.userId === pitcher)!.extra?.pitches).equals(
-      null
-    )
+    expect(
+      rows.find(row => row.userId === userIdOfGumbo(batter))!.extra?.roe
+    ).equals(0)
+    expect(
+      rows.find(row => row.userId === userIdOfGumbo(pitcher))!.extra?.pitches
+    ).equals(null)
     await requestGameStats(db, gameId)
     await drain(db, clock)
     expect(await statRows(db, { gameId })).deep.equals(rows)
@@ -220,9 +225,11 @@ describe('statsBuilder drain', function () {
     ])
     await drain(db, clock)
     const rows = await statRows(db, { gameId })
-    const bat = rows.find(row => row.userId === batter)!
+    const bat = rows.find(row => row.userId === userIdOfGumbo(batter))!
     expect([bat.pa, bat.ab, bat.sf, bat.sh]).deep.equals([1, 0, 0, 1])
-    expect(rows.find(row => row.userId === pitcher)!.sh).equals(0)
+    expect(rows.find(row => row.userId === userIdOfGumbo(pitcher))!.sh).equals(
+      0
+    )
   })
 
   it('rebuilds after a second post and drops vanished players', async function () {
@@ -235,11 +242,11 @@ describe('statsBuilder drain', function () {
       (
         await db
           .selectFrom('game_player_stats')
-          .select('user_id')
+          .select('gumbo_id')
           .where('game_id', '=', gameId)
           .execute()
       )
-        .map(row => Number(row.user_id))
+        .map(row => Number(row.gumbo_id))
         .sort((a, b) => a - b)
     ).deep.equals([batter, otherBatter, pitcher].sort((a, b) => a - b))
 
@@ -253,10 +260,10 @@ describe('statsBuilder drain', function () {
     const ids = (
       await db
         .selectFrom('game_player_stats')
-        .select('user_id')
+        .select('gumbo_id')
         .where('game_id', '=', gameId)
         .execute()
-    ).map(row => Number(row.user_id))
+    ).map(row => Number(row.gumbo_id))
     expect(ids.includes(otherBatter)).equals(false)
     expect(ids.includes(batter)).equals(true)
   })
@@ -351,10 +358,10 @@ describe('statsBuilder drain', function () {
     const ids = (
       await db
         .selectFrom('game_player_stats')
-        .select('user_id')
+        .select('gumbo_id')
         .where('game_id', '=', gameId)
         .execute()
-    ).map(row => Number(row.user_id))
+    ).map(row => Number(row.gumbo_id))
     expect(ids.includes(otherBatter)).equals(true)
     expect(ids.includes(batter)).equals(false)
   })
@@ -407,22 +414,33 @@ describe('statsBuilder drain', function () {
     const hosts = Array.from({ length: 10 }, () => mint())
     const now = new Date()
     for (const id of [...visitors, ...hosts])
-      await db
-        .insertInto('users')
-        .values({
-          id,
-          legacyId: legacies.get(id)!,
-          display_name: String(id),
-          created_at: now,
-          updated_at: now
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id,
+        legacyId: legacies.get(id)!,
+        display_name: String(id),
+        created_at: now,
+        updated_at: now
+      })
+    const guest = mint()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(guest),
+      legacyId: legacies.get(guest)!,
+      display_name: 'Guest'
+    })
     const [v01, v02, v03, , , , , , , v10, v11, v12] = visitors
     const [starter] = hosts
     const relief = hosts[9]
     const setup = newSetup(TEAMS, {
-      away: visitors.map(userId => ({ userId, shortName: String(userId) })),
-      home: hosts.map(userId => ({ userId, shortName: String(userId) }))
+      away: visitors.map(userId => ({
+        userId: userIdOfGumbo(userId),
+        gumboId: userId,
+        shortName: String(userId)
+      })),
+      home: hosts.map(userId => ({
+        userId: userIdOfGumbo(userId),
+        gumboId: userId,
+        shortName: String(userId)
+      }))
     })
     for (const side of ['away', 'home'] as const)
       setup.sides[side].battingOrder = setup.sides[side].battingOrder.slice(
@@ -436,7 +454,7 @@ describe('statsBuilder drain', function () {
     const sub = (player: number, replaces: number): ScoringAction => ({
       type: 'lineup',
       kind: 'substitute',
-      side: player > 12 ? 'home' : 'away',
+      side: hosts.includes(player) ? 'home' : 'away',
       player,
       replaces
     })
@@ -448,14 +466,19 @@ describe('statsBuilder drain', function () {
     const steps = (sheetPinchHitter: boolean): Step[] =>
       sheetPinchHitter
         ? [
-            // Visitor 1 goes to 0-2; a man made in the sheet, with no user
-            // id, strikes out for him.
+            // Visitor 1 goes to 0-2; a persisted guest strikes out for him.
             () => [
               ...pitches(['C', 'C']),
-              { type: 'lineup', kind: 'addPlayer', side: 'away', name: 'PH' }
+              {
+                type: 'lineup',
+                kind: 'addPlayer',
+                side: 'away',
+                name: 'PH',
+                player: guest
+              }
             ],
             state => [
-              sub(state.liveData.boxscore.teams.away.players.at(-1)!, 1),
+              sub(state.liveData.boxscore.teams.away.players.at(-1)!, v01),
               ...pitches(['C'])
             ],
             settle
@@ -482,9 +505,9 @@ describe('statsBuilder drain', function () {
             ],
             settle,
             state => [
-              sub(22, fielder(state, 'P')),
+              sub(relief, fielder(state, 'P')),
               ...pitches(['C', 'C']),
-              sub(10, 2)
+              sub(v10, v02)
             ],
             () => pitches(['C']),
             settle,
@@ -494,9 +517,9 @@ describe('statsBuilder drain', function () {
                 kind: 'pinchRunner',
                 side: 'away',
                 base: '1B',
-                player: 11
+                player: v11
               },
-              { type: 'baseRunning', kind: 'steal', runner: 11, to: '2B' }
+              { type: 'baseRunning', kind: 'steal', runner: v11, to: '2B' }
             ],
             state => [
               ...pitches(['F']),
@@ -507,12 +530,12 @@ describe('statsBuilder drain', function () {
                 trajectory: 'line_drive'
               },
               { type: 'result', eventType: 'single' },
-              { type: 'runnerMovement', runner: 11, to: 'home' }
+              { type: 'runnerMovement', runner: v11, to: 'home' }
             ],
             settle,
             () => [
               ...pitches(['B', 'C', 'C']),
-              sub(12, 4),
+              sub(v12, visitors[3]),
               ...pitches(['B', 'B', 'B'])
             ],
             settle
@@ -543,7 +566,7 @@ describe('statsBuilder drain', function () {
         .selectAll()
         .where('game_id', '=', gameId)
         .execute()
-      return new Map(rows.map(row => [Number(row.user_id), row]))
+      return new Map(rows.map(row => [Number(row.gumbo_id), row]))
     }
 
     const e8 = await build(false)
@@ -564,16 +587,13 @@ describe('statsBuilder drain', function () {
 
   it('marks failed with retry_at, skips until the clock passes', async function () {
     const doomed = mint()
-    await db
-      .insertInto('users')
-      .values({
-        id: doomed,
-        legacyId: legacies.get(doomed)!,
-        display_name: 'Doomed',
-        created_at: new Date(),
-        updated_at: new Date()
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(doomed),
+      legacyId: legacies.get(doomed)!,
+      display_name: 'Doomed',
+      created_at: new Date(),
+      updated_at: new Date()
+    })
     const gameId = await seedGame([paPlay(doomed, pitcher)])
     const other = await seedGame([paPlay(batter, pitcher)])
 
@@ -585,7 +605,10 @@ describe('statsBuilder drain', function () {
       // Delete inside the build transaction so the insert fails the FK; the
       // rollback restores the user, which is what a mid-build race looks like
       // after the failed attempt is recorded.
-      await trx.deleteFrom('users').where('id', '=', doomed).execute()
+      await trx
+        .deleteFrom('users')
+        .where('id', '=', userIdOfGumbo(doomed))
+        .execute()
     }
     await drain(db, clock, deleteDoomed)
 
@@ -677,16 +700,13 @@ describe('statsBuilder drain', function () {
 
   it('does not let markFailed clobber a concurrent poke', async function () {
     const doomed = mint()
-    await db
-      .insertInto('users')
-      .values({
-        id: doomed,
-        legacyId: legacies.get(doomed)!,
-        display_name: 'Doomed',
-        created_at: new Date(),
-        updated_at: new Date()
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(doomed),
+      legacyId: legacies.get(doomed)!,
+      display_name: 'Doomed',
+      created_at: new Date(),
+      updated_at: new Date()
+    })
     const gameId = await seedGame([paPlay(doomed, pitcher)])
     const before = await db
       .selectFrom('game_stats_state')
@@ -699,7 +719,10 @@ describe('statsBuilder drain', function () {
     // fail the build. markFailed must not overwrite the poke's pending row.
     const pokeAndFail: AfterReadHook = async () => {
       await requestGameStats(db, gameId)
-      await db.deleteFrom('users').where('id', '=', doomed).execute()
+      await db
+        .deleteFrom('users')
+        .where('id', '=', userIdOfGumbo(doomed))
+        .execute()
     }
     await buildNext(db, clock, new Set(), pokeAndFail)
 
@@ -714,16 +737,13 @@ describe('statsBuilder drain', function () {
     expect(state.retry_at).equals(null)
 
     // Restore the user so a later drain can succeed.
-    await db
-      .insertInto('users')
-      .values({
-        id: doomed,
-        legacyId: legacies.get(doomed)!,
-        display_name: 'Doomed',
-        created_at: new Date(),
-        updated_at: new Date()
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(doomed),
+      legacyId: legacies.get(doomed)!,
+      display_name: 'Doomed',
+      created_at: new Date(),
+      updated_at: new Date()
+    })
     await drain(db, clock)
     expect(
       (

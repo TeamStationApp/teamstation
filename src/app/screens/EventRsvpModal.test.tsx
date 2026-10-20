@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { asGameSummary, TeamStationClient } from '../../common/api'
 import { asEventInfo, type EventInfo } from '../../common/eventInfo'
+import { userIdOfGumbo } from '../../common/userId'
 import { PlayerRsvpCounts } from '../components/PlayerRsvpCounts'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { eventReplyRows, EventRsvpModal } from './EventRsvpModal'
@@ -26,14 +27,15 @@ const info = (): EventInfo =>
     longitude: null,
     status: 'scheduled',
     canManage: false,
-    replyUserIds: [101, 103, 104],
+    replyUserIds: [userIdOfGumbo(101), userIdOfGumbo(103), userIdOfGumbo(104)],
     attendanceTeams: [
       { id: 'home', name: 'Demo Hawks', isParticipant: true },
       { id: 'away', name: 'Demo Eagles', isParticipant: true }
     ],
     attendees: [
       {
-        userId: 101,
+        userId: userIdOfGumbo(101),
+        gumboId: 101,
         name: 'Babe R',
         response: null,
         canReply: true,
@@ -42,7 +44,8 @@ const info = (): EventInfo =>
         avatarUrl: null
       },
       {
-        userId: 103,
+        userId: userIdOfGumbo(103),
+        gumboId: 103,
         name: 'Mike T',
         response: null,
         canReply: true,
@@ -51,7 +54,8 @@ const info = (): EventInfo =>
         avatarUrl: null
       },
       {
-        userId: 104,
+        userId: userIdOfGumbo(104),
+        gumboId: 104,
         name: 'Ichiro',
         response: 'no',
         canReply: true,
@@ -60,7 +64,8 @@ const info = (): EventInfo =>
         avatarUrl: null
       },
       {
-        userId: 115,
+        userId: userIdOfGumbo(115),
+        gumboId: 115,
         name: 'Alex R',
         response: null,
         canReply: false,
@@ -130,13 +135,13 @@ describe('quick event RSVP and player pills', () => {
       teamId: 'away',
       attendees: primary.attendees.map(row => ({
         ...row,
-        isPlayer: row.userId === 104,
-        isTeamParticipant: row.userId === 104
+        isPlayer: row.userId === userIdOfGumbo(104),
+        isTeamParticipant: row.userId === userIdOfGumbo(104)
       }))
     }
-    expect(eventReplyRows([primary, away]).map(row => row.userId)).deep.equals([
-      101, 103, 104
-    ])
+    expect(eventReplyRows([primary, away]).map(row => row.userId)).deep.equals(
+      [101, 103, 104].map(userIdOfGumbo)
+    )
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.eventInfo = async (_id, team) => (team === 'away' ? away : primary)
     let counts = { yes: 0, unknown: 0, no: 0 }
@@ -155,19 +160,21 @@ describe('quick event RSVP and player pills', () => {
       .includes('vs Demo Eagles')
       .and.includes('Demo Park')
       .and.includes('1 Demo Way')
-    expect(document.querySelector('[data-testid="quick-rsvp-row-115"]')).equals(
-      null
-    )
+    expect(
+      document.querySelector(
+        `[data-testid="quick-rsvp-row-${userIdOfGumbo(115)}"]`
+      )
+    ).equals(null)
     let rejectRow!: (error: Error) => void
     client.saveRsvp = async (_id, id, response) =>
-      id === 103
+      id === userIdOfGumbo(103)
         ? await new Promise((_resolve, reject) => {
             rejectRow = reject
           })
         : { userId: id, response }
-    await click('event-rsvp-103-0')
+    await click('event-rsvp-usr_111111111111111111112n-0')
     expect(counts).deep.equals({ yes: 1, unknown: 0, no: 0 })
-    await click('event-rsvp-104-0')
+    await click('event-rsvp-usr_111111111111111111112o-0')
     await act(async () => {
       rejectRow(new Error('Save unavailable'))
     })
@@ -175,7 +182,9 @@ describe('quick event RSVP and player pills', () => {
     expect(document.body.textContent).includes('Save unavailable')
     expect(
       document
-        .querySelector('[data-testid="event-rsvp-104-0"]')!
+        .querySelector(
+          '[data-testid="event-rsvp-usr_111111111111111111112o-0"]'
+        )!
         .getAttribute('aria-checked')
     ).equals('true')
     // Every line of the sheet is bold: title, time and place, names, errors
@@ -217,7 +226,9 @@ describe('quick event RSVP and player pills', () => {
     })
     expect(document.body.textContent).not.includes('Load unavailable')
     expect(
-      document.querySelector('[data-testid="quick-rsvp-row-103"]')
+      document.querySelector(
+        `[data-testid="quick-rsvp-row-${userIdOfGumbo(103)}"]`
+      )
     ).not.equals(null)
     for (const [type, title] of [
       ['practice', 'Practice'],

@@ -15,6 +15,7 @@ import type {
 } from '../../common/api'
 import { asSeasonGame, asTeamSummary, asUserMatch } from '../../common/api'
 import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import { App } from '../App'
 import { parseRoute, routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
@@ -204,7 +205,13 @@ function guarded(
   shortName: string,
   avatarUrl: string | null = null
 ): UserMatch {
-  return asUserMatch({ userId, externalIds: [], shortName, avatarUrl })
+  return asUserMatch({
+    userId: userIdOfGumbo(userId),
+    gumboId: userId,
+    externalIds: [],
+    shortName,
+    avatarUrl
+  })
 }
 
 function league(id: string, name: string): PublicGroup {
@@ -788,27 +795,27 @@ describe('the home screen’s players', function () {
     const calls = await mount({
       players: async () => [
         guarded(7, 'Jordan P', 'https://img.example/jordan.jpg'),
-        guarded(8, 'Avery S')
+        guarded(8, 'Alfonso S')
       ],
       teams: async () => [team('tem_hawks', 'Alta Hawks')]
     })
     const page = text()
     expect(page).includes('YOUR PLAYERS')
     expect(page.indexOf('YOUR PLAYERS')).lessThan(page.indexOf('YOUR TEAMS'))
-    expect(page.indexOf('Avery S')).lessThan(page.indexOf('Alta Hawks'))
+    expect(page.indexOf('Alfonso S')).lessThan(page.indexOf('Alta Hawks'))
     // In the order the server sorted them, the picture where there is one.
-    expect(page.indexOf('Jordan P')).lessThan(page.indexOf('Avery S'))
+    expect(page.indexOf('Jordan P')).lessThan(page.indexOf('Alfonso S'))
     expect(
       document.querySelector('img[src="https://img.example/jordan.jpg"]')
     ).not.equals(null)
-    labelled('Avery S')
+    labelled('Alfonso S')
 
     await press(labelled('Jordan P'))
-    await press(labelled('Avery S'))
+    await press(labelled('Alfonso S'))
     // A name and nothing else: no team, so the page opens on the career.
     expect(calls.players).deep.equals([
-      [7, 'Jordan P'],
-      [8, 'Avery S']
+      [userIdOfGumbo(7), 'Jordan P'],
+      [userIdOfGumbo(8), 'Alfonso S']
     ])
     expect(calls.teams).deep.equals([])
   })
@@ -1007,14 +1014,25 @@ describe('a player opened from Home, through the app', function () {
             : input.url
       const path = url.split('?')[0]
       const data = path.endsWith('/auth/me')
-        ? { id: 100, displayName: 'Demo Guardian', isAdmin: false }
+        ? {
+            id: userIdOfGumbo(100),
+            displayName: 'Demo Guardian',
+            isAdmin: false
+          }
         : path.endsWith('/me/roles')
-          ? { teams: {}, guardianOf: [7] }
+          ? { teams: {}, guardianOf: [userIdOfGumbo(7)] }
           : url.endsWith('/users?guardedBy=me')
-            ? [{ userId: 7, externalIds: [], shortName: 'Jordan P' }]
-            : path.endsWith('/players/7')
-              ? { userId: 7, name: 'Jordan P', teams: [] }
-              : path.endsWith('/players/7/highlights')
+            ? [
+                {
+                  userId: userIdOfGumbo(7),
+                  gumboId: 7,
+                  externalIds: [],
+                  shortName: 'Jorge P'
+                }
+              ]
+            : path.endsWith('/players/usr_1111111111111111111118')
+              ? { userId: userIdOfGumbo(7), name: 'Jorge P', teams: [] }
+              : path.endsWith('/players/usr_1111111111111111111118/highlights')
                 ? { highlights: [], nextBefore: null, withoutVideo: 0 }
                 : []
       return new Response(JSON.stringify(data), {
@@ -1031,11 +1049,13 @@ describe('a player opened from Home, through the app', function () {
       await delay(50)
     })
     expect(text()).includes('YOUR PLAYERS')
-    await press(labelled('Jordan P'))
+    await press(labelled('Jorge P'))
     await act(async () => {
       await delay(50)
     })
-    expect(routePath(currentRoute())).equals('/players/7')
+    expect(routePath(currentRoute())).equals(
+      '/players/usr_1111111111111111111118'
+    )
   })
 })
 

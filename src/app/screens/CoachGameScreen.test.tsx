@@ -24,6 +24,7 @@ import {
   POSITIONS,
   setupOf
 } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   dictatingHealth,
   type FakeDictation,
@@ -103,7 +104,8 @@ function roster(teamId: string): RosterEntry[] {
   const first = teamId === 'away' ? 101 : 201
   return POSITIONS.map((position, i) =>
     asRosterEntry({
-      userId: first + i,
+      userId: userIdOfGumbo(first + i),
+      gumboId: first + i,
       shortName: `${teamId === 'away' ? 'Owl' : 'Hawk'} ${i + 1}`,
       jersey: String(i + 1),
       positions: [position],
@@ -348,6 +350,113 @@ async function say(
 }
 
 describe('Coach Game (U25)', function () {
+  it('disables availability switches until the lineup save finishes refreshing', async () => {
+    const held = server()
+    const save = held.client.saveLineups.bind(held.client)
+    let finish!: () => void
+    held.client.saveLineups = async (...args) => {
+      await new Promise<void>(resolve => {
+        finish = resolve
+      })
+      return await save(...args)
+    }
+    await coach(held)
+    await click('Roster', 'tab')
+    await click('Save Rosters')
+    const toggle = (): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>(
+        `[data-testid="Rostered ${userIdOfGumbo(201)}"] input`
+      )!
+    expect(toggle().disabled).equals(true)
+    await act(async () => {
+      finish()
+    })
+    await settle()
+    expect(toggle().disabled).equals(false)
+  })
+
+  it('keeps a failed switch unchanged, removes a player on success and restores him unplaced', async () => {
+    const guest = asRosterEntry({
+      ...roster('home')[0],
+      userId: userIdOfGumbo(901),
+      gumboId: 901,
+      shortName: 'Babe Ruth',
+      jersey: '99'
+    })
+    const held = server({
+      guests: { away: [], home: [901] },
+      guestPlayers: { away: [], home: [guest] }
+    })
+    let refuse = true
+    const calls: Array<{ side: string; userId: string; rostered: boolean }> = []
+    held.client.setRostered = async (_id, body) => {
+      calls.push(body)
+      if (refuse)
+        throw new HttpError('conflict', 'Finish the current play first')
+      held.game = {
+        ...held.game,
+        unrostered: {
+          away: [],
+          home: body.rostered
+            ? []
+            : [roster('home').find(row => row.userId === body.userId)!.gumboId!]
+        }
+      }
+      return held.game.unrostered
+    }
+    await coach(held)
+    await click('Roster', 'tab')
+    const toggle = (): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>(
+        `[data-testid="Rostered ${userIdOfGumbo(201)}"] input`
+      )!
+    expect(
+      document.querySelectorAll('input[aria-label="Rostered for this game"]')
+    ).length(9)
+    expect(toggle().checked).equals(true)
+    await act(async () => {
+      toggle().click()
+    })
+    await settle()
+    expect(toggle().checked).equals(true)
+    expect(document.body.textContent).includes('Finish the current play first')
+    expect(node('Remove Hawk 1')).not.equals(null)
+    refuse = false
+    await act(async () => {
+      toggle().click()
+    })
+    await settle()
+    expect(toggle().checked).equals(false)
+    expect(node('Remove Hawk 1')).equals(null)
+    await click('Lineup', 'tab')
+    expect(node('Add Hawk 1 to Lineup')).equals(null)
+    await click('Defense', 'tab')
+    expect(
+      document.querySelector('[data-testid="Defense roster grid"]')!.textContent
+    ).not.includes('Hawk 1')
+    await click('Roster', 'tab')
+    await act(async () => {
+      toggle().click()
+    })
+    await settle()
+    expect(toggle().checked).equals(true)
+    await click('Lineup', 'tab')
+    expect(node('Add Hawk 1 to Lineup')).not.equals(null)
+    expect(node('Remove Hawk 1')).equals(null)
+    await click('Save Rosters')
+    const body = held.saved[0]
+    const index = body.players.findIndex(player => player.gumboId === 201)
+    expect(index).gte(0)
+    expect(body.players.some(player => player.gumboId === 901)).equals(true)
+    expect(body.battingOrder).not.includes(index)
+    expect(Object.values(body.defense)).not.includes(index)
+    expect(calls).deep.equals([
+      { side: 'home', userId: userIdOfGumbo(201), rostered: false },
+      { side: 'home', userId: userIdOfGumbo(201), rostered: false },
+      { side: 'home', userId: userIdOfGumbo(201), rostered: true }
+    ])
+  })
+
   this.timeout(20000)
 
   it('draws its own chevron and his team’s name on the right, over Box Score, Roster, Lineup and Defense', async function () {
@@ -375,8 +484,8 @@ describe('Coach Game (U25)', function () {
     const rows = roster('home')
     const person = (
       row: RosterEntry
-    ): { userId: number; name: string; jersey: string } => ({
-      userId: row.userId,
+    ): { gumboId: number; name: string; jersey: string } => ({
+      gumboId: row.gumboId!,
       name: row.shortName,
       jersey: row.jersey ?? ''
     })
@@ -421,7 +530,7 @@ describe('Coach Game (U25)', function () {
     await click('Save Rosters')
     expect(held.saved).has.length(1)
     expect(held.saved[0].side).equals('home')
-    expect(held.saved[0].players.map(player => player.userId)).deep.equals([
+    expect(held.saved[0].players.map(player => player.gumboId)).deep.equals([
       201, 202, 203, 204, 205, 206, 207, 208, 209
     ])
     expect(held.saved[0].battingOrder).deep.equals([8, 7, 6, 5, 4, 3, 2, 1, 0])
@@ -432,8 +541,8 @@ describe('Coach Game (U25)', function () {
     const rows = roster('home')
     const person = (
       row: RosterEntry
-    ): { userId: number; name: string; jersey: string } => ({
-      userId: row.userId,
+    ): { gumboId: number; name: string; jersey: string } => ({
+      gumboId: row.gumboId!,
       name: row.shortName,
       jersey: row.jersey ?? ''
     })
@@ -537,7 +646,7 @@ describe('Coach Game (U25)', function () {
     const body = held.saved[0]
     expect(body.side).equals('home')
     expect(body.base).equals('first')
-    expect(body.players.map(player => player.userId)).deep.equals([
+    expect(body.players.map(player => player.gumboId)).deep.equals([
       201, 202, 203, 204, 205, 206, 207, 208, 209
     ])
     expect(body.players[0]).deep.include({ jersey: '1' })
@@ -589,7 +698,7 @@ describe('Coach Game (U25)', function () {
         open: async () => {
           // Number 2 is up to bat; the runner comes off the coach's bench.
           const game = copyState(gameUnderWay())
-          addDevelopmentPlayer(game, 'away', 'Owl 10', '10')
+          addDevelopmentPlayer(game, 'away', 9000000, 'Owl 10', '10')
           return ScoringSession.start(memoryStore(), 'g1', game)
         }
       },
@@ -750,12 +859,44 @@ describe('Coach Game (U25)', function () {
     })
   })
 
+  it('waits for a persisted game guest before adding it to the coach draft', async () => {
+    const held = server()
+    const requests: unknown[] = []
+    held.client.createGuestPlayer = async (gameId, side, player) => {
+      requests.push({ gameId, side, player })
+      return {
+        ...roster('home')[0],
+        userId: userIdOfGumbo(9000001),
+        gumboId: 9000001,
+        shortName: 'Hawks A'
+      }
+    }
+    await coach(held)
+    await click('Create Player')
+    await click('Create Placeholder Player')
+    await click('Create')
+    expect(requests).has.length(1)
+    expect(requests[0]).includes({ gameId: 'g1', side: 'home' })
+    expect(document.body.textContent).includes('Hawks A')
+    held.client.gameLineups = async () => lineups('mine', true)
+    await click('Save Rosters')
+    await waitFor(() => held.saved.length === 1, 'the saved guest')
+    expect(held.saved[0].players.map(player => player.gumboId)).includes(
+      9000001
+    )
+  })
+
   it('creates a team roster player from the coach form', async () => {
     const held = server()
     const sent: unknown[] = []
     held.client.createRosterPlayer = async (teamId, player) => {
       sent.push({ teamId, player })
-      return { ...roster('home')[0], userId: 300, shortName: 'Mookie B' }
+      return {
+        ...roster('home')[0],
+        userId: userIdOfGumbo(300),
+        gumboId: 300,
+        shortName: 'Mookie B'
+      }
     }
     await coach(held)
     await click('Create Player')
@@ -821,7 +962,7 @@ describe('Coach Game (U25)', function () {
     })
     await click('Save')
     expect(writes).deep.equals([
-      { teamId: 'home', userId: '201', changes: { jersey: '42' } }
+      { teamId: 'home', userId: userIdOfGumbo(201), changes: { jersey: '42' } }
     ])
     const cancels = document.querySelectorAll<HTMLElement>(
       '[aria-label="Cancel"]'
@@ -989,7 +1130,7 @@ describe('a coach’s lineup save', function () {
     expect(body.side).equals('away')
     expect(body.base).equals('d1')
     expect(body.players[0]).deep.equals({
-      userId: 101,
+      gumboId: 101,
       fullName: draft.gameData.players[team.players[0]].fullName,
       jersey: '1'
     })
@@ -1010,15 +1151,27 @@ describe('a coach’s lineup save', function () {
 
   it('lists each side’s batting order by who bats, for the box score', function () {
     const draft = copyState(game)
-    const made = addDevelopmentPlayer(draft, 'home', 'Made Up')
+    const made = addDevelopmentPlayer(draft, 'home', 9000000, 'Made Up')
     draft.liveData.boxscore.teams.home.battingOrder.push(made)
-    const orders = battingOrders(draft)
+    const accounts = [...roster('away'), ...roster('home')].map(row => ({
+      ...row,
+      userId: userIdOfGumbo(row.gumboId! + 1000)
+    }))
+    const orders = battingOrders(draft, ['away', 'home'], accounts)
     expect(orders.away!.map(batter => batter.userId)).deep.equals([
-      101, 102, 103, 104, 105, 106, 107, 108, 109
+      ...[1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109].map(
+        userIdOfGumbo
+      )
     ])
-    expect(orders.away![0]).deep.equals({ userId: 101, shortName: 'Owl 1' })
+    expect(orders.away![0]).deep.equals({
+      userId: userIdOfGumbo(1101),
+      shortName: 'Owl 1'
+    })
     expect(orders.home).has.length(10)
-    expect(orders.home![9]).deep.equals({ userId: null, shortName: 'Made Up' })
+    expect(orders.home![9]).deep.equals({
+      userId: null,
+      shortName: 'Made Up'
+    })
     // One side's alone.
     expect(Object.keys(battingOrders(draft, ['home']))).deep.equals(['home'])
   })
@@ -1086,7 +1239,7 @@ describe('Coach Game in the app', function () {
             : input.url
       ).split('?')[0]
       const data = path.endsWith('/auth/me')
-        ? { id: 100, displayName: 'Coach', isAdmin: false }
+        ? { id: userIdOfGumbo(100), displayName: 'Coach', isAdmin: false }
         : path.endsWith('/games/g1/events')
           ? { plays: [], currentPlay: null }
           : path.endsWith('/games/g1/lineups')

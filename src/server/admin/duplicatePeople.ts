@@ -36,9 +36,9 @@ import { onePerson } from './people'
 /** Every row of every person these rows belong to, closed ones included. */
 async function everyRowOf(
   db: Kysely<Database>,
-  rows: Array<{ userId: number }>
-): Promise<number[]> {
-  const ids = new Set<number>()
+  rows: Array<{ userId: string }>
+): Promise<string[]> {
+  const ids = new Set<string>()
   for (const row of rows) {
     for (const id of (await onePerson(db, row.userId)).userIds) ids.add(id)
   }
@@ -55,11 +55,11 @@ export function actionFor(
 export interface DuplicatePair {
   teamId: string
   /** The row with the fuller name. */
-  keepUserId: number
+  keepUserId: string
   keepName: string
   keepPlays: number
   /** The row whose name is a prefix of the other's. */
-  otherUserId: number
+  otherUserId: string
   otherName: string
   otherPlays: number
   /** `drop` when only one has plays, `merge` when both do. */
@@ -134,16 +134,16 @@ export function isShortFormOf(
  * played, and none of those is this.
  */
 export interface ShirtPair {
-  keepUserId: number
+  keepUserId: string
   keepName: string
   keepPlays: number
-  emptyUserId: number
+  emptyUserId: string
   emptyName: string
 }
 
 export function shirtPairs(
   people: Array<{
-    userId: number
+    userId: string
     displayName: string
     jersey: string | null
     plays: number
@@ -181,7 +181,8 @@ export async function findDuplicatePeople(
   const rows = await db
     .selectFrom('memberships')
     .innerJoin('users', 'users.id', 'memberships.user_id')
-    .leftJoin('event_players', 'event_players.user_id', 'users.id')
+    .leftJoin('gumbo_ids', 'gumbo_ids.user_id', 'users.id')
+    .leftJoin('event_players', 'event_players.gumbo_id', 'gumbo_ids.gumbo_id')
     .select([
       'memberships.team_id as teamId',
       'users.id as userId',
@@ -239,7 +240,7 @@ export async function findDuplicatePeople(
     // How many short rows each longer name would take. Two boys called Ben and
     // one `Benito Santiago` is not one child written twice, and neither of them
     // can be told from the other.
-    const claimed = new Map<number, number>()
+    const claimed = new Map<string, number>()
     for (const one of people) {
       for (const other of people) {
         if (!isShortFormOf(named(one), named(other))) continue
@@ -350,10 +351,10 @@ export async function findDuplicatePeople(
  */
 export interface SamePersonGroup {
   /** The row to keep: the one with the most plays behind it. */
-  keepUserId: number
+  keepUserId: string
   name: string
   members: Array<{
-    userId: number
+    userId: string
     plays: number
     /** The teams this row appears on, which is what makes it recognisable. */
     teams: string[]
@@ -365,7 +366,8 @@ export async function findSamePersonAcrossTeams(
 ): Promise<SamePersonGroup[]> {
   const rows = await db
     .selectFrom('users')
-    .leftJoin('event_players', 'event_players.user_id', 'users.id')
+    .leftJoin('gumbo_ids', 'gumbo_ids.user_id', 'users.id')
+    .leftJoin('event_players', 'event_players.gumbo_id', 'gumbo_ids.gumbo_id')
     .select([
       'users.id as userId',
       'users.first_name as firstName',
@@ -383,7 +385,7 @@ export async function findSamePersonAcrossTeams(
   // Every team each row is on, not one of them: the whole design rests on a
   // person reading this list and recognising a child, and "Badgers" beside a
   // row that is also on the Hawks is not enough to recognise anybody by.
-  const teamsByUser = new Map<number, string[]>()
+  const teamsByUser = new Map<string, string[]>()
   for (const row of await db
     .selectFrom('memberships')
     .innerJoin('teams', 'teams.id', 'memberships.team_id')
@@ -414,7 +416,7 @@ export async function findSamePersonAcrossTeams(
     if (people.length < 2) continue
     // One child cannot play for both sides of a game — asked of every row the
     // group already holds, not just the two in front of us.
-    const everyRow: number[] = []
+    const everyRow: string[] = []
     for (const one of people) {
       everyRow.push(...(await onePerson(db, one.userId)).userIds)
     }

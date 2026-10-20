@@ -4,6 +4,8 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { TeamStationClient } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
+import { scoringRoster } from '../../test/scoringSession'
 import { App, stackFor } from '../App'
 import { BaseballScreen } from '../field/BaseballScreen'
 import { StandaloneField } from '../field/StandaloneField'
@@ -60,14 +62,17 @@ function fixtureFetch(signedIn = true): void {
           : input.url
     ).split('?')[0]
     const data = path.endsWith('/auth/me')
-      ? { id: 100, displayName: 'Scorer', isAdmin: false }
+      ? { id: userIdOfGumbo(100), displayName: 'Scorer', isAdmin: false }
       : path.endsWith('/games/g1/events')
         ? { plays: [], currentPlay: null }
         : path.endsWith('/games/g1')
           ? { ...gameFixture, canScore: true }
           : path.endsWith('/roster')
             ? Array.from({ length: 9 }, (_, i) => ({
-                userId: (path.includes('/away/') ? 101 : 201) + i,
+                userId: userIdOfGumbo(
+                  (path.includes('/away/') ? 101 : 201) + i
+                ),
+                gumboId: (path.includes('/away/') ? 101 : 201) + i,
                 shortName: `Player ${i + 1}`,
                 jersey: String(i + 1),
                 positions: [],
@@ -143,7 +148,7 @@ describe('scoring shell and exit', function () {
     '/schedule',
     '/account',
     '/players/p1',
-    '/teams/t1/people/7'
+    '/teams/t1/people/usr_1111111111111111111118'
   ]) {
     it(`keeps existing navigation reachable at ${path}`, async function () {
       fixtureFetch()
@@ -302,6 +307,8 @@ describe('scoring shell and exit', function () {
   it('warns on dirty exit and document unload, while Undo clears the warning', async function () {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => gameFixture
+    client.roster = async teamId =>
+      scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
     let exits = 0
     // Save the host method solely for restoration.
     // eslint-disable-next-line @typescript-eslint/unbound-method
@@ -378,7 +385,12 @@ describe('scoring shell and exit', function () {
     for (const route of [
       { name: 'account' } as const,
       { name: 'player', userId: 'p1' } as const,
-      { name: 'person', kind: 'team', id: 't1', userId: '7' } as const
+      {
+        name: 'person',
+        kind: 'team',
+        id: 't1',
+        userId: userIdOfGumbo(7)
+      } as const
     ])
       expect(stackFor(route).home).has.length(1)
     let exits = 0
@@ -483,7 +495,8 @@ describe('scoring shell and exit', function () {
     }
     const roster = (base: number): unknown[] =>
       Array.from({ length: 9 }, (_, index) => ({
-        userId: base + index,
+        userId: userIdOfGumbo(base + index),
+        gumboId: base + index,
         shortName: `P${base + index}`,
         fullName: null,
         avatarUrl: null,
@@ -556,7 +569,9 @@ describe('scoring shell and exit', function () {
       '[data-testid="walk-up-note"]'
     )
     expect(note, 'note').not.equals(null)
-    expect(owners[0]).matches(/^away:10\d$/)
+    expect(
+      Array.from({ length: 10 }, (_, i) => `away:${userIdOfGumbo(100 + i)}`)
+    ).includes(owners[0])
     await act(async () => {
       note?.click()
     })
@@ -617,7 +632,8 @@ describe('scoring shell and exit', function () {
     })
     const roster = (base: number, ids: string[]): unknown[] =>
       Array.from({ length: 9 }, (_, index) => ({
-        userId: base + index,
+        userId: userIdOfGumbo(base + index),
+        gumboId: base + index,
         shortName: `P${base + index}`,
         fullName: null,
         avatarUrl: null,

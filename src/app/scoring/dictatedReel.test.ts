@@ -7,8 +7,8 @@ import type {
   ScoringAction,
   Trajectory
 } from '../../common/scoring/actions'
+import { scoringSession } from '../../test/scoringSession'
 import { BASES } from '../field/fieldModel'
-import { createDevelopmentSession } from './developmentSession'
 import { hitGeometry, outcomeOf } from './dictatedReel'
 import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
@@ -36,10 +36,7 @@ const F = {
 function game(
   bases: { first?: number; second?: number; third?: number } = {}
 ): ScoringState {
-  const state = initialScoringState(
-    createDevelopmentSession(gameFixture, [], []),
-    true
-  )
+  const state = initialScoringState(scoringSession(gameFixture), true)
   const offense = state.session.liveData.linescore.offense
   // The leadoff batter is 1; runners come from further down the order.
   for (const key of ['first', 'second', 'third'] as const) {

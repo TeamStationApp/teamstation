@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { guardianFixture } from '../../test/guardianFixture'
 import {
   browserSession,
@@ -102,7 +103,7 @@ async function main(): Promise<void> {
       .selectFrom('group_requests')
       .selectAll()
       .where('kind', '=', 'membership')
-      .where('sender_id', '=', user)
+      .where('sender_id', '=', userIdOfGumbo(user))
       .executeTakeFirstOrThrow()
     expect(pending.status).equals('pending')
     const stillLocked = await f.h.request(

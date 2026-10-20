@@ -4,7 +4,7 @@ import {
   type NewRosterPlayer,
   PLAYER_POSITIONS as STORED_POSITIONS
 } from '../../common/playerSettings'
-import { allocatePlayer } from '../../common/scoring/lineup'
+import { asGumboId } from '../../common/userId'
 import { addDevelopmentPlayer } from './developmentSession'
 import type { ScoringPlayer, ScoringSessionState, Side } from './scoringTypes'
 
@@ -48,7 +48,8 @@ export function playerDraftError(draft: PlayerDraft): string | undefined {
 export function addPlayerDraft(
   session: ScoringSessionState,
   side: Side,
-  draft: PlayerDraft
+  draft: PlayerDraft,
+  playerId: number
 ): number {
   const error = playerDraftError(draft)
   if (error != null) throw new Error(error)
@@ -57,6 +58,7 @@ export function addPlayerDraft(
   const id = addDevelopmentPlayer(
     session,
     side,
+    playerId,
     [firstName, lastName].filter(Boolean).join(' '),
     draft.jersey.trim()
   )
@@ -97,19 +99,18 @@ export function rosterPlayerBody(draft: PlayerDraft): NewRosterPlayer {
 export function addRosteredPlayer(
   session: ScoringSessionState,
   side: Side,
-  entry: Pick<RosterEntry, 'userId' | 'shortName'>,
+  entry: Pick<RosterEntry, 'gumboId' | 'shortName'>,
   draft: PlayerDraft
 ): number {
   const error = playerDraftError(draft)
   if (error != null) throw new Error(error)
   const firstName = draft.firstName.trim()
   const lastName = draft.lastName.trim()
-  const { userId } = entry
-  const id = allocatePlayer(session.meta.identities, userId)
+  const id = asGumboId(entry.gumboId)
+  if (!session.meta.tagOrder.includes(id)) session.meta.tagOrder.push(id)
   const team = session.liveData.boxscore.teams[side]
   const player = {
     id,
-    userId,
     teamId: session.gameData.teams[side].id,
     fullName: entry.shortName,
     firstName,
@@ -153,7 +154,7 @@ export function editLocalPlayerDraft(
   const player = session.gameData.players[id]
   if (
     player == null ||
-    player.userId != null ||
+    !player.local ||
     !session.liveData.boxscore.teams[side].players.includes(id)
   ) {
     throw new Error('This game-only player is not on the roster.')

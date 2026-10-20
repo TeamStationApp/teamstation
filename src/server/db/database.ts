@@ -15,16 +15,16 @@ type Json = ColumnType<unknown, unknown, unknown>
 
 /** A fan following a group: a line on their Home and no access. */
 export interface FollowsTable {
-  user_id: number
+  user_id: string
   group_type: 'league' | 'season' | 'team'
   group_id: string
   created_at: Generated<Date>
 }
 
 export interface UsersTable {
-  id: number
-  /** The `usr_` string this id was taken from. The other 43 bits live only here. */
-  legacyId: string
+  id: string
+  /** Original historical identifier, retained for migrated accounts only. */
+  legacyId: Generated<string | null>
   display_name: string
   first_name: string | null
   last_name: string | null
@@ -46,7 +46,7 @@ export interface UsersTable {
   /** Where the two above came from, so an import never overwrites a person. */
   bats_source: 'import' | 'manual' | null
   /** Set when this account was absorbed by another; it is closed, not deleted. */
-  merged_into: number | null
+  merged_into: string | null
   created_at: Timestamp
   updated_at: Timestamp
 }
@@ -57,7 +57,7 @@ export interface UsersTable {
  */
 export interface UserEmailsTable {
   id: string
-  user_id: number
+  user_id: string
   email: string
   is_primary: Generated<boolean>
   verified_at: Timestamp | null
@@ -67,8 +67,8 @@ export interface UserEmailsTable {
 
 export interface UserLinksTable {
   id: string
-  user_id: number
-  related_user_id: number
+  user_id: string
+  related_user_id: string
   kind: 'guardian' | 'family' | 'other'
   can_manage: Generated<boolean>
   created_at: Timestamp
@@ -169,7 +169,7 @@ export interface TeamsTable {
  */
 export interface SeasonMembersTable {
   id: string
-  user_id: number
+  user_id: string
   season_id: string
   role: Generated<'member'>
   source: Generated<'peertube' | 'import' | 'manual'>
@@ -183,7 +183,7 @@ export interface SeasonMembersTable {
  */
 export interface LeagueMembersTable {
   id: string
-  user_id: number
+  user_id: string
   league_id: string
   role: Generated<'member'>
   source: Generated<'peertube' | 'import' | 'manual'>
@@ -199,7 +199,7 @@ export interface SeasonTeamsTable {
 
 export interface MembershipsTable {
   id: string
-  user_id: number
+  user_id: string
   team_id: string
   role: Generated<'owner' | 'manager' | 'member'>
   is_player: Generated<boolean>
@@ -212,18 +212,18 @@ export interface MembershipsTable {
 /** One role for one person on one league, season or team (043roleFlags). */
 export interface ScopeRolesTable {
   id: string
-  user_id: number
+  user_id: string
   scope_type: 'league' | 'season' | 'team'
   scope_id: string
   role: Generated<Role>
-  granted_by: number | null
+  granted_by: string | null
   granted_at: Timestamp
 }
 
 /** One player's walk-up song on one team (045walkUpSongs). */
 export interface WalkUpSongsTable {
   team_id: string
-  user_id: number
+  user_id: string
   provider: 'appleMusic' | 'localFile'
   provider_id: string
   isrc: string | null
@@ -234,7 +234,7 @@ export interface WalkUpSongsTable {
   duration_ms: number
   start_ms: number
   end_ms: number
-  set_by: number
+  set_by: string
   set_at: Timestamp
 }
 
@@ -250,6 +250,8 @@ export interface ExternalIdsTable {
 }
 
 export interface GamesTable {
+  guests: Generated<unknown>
+  unrostered: Generated<unknown>
   notes: Generated<string | null>
   arrival_time_delta: Generated<number | null>
   end_at: Generated<Date | null>
@@ -261,7 +263,7 @@ export interface GamesTable {
   outside_tournament: Generated<string | null>
   cancellation_reason: Generated<string | null>
   withdrawn_by_team_id: Generated<string | null>
-  withdrawn_by_user_id: Generated<number | null>
+  withdrawn_by_user_id: Generated<string | null>
   withdrawn_at: Timestamp | null
   id: string
   home_team_id: string
@@ -303,7 +305,7 @@ export interface GamesTable {
  */
 export interface DirectorUploadsTable {
   id: string
-  user_id: number
+  user_id: string
   game_id: string | null
   title: string
   kind: Generated<string>
@@ -442,16 +444,22 @@ export interface EventCreditsTable {
   eventType: string
   label: string
   teamId: string | null
-  creditUserId: number | null
+  creditGumboId: number | null
   name: string
   role: string | null
   position: string | null
 }
 
+export interface GumboIdsTable {
+  gumbo_id: number
+  user_id: string
+  created_at: Timestamp
+}
+
 export interface EventPlayersTable {
   id: string
   event_id: string
-  user_id: number
+  gumbo_id: number
   team_id: string | null
   role: 'batter' | 'pitcher' | 'runner' | 'scorer' | 'fielder' | 'catcher'
   position: string | null
@@ -459,7 +467,7 @@ export interface EventPlayersTable {
 
 export interface AuthSessionsTable {
   id: string
-  user_id: number
+  user_id: string
   token_hash: string
   user_agent: string | null
   /** What this session is, when it is a thing rather than a browser tab. */
@@ -472,7 +480,7 @@ export interface AuthSessionsTable {
 
 export interface ApiTokensTable {
   id: string
-  user_id: number
+  user_id: string
   label: string
   token_hash: string
   scopes: Generated<string[]>
@@ -509,7 +517,7 @@ export interface InvitesTable {
   code: string
   scope_type: 'league' | 'season' | 'team'
   scope_id: string
-  created_by: number | null
+  created_by: string | null
   label: string | null
   /** Null for an invite that never runs out of uses, which is the usual one. */
   max_uses: number | null
@@ -527,7 +535,7 @@ export interface InvitesTable {
 export interface InviteRedemptionsTable {
   id: string
   invite_id: string
-  user_id: number
+  user_id: string
   created_account: Generated<boolean>
   redeemed_at: Timestamp
 }
@@ -569,7 +577,7 @@ export interface RateEventsTable {
 export interface AuditLogTable {
   id: string
   at: Timestamp
-  actor_user_id: number | null
+  actor_user_id: string | null
   api_token_id: string | null
   method: string
   path: string
@@ -583,7 +591,7 @@ export interface SystemSettingsTable {
   key: string
   value: Json
   updated_at: Timestamp
-  updated_by: number | null
+  updated_by: string | null
 }
 
 /**
@@ -599,7 +607,7 @@ export interface LiveStreamsTable {
   game_id: string
   team_id: string
   /** Whose key this is. A key publishes video as somebody. */
-  user_id: number
+  user_id: string
   /** Which of that person's four cameras for this game. */
   slot: Generated<number>
   /** What the camera is called. `Camera <slot>` where nobody has said. */
@@ -618,7 +626,7 @@ export interface LiveStreamsTable {
   first_published_at: Timestamp | null
   last_published_at: Timestamp | null
   ended_at: Timestamp | null
-  created_by: number | null
+  created_by: string | null
   /** The install that holds this stream. Null for a browser or software. */
   device_id: string | null
   /** What that device is, in words: `iPhone 13 Pro`, `iPad Pro`. */
@@ -660,7 +668,7 @@ export interface GameStatsStateTable {
 export interface GamePlayerStatsTable {
   id: string
   game_id: string
-  user_id: number
+  gumbo_id: number
   team_id: string | null
   pa: Generated<number>
   ab: Generated<number>
@@ -698,10 +706,10 @@ export interface EventTagsTable {
   at_bat_index: number
   event_index: number | null
   tag: string
-  assigned_by: number
+  assigned_by: string
 }
 export interface UserTagsTable {
-  user_id: number
+  user_id: string
   tag: string
   last_used: Generated<number>
 }
@@ -713,7 +721,7 @@ export interface SeasonTeamParentsTable {
 }
 
 export interface CreationIdempotencyTable {
-  user_id: number
+  user_id: string
   key: string
   body_hash: string
   response: Json
@@ -731,7 +739,7 @@ export interface GroupRequestsTable {
     | 'guardian'
     | 'game'
     | 'gameChange'
-  sender_id: number
+  sender_id: string
   /** Null for a guardian or membership request sent on one’s own behalf. */
   sender_scope_type: 'league' | 'season' | 'team' | null
   sender_scope_id: string | null
@@ -743,7 +751,7 @@ export interface GroupRequestsTable {
   sent_at: Timestamp
   expires_at: Timestamp
   resolved_at: Timestamp | null
-  resolved_by: number | null
+  resolved_by: string | null
   game_id: string | null
   initiating_team_id: string | null
   sender_hidden: Generated<boolean>
@@ -754,7 +762,7 @@ export interface GroupRequestSidesTable {
   request_id: string
   scope_type: 'league' | 'season' | 'team' | 'user'
   scope_id: string
-  approved_by: number | null
+  approved_by: string | null
   approved_at: Timestamp | null
 }
 
@@ -763,15 +771,15 @@ export interface NotificationEventsTable {
   source_type: string
   source_id: string
   revision: number
-  actor_id: number | null
+  actor_id: string | null
   metadata: Json
-  recorded_recipients: Generated<number[]>
+  recorded_recipients: Generated<string[]>
   created_at: Timestamp
 }
 
 export interface NotificationReceiptsTable {
   event_id: string
-  user_id: number
+  user_id: string
   viewed_at: Timestamp
   /** When the person dismissed a reminder, or its upload landed. */
   dismissed_at: Timestamp | null
@@ -797,9 +805,9 @@ export interface TeamEventsTable {
 }
 export interface EventRsvpsTable {
   event_id: string
-  user_id: number
+  user_id: string
   response: 'yes' | 'maybe' | 'no'
-  updated_by: number | null
+  updated_by: string | null
   updated_at: Generated<Date>
 }
 
@@ -814,7 +822,7 @@ export interface ScoreboardLogTable {
   /** The server's time when the write was taken in. */
   at: Timestamp
   cause: 'publisher' | 'speedHold' | 'dashboard' | 'reset'
-  actor_id: number | null
+  actor_id: string | null
   /** The publisher's slot after the write, `{ state, receivedAt }`. */
   publisher: Json | null
   overrides: Json
@@ -833,6 +841,12 @@ export interface VideoWallAnchorsTable {
 }
 
 export interface Database {
+  game_guest_details: {
+    game_id: string
+    user_id: string
+    jersey: string | null
+    positions: string[]
+  }
   team_events: TeamEventsTable
   game_rsvps: EventRsvpsTable
   team_event_rsvps: EventRsvpsTable
@@ -858,6 +872,7 @@ export interface Database {
   email_codes: EmailCodesTable
   rate_events: RateEventsTable
   eventCredits: EventCreditsTable
+  gumbo_ids: GumboIdsTable
   event_players: EventPlayersTable
   events: EventsTable
   external_ids: ExternalIdsTable

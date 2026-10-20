@@ -151,7 +151,10 @@ export async function mergeTeams(
     await lockKeys(trx, [
       'creation:parent-graph',
       `group:team:${fromTeamId}`,
-      `group:team:${intoTeamId}`
+      `group:team:${intoTeamId}`,
+      // Player imports lock users before memberships; the allocation trigger
+      // does the reverse here. Finish those writers before moving their rows.
+      'users.closeInto'
     ])
     await mergeParents(trx, fromTeamId, intoTeamId, true)
     // Merge overlapping rows before repointing, so unique constraints remain valid.

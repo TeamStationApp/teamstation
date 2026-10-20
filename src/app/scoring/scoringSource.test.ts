@@ -12,6 +12,7 @@ import {
 import { HttpError } from '../../common/errors'
 import { ScoringSession } from '../../common/scoring/session'
 import { type Position, POSITIONS } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { deviceStorage } from '../platform/deviceStorage'
 import { startingSetup, teamsOf } from './developmentSession'
 import {
@@ -42,7 +43,8 @@ const game = asGameDetail({
 const roster = (first: number): RosterEntry[] =>
   Array.from({ length: 9 }, (_, i) =>
     asRosterEntry({
-      userId: first + i,
+      userId: userIdOfGumbo(first + i),
+      gumboId: first + i,
       shortName: `Player ${first + i}`,
       jersey: String(i + 1),
       positions: [],
@@ -56,7 +58,7 @@ const roster = (first: number): RosterEntry[] =>
 const away = roster(101)
 const home = roster(201)
 const person = (userId: number): LineupPerson => ({
-  userId,
+  gumboId: userId,
   name: `Player ${userId}`,
   jersey: ''
 })
@@ -86,6 +88,8 @@ function client(
     asked.push(teamId)
     return await defaults(teamId)
   }
+  made.game = async () => game
+  made.roster = async id => (id === game.awayTeamId ? away : home)
   made.gameEvents = async gameId => await store.load(gameId)
   made.saveGameEvents = async (gameId, change) =>
     await store.save(gameId, change)
@@ -93,10 +97,78 @@ function client(
 }
 const order = (session: ScoringSession, side: 'away' | 'home'): unknown[] =>
   session.state.liveData.boxscore.teams[side].battingOrder.map(
-    id => session.state.gameData.players[id].userId
+    id => session.state.gameData.players[id].id
   )
 
 describe('the server scoring source with default lineups (U12)', function () {
+  it('reconciles the resumed lineup after an unfinished play without writing it on read', async () => {
+    const store = memoryStore()
+    const first = await ScoringSession.open(store, game.id, {
+      gamePk: game.id,
+      teams: teamsOf(game),
+      setup: startingSetup(game, away, home)
+    })
+    expect(
+      first.apply({ type: 'ballInPlay', contact: 'swing', fielder: 206 })
+        .problems
+    ).deep.equals([])
+    await first.flush()
+    const saved = JSON.stringify(store.games.get(game.id))
+    const { client: fake } = client(async () => none, store)
+    const current = { ...game, unrostered: { away: [109], home: [] } }
+    const opened = await new ServerScoringSource(fake).open(current, away, home)
+    const resumed = opened.resumable()
+    expect(resumed.state.pending).equals(null)
+    expect(resumed.state.liveData.boxscore.teams.away.players).not.includes(109)
+    expect(opened.pending).equals(0)
+    await opened.flush()
+    expect(JSON.stringify(store.games.get(game.id))).equals(saved)
+    expect(opened.sync(resumed.actions)).deep.equals([])
+    expect(opened.undo().problems[0].message).equals('Nothing to undo')
+  })
+
+  it('reconciles saved options on read without writing, retains placements and keeps Undo on scoring actions', async () => {
+    const store = memoryStore()
+    const first = await ScoringSession.open(store, game.id, {
+      gamePk: game.id,
+      teams: teamsOf(game),
+      setup: startingSetup(game, away.slice(0, 3), home)
+    })
+    first.apply({ type: 'pitch', call: 'B' })
+    await first.flush()
+    const saved = JSON.stringify(store.games.get(game.id))
+    const { client: fake } = client(async () => none, store)
+    const guest = asRosterEntry({
+      ...away[0],
+      userId: userIdOfGumbo(901),
+      gumboId: 901,
+      shortName: 'Babe Ruth'
+    })
+    const current = {
+      ...game,
+      unrostered: { away: [102], home: [] },
+      guestPlayers: { away: [guest], home: [] }
+    }
+    fake.game = async () => current
+    const opened = await new ServerScoringSource(fake).open(current, away, home)
+    expect(opened.state.liveData.boxscore.teams.away.players).deep.equals([
+      101, 103, 104, 105, 106, 107, 108, 109, 901
+    ])
+    expect(order(opened, 'away')).deep.equals([101, 103])
+    expect(opened.state.liveData.boxscore.teams.away.defense.C).equals(null)
+    expect(opened.pending).equals(0)
+    await opened.flush()
+    expect(JSON.stringify(store.games.get(game.id))).equals(saved)
+    expect(await opened.reload()).equals(false)
+    expect(opened.undo().problems).deep.equals([])
+    expect(opened.state.liveData.linescore.balls).equals(0)
+    expect(opened.state.liveData.boxscore.teams.away.players).not.includes(102)
+    expect(opened.undo().problems[0].message).equals('Nothing to undo')
+    await opened.flush()
+    const again = await new ServerScoringSource(fake).open(current, away, home)
+    expect(again.state.liveData.boxscore.teams.away.players).includes(901)
+  })
+
   it('keeps actual rosters without manufactured players on ordinary scoring entry', async function () {
     const { client: fake } = client(async () => none)
     for (const count of [0, 8]) {
@@ -136,7 +208,7 @@ describe('the server scoring source with default lineups (U12)', function () {
       201, 202, 203, 204, 205, 206, 207, 208, 209
     ])
     const pitcher = session.state.liveData.boxscore.teams.away.defense.P
-    expect(session.state.gameData.players[pitcher!].userId).equals(101)
+    expect(session.state.gameData.players[pitcher!].id).equals(101)
   })
 
   it('starts a side from its roster when its default fails to load', async function () {
@@ -216,9 +288,9 @@ describe('the server scoring source’s clock (U43)', function () {
     const rows = teamId === 'away' ? away : home
     return {
       lineup: {
-        batters: rows.map(row => person(row.userId)),
+        batters: rows.map(row => person(row.gumboId!)),
         defense: Object.fromEntries(
-          POSITIONS.map((position, i) => [position, person(rows[i].userId)])
+          POSITIONS.map((position, i) => [position, person(rows[i].gumboId!)])
         ) as Record<Position, LineupPerson | null>
       },
       fromGameId: 'g0',

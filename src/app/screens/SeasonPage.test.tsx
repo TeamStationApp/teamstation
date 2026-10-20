@@ -15,6 +15,7 @@ import {
   asPublicGroup,
   type PublicGroup
 } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { GroupLinkChoice } from './GroupScreen'
 import { GroupScreen } from './GroupScreen'
@@ -229,8 +230,9 @@ describe('the season page', () => {
 describe('a season’s People tab, and a team’s roster, through the group page', () => {
   const people = [
     asRosterEntry({
-      userId: 201,
-      shortName: 'Avery S',
+      userId: userIdOfGumbo(201),
+      gumboId: 201,
+      shortName: 'Alfonso S',
       jersey: null,
       positions: [],
       isPlayer: true,
@@ -241,7 +243,8 @@ describe('a season’s People tab, and a team’s roster, through the group page
       teamNames: ['Demo Hawks']
     }),
     asRosterEntry({
-      userId: 106,
+      userId: userIdOfGumbo(106),
+      gumboId: 106,
       shortName: 'Tim R',
       jersey: null,
       positions: [],
@@ -287,10 +290,14 @@ describe('a season’s People tab, and a team’s roster, through the group page
       />
     )
     expect(document.body.textContent).includes('Demo Hawks')
-    await tapRow('Avery S')
+    await tapRow('Alfonso S')
     await tapRow('Tim R')
-    expect(players).deep.equals([[201, 'Avery S', { seasonId: season.id }]])
-    expect(persons).deep.equals([[{ kind: 'season', id: season.id }, 106]])
+    expect(players).deep.equals([
+      [userIdOfGumbo(201), 'Alfonso S', { seasonId: season.id }]
+    ])
+    expect(persons).deep.equals([
+      [{ kind: 'season', id: season.id }, userIdOfGumbo(106)]
+    ])
   })
 
   it('opens somebody on a team’s roster as the team’s profile', async () => {
@@ -322,6 +329,8 @@ describe('a season’s People tab, and a team’s roster, through the group page
       />
     )
     await tapRow('Tim R')
-    expect(persons).deep.equals([[{ kind: 'team', id: 'team_canonical' }, 106]])
+    expect(persons).deep.equals([
+      [{ kind: 'team', id: 'team_canonical' }, userIdOfGumbo(106)]
+    ])
   })
 })
