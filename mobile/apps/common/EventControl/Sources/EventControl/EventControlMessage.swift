@@ -1,6 +1,6 @@
 import Foundation
 
-/// The six messages of version 1, by their byte on the wire.
+/// The six messages of version 2, by their byte on the wire.
 public enum EventControlMessageType: UInt8, Sendable, CaseIterable {
   /// Director → receiver: who are you, with a fresh challenge.
   case discover = 1
@@ -122,7 +122,7 @@ public enum EventControlBody: Sendable, Equatable {
   }
 }
 
-/// One message: version 1, its header and its body.
+/// One message: version 2, its header and its body.
 public struct EventControlMessage: Sendable, Equatable {
   public var header: EventControlHeader
   public var body: EventControlBody
