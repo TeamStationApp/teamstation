@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { parseRoute } from './routes'
-import { currentRoute } from './useAddressBar'
+import { currentRoute, showRoute } from './useAddressBar'
 
 describe('legacy person addresses', () => {
   const id = userIdOfGumbo(42)
@@ -80,5 +80,46 @@ describe('legacy person addresses', () => {
     }
     Reflect.deleteProperty(globalThis, 'window')
     expect(currentRoute()).deep.equals({ name: 'home' })
+  })
+  it('keeps upgraded URL metadata when the mounted screen synchronizes its route', () => {
+    const location = {
+      pathname: '/players/42',
+      search: '?identityProof=1',
+      hash: '#stats'
+    }
+    const state = { custom: 'preserved' }
+    const history = {
+      state: state as Record<string, unknown>,
+      replaceState: (
+        next: Record<string, unknown>,
+        _title: string,
+        path?: string
+      ) => {
+        history.state = next
+        if (path != null) {
+          const url = new URL(path, 'http://localhost')
+          Object.assign(location, {
+            pathname: url.pathname,
+            search: url.search,
+            hash: url.hash
+          })
+        }
+      },
+      pushState: () => {
+        throw new Error('Unexpected extra history entry')
+      }
+    }
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { location, history }
+    })
+    const route = currentRoute()
+    showRoute(route, true)
+    showRoute(route)
+    expect(location.pathname).equals('/players/' + id)
+    expect(location.search).equals('?identityProof=1')
+    expect(location.hash).equals('#stats')
+    expect(history.state).includes(state)
+    expect(history.state.tsRouteIndex).equals(0)
   })
 })
