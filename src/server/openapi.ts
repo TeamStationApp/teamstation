@@ -5359,9 +5359,11 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary:
             'Who people are here, by the ids another service has, or the players you guard',
           description:
-            'A play names people by TeamStation user id alone, so a sender ' +
+            'A play names people by their numeric gumboId, so a sender ' +
             'asks this with the ids it holds first. Each answer is ' +
             '`{ userId, gumboId, externalIds, shortName, avatarUrl }`: a person, ' +
+            'their canonical account userId and separate scoring gumboId ' +
+            '(null until allocated), ' +
             'which of the asked ids are theirs, their short name and their ' +
             'signed picture (null when none). A merged row answers as the ' +
             'person it was merged ' +

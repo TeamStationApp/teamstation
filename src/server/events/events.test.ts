@@ -334,7 +334,11 @@ describe('scoring events', function () {
       userIdOfGumbo(player.userId),
       userIdOfGumbo(other.userId)
     ])
-    expect(together.has(`${player.userId}|${other.userId}`)).equals(false)
+    expect(
+      together.has(
+        `${userIdOfGumbo(player.userId)}|${userIdOfGumbo(other.userId)}`
+      )
+    ).equals(false)
   })
 
   // U8b: a head coach's lineup saved before the first pitch is an at-bat in

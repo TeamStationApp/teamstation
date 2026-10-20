@@ -217,7 +217,7 @@ export async function guardiansOfEach(
     .$if(signsIn, query =>
       query.where('login_enabled', '=', true).where('merged_into', 'is', null)
     )
-    .orderBy('id')
+    .orderBy(sql`id collate "C"`)
     .execute()
   return new Map(enabled.map(row => [row.id, guardians.get(row.id)!]))
 }
@@ -454,7 +454,7 @@ function permissionParents(
  * Each role's rows, carried down: a league's to its seasons and their teams,
  * a season's to its teams. Never upwards.
  *
- * One query per level for every role at once, whatever the string of roles:
+ * One query per level for every role at once, whatever the number of roles:
  * the seasons of every league anybody holds anything on, then the teams of
  * every season. The sets are filled in place, and returned.
  */

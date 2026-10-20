@@ -266,8 +266,8 @@ describe('real event info and guardian attendance', function () {
     expect(read.teamId).equals(f.teamA)
     expect(read.attendees.map(row => row.userId))
       .not.includes(userIdOfGumbo(102))
-      .and.not.includes(109)
-      .and.not.includes(110)
+      .and.not.includes(userIdOfGumbo(109))
+      .and.not.includes(userIdOfGumbo(110))
     expect(
       read.attendees.find(row => row.userId === userIdOfGumbo(108))
     ).includes({
@@ -522,8 +522,8 @@ describe('real event info and guardian attendance', function () {
     const read = await info(gameId)
     expect(read.attendees.map(row => row.userId))
       .not.includes(userIdOfGumbo(105))
-      .and.not.includes(106)
-      .and.not.includes(107)
+      .and.not.includes(userIdOfGumbo(106))
+      .and.not.includes(userIdOfGumbo(107))
     expect(read.replyUserIds).not.includes(userIdOfGumbo(103))
     expect(
       read.attendees.find(row => row.userId === userIdOfGumbo(101))?.staffRoles
@@ -983,7 +983,7 @@ describe('real event info and guardian attendance', function () {
       .execute()
     expect((await info(gameId)).attendees.map(row => row.userId))
       .not.includes(userIdOfGumbo(103))
-      .and.not.includes(104)
+      .and.not.includes(userIdOfGumbo(104))
     expect(
       (
         await f.h.request(
@@ -1038,7 +1038,7 @@ describe('real event info and guardian attendance', function () {
     ).length(1)
     expect(other.attendees.map(row => row.userId))
       .not.includes(userIdOfGumbo(103))
-      .and.not.includes(106)
+      .and.not.includes(userIdOfGumbo(106))
     expect((await info(gameId, 105)).replyUserIds).deep.equals(
       [104].map(userIdOfGumbo)
     )
@@ -1148,7 +1148,7 @@ describe('real event info and guardian attendance', function () {
       ).equals('maybe')
       expect(rows.map(row => row.userId))
         .not.includes(userIdOfGumbo(103))
-        .and.not.includes(106)
+        .and.not.includes(userIdOfGumbo(106))
       expect(
         (
           await f.h.request(

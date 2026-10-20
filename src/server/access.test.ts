@@ -954,6 +954,27 @@ describe('guardians', function () {
     expect(await teamsPlayedOnNow(db, [])).deep.equals([])
   })
 
+  it('orders canonical guardian IDs by case-sensitive Base58 digits', async function () {
+    const [first, second, child] = [32, 33, 34].map(userIdOfGumbo)
+    await insertFixtureUsers(db, [
+      { id: first, display_name: 'Babe Ruth' },
+      { id: second, display_name: 'Hank Aaron' },
+      { id: child, display_name: 'Mookie Betts' }
+    ])
+    await db
+      .insertInto('user_links')
+      .values(
+        [second, first].map(userId => ({
+          id: makeId('userLink'),
+          user_id: userId,
+          related_user_id: child,
+          kind: 'guardian'
+        }))
+      )
+      .execute()
+    expect(await guardiansOf(db, [child])).deep.equals([first, second])
+  })
+
   it('reads the guardians of several players at once as it reads each alone', async function () {
     // The child twice, by both rows; a guardian's closed row, whose only
     // link is from the guardian themself; and a member nobody guards.
