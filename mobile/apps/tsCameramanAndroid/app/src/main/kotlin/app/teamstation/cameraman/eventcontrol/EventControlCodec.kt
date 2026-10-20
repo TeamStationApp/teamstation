@@ -92,7 +92,7 @@ internal class EventControlDecoded(
  *     frame   = u32be(payloadLength) || payload            1 <= payloadLength <= 4096
  *     payload = version (u8) || type (u8) || field* || mac (32 bytes)
  *     field   = u16be(byteLength) || bytes
- *     mac     = HMAC-SHA256(key, lp("device-event-control:v1:frame") || version || type || field*)
+ *     mac     = HMAC-SHA256(key, lp("device-event-control:v2:frame") || version || type || field*)
  */
 internal object EventControlCodec {
     private class Spec(val min: Int, val max: Int, val only: Set<Int>? = null)
