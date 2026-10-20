@@ -7,10 +7,12 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { angleLabels } from '../../app/player/multiCam/takes'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -143,23 +145,20 @@ describe('a game’s stream key over the API', function () {
     const now = new Date()
     for (const [id, name] of [
       [managerId, 'Casey Manager'],
-      [coachId, 'Robin Coach'],
+      [coachId, 'Robin Yount'],
       [parentId, 'Parent'],
-      [filmerId, 'Vic Filmer'],
-      [scorerId, 'Kim Scorer']
+      [filmerId, 'Vic Power'],
+      [scorerId, 'Kevin Kiermaier']
     ] as Array<[number, string]>) {
-      await db
-        .insertInto('users')
-        .values({
-          id,
-          legacyId: legacyId(id),
-          display_name: name,
-          first_name: null,
-          last_name: null,
-          created_at: now,
-          updated_at: now
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id,
+        legacyId: legacyId(id),
+        display_name: name,
+        first_name: null,
+        last_name: null,
+        created_at: now,
+        updated_at: now
+      })
     }
     for (const [id, user, token] of [
       ['ses_manager', managerId, MANAGER],
@@ -172,7 +171,7 @@ describe('a game’s stream key over the API', function () {
         .insertInto('auth_sessions')
         .values({
           id,
-          user_id: user,
+          user_id: userIdOfGumbo(user),
           token_hash: hashToken(token),
           expires_at: new Date(now.getTime() + 3_600_000),
           created_at: now
@@ -223,7 +222,7 @@ describe('a game’s stream key over the API', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_manager',
-        user_id: managerId,
+        user_id: userIdOfGumbo(managerId),
         team_id: 'tem_home',
         role: 'manager'
       })
@@ -232,7 +231,7 @@ describe('a game’s stream key over the API', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_coach',
-        user_id: coachId,
+        user_id: userIdOfGumbo(coachId),
         team_id: 'tem_home',
         role: 'manager'
       })
@@ -241,7 +240,7 @@ describe('a game’s stream key over the API', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_parent',
-        user_id: parentId,
+        user_id: userIdOfGumbo(parentId),
         team_id: 'tem_home',
         role: 'member'
       })
@@ -254,13 +253,17 @@ describe('a game’s stream key over the API', function () {
     ] as const) {
       await db
         .insertInto('memberships')
-        .values({ id: `mem_${role}`, user_id: userId, team_id: teamId })
+        .values({
+          id: `mem_${role}`,
+          user_id: userIdOfGumbo(userId),
+          team_id: teamId
+        })
         .execute()
       await db
         .insertInto('scope_roles')
         .values({
           id: `rol_${role}`,
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           scope_type: 'team',
           scope_id: teamId,
           role

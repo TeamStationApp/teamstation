@@ -21,7 +21,7 @@ import { findInviteById, inviteProblem, redeemInvite } from './invites'
  */
 
 export interface SettledJoin {
-  userId: number
+  userId: string
   displayName: string
   /** True when this sign-in is where the account came from. */
   createdAccount: boolean

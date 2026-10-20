@@ -1,9 +1,10 @@
-import { asArray, asBoolean, asNumber, asObject, asString } from 'cleaners'
+import { asArray, asBoolean, asObject, asString } from 'cleaners'
 
 import { isRecord } from './groupCreation'
+import { asUserId } from './userId'
 
 export const asNodeAccount = asObject({
-  userId: asNumber,
+  userId: asUserId,
   displayName: asString,
   email: (value: unknown): string | null =>
     value == null ? null : asString(value),

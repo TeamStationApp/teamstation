@@ -68,9 +68,9 @@ export function EventRsvpModal({
   const [infos, setInfos] = useState<EventInfo[]>([])
   const current = useRef<EventInfo[]>([])
   const alive = useRef(true)
-  const writing = useRef(new Set<number>())
-  const [busy, setBusy] = useState<Record<number, boolean>>({})
-  const [errors, setErrors] = useState<Record<number, string>>({})
+  const writing = useRef(new Set<string>())
+  const [busy, setBusy] = useState<Record<string, boolean>>({})
+  const [errors, setErrors] = useState<Record<string, string>>({})
   const [loadError, setLoadError] = useState('')
   const [retry, setRetry] = useState(0)
   const countsCallback = useRef(onCounts)
@@ -101,7 +101,7 @@ export function EventRsvpModal({
       alive.current = false
     }
   }, [client, game.id, teamId, retry])
-  const update = (id: number, response: Rsvp | null): void => {
+  const update = (id: string, response: Rsvp | null): void => {
     current.current = current.current.map(info => ({
       ...info,
       attendees: info.attendees.map(row =>
@@ -112,7 +112,7 @@ export function EventRsvpModal({
     if (current.current[0] != null)
       countsCallback.current(playerRsvpCounts(current.current[0].attendees))
   }
-  const change = async (id: number, response: Rsvp): Promise<void> => {
+  const change = async (id: string, response: Rsvp): Promise<void> => {
     if (writing.current.has(id)) return
     const previous =
       current.current[0]?.attendees.find(row => row.userId === id)?.response ??

@@ -13,6 +13,7 @@ import type { ScoringAction } from '../../common/scoring/actions'
 import { baseIds, freshGame, overrideOf } from '../../common/scoring/rules'
 import { applyAction, ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { mintedRosterEntry } from '../../test/mintedRosterEntry'
 import { F } from '../../test/scoringGames'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
@@ -709,7 +710,7 @@ describe('scoring screen field wiring', function () {
           {
             away: [
               asRosterEntry({
-                userId: id,
+                userId: userIdOfGumbo(id),
                 gumboId: id,
                 shortName: 'Mike T',
                 jersey,
@@ -2391,7 +2392,7 @@ describe('scoring screen field wiring', function () {
         {
           [gameFixture.awayTeamId]: [
             asRosterEntry({
-              userId: 1,
+              userId: userIdOfGumbo(1),
               gumboId: 1,
               shortName: 'Mike T',
               jersey: '7',
@@ -2524,7 +2525,7 @@ describe('scoring screen field wiring', function () {
         await press('Cancel')
       } else if (cover === 'scorer change') {
         // A new scorer is a new panel: the old one goes with its sheet up.
-        await rerender({ userId: 22 })
+        await rerender({ userId: userIdOfGumbo(22) })
         expect(document.body.textContent).not.includes('Create Player')
       } else {
         await step(() => props().onHistoryClose?.())

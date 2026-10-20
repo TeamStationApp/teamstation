@@ -13,11 +13,16 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import { asTeamAdultsBody, asTeamPlayersBody } from '../../common/teamMembers'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import {
+  fixtureUserId,
+  insertFixtureUsers
+} from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -27,7 +32,7 @@ import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { attachEmail } from '../teams/addAdults'
-import { mintFreeUserId } from '../teams/addPlayers'
+import { insertUser } from '../users/insertUser'
 import { authRoutes } from './auth'
 import { manageRoutes } from './manage'
 import { teamMemberRoutes } from './teamMembers'
@@ -134,26 +139,24 @@ describe('a team’s people by external id', function () {
     await pool.end()
     db = makeDatabase(scratchUrl)
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values(
-        [
-          { made: admin, name: 'Adam Dunn', isAdmin: true },
-          { made: teamAdmin, name: 'Ted Williams', isAdmin: false },
-          { made: seasonAdmin, name: 'Sam Fuld', isAdmin: false },
-          { made: leagueAdmin, name: 'Lee Smith', isAdmin: false },
-          { made: member, name: 'Cam Bedrosian', isAdmin: false },
-          { made: stranger, name: 'Sal Bando', isAdmin: false }
-        ].map(one => ({
-          id: one.made.userId,
-          legacyId: one.made.legacyId,
-          display_name: one.name,
-          is_admin: one.isAdmin,
-          created_at: now,
-          updated_at: now
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      [
+        { made: admin, name: 'Adam Dunn', isAdmin: true },
+        { made: teamAdmin, name: 'Ted Williams', isAdmin: false },
+        { made: seasonAdmin, name: 'Sam Fuld', isAdmin: false },
+        { made: leagueAdmin, name: 'Lee Smith', isAdmin: false },
+        { made: member, name: 'Cam Bedrosian', isAdmin: false },
+        { made: stranger, name: 'Sal Bando', isAdmin: false }
+      ].map(one => ({
+        id: one.made.userId,
+        legacyId: one.made.legacyId,
+        display_name: one.name,
+        is_admin: one.isAdmin,
+        created_at: now,
+        updated_at: now
+      }))
+    )
     await db
       .insertInto('auth_sessions')
       .values(
@@ -168,7 +171,7 @@ describe('a team’s people by external id', function () {
           ] as Array<[string, number]>
         ).map(([token, userId]) => ({
           id: makeId('authSession'),
-          user_id: userId,
+          user_id: fixtureUserId(userId),
           token_hash: hashToken(token),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
@@ -219,7 +222,7 @@ describe('a team’s people by external id', function () {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: member.userId,
+        user_id: fixtureUserId(member.userId),
         team_id: hawks
       })
       .execute()
@@ -236,7 +239,7 @@ describe('a team’s people by external id', function () {
           ] as const
         ).map(([made, scopeType, scopeId]) => ({
           id: makeId('scopeRole'),
-          user_id: made.userId,
+          user_id: fixtureUserId(made.userId),
           scope_type: scopeType,
           scope_id: scopeId,
           role: 'admin' as const,
@@ -437,27 +440,25 @@ describe('a team’s people by external id', function () {
   ): Promise<number> {
     const made = person()
     const now = new Date()
-    await database()
-      .insertInto('users')
-      .values({
-        id: made.userId,
-        legacyId: made.legacyId,
-        display_name: values.displayName ?? 'Someone',
-        merged_into: values.mergedInto ?? null,
-        bats: values.bats ?? null,
-        bats_source: values.batsSource ?? null,
-        login_enabled: values.loginEnabled ?? false,
-        created_at: now,
-        updated_at: now
-      })
-      .execute()
+    await insertFixtureUsers(database(), {
+      id: fixtureUserId(made.userId),
+      legacyId: made.legacyId,
+      display_name: values.displayName ?? 'Someone',
+      merged_into:
+        values.mergedInto == null ? null : fixtureUserId(values.mergedInto),
+      bats: values.bats ?? null,
+      bats_source: values.batsSource ?? null,
+      login_enabled: values.loginEnabled ?? false,
+      created_at: now,
+      updated_at: now
+    })
     if (externalId != null) {
       await database()
         .insertInto('external_ids')
         .values({
           id: makeId('externalId'),
           entity_type: 'user',
-          entity_id: String(made.userId),
+          entity_id: fixtureUserId(made.userId),
           system: 'otherLeague',
           kind,
           external_id: externalId,
@@ -528,7 +529,7 @@ describe('a team’s people by external id', function () {
 
   const membershipOf = async (
     teamId: string,
-    userId: number
+    userId: number | string
   ): Promise<
     | {
         is_player: boolean
@@ -541,7 +542,7 @@ describe('a team’s people by external id', function () {
       .selectFrom('memberships')
       .select(['is_player', 'jersey', 'role'])
       .where('team_id', '=', teamId)
-      .where('user_id', '=', userId)
+      .where('user_id', '=', fixtureUserId(userId))
       .executeTakeFirst()
 
   describe('the players body', function () {
@@ -690,7 +691,7 @@ describe('a team’s people by external id', function () {
         .insertInto('memberships')
         .values({
           id: makeId('membership'),
-          user_id: traveller,
+          user_id: fixtureUserId(traveller),
           team_id: elsewhere,
           is_player: true
         })
@@ -713,7 +714,7 @@ describe('a team’s people by external id', function () {
       )
       expect(bySeason.status).equals(200)
       expect(bySeason.body.results).deep.equals([
-        { index: 0, result: 'joined', userId: traveller }
+        { index: 0, result: 'joined', userId: fixtureUserId(traveller) }
       ])
       expect(await membershipOf(teamId, traveller)).deep.include({
         is_player: true
@@ -810,7 +811,7 @@ describe('a team’s people by external id', function () {
         .executeTakeFirstOrThrow()
       expect(held).deep.include({
         entity_type: 'user',
-        entity_id: String(first.userId),
+        entity_id: fixtureUserId(first.userId),
         system: 'otherLeague',
         kind: 'player'
       })
@@ -877,12 +878,12 @@ describe('a team’s people by external id', function () {
         .values([
           {
             id: makeId('membership'),
-            user_id: watcher,
+            user_id: fixtureUserId(watcher),
             team_id: team
           },
           {
             id: makeId('membership'),
-            user_id: numbered,
+            user_id: fixtureUserId(numbered),
             team_id: team,
             jersey: '5'
           }
@@ -906,8 +907,8 @@ describe('a team’s people by external id', function () {
         ]
       })
       expect(answer.body.results).deep.equals([
-        { index: 0, result: 'joined', userId: watcher },
-        { index: 1, result: 'joined', userId: numbered }
+        { index: 0, result: 'joined', userId: fixtureUserId(watcher) },
+        { index: 1, result: 'joined', userId: fixtureUserId(numbered) }
       ])
       expect(await count('users')).equals(users)
       expect(await membershipOf(team, watcher)).deep.include({
@@ -927,7 +928,7 @@ describe('a team’s people by external id', function () {
         .insertInto('memberships')
         .values({
           id: makeId('membership'),
-          user_id: playing,
+          user_id: fixtureUserId(playing),
           team_id: team,
           is_player: true
         })
@@ -938,7 +939,7 @@ describe('a team’s people by external id', function () {
       expect(answer.body.results[0]).deep.equals({
         index: 0,
         result: 'unchanged',
-        userId: playing
+        userId: fixtureUserId(playing)
       })
       expect((await membershipOf(team, playing))?.jersey).equals('22')
     })
@@ -955,7 +956,7 @@ describe('a team’s people by external id', function () {
       expect(answer.body.results[0]).deep.equals({
         index: 0,
         result: 'joined',
-        userId: survivor
+        userId: fixtureUserId(survivor)
       })
       expect((await membershipOf(team, survivor))?.is_player).equals(true)
     })
@@ -988,6 +989,35 @@ describe('a team’s people by external id', function () {
       ])
     })
 
+    it('reclaims canonical orphan references for both players and adults', async function () {
+      const team = await newTeam('Orphan references')
+      for (const kind of ['players', 'adults'] as const) {
+        const externalId = ext(`canonical-orphan-${kind}`)
+        await database()
+          .insertInto('external_ids')
+          .values({
+            id: makeId('externalId'),
+            entity_type: 'user',
+            entity_id: userIdOfGumbo(999999),
+            system: externalId.system,
+            kind: externalId.kind,
+            external_id: externalId.id
+          })
+          .execute()
+        const answer = await ask('POST', `/teams/${team}/${kind}`, ADMIN, {
+          [kind]: [{ firstName: 'Babe', lastName: 'Ruth', externalId }]
+        })
+        expect(answer.status).equals(200)
+        expect(answer.body.results[0].result).equals('created')
+        const held = await database()
+          .selectFrom('external_ids')
+          .select('entity_id')
+          .where('external_id', '=', externalId.id)
+          .execute()
+        expect(held).deep.equals([{ entity_id: answer.body.results[0].userId }])
+      }
+    })
+
     it("never replaces a coach's hands, and fills them where nobody gave any", async function () {
       const team = await newTeam('Hands')
       const coached = await existingUser('hands-1', {
@@ -1001,11 +1031,11 @@ describe('a team’s people by external id', function () {
           { bats: 'switch', throws: 'left', externalId: ext('hands-2') }
         ]
       })
-      const read = async (userId: number): Promise<unknown> =>
+      const read = async (userId: number | string): Promise<unknown> =>
         await database()
           .selectFrom('users')
           .select(['bats', 'throws', 'bats_source'])
-          .where('id', '=', userId)
+          .where('id', '=', fixtureUserId(userId))
           .executeTakeFirstOrThrow()
       expect(await read(coached)).deep.equals({
         bats: 'left',
@@ -1021,11 +1051,11 @@ describe('a team’s people by external id', function () {
 
     it('writes each hand an import sends over an imported one, and leaves the other', async function () {
       const team = await newTeam('Hands later')
-      const read = async (userId: number): Promise<unknown> =>
+      const read = async (userId: number | string): Promise<unknown> =>
         await database()
           .selectFrom('users')
           .select(['bats', 'throws', 'bats_source'])
-          .where('id', '=', userId)
+          .where('id', '=', fixtureUserId(userId))
           .executeTakeFirstOrThrow()
       const post = async (hands: object): Promise<void> => {
         await ask('POST', `/teams/${team}/players`, ADMIN, {
@@ -1040,7 +1070,7 @@ describe('a team’s people by external id', function () {
         .select('entity_id')
         .where('external_id', '=', 'hands-later')
         .execute()
-      const userId = Number(held?.entity_id)
+      const userId = held.entity_id
       expect(await read(userId)).deep.equals({
         bats: null,
         throws: 'left',
@@ -1068,7 +1098,7 @@ describe('a team’s people by external id', function () {
       await database()
         .updateTable('users')
         .set({ bats_source: 'manual', throws: null })
-        .where('id', '=', userId)
+        .where('id', '=', fixtureUserId(userId))
         .execute()
       await post({ bats: 'left', throws: 'left' })
       expect(await read(userId)).deep.equals({
@@ -1084,7 +1114,7 @@ describe('a team’s people by external id', function () {
         .select('entity_id')
         .where('external_id', '=', 'no-hands')
         .execute()
-      expect(await read(Number(bare?.entity_id))).deep.equals({
+      expect(await read(bare.entity_id)).deep.equals({
         bats: null,
         throws: null,
         bats_source: null
@@ -1117,34 +1147,29 @@ describe('a team’s people by external id', function () {
       })
     })
 
-    it('draws another user id when the first is already a user’s, and gives up after five', async function () {
-      const held = await existingUser(null)
-      const fresh = mintUserId(id => id === held)
-      const draws = [{ legacyId: 'usr_held', userId: held }, fresh]
-      const minted = await database()
-        .transaction()
-        .execute(
-          async trx => await mintFreeUserId(trx, () => draws.shift() ?? fresh)
+    it('reserves a fresh account after a collision and refuses five occupied identities', async () => {
+      const held = fixtureUserId(await existingUser(null))
+      const fresh = fixtureUserId(mintUserId(() => false).userId)
+      const draws = [held, fresh]
+      expect(
+        await insertUser(database(), { display_name: 'Hank Aaron' }, () =>
+          draws.shift()!
         )
-      expect(minted).deep.equals(fresh)
+      ).equals(fresh)
       expect(draws).deep.equals([])
-
+      let attempts = 0
       let failed: unknown
       try {
-        await database()
-          .transaction()
-          .execute(
-            async trx =>
-              await mintFreeUserId(trx, () => ({
-                legacyId: 'usr_held',
-                userId: held
-              }))
-          )
+        await insertUser(database(), { display_name: 'Babe Ruth' }, () => {
+          attempts++
+          return held
+        })
       } catch (error) {
         failed = error
       }
+      expect(attempts).equals(5)
       expect((failed as Error).message).equals(
-        'Five user ids drawn were all taken'
+        'Five account identity allocations exhausted'
       )
     })
 
@@ -1225,7 +1250,13 @@ describe('a team’s people by external id', function () {
       expect(players).to.have.length(1)
       expect(players[0]).deep.include({
         userId,
-        gumboId: userId,
+        gumboId: (
+          await database()
+            .selectFrom('gumbo_ids')
+            .select('gumbo_id')
+            .where('user_id', '=', userId)
+            .executeTakeFirstOrThrow()
+        ).gumbo_id,
         jersey: '11',
         isPlayer: true
       })
@@ -1233,6 +1264,7 @@ describe('a team’s people by external id', function () {
       expect(found.body).deep.equals([
         {
           userId,
+          gumboId: players[0].gumboId,
           externalIds: ['found-1'],
           shortName: 'Ken M',
           avatarUrl: null
@@ -1319,7 +1351,7 @@ describe('a team’s people by external id', function () {
 
   describe('POST /teams/:teamId/adults', function () {
     /** People the sign-in cases at the end reach by address. */
-    const signIns: Array<{ email: string; userId: number; teamId: string }> = []
+    const signIns: Array<{ email: string; userId: string; teamId: string }> = []
 
     const adults = async (
       teamId: string,
@@ -1333,7 +1365,7 @@ describe('a team’s people by external id', function () {
       name: string,
       prefix: string,
       n: number
-    ): Promise<{ teamId: string; players: number[] }> {
+    ): Promise<{ teamId: string; players: string[] }> {
       const teamId = await newTeam(name)
       const answer = await ask('POST', `/teams/${teamId}/players`, ADMIN, {
         players: Array.from({ length: n }, (_, i) => ({
@@ -1349,7 +1381,7 @@ describe('a team’s people by external id', function () {
     }
 
     const emailsOf = async (
-      userId: number
+      userId: number | string
     ): Promise<
       Array<{
         email: string
@@ -1361,28 +1393,31 @@ describe('a team’s people by external id', function () {
       await database()
         .selectFrom('user_emails')
         .select(['email', 'is_primary', 'source', 'verified_at'])
-        .where('user_id', '=', userId)
+        .where('user_id', '=', fixtureUserId(userId))
         .orderBy('created_at')
         .execute()
 
     const linksOf = async (
-      userId: number
+      userId: number | string
     ): Promise<
-      Array<{ related_user_id: number; kind: string; can_manage: boolean }>
+      Array<{ related_user_id: string; kind: string; can_manage: boolean }>
     > =>
       await database()
         .selectFrom('user_links')
         .select(['related_user_id', 'kind', 'can_manage'])
-        .where('user_id', '=', userId)
+        .where('user_id', '=', fixtureUserId(userId))
         .orderBy('related_user_id')
         .execute()
 
-    const rolesOf = async (userId: number, teamId: string): Promise<string[]> =>
+    const rolesOf = async (
+      userId: number | string,
+      teamId: string
+    ): Promise<string[]> =>
       (
         await database()
           .selectFrom('scope_roles')
           .select(['role'])
-          .where('user_id', '=', userId)
+          .where('user_id', '=', fixtureUserId(userId))
           .where('scope_type', '=', 'team')
           .where('scope_id', '=', teamId)
           .execute()
@@ -1399,7 +1434,7 @@ describe('a team’s people by external id', function () {
         .insertInto('user_emails')
         .values({
           id: makeId('userEmail'),
-          user_id: userId,
+          user_id: fixtureUserId(userId),
           email,
           is_primary: isPrimary,
           created_at: new Date()
@@ -1541,9 +1576,9 @@ describe('a team’s people by external id', function () {
       })
       expect(await linksOf(row.userId)).deep.equals(
         [...players]
-          .sort((a, b) => a - b)
+          .sort((a, b) => a.localeCompare(b))
           .map(id => ({
-            related_user_id: id,
+            related_user_id: fixtureUserId(id),
             kind: 'guardian',
             can_manage: true
           }))
@@ -1585,7 +1620,7 @@ describe('a team’s people by external id', function () {
       ])
       expect(answer.body.results[0]).deep.include({
         result: 'matched',
-        userId: known,
+        userId: fixtureUserId(known),
         joined: true
       })
       expect(await emailsOf(known)).deep.equals([
@@ -1599,11 +1634,15 @@ describe('a team’s people by external id', function () {
       const user = await database()
         .selectFrom('users')
         .select(['login_enabled'])
-        .where('id', '=', known)
+        .where('id', '=', fixtureUserId(known))
         .executeTakeFirstOrThrow()
       // Never changed for somebody already here.
       expect(user.login_enabled).equals(false)
-      signIns.push({ email: 'quin@example.test', userId: known, teamId })
+      signIns.push({
+        email: 'quin@example.test',
+        userId: fixtureUserId(known),
+        teamId
+      })
     })
 
     it('never gives an account that has an address a second one', async function () {
@@ -1622,7 +1661,7 @@ describe('a team’s people by external id', function () {
           token
         )
         expect(answer.body.results[0], token).deep.include({
-          userId: known,
+          userId: fixtureUserId(known),
           emailNotAttached: true
         })
         expect(answer.body.results[0]).not.to.have.property(
@@ -1645,7 +1684,7 @@ describe('a team’s people by external id', function () {
       const first = await adults(teamId, [row], SEASON_ADMIN)
       expect(first.body.results[0]).deep.include({
         result: 'matched',
-        userId: known,
+        userId: fixtureUserId(known),
         joined: true,
         emailNotAttached: true
       })
@@ -1733,7 +1772,7 @@ describe('a team’s people by external id', function () {
       ])
       expect(answer.body.results[0]).deep.include({
         result: 'matched',
-        userId: known
+        userId: fixtureUserId(known)
       })
       expect(answer.body.results[0]).not.to.have.property(
         'externalIdNotAttached'
@@ -1744,7 +1783,7 @@ describe('a team’s people by external id', function () {
         .select(['entity_id'])
         .where('external_id', '=', 'by-address-1')
         .executeTakeFirstOrThrow()
-      expect(held.entity_id).equals(String(known))
+      expect(held.entity_id).equals(fixtureUserId(known))
     })
 
     it('records no id on an account found by address when a team administrator imports it', async function () {
@@ -1764,7 +1803,7 @@ describe('a team’s people by external id', function () {
       )
       expect(answer.body.results[0]).deep.include({
         result: 'matched',
-        userId: known,
+        userId: fixtureUserId(known),
         joined: true,
         externalIdNotAttached: true
       })
@@ -1783,7 +1822,7 @@ describe('a team’s people by external id', function () {
         ]
       })
       expect(player.body.results[0].result).equals('created')
-      expect(player.body.results[0].userId).not.equals(known)
+      expect(player.body.results[0].userId).not.equals(userIdOfGumbo(known))
     })
 
     it('finds the account an address’s merged-away holder became, and makes nobody', async function () {
@@ -1801,7 +1840,7 @@ describe('a team’s people by external id', function () {
       ])
       expect(answer.body.results[0]).deep.include({
         result: 'matched',
-        userId: survivor,
+        userId: fixtureUserId(survivor),
         joined: true
       })
       expect(answer.body.results[0]).not.to.have.property('emailHeldElsewhere')
@@ -1865,7 +1904,7 @@ describe('a team’s people by external id', function () {
         {
           text: `insert into user_emails (id, user_id, email, is_primary)
                  values ($1, $2, 'race@example.test', true)`,
-          values: [makeId('userEmail'), other]
+          values: [makeId('userEmail'), fixtureUserId(other)]
         },
         async () =>
           await adults(teamId, [
@@ -1902,11 +1941,13 @@ describe('a team’s people by external id', function () {
             async trx =>
               await attachEmail(
                 trx,
-                userId,
+                fixtureUserId(userId),
                 'late@example.test',
                 { created: true, callerIsAdmin: false },
                 async () =>
-                  heldBy == null ? { added: false } : { added: false, heldBy }
+                  heldBy == null
+                    ? { added: false }
+                    : { added: false, heldBy: fixtureUserId(heldBy) }
               )
           )
       expect(await attach(other)).equals('heldElsewhere')
@@ -1929,7 +1970,7 @@ describe('a team’s people by external id', function () {
       ])
       expect(answer.body.results[0]).deep.include({
         result: 'matched',
-        userId: holder,
+        userId: fixtureUserId(holder),
         emailHeldElsewhere: true
       })
       expect(answer.body.results[0]).not.to.have.property('emailNotAttached')
@@ -1946,7 +1987,7 @@ describe('a team’s people by external id', function () {
         .insertInto('scope_roles')
         .values({
           id: makeId('scopeRole'),
-          user_id: singer,
+          user_id: fixtureUserId(singer),
           scope_type: 'team',
           scope_id: teamId,
           role: 'songkeeper',
@@ -2075,7 +2116,9 @@ describe('a team’s people by external id', function () {
         guardianLinks: 0,
         guardiansRefused: 2
       })
-      expect(later.body.results[1].userId).equals(seasonAdmin.userId)
+      expect(later.body.results[1].userId).equals(
+        fixtureUserId(seasonAdmin.userId)
+      )
       expect(await linksOf(seasonAdmin.userId)).deep.equals([])
       expect(await linksOf(later.body.results[0].userId)).deep.equals([])
 
@@ -2086,10 +2129,18 @@ describe('a team’s people by external id', function () {
         [1, 0]
       ])
       expect(await linksOf(later.body.results[0].userId)).deep.equals([
-        { related_user_id: first, kind: 'guardian', can_manage: true }
+        {
+          related_user_id: fixtureUserId(first),
+          kind: 'guardian',
+          can_manage: true
+        }
       ])
       expect(await linksOf(seasonAdmin.userId)).deep.equals([
-        { related_user_id: second, kind: 'guardian', can_manage: true }
+        {
+          related_user_id: fixtureUserId(second),
+          kind: 'guardian',
+          can_manage: true
+        }
       ])
     })
 
@@ -2110,7 +2161,11 @@ describe('a team’s people by external id', function () {
       expect(links(first)).deep.equals([[1, 0]])
       const granId = first.body.results[0].userId
       expect(await linksOf(granId)).deep.equals([
-        { related_user_id: players[0], kind: 'guardian', can_manage: true }
+        {
+          related_user_id: fixtureUserId(players[0]),
+          kind: 'guardian',
+          can_manage: true
+        }
       ])
 
       // So a later import's parent with an address is linked too, and Gran
@@ -2170,7 +2225,7 @@ describe('a team’s people by external id', function () {
       ])
       expect(answer.body.results[0]).deep.include({
         result: 'unchanged',
-        userId: players[0],
+        userId: fixtureUserId(players[0]),
         joined: false
       })
       expect(await membershipOf(teamId, players[0])).deep.include({
@@ -2417,7 +2472,7 @@ describe('a team’s people by external id', function () {
           'avatar_source',
           'avatar_updated_at'
         ])
-        .where('id', '=', userId)
+        .where('id', '=', fixtureUserId(userId))
         .executeTakeFirstOrThrow()
       expect(row.avatar_path).matches(
         new RegExp(`^images/user/${userId}/[0-9a-f]{8}$`)
@@ -2428,8 +2483,9 @@ describe('a team’s people by external id', function () {
       expect(answer.body.url).includes(`${row.avatar_path}-192.png`)
       const roster = await ask('GET', `/teams/${teamId}/roster`, ADMIN)
       expect(
-        roster.body.find((entry: { userId: number }) => entry.userId === userId)
-          .avatarUrl
+        roster.body.find(
+          (entry: { userId: string }) => entry.userId === fixtureUserId(userId)
+        ).avatarUrl
       ).to.be.a('string')
     })
 
@@ -2486,7 +2542,7 @@ describe('a team’s people by external id', function () {
       const kept = await database()
         .selectFrom('users')
         .select(['avatar_sha256'])
-        .where('id', '=', userId)
+        .where('id', '=', fixtureUserId(userId))
         .executeTakeFirstOrThrow()
       expect(
         (await avatar(teamId, userId, body(blue, 'upload'))).body.stored
@@ -2494,7 +2550,7 @@ describe('a team’s people by external id', function () {
       const replaced = await database()
         .selectFrom('users')
         .select(['avatar_sha256'])
-        .where('id', '=', userId)
+        .where('id', '=', fixtureUserId(userId))
         .executeTakeFirstOrThrow()
       expect(replaced.avatar_sha256).not.equals(kept.avatar_sha256)
 
@@ -2524,7 +2580,7 @@ describe('a team’s people by external id', function () {
             await database()
               .selectFrom('users')
               .select(['avatar_source as source', 'avatar_sha256 as sha256'])
-              .where('id', '=', userId)
+              .where('id', '=', fixtureUserId(userId))
               .executeTakeFirstOrThrow()
         }
       ]

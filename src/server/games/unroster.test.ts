@@ -16,9 +16,11 @@ import { reconcileRoster } from '../../common/scoring/rosterAvailability'
 import { ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import type { Unrostered } from '../../common/unroster'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { after as score, game as fixture } from '../../test/scoringGames'
 import { closeInto } from '../admin/people'
 import type { Actor } from '../auth/sessions'
@@ -34,7 +36,11 @@ describe('atomic game availability', function () {
   const name = `teamstation_unroster_api_${process.pid}_${Date.now()}`
   let admin: Pool
   let db: Kysely<Database>
-  const actor: Actor = { userId: 123, isAdmin: false, scopes: [] }
+  const actor: Actor = {
+    userId: userIdOfGumbo(123),
+    isAdmin: false,
+    scopes: []
+  }
   before(async () => {
     admin = new Pool({ connectionString: testDatabaseUrl })
     await admin.query(`create database ${name}`)
@@ -43,25 +49,23 @@ describe('atomic game availability', function () {
     await migrateUp(pool, migrations)
     await pool.end()
     db = makeDatabase(url)
-    await db
-      .insertInto('users')
-      .values(
-        [
-          ...Array.from({ length: 18 }, (_, i) => i + 1),
-          123,
-          124,
-          125,
-          126,
-          127,
-          128,
-          129
-        ].map(id => ({
-          id,
-          legacyId: makeId('user'),
-          display_name: 'Hank Aaron'
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      [
+        ...Array.from({ length: 18 }, (_, i) => i + 1),
+        123,
+        124,
+        125,
+        126,
+        127,
+        128,
+        129
+      ].map(id => ({
+        id,
+        legacyId: makeId('user'),
+        display_name: 'Hank Aaron'
+      }))
+    )
     await db
       .insertInto('teams')
       .values([
@@ -91,7 +95,7 @@ describe('atomic game availability', function () {
       .values(
         Array.from({ length: 18 }, (_, i) => ({
           id: makeId('membership'),
-          user_id: i + 1,
+          user_id: userIdOfGumbo(i + 1),
           team_id: i < 9 ? 'team-away' : 'team-home',
           role: 'member' as const,
           is_player: true,
@@ -104,7 +108,7 @@ describe('atomic game availability', function () {
       .values([
         {
           id: makeId('scopeRole'),
-          user_id: 123,
+          user_id: userIdOfGumbo(123),
           scope_type: 'team' as const,
           scope_id: 'team-away',
           role: 'coach' as const
@@ -113,14 +117,14 @@ describe('atomic game availability', function () {
           ['assistant', 'scorekeeper', 'songkeeper', 'videographer'] as const
         ).map((role, i) => ({
           id: makeId('scopeRole'),
-          user_id: 124 + i,
+          user_id: userIdOfGumbo(124 + i),
           scope_type: 'team' as const,
           scope_id: 'team-away',
           role
         })),
         {
           id: makeId('scopeRole'),
-          user_id: 128,
+          user_id: userIdOfGumbo(128),
           scope_type: 'team' as const,
           scope_id: 'team-home',
           role: 'coach' as const
@@ -151,11 +155,15 @@ describe('atomic game availability', function () {
       .executeTakeFirstOrThrow()
   const toggle = async (
     id: string,
-    userId: number,
+    userId: number | string,
     rostered: boolean,
     caller = actor
   ): Promise<Unrostered> =>
-    await setRostered(db, caller, id, { side: 'away', userId, rostered })
+    await setRostered(db, caller, id, {
+      side: 'away',
+      userId: typeof userId === 'number' ? userIdOfGumbo(userId) : userId,
+      rostered
+    })
   const rejected = async (
     run: () => Promise<unknown>,
     code: string
@@ -286,7 +294,11 @@ describe('atomic game availability', function () {
   it('refuses every non-head-coach role, the other team, missing users, nonplayers and guests', async () => {
     for (const userId of [124, 125, 126, 127, 128, 129])
       await rejected(
-        async () => await toggle('gam_empty', 1, false, { ...actor, userId }),
+        async () =>
+          await toggle('gam_empty', 1, false, {
+            ...actor,
+            userId: userIdOfGumbo(userId)
+          }),
         'forbidden'
       )
     await rejected(
@@ -325,11 +337,11 @@ describe('atomic game availability', function () {
       bats: 'left'
     })
     expect(availability.guestPlayers.away[0].positions).deep.equals(['P'])
-    expect(availability.guests.away).deep.equals([guest.userId])
-    await closeInto(db, guest.userId, 2)
+    expect(availability.guests.away).deep.equals([guest.gumboId])
+    await closeInto(db, guest.userId, userIdOfGumbo(2))
     const merged = await gameAvailability(db, await row('gam_empty'))
     expect(merged.guests.away).deep.equals([2])
-    expect(merged.guestPlayers.away[0].userId).equals(2)
+    expect(merged.guestPlayers.away[0].userId).equals(userIdOfGumbo(2))
   })
   it('removes a placed player, keeps teammates and the guest, and appends him unplaced on return', async () => {
     const initial = fixture()
@@ -368,7 +380,7 @@ describe('atomic game availability', function () {
     await toggle('gam_saved', 1, false)
     const removed = (await open('gam_saved')).state.liveData.boxscore.teams
     expect(removed.away.players).not.includes(1)
-    expect(removed.away.players).includes(guest.userId)
+    expect(removed.away.players).includes(guest.gumboId)
     expect(removed.away.battingOrder).deep.equals(
       before.state.liveData.boxscore.teams.away.battingOrder.filter(
         id => id !== 1
@@ -453,13 +465,13 @@ describe('atomic game availability', function () {
     await db
       .updateTable('gumbo_ids')
       .set({ gumbo_id: 3129 })
-      .where('user_id', '=', 129)
+      .where('user_id', '=', userIdOfGumbo(129))
       .execute()
     await db
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: 129,
+        user_id: userIdOfGumbo(129),
         team_id: 'team-away',
         role: 'member',
         is_player: true
@@ -479,7 +491,8 @@ describe('atomic game availability', function () {
     expect((await row(id)).unrostered).deep.equals({ away: [3129], home: [] })
     const available = await gameAvailability(db, await row(id))
     expect(
-      available.roster.away.find(player => player.userId === 129)?.gumboId
+      available.roster.away.find(player => player.userId === userIdOfGumbo(129))
+        ?.gumboId
     ).equals(3129)
     expect((await toggle(id, 129, true)).away).deep.equals([])
     await rejected(async () => await toggle(id, 3129, false), 'badRequest')

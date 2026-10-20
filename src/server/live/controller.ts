@@ -946,7 +946,7 @@ async function recordWallPoints(
 /** A key belongs to an active account filming a current side of this game. */
 async function mayPublish(
   db: Kysely<Database>,
-  row: { userId: number; gameId: string; teamId: string }
+  row: { userId: string; gameId: string; teamId: string }
 ): Promise<boolean> {
   const user = await db
     .selectFrom('users')

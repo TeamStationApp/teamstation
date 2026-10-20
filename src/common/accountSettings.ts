@@ -1,11 +1,15 @@
 import { asArray, asBoolean, asObject, asOptional, asString } from 'cleaners'
 
 import { asArgonParameters, asHex, asPasswordUpdate } from './passwordProtocol'
-import { asUserId } from './userIdNumber'
+import { asGumboId, asUserId } from './userId'
 
 export const asAccountSettings = asObject({
   user: asObject({
     id: asUserId,
+    gumboId: asOptional(
+      (raw: unknown) => (raw == null ? null : asGumboId(raw)),
+      null
+    ),
     displayName: asString,
     email: asOptional(asString),
     isAdmin: asBoolean,

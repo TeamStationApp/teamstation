@@ -1,15 +1,15 @@
 import type { Kysely } from 'kysely'
 
 import { asAccountEmail, asAccountName } from '../../common/accountSettings'
-import { conflict, unauthorized, unavailable } from '../../common/errors'
-import { mintUserId } from '../../common/mintUserId'
+import { conflict, unauthorized } from '../../common/errors'
 import type { Onboarding } from '../../common/onboarding'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
+import { insertUser } from '../users/insertUser'
 import { addEmail, findUserByEmail } from './emails'
 
 export interface SettledAccount {
-  userId: number
+  userId: string
   displayName: string
   createdAccount: boolean
 }
@@ -20,7 +20,7 @@ export async function settleAccount(
   rawEmail: string,
   options: {
     displayName?: string | null
-    mint?: () => { userId: number; legacyId: string }
+    mint?: () => string
   } = {}
 ): Promise<SettledAccount> {
   const email = asAccountEmail(rawEmail)
@@ -63,43 +63,33 @@ export async function settleAccount(
       options.displayName == null || options.displayName.trim() === ''
         ? 'New account'
         : asAccountName(options.displayName)
-    for (let attempt = 0; attempt < 16; attempt++) {
-      const minted = options.mint?.() ?? mintUserId(() => false)
-      const user = await trx
-        .insertInto('users')
-        .values({
-          id: minted.userId,
-          legacyId: minted.legacyId,
-          display_name: displayName,
-          login_enabled: true,
-          is_admin: false,
-          onboarding_step: 'name',
-          onboarding_completed_at: null
-        })
-        .onConflict(oc => oc.doNothing())
-        .returning('id')
-        .executeTakeFirst()
-      if (user == null) continue
-      const attached = await addEmail(trx, minted.userId, email, {
-        isPrimary: true,
-        source: 'manual',
-        verifiedAt: new Date()
-      })
-      if (attached.heldBy != null)
-        throw conflict(
-          'This address has an existing identity that must be resolved before signing in'
-        )
-      return { userId: minted.userId, displayName, createdAccount: true }
-    }
-    throw unavailable(
-      'An account could not be created. Please retry verification.'
+    const userId = await insertUser(
+      trx,
+      {
+        display_name: displayName,
+        login_enabled: true,
+        is_admin: false,
+        onboarding_step: 'name',
+        onboarding_completed_at: null
+      },
+      options.mint
     )
+    const attached = await addEmail(trx, userId, email, {
+      isPrimary: true,
+      source: 'manual',
+      verifiedAt: new Date()
+    })
+    if (attached.heldBy != null)
+      throw conflict(
+        'This address has an existing identity that must be resolved before signing in'
+      )
+    return { userId, displayName, createdAccount: true }
   })
 }
 
 export async function onboardingFor(
   db: Kysely<Database>,
-  userId: number
+  userId: string
 ): Promise<Onboarding> {
   const user = await db
     .selectFrom('users')

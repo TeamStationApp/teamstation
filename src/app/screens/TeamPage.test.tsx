@@ -10,6 +10,7 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { asGroupDetail, type GroupDetail } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ManagementCard } from './ManagementCard'
 import { TeamPage } from './TeamPage'
@@ -261,7 +262,7 @@ describe('restored access-aware team presentation', () => {
         asked.push(`roster ${id}`)
         return [
           asRosterEntry({
-            userId: 201,
+            userId: userIdOfGumbo(201),
             gumboId: 201,
             shortName: 'Alfonso S',
             jersey: '7',
