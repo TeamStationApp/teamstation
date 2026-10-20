@@ -70,6 +70,8 @@ struct EventControlIdentityTests {
 
   @Test func aSignInRemembersWhoAndWhere() async throws {
     let keychain = KeychainStore.inMemory()
+    keychain.setToken("old-token")
+    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "1001"))
     IdentityServer.answers["/api/v1/auth/email-code/verify"] = (
       200,
       #"{"token":"tok_one","expiresAt":"2027-01-01T00:00:00Z","user":\#(me)}"#
@@ -131,6 +133,7 @@ struct EventControlIdentityTests {
   @Test func fetchesItsOwnKeyWithItsOwnToken() async throws {
     let keychain = KeychainStore.inMemory()
     keychain.setToken("tok_one")
+    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "usr_11111111111111111111JG"))
     let signedIn = account(keychain)
     IdentityServer.answers["/api/v1/device-event-control/key"] = (200, keyReply)
     let key = try await signedIn.deviceEventControlKey()
@@ -188,13 +191,15 @@ struct EventControlIdentityTests {
   @Test func aKeyAnsweredAfterTheTokenChangedIsThrownAway() async {
     let keychain = KeychainStore.inMemory()
     keychain.setToken("tok_one")
+    let scope = TeamStationAccountScope(server: "https://app.example.test", userId: "usr_11111111111111111111JG")
+    keychain.setAccountScope(scope)
     let signedIn = account(keychain)
     // The operator signs in as someone else while the first account's key is on its way.
     IdentityServer.whileAsking = { keychain.setToken("tok_two") }
     IdentityServer.answers["/api/v1/device-event-control/key"] = (200, keyReply)
     await #expect(throws: TeamStationError.accountChanged) { try await signedIn.deviceEventControlKey() }
-    #expect(signedIn.scope == nil)
-    #expect(keychain.accountScope() == nil)
+    #expect(signedIn.scope == scope)
+    #expect(keychain.accountScope() == scope)
     // The first token's rejection, arriving late, does not sign the second session out.
     keychain.setToken("tok_one")
     IdentityServer.answers["/api/v1/device-event-control/key"] = (401, #"{"code":"unauthorized","message":"Sign in to continue"}"#)
