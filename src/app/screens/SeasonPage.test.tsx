@@ -232,7 +232,7 @@ describe('a season’s People tab, and a team’s roster, through the group page
     asRosterEntry({
       userId: userIdOfGumbo(201),
       gumboId: 201,
-      shortName: 'Avery S',
+      shortName: 'Alfonso S',
       jersey: null,
       positions: [],
       isPlayer: true,
@@ -290,10 +290,10 @@ describe('a season’s People tab, and a team’s roster, through the group page
       />
     )
     expect(document.body.textContent).includes('Demo Hawks')
-    await tapRow('Avery S')
+    await tapRow('Alfonso S')
     await tapRow('Tim R')
     expect(players).deep.equals([
-      [userIdOfGumbo(201), 'Avery S', { seasonId: season.id }]
+      [userIdOfGumbo(201), 'Alfonso S', { seasonId: season.id }]
     ])
     expect(persons).deep.equals([
       [{ kind: 'season', id: season.id }, userIdOfGumbo(106)]

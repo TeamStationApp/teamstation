@@ -647,7 +647,7 @@ describe('roster sections', function () {
     ])
     expect(byUser.get(userIdOfGumbo(admin))?.staffRoles).deep.equals([])
     expect(byUser.get(userIdOfGumbo(201))).to.include({
-      shortName: 'Avery S',
+      shortName: 'Alfonso S',
       jersey: '7',
       isPlayer: true
     })
@@ -756,7 +756,7 @@ describe('roster sections', function () {
     // nobody else carries the field.
     expect(
       byUser.get(userIdOfGumbo(f.people.guardian))?.guardianOf
-    ).deep.equals(['Avery S'])
+    ).deep.equals(['Alfonso S'])
     expect(byUser.get(userIdOfGumbo(201))?.guardianOf).equals(undefined)
     expect(byUser.get(userIdOfGumbo(f.people.teamCoach))).to.include({
       section: 'staff',
@@ -824,7 +824,7 @@ describe('roster sections', function () {
     await follow(265, f.seasonA, 'season')
 
     const { roster } = await read()
-    // By name: Fay F, Grace H, Mo M; and last.
+    // By name: Fay F, Grant H, Mo M; and last.
     expect(placed(roster.slice(-3))).deep.equals(
       [
         [260, 'follower', null],
@@ -915,7 +915,7 @@ describe('roster sections', function () {
     await user(242, 'Drew Ellis', 204)
     await link(243, 242)
     // A row of Eli's linked to Eli is Eli, not a parent of his.
-    await user(244, 'Eli Fox', 205)
+    await user(244, 'Elijah Dukes', 205)
     await link(244, 205)
 
     const { roster } = await read()

@@ -40,7 +40,7 @@ export const battingFixture = asBattingRow({
 export const pitchingFixture = asPitchingRow({
   userId: userIdOfGumbo(102),
   gumboId: 102,
-  shortName: 'Blair R',
+  shortName: 'Babe R',
   teamId: 'demo-hawks',
   g: 2,
   gs: 1,

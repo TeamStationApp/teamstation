@@ -132,7 +132,10 @@ async function apiRoles(run: Run): Promise<void> {
   for (const reader of [people.scorekeeper, people.assistant]) {
     const shown = await api('GET', `/players/${avery.id}/name`, reader)
     expect(shown.status).equals(200)
-    expect(shown.body).deep.include({ firstName: 'Avery', lastName: 'Stone' })
+    expect(shown.body).deep.include({
+      firstName: 'Alfonso',
+      lastName: 'Soriano'
+    })
   }
 
   const assistant = await api('GET', '/me/roles', people.assistant)
@@ -324,7 +327,7 @@ function nonMemberSummary(route: string, body: any): unknown {
 async function roster(run: Run): Promise<void> {
   const { f } = run
   const { people } = f
-  // Somebody on the team who neither plays nor helps: Hank Moss joins the
+  // Somebody on the team who neither plays nor helps: Hank Majeski joins the
   // Hawks with no role.
   await f.h.db
     .insertInto('memberships')
@@ -337,7 +340,7 @@ async function roster(run: Run): Promise<void> {
     })
     .execute()
   // A member of Demo Regular and one of Demo League A, each a member of the
-  // Hawks through it, and a second follower beside Grace Hill.
+  // Hawks through it, and a second follower beside Grant Hartwig.
   const adult = async (
     id: number,
     first: string,
@@ -431,44 +434,44 @@ async function roster(run: Run): Promise<void> {
   const row = (name: string): string => found(name).text
   expect(row('Mike T')).includes('Season coach')
   expect(row('Babe R')).includes('League admin')
-  expect(row('Owen P')).includes('Assistant')
-  expect(row('Nora Q')).includes('Scorekeeper')
+  expect(row('Owen M')).includes('Assistant')
+  expect(row('Nick P')).includes('Scorekeeper')
   expect(row('Ichiro')).includes('Coach')
   expect(row('Ichiro')).not.includes('Season')
-  expect(row('Avery S')).includes('SS · 2B')
-  expect(row('Avery S')).includes('#7')
+  expect(row('Alfonso S')).includes('SS · 2B')
+  expect(row('Alfonso S')).includes('#7')
   expect(row('Tim R')).not.includes('#')
   expect(row('Hank M')).not.includes('#')
   expect(row('Sadie L')).includes('Season spectator')
   expect(row('Leo G')).includes('League spectator')
   // The team's own spectator and the followers carry no pill.
-  for (const name of ['Hank M', 'Grace H', 'Fern A'])
+  for (const name of ['Hank M', 'Grant H', 'Fern A'])
     expect(row(name), name).not.match(/Season|League/)
   // For the team's admin every row opens, with a chevron: a player's page,
   // and staff, family, spectators and followers their profile.
   for (const name of [
     'Babe R',
     'Mike T',
-    'Owen P',
-    'Nora Q',
+    'Owen M',
+    'Nick P',
     'Ichiro',
     'Tim R',
     'Hank M',
     'Leo G',
     'Sadie L',
     'Fern A',
-    'Grace H',
-    'Avery S',
+    'Grant H',
+    'Alfonso S',
     'Ben C',
     'Cody D',
     'Drew E',
-    'Eli F'
+    'Elijah D'
   ]) {
     expect(found(name).button, name).equals(true)
     expect(row(name), name).includes('chevron_right')
   }
   // In its section's order: the team's own staff, then the season's coach.
-  expect(page.indexOf('Owen P')).lessThan(page.indexOf('Mike T'))
+  expect(page.indexOf('Owen M')).lessThan(page.indexOf('Mike T'))
   expect(page.indexOf('Mike T')).lessThan(page.indexOf('PLAYERS'))
   expect(page.indexOf('Tim R')).greaterThan(page.indexOf('FAMILY MEMBERS'))
   // The team's own spectator, then the league's and the season's by name,
@@ -478,7 +481,7 @@ async function roster(run: Run): Promise<void> {
   expect(page.indexOf('Leo G')).lessThan(page.indexOf('Sadie L'))
   expect(page.indexOf('Sadie L')).lessThan(page.indexOf('FOLLOWERS'))
   expect(page.indexOf('FOLLOWERS')).lessThan(page.indexOf('Fern A'))
-  expect(page.indexOf('Fern A')).lessThan(page.indexOf('Grace H'))
+  expect(page.indexOf('Fern A')).lessThan(page.indexOf('Grant H'))
   await run.shot(admin, 'roster-after.png', { fit: true })
   // The place and the gear share the card's right-hand column without
   // touching, and "Demo Hawks" keeps its words whole, on this phone and on a
@@ -568,9 +571,9 @@ async function roster(run: Run): Promise<void> {
 /**
  * The person profile in Chromium, and the people API behind it.
  *
- * The admin adds Grace Hill, who only follows the Hawks, as their Coach from
+ * The admin adds Grant Hartwig, who only follows the Hawks, as their Coach from
  * her profile and takes it away again; Ichiro, their coach, opens Tim
- * Raines's profile, with Avery under "Parent/Guardian of", and has no Admin
+ * Raines's profile, with Alfonso under "Parent/Guardian of", and has no Admin
  * buttons; the admin opens Tim from Demo Regular, where the season's roles
  * change and the league's are for reading; a player who can sign in has
  * Team roles at the bottom of Settings, where one who cannot has none; and
@@ -621,12 +624,12 @@ async function people(run: Run): Promise<void> {
     throw new Error('Never happened')
   }
 
-  // The admin adds Grace as Coach from her profile, and takes it away.
+  // The admin adds Grant as Coach from his profile, and takes it away.
   const admin = await run.signIn('people-admin', people.admin)
   await admin.m.openBrowser({
     url: `${f.h.origin}/teams/${f.teamA}/people/${people.follower}`
   })
-  await contains(admin.page, 'Grace Hill')
+  await contains(admin.page, 'Grant Hartwig')
   await contains(admin.page, 'Team · Demo Hawks')
   expect(await heldRows(admin, 'team')).deep.include({
     admin: 'Off',
@@ -653,7 +656,7 @@ async function people(run: Run): Promise<void> {
   await pressRole(admin, 'team', 'coach')
   await until(async () => (await roleRows(people.follower)).length === 0)
 
-  // Ichiro, the team's coach, opens Tim Raines: Avery under Parent/Guardian
+  // Ichiro, the team's coach, opens Tim Raines: Alfonso under Parent/Guardian
   // of, his roles here changeable, Admin not.
   const coach = await run.signIn('people-coach', people.teamCoach)
   await coach.m.openBrowser({
@@ -661,7 +664,7 @@ async function people(run: Run): Promise<void> {
   })
   await contains(coach.page, 'Tim Raines')
   await contains(coach.page, 'PARENT/GUARDIAN OF')
-  await contains(coach.page, 'Avery S')
+  await contains(coach.page, 'Alfonso S')
   const coachView = await heldRows(coach, 'team')
   expect(coachView.admin).equals('—')
   expect(coachView.coach).equals('Off')
@@ -673,8 +676,8 @@ async function people(run: Run): Promise<void> {
       level
     ).equals(false)
   await run.shot(coach, 'person-profile-team.png', { fit: true })
-  // Avery's row opens Avery, on the Hawks.
-  await coach.m.tapOn({ text: 'Avery S', timeout: 15000 })
+  // Alfonso's row opens Alfonso, on the Hawks.
+  await coach.m.tapOn({ text: 'Alfonso S', timeout: 15000 })
   await coach.page.waitForFunction(
     () => location.pathname.startsWith('/players/'),
     { timeout: 15000 }
@@ -686,7 +689,7 @@ async function people(run: Run): Promise<void> {
     url: `${f.h.origin}/seasons/${f.seasonA}/people/${people.guardian}`
   })
   await contains(admin.page, 'Season · Demo Regular')
-  await contains(admin.page, 'Avery S')
+  await contains(admin.page, 'Alfonso S')
   const page =
     (await admin.page.evaluate(() => document.body.textContent)) ?? ''
   expect(page).includes('SEASON ROLES')
@@ -754,7 +757,7 @@ async function people(run: Run): Promise<void> {
   await until(async () => !(await onHawks(ben.id)))
   expect(await roleRows(ben.id)).deep.equals([])
   await contains(admin.page, 'Removed Ben C from Demo Hawks')
-  await contains(admin.page, 'Avery S')
+  await contains(admin.page, 'Alfonso S')
   const rosterNames = await admin.page.evaluate(() => {
     const roster = document.querySelector('[data-testid="teamTabContent"]')
     if (roster === null) throw new Error('No roster')
@@ -762,7 +765,7 @@ async function people(run: Run): Promise<void> {
       .filter(node => node.children.length === 0)
       .map(node => String(node.textContent))
   })
-  expect(rosterNames).includes('Avery S')
+  expect(rosterNames).includes('Alfonso S')
   expect(rosterNames).includes('Cody D')
   expect(rosterNames).not.includes('Ben C')
   await run.shot(admin, 'player-remove-from-team.png', { fit: true })
@@ -786,7 +789,7 @@ async function people(run: Run): Promise<void> {
   })
   await run.note(
     'api-people.log',
-    'The admin adds Hank Moss, who has an account, as Scorekeeper of Demo Hawks by his address: no invitation.'
+    'The admin adds Hank Majeski, who has an account, as Scorekeeper of Demo Hawks by his address: no invitation.'
   )
   const added = await api(
     'POST',
@@ -816,7 +819,7 @@ async function people(run: Run): Promise<void> {
   expect(await roleRows(people.oneTeam)).deep.equals([])
   await run.note(
     'api-people.log',
-    'Ichiro, coach of the Hawks, may give Grace Hill any role but Admin.'
+    'Ichiro, coach of the Hawks, may give Grant Hartwig any role but Admin.'
   )
   const refused = await api(
     'PUT',
@@ -836,7 +839,7 @@ async function people(run: Run): Promise<void> {
     roles: ['videographer'],
     member: true
   })
-  await run.note('api-people.log', 'Grace steps down as videographer.')
+  await run.note('api-people.log', 'Grant steps down as videographer.')
   const down = await api(
     'DELETE',
     `/me/groups/team/${f.teamA}/roles/videographer`,
@@ -863,7 +866,7 @@ async function player(run: Run): Promise<void> {
   const db = f.h.db
   const { contains } = await import('../test/refinementsMaestro.e2e')
 
-  // A season on each of Avery's teams, so the Teams tab has an order to
+  // A season on each of Alfonso's teams, so the Teams tab has an order to
   // show: Demo Regular is this year's, Demo Playoffs (the Comets') next
   // year's.
   await db
@@ -879,8 +882,8 @@ async function player(run: Run): Promise<void> {
       joined_at: new Date()
     })
     .execute()
-  // A Hawks game outside any season, with one highlight of Avery's, so a
-  // season narrows the Hawks' videos. Stat lines for Avery in all three, so
+  // A Hawks game outside any season, with one highlight of Alfonso's, so a
+  // season narrows the Hawks' videos. Stat lines for Alfonso in all three, so
   // the filter has Demo Regular to offer.
   const extra = {
     id: 'guardian-game-3',
@@ -935,10 +938,10 @@ async function player(run: Run): Promise<void> {
         credits: [
           {
             eventType: 'double',
-            label: 'Double: Avery S',
+            label: 'Double: Alfonso S',
             teamId: f.teamA,
             creditUserId: avery.id,
-            credit: { name: 'Avery S', role: 'batter', position: null }
+            credit: { name: 'Alfonso S', role: 'batter', position: null }
           }
         ]
       }
@@ -1023,11 +1026,11 @@ async function player(run: Run): Promise<void> {
       return node === null ? null : node.textContent
     })) ?? ''
 
-  // The coach opens Avery from the roster.
+  // The coach opens Alfonso from the roster.
   const coach = await run.signIn('player-coach', people.teamCoach)
   await coach.m.openBrowser({ url: `${f.h.origin}/teams/${f.teamA}?tab=team` })
   await contains(coach.page, 'PLAYERS')
-  await coach.m.tapOn({ css: '[aria-label^="Avery S"]', timeout: 15000 })
+  await coach.m.tapOn({ css: '[aria-label^="Alfonso S"]', timeout: 15000 })
   await coach.page.waitForSelector('[aria-label="Filter videos"]', {
     timeout: 20000
   })
@@ -1075,7 +1078,7 @@ async function player(run: Run): Promise<void> {
     f.seasonA
   )
 
-  // Teams: only the teams the coach can see, each once with Avery's number
+  // Teams: only the teams the coach can see, each once with Alfonso's number
   // there; the game outside any season adds no second Hawks row.
   await coach.m.tapOn({ text: 'Teams', role: 'tab', timeout: 15000 })
   await contains(coach.page, 'Demo Regular')
@@ -1112,7 +1115,7 @@ async function player(run: Run): Promise<void> {
     hands: document.querySelectorAll('[role="radio"]').length,
     text: document.body.textContent
   }))
-  expect(form.name).deep.equals(['Avery', 'Stone'])
+  expect(form.name).deep.equals(['Alfonso', 'Soriano'])
   expect(form.jersey).equals('7')
   expect(form.on).deep.equals(['2B', 'SS'])
   expect(form.hands).equals(0)
@@ -1120,7 +1123,7 @@ async function player(run: Run): Promise<void> {
   expect(form.text).not.includes('THROWS')
   await run.shot(coach, 'player-settings-team-after.png')
 
-  // The guardian sees every team Avery plays on, newest season first.
+  // The guardian sees every team Alfonso plays on, newest season first.
   const guardian = await run.signIn('player-guardian', people.guardian)
   await guardian.m.openBrowser({
     url: `${f.h.origin}/players/${avery.id}?tab=teams&onTeam=${f.teamA}`
@@ -1142,14 +1145,14 @@ async function player(run: Run): Promise<void> {
 /**
  * Guardians in the app. The coach invites the first guardian of Cody, who
  * has none, by address from Settings; once Cody has one, the coach's
- * Settings offers no invitation and the API refuses the team's. Tim, Avery's
- * guardian, invites a second guardian from Avery's Settings; the invitee
- * accepts in their notifications, opens Avery from the team and saves the
- * jersey and positions, and finds the walk-up song they set. Avery leaves
+ * Settings offers no invitation and the API refuses the team's. Tim, Alfonso's
+ * guardian, invites a second guardian from Alfonso's Settings; the invitee
+ * accepts in their notifications, opens Alfonso from the team and saves the
+ * jersey and positions, and finds the walk-up song they set. Alfonso leaves
  * the Comets and the guardian loses that team. A member who is a stranger to
  * Ben asks to be his guardian and Ben, whose account signs in, approves. One
  * user is stopped at a sixth waiting request; another, after three declined
- * by Avery's guardian and by the coach of two players with none, is told the
+ * by Alfonso's guardian and by the coach of two players with none, is told the
  * date they may ask again, and on that date may.
  */
 async function guardian(run: Run): Promise<void> {
@@ -1376,7 +1379,7 @@ async function guardian(run: Run): Promise<void> {
   expect(jade.body.status).equals('accepted')
   expect(await guardiansOf(cody.id)).deep.equals([first])
 
-  // Cody has a guardian now: the coach's Settings for him, as for Avery,
+  // Cody has a guardian now: the coach's Settings for him, as for Alfonso,
   // offers no invitation, and the team's is refused.
   for (const p of [cody, avery]) {
     await openSettings(coach, p.id)
@@ -1399,7 +1402,7 @@ async function guardian(run: Run): Promise<void> {
     'Cody D has a guardian already. Ask them to invite another guardian.'
   )
 
-  // Tim, Avery's guardian, invites Faye from Avery's Settings beside the
+  // Tim, Alfonso's guardian, invites Faye from Alfonso's Settings beside the
   // Hawks, in his own name.
   const tim = await run.signIn('guardian-tim', people.guardian)
   await openSettings(tim, avery.id)
@@ -1414,13 +1417,13 @@ async function guardian(run: Run): Promise<void> {
   expect(byTim.map(row => row.player)).deep.equals([avery.id])
   const mailed = f.h.invitations.get('invitee@example.com')
   expect(mailed).deep.include({
-    playerName: 'Avery S',
+    playerName: 'Alfonso S',
     invitedBy: 'Tim Raines'
   })
   expect(mailed).not.has.property('teamName')
   const timSent = await api('GET', '/me/notifications?sent=1', people.guardian)
   expect(timSent.body.items.map((item: any) => item.title)).deep.equals([
-    'Be a guardian of Avery S'
+    'Be a guardian of Alfonso S'
   ])
   const beforeTeams = await api('GET', '/teams', invitee)
   expect(beforeTeams.body).deep.equals([])
@@ -1428,10 +1431,10 @@ async function guardian(run: Run): Promise<void> {
   // Faye accepts in her notifications.
   const faye = await run.signIn('guardian-invitee', invitee)
   await faye.m.openBrowser({ url: `${f.h.origin}/notifications` })
-  await contains(faye.page, 'Be a guardian of Avery S')
+  await contains(faye.page, 'Be a guardian of Alfonso S')
   await contains(faye.page, 'Tim Raines invited you')
   await faye.m.tapOn({
-    css: '[aria-label="Be a guardian of Avery S"]',
+    css: '[aria-label="Be a guardian of Alfonso S"]',
     timeout: 15000
   })
   await contains(faye.page, 'Accept invitation')
@@ -1440,7 +1443,7 @@ async function guardian(run: Run): Promise<void> {
   expect(await guardiansOf(avery.id)).deep.equals([people.guardian, invitee])
   const inbox = await api('GET', '/me/notifications?history=1', invitee)
   expect(inbox.body.items[0]).deep.include({
-    title: 'Be a guardian of Avery S',
+    title: 'Be a guardian of Alfonso S',
     status: 'accepted'
   })
   const roles = await api('GET', '/me/roles', invitee)
@@ -1450,8 +1453,8 @@ async function guardian(run: Run): Promise<void> {
     [f.teamA, f.secondTeam].sort()
   )
 
-  // She opens Avery from the Hawks and saves his number and positions.
-  await openFromRoster(faye, 'Avery S', avery.id)
+  // She opens Alfonso from the Hawks and saves his number and positions.
+  await openFromRoster(faye, 'Alfonso S', avery.id)
   await faye.m.tapOn({
     text: 'Player settings',
     role: 'button',
@@ -1513,7 +1516,7 @@ async function guardian(run: Run): Promise<void> {
   expect(new URL(faye.page.url()).searchParams.get('tab')).equals('walkup')
   await run.shot(faye, 'guardian-walkup.png')
 
-  // Avery leaves the Comets, and Faye, who is there only through him, loses
+  // Alfonso leaves the Comets, and Faye, who is there only through him, loses
   // the team.
   const comets = await api('GET', `/teams/${f.secondTeam}`, invitee)
   expect(comets.body.canViewPrivate).equals(true)
@@ -1558,7 +1561,7 @@ async function guardian(run: Run): Promise<void> {
   // Ben signs in and approves.
   const benSession = await run.signIn('guardian-player', ben.id)
   await benSession.m.openBrowser({ url: `${f.h.origin}/notifications` })
-  const asked = "Hank Moss asks to be Ben C's guardian"
+  const asked = "Hank Majeski asks to be Ben C's guardian"
   await contains(benSession.page, asked)
   await benSession.m.tapOn({ css: `[aria-label="${asked}"]`, timeout: 15000 })
   await tap(benSession.m, 'Accept invitation')
@@ -1593,7 +1596,7 @@ async function guardian(run: Run): Promise<void> {
   expect(sixth.body).deep.include({ code: 'rateLimited', message: limit })
   expect(await requestsBy(asker, 'pending')).has.length(5)
 
-  // Ivy has three requests declined, by those with a say: Tim for Avery,
+  // Ivy has three requests declined, by those with a say: Tim for Alfonso,
   // and the coach for Drew and Finn, who have no guardian. The fourth is
   // refused until a week after the third decline.
   for (const [p, decider] of [
@@ -1622,8 +1625,8 @@ async function guardian(run: Run): Promise<void> {
   })
   const blocked = `Three guardian requests were declined. You can ask again on ${retryOn}.`
   const ivy = await run.signIn('guardian-declined', declined)
-  await openFromRoster(ivy, 'Eli F', eli.id)
-  await ask(ivy, 'Eli F')
+  await openFromRoster(ivy, 'Elijah D', eli.id)
+  await ask(ivy, 'Elijah D')
   await contains(ivy.page, blocked)
   expect(await requestLabel(ivy)).equals('Request to be a guardian')
   await run.shot(ivy, 'guardian-blocked.png')
@@ -1645,7 +1648,7 @@ async function guardian(run: Run): Promise<void> {
   await ivy.page.reload()
   await settle(ivy)
   expect(await requestLabel(ivy)).equals('Request to be a guardian')
-  await ask(ivy, 'Eli F')
+  await ask(ivy, 'Elijah D')
   await contains(ivy.page, 'Guardian request sent')
   expect(await bodyText(ivy)).not.includes(
     'Three guardian requests were declined'
@@ -1657,21 +1660,21 @@ async function guardian(run: Run): Promise<void> {
   expect(ivySent.body.items).deep.equals([
     {
       ...ivySent.body.items[0],
-      title: "Ivy Jones asks to be Eli F's guardian",
+      title: "Ivy Jones asks to be Elijah D's guardian",
       status: 'pending'
     }
   ])
 }
 
 /**
- * The non-member view in the app. Grace Hill follows Demo Hawks and belongs
+ * The non-member view in the app. Grant Hartwig follows Demo Hawks and belongs
  * to neither team: she reads every name on the roster without a photo, the
  * season's performance, the schedule with its thumbnails, and on a game the
  * score, the records, the line score and the highlights' pictures. The rest
  * says it is for members, in the page's own text colour on the page, with no
  * empty player box, and the app never asks for what the server keeps for
  * members. A game nothing was recorded of says "No videos." with no player
- * box. Hank Moss, who follows nothing here, opens the Hawks from Search and
+ * box. Hank Majeski, who follows nothing here, opens the Hawks from Search and
  * gets the same page, bar the Follow button.
  */
 async function follower(run: Run): Promise<void> {
@@ -1686,7 +1689,7 @@ async function follower(run: Run): Promise<void> {
     'You need to be a member of one of these teams to see individual player stats.'
   // As the `api` stage: the Hawks compete in Demo Regular, so the season has
   // a table and the games records; the first game has its innings and its
-  // totals; and Avery has a photo, which a non-member is not sent.
+  // totals; and Alfonso has a photo, which a non-member is not sent.
   await f.h.db
     .insertInto('season_teams')
     .values({ season_id: f.seasonA, team_id: f.teamA, joined_at: new Date() })
@@ -1785,21 +1788,21 @@ async function follower(run: Run): Promise<void> {
   for (const name of [
     'Babe R',
     'Ichiro',
-    'Nora Q',
-    'Owen P',
+    'Nick P',
+    'Owen M',
     'Mike T',
-    'Avery S',
+    'Alfonso S',
     'Ben C',
     'Cody D',
     'Drew E',
-    'Eli F',
+    'Elijah D',
     'Tim R'
   ])
     expect(roster, name).includes(name)
   for (const heading of ['ADMINS', 'STAFF', 'PLAYERS', 'FAMILY MEMBERS'])
     expect(roster, heading).includes(heading)
   // Initials in every circle, and no picture of anybody.
-  expect(roster).includes('ASAvery S')
+  expect(roster).includes('ASAlfonso S')
   const pictures = await grace.page.evaluate(() =>
     [...document.querySelectorAll('img')].map(image => image.src)
   )
@@ -1808,7 +1811,7 @@ async function follower(run: Run): Promise<void> {
   expect(
     await grace.page.evaluate(
       () =>
-        document.querySelectorAll('[role="button"][aria-label^="Avery S"]')
+        document.querySelectorAll('[role="button"][aria-label^="Alfonso S"]')
           .length
     )
   ).equals(0)
@@ -1914,7 +1917,7 @@ async function follower(run: Run): Promise<void> {
   expect(await playerBox(grace)).equals(false)
   await readable(grace, videosMembersOnly)
   const watch = await text()
-  const firstPlay = watch.indexOf('Avery S')
+  const firstPlay = watch.indexOf('Alfonso S')
   expect(firstPlay).greaterThan(0)
   expect(watch.indexOf(videosMembersOnly)).lessThan(firstPlay)
   expect(watch).not.includes('All angles')
@@ -1941,7 +1944,7 @@ async function follower(run: Run): Promise<void> {
       const words = item.textContent
       return (
         words !== null &&
-        words.includes('Avery S') &&
+        words.includes('Alfonso S') &&
         item.querySelector('img') !== null
       )
     })
@@ -1949,13 +1952,13 @@ async function follower(run: Run): Promise<void> {
     node.scrollIntoView({ block: 'center' })
     return node.textContent
   })
-  expect(play).includes('Avery S')
+  expect(play).includes('Alfonso S')
   await grace.page.evaluate(() => {
     const node = [...document.querySelectorAll('[tabindex="0"]')].find(item => {
       const words = item.textContent
       return (
         words !== null &&
-        words.includes('Avery S') &&
+        words.includes('Alfonso S') &&
         item.querySelector('img') !== null
       )
     })
@@ -1977,7 +1980,7 @@ async function follower(run: Run): Promise<void> {
       const tapped = repeated === null ? null : repeated.parentElement
       const words = tapped === null ? null : tapped.textContent
       // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
-      return words !== null && words.includes('Avery S')
+      return words !== null && words.includes('Alfonso S')
     })
   ).equals(true)
   expect(new URL(grace.page.url()).searchParams.get('t')).equals(null)
@@ -2015,7 +2018,7 @@ async function follower(run: Run): Promise<void> {
   ).deep.equals([])
 
   // Hank follows nothing here and opens the Hawks from Search: the same page
-  // Grace reads, bar the Follow button.
+  // Grant reads, bar the Follow button.
   const hank = await run.signIn('follower-search', people.oneTeam)
   await hank.m.openBrowser({ url: `${f.h.origin}/discover` })
   await tap(hank.m, 'Teams')
@@ -2035,11 +2038,11 @@ async function follower(run: Run): Promise<void> {
   await settle(hank)
   const found =
     (await hank.page.evaluate(() => document.body.textContent)) ?? ''
-  for (const name of ['Babe R', 'Ichiro', 'Avery S', 'Tim R'])
+  for (const name of ['Babe R', 'Ichiro', 'Alfonso S', 'Tim R'])
     expect(found, name).includes(name)
   for (const heading of ['ADMINS', 'STAFF', 'PLAYERS', 'FAMILY MEMBERS'])
     expect(found, heading).includes(heading)
-  expect(found).includes('ASAvery S')
+  expect(found).includes('ASAlfonso S')
   expect(found).not.includes('Team membership is required')
   expect(found).not.includes('Standalone team')
   expect(
@@ -2089,11 +2092,11 @@ async function follower(run: Run): Promise<void> {
 }
 
 /**
- * Home. The guardian finds Avery under "Your Players", above "Your teams",
+ * Home. The guardian finds Alfonso under "Your Players", above "Your teams",
  * and a large card for each kind they have nothing in under the team
- * (`home-after.png`). Opened from there, Avery's page is his whole career,
+ * (`home-after.png`). Opened from there, Alfonso's page is his whole career,
  * its Teams tab still has the Comets he has left, and its Settings are how he
- * bats and throws, which the guardian saves. Hank Moss, with one team and
+ * bats and throws, which the guardian saves. Hank Majeski, with one team and
  * nothing else, gets a large card for each of the other two kinds under his
  * team (`home-one-team.png`, beside `home-before.png`).
  */
@@ -2104,7 +2107,7 @@ async function home(run: Run): Promise<void> {
   const db = f.h.db
   const { contains } = await import('../test/refinementsMaestro.e2e')
 
-  // A Comets game Avery played, so the team stays on his page after he
+  // A Comets game Alfonso played, so the team stays on his page after he
   // leaves it, and a stat line on each team for the career to add up.
   const comets = {
     id: 'guardian-game-comets',
@@ -2142,7 +2145,7 @@ async function home(run: Run): Promise<void> {
         singles: h
       })
       .execute()
-  // Avery leaves the Comets.
+  // Alfonso leaves the Comets.
   const removed = await f.h.request(
     'DELETE',
     `/manage/team/${f.secondTeam}/people/${avery.id}`,
@@ -2179,7 +2182,7 @@ async function home(run: Run): Promise<void> {
       )
     ).map(name => name ?? '')
 
-  // The guardian's Home: Avery above the team he plays on.
+  // The guardian's Home: Alfonso above the team he plays on.
   const guardian = await run.signIn('home-guardian', people.guardian)
   await guardian.m.openBrowser({ url: `${f.h.origin}/` })
   await contains(guardian.page, 'YOUR PLAYERS')
@@ -2192,7 +2195,7 @@ async function home(run: Run): Promise<void> {
   }
   const guardianOrder = inOrder(guardianHome, [
     'YOUR PLAYERS',
-    'Avery S',
+    'Alfonso S',
     'YOUR TEAMS',
     'Demo Hawks',
     'Create League',
@@ -2201,7 +2204,7 @@ async function home(run: Run): Promise<void> {
     'Create a season or tournament'
   ])
   expect(guardianOrder.every(at => at >= 0)).equals(true)
-  // The Comets went with Avery; the kinds the guardian has nothing in are
+  // The Comets went with Alfonso; the kinds the guardian has nothing in are
   // large cards under the team.
   expect(guardianHome).not.includes('Demo Comets')
   expect((await controls(guardian, 'Create League'))[0]).includes(
@@ -2212,8 +2215,8 @@ async function home(run: Run): Promise<void> {
   )
   await run.shot(guardian, 'home-after.png', { fit: true })
 
-  // Opened from Home, Avery's page has no team: his whole career.
-  await guardian.m.tapOn({ css: '[aria-label="Avery S"]', timeout: 15000 })
+  // Opened from Home, Alfonso's page has no team: his whole career.
+  await guardian.m.tapOn({ css: '[aria-label="Alfonso S"]', timeout: 15000 })
   await guardian.page.waitForSelector('[aria-label="Filter videos"]', {
     timeout: 20000
   })
@@ -2290,7 +2293,7 @@ async function home(run: Run): Promise<void> {
   })
   await run.shot(guardian, 'guardian-settings-home.png')
 
-  // Hank Moss runs one team and nothing else: a large card for a league
+  // Hank Majeski runs one team and nothing else: a large card for a league
   // and one for a season, under it.
   const hank = await run.signIn('home-one-team', people.oneTeam)
   await hank.m.openBrowser({ url: `${f.h.origin}/` })
@@ -2674,7 +2677,7 @@ function oneLinePerField(value: unknown): string {
   return JSON.stringify(value)
 }
 
-/** `Owen Pratt (assistant)`, for the API logs. */
+/** `Owen Miller (assistant)`, for the API logs. */
 async function userNames(f: GuardianFixture): Promise<Map<string, string>> {
   const rows = await f.h.db
     .selectFrom('users')

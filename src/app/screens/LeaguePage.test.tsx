@@ -305,7 +305,7 @@ describe('a league’s People tab', () => {
           asRosterEntry({
             userId: userIdOfGumbo(201),
             gumboId: 201,
-            shortName: 'Avery S',
+            shortName: 'Alfonso S',
             jersey: null,
             positions: [],
             isPlayer: true,
@@ -351,7 +351,7 @@ describe('a league’s People tab', () => {
         }}
       />
     )
-    for (const name of ['Avery S', 'Leo G']) {
+    for (const name of ['Alfonso S', 'Leo G']) {
       const row = [
         ...document.querySelectorAll<HTMLElement>('[role="button"]')
       ].find(node => node.textContent?.includes(name) === true)
@@ -361,7 +361,7 @@ describe('a league’s People tab', () => {
         await new Promise(resolve => setTimeout(resolve, 20))
       })
     }
-    expect(players).deep.equals([[userIdOfGumbo(201), 'Avery S']])
+    expect(players).deep.equals([[userIdOfGumbo(201), 'Alfonso S']])
     expect(persons).deep.equals([
       [{ kind: 'league', id: league.id }, userIdOfGumbo(271)]
     ])

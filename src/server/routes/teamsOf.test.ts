@@ -333,9 +333,9 @@ describe('the teams and seasons a player has played in', function () {
  * played for, every figure and every highlight, the teams the child has left
  * included. A coach of one of those teams reads that team's part alone.
  *
- * On `guardianFixture`: Avery (201) plays for Demo Hawks and Demo Comets, and
+ * On `guardianFixture`: Alfonso (201) plays for Demo Hawks and Demo Comets, and
  * Tim Raines (106) is his guardian with no membership of his own. A Comets
- * game with a video, a credited play and stat lines is added, then Avery
+ * game with a video, a credited play and stat lines is added, then Alfonso
  * leaves the Comets.
  */
 describe('a guardian reading their child’s page', function () {
@@ -397,10 +397,10 @@ describe('a guardian reading their child’s page', function () {
           credits: [
             {
               eventType: 'double',
-              label: 'Double: Avery S',
+              label: 'Double: Alfonso S',
               teamId: f.secondTeam,
               creditUserId: avery,
-              credit: { name: 'Avery S', role: 'batter', position: null }
+              credit: { name: 'Alfonso S', role: 'batter', position: null }
             }
           ]
         }
@@ -443,7 +443,7 @@ describe('a guardian reading their child’s page', function () {
         }))
       )
       .execute()
-    // Avery leaves the Comets.
+    // Alfonso leaves the Comets.
     await db
       .deleteFrom('memberships')
       .where('user_id', '=', userIdOfGumbo(avery))

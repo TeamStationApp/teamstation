@@ -795,27 +795,27 @@ describe('the home screen’s players', function () {
     const calls = await mount({
       players: async () => [
         guarded(7, 'Jordan P', 'https://img.example/jordan.jpg'),
-        guarded(8, 'Avery S')
+        guarded(8, 'Alfonso S')
       ],
       teams: async () => [team('tem_hawks', 'Alta Hawks')]
     })
     const page = text()
     expect(page).includes('YOUR PLAYERS')
     expect(page.indexOf('YOUR PLAYERS')).lessThan(page.indexOf('YOUR TEAMS'))
-    expect(page.indexOf('Avery S')).lessThan(page.indexOf('Alta Hawks'))
+    expect(page.indexOf('Alfonso S')).lessThan(page.indexOf('Alta Hawks'))
     // In the order the server sorted them, the picture where there is one.
-    expect(page.indexOf('Jordan P')).lessThan(page.indexOf('Avery S'))
+    expect(page.indexOf('Jordan P')).lessThan(page.indexOf('Alfonso S'))
     expect(
       document.querySelector('img[src="https://img.example/jordan.jpg"]')
     ).not.equals(null)
-    labelled('Avery S')
+    labelled('Alfonso S')
 
     await press(labelled('Jordan P'))
-    await press(labelled('Avery S'))
+    await press(labelled('Alfonso S'))
     // A name and nothing else: no team, so the page opens on the career.
     expect(calls.players).deep.equals([
       [userIdOfGumbo(7), 'Jordan P'],
-      [userIdOfGumbo(8), 'Avery S']
+      [userIdOfGumbo(8), 'Alfonso S']
     ])
     expect(calls.teams).deep.equals([])
   })
