@@ -68,18 +68,14 @@ public struct TeamStationUser: Sendable, Codable, Equatable {
     self.isAdmin = isAdmin
   }
 
-  /// TeamStation sends `id` as a JSON number (a 53-bit integer). Swift's
-  /// default `String` decode refuses that, so a correct sign-in came back
-  /// unreadable, the waiting screen never cleared, and the two-second poll
-  /// minted a fresh session on every tick.
+  /// Current API replies carry a validated canonical account identity.
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    if let text = try? container.decode(String.self, forKey: .id) {
-      id = text
-    } else {
-      let number = try container.decode(Int64.self, forKey: .id)
-      id = String(number)
+    let text = try container.decode(String.self, forKey: .id)
+    guard let canonical = TeamStationUserID.canonical(text) else {
+      throw EventControlCredentials.Problem.badUserId
     }
+    id = canonical
     displayName = try container.decode(String.self, forKey: .displayName)
     email = try container.decodeIfPresent(String.self, forKey: .email)
     isAdmin = try container.decode(Bool.self, forKey: .isAdmin)
@@ -277,7 +273,7 @@ public struct TeamStationEventControlKey: Sendable, Codable, Equatable, CustomSt
   public let version: Int
   /// The server's canonical public origin, as the server states it.
   public let issuer: String
-  /// The signed-in user's ID, in decimal.
+  /// The signed-in user's canonical account ID.
   public let userId: String
   /// 32 hex characters, equal on every device of the account.
   public let accountTag: String
@@ -287,7 +283,7 @@ public struct TeamStationEventControlKey: Sendable, Codable, Equatable, CustomSt
   public let key: String
 
   public init(
-    version: Int = 1,
+    version: Int = 2,
     issuer: String,
     userId: String,
     accountTag: String,
@@ -306,18 +302,15 @@ public struct TeamStationEventControlKey: Sendable, Codable, Equatable, CustomSt
     case version, issuer, userId, accountTag, keyId, key
   }
 
-  /// `userId` arrives as a string; a number is read too, as `TeamStationUser.id` is.
+  /// Validate the same v2 contract as the signing implementation.
   public init(from decoder: Decoder) throws {
+    let credentials = try EventControlCredentials(from: decoder)
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
-    issuer = try container.decode(String.self, forKey: .issuer)
-    if let text = try? container.decode(String.self, forKey: .userId) {
-      userId = text
-    } else {
-      userId = String(try container.decode(Int64.self, forKey: .userId))
-    }
-    accountTag = try container.decode(String.self, forKey: .accountTag)
-    keyId = try container.decode(String.self, forKey: .keyId)
+    version = 2
+    issuer = credentials.scope.issuer
+    userId = credentials.scope.userId
+    accountTag = credentials.scope.accountTag
+    keyId = credentials.keyId
     key = try container.decode(String.self, forKey: .key)
   }
 
@@ -337,7 +330,7 @@ public struct TeamStationEventControlKey: Sendable, Codable, Equatable, CustomSt
 public struct TeamStationAccountScope: Sendable, Codable, Equatable {
   /// The canonical origin of the server the token was issued by (`origin(of:)`).
   public let server: String
-  /// The user's ID on that server, in decimal.
+  /// The user's canonical account ID on that server.
   public let userId: String
 
   public init(server: String, userId: String) {
