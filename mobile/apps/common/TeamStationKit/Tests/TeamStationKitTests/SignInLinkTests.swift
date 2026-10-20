@@ -37,7 +37,7 @@ struct SignInLinkReadTests {
   }
 
   @Test func saysWhatHappened() {
-    #expect(SignInLinkOutcome.signedIn(displayName: "Pat").message == "Signed in to TeamStation as Pat")
+    #expect(SignInLinkOutcome.signedIn(displayName: "Hank Aaron").message == "Signed in to TeamStation as Hank Aaron")
     #expect(
       SignInLinkOutcome.wrongServer(server: "https://b.example.test", own: own).message
         == "This link is for https://b.example.test. This app signs in to https://api.example.test."
@@ -95,7 +95,7 @@ private final class LinkServer: URLProtocol, @unchecked Sendable {
         status = 401
         body = #"{"code":"unauthorized","message":"That link is no longer good"}"#
       } else {
-        body = #"{"token":"session","expiresAt":"2027-04-01T00:00:00Z","user":{"id":"7","displayName":"Pat","email":null,"isAdmin":false}}"#
+        body = #"{"token":"session","expiresAt":"2027-04-01T00:00:00Z","user":{"id":"usr_1111111111111111111118","displayName":"Hank Aaron","email":null,"isAdmin":false}}"#
       }
     default:
       status = 404
@@ -161,9 +161,9 @@ struct SignInLinkAccountTests {
     let keychain = KeychainStore.inMemory()
     let subject = account(keychain: keychain)
     let outcome = await subject.signIn(link: URL(string: "https://app1.example.test/signin/\(token)")!)
-    #expect(outcome == .signedIn(displayName: "Pat"))
+    #expect(outcome == .signedIn(displayName: "Hank Aaron"))
     #expect(keychain.token() == "session")
-    #expect(subject.user?.displayName == "Pat")
+    #expect(subject.user?.displayName == "Hank Aaron")
     let body = try #require(LinkServer.bodies["/api/v1/auth/link/verify"])
     #expect(body.contains(#""deviceName":"Bench iPad""#))
     #expect(!LinkServer.asked.contains("/oauth/.well-known/openid-configuration"))
@@ -174,7 +174,7 @@ struct SignInLinkAccountTests {
     try await subject.startSignIn(email: "pat@example.com")
     #expect(subject.waiting?.requestId == "emc_1")
     let outcome = await subject.signIn(link: URL(string: "https://app1.example.test/signin/\(token)")!)
-    #expect(outcome == .signedIn(displayName: "Pat"))
+    #expect(outcome == .signedIn(displayName: "Hank Aaron"))
     let body = try #require(LinkServer.bodies["/api/v1/auth/link/verify"])
     #expect(body.contains(#""requestId":"emc_1""#))
     #expect(subject.waiting == nil)
@@ -189,7 +189,7 @@ struct SignInLinkAccountTests {
     let outcome = await subject.signIn(
       link: URL(string: "https://app1.example.test/signin/\(token)?server=https%3A%2F%2Fweb.example.test")!
     )
-    #expect(outcome == .signedIn(displayName: "Pat"))
+    #expect(outcome == .signedIn(displayName: "Hank Aaron"))
     #expect(LinkServer.asked == [ "/oauth/.well-known/openid-configuration", "/api/v1/auth/link/verify" ])
   }
 
