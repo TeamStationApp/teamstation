@@ -61,7 +61,9 @@
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Choose a profile picture for your TeamStation account.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Suggest a city and region for your league or team. You can enter a location yourself.</string>
+	<string>TeamStation uses your approximate location to find nearby events, teams and venues.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>TeamStation uses your approximate location to find nearby events, teams and venues. It never uses your location in the background.</string>
 	<key>NSLocationDefaultAccuracyReduced</key>
 	<true/>
 	<key>RCTNewArchEnabled</key>
