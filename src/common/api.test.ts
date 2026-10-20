@@ -463,7 +463,7 @@ describe('api client', function () {
   })
 
   it("reads a team's default lineup and a game's lineups", async function () {
-    const person = { gumboId: 7, name: 'Jordan P', jersey: '12' }
+    const person = { gumboId: 7, name: 'Jorge P', jersey: '12' }
     const defense = {
       P: person,
       C: null,
@@ -506,7 +506,7 @@ describe('api client', function () {
           position: 'P',
           battingOrder: null,
           replaced: null,
-          description: 'Pitching Change: Jordan P replaces Ott O.'
+          description: 'Pitching Change: Jorge P replaces Mel O.'
         }
       ],
       current: { batters: [person], defense }
@@ -532,7 +532,7 @@ describe('api client', function () {
       side: 'home',
       base: 'd1',
       players: [
-        { gumboId: 7, fullName: 'Jordan P', jersey: '12' },
+        { gumboId: 7, fullName: 'Jorge P', jersey: '12' },
         { gumboId: null, fullName: 'Guest', jersey: '' }
       ],
       battingOrder: [1, 0],
@@ -941,7 +941,7 @@ describe('api client', function () {
         userId: userIdOfGumbo(7),
         gumboId: null,
         externalIds: [],
-        shortName: 'Avery S',
+        shortName: 'Alfonso S',
         avatarUrl: null
       }
     ])
@@ -951,7 +951,7 @@ describe('api client', function () {
         userId: userIdOfGumbo(7),
         gumboId: null,
         externalIds: [],
-        shortName: 'Avery S',
+        shortName: 'Alfonso S',
         avatarUrl: null
       }
     ])

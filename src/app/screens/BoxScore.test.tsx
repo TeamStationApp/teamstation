@@ -388,7 +388,7 @@ describe('the box score module (U24)', function () {
       ...BLAIR,
       userId: userIdOfGumbo(4),
       gumboId: 4,
-      shortName: 'Drew',
+      shortName: 'Drew Smyly',
       teamId: 'home'
     })
   ]

@@ -1027,11 +1027,11 @@ describe('a player opened from Home, through the app', function () {
                   userId: userIdOfGumbo(7),
                   gumboId: 7,
                   externalIds: [],
-                  shortName: 'Jordan P'
+                  shortName: 'Jorge P'
                 }
               ]
             : path.endsWith('/players/usr_1111111111111111111118')
-              ? { userId: userIdOfGumbo(7), name: 'Jordan P', teams: [] }
+              ? { userId: userIdOfGumbo(7), name: 'Jorge P', teams: [] }
               : path.endsWith('/players/usr_1111111111111111111118/highlights')
                 ? { highlights: [], nextBefore: null, withoutVideo: 0 }
                 : []
@@ -1049,7 +1049,7 @@ describe('a player opened from Home, through the app', function () {
       await delay(50)
     })
     expect(text()).includes('YOUR PLAYERS')
-    await press(labelled('Jordan P'))
+    await press(labelled('Jorge P'))
     await act(async () => {
       await delay(50)
     })
