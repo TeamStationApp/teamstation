@@ -1,5 +1,6 @@
 package app.teamstation.cameraman.scoreboard
 
+import app.teamstation.cameraman.eventcontrol.TeamStationUserId
 import app.teamstation.cameraman.eventcontrol.EventControlCredentials
 import app.teamstation.cameraman.eventcontrol.EventControlFetchException
 import app.teamstation.cameraman.eventcontrol.EventControlFetchFailure
@@ -74,7 +75,7 @@ internal interface ScoreboardAccount {
      */
     fun issuer(server: String): String?
 
-    /** `GET auth/me`: the canonical user ID, in decimal, of the account [token] belongs to. */
+    /** `GET auth/me`: the canonical user ID, of the account [token] belongs to. */
     fun me(server: String, token: String): String
 
     /** `GET device-event-control/key` with this device's own [token]: the server's JSON reply. */
@@ -100,15 +101,9 @@ internal fun ScoreboardAccount.eventControlKeyFetcher(): EventControlKeyFetcher 
         EventControlCredentials.decode(reply)
     }
 
-/** A user ID as the server writes it, a JSON number or string, in decimal; empty when absent. */
-internal fun decimalUserId(raw: Any?): String {
-    val text = when (raw) {
-        is Int, is Long -> raw.toString()
-        is String -> raw.trim()
-        else -> return ""
-    }
-    return if (text.isNotEmpty() && text.length <= 32 && text.all { it in '0'..'9' }) text else ""
-}
+/** Current server identities are canonical strings; empty when malformed or absent. */
+internal fun decimalUserId(raw: Any?): String =
+    (raw as? String)?.let(TeamStationUserId::canonical).orEmpty()
 
 internal class OkHttpScoreboardAccount(
     private val client: OkHttpClient = OkHttpClient()
