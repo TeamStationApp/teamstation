@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { TeamStationClient } from '../../common/api'
 import { asEventInfo, type EventInfo } from '../../common/eventInfo'
 import { makeId } from '../../common/ids'
-import { migration057EventInfo } from '../../migrate/migrations/057eventInfo'
+import { userIdOfGumbo } from '../../common/userId'
 import { seedEventInfo2People } from '../../test/eventInfo2Fixture'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { mergeTeams } from '../admin/mergeTeams'
@@ -78,7 +78,7 @@ describe('real event info and guardian attendance', function () {
         .insertInto('memberships')
         .values({
           id: makeId('membership'),
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           team_id: f.teamA,
           is_player: true
         })
@@ -87,8 +87,8 @@ describe('real event info and guardian attendance', function () {
         .insertInto('user_links')
         .values({
           id: makeId('userLink'),
-          user_id: 101,
-          related_user_id: userId,
+          user_id: userIdOfGumbo(101),
+          related_user_id: userIdOfGumbo(userId),
           kind: 'guardian',
           can_manage: false
         })
@@ -257,18 +257,20 @@ describe('real event info and guardian attendance', function () {
     await f.h.db
       .updateTable('users')
       .set({ avatar_path: 'fixtures/player.png' })
-      .where('id', '=', 108)
+      .where('id', '=', userIdOfGumbo(108))
       .execute()
     const read = await info(gameId)
-    expect(read.attendees.find(row => row.userId === 108)?.avatarUrl).is.a(
-      'string'
-    )
+    expect(
+      read.attendees.find(row => row.userId === userIdOfGumbo(108))?.avatarUrl
+    ).is.a('string')
     expect(read.teamId).equals(f.teamA)
     expect(read.attendees.map(row => row.userId))
-      .not.includes(102)
+      .not.includes(userIdOfGumbo(102))
       .and.not.includes(109)
       .and.not.includes(110)
-    expect(read.attendees.find(row => row.userId === 108)).includes({
+    expect(
+      read.attendees.find(row => row.userId === userIdOfGumbo(108))
+    ).includes({
       name: 'Mookie B',
       isPlayer: true,
       isTeamParticipant: true,
@@ -276,20 +278,24 @@ describe('real event info and guardian attendance', function () {
       throws: 'right'
     })
     expect(
-      read.attendees.find(row => row.userId === 108)?.staffRoles
+      read.attendees.find(row => row.userId === userIdOfGumbo(108))?.staffRoles
     ).deep.equals(['coach'])
     expect(
-      read.attendees.find(row => row.userId === 108)?.positions
+      read.attendees.find(row => row.userId === userIdOfGumbo(108))?.positions
     ).deep.equals(['SS', 'CF'])
     expect(
-      read.attendees.find(row => row.userId === 105)?.guardianOf
+      read.attendees.find(row => row.userId === userIdOfGumbo(105))?.guardianOf
     ).deep.equals(['Mike T'])
-    expect(read.attendees.find(row => row.userId === 101)?.name).equals(
-      'Babe R'
-    )
-    expect(read.attendees.find(row => row.userId === 115)).equals(undefined)
     expect(
-      (await info(gameId, 109)).attendees.find(row => row.userId === 109)
+      read.attendees.find(row => row.userId === userIdOfGumbo(101))?.name
+    ).equals('Babe R')
+    expect(
+      read.attendees.find(row => row.userId === userIdOfGumbo(115))
+    ).equals(undefined)
+    expect(
+      (await info(gameId, 109)).attendees.find(
+        row => row.userId === userIdOfGumbo(109)
+      )
     ).equals(undefined)
     const away = await info(gameId, 102)
     expect(away.teamId).equals(f.teamB)
@@ -297,7 +303,7 @@ describe('real event info and guardian attendance', function () {
       away.attendees
         .filter(row => row.isTeamParticipant === true)
         .map(row => row.userId)
-    ).deep.equals([102])
+    ).deep.equals([102].map(userIdOfGumbo))
     const client = new TeamStationClient({
       baseUrl: `${f.h.origin}/api/v1`,
       token: f.h.tokens.get(105)!
@@ -308,7 +314,7 @@ describe('real event info and guardian attendance', function () {
       selected.attendees
         .filter(row => row.isTeamParticipant === true)
         .map(row => row.userId)
-    ).deep.equals([102])
+    ).deep.equals([102].map(userIdOfGumbo))
     for (const query of [
       `?teamId=${f.standaloneTeam}`,
       '?teamId=missing',
@@ -342,7 +348,7 @@ describe('real event info and guardian attendance', function () {
     ).deep.equals({ yes: 1, unknown: 4, no: 0 })
     await f.h.request(
       'PUT',
-      `/events/${gameId}/rsvps/103`,
+      `/events/${gameId}/rsvps/${userIdOfGumbo(103)}`,
       { response: 'no' },
       101
     )
@@ -352,7 +358,7 @@ describe('real event info and guardian attendance', function () {
     await f.h.db
       .updateTable('users')
       .set({ disabled_at: new Date() })
-      .where('id', '=', 108)
+      .where('id', '=', userIdOfGumbo(108))
       .execute()
     expect(
       (await schedule()).find(row => row.id === gameId)?.playerRsvps
@@ -363,14 +369,14 @@ describe('real event info and guardian attendance', function () {
     ).deep.equals({ yes: 0, unknown: 4, no: 0 })
     await f.h.request(
       'PUT',
-      `/events/${dinner}/rsvps/104`,
+      `/events/${dinner}/rsvps/${userIdOfGumbo(104)}`,
       { response: 'yes' },
       101
     )
     expect(
       (await schedule()).find(row => row.id === dinner)?.playerRsvps
     ).deep.equals({ yes: 1, unknown: 3, no: 0 })
-    await closeInto(f.h.db, 113, 114)
+    await closeInto(f.h.db, userIdOfGumbo(113), userIdOfGumbo(114))
     expect(
       (await schedule()).find(row => row.id === gameId)?.playerRsvps
     ).deep.equals({ yes: 0, unknown: 2, no: 1 })
@@ -405,7 +411,7 @@ describe('real event info and guardian attendance', function () {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: 105,
+        user_id: userIdOfGumbo(105),
         team_id: f.teamB,
         is_player: false
       })
@@ -437,7 +443,7 @@ describe('real event info and guardian attendance', function () {
         .insertInto('memberships')
         .values({
           id: makeId('membership'),
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           team_id: teamId,
           is_player: isPlayer
         })
@@ -448,8 +454,8 @@ describe('real event info and guardian attendance', function () {
         .insertInto('user_links')
         .values({
           id: makeId('userLink'),
-          user_id: 107,
-          related_user_id: child,
+          user_id: userIdOfGumbo(107),
+          related_user_id: userIdOfGumbo(child),
           kind: 'guardian',
           can_manage: false
         })
@@ -465,7 +471,7 @@ describe('real event info and guardian attendance', function () {
       .insertInto('scope_roles')
       .values({
         id: makeId('scopeRole'),
-        user_id: 107,
+        user_id: userIdOfGumbo(107),
         scope_type: 'team',
         scope_id: f.teamB,
         role: 'coach'
@@ -500,21 +506,27 @@ describe('real event info and guardian attendance', function () {
   })
   it('drops removed team people and disabled players’ guardians without widening from old replies', async () => {
     await seedEventInfo2People(f, gameId)
-    await f.h.db.deleteFrom('scope_roles').where('user_id', '=', 106).execute()
-    await f.h.db.deleteFrom('memberships').where('user_id', '=', 107).execute()
+    await f.h.db
+      .deleteFrom('scope_roles')
+      .where('user_id', '=', userIdOfGumbo(106))
+      .execute()
+    await f.h.db
+      .deleteFrom('memberships')
+      .where('user_id', '=', userIdOfGumbo(107))
+      .execute()
     await f.h.db
       .updateTable('users')
       .set({ disabled_at: new Date() })
-      .where('id', '=', 103)
+      .where('id', '=', userIdOfGumbo(103))
       .execute()
     const read = await info(gameId)
     expect(read.attendees.map(row => row.userId))
-      .not.includes(105)
+      .not.includes(userIdOfGumbo(105))
       .and.not.includes(106)
       .and.not.includes(107)
-    expect(read.replyUserIds).not.includes(103)
+    expect(read.replyUserIds).not.includes(userIdOfGumbo(103))
     expect(
-      read.attendees.find(row => row.userId === 101)?.staffRoles
+      read.attendees.find(row => row.userId === userIdOfGumbo(101))?.staffRoles
     ).deep.equals(['admin'])
   })
   it('never defaults a season viewer to an inaccessible participating roster', async () => {
@@ -557,14 +569,14 @@ describe('real event info and guardian attendance', function () {
       .updateTable('memberships')
       .set({ is_player: false })
       .where('team_id', '=', f.teamA)
-      .where('user_id', '=', 103)
+      .where('user_id', '=', userIdOfGumbo(103))
       .execute()
     await f.h.db
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
         team_id: f.teamB,
-        user_id: 109,
+        user_id: userIdOfGumbo(109),
         is_player: false
       })
       .execute()
@@ -572,15 +584,17 @@ describe('real event info and guardian attendance', function () {
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: 109,
-        related_user_id: 103,
+        user_id: userIdOfGumbo(109),
+        related_user_id: userIdOfGumbo(103),
         kind: 'guardian',
         can_manage: false
       })
       .execute()
     const read = await info(gameId, 109)
     expect(read.teamId).equals(f.teamB)
-    expect(read.attendees.find(row => row.userId === 103)).equals(undefined)
+    expect(
+      read.attendees.find(row => row.userId === userIdOfGumbo(103))
+    ).equals(undefined)
     const home = asEventInfo(
       await (
         await f.h.request(
@@ -591,7 +605,9 @@ describe('real event info and guardian attendance', function () {
         )
       ).json()
     )
-    expect(home.attendees.find(row => row.userId === 109)).includes({
+    expect(
+      home.attendees.find(row => row.userId === userIdOfGumbo(109))
+    ).includes({
       canReply: true,
       isTeamParticipant: false
     })
@@ -672,7 +688,7 @@ describe('real event info and guardian attendance', function () {
   it('persists separate self and child replies and denies impersonation even by administrators', async () => {
     const id = await create()
     const initial = await info(id)
-    expect(initial.replyUserIds).deep.equals([101, 103, 104])
+    expect(initial.replyUserIds).deep.equals([101, 103, 104].map(userIdOfGumbo))
     expect(
       initial.attendees
         .filter(row => row.canReply)
@@ -683,11 +699,18 @@ describe('real event info and guardian attendance', function () {
       [103, 'no'],
       [104, 'maybe']
     ] as const) {
-      const saved = await f.h.request('PUT', `/events/${id}/rsvps/${userId}`, {
+      const saved = await f.h.request(
+        'PUT',
+        `/events/${id}/rsvps/${userIdOfGumbo(userId)}`,
+        {
+          response
+        }
+      )
+      expect(saved.status).equals(200)
+      expect(await saved.json()).deep.equals({
+        userId: userIdOfGumbo(userId),
         response
       })
-      expect(saved.status).equals(200)
-      expect(await saved.json()).deep.equals({ userId, response })
     }
     expect(
       (await info(id)).attendees
@@ -695,14 +718,17 @@ describe('real event info and guardian attendance', function () {
         .map(row => row.response)
     ).deep.equals(['yes', 'maybe', 'no'])
     expect(
-      (await f.h.request('PUT', `/events/${id}/rsvps/102`, { response: 'yes' }))
-        .status
+      (
+        await f.h.request('PUT', `/events/${id}/rsvps/${userIdOfGumbo(102)}`, {
+          response: 'yes'
+        })
+      ).status
     ).equals(403)
     expect(
       (
         await f.h.request(
           'PUT',
-          `/events/${id}/rsvps/101`,
+          `/events/${id}/rsvps/${userIdOfGumbo(101)}`,
           { response: 'yes' },
           105
         )
@@ -710,8 +736,13 @@ describe('real event info and guardian attendance', function () {
     ).equals(403)
     for (const response of ['none', null, 3])
       expect(
-        (await f.h.request('PUT', `/events/${id}/rsvps/101`, { response }))
-          .status
+        (
+          await f.h.request(
+            'PUT',
+            `/events/${id}/rsvps/${userIdOfGumbo(101)}`,
+            { response }
+          )
+        ).status
       ).equals(400)
     expect(
       (await f.h.request('PUT', `/events/${id}/rsvps/0`, { response: 'yes' }))
@@ -722,12 +753,22 @@ describe('real event info and guardian attendance', function () {
         .status
     ).equals(400)
     expect(
-      (await f.h.request('PUT', `/events/${id}/rsvps/101`, null)).status
+      (
+        await f.h.request(
+          'PUT',
+          `/events/${id}/rsvps/${userIdOfGumbo(101)}`,
+          null
+        )
+      ).status
     ).equals(400)
     const responses = await Promise.all(
       ['yes', 'maybe', 'no'].map(
         async response =>
-          await f.h.request('PUT', `/events/${id}/rsvps/101`, { response })
+          await f.h.request(
+            'PUT',
+            `/events/${id}/rsvps/${userIdOfGumbo(101)}`,
+            { response }
+          )
       )
     )
     expect(responses.every(response => response.status === 200)).equals(true)
@@ -736,26 +777,32 @@ describe('real event info and guardian attendance', function () {
         .selectFrom('team_event_rsvps')
         .selectAll()
         .where('event_id', '=', id)
-        .where('user_id', '=', 101)
+        .where('user_id', '=', userIdOfGumbo(101))
         .execute()
     ).length(1)
     await f.h.db
       .deleteFrom('user_links')
-      .where('related_user_id', '=', 103)
+      .where('related_user_id', '=', userIdOfGumbo(103))
       .execute()
-    expect((await info(id)).replyUserIds).not.includes(103)
+    expect((await info(id)).replyUserIds).not.includes(userIdOfGumbo(103))
     expect(
-      (await f.h.request('PUT', `/events/${id}/rsvps/103`, { response: 'yes' }))
-        .status
+      (
+        await f.h.request('PUT', `/events/${id}/rsvps/${userIdOfGumbo(103)}`, {
+          response: 'yes'
+        })
+      ).status
     ).equals(403)
     await f.h.db
       .updateTable('user_links')
       .set({ kind: 'family' })
-      .where('related_user_id', '=', 104)
+      .where('related_user_id', '=', userIdOfGumbo(104))
       .execute()
     expect(
-      (await f.h.request('PUT', `/events/${id}/rsvps/104`, { response: 'yes' }))
-        .status
+      (
+        await f.h.request('PUT', `/events/${id}/rsvps/${userIdOfGumbo(104)}`, {
+          response: 'yes'
+        })
+      ).status
     ).equals(403)
   })
   it('rejects unrelated children and revoked roster membership, even with an old reply', async () => {
@@ -764,26 +811,36 @@ describe('real event info and guardian attendance', function () {
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: 101,
-        related_user_id: 106,
+        user_id: userIdOfGumbo(101),
+        related_user_id: userIdOfGumbo(106),
         kind: 'guardian',
         can_manage: false
       })
       .execute()
     for (const eventId of [id, gameId]) {
-      expect((await info(eventId)).replyUserIds).not.includes(106)
+      expect((await info(eventId)).replyUserIds).not.includes(
+        userIdOfGumbo(106)
+      )
       expect(
         (
-          await f.h.request('PUT', `/events/${eventId}/rsvps/106`, {
-            response: 'yes'
-          })
+          await f.h.request(
+            'PUT',
+            `/events/${eventId}/rsvps/${userIdOfGumbo(106)}`,
+            {
+              response: 'yes'
+            }
+          )
         ).status
       ).equals(403)
       expect(
         (
-          await f.h.request('PUT', `/events/${eventId}/rsvps/103`, {
-            response: 'yes'
-          })
+          await f.h.request(
+            'PUT',
+            `/events/${eventId}/rsvps/${userIdOfGumbo(103)}`,
+            {
+              response: 'yes'
+            }
+          )
         ).status
       ).equals(200)
     }
@@ -791,15 +848,21 @@ describe('real event info and guardian attendance', function () {
       .updateTable('memberships')
       .set({ is_player: false })
       .where('team_id', '=', f.teamA)
-      .where('user_id', '=', 103)
+      .where('user_id', '=', userIdOfGumbo(103))
       .execute()
     for (const eventId of [id, gameId]) {
-      expect((await info(eventId)).replyUserIds).not.includes(103)
+      expect((await info(eventId)).replyUserIds).not.includes(
+        userIdOfGumbo(103)
+      )
       expect(
         (
-          await f.h.request('PUT', `/events/${eventId}/rsvps/103`, {
-            response: 'no'
-          })
+          await f.h.request(
+            'PUT',
+            `/events/${eventId}/rsvps/${userIdOfGumbo(103)}`,
+            {
+              response: 'no'
+            }
+          )
         ).status
       ).equals(403)
     }
@@ -810,32 +873,41 @@ describe('real event info and guardian attendance', function () {
       .updateTable('memberships')
       .set({ team_id: f.teamB })
       .where('team_id', '=', f.teamA)
-      .where('user_id', '=', 103)
+      .where('user_id', '=', userIdOfGumbo(103))
       .execute()
-    expect((await info(gameId)).replyUserIds).includes(103)
+    expect((await info(gameId)).replyUserIds).includes(userIdOfGumbo(103))
     expect(
       (
-        await f.h.request('PUT', `/events/${gameId}/rsvps/103`, {
+        await f.h.request(
+          'PUT',
+          `/events/${gameId}/rsvps/${userIdOfGumbo(103)}`,
+          {
+            response: 'yes'
+          }
+        )
+      ).status
+    ).equals(200)
+    expect((await info(id)).replyUserIds).not.includes(userIdOfGumbo(103))
+    expect(
+      (
+        await f.h.request('PUT', `/events/${id}/rsvps/${userIdOfGumbo(103)}`, {
           response: 'yes'
         })
       ).status
-    ).equals(200)
-    expect((await info(id)).replyUserIds).not.includes(103)
-    expect(
-      (await f.h.request('PUT', `/events/${id}/rsvps/103`, { response: 'yes' }))
-        .status
     ).equals(403)
   })
   it('requires direct membership or direct admin/coach roles for the viewer’s own reply', async () => {
     await seedEventInfo2People(f, gameId)
     // Inherited season membership, league membership and site admin are insufficient.
     for (const viewer of [109, 110, 105]) {
-      expect((await info(gameId, viewer)).replyUserIds).not.includes(viewer)
+      expect((await info(gameId, viewer)).replyUserIds).not.includes(
+        userIdOfGumbo(viewer)
+      )
       expect(
         (
           await f.h.request(
             'PUT',
-            `/events/${gameId}/rsvps/${viewer}`,
+            `/events/${gameId}/rsvps/${userIdOfGumbo(viewer)}`,
             { response: 'yes' },
             viewer
           )
@@ -843,12 +915,14 @@ describe('real event info and guardian attendance', function () {
       ).equals(403)
     }
     for (const viewer of [101, 106, 107, 108]) {
-      expect((await info(gameId, viewer)).replyUserIds).includes(viewer)
+      expect((await info(gameId, viewer)).replyUserIds).includes(
+        userIdOfGumbo(viewer)
+      )
       expect(
         (
           await f.h.request(
             'PUT',
-            `/events/${gameId}/rsvps/${viewer}`,
+            `/events/${gameId}/rsvps/${userIdOfGumbo(viewer)}`,
             { response: 'yes' },
             viewer
           )
@@ -859,54 +933,66 @@ describe('real event info and guardian attendance', function () {
       .insertInto('scope_roles')
       .values({
         id: makeId('scopeRole'),
-        user_id: 109,
+        user_id: userIdOfGumbo(109),
         scope_type: 'team',
         scope_id: f.teamB,
         role: 'admin'
       })
       .execute()
-    expect((await info(gameId, 109)).replyUserIds).includes(109)
+    expect((await info(gameId, 109)).replyUserIds).includes(userIdOfGumbo(109))
   })
   it('applies the same RSVP controls to a game and hides inactive or merged roster identities', async () => {
     await f.h.db
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: 103,
+        user_id: userIdOfGumbo(103),
         team_id: f.teamB,
         is_player: true
       })
       .execute()
     const initial = await info(gameId)
-    expect(initial.attendees.filter(row => row.userId === 103)).length(1)
+    expect(
+      initial.attendees.filter(row => row.userId === userIdOfGumbo(103))
+    ).length(1)
     expect(
       (
-        await f.h.request('PUT', `/events/${gameId}/rsvps/103`, {
-          response: 'yes'
-        })
+        await f.h.request(
+          'PUT',
+          `/events/${gameId}/rsvps/${userIdOfGumbo(103)}`,
+          {
+            response: 'yes'
+          }
+        )
       ).status
     ).equals(200)
     expect(
-      (await info(gameId)).attendees.find(row => row.userId === 103)?.response
+      (await info(gameId)).attendees.find(
+        row => row.userId === userIdOfGumbo(103)
+      )?.response
     ).equals('yes')
     await f.h.db
       .updateTable('users')
       .set({ disabled_at: new Date() })
-      .where('id', '=', 103)
+      .where('id', '=', userIdOfGumbo(103))
       .execute()
     await f.h.db
       .updateTable('users')
-      .set({ merged_into: 101 })
-      .where('id', '=', 104)
+      .set({ merged_into: userIdOfGumbo(101) })
+      .where('id', '=', userIdOfGumbo(104))
       .execute()
     expect((await info(gameId)).attendees.map(row => row.userId))
-      .not.includes(103)
+      .not.includes(userIdOfGumbo(103))
       .and.not.includes(104)
     expect(
       (
-        await f.h.request('PUT', `/events/${gameId}/rsvps/103`, {
-          response: 'yes'
-        })
+        await f.h.request(
+          'PUT',
+          `/events/${gameId}/rsvps/${userIdOfGumbo(103)}`,
+          {
+            response: 'yes'
+          }
+        )
       ).status
     ).equals(403)
     expect(
@@ -919,8 +1005,8 @@ describe('real event info and guardian attendance', function () {
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: 106,
-        related_user_id: 103,
+        user_id: userIdOfGumbo(106),
+        related_user_id: userIdOfGumbo(103),
         kind: 'guardian',
         can_manage: false
       })
@@ -928,24 +1014,34 @@ describe('real event info and guardian attendance', function () {
     for (const role of await f.h.db
       .selectFrom('scope_roles')
       .selectAll()
-      .where('user_id', '=', 103)
+      .where('user_id', '=', userIdOfGumbo(103))
       .execute())
       await f.h.db
         .insertInto('scope_roles')
-        .values({ ...role, id: makeId('scopeRole'), user_id: 105 })
+        .values({
+          ...role,
+          id: makeId('scopeRole'),
+          user_id: userIdOfGumbo(105)
+        })
         .execute()
-    await closeInto(f.h.db, 103, 104)
-    await closeInto(f.h.db, 106, 105)
+    await closeInto(f.h.db, userIdOfGumbo(103), userIdOfGumbo(104))
+    await closeInto(f.h.db, userIdOfGumbo(106), userIdOfGumbo(105))
     const other = await info(gameId)
-    expect(other.attendees.find(row => row.userId === 105)).includes({
+    expect(
+      other.attendees.find(row => row.userId === userIdOfGumbo(105))
+    ).includes({
       response: null,
       canReply: false
     })
-    expect(other.attendees.filter(row => row.userId === 104)).length(1)
+    expect(
+      other.attendees.filter(row => row.userId === userIdOfGumbo(104))
+    ).length(1)
     expect(other.attendees.map(row => row.userId))
-      .not.includes(103)
+      .not.includes(userIdOfGumbo(103))
       .and.not.includes(106)
-    expect((await info(gameId, 105)).replyUserIds).deep.equals([104])
+    expect((await info(gameId, 105)).replyUserIds).deep.equals(
+      [104].map(userIdOfGumbo)
+    )
   })
   it('keeps the latest saved child and guardian responses across account aliases in both RSVP tables', async () => {
     const titled = await create()
@@ -954,7 +1050,7 @@ describe('real event info and guardian attendance', function () {
       .values(
         [105, 106].map(userId => ({
           id: makeId('membership'),
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           team_id: f.teamA,
           is_player: false
         }))
@@ -964,8 +1060,8 @@ describe('real event info and guardian attendance', function () {
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: 106,
-        related_user_id: 103,
+        user_id: userIdOfGumbo(106),
+        related_user_id: userIdOfGumbo(103),
         kind: 'guardian',
         can_manage: false
       })
@@ -973,23 +1069,31 @@ describe('real event info and guardian attendance', function () {
     for (const id of [gameId, titled]) {
       expect(
         (
-          await f.h.request('PUT', `/events/${id}/rsvps/103`, {
-            response: 'yes'
-          })
-        ).status
-      ).equals(200)
-      expect(
-        (
-          await f.h.request('PUT', `/events/${id}/rsvps/104`, {
-            response: 'maybe'
-          })
+          await f.h.request(
+            'PUT',
+            `/events/${id}/rsvps/${userIdOfGumbo(103)}`,
+            {
+              response: 'yes'
+            }
+          )
         ).status
       ).equals(200)
       expect(
         (
           await f.h.request(
             'PUT',
-            `/events/${id}/rsvps/106`,
+            `/events/${id}/rsvps/${userIdOfGumbo(104)}`,
+            {
+              response: 'maybe'
+            }
+          )
+        ).status
+      ).equals(200)
+      expect(
+        (
+          await f.h.request(
+            'PUT',
+            `/events/${id}/rsvps/${userIdOfGumbo(106)}`,
             { response: 'maybe' },
             106
           )
@@ -999,7 +1103,7 @@ describe('real event info and guardian attendance', function () {
         (
           await f.h.request(
             'PUT',
-            `/events/${id}/rsvps/105`,
+            `/events/${id}/rsvps/${userIdOfGumbo(105)}`,
             { response: 'yes' },
             105
           )
@@ -1015,37 +1119,51 @@ describe('real event info and guardian attendance', function () {
         .updateTable(table)
         .set({ updated_at: new Date('2025-01-02T00:00:00Z') })
         .where('event_id', '=', id)
-        .where('user_id', 'in', [104, 106])
+        .where('user_id', 'in', [userIdOfGumbo(104), userIdOfGumbo(106)])
         .execute()
     }
     for (const role of await f.h.db
       .selectFrom('scope_roles')
       .selectAll()
-      .where('user_id', '=', 103)
+      .where('user_id', '=', userIdOfGumbo(103))
       .execute())
       await f.h.db
         .insertInto('scope_roles')
-        .values({ ...role, id: makeId('scopeRole'), user_id: 105 })
+        .values({
+          ...role,
+          id: makeId('scopeRole'),
+          user_id: userIdOfGumbo(105)
+        })
         .execute()
-    await closeInto(f.h.db, 103, 104)
-    await closeInto(f.h.db, 106, 105)
+    await closeInto(f.h.db, userIdOfGumbo(103), userIdOfGumbo(104))
+    await closeInto(f.h.db, userIdOfGumbo(106), userIdOfGumbo(105))
     for (const id of [gameId, titled]) {
       const rows = (await info(id)).attendees
-      expect(rows.filter(row => row.userId === 104)).length(1)
-      expect(rows.find(row => row.userId === 104)?.response).equals('maybe')
-      expect(rows.find(row => row.userId === 105)?.response).equals('maybe')
+      expect(rows.filter(row => row.userId === userIdOfGumbo(104))).length(1)
+      expect(
+        rows.find(row => row.userId === userIdOfGumbo(104))?.response
+      ).equals('maybe')
+      expect(
+        rows.find(row => row.userId === userIdOfGumbo(105))?.response
+      ).equals('maybe')
       expect(rows.map(row => row.userId))
-        .not.includes(103)
+        .not.includes(userIdOfGumbo(103))
         .and.not.includes(106)
       expect(
         (
-          await f.h.request('PUT', `/events/${id}/rsvps/104`, {
-            response: 'no'
-          })
+          await f.h.request(
+            'PUT',
+            `/events/${id}/rsvps/${userIdOfGumbo(104)}`,
+            {
+              response: 'no'
+            }
+          )
         ).status
       ).equals(200)
       expect(
-        (await info(id)).attendees.find(row => row.userId === 104)?.response
+        (await info(id)).attendees.find(
+          row => row.userId === userIdOfGumbo(104)
+        )?.response
       ).equals('no')
     }
   })
@@ -1203,7 +1321,7 @@ describe('real event info and guardian attendance', function () {
       (
         await f.h.request(
           'PUT',
-          `/events/${gameId}/rsvps/106`,
+          `/events/${gameId}/rsvps/${userIdOfGumbo(106)}`,
           { response: 'yes' },
           106
         )
@@ -1265,7 +1383,9 @@ describe('real event info and guardian attendance', function () {
       })
     ).id
     expect((await client.eventInfo(id)).title).equals('Team dinner')
-    expect((await client.saveRsvp(id, 104, 'maybe')).response).equals('maybe')
+    expect(
+      (await client.saveRsvp(id, userIdOfGumbo(104), 'maybe')).response
+    ).equals('maybe')
     expect(
       (await client.updateEventInfo(id, { title: 'Team lunch' })).title
     ).equals('Team lunch')
@@ -1279,12 +1399,12 @@ describe('real event info and guardian attendance', function () {
       expect(paths).property(path)
     expect(paths['/events']).property('post')
   })
-  it('enforces database coordinates/end/reply constraints and supports migration rollback', async () => {
+  it('enforces database coordinates/end/reply constraints after the identity migration', async () => {
     const id = await create()
     for (const query of [
       sql`update team_events set end_at = start_at where id=${id}`,
       sql`update team_events set latitude=100 where id=${id}`,
-      sql`insert into team_event_rsvps(event_id,user_id,response) values(${id},101,'invalid')`
+      sql`insert into team_event_rsvps(event_id,user_id,response) values(${id},${userIdOfGumbo(101)},'invalid')`
     ]) {
       try {
         await query.execute(f.h.db)
@@ -1293,11 +1413,6 @@ describe('real event info and guardian attendance', function () {
         expect(String(error)).includes('constraint')
       }
     }
-    await sql.raw(migration057EventInfo.down).execute(f.h.db)
-    await sql.raw(migration057EventInfo.up).execute(f.h.db)
-    expect(await f.h.db.selectFrom('team_events').selectAll().execute()).length(
-      0
-    )
   })
   it('keeps title events, game locations and latest RSVPs when duplicate teams and fixtures merge', async () => {
     const id = await create()
@@ -1334,16 +1449,16 @@ describe('real event info and guardian attendance', function () {
       .values([
         {
           event_id: gameId,
-          user_id: 101,
+          user_id: userIdOfGumbo(101),
           response: 'no',
-          updated_by: 101,
+          updated_by: userIdOfGumbo(101),
           updated_at: new Date('2027-01-01T00:00:00Z')
         },
         {
           event_id: 'gam_info_duplicate',
-          user_id: 101,
+          user_id: userIdOfGumbo(101),
           response: 'yes',
-          updated_by: 101,
+          updated_by: userIdOfGumbo(101),
           updated_at: new Date('2027-01-02T00:00:00Z')
         }
       ])
@@ -1375,7 +1490,7 @@ describe('real event info and guardian attendance', function () {
     const replies = await f.h.db.selectFrom('game_rsvps').selectAll().execute()
     expect(replies).length(1)
     expect(replies[0]).includes({
-      user_id: 101,
+      user_id: userIdOfGumbo(101),
       response: 'yes',
       event_id: survivor.id
     })

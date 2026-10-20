@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asBattingRow, asPitchingRow } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   battingColumns,
   pitchingColumns,
@@ -10,7 +11,7 @@ import {
 } from './statColumns'
 
 export const battingFixture = asBattingRow({
-  userId: 101,
+  userId: userIdOfGumbo(101),
   gumboId: 101,
   shortName: 'Alex L',
   teamId: 'demo-hawks',
@@ -37,7 +38,7 @@ export const battingFixture = asBattingRow({
   rates: { avg: 0.5, obp: 0.625, ops: 1.792, slg: 1.167, sbPct: 0.667 }
 })
 export const pitchingFixture = asPitchingRow({
-  userId: 102,
+  userId: userIdOfGumbo(102),
   gumboId: 102,
   shortName: 'Blair R',
   teamId: 'demo-hawks',

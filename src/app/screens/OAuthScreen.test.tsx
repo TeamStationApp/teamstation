@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Linking, NativeModules, Platform } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { App } from '../App'
 import { AppHeader } from '../components/AppHeader'
 import { BuildInfoModal } from '../components/BuildInfoModal'
@@ -70,7 +71,7 @@ describe('OAuth consent and loaded build information', () => {
       token: 'fixture-session',
       expiresAt: new Date(Date.now() + 60000).toISOString(),
       user: {
-        id: 123,
+        id: userIdOfGumbo(123),
         displayName: 'Alex Lee',
         isAdmin: false,
         avatarUrl: null
@@ -175,7 +176,7 @@ describe('OAuth consent and loaded build information', () => {
       if (url.endsWith('/auth/me'))
         return new Response(
           JSON.stringify({
-            id: 123,
+            id: userIdOfGumbo(123),
             displayName: 'Alex Lee',
             email: 'alex@example.test',
             isAdmin: false,
@@ -216,7 +217,7 @@ describe('OAuth consent and loaded build information', () => {
       seen.push(url)
       if (url.endsWith('/auth/me'))
         return Response.json({
-          id: 123,
+          id: userIdOfGumbo(123),
           displayName: 'Alex Lee',
           email: 'alex@example.test',
           isAdmin: false,
@@ -270,7 +271,7 @@ describe('OAuth consent and loaded build information', () => {
           if (url.endsWith('/auth/me'))
             return new Response(
               JSON.stringify({
-                id: 123,
+                id: userIdOfGumbo(123),
                 displayName: 'Alex Lee',
                 email: 'alex@example.test',
                 isAdmin: false,

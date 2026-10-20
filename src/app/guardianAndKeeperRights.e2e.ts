@@ -26,10 +26,12 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 
 import { makeId } from '../common/ids'
+import { userIdOfGumbo } from '../common/userId'
 import { createSession } from '../server/auth/sessions'
 import { posterSecond } from '../server/media/posters'
 import { stillKey } from '../server/media/stills'
 import { type GuardianFixture, guardianFixture } from '../test/guardianFixture'
+import { insertFixtureUsers } from '../test/insertFixtureUsers'
 import type { BrowserSession } from '../test/refinementsMaestro.e2e'
 
 /** The viewport every screenshot is taken at, the same as the befores. */
@@ -174,7 +176,7 @@ async function api(run: Run): Promise<void> {
   await f.h.db
     .updateTable('users')
     .set({ avatar_path: 'avatars/avery' })
-    .where('id', '=', f.players[0].id)
+    .where('id', '=', userIdOfGumbo(f.players[0].id))
     .execute()
 
   const call = run.api('api-follower.log', nonMemberSummary)
@@ -328,7 +330,7 @@ async function roster(run: Run): Promise<void> {
     .insertInto('memberships')
     .values({
       id: makeId('membership'),
-      user_id: people.oneTeam,
+      user_id: userIdOfGumbo(people.oneTeam),
       team_id: f.teamA,
       role: 'member',
       is_player: false
@@ -341,31 +343,40 @@ async function roster(run: Run): Promise<void> {
     first: string,
     last: string
   ): Promise<void> => {
-    await f.h.db
-      .insertInto('users')
-      .values({
-        id,
-        legacyId: `usr_guardian_${id}`,
-        display_name: `${first} ${last}`,
-        first_name: first,
-        last_name: last
-      })
-      .execute()
+    await insertFixtureUsers(f.h.db, {
+      id,
+      legacyId: `usr_guardian_${id}`,
+      display_name: `${first} ${last}`,
+      first_name: first,
+      last_name: last
+    })
   }
   await adult(270, 'Sadie', 'Lake')
   await f.h.db
     .insertInto('season_members')
-    .values({ id: makeId('seasonMember'), user_id: 270, season_id: f.seasonA })
+    .values({
+      id: makeId('seasonMember'),
+      user_id: userIdOfGumbo(270),
+      season_id: f.seasonA
+    })
     .execute()
   await adult(271, 'Leo', 'Grant')
   await f.h.db
     .insertInto('league_members')
-    .values({ id: makeId('leagueMember'), user_id: 271, league_id: f.leagueA })
+    .values({
+      id: makeId('leagueMember'),
+      user_id: userIdOfGumbo(271),
+      league_id: f.leagueA
+    })
     .execute()
   await adult(272, 'Fern', 'Ash')
   await f.h.db
     .insertInto('follows')
-    .values({ user_id: 272, group_type: 'team', group_id: f.teamA })
+    .values({
+      user_id: userIdOfGumbo(272),
+      group_type: 'team',
+      group_id: f.teamA
+    })
     .execute()
 
   const admin = await run.signIn('roster-admin', people.admin)
@@ -541,7 +552,7 @@ async function roster(run: Run): Promise<void> {
       await f.h.db
         .selectFrom('scope_roles')
         .select('role')
-        .where('user_id', '=', people.teamCoach)
+        .where('user_id', '=', userIdOfGumbo(people.teamCoach))
         .where('scope_type', '=', 'team')
         .where('scope_id', '=', f.teamA)
         .execute()
@@ -577,13 +588,13 @@ async function people(run: Run): Promise<void> {
   await f.h.db
     .updateTable('users')
     .set({ login_enabled: true })
-    .where('id', '=', ben.id)
+    .where('id', '=', userIdOfGumbo(ben.id))
     .execute()
   await f.h.db
     .insertInto('user_emails')
     .values({
       id: 'email_people_ben',
-      user_id: ben.id,
+      user_id: userIdOfGumbo(ben.id),
       email: 'ben@example.com',
       is_primary: true,
       verified_at: new Date(),
@@ -595,7 +606,7 @@ async function people(run: Run): Promise<void> {
       await f.h.db
         .selectFrom('scope_roles')
         .select('role')
-        .where('user_id', '=', userId)
+        .where('user_id', '=', userIdOfGumbo(userId))
         .where('scope_type', '=', 'team')
         .where('scope_id', '=', f.teamA)
         .execute()
@@ -738,7 +749,7 @@ async function people(run: Run): Promise<void> {
       .selectFrom('memberships')
       .select('id')
       .where('team_id', '=', f.teamA)
-      .where('user_id', '=', userId)
+      .where('user_id', '=', userIdOfGumbo(userId))
       .executeTakeFirst()) != null
   await until(async () => !(await onHawks(ben.id)))
   expect(await roleRows(ben.id)).deep.equals([])
@@ -821,7 +832,7 @@ async function people(run: Run): Promise<void> {
     {}
   )
   expect(given.body).deep.equals({
-    userId: people.follower,
+    userId: userIdOfGumbo(people.follower),
     roles: ['videographer'],
     member: true
   })
@@ -1181,13 +1192,13 @@ async function guardian(run: Run): Promise<void> {
     await db
       .updateTable('users')
       .set({ login_enabled: true })
-      .where('id', '=', id)
+      .where('id', '=', userIdOfGumbo(id))
       .execute()
     await db
       .insertInto('user_emails')
       .values({
         id: `email_guardian_stage_${id}`,
-        user_id: id,
+        user_id: userIdOfGumbo(id),
         email,
         is_primary: true,
         verified_at: new Date(),
@@ -1195,7 +1206,10 @@ async function guardian(run: Run): Promise<void> {
       })
       .execute()
     f.emails[id] = email
-    f.h.tokens.set(id, (await createSession(db, id, 'guardian')).token)
+    f.h.tokens.set(
+      id,
+      (await createSession(db, userIdOfGumbo(id), 'guardian')).token
+    )
   }
   const person = async (
     id: number,
@@ -1203,17 +1217,14 @@ async function guardian(run: Run): Promise<void> {
     last: string,
     email: string | null
   ): Promise<void> => {
-    await db
-      .insertInto('users')
-      .values({
-        id,
-        legacyId: `usr_guardian_stage_${id}`,
-        display_name: `${first} ${last}`,
-        first_name: first,
-        last_name: last,
-        login_enabled: false
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id,
+      legacyId: `usr_guardian_stage_${id}`,
+      display_name: `${first} ${last}`,
+      first_name: first,
+      last_name: last,
+      login_enabled: false
+    })
     if (email != null) await signsIn(id, email)
   }
   const joinsHawks = async (
@@ -1224,7 +1235,7 @@ async function guardian(run: Run): Promise<void> {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: id,
+        user_id: userIdOfGumbo(id),
         team_id: f.teamA,
         role: 'member',
         is_player: player != null,
@@ -1253,7 +1264,7 @@ async function guardian(run: Run): Promise<void> {
       await db
         .selectFrom('user_links')
         .select('user_id')
-        .where('related_user_id', '=', playerId)
+        .where('related_user_id', '=', userIdOfGumbo(playerId))
         .where('kind', '=', 'guardian')
         .orderBy('user_id')
         .execute()
@@ -1267,7 +1278,7 @@ async function guardian(run: Run): Promise<void> {
       await db
         .selectFrom('group_requests')
         .select(['id', 'terms'])
-        .where('sender_id', '=', sender)
+        .where('sender_id', '=', userIdOfGumbo(sender))
         .where('kind', '=', 'guardian')
         .where('status', '=', status)
         .orderBy('sent_at')
@@ -1377,7 +1388,7 @@ async function guardian(run: Run): Promise<void> {
     people.teamCoach,
     {
       kind: 'guardian',
-      playerUserId: cody.id,
+      playerUserId: userIdOfGumbo(cody.id),
       guardian: { email: 'second.parent@example.com' },
       sender: { kind: 'team', id: f.teamA },
       idempotencyKey: 'guardian-stage-coach-again'
@@ -1465,7 +1476,7 @@ async function guardian(run: Run): Promise<void> {
   const saved = await db
     .selectFrom('memberships')
     .select(['jersey', 'positions'])
-    .where('user_id', '=', avery.id)
+    .where('user_id', '=', userIdOfGumbo(avery.id))
     .where('team_id', '=', f.teamA)
     .executeTakeFirstOrThrow()
   expect(saved).deep.equals({ jersey: '17', positions: ['SS', 'CF'] })
@@ -1563,8 +1574,8 @@ async function guardian(run: Run): Promise<void> {
   const request = async (user: number, playerId: number): Promise<any> =>
     await api('POST', '/relationship-requests', user, {
       kind: 'guardian',
-      playerUserId: playerId,
-      guardian: { userId: user },
+      playerUserId: userIdOfGumbo(playerId),
+      guardian: { userId: userIdOfGumbo(user) },
       idempotencyKey: `guardian-stage-${user}-${++retry}`
     })
   for (const p of [avery, ben, cody, drew, eli]) {
@@ -1693,7 +1704,7 @@ async function follower(run: Run): Promise<void> {
   await f.h.db
     .updateTable('users')
     .set({ avatar_path: 'avatars/avery' })
-    .where('id', '=', f.players[0].id)
+    .where('id', '=', userIdOfGumbo(f.players[0].id))
     .execute()
 
   const grace = await run.signIn('follower', people.follower)
@@ -2270,7 +2281,7 @@ async function home(run: Run): Promise<void> {
   const hands = await db
     .selectFrom('users')
     .select(['bats', 'throws', 'bats_source'])
-    .where('id', '=', avery.id)
+    .where('id', '=', userIdOfGumbo(avery.id))
     .executeTakeFirstOrThrow()
   expect(hands).deep.equals({
     bats: 'switch',
@@ -2344,7 +2355,7 @@ async function runStage(
   let daemon: { shutdown: () => Promise<unknown> } | undefined
   // Read at the first request rather than now, so the people a stage adds
   // before it calls the API are named in its log too.
-  let names: Map<number, string> | undefined
+  let names: Map<string, string> | undefined
   const started = new Set<string>()
   /** A stage's log, emptied the first time the stage writes to it. */
   const logPath = async (file: string): Promise<string> => {
@@ -2364,7 +2375,10 @@ async function runStage(
     api: (file, summarize) => async (method, route, user, body) => {
       const path = await logPath(file)
       names ??= await userNames(f)
-      const who = user == null ? 'nobody signed in' : (names.get(user) ?? user)
+      const who =
+        user == null
+          ? 'nobody signed in'
+          : (names.get(userIdOfGumbo(user)) ?? user)
       const lines = [`$ ${method} /api/v1${route} as ${who}`]
       if (body !== undefined) lines.push(`> ${JSON.stringify(body)}`)
       const response = await f.h.request(method, route, body, user)
@@ -2661,13 +2675,13 @@ function oneLinePerField(value: unknown): string {
 }
 
 /** `Owen Pratt (assistant)`, for the API logs. */
-async function userNames(f: GuardianFixture): Promise<Map<number, string>> {
+async function userNames(f: GuardianFixture): Promise<Map<string, string>> {
   const rows = await f.h.db
     .selectFrom('users')
     .select(['id', 'display_name'])
     .execute()
-  const roles = new Map<number, string>(
-    Object.entries(f.people).map(([role, id]) => [id, role])
+  const roles = new Map<string, string>(
+    Object.entries(f.people).map(([role, id]) => [userIdOfGumbo(id), role])
   )
   return new Map(
     rows.map(row => {

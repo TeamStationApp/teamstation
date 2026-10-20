@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import type { Session, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { SignInLinkScreen } from './SignInLinkScreen'
 
@@ -18,11 +19,12 @@ const session: Session = {
   token: 'session-token',
   expiresAt: '2026-11-01T00:00:00.000Z',
   user: {
-    id: 1,
+    id: userIdOfGumbo(1),
     displayName: 'Pat',
     email: 'pat@example.com',
     isAdmin: false,
-    avatarUrl: null
+    avatarUrl: null,
+    gumboId: null
   }
 }
 

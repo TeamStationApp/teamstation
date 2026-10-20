@@ -11,6 +11,7 @@ import {
   lineupsOf,
   setupOf
 } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { completeMotions, singleCorrection } from '../../test/scoringHelpers'
 import { scoringRoster } from '../../test/scoringSession'
 import { advancePlayer } from '../field/fieldModel'
@@ -39,7 +40,7 @@ import { CORRECTION_WINDOW_MS, type ScoringState } from './scoringTypes'
 
 const roster = [
   asRosterEntry({
-    userId: 1,
+    userId: userIdOfGumbo(1),
     gumboId: 1,
     shortName: 'Jordan K.',
     jersey: '00',
@@ -104,7 +105,7 @@ describe('local scoring sessions', function () {
     expect(session.liveData.plays.currentPlay?.matchup.batSide.code).equals('R')
     const ignored = asRosterEntry({
       ...roster[0],
-      userId: 104,
+      userId: userIdOfGumbo(104),
       gumboId: 104,
       isPlayer: false,
       section: 'spectator'
@@ -772,7 +773,7 @@ describe('a scorekeeper and a side left unseen', function () {
   function players(first: number): Array<ReturnType<typeof asRosterEntry>> {
     return Array.from({ length: 9 }, (_, index) =>
       asRosterEntry({
-        userId: first + index,
+        userId: userIdOfGumbo(first + index),
         gumboId: first + index,
         shortName: `Owl ${first + index}`,
         jersey: String(index + 1),

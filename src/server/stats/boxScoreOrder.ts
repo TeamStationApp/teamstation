@@ -12,7 +12,7 @@ export async function boxScoreOrder(
   gameId: string,
   lines: BattingLine[]
 ): Promise<BattingLine[]> {
-  const first = new Map<number, number>()
+  const first = new Map<string, number>()
   for (const line of lines)
     if (line.firstPa != null) first.set(line.userId, line.firstPa)
   if (lines.some(line => line.firstPa == null)) {
@@ -34,7 +34,7 @@ export async function boxScoreOrder(
     for (const play of plays) {
       const id = play.matchup?.batter?.id
       if (typeof id !== 'number') continue
-      const survivor = survivors.get(id) ?? id
+      const survivor = survivors.get(id)!
       first.set(
         survivor,
         Math.min(first.get(survivor) ?? Infinity, play.about.atBatIndex)
@@ -44,6 +44,8 @@ export async function boxScoreOrder(
   return [...lines].sort((a, b) => {
     const delta =
       (first.get(a.userId) ?? Infinity) - (first.get(b.userId) ?? Infinity)
-    return Number.isNaN(delta) || delta === 0 ? a.userId - b.userId : delta
+    return Number.isNaN(delta) || delta === 0
+      ? a.userId.localeCompare(b.userId)
+      : delta
   })
 }

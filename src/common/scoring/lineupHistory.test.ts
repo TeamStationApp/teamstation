@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
+import { userIdOfGumbo } from '../userId'
 import type { ScoringAction } from './actions'
 import { applyAction } from './apply'
 import { addPlayer, freshGame, newSetup } from './lineup'
@@ -41,13 +42,13 @@ const roster = (
   first: number,
   count: number
 ): Array<{
-  userId: number
+  userId: string
   gumboId: number
   shortName: string
   jersey: string
 }> =>
   Array.from({ length: count }, (_, i) => ({
-    userId: first + i,
+    userId: userIdOfGumbo(first + i),
     gumboId: first + i,
     shortName: `Player ${first + i}`,
     jersey: String(i + 1)

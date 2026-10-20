@@ -4,11 +4,13 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../common/ids'
-import { mintUserId } from '../common/mintUserId'
 import { type Role, ROLE_FLAGS, ROLES } from '../common/roles'
+import { userIdOfGumbo } from '../common/userId'
 import { migrations } from '../migrate/migrations'
 import { migrateUp } from '../migrate/runner'
 import { testDatabaseUrl } from '../migrate/testDatabase'
+import { mintUserId } from '../test/historicalUserIds'
+import { insertFixtureUsers } from '../test/insertFixtureUsers'
 import {
   type AdminScopes,
   adminScopes,
@@ -250,22 +252,19 @@ describe('role flags', function () {
     for (const row of rows) {
       const made = person()
       people.set(row.name, made)
-      await db
-        .insertInto('users')
-        .values({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: row.name,
-          is_admin: row.name === 'siteAdmin',
-          disabled_at: row.name === 'disabled' ? new Date() : null
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(made.userId),
+        legacyId: made.legacyId,
+        display_name: row.name,
+        is_admin: row.name === 'siteAdmin',
+        disabled_at: row.name === 'disabled' ? new Date() : null
+      })
       for (const role of row.roles) {
         await db
           .insertInto('scope_roles')
           .values({
             id: makeId('scopeRole'),
-            user_id: made.userId,
+            user_id: userIdOfGumbo(made.userId),
             scope_type: role.type,
             scope_id: role.id,
             role: role.role
@@ -278,25 +277,25 @@ describe('role flags', function () {
       .values([
         {
           id: makeId('membership'),
-          user_id: idOf('manager'),
+          user_id: userIdOfGumbo(idOf('manager')),
           team_id: 'tem_a1',
           role: 'manager'
         },
         {
           id: makeId('membership'),
-          user_id: idOf('owner'),
+          user_id: userIdOfGumbo(idOf('owner')),
           team_id: 'tem_b1',
           role: 'owner'
         },
         {
           id: makeId('membership'),
-          user_id: idOf('player'),
+          user_id: userIdOfGumbo(idOf('player')),
           team_id: 'tem_a2',
           is_player: true
         },
         {
           id: makeId('membership'),
-          user_id: idOf('member'),
+          user_id: userIdOfGumbo(idOf('member')),
           team_id: 'tem_a2'
         }
       ])
@@ -305,8 +304,8 @@ describe('role flags', function () {
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: idOf('guardian'),
-        related_user_id: idOf('player'),
+        user_id: userIdOfGumbo(idOf('guardian')),
+        related_user_id: userIdOfGumbo(idOf('player')),
         kind: 'guardian'
       })
       .execute()
@@ -317,17 +316,17 @@ describe('role flags', function () {
       .values([
         {
           id: makeId('seasonMember'),
-          user_id: idOf('seasonMember'),
+          user_id: userIdOfGumbo(idOf('seasonMember')),
           season_id: 'sea_a1'
         },
         {
           id: makeId('seasonMember'),
-          user_id: idOf('otherSeasonMember'),
+          user_id: userIdOfGumbo(idOf('otherSeasonMember')),
           season_id: 'sea_b1'
         },
         {
           id: makeId('seasonMember'),
-          user_id: idOf('closedMember'),
+          user_id: userIdOfGumbo(idOf('closedMember')),
           season_id: 'sea_a2'
         }
       ])
@@ -336,14 +335,14 @@ describe('role flags', function () {
       .insertInto('league_members')
       .values({
         id: makeId('leagueMember'),
-        user_id: idOf('leagueMember'),
+        user_id: userIdOfGumbo(idOf('leagueMember')),
         league_id: 'lea_a'
       })
       .execute()
     await db
       .updateTable('users')
-      .set({ merged_into: idOf('survivor') })
-      .where('id', '=', idOf('closedMember'))
+      .set({ merged_into: userIdOfGumbo(idOf('survivor')) })
+      .where('id', '=', userIdOfGumbo(idOf('closedMember')))
       .execute()
   })
 
@@ -356,7 +355,7 @@ describe('role flags', function () {
   })
 
   const scopesOf = async (name: string): Promise<RoleScopes> =>
-    await roleScopes(db, idOf(name), name === 'siteAdmin')
+    await roleScopes(db, userIdOfGumbo(idOf(name)), name === 'siteAdmin')
 
   /** The teams on which `name` holds `role`, of the four there are. */
   const teamsHolding = async (name: string, role: Role): Promise<string[]> => {
@@ -465,11 +464,14 @@ describe('role flags', function () {
   })
 
   it('lists the roles each person was given on a team, implying nothing', async function () {
-    const named = (given: Map<number, Role[]>): Record<string, Role[]> =>
+    const named = (given: Map<string, Role[]>): Record<string, Role[]> =>
       Object.fromEntries(
         [...people]
-          .filter(([, made]) => given.has(made.userId))
-          .map(([name, made]) => [name, given.get(made.userId) ?? []])
+          .filter(([, made]) => given.has(userIdOfGumbo(made.userId)))
+          .map(([name, made]) => [
+            name,
+            given.get(userIdOfGumbo(made.userId)) ?? []
+          ])
       )
     // Everything set on the team, its season and its league; no implied
     // songkeeper for the scorekeeper, no flags for the admin.
@@ -511,12 +513,20 @@ describe('role flags', function () {
 
   it('never makes a flag an admin, and keeps what adminScopes gave admins', async function () {
     for (const flag of ROLE_FLAGS) {
-      const scopes = await adminScopes(db, idOf(`${flag}@lea_a`), false)
+      const scopes = await adminScopes(
+        db,
+        userIdOfGumbo(idOf(`${flag}@lea_a`)),
+        false
+      )
       expect(
         scopes.leagueIds.size + scopes.seasonIds.size + scopes.teamIds.size
       ).equals(0)
     }
-    const league = await adminScopes(db, idOf('admin@lea_a'), false)
+    const league = await adminScopes(
+      db,
+      userIdOfGumbo(idOf('admin@lea_a')),
+      false
+    )
     expect({
       leagueIds: [...league.leagueIds],
       seasonIds: [...league.seasonIds].sort(),
@@ -528,9 +538,9 @@ describe('role flags', function () {
       teamIds: ['tem_a1', 'tem_a2', 'tem_a3'],
       isAdmin: false
     })
-    const manager = await adminScopes(db, idOf('manager'), false)
+    const manager = await adminScopes(db, userIdOfGumbo(idOf('manager')), false)
     expect([...manager.teamIds]).deep.equals(['tem_a1'])
-    const site = await adminScopes(db, idOf('siteAdmin'), true)
+    const site = await adminScopes(db, userIdOfGumbo(idOf('siteAdmin')), true)
     expect(site.isAdmin).equals(true)
   })
 
@@ -543,7 +553,7 @@ describe('role flags', function () {
     const reach = async (
       name: string
     ): Promise<{ teams: string[]; seasons: string[] }> => {
-      const scopes = await visibleScopes(db, idOf(name), false)
+      const scopes = await visibleScopes(db, userIdOfGumbo(idOf(name)), false)
       return {
         teams: [...scopes.teamIds].sort(),
         seasons: [...scopes.seasonIds].sort()
@@ -568,7 +578,11 @@ describe('role flags', function () {
         teams: ['tem_a2'],
         seasons: []
       })
-      const scopes = await visibleScopes(db, idOf('seasonMember'), false)
+      const scopes = await visibleScopes(
+        db,
+        userIdOfGumbo(idOf('seasonMember')),
+        false
+      )
       expect(canSeeTeam(scopes, 'tem_a2')).equals(true)
       expect(canSeeTeam(scopes, 'tem_a3')).equals(false)
       // A season membership written under a row since merged is the
@@ -586,9 +600,14 @@ describe('role flags', function () {
         []
       )
       expect(
-        await mayEditName(db, idOf('seasonMember'), idOf('player'), {
-          isAdmin: false
-        })
+        await mayEditName(
+          db,
+          userIdOfGumbo(idOf('seasonMember')),
+          userIdOfGumbo(idOf('player')),
+          {
+            isAdmin: false
+          }
+        )
       ).equals(false)
     } finally {
       await db.deleteFrom('teams').where('id', '=', 'tem_a9').execute()
@@ -603,30 +622,62 @@ describe('role flags', function () {
     for (const role of ['admin', 'coach', 'assistant', 'scorekeeper']) {
       for (const height of HEIGHTS) {
         const name = `${role}@${height.id}`
-        expect(await mayEditName(db, idOf(name), player, about), name).equals(
-          true
-        )
+        expect(
+          await mayEditName(
+            db,
+            userIdOfGumbo(idOf(name)),
+            userIdOfGumbo(player),
+            about
+          ),
+          name
+        ).equals(true)
       }
     }
     // The other flags hold a role on the team but never read the name.
     for (const role of ['songkeeper', 'videographer']) {
       for (const height of HEIGHTS) {
         const name = `${role}@${height.id}`
-        expect(await mayEditName(db, idOf(name), player, about), name).equals(
-          false
-        )
+        expect(
+          await mayEditName(
+            db,
+            userIdOfGumbo(idOf(name)),
+            userIdOfGumbo(player),
+            about
+          ),
+          name
+        ).equals(false)
       }
     }
     // Staff of other teams, a member who is not staff, and a disabled coach.
     for (const name of ['manager', 'owner', 'union', 'member', 'disabled']) {
-      expect(await mayEditName(db, idOf(name), player, about), name).equals(
-        false
-      )
+      expect(
+        await mayEditName(
+          db,
+          userIdOfGumbo(idOf(name)),
+          userIdOfGumbo(player),
+          about
+        ),
+        name
+      ).equals(false)
     }
-    expect(await mayEditName(db, idOf('guardian'), player, about)).equals(true)
-    expect(await mayEditName(db, player, player, about)).equals(true)
     expect(
-      await mayEditName(db, idOf('member'), player, { isAdmin: true })
+      await mayEditName(
+        db,
+        userIdOfGumbo(idOf('guardian')),
+        userIdOfGumbo(player),
+        about
+      )
+    ).equals(true)
+    expect(
+      await mayEditName(db, userIdOfGumbo(player), userIdOfGumbo(player), about)
+    ).equals(true)
+    expect(
+      await mayEditName(
+        db,
+        userIdOfGumbo(idOf('member')),
+        userIdOfGumbo(player),
+        { isAdmin: true }
+      )
     ).equals(true)
   })
 })
@@ -705,25 +756,22 @@ describe('guardians', function () {
       const made = mintUserId(id => taken.has(id))
       taken.add(made.userId)
       ids.set(name, made.userId)
-      await db
-        .insertInto('users')
-        .values({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: name,
-          is_admin: name === 'siteAdmin'
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(made.userId),
+        legacyId: made.legacyId,
+        display_name: name,
+        is_admin: name === 'siteAdmin'
+      })
     }
     await db
       .updateTable('users')
-      .set({ merged_into: idOf('child') })
-      .where('id', '=', idOf('childOld'))
+      .set({ merged_into: userIdOfGumbo(idOf('child')) })
+      .where('id', '=', userIdOfGumbo(idOf('childOld')))
       .execute()
     await db
       .updateTable('users')
-      .set({ merged_into: idOf('guardian') })
-      .where('id', '=', idOf('guardianOld'))
+      .set({ merged_into: userIdOfGumbo(idOf('guardian')) })
+      .where('id', '=', userIdOfGumbo(idOf('guardianOld')))
       .execute()
     const membership = (
       name: string,
@@ -731,12 +779,12 @@ describe('guardians', function () {
       isPlayer: boolean
     ): {
       id: string
-      user_id: number
+      user_id: string
       team_id: string
       is_player: boolean
     } => ({
       id: makeId('membership'),
-      user_id: idOf(name),
+      user_id: userIdOfGumbo(idOf(name)),
       team_id: teamId,
       is_player: isPlayer
     })
@@ -765,8 +813,8 @@ describe('guardians', function () {
           ] as const
         ).map(([from, to, kind]) => ({
           id: makeId('userLink'),
-          user_id: idOf(from),
-          related_user_id: idOf(to),
+          user_id: userIdOfGumbo(idOf(from)),
+          related_user_id: userIdOfGumbo(idOf(to)),
           kind
         }))
       )
@@ -775,7 +823,7 @@ describe('guardians', function () {
       .insertInto('scope_roles')
       .values({
         id: makeId('scopeRole'),
-        user_id: idOf('coach'),
+        user_id: userIdOfGumbo(idOf('coach')),
         scope_type: 'team',
         scope_id: 'tem_two',
         role: 'coach'
@@ -792,39 +840,65 @@ describe('guardians', function () {
   })
 
   const teamsOf = async (name: string): Promise<string[]> =>
-    [...(await visibleScopes(db, idOf(name), false)).teamIds].sort()
+    [
+      ...(await visibleScopes(db, userIdOfGumbo(idOf(name)), false)).teamIds
+    ].sort()
 
   it('names the child by the row they sign in as, across merged rows on both sides', async function () {
-    expect(await guardedPlayers(db, idOf('guardian'))).deep.equals([
-      idOf('child')
-    ])
+    expect(
+      await guardedPlayers(db, userIdOfGumbo(idOf('guardian')))
+    ).deep.equals([idOf('child')].map(userIdOfGumbo))
     // A `family` link counts; an `other` one does not.
-    expect(await guardedPlayers(db, idOf('aunt'))).deep.equals([idOf('child')])
+    expect(await guardedPlayers(db, userIdOfGumbo(idOf('aunt')))).deep.equals(
+      [idOf('child')].map(userIdOfGumbo)
+    )
     for (const name of ['neighbour', 'coach', 'member', 'child']) {
-      expect(await guardedPlayers(db, idOf(name)), name).deep.equals([])
+      expect(
+        await guardedPlayers(db, userIdOfGumbo(idOf(name))),
+        name
+      ).deep.equals([])
     }
-    expect(await guardsPlayer(db, idOf('guardian'), idOf('childOld'))).equals(
-      true
-    )
-    expect(await guardsPlayer(db, idOf('neighbour'), idOf('child'))).equals(
-      false
-    )
+    expect(
+      await guardsPlayer(
+        db,
+        userIdOfGumbo(idOf('guardian')),
+        userIdOfGumbo(idOf('childOld'))
+      )
+    ).equals(true)
+    expect(
+      await guardsPlayer(
+        db,
+        userIdOfGumbo(idOf('neighbour')),
+        userIdOfGumbo(idOf('child'))
+      )
+    ).equals(false)
   })
 
   it('reads the guarded people once with the scopes, and on their own without them', async function () {
-    const child = await onePerson(db, idOf('childOld'))
-    const guardian = await visibleScopes(db, idOf('guardian'), false)
-    expect([...guardian.guardedIds!]).deep.equals([idOf('child')])
-    expect(await guardsPerson(db, guardian, idOf('guardian'), child)).equals(
-      true
-    )
-    const neighbour = await visibleScopes(db, idOf('neighbour'), false)
-    expect(await guardsPerson(db, neighbour, idOf('neighbour'), child)).equals(
+    const child = await onePerson(db, userIdOfGumbo(idOf('childOld')))
+    const guardian = await visibleScopes(
+      db,
+      userIdOfGumbo(idOf('guardian')),
       false
     )
+    expect([...guardian.guardedIds!]).deep.equals(
+      [idOf('child')].map(userIdOfGumbo)
+    )
+    expect(
+      await guardsPerson(db, guardian, userIdOfGumbo(idOf('guardian')), child)
+    ).equals(true)
+    const neighbour = await visibleScopes(
+      db,
+      userIdOfGumbo(idOf('neighbour')),
+      false
+    )
+    expect(
+      await guardsPerson(db, neighbour, userIdOfGumbo(idOf('neighbour')), child)
+    ).equals(false)
     // A closed row asks as nobody, and guards nobody.
     expect([
-      ...(await visibleScopes(db, idOf('guardianOld'), false)).guardedIds!
+      ...(await visibleScopes(db, userIdOfGumbo(idOf('guardianOld')), false))
+        .guardedIds!
     ]).deep.equals([])
     // Scopes made by hand carry none, so the links are read instead.
     for (const [name, guards] of [
@@ -832,7 +906,12 @@ describe('guardians', function () {
       ['neighbour', false]
     ] as const)
       expect(
-        await guardsPerson(db, scopes([], []), idOf(name), child),
+        await guardsPerson(
+          db,
+          scopes([], []),
+          userIdOfGumbo(idOf(name)),
+          child
+        ),
         name
       ).equals(guards)
   })
@@ -858,7 +937,7 @@ describe('guardians', function () {
   })
 
   it('reads the teams any of a player’s rows plays on now, each once', async function () {
-    const child = await onePerson(db, idOf('child'))
+    const child = await onePerson(db, userIdOfGumbo(idOf('child')))
     // Not the team the child only watches, nor one merged away; a team two
     // rows play on once.
     expect((await teamsPlayedOnNow(db, child.userIds)).sort()).deep.equals([
@@ -866,10 +945,12 @@ describe('guardians', function () {
       'tem_one',
       'tem_two'
     ])
-    expect(await teamsPlayedOnNow(db, [idOf('childOld')])).deep.equals([
-      'tem_two'
-    ])
-    expect(await teamsPlayedOnNow(db, [idOf('member')])).deep.equals([])
+    expect(
+      await teamsPlayedOnNow(db, [userIdOfGumbo(idOf('childOld'))])
+    ).deep.equals(['tem_two'])
+    expect(
+      await teamsPlayedOnNow(db, [userIdOfGumbo(idOf('member'))])
+    ).deep.equals([])
     expect(await teamsPlayedOnNow(db, [])).deep.equals([])
   })
 
@@ -877,23 +958,29 @@ describe('guardians', function () {
     // The child twice, by both rows; a guardian's closed row, whose only
     // link is from the guardian themself; and a member nobody guards.
     const players = ['childOld', 'member', 'guardianOld', 'child'].map(idOf)
-    const each = new Set<number>()
+    const each = new Set<string>()
     for (const player of players)
-      for (const guardian of await guardiansOf(db, [player])) each.add(guardian)
-    const together = await guardiansOf(db, players)
-    expect(together).deep.equals([...each].sort((a, b) => a - b))
+      for (const guardian of await guardiansOf(db, [userIdOfGumbo(player)]))
+        each.add(guardian)
+    const together = await guardiansOf(db, players.map(userIdOfGumbo))
+    expect(together).deep.equals([...each].sort())
     // By the row each signs in as: the guardian linked from a closed row.
     expect(together).deep.equals(
-      [idOf('guardian'), idOf('aunt')].sort((a, b) => a - b)
+      [idOf('guardian'), idOf('aunt')].map(userIdOfGumbo).sort()
     )
-    expect(await guardiansOf(db, [idOf('member')])).deep.equals([])
+    expect(await guardiansOf(db, [userIdOfGumbo(idOf('member'))])).deep.equals(
+      []
+    )
     expect(await guardiansOf(db, [])).deep.equals([])
   })
 
   it('takes a team away when the child leaves it, unless the guardian belongs to it', async function () {
     await db
       .deleteFrom('memberships')
-      .where('user_id', 'in', [idOf('child'), idOf('childOld')])
+      .where('user_id', 'in', [
+        userIdOfGumbo(idOf('child')),
+        userIdOfGumbo(idOf('childOld'))
+      ])
       .where('team_id', 'in', ['tem_two', 'tem_both'])
       .execute()
     try {
@@ -905,13 +992,13 @@ describe('guardians', function () {
         .values([
           {
             id: makeId('membership'),
-            user_id: idOf('childOld'),
+            user_id: userIdOfGumbo(idOf('childOld')),
             team_id: 'tem_two',
             is_player: true
           },
           {
             id: makeId('membership'),
-            user_id: idOf('child'),
+            user_id: userIdOfGumbo(idOf('child')),
             team_id: 'tem_both',
             is_player: true
           }
@@ -921,40 +1008,52 @@ describe('guardians', function () {
   })
 
   it('lets a guardian, a coach of one of the child’s teams or a site admin manage the child', async function () {
-    const as = (name: string): { userId: number; isAdmin: boolean } => ({
-      userId: idOf(name),
+    const as = (name: string): { userId: string; isAdmin: boolean } => ({
+      userId: userIdOfGumbo(idOf(name)),
       isAdmin: name === 'siteAdmin'
     })
     const child = idOf('child')
     for (const teamId of ['tem_one', 'tem_two', null]) {
       for (const name of ['guardian', 'aunt', 'siteAdmin']) {
         expect(
-          await mayManagePlayer(db, as(name), child, teamId),
+          await mayManagePlayer(db, as(name), userIdOfGumbo(child), teamId),
           `${name} ${teamId}`
         ).equals(true)
       }
       for (const name of ['neighbour', 'member', 'child']) {
         expect(
-          await mayManagePlayer(db, as(name), child, teamId),
+          await mayManagePlayer(db, as(name), userIdOfGumbo(child), teamId),
           `${name} ${teamId}`
         ).equals(false)
       }
     }
     // A coach, on the team they coach, and away from any team for a child
     // who plays on it under a closed row; never on another team.
-    expect(await mayManagePlayer(db, as('coach'), child, 'tem_two')).equals(
-      true
-    )
-    expect(await mayManagePlayer(db, as('coach'), child, null)).equals(true)
-    expect(await mayManagePlayer(db, as('coach'), child, 'tem_one')).equals(
-      false
-    )
-    expect(await mayManagePlayer(db, as('coach'), idOf('member'), null)).equals(
-      false
-    )
+    expect(
+      await mayManagePlayer(db, as('coach'), userIdOfGumbo(child), 'tem_two')
+    ).equals(true)
+    expect(
+      await mayManagePlayer(db, as('coach'), userIdOfGumbo(child), null)
+    ).equals(true)
+    expect(
+      await mayManagePlayer(db, as('coach'), userIdOfGumbo(child), 'tem_one')
+    ).equals(false)
+    expect(
+      await mayManagePlayer(
+        db,
+        as('coach'),
+        userIdOfGumbo(idOf('member')),
+        null
+      )
+    ).equals(false)
     // Nobody's guardian manages somebody else.
     expect(
-      await mayManagePlayer(db, as('guardian'), idOf('member'), null)
+      await mayManagePlayer(
+        db,
+        as('guardian'),
+        userIdOfGumbo(idOf('member')),
+        null
+      )
     ).equals(false)
   })
 })

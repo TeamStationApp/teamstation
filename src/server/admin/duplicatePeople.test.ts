@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { actionFor, isShortFormOf, shirtPairs } from './duplicatePeople'
 
 describe('two rows for one child', function () {
@@ -94,29 +95,54 @@ describe('two rows for one child', function () {
     // and no rule can read a nickname.
     const [ned, edward, other] = [1, 2, 3]
     const found = shirtPairs([
-      { userId: ned, displayName: 'Ned', jersey: '7', plays: 72 },
-      { userId: edward, displayName: 'Edward Olivares', jersey: '7', plays: 0 },
-      { userId: other, displayName: 'Somebody', jersey: '3', plays: 12 }
+      {
+        userId: userIdOfGumbo(ned),
+        displayName: 'Ned',
+        jersey: '7',
+        plays: 72
+      },
+      {
+        userId: userIdOfGumbo(edward),
+        displayName: 'Edward Olivares',
+        jersey: '7',
+        plays: 0
+      },
+      {
+        userId: userIdOfGumbo(other),
+        displayName: 'Somebody',
+        jersey: '3',
+        plays: 12
+      }
     ])
     expect(found.length).equals(1)
-    expect(found[0].keepUserId).equals(ned)
-    expect(found[0].emptyUserId).equals(edward)
+    expect(found[0].keepUserId).equals(userIdOfGumbo(ned))
+    expect(found[0].emptyUserId).equals(userIdOfGumbo(edward))
   })
 
   it('leaves a shirt two children have both played in', function () {
     // Eleven numbers on the server are worn by two children who both played.
     expect(
       shirtPairs([
-        { userId: 1, displayName: 'Aaron A', jersey: '13', plays: 40 },
-        { userId: 2, displayName: 'Jack A', jersey: '13', plays: 12 }
+        {
+          userId: userIdOfGumbo(1),
+          displayName: 'Aaron A',
+          jersey: '13',
+          plays: 40
+        },
+        {
+          userId: userIdOfGumbo(2),
+          displayName: 'Jack A',
+          jersey: '13',
+          plays: 12
+        }
       ])
     ).deep.equals([])
     // And a shirt three rows claim says nothing at all.
     expect(
       shirtPairs([
-        { userId: 1, displayName: 'A', jersey: '5', plays: 10 },
-        { userId: 2, displayName: 'B', jersey: '5', plays: 0 },
-        { userId: 3, displayName: 'C', jersey: '5', plays: 0 }
+        { userId: userIdOfGumbo(1), displayName: 'A', jersey: '5', plays: 10 },
+        { userId: userIdOfGumbo(2), displayName: 'B', jersey: '5', plays: 0 },
+        { userId: userIdOfGumbo(3), displayName: 'C', jersey: '5', plays: 0 }
       ])
     ).deep.equals([])
   })

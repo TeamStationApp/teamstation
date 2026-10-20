@@ -27,7 +27,7 @@ export function NodeAdministrationScreen({
   onChanged
 }: {
   client: TeamStationClient
-  onChanged: (userId: number) => void
+  onChanged: (userId: string) => void
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)

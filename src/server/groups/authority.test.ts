@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { setScopeRoles } from '../invites/people'
 
@@ -35,21 +36,21 @@ describe('current authority and immutable relationship request terms', function 
       f.h.db,
       'season',
       f.seasonB,
-      103,
+      userIdOfGumbo(103),
       { admin: true, flags: [] },
-      102
+      userIdOfGumbo(102)
     )
     await setScopeRoles(
       f.h.db,
       'league',
       f.leagueB,
-      105,
+      userIdOfGumbo(105),
       { admin: true, flags: [] },
-      105
+      userIdOfGumbo(105)
     )
     await f.h.db
       .deleteFrom('scope_roles')
-      .where('user_id', '=', 102)
+      .where('user_id', '=', userIdOfGumbo(102))
       .where('scope_id', 'in', [f.leagueB, f.seasonB])
       .execute()
     const formerSender = (await (
@@ -95,9 +96,9 @@ describe('current authority and immutable relationship request terms', function 
       f.h.db,
       'team',
       f.teamA,
-      103,
+      userIdOfGumbo(103),
       { admin: true, flags: [] },
-      101
+      userIdOfGumbo(101)
     )
     for (const ref of [
       { kind: 'league' as const, id: f.leagueA },
@@ -108,13 +109,13 @@ describe('current authority and immutable relationship request terms', function 
         f.h.db,
         ref.kind,
         ref.id,
-        105,
+        userIdOfGumbo(105),
         { admin: true, flags: [] },
-        105
+        userIdOfGumbo(105)
       )
     await f.h.db
       .deleteFrom('scope_roles')
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .where('scope_id', 'in', [f.leagueA, f.seasonA, f.playoffs, f.teamA])
       .execute()
     expect(
@@ -154,21 +155,21 @@ describe('current authority and immutable relationship request terms', function 
       f.h.db,
       'league',
       f.leagueB,
-      105,
+      userIdOfGumbo(105),
       { admin: true, flags: [] },
-      105
+      userIdOfGumbo(105)
     )
     await setScopeRoles(
       f.h.db,
       'season',
       f.seasonB,
-      103,
+      userIdOfGumbo(103),
       { admin: true, flags: [] },
-      102
+      userIdOfGumbo(102)
     )
     await f.h.db
       .deleteFrom('scope_roles')
-      .where('user_id', '=', 102)
+      .where('user_id', '=', userIdOfGumbo(102))
       .where('scope_id', 'in', [f.leagueB, f.seasonB])
       .execute()
     expect(

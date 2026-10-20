@@ -15,6 +15,7 @@ import type {
 } from '../../common/api'
 import { asSeasonGame, asTeamSummary, asUserMatch } from '../../common/api'
 import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import { App } from '../App'
 import { parseRoute, routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
@@ -205,7 +206,7 @@ function guarded(
   avatarUrl: string | null = null
 ): UserMatch {
   return asUserMatch({
-    userId,
+    userId: userIdOfGumbo(userId),
     gumboId: userId,
     externalIds: [],
     shortName,
@@ -813,8 +814,8 @@ describe('the home screen’s players', function () {
     await press(labelled('Avery S'))
     // A name and nothing else: no team, so the page opens on the career.
     expect(calls.players).deep.equals([
-      [7, 'Jordan P'],
-      [8, 'Avery S']
+      [userIdOfGumbo(7), 'Jordan P'],
+      [userIdOfGumbo(8), 'Avery S']
     ])
     expect(calls.teams).deep.equals([])
   })
@@ -1013,21 +1014,25 @@ describe('a player opened from Home, through the app', function () {
             : input.url
       const path = url.split('?')[0]
       const data = path.endsWith('/auth/me')
-        ? { id: 100, displayName: 'Demo Guardian', isAdmin: false }
+        ? {
+            id: userIdOfGumbo(100),
+            displayName: 'Demo Guardian',
+            isAdmin: false
+          }
         : path.endsWith('/me/roles')
-          ? { teams: {}, guardianOf: [7] }
+          ? { teams: {}, guardianOf: [userIdOfGumbo(7)] }
           : url.endsWith('/users?guardedBy=me')
             ? [
                 {
-                  userId: 7,
+                  userId: userIdOfGumbo(7),
                   gumboId: 7,
                   externalIds: [],
                   shortName: 'Jordan P'
                 }
               ]
-            : path.endsWith('/players/7')
-              ? { userId: 7, name: 'Jordan P', teams: [] }
-              : path.endsWith('/players/7/highlights')
+            : path.endsWith('/players/usr_1111111111111111111118')
+              ? { userId: userIdOfGumbo(7), name: 'Jordan P', teams: [] }
+              : path.endsWith('/players/usr_1111111111111111111118/highlights')
                 ? { highlights: [], nextBefore: null, withoutVideo: 0 }
                 : []
       return new Response(JSON.stringify(data), {
@@ -1048,7 +1053,9 @@ describe('a player opened from Home, through the app', function () {
     await act(async () => {
       await delay(50)
     })
-    expect(routePath(currentRoute())).equals('/players/7')
+    expect(routePath(currentRoute())).equals(
+      '/players/usr_1111111111111111111118'
+    )
   })
 })
 

@@ -37,7 +37,7 @@ export interface VisibleScopes {
    * so a route that asks `guardsPerson` reads them no second time. Absent
    * from scopes made by hand.
    */
-  guardedIds?: ReadonlySet<number>
+  guardedIds?: ReadonlySet<string>
 }
 
 /**
@@ -50,7 +50,7 @@ export interface VisibleScopes {
  */
 async function guardedPeople(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   /** The asker as `onePerson` read them, when the caller already has it. */
   known?: OnePerson
 ): Promise<OnePerson[]> {
@@ -61,14 +61,14 @@ async function guardedPeople(
     .where('user_id', 'in', actor.userIds)
     .where('kind', 'in', ['guardian', 'family'])
     .execute()
-  const people = new Map<number, OnePerson>()
+  const people = new Map<string, OnePerson>()
   for (const relatedId of new Set(links.map(row => row.related_user_id))) {
     const child = await onePerson(db, relatedId)
     // Somebody closed into the asker is the asker, not their child.
     if (child.userIds.some(id => actor.userIds.includes(id))) continue
     people.set(child.userId, child)
   }
-  return [...people.values()].sort((a, b) => a.userId - b.userId)
+  return [...people.values()].sort((a, b) => a.userId.localeCompare(b.userId))
 }
 
 /**
@@ -77,8 +77,8 @@ async function guardedPeople(
  */
 export async function guardedRows(
   db: Kysely<Database>,
-  userId: number
-): Promise<number[]> {
+  userId: string
+): Promise<string[]> {
   return (await guardedPeople(db, userId)).flatMap(child => child.userIds)
 }
 
@@ -89,8 +89,8 @@ export async function guardedRows(
  */
 export async function guardedPlayers(
   db: Kysely<Database>,
-  userId: number
-): Promise<number[]> {
+  userId: string
+): Promise<string[]> {
   return (await guardedPeople(db, userId)).map(child => child.userId)
 }
 
@@ -105,15 +105,15 @@ const MAX_MERGE_DEPTH = 16
  */
 async function peopleOf(
   db: Kysely<Database>,
-  userIds: readonly number[]
-): Promise<Map<number, OnePerson>> {
+  userIds: readonly string[]
+): Promise<Map<string, OnePerson>> {
   const asked = [...new Set(userIds)]
-  const people = new Map<number, OnePerson>()
+  const people = new Map<string, OnePerson>()
   if (asked.length === 0) return people
-  const { rows } = await sql<{ start: number; survivor: number; id: number }>`
+  const { rows } = await sql<{ start: string; survivor: string; id: string }>`
     with recursive up(start, id, depth, path) as (
       select asked.id, asked.id, 0, array[asked.id]
-      from unnest(${asked}::bigint[]) as asked(id)
+      from unnest(${asked}::text[]) as asked(id)
       union all
       select up.start, users.merged_into, up.depth + 1,
         up.path || users.merged_into
@@ -165,9 +165,9 @@ async function peopleOf(
  */
 export async function guardiansOf(
   db: Kysely<Database>,
-  playerUserIds: readonly number[],
+  playerUserIds: readonly string[],
   options: { signsIn?: boolean } = {}
-): Promise<number[]> {
+): Promise<string[]> {
   return [...(await guardiansOfEach(db, playerUserIds, options)).keys()]
 }
 
@@ -178,9 +178,9 @@ export async function guardiansOf(
  */
 export async function guardiansOfEach(
   db: Kysely<Database>,
-  playerUserIds: readonly number[],
+  playerUserIds: readonly string[],
   { signsIn = false }: { signsIn?: boolean } = {}
-): Promise<Map<number, number[]>> {
+): Promise<Map<string, string[]>> {
   const players = [...(await peopleOf(db, playerUserIds)).values()]
   if (players.length === 0) return new Map()
   const links = await db
@@ -198,7 +198,7 @@ export async function guardiansOfEach(
     db,
     links.map(link => link.user_id)
   )
-  const guardians = new Map<number, number[]>()
+  const guardians = new Map<string, string[]>()
   for (const player of players)
     for (const link of links) {
       if (!player.userIds.includes(link.related_user_id)) continue
@@ -231,8 +231,8 @@ export async function guardiansOfEach(
  */
 export async function guardiansWhoCanAct(
   db: Kysely<Database>,
-  playerUserIds: readonly number[]
-): Promise<number[]> {
+  playerUserIds: readonly string[]
+): Promise<string[]> {
   return await guardiansOf(db, playerUserIds, { signsIn: true })
 }
 
@@ -243,7 +243,7 @@ export async function guardiansWhoCanAct(
 export async function guardsPerson(
   db: Kysely<Database>,
   scopes: VisibleScopes,
-  actorUserId: number,
+  actorUserId: string,
   player: OnePerson
 ): Promise<boolean> {
   const guarded =
@@ -254,8 +254,8 @@ export async function guardsPerson(
 /** Whether `actorUserId` is a guardian of any row of `playerUserId`. */
 export async function guardsPlayer(
   db: Kysely<Database>,
-  actorUserId: number,
-  playerUserId: number
+  actorUserId: string,
+  playerUserId: string
 ): Promise<boolean> {
   const player = await onePerson(db, playerUserId)
   const guarded = await guardedPlayers(db, actorUserId)
@@ -274,8 +274,8 @@ export async function guardsPlayer(
  */
 export async function mayManagePlayer(
   db: Kysely<Database>,
-  actor: { userId: number; isAdmin: boolean },
-  playerUserId: number,
+  actor: { userId: string; isAdmin: boolean },
+  playerUserId: string,
   teamId: string | null
 ): Promise<boolean> {
   if (actor.isAdmin) return true
@@ -295,7 +295,7 @@ export async function mayManagePlayer(
  */
 export async function teamsPlayedOnNow(
   db: Kysely<Database>,
-  userIds: readonly number[]
+  userIds: readonly string[]
 ): Promise<string[]> {
   if (userIds.length === 0) return []
   const plays = await db
@@ -319,7 +319,7 @@ export interface AdminScopes {
 
 export async function visibleScopes(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   _isAdmin: boolean
 ): Promise<VisibleScopes> {
   const user = await db
@@ -454,7 +454,7 @@ function permissionParents(
  * Each role's rows, carried down: a league's to its seasons and their teams,
  * a season's to its teams. Never upwards.
  *
- * One query per level for every role at once, whatever the number of roles:
+ * One query per level for every role at once, whatever the string of roles:
  * the seasons of every league anybody holds anything on, then the teams of
  * every season. The sets are filled in place, and returned.
  */
@@ -540,7 +540,7 @@ export async function teamsUnder(
  */
 export async function roleScopes(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   _isAdmin: boolean
 ): Promise<RoleScopes> {
   const user = await db
@@ -569,7 +569,7 @@ function noRoles(): Record<Role, ScopeSet> {
  */
 async function directRoles(
   db: Kysely<Database>,
-  userId: number
+  userId: string
 ): Promise<Record<Role, ScopeSet>> {
   const direct = noRoles()
   const rows = await db
@@ -616,7 +616,7 @@ function addImpliedRoles(inherited: Record<Role, ScopeSet>): void {
  */
 export async function adminScopes(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   isAdmin: boolean
 ): Promise<AdminScopes> {
   const scopes = await roleScopes(db, userId, isAdmin)
@@ -699,7 +699,7 @@ export function rolesOnTeam(scopes: RoleScopes, teamId: string): Role[] {
 export async function givenRolesOnTeam(
   db: Kysely<Database>,
   teamId: string
-): Promise<Map<number, Role[]>> {
+): Promise<Map<string, Role[]>> {
   const levels = await givenRoleLevelsOnTeam(db, teamId)
   return new Map(
     [...levels].map(([userId, held]) => [userId, [...held.keys()]])
@@ -714,8 +714,8 @@ export async function givenRolesOnTeam(
 export async function givenRolesOnTeams(
   db: Kysely<Database>,
   teamIds: string[]
-): Promise<Map<string, Map<number, Role[]>>> {
-  const result = new Map<string, Map<number, Role[]>>(
+): Promise<Map<string, Map<string, Role[]>>> {
+  const result = new Map<string, Map<string, Role[]>>(
     teamIds.map(id => [id, new Map()])
   )
   if (teamIds.length === 0) return result
@@ -799,8 +799,8 @@ export async function givenRolesOnTeams(
     .execute()
   for (const teamId of teamIds) {
     const level = levels.get(teamId)!
-    const held = new Map<number, Set<Role>>()
-    const give = (userId: number, role: Role): void => {
+    const held = new Map<string, Set<Role>>()
+    const give = (userId: string, role: Role): void => {
       held.set(userId, (held.get(userId) ?? new Set<Role>()).add(role))
     }
     for (const row of rows)
@@ -868,7 +868,7 @@ export async function levelsAboveTeam(
 export async function membersOfLevels(
   db: Kysely<Database>,
   { seasonIds, leagueIds }: { seasonIds: string[]; leagueIds: string[] }
-): Promise<Map<number, Exclude<RoleLevel, 'team'>>> {
+): Promise<Map<string, Exclude<RoleLevel, 'team'>>> {
   const rows = [
     ...(seasonIds.length === 0
       ? []
@@ -896,7 +896,7 @@ export async function membersOfLevels(
   const survivors = [...new Set([...people.values()].map(p => p.userId))]
   const open =
     survivors.length === 0
-      ? new Set<number>()
+      ? new Set<string>()
       : new Set(
           (
             await db
@@ -908,7 +908,7 @@ export async function membersOfLevels(
               .execute()
           ).map(row => row.id)
         )
-  const members = new Map<number, Exclude<RoleLevel, 'team'>>()
+  const members = new Map<string, Exclude<RoleLevel, 'team'>>()
   for (const row of rows) {
     const userId = people.get(row.userId)?.userId ?? row.userId
     if (!open.has(userId)) continue
@@ -928,7 +928,7 @@ const LEVEL_RANK: Record<RoleLevel, number> = { team: 0, season: 1, league: 2 }
 export async function givenRoleLevelsOnTeam(
   db: Kysely<Database>,
   teamId: string
-): Promise<Map<number, Map<Role, RoleLevel>>> {
+): Promise<Map<string, Map<Role, RoleLevel>>> {
   return await givenRoleLevelsAt(db, {
     teamId,
     ...(await levelsAboveTeam(db, teamId))
@@ -948,7 +948,7 @@ export async function givenRoleLevelsAt(
     seasonIds,
     leagueIds
   }: { teamId?: string; seasonIds: string[]; leagueIds: string[] }
-): Promise<Map<number, Map<Role, RoleLevel>>> {
+): Promise<Map<string, Map<Role, RoleLevel>>> {
   const rows = await db
     .selectFrom('scope_roles')
     .innerJoin('users', 'users.id', 'scope_roles.user_id')
@@ -1001,8 +1001,8 @@ export async function givenRoleLevelsAt(
           .where('users.merged_into', 'is', null)
           .execute()
 
-  const held = new Map<number, Map<Role, RoleLevel>>()
-  const give = (userId: number, role: Role, level: RoleLevel): void => {
+  const held = new Map<string, Map<Role, RoleLevel>>()
+  const give = (userId: string, role: Role, level: RoleLevel): void => {
     const roles = held.get(userId) ?? new Map<Role, RoleLevel>()
     const before = roles.get(role)
     if (before == null || LEVEL_RANK[level] > LEVEL_RANK[before])
@@ -1078,7 +1078,7 @@ export function canSeeTeam(scopes: VisibleScopes, teamId: string): boolean {
  */
 export async function nonMemberTeam(
   db: Kysely<Database>,
-  actor: { userId: number } | null | undefined,
+  actor: { userId: string } | null | undefined,
   scopes: VisibleScopes,
   teamId: string
 ): Promise<boolean> {
@@ -1133,7 +1133,7 @@ export function canSeePerson(
  */
 export async function seesPeopleOf(
   db: Kysely<Database>,
-  actor: { userId: number; isAdmin: boolean },
+  actor: { userId: string; isAdmin: boolean },
   ref: { kind: 'league' | 'season' | 'team'; id: string }
 ): Promise<boolean> {
   const visible = await visibleScopes(db, actor.userId, actor.isAdmin)
@@ -1204,8 +1204,8 @@ export function canManageTeam(scopes: AdminScopes, teamId: string): boolean {
  */
 export async function mayEditName(
   db: Kysely<Database>,
-  actorUserId: number,
-  playerUserId: number,
+  actorUserId: string,
+  playerUserId: string,
   about: { isAdmin: boolean },
   known: { player?: OnePerson } = {}
 ): Promise<boolean> {

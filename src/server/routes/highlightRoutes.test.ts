@@ -10,10 +10,12 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -175,7 +177,9 @@ describe('the highlight routes', function () {
   }): string[] => body.highlights.map(highlight => highlight.eventId)
 
   it("finds a player's plays by our own user id, newest first, a page at a time", async function () {
-    const first = await get(`/players/${ada.userId}/highlights?limit=2`)
+    const first = await get(
+      `/players/${userIdOfGumbo(ada.userId)}/highlights?limit=2`
+    )
     expect(first.status).equals(200)
     expect(eventIdsOf(first.body)).deep.equals(['evt_ada3', 'evt_ada2'])
     expect(first.body.nextBefore).equals(minutesIn(30))
@@ -184,7 +188,7 @@ describe('the highlight routes', function () {
     expect(first.body.highlights[0].outcome).is.a('string')
 
     const second = await get(
-      `/players/${ada.userId}/highlights?limit=2&before=${encodeURIComponent(
+      `/players/${userIdOfGumbo(ada.userId)}/highlights?limit=2&before=${encodeURIComponent(
         first.body.nextBefore
       )}`
     )
@@ -193,13 +197,13 @@ describe('the highlight routes', function () {
   })
 
   it('finds a player credited under a row merged into them', async function () {
-    const answer = await get(`/players/${bea.userId}/highlights`)
+    const answer = await get(`/players/${userIdOfGumbo(bea.userId)}/highlights`)
     expect(answer.status).equals(200)
     expect(eventIdsOf(answer.body)).deep.equals(['evt_bea'])
   })
 
   it('answers an empty page for somebody credited with nothing', async function () {
-    const answer = await get(`/players/${cal.userId}/highlights`)
+    const answer = await get(`/players/${userIdOfGumbo(cal.userId)}/highlights`)
     expect(answer.body).deep.equals({
       highlights: [],
       nextBefore: null,
@@ -207,13 +211,15 @@ describe('the highlight routes', function () {
     })
   })
 
-  it('answers 404 for a user id that is not one', async function () {
-    expect((await get('/players/not-a-user/highlights')).status).equals(404)
+  it('answers 400 for a malformed user id', async function () {
+    expect((await get('/players/not-a-user/highlights')).status).equals(400)
   })
 
   describe("narrowed as the player's stats are", function () {
     const dees = async (query = ''): Promise<string[]> => {
-      const answer = await get(`/players/${dee.userId}/highlights${query}`)
+      const answer = await get(
+        `/players/${userIdOfGumbo(dee.userId)}/highlights${query}`
+      )
       expect(answer.status).equals(200)
       return eventIdsOf(answer.body)
     }
@@ -243,7 +249,11 @@ describe('the highlight routes', function () {
     it('leaves a play whose credit names no team to the teams in its game', async function () {
       const eves = async (teamId: string): Promise<string[]> =>
         eventIdsOf(
-          (await get(`/players/${eve.userId}/highlights?teamId=${teamId}`)).body
+          (
+            await get(
+              `/players/${userIdOfGumbo(eve.userId)}/highlights?teamId=${teamId}`
+            )
+          ).body
         )
       expect(await eves(away)).deep.equals(['evt_eve'])
       expect(await eves(other)).deep.equals([])
@@ -266,13 +276,13 @@ describe('the highlight routes', function () {
 
     it('narrows before the page is cut, and pages through what is left', async function () {
       const first = await get(
-        `/players/${dee.userId}/highlights?teamId=${away}&limit=1`
+        `/players/${userIdOfGumbo(dee.userId)}/highlights?teamId=${away}&limit=1`
       )
       expect(eventIdsOf(first.body)).deep.equals(['evt_dee_season'])
       expect(first.body.nextBefore).equals(minutesIn(10, DEE_SEASON))
 
       const second = await get(
-        `/players/${dee.userId}/highlights?teamId=${away}&limit=1&before=${encodeURIComponent(
+        `/players/${userIdOfGumbo(dee.userId)}/highlights?teamId=${away}&limit=1&before=${encodeURIComponent(
           first.body.nextBefore
         )}`
       )
@@ -282,7 +292,7 @@ describe('the highlight routes', function () {
 
     it('answers an empty page when nothing is left', async function () {
       const answer = await get(
-        `/players/${dee.userId}/highlights?seasonId=${season}&year=2025`
+        `/players/${userIdOfGumbo(dee.userId)}/highlights?seasonId=${season}&year=2025`
       )
       expect(answer.body).deep.equals({
         highlights: [],
@@ -317,32 +327,30 @@ describe('the highlight routes', function () {
    */
   async function seed(db: Kysely<Database>): Promise<void> {
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values(
-        [
-          { made: admin, name: 'Ada Admin', isAdmin: true },
-          { made: ada, name: 'Ada Lovelace', isAdmin: false },
-          { made: bea, name: 'Bea Brown', isAdmin: false },
-          { made: cal, name: 'Cal Carter', isAdmin: false },
-          { made: bee, name: 'Bea B', isAdmin: false },
-          { made: dee, name: 'Dee Dodd', isAdmin: false },
-          { made: eve, name: 'Eve Ennis', isAdmin: false }
-        ].map(person => ({
-          id: person.made.userId,
-          legacyId: person.made.legacyId,
-          display_name: person.name,
-          is_admin: person.isAdmin,
-          created_at: now,
-          updated_at: now
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      [
+        { made: admin, name: 'Ada Admin', isAdmin: true },
+        { made: ada, name: 'Ada Lovelace', isAdmin: false },
+        { made: bea, name: 'Bea Brown', isAdmin: false },
+        { made: cal, name: 'Cal Carter', isAdmin: false },
+        { made: bee, name: 'Bea B', isAdmin: false },
+        { made: dee, name: 'Dee Dodd', isAdmin: false },
+        { made: eve, name: 'Eve Ennis', isAdmin: false }
+      ].map(person => ({
+        id: person.made.userId,
+        legacyId: person.made.legacyId,
+        display_name: person.name,
+        is_admin: person.isAdmin,
+        created_at: now,
+        updated_at: now
+      }))
+    )
     await db
       .insertInto('auth_sessions')
       .values({
         id: makeId('authSession'),
-        user_id: admin.userId,
+        user_id: userIdOfGumbo(admin.userId),
         token_hash: hashToken(ADMIN),
         created_at: now,
         expires_at: new Date(now.getTime() + 3_600_000)
@@ -362,8 +370,8 @@ describe('the highlight routes', function () {
       .execute()
     await db
       .updateTable('users')
-      .set({ merged_into: bea.userId })
-      .where('id', '=', bee.userId)
+      .set({ merged_into: userIdOfGumbo(bea.userId) })
+      .where('id', '=', userIdOfGumbo(bee.userId))
       .execute()
 
     // Dee played for Away twice, once in a season, and for Other last year,

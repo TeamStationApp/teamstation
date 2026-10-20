@@ -10,6 +10,7 @@ import {
   type TeamStationClient
 } from '../../common/api'
 import type { GameSocketEvent } from '../../common/gameSocket'
+import { userIdOfGumbo } from '../../common/userId'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { AT_BAT_FADE_MS } from './atBatColors'
@@ -130,7 +131,7 @@ function side(
     source: 'lineup',
     canEditWalkUp: false,
     batters: batters.map((name, index) => ({
-      userId: index + 1,
+      userId: userIdOfGumbo(index + 1),
       name,
       walkUpSong: null
     })),
@@ -325,7 +326,9 @@ describe('DJ Game’s team pill (U29)', function () {
 
   it('opens on the team at bat, with that batter outlined', async function () {
     await render({
-      client: djClient([{ ...game(), atBat: { side: 'away', userId: 1 } }])
+      client: djClient([
+        { ...game(), atBat: { side: 'away', userId: userIdOfGumbo(1) } }
+      ])
     })
     expect(labelled('Away Team')?.getAttribute('aria-selected')).equals('true')
     const marks = document.querySelectorAll('[data-testid="DJ at bat"]')
@@ -337,9 +340,9 @@ describe('DJ Game’s team pill (U29)', function () {
     const socket = new FakeSocket()
     const sides: string[] = []
     const client = djClient([
-      { ...game(), atBat: { side: 'away', userId: 1 } },
-      { ...game(), atBat: { side: 'away', userId: 2 } },
-      { ...game(), atBat: { side: 'home', userId: 2 } }
+      { ...game(), atBat: { side: 'away', userId: userIdOfGumbo(1) } },
+      { ...game(), atBat: { side: 'away', userId: userIdOfGumbo(2) } },
+      { ...game(), atBat: { side: 'home', userId: userIdOfGumbo(2) } }
     ])
     await render({
       client,
@@ -474,7 +477,7 @@ describe('DJ Game on the socket (U29)', function () {
       gameId: 'g1',
       kind: 'walkUpSong',
       at: '',
-      data: { teamId: 'tem_t', userId: 2, song: walk }
+      data: { teamId: 'tem_t', userId: userIdOfGumbo(2), song: walk }
     })
     expect(client.reads).equals(1)
     expect(names()[1]).includes('Walk · Band')
@@ -485,7 +488,7 @@ describe('DJ Game on the socket (U29)', function () {
       gameId: 'g1',
       kind: 'walkUpSong',
       at: '',
-      data: { teamId: 'tem_x', userId: 1, song: walk }
+      data: { teamId: 'tem_x', userId: userIdOfGumbo(1), song: walk }
     })
     expect(names()[0]).includes('No walk-up song')
     await socket.emit('g1', {
@@ -493,21 +496,23 @@ describe('DJ Game on the socket (U29)', function () {
       gameId: 'g1',
       kind: 'walkUpSong',
       at: '',
-      data: { teamId: 'tem_t', userId: 2, song: null }
+      data: { teamId: 'tem_t', userId: userIdOfGumbo(2), song: null }
     })
     expect(names()[1]).includes('No walk-up song')
   })
 
   it('keeps the batter outlined through a song change', async function () {
     const socket = new FakeSocket()
-    const client = djClient([{ ...game(), atBat: { side: 'away', userId: 1 } }])
+    const client = djClient([
+      { ...game(), atBat: { side: 'away', userId: userIdOfGumbo(1) } }
+    ])
     await render({ client, socket })
     await socket.emit('g1', {
       type: 'change',
       gameId: 'g1',
       kind: 'walkUpSong',
       at: '',
-      data: { teamId: 'tem_t', userId: 2, song: walk }
+      data: { teamId: 'tem_t', userId: userIdOfGumbo(2), song: walk }
     })
     await act(async () => {
       await delay(AT_BAT_FADE_MS * 2 + 40)
@@ -650,15 +655,15 @@ describe('DJ Game getting the songs onto the phone', function () {
     const first = game(
       {
         batters: [
-          { userId: 9, name: 'Otto', walkUpSong: apple('111') },
-          { userId: 8, name: 'Olga', walkUpSong: walk }
+          { userId: userIdOfGumbo(9), name: 'Otto', walkUpSong: apple('111') },
+          { userId: userIdOfGumbo(8), name: 'Olga', walkUpSong: walk }
         ]
       },
       {
         batters: [
-          { userId: 1, name: 'Tom A', walkUpSong: apple('222') },
-          { userId: 2, name: 'Bea B', walkUpSong: apple('111') },
-          { userId: 3, name: 'Cal C', walkUpSong: null }
+          { userId: userIdOfGumbo(1), name: 'Tom A', walkUpSong: apple('222') },
+          { userId: userIdOfGumbo(2), name: 'Bea B', walkUpSong: apple('111') },
+          { userId: userIdOfGumbo(3), name: 'Cal C', walkUpSong: null }
         ]
       }
     )
@@ -670,7 +675,7 @@ describe('DJ Game getting the songs onto the phone', function () {
       gameId: 'g1',
       kind: 'walkUpSong',
       at: '',
-      data: { teamId: 'tem_t', userId: 3, song: apple('333') }
+      data: { teamId: 'tem_t', userId: userIdOfGumbo(3), song: apple('333') }
     })
     expect(asked).deep.equals([['111', '222']])
   })
@@ -707,7 +712,7 @@ describe('DJ Game’s rows on the screen (U29)', function () {
       {
         canEditWalkUp: true,
         batters: [
-          { userId: 1, name: 'Tom A', walkUpSong: walk },
+          { userId: userIdOfGumbo(1), name: 'Tom A', walkUpSong: walk },
           { userId: null, name: 'Guest', walkUpSong: null }
         ]
       }
@@ -719,7 +724,7 @@ describe('DJ Game’s rows on the screen (U29)', function () {
       }
     })
     await press('Set Tom A’s walk-up song')
-    expect(opened).deep.equals(['tem_t:1:Walk'])
+    expect(opened).deep.equals([`tem_t:${userIdOfGumbo(1)}:Walk`])
     expect(labelled('Set Guest’s walk-up song')).equals(null)
   })
 
@@ -727,10 +732,10 @@ describe('DJ Game’s rows on the screen (U29)', function () {
     const music = fakeMusic()
     const playing = game(
       {
-        batters: [{ userId: 9, name: 'Otto', walkUpSong: walk }]
+        batters: [{ userId: userIdOfGumbo(9), name: 'Otto', walkUpSong: walk }]
       },
       {
-        batters: [{ userId: 1, name: 'Tom A', walkUpSong: walk }]
+        batters: [{ userId: userIdOfGumbo(1), name: 'Tom A', walkUpSong: walk }]
       }
     )
     await render({
@@ -739,11 +744,14 @@ describe('DJ Game’s rows on the screen (U29)', function () {
       resolve: async (_song, owner) => `file:${owner.teamId}:${owner.userId}`
     })
     await press('Play Tom A’s walk-up song')
-    expect(music.played).deep.equals(['file:tem_t:1'])
+    expect(music.played).deep.equals([`file:tem_t:${userIdOfGumbo(1)}`])
     await press('Away Team')
     expect(music.stops).deep.equals([])
     await press('Play Otto’s walk-up song')
-    expect(music.played).deep.equals(['file:tem_t:1', 'file:tem_o:9'])
+    expect(music.played).deep.equals([
+      `file:tem_t:${userIdOfGumbo(1)}`,
+      `file:tem_o:${userIdOfGumbo(9)}`
+    ])
     await press('Stop Otto’s walk-up song')
     expect(music.stops).deep.equals([1500])
     await press('Play Otto’s walk-up song')
@@ -758,7 +766,14 @@ describe('DJ Game’s rows on the screen (U29)', function () {
     const music = fakeMusic()
     await render({
       client: djClient([
-        game({}, { batters: [{ userId: 1, name: 'Tom A', walkUpSong: walk }] })
+        game(
+          {},
+          {
+            batters: [
+              { userId: userIdOfGumbo(1), name: 'Tom A', walkUpSong: walk }
+            ]
+          }
+        )
       ]),
       music,
       resolve: async () => null

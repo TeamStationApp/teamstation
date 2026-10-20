@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { cpus } from 'node:os'
 import path from 'node:path'
 
+import { userIdOfGumbo } from '../common/userId'
 import { type AccountHarness, accountHarness } from '../test/accountHarness'
 import {
   testPasswordKdf,
@@ -46,7 +47,7 @@ async function main(): Promise<void> {
         res.json({
           token: fixture.tokens.get(101),
           email: 'alex@example.com',
-          userId: 101
+          userId: userIdOfGumbo(101)
         })
       )
       app.post('/benchmark/result', (req, res) => {

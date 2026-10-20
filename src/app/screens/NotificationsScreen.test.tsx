@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import type { TeamStationClient } from '../../common/api'
 import type { Notification } from '../../common/notifications'
+import { userIdOfGumbo } from '../../common/userId'
 import { App } from '../App'
 import { parseRoute } from '../navigation/routes'
 import { showRoute } from '../navigation/useAddressBar'
@@ -158,7 +159,7 @@ describe('guardian notifications', function () {
       )
         current = { ...current, status: 'accepted', canAct: false }
       const data = path.endsWith('/auth/me')
-        ? { id: 106, displayName: 'Tim Raines', isAdmin: false }
+        ? { id: userIdOfGumbo(106), displayName: 'Tim Raines', isAdmin: false }
         : path.endsWith('/me/roles')
           ? {
               teams: {},
@@ -447,7 +448,7 @@ describe('a reminder to upload a recording', function () {
         return new Response(null, { status: 204 })
       }
       const data = path.endsWith('/auth/me')
-        ? { id: 106, displayName: 'Tim Raines', isAdmin: false }
+        ? { id: userIdOfGumbo(106), displayName: 'Tim Raines', isAdmin: false }
         : path.endsWith('/me/roles')
           ? { teams: {}, guardianOf: [] }
           : path.endsWith('/me/notifications/summary')

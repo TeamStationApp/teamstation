@@ -158,7 +158,7 @@ import { useTiebreakerSetup } from './useTiebreakerSetup'
 
 export interface ScoringScreenProps {
   active?: boolean
-  onEditPlayer?: (userId: number, name: string, teamId: string) => void
+  onEditPlayer?: (userId: string, name: string, teamId: string) => void
   onSettingsRefresh?: (refresh: () => void) => () => void
   onBeforeLeave?: (check: () => Promise<boolean>) => () => void
   allowNavigation?: (route: Route) => boolean

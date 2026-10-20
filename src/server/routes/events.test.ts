@@ -18,7 +18,6 @@ import {
   type GumboPlay
 } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { halfOutcomes } from '../../common/scoring/linescore'
 import { newSetup } from '../../common/scoring/lineup'
@@ -27,9 +26,12 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -181,81 +183,78 @@ describe('posting and reading plays', function () {
     await pool.end()
     db = makeDatabase(scratchUrl)
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values([
-        {
-          id: admin.userId,
-          legacyId: admin.legacyId,
-          display_name: 'Ada',
-          is_admin: true,
-          created_at: now,
-          updated_at: now
-        },
-        {
-          id: stranger.userId,
-          legacyId: stranger.legacyId,
-          display_name: 'Bea',
-          created_at: now,
-          updated_at: now
-        },
-        {
-          id: member.userId,
-          legacyId: member.legacyId,
-          display_name: 'Cam',
-          created_at: now,
-          updated_at: now
-        },
-        {
-          id: manager.userId,
-          legacyId: manager.legacyId,
-          display_name: 'Dee',
-          created_at: now,
-          updated_at: now
-        },
-        ...FLAGS.map(flag => ({
-          id: flagUser(flag).userId,
-          legacyId: flagUser(flag).legacyId,
-          display_name: flag,
-          created_at: now,
-          updated_at: now
-        }))
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(admin.userId),
+        legacyId: admin.legacyId,
+        display_name: 'Ada',
+        is_admin: true,
+        created_at: now,
+        updated_at: now
+      },
+      {
+        id: userIdOfGumbo(stranger.userId),
+        legacyId: stranger.legacyId,
+        display_name: 'Bea',
+        created_at: now,
+        updated_at: now
+      },
+      {
+        id: userIdOfGumbo(member.userId),
+        legacyId: member.legacyId,
+        display_name: 'Cam',
+        created_at: now,
+        updated_at: now
+      },
+      {
+        id: userIdOfGumbo(manager.userId),
+        legacyId: manager.legacyId,
+        display_name: 'Dee',
+        created_at: now,
+        updated_at: now
+      },
+      ...FLAGS.map(flag => ({
+        id: flagUser(flag).userId,
+        legacyId: flagUser(flag).legacyId,
+        display_name: flag,
+        created_at: now,
+        updated_at: now
+      }))
+    ])
     await db
       .insertInto('auth_sessions')
       .values([
         {
           id: 'ses_events_admin',
-          user_id: admin.userId,
+          user_id: userIdOfGumbo(admin.userId),
           token_hash: hashToken(TOKEN),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
         },
         {
           id: 'ses_events_stranger',
-          user_id: stranger.userId,
+          user_id: userIdOfGumbo(stranger.userId),
           token_hash: hashToken(STRANGER),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
         },
         {
           id: 'ses_events_member',
-          user_id: member.userId,
+          user_id: userIdOfGumbo(member.userId),
           token_hash: hashToken(MEMBER),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
         },
         {
           id: 'ses_events_manager',
-          user_id: manager.userId,
+          user_id: userIdOfGumbo(manager.userId),
           token_hash: hashToken(MANAGER),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
         },
         ...FLAGS.map(flag => ({
           id: `ses_events_${flag}`,
-          user_id: flagUser(flag).userId,
+          user_id: userIdOfGumbo(flagUser(flag).userId),
           token_hash: hashToken(flagUser(flag).token),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
@@ -389,19 +388,19 @@ describe('posting and reading plays', function () {
       .values([
         {
           id: makeId('membership'),
-          user_id: member.userId,
+          user_id: userIdOfGumbo(member.userId),
           team_id: home,
           role: 'member'
         },
         {
           id: makeId('membership'),
-          user_id: manager.userId,
+          user_id: userIdOfGumbo(manager.userId),
           team_id: home,
           role: 'manager'
         },
         ...FLAGS.map(flag => ({
           id: makeId('membership'),
-          user_id: flagUser(flag).userId,
+          user_id: userIdOfGumbo(flagUser(flag).userId),
           team_id: home,
           role: 'member' as const
         }))
@@ -412,7 +411,7 @@ describe('posting and reading plays', function () {
       .values(
         FLAGS.map(flag => ({
           id: makeId('scopeRole'),
-          user_id: flagUser(flag).userId,
+          user_id: userIdOfGumbo(flagUser(flag).userId),
           scope_type: 'team' as const,
           scope_id: home,
           role: flag
@@ -1182,7 +1181,7 @@ describe('posting and reading plays', function () {
       .set({
         cancellation_reason: 'withdrawal',
         withdrawn_by_team_id: game.home_team_id,
-        withdrawn_by_user_id: admin.userId,
+        withdrawn_by_user_id: userIdOfGumbo(admin.userId),
         withdrawn_at: when
       })
       .where('id', '=', cancelledId)
@@ -1205,7 +1204,7 @@ describe('posting and reading plays', function () {
     expect(retained.status).equals('cancelled')
     expect(retained.cancellation_reason).equals('withdrawal')
     expect(retained.withdrawn_by_team_id).equals(game.home_team_id)
-    expect(retained.withdrawn_by_user_id).equals(admin.userId)
+    expect(retained.withdrawn_by_user_id).equals(userIdOfGumbo(admin.userId))
     expect(retained.withdrawn_at!.getTime()).equals(when.getTime())
     await db!
       .updateTable('games')
@@ -2960,7 +2959,7 @@ describe('posting and reading plays', function () {
     const before = await db!
       .selectFrom('user_tags')
       .selectAll()
-      .where('user_id', '=', admin.userId)
+      .where('user_id', '=', userIdOfGumbo(admin.userId))
       .execute()
     const retryWrites = await Promise.all([
       put(pitchTarget.id, 'great pitch'),
@@ -2978,7 +2977,7 @@ describe('posting and reading plays', function () {
     const afterHistory = await db!
       .selectFrom('user_tags')
       .selectAll()
-      .where('user_id', '=', admin.userId)
+      .where('user_id', '=', userIdOfGumbo(admin.userId))
       .execute()
     expect(afterHistory.map(row => row.tag).sort()).deep.equals(
       before.map(row => row.tag).sort()
@@ -3090,7 +3089,7 @@ describe('posting and reading plays', function () {
       await db!
         .selectFrom('user_tags')
         .select('tag')
-        .where('user_id', '=', admin.userId)
+        .where('user_id', '=', userIdOfGumbo(admin.userId))
         .where('tag', '=', 'choice 0')
         .execute()
     ).has.length(1)
@@ -3141,20 +3140,17 @@ describe('posting and reading plays', function () {
       ].includes(id)
     )
     const token = 'tok_catalog_actor_000000000000000000'
-    await db!
-      .insertInto('users')
-      .values({
-        id: actor.userId,
-        legacyId: actor.legacyId,
-        display_name: 'Mookie Betts',
-        is_admin: true
-      })
-      .execute()
+    await insertFixtureUsers(db!, {
+      id: userIdOfGumbo(actor.userId),
+      legacyId: actor.legacyId,
+      display_name: 'Mookie Betts',
+      is_admin: true
+    })
     await db!
       .insertInto('auth_sessions')
       .values({
         id: makeId('authSession'),
-        user_id: actor.userId,
+        user_id: userIdOfGumbo(actor.userId),
         token_hash: hashToken(token),
         expires_at: new Date(Date.now() + 3600000)
       })
@@ -3189,12 +3185,15 @@ describe('posting and reading plays', function () {
       (await ask(`/games/${id}/tags/${target.id}`, 'DELETE', undefined, token))
         .status
     ).equals(200)
-    await db!.deleteFrom('users').where('id', '=', actor.userId).execute()
+    await db!
+      .deleteFrom('users')
+      .where('id', '=', userIdOfGumbo(actor.userId))
+      .execute()
     expect(
       await db!
         .selectFrom('user_tags')
         .selectAll()
-        .where('user_id', '=', actor.userId)
+        .where('user_id', '=', userIdOfGumbo(actor.userId))
         .execute()
     ).deep.equals([])
     expect((await ask('/tags?includeUnused=true')).body.popular).deep.includes({
@@ -3376,13 +3375,13 @@ describe('the team default lineup a live post keeps (U10)', function () {
   const rosterOf = (
     ids: number[]
   ): Array<{
-    userId: number
+    userId: string
     gumboId: number
     shortName: string
     jersey: string
   }> =>
     ids.map((userId, i) => ({
-      userId,
+      userId: userIdOfGumbo(userId),
       gumboId: userId,
       shortName: `P${i + 1}`,
       jersey: String(i + 1)
@@ -3410,24 +3409,22 @@ describe('the team default lineup a live post keeps (U10)', function () {
     await pool.end()
     db = makeDatabase(url)
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values(
-        [{ ...owner, is_admin: true }, ...players].map(user => ({
-          id: user.userId,
-          legacyId: user.legacyId,
-          display_name: `User ${user.userId}`,
-          is_admin: 'is_admin' in user,
-          created_at: now,
-          updated_at: now
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      [{ ...owner, is_admin: true }, ...players].map(user => ({
+        id: user.userId,
+        legacyId: user.legacyId,
+        display_name: `User ${user.userId}`,
+        is_admin: 'is_admin' in user,
+        created_at: now,
+        updated_at: now
+      }))
+    )
     await db
       .insertInto('auth_sessions')
       .values({
         id: 'ses_lineups_owner',
-        user_id: owner.userId,
+        user_id: userIdOfGumbo(owner.userId),
         token_hash: hashToken(OWNER),
         created_at: now,
         expires_at: new Date(now.getTime() + 3_600_000)

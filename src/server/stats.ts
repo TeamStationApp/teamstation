@@ -17,7 +17,7 @@ export const DEFAULT_ERA_INNINGS = 6
 
 export interface StatRow {
   extra?: StatExtras | null
-  userId: number
+  userId: string
   teamId: string | null
   /**
    * The innings a game in this game's season runs, which is what an ERA
@@ -58,7 +58,7 @@ export interface BattingLine {
   fc: number | null
   pik: number | null
   firstPa: number | null
-  userId: number
+  userId: string
   /** Null where the total spans more than one team, as a career does. */
   teamId: string | null
   /** Games this player has a line for. */
@@ -97,7 +97,7 @@ export interface PitchingLine {
   pik: number | null
   cs: number | null
   sb: number | null
-  userId: number
+  userId: string
   teamId: string | null
   g: number
   /** Outs recorded, which is what innings pitched actually means. */
@@ -120,7 +120,7 @@ export interface PitchingLine {
   eraInnings: number
 }
 
-function emptyBatting(userId: number, teamId: string | null): BattingLine {
+function emptyBatting(userId: string, teamId: string | null): BattingLine {
   return {
     userId,
     teamId,
@@ -148,7 +148,7 @@ function emptyBatting(userId: number, teamId: string | null): BattingLine {
   }
 }
 
-function emptyPitching(userId: number, teamId: string | null): PitchingLine {
+function emptyPitching(userId: string, teamId: string | null): PitchingLine {
   return {
     userId,
     teamId,
@@ -178,7 +178,7 @@ function emptyPitching(userId: number, teamId: string | null): PitchingLine {
 
 /** One line per player, most plate appearances first. */
 export function battingLines(rows: StatRow[]): BattingLine[] {
-  const byPlayer = new Map<number, BattingLine>()
+  const byPlayer = new Map<string, BattingLine>()
   for (const row of rows) {
     const held =
       byPlayer.get(row.userId) ?? emptyBatting(row.userId, row.teamId)
@@ -222,11 +222,11 @@ export function battingLines(rows: StatRow[]): BattingLine[] {
 
 /** One per pitcher, most outs first; the starter is recorded separately. */
 export function pitchingLines(rows: StatRow[]): PitchingLine[] {
-  const byPlayer = new Map<number, PitchingLine>()
+  const byPlayer = new Map<string, PitchingLine>()
   // The ERA divisor is weighted by the innings thrown under it, so a career
   // across a six-inning league and a nine-inning one lands between the two
   // rather than on whichever season came last.
-  const weighted = new Map<number, { outs: number; product: number }>()
+  const weighted = new Map<string, { outs: number; product: number }>()
   for (const row of rows) {
     if (
       row.pitchBf === 0 &&

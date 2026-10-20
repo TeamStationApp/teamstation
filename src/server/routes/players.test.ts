@@ -8,11 +8,13 @@ import { Pool } from 'pg'
 
 import { asPlayerDetail, asRosterEntry } from '../../common/api'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import type { Role } from '../../common/roles'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { mayEditName } from '../access'
 import type { Database, ScopeRolesTable } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
@@ -134,93 +136,94 @@ describe('a player, and who may change their name', function () {
       .insertInto('season_team_parents')
       .values({ season_id: seasonId, team_id: teamId })
       .execute()
-    await db
-      .insertInto('users')
-      .values([
-        {
-          id: childId,
-          legacyId: legacyId(childId),
-          display_name: 'Jordan Pujols',
-          first_name: 'Jordan',
-          last_name: 'Pujols',
-          bats: 'left'
-        },
-        ...[
-          teamCoachId,
-          assistantId,
-          scorekeeperId,
-          songkeeperId,
-          videographerId,
-          leagueCoachId,
-          otherCoachId,
-          siteAdminId
-        ].map(id => ({
-          id,
-          legacyId: legacyId(id),
-          display_name: 'A Helper',
-          is_admin: id === siteAdminId
-        })),
-        {
-          id: parentId,
-          legacyId: legacyId(parentId),
-          display_name: 'A Parent'
-        },
-        {
-          id: bothTeamsId,
-          legacyId: legacyId(bothTeamsId),
-          display_name: 'Avery Both',
-          first_name: 'Avery',
-          last_name: 'Both'
-        },
-        {
-          id: legendId,
-          legacyId: legacyId(legendId),
-          display_name: 'Lee Legend',
-          first_name: 'Lee',
-          last_name: 'Legend'
-        },
-        { id: coachId, legacyId: legacyId(coachId), display_name: 'A Coach' },
-        {
-          id: strangerId,
-          legacyId: legacyId(strangerId),
-          display_name: 'Somebody Else'
-        },
-        {
-          id: seasonAdminId,
-          legacyId: legacyId(seasonAdminId),
-          display_name: 'A Season Admin'
-        }
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(childId),
+        legacyId: legacyId(childId),
+        display_name: 'Jordan Pujols',
+        first_name: 'Jordan',
+        last_name: 'Pujols',
+        bats: 'left'
+      },
+      ...[
+        teamCoachId,
+        assistantId,
+        scorekeeperId,
+        songkeeperId,
+        videographerId,
+        leagueCoachId,
+        otherCoachId,
+        siteAdminId
+      ].map(id => ({
+        id,
+        legacyId: legacyId(id),
+        display_name: 'A Helper',
+        is_admin: id === siteAdminId
+      })),
+      {
+        id: userIdOfGumbo(parentId),
+        legacyId: legacyId(parentId),
+        display_name: 'A Parent'
+      },
+      {
+        id: userIdOfGumbo(bothTeamsId),
+        legacyId: legacyId(bothTeamsId),
+        display_name: 'Avery Both',
+        first_name: 'Avery',
+        last_name: 'Both'
+      },
+      {
+        id: userIdOfGumbo(legendId),
+        legacyId: legacyId(legendId),
+        display_name: 'Lee Legend',
+        first_name: 'Lee',
+        last_name: 'Legend'
+      },
+      {
+        id: userIdOfGumbo(coachId),
+        legacyId: legacyId(coachId),
+        display_name: 'A Coach'
+      },
+      {
+        id: userIdOfGumbo(strangerId),
+        legacyId: legacyId(strangerId),
+        display_name: 'Somebody Else'
+      },
+      {
+        id: userIdOfGumbo(seasonAdminId),
+        legacyId: legacyId(seasonAdminId),
+        display_name: 'A Season Admin'
+      }
+    ])
     await db
       .insertInto('memberships')
       .values([
         {
           id: makeId('membership'),
-          user_id: childId,
+          user_id: userIdOfGumbo(childId),
           team_id: teamId,
           is_player: true,
           jersey: '12'
         },
         {
           id: makeId('membership'),
-          user_id: coachId,
+          user_id: userIdOfGumbo(coachId),
           team_id: teamId,
           role: 'manager'
         },
         {
           id: makeId('membership'),
-          user_id: strangerId,
+          user_id: userIdOfGumbo(strangerId),
           team_id: teamId
         },
         {
           id: makeId('membership'),
-          user_id: parentId,
+          user_id: userIdOfGumbo(parentId),
           team_id: otherTeamId
         },
         {
           id: makeId('membership'),
-          user_id: bothTeamsId,
+          user_id: userIdOfGumbo(bothTeamsId),
           team_id: teamId,
           is_player: true,
           jersey: '4',
@@ -228,7 +231,7 @@ describe('a player, and who may change their name', function () {
         },
         {
           id: makeId('membership'),
-          user_id: bothTeamsId,
+          user_id: userIdOfGumbo(bothTeamsId),
           team_id: otherTeamId,
           is_player: true,
           jersey: '9',
@@ -236,7 +239,7 @@ describe('a player, and who may change their name', function () {
         },
         {
           id: makeId('membership'),
-          user_id: legendId,
+          user_id: userIdOfGumbo(legendId),
           team_id: otherTeamId,
           is_player: true,
           jersey: '1'
@@ -252,7 +255,7 @@ describe('a player, and who may change their name', function () {
           otherCoachId
         ].map(id => ({
           id: makeId('membership'),
-          user_id: id,
+          user_id: userIdOfGumbo(id),
           team_id: teamId
         }))
       ])
@@ -261,7 +264,7 @@ describe('a player, and who may change their name', function () {
       .insertInto('league_members')
       .values({
         id: makeId('leagueMember'),
-        user_id: leagueCoachId,
+        user_id: userIdOfGumbo(leagueCoachId),
         league_id: leagueId,
         role: 'member',
         source: 'manual'
@@ -274,7 +277,7 @@ describe('a player, and who may change their name', function () {
       role: Role
     ): Insertable<ScopeRolesTable> => ({
       id: makeId('scopeRole'),
-      user_id: userId,
+      user_id: userIdOfGumbo(userId),
       scope_type: scopeType,
       scope_id: scopeId,
       role,
@@ -312,7 +315,7 @@ describe('a player, and who may change their name', function () {
       const id = req.header('x-test-user')
       if (id != null) {
         req.actor = {
-          userId: Number(id),
+          userId: userIdOfGumbo(Number(id)),
           isAdmin: Number(id) === siteAdminId,
           scopes: []
         }
@@ -337,8 +340,8 @@ describe('a player, and who may change their name', function () {
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: parentId,
-        related_user_id: childId,
+        user_id: userIdOfGumbo(parentId),
+        related_user_id: userIdOfGumbo(childId),
         kind: 'guardian'
       })
       .execute()
@@ -346,7 +349,7 @@ describe('a player, and who may change their name', function () {
       .insertInto('scope_roles')
       .values({
         id: makeId('scopeRole'),
-        user_id: seasonAdminId,
+        user_id: userIdOfGumbo(seasonAdminId),
         scope_type: 'season',
         scope_id: seasonId
       })
@@ -371,17 +374,33 @@ describe('a player, and who may change their name', function () {
   const about = { isAdmin: false }
 
   it('lets a parent change it', async function () {
-    expect(await mayEditName(db, parentId, childId, about)).equals(true)
+    expect(
+      await mayEditName(
+        db,
+        userIdOfGumbo(parentId),
+        userIdOfGumbo(childId),
+        about
+      )
+    ).equals(true)
   })
 
   it('lets a site administrator change it', async function () {
     expect(
-      await mayEditName(db, strangerId, childId, { isAdmin: true })
+      await mayEditName(db, userIdOfGumbo(strangerId), userIdOfGumbo(childId), {
+        isAdmin: true
+      })
     ).equals(true)
   })
 
   it('lets a player change their own', async function () {
-    expect(await mayEditName(db, childId, childId, about)).equals(true)
+    expect(
+      await mayEditName(
+        db,
+        userIdOfGumbo(childId),
+        userIdOfGumbo(childId),
+        about
+      )
+    ).equals(true)
   })
 
   // Team admins, coaches, assistants and scorekeepers can see and edit a
@@ -398,7 +417,12 @@ describe('a player, and who may change their name', function () {
       leagueCoachId
     ]) {
       expect(
-        await mayEditName(db, staff, childId, about),
+        await mayEditName(
+          db,
+          userIdOfGumbo(staff),
+          userIdOfGumbo(childId),
+          about
+        ),
         String(staff)
       ).equals(true)
     }
@@ -409,15 +433,41 @@ describe('a player, and who may change their name', function () {
       otherCoachId
     ]) {
       expect(
-        await mayEditName(db, outsider, childId, about),
+        await mayEditName(
+          db,
+          userIdOfGumbo(outsider),
+          userIdOfGumbo(childId),
+          about
+        ),
         String(outsider)
       ).equals(false)
     }
     // The Legends' coach has the Legends' player, and the Badgers' staff
     // do not.
-    expect(await mayEditName(db, otherCoachId, legendId, about)).equals(true)
-    expect(await mayEditName(db, teamCoachId, legendId, about)).equals(false)
-    expect(await mayEditName(db, parentId, legendId, about)).equals(false)
+    expect(
+      await mayEditName(
+        db,
+        userIdOfGumbo(otherCoachId),
+        userIdOfGumbo(legendId),
+        about
+      )
+    ).equals(true)
+    expect(
+      await mayEditName(
+        db,
+        userIdOfGumbo(teamCoachId),
+        userIdOfGumbo(legendId),
+        about
+      )
+    ).equals(false)
+    expect(
+      await mayEditName(
+        db,
+        userIdOfGumbo(parentId),
+        userIdOfGumbo(legendId),
+        about
+      )
+    ).equals(false)
   })
 
   const post = async (
@@ -463,7 +513,7 @@ describe('a player, and who may change their name', function () {
 
   it('never puts the whole name on the player page, for anybody', async function () {
     for (const viewer of everyViewer()) {
-      const answer = await get(`/players/${childId}`, viewer)
+      const answer = await get(`/players/${userIdOfGumbo(childId)}`, viewer)
       expect(answer.status, String(viewer)).equals(200)
       expect(asPlayerDetail(answer.body).name).equals('Jordan P')
       expect(JSON.stringify(answer.body), String(viewer)).not.includes('Pujols')
@@ -478,7 +528,7 @@ describe('a player, and who may change their name', function () {
       if (!Array.isArray(answer.body)) throw new Error('Expected roster array')
       const child = answer.body
         .map(asRosterEntry)
-        .find(entry => entry.userId === childId)
+        .find(entry => entry.userId === userIdOfGumbo(childId))
       expect(child?.shortName).equals('Jordan P')
       expect(JSON.stringify(answer.body), String(viewer)).not.includes('Pujols')
     }
@@ -492,29 +542,37 @@ describe('a player, and who may change their name', function () {
       coachId,
       leagueCoachId
     ]) {
-      const answer = await get(`/players/${childId}/name`, viewer)
+      const answer = await get(
+        `/players/${userIdOfGumbo(childId)}/name`,
+        viewer
+      )
       expect(answer.status, String(viewer)).equals(200)
       expect(answer.body).deep.include({
         firstName: 'Jordan',
         lastName: 'Pujols'
       })
       const detail = asPlayerDetail(
-        (await get(`/players/${childId}`, viewer)).body
+        (await get(`/players/${userIdOfGumbo(childId)}`, viewer)).body
       )
       expect(detail.canEditName, String(viewer)).equals(true)
     }
     // A parent on another team asks for the name alone.
-    expect((await get(`/players/${childId}/name`, parentId)).status).equals(200)
+    expect(
+      (await get(`/players/${userIdOfGumbo(childId)}/name`, parentId)).status
+    ).equals(200)
     for (const viewer of [
       songkeeperId,
       videographerId,
       strangerId,
       otherCoachId
     ]) {
-      const answer = await get(`/players/${childId}/name`, viewer)
+      const answer = await get(
+        `/players/${userIdOfGumbo(childId)}/name`,
+        viewer
+      )
       expect(answer.status, String(viewer)).equals(404)
       const detail = asPlayerDetail(
-        (await get(`/players/${childId}`, viewer)).body
+        (await get(`/players/${userIdOfGumbo(childId)}`, viewer)).body
       )
       expect(detail.canEditName, String(viewer)).equals(false)
     }
@@ -534,38 +592,39 @@ describe('a player, and who may change their name', function () {
     }) => Promise<void>
   ): Promise<void> => {
     const [oldest, closer, parent] = [mintUser(), mintUser(), mintUser()]
-    await db
-      .insertInto('users')
-      .values([
-        {
-          id: closer,
-          legacyId: legacyId(closer),
-          display_name: 'Jordan P',
-          merged_into: childId
-        },
-        {
-          id: oldest,
-          legacyId: legacyId(oldest),
-          display_name: 'Jordan',
-          merged_into: closer
-        },
-        {
-          id: parent,
-          legacyId: legacyId(parent),
-          display_name: 'Albert Pujols'
-        }
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(closer),
+        legacyId: legacyId(closer),
+        display_name: 'Jordan P',
+        merged_into: userIdOfGumbo(childId)
+      },
+      {
+        id: userIdOfGumbo(oldest),
+        legacyId: legacyId(oldest),
+        display_name: 'Jordan',
+        merged_into: userIdOfGumbo(closer)
+      },
+      {
+        id: userIdOfGumbo(parent),
+        legacyId: legacyId(parent),
+        display_name: 'Albert Pujols'
+      }
+    ])
     await db
       .insertInto('memberships')
-      .values({ id: makeId('membership'), team_id: teamId, user_id: parent })
+      .values({
+        id: makeId('membership'),
+        team_id: teamId,
+        user_id: userIdOfGumbo(parent)
+      })
       .execute()
     await db
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: parent,
-        related_user_id: oldest,
+        user_id: userIdOfGumbo(parent),
+        related_user_id: userIdOfGumbo(oldest),
         kind: 'guardian'
       })
       .execute()
@@ -574,21 +633,28 @@ describe('a player, and who may change their name', function () {
     } finally {
       await db
         .deleteFrom('users')
-        .where('id', 'in', [parent, oldest, closer])
+        .where('id', 'in', [
+          userIdOfGumbo(parent),
+          userIdOfGumbo(oldest),
+          userIdOfGumbo(closer)
+        ])
         .execute()
     }
   }
 
   it('offers the name field to a parent linked to a row merged into the child', async function () {
     await withClosedRows(async ({ parent }) => {
-      const page = await get(`/players/${childId}`, parent)
+      const page = await get(`/players/${userIdOfGumbo(childId)}`, parent)
       expect(page.status).equals(200)
       expect(asPlayerDetail(page.body).canEditName).equals(true)
-      const name = await get(`/players/${childId}/name`, parent)
+      const name = await get(`/players/${userIdOfGumbo(childId)}/name`, parent)
       expect(name.status).equals(200)
       expect(name.body).deep.include({ lastName: 'Pujols' })
 
-      const stranger = await get(`/players/${childId}`, strangerId)
+      const stranger = await get(
+        `/players/${userIdOfGumbo(childId)}`,
+        strangerId
+      )
       expect(asPlayerDetail(stranger.body).canEditName).equals(false)
     })
   })
@@ -596,7 +662,7 @@ describe('a player, and who may change their name', function () {
   it('sends the name of a merged-away row on to the open row, and answers anybody refused with 404', async function () {
     await withClosedRows(async ({ oldest, closer, parent }) => {
       const ask = async (id: number, viewer: number): Promise<Response> =>
-        await fetch(`${base}/players/${id}/name`, {
+        await fetch(`${base}/players/${userIdOfGumbo(id)}/name`, {
           headers: { 'x-test-user': String(viewer) },
           redirect: 'manual'
         })
@@ -608,7 +674,7 @@ describe('a player, and who may change their name', function () {
           const answer = await ask(id, viewer)
           expect(answer.status, `${id} ${viewer}`).equals(303)
           expect(answer.headers.get('location')).equals(
-            `/api/v1/players/${childId}/name`
+            `/api/v1/players/${userIdOfGumbo(childId)}/name`
           )
         }
         for (const viewer of [strangerId, otherCoachId]) {
@@ -622,44 +688,52 @@ describe('a player, and who may change their name', function () {
     // Two rows closed into each other: bad data, but no reason to send the
     // editor round in circles.
     const [one, two] = [mintUser(), mintUser()]
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(one),
+        legacyId: legacyId(one),
+        display_name: 'Jordan'
+      },
+      {
+        id: userIdOfGumbo(two),
+        legacyId: legacyId(two),
+        display_name: 'Jordan P'
+      }
+    ])
     await db
-      .insertInto('users')
-      .values([
-        { id: one, legacyId: legacyId(one), display_name: 'Jordan' },
-        { id: two, legacyId: legacyId(two), display_name: 'Jordan P' }
-      ])
+      .updateTable('users')
+      .set({ merged_into: userIdOfGumbo(two) })
+      .where('id', '=', userIdOfGumbo(one))
       .execute()
     await db
       .updateTable('users')
-      .set({ merged_into: two })
-      .where('id', '=', one)
-      .execute()
-    await db
-      .updateTable('users')
-      .set({ merged_into: one })
-      .where('id', '=', two)
+      .set({ merged_into: userIdOfGumbo(one) })
+      .where('id', '=', userIdOfGumbo(two))
       .execute()
     await db
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: parentId,
-        related_user_id: one,
+        user_id: userIdOfGumbo(parentId),
+        related_user_id: userIdOfGumbo(one),
         kind: 'guardian'
       })
       .execute()
     try {
-      const answer = await fetch(`${base}/players/${one}/name`, {
+      const answer = await fetch(`${base}/players/${userIdOfGumbo(one)}/name`, {
         headers: { 'x-test-user': String(parentId) },
         redirect: 'manual'
       })
       expect(answer.status).equals(200)
       expect(await answer.json()).deep.include({
-        userId: one,
+        userId: userIdOfGumbo(one),
         displayName: 'Jordan'
       })
     } finally {
-      await db.deleteFrom('users').where('id', 'in', [one, two]).execute()
+      await db
+        .deleteFrom('users')
+        .where('id', 'in', [userIdOfGumbo(one), userIdOfGumbo(two)])
+        .execute()
     }
   })
 
@@ -679,7 +753,7 @@ describe('a player, and who may change their name', function () {
     return { status: response.status, body: await response.json() }
   }
   const settingsOf = (team: string, player: number): string =>
-    `/teams/${team}/players/${player}/settings`
+    `/teams/${team}/players/${userIdOfGumbo(player)}/settings`
 
   it('lets existing roster managers correct a placeholder name atomically, without broadening permissions', async function () {
     const original = await db
@@ -692,13 +766,13 @@ describe('a player, and who may change their name', function () {
         'bats_source',
         'bats'
       ])
-      .where('id', '=', childId)
+      .where('id', '=', userIdOfGumbo(childId))
       .executeTakeFirstOrThrow()
     const place = await db
       .selectFrom('memberships')
       .select(['jersey'])
       .where('team_id', '=', teamId)
-      .where('user_id', '=', childId)
+      .where('user_id', '=', userIdOfGumbo(childId))
       .executeTakeFirstOrThrow()
     const proof = (body: unknown, answer: unknown): void => {
       if (process.env.TS_NAME_API_PROOF === '1')
@@ -708,7 +782,7 @@ describe('a player, and who may change their name', function () {
       await db
         .updateTable('users')
         .set({ login_enabled: false })
-        .where('id', '=', childId)
+        .where('id', '=', userIdOfGumbo(childId))
         .execute()
       // The player's guardian manages their child, the name included.
       for (const viewer of [
@@ -735,7 +809,7 @@ describe('a player, and who may change their name', function () {
           displayName: 'Mookie Betts'
         })
         expect(entry.jersey).equals('14')
-        expect(entry.userId).equals(childId)
+        expect(entry.userId).equals(userIdOfGumbo(childId))
       }
       for (const viewer of [
         songkeeperId,
@@ -767,12 +841,14 @@ describe('a player, and who may change their name', function () {
         )
       ).body as unknown[]
       expect(
-        roster.map(asRosterEntry).find(row => row.userId === childId)?.jersey
+        roster
+          .map(asRosterEntry)
+          .find(row => row.userId === userIdOfGumbo(childId))?.jersey
       ).equals('14')
       const saved = await db
         .selectFrom('users')
         .select(['display_name', 'login_enabled', 'bats_source'])
-        .where('id', '=', childId)
+        .where('id', '=', userIdOfGumbo(childId))
         .executeTakeFirstOrThrow()
       expect(saved).deep.equals({
         display_name: 'Mookie Betts',
@@ -802,13 +878,13 @@ describe('a player, and who may change their name', function () {
       await db
         .updateTable('users')
         .set(original)
-        .where('id', '=', childId)
+        .where('id', '=', userIdOfGumbo(childId))
         .execute()
       await db
         .updateTable('memberships')
         .set({ jersey: place.jersey })
         .where('team_id', '=', teamId)
-        .where('user_id', '=', childId)
+        .where('user_id', '=', userIdOfGumbo(childId))
         .execute()
     }
   })
@@ -827,7 +903,7 @@ describe('a player, and who may change their name', function () {
       const answer = await put(settingsOf(teamId, childId), viewer, { jersey })
       expect(answer.status, String(viewer)).equals(200)
       const entry = asRosterEntry(answer.body)
-      expect(entry.userId).equals(childId)
+      expect(entry.userId).equals(userIdOfGumbo(childId))
       expect(entry.jersey).equals(jersey)
       expect(entry.shortName).equals('Jordan P')
     }
@@ -870,11 +946,11 @@ describe('a player, and who may change their name', function () {
     expect(
       (await put(`/teams/${teamId}/players/nobody/settings`, siteAdminId, {}))
         .status
-    ).equals(404)
+    ).equals(400)
     const [row] = await db
       .selectFrom('memberships')
       .select(['jersey'])
-      .where('user_id', '=', childId)
+      .where('user_id', '=', userIdOfGumbo(childId))
       .where('team_id', '=', teamId)
       .execute()
     expect(row.jersey).equals('12')
@@ -898,7 +974,7 @@ describe('a player, and who may change their name', function () {
       .body as unknown[]
     const there = legends
       .map(asRosterEntry)
-      .find(row => row.userId === bothTeamsId)
+      .find(row => row.userId === userIdOfGumbo(bothTeamsId))
     expect(there?.jersey).equals('9')
     expect(there?.positions).deep.equals(['P'])
     expect(there?.bats).equals('left')
@@ -925,7 +1001,7 @@ describe('a player, and who may change their name', function () {
     const user = await db
       .selectFrom('users')
       .select(['bats_source'])
-      .where('id', '=', bothTeamsId)
+      .where('id', '=', userIdOfGumbo(bothTeamsId))
       .executeTakeFirstOrThrow()
     expect(user.bats_source).equals('manual')
   })
@@ -959,7 +1035,7 @@ describe('a player, and who may change their name', function () {
         .selectFrom('audit_log')
         .select(['before', 'after'])
         .where('entity_type', '=', 'playerSettings')
-        .where('entity_id', '=', String(legendId))
+        .where('entity_id', '=', userIdOfGumbo(legendId))
         .execute()
     }
     expect(audited).deep.equals([
@@ -983,7 +1059,7 @@ describe('a player, and who may change their name', function () {
   })
 
   const handsOf = (player: number | string): string =>
-    `/players/${player}/settings`
+    `/players/${typeof player === 'number' ? userIdOfGumbo(player) : player}/settings`
 
   it('lets a guardian, a coach of any of the player’s teams or a site admin set how they bat and throw', async function () {
     const mine = await put(handsOf(childId), parentId, {
@@ -992,18 +1068,22 @@ describe('a player, and who may change their name', function () {
     })
     expect(mine.status).equals(200)
     expect(mine.body).deep.equals({
-      userId: childId,
+      userId: userIdOfGumbo(childId),
       bats: 'right',
       throws: 'left'
     })
     // A field left out is left alone.
     expect(
       (await put(handsOf(childId), teamCoachId, { throws: null })).body
-    ).deep.equals({ userId: childId, bats: 'right', throws: null })
+    ).deep.equals({
+      userId: userIdOfGumbo(childId),
+      bats: 'right',
+      throws: null
+    })
     const user = await db
       .selectFrom('users')
       .select(['bats', 'throws', 'bats_source'])
-      .where('id', '=', childId)
+      .where('id', '=', userIdOfGumbo(childId))
       .executeTakeFirstOrThrow()
     expect(user).deep.equals({
       bats: 'right',
@@ -1031,7 +1111,7 @@ describe('a player, and who may change their name', function () {
         .selectFrom('audit_log')
         .select(['before', 'after'])
         .where('entity_type', '=', 'playerSettings')
-        .where('entity_id', '=', String(childId))
+        .where('entity_id', '=', userIdOfGumbo(childId))
         .where('path', '=', handsOf(childId))
         .orderBy('at')
         .execute()
@@ -1064,7 +1144,7 @@ describe('a player, and who may change their name', function () {
     }
     // Rights come first: a bad body from somebody with none is still 404.
     expect((await put(handsOf(childId), strangerId, {})).status).equals(404)
-    expect((await put(handsOf('nobody'), siteAdminId, {})).status).equals(404)
+    expect((await put(handsOf('nobody'), siteAdminId, {})).status).equals(400)
     expect(
       (await put(handsOf(mintUser()), siteAdminId, { bats: 'left' })).status
     ).equals(404)
@@ -1083,23 +1163,23 @@ describe('a player, and who may change their name', function () {
     const user = await db
       .selectFrom('users')
       .select(['bats'])
-      .where('id', '=', childId)
+      .where('id', '=', userIdOfGumbo(childId))
       .executeTakeFirstOrThrow()
     expect(user.bats).equals('right')
   })
 
   it('shows a guardian their child’s page, and lists their child in GET /me/roles', async function () {
-    const page = await get(`/players/${childId}`, parentId)
+    const page = await get(`/players/${userIdOfGumbo(childId)}`, parentId)
     expect(page.status).equals(200)
     expect(
       asPlayerDetail(page.body).teams.map(team => team.teamId)
     ).deep.equals([teamId])
     const roles = await get('/me/roles', parentId)
-    expect((roles.body as { guardianOf: number[] }).guardianOf).deep.equals([
-      childId
+    expect((roles.body as { guardianOf: string[] }).guardianOf).deep.equals([
+      userIdOfGumbo(childId)
     ])
     expect(
-      ((await get('/me/roles', teamCoachId)).body as { guardianOf: number[] })
+      ((await get('/me/roles', teamCoachId)).body as { guardianOf: string[] })
         .guardianOf
     ).deep.equals([])
   })
@@ -1119,7 +1199,7 @@ describe('a player, and who may change their name', function () {
   })
 
   it('lists the teams a player has been on, with the season and their number', async function () {
-    const teams = await teamsOf(db, [childId])
+    const teams = await teamsOf(db, [userIdOfGumbo(childId)])
     expect(teams).deep.equals([
       {
         teamId,
@@ -1139,7 +1219,7 @@ describe('a player, and who may change their name', function () {
   // filter on their stats is built from this list, and a season nobody batted
   // in is an option that can only ever answer "nothing".
   it('leaves out a team they are only a spectator on', async function () {
-    expect(await teamsOf(db, [strangerId])).deep.equals([])
+    expect(await teamsOf(db, [userIdOfGumbo(strangerId)])).deep.equals([])
   })
 
   const createdPlayer = {

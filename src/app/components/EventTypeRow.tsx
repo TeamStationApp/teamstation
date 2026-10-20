@@ -31,7 +31,6 @@ export function EventTypeRow({
           widthRem={16.5}
           labelSizeRem={0.75}
           value={RESPONSES[TYPES.indexOf(value)]}
-          userId={0}
           name="Event Type"
           groupLabel="Event Type"
           labels={['Game', 'Practice', 'Other']}

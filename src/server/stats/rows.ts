@@ -18,9 +18,9 @@ export interface StatRowFilter {
   gameId?: string
   /** Bound historical aggregates to the caller’s currently visible games. */
   visibleGames?: VisibleScopes
-  userId?: number
+  userId?: string
   /** Every id one person has had — see `admin/people.ts`. */
-  userIds?: number[]
+  userIds?: string[]
   teamId?: string
   seasonId?: string
   /** The calendar year the game was played in. */

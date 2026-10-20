@@ -12,10 +12,12 @@ import { asEventInfo } from '../../common/eventInfo'
 import { eventArrivalTime, eventHeroLines } from '../../common/eventTime'
 import type { GameRequestTerms } from '../../common/gameApprovals'
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import { createSession } from '../../server/auth/sessions'
 import { SESSION_COOKIE } from '../../server/auth/tokens'
 import { seedEventInfo2People } from '../../test/eventInfo2Fixture'
 import { groupFixture } from '../../test/groupFixtures'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 
 interface Browser {
   openBrowser: (body: { url: string }) => Promise<unknown>
@@ -196,7 +198,7 @@ async function main(): Promise<void> {
         .values({
           id: makeId('membership'),
           team_id: f.teamA,
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           is_player: true
         })
         .execute()
@@ -204,8 +206,8 @@ async function main(): Promise<void> {
         .insertInto('user_links')
         .values({
           id: makeId('userLink'),
-          user_id: 101,
-          related_user_id: userId,
+          user_id: userIdOfGumbo(101),
+          related_user_id: userIdOfGumbo(userId),
           kind: 'guardian',
           can_manage: false
         })
@@ -607,15 +609,16 @@ async function main(): Promise<void> {
     )
     assert.deepEqual(persisted.replyUserIds, [101, 103, 104, 115])
     assert.equal(
-      persisted.attendees.find(row => row.userId === 101)?.name,
+      persisted.attendees.find(row => row.userId === userIdOfGumbo(101))?.name,
       'Babe R'
     )
     assert.equal(
-      persisted.attendees.find(row => row.userId === 115)?.isTeamParticipant,
+      persisted.attendees.find(row => row.userId === userIdOfGumbo(115))
+        ?.isTeamParticipant,
       false
     )
     for (const id of [102, 109, 110])
-      assert(!persisted.attendees.some(row => row.userId === id))
+      assert(!persisted.attendees.some(row => row.userId === userIdOfGumbo(id)))
     const groups = await evaluate<
       Array<{ id: string; text: string; count: string; right: boolean }>
     >(
@@ -788,7 +791,7 @@ async function main(): Promise<void> {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: 105,
+        user_id: userIdOfGumbo(105),
         team_id: f.teamB,
         is_player: false
       })
@@ -814,20 +817,18 @@ async function main(): Promise<void> {
       ),
       'An out-of-selected-team child keeps a private control'
     )
-    await f.h.db
-      .insertInto('users')
-      .values({
-        id: 116,
-        legacyId: 'usr_info2_visitor',
-        display_name: 'Nolan Ryan',
-        first_name: 'Nolan',
-        last_name: 'Ryan',
-        login_enabled: true
-      })
-      .execute()
+    await insertFixtureUsers(f.h.db, {
+      id: 116,
+      legacyId: 'usr_info2_visitor',
+      display_name: 'Nolan Ryan',
+      first_name: 'Nolan',
+      last_name: 'Ryan',
+      login_enabled: true
+    })
     f.h.tokens.set(
       116,
-      (await createSession(f.h.db, 116, 'event-info-visitor')).token
+      (await createSession(f.h.db, userIdOfGumbo(116), 'event-info-visitor'))
+        .token
     )
     await cookie(116)
     await open(`/games/${gameId}`, 'event-location-map')
@@ -1579,14 +1580,14 @@ async function main(): Promise<void> {
       .updateTable('memberships')
       .set({ is_player: false })
       .where('team_id', '=', f.teamA)
-      .where('user_id', '=', 103)
+      .where('user_id', '=', userIdOfGumbo(103))
       .execute()
     await f.h.db
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
         team_id: f.teamB,
-        user_id: 109,
+        user_id: userIdOfGumbo(109),
         is_player: false
       })
       .execute()
@@ -1594,8 +1595,8 @@ async function main(): Promise<void> {
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: 109,
-        related_user_id: 103,
+        user_id: userIdOfGumbo(109),
+        related_user_id: userIdOfGumbo(103),
         kind: 'guardian',
         can_manage: false
       })

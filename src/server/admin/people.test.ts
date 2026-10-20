@@ -4,10 +4,12 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { mayEditName } from '../access'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
@@ -65,35 +67,32 @@ describe('one person, however many rows', function () {
     await migrateUp(pool, migrations)
     db = new Kysely<Database>({ dialect: new PostgresDialect({ pool }) })
 
-    await db
-      .insertInto('users')
-      .values([
-        {
-          id: survivor,
-          legacyId: legacyId(survivor),
-          display_name: 'Jordan Pujols'
-        },
-        // Closed into the survivor, and one closed into that one: a child can
-        // be merged twice as more teams turn up.
-        {
-          id: closed,
-          legacyId: legacyId(closed),
-          display_name: 'Jordan Pujols',
-          merged_into: survivor
-        },
-        {
-          id: closedTwice,
-          legacyId: legacyId(closedTwice),
-          display_name: 'Jordan Pujols',
-          merged_into: closed
-        },
-        {
-          id: stranger,
-          legacyId: legacyId(stranger),
-          display_name: 'Somebody Else'
-        }
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(survivor),
+        legacyId: legacyId(survivor),
+        display_name: 'Jordan Pujols'
+      },
+      // Closed into the survivor, and one closed into that one: a child can
+      // be merged twice as more teams turn up.
+      {
+        id: userIdOfGumbo(closed),
+        legacyId: legacyId(closed),
+        display_name: 'Jordan Pujols',
+        merged_into: userIdOfGumbo(survivor)
+      },
+      {
+        id: userIdOfGumbo(closedTwice),
+        legacyId: legacyId(closedTwice),
+        display_name: 'Jordan Pujols',
+        merged_into: userIdOfGumbo(closed)
+      },
+      {
+        id: userIdOfGumbo(stranger),
+        legacyId: legacyId(stranger),
+        display_name: 'Somebody Else'
+      }
+    ])
   })
 
   after(async function () {
@@ -107,10 +106,10 @@ describe('one person, however many rows', function () {
 
   it('gathers every row from the open one', async function () {
     if (db == null) this.skip()
-    const person = await onePerson(db, survivor)
-    expect(person.userId).equals(survivor)
-    expect([...person.userIds].sort((a, b) => a - b)).deep.equals(
-      [survivor, closed, closedTwice].sort((a, b) => a - b)
+    const person = await onePerson(db, userIdOfGumbo(survivor))
+    expect(person.userId).equals(userIdOfGumbo(survivor))
+    expect([...person.userIds].sort()).deep.equals(
+      [survivor, closed, closedTwice].map(userIdOfGumbo).sort()
     )
   })
 
@@ -119,16 +118,16 @@ describe('one person, however many rows', function () {
     // A link sent last year names a row that has since been closed. It has to
     // land on the whole person, not on a fifth of them.
     for (const id of [closed, closedTwice]) {
-      const person = await onePerson(db, id)
-      expect(person.userId).equals(survivor)
+      const person = await onePerson(db, userIdOfGumbo(id))
+      expect(person.userId).equals(userIdOfGumbo(survivor))
       expect(person.userIds.length).equals(3)
     }
   })
 
   it('leaves somebody else alone', async function () {
     if (db == null) this.skip()
-    const person = await onePerson(db, stranger)
-    expect(person.userIds).deep.equals([stranger])
+    const person = await onePerson(db, userIdOfGumbo(stranger))
+    expect(person.userIds).deep.equals([stranger].map(userIdOfGumbo))
   })
 
   it('takes the closed row’s team with it', async function () {
@@ -143,30 +142,35 @@ describe('one person, however many rows', function () {
         { id: ravens, name: 'Ravens' }
       ])
       .execute()
-    await db
-      .insertInto('users')
-      .values({
-        id: mover,
-        legacyId: legacyId(mover),
-        display_name: 'Miles Mikolas'
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(mover),
+      legacyId: legacyId(mover),
+      display_name: 'Miles Mikolas'
+    })
     await db
       .insertInto('memberships')
       .values([
-        { id: makeId('membership'), team_id: hawks, user_id: survivor },
-        { id: makeId('membership'), team_id: ravens, user_id: mover }
+        {
+          id: makeId('membership'),
+          team_id: hawks,
+          user_id: userIdOfGumbo(survivor)
+        },
+        {
+          id: makeId('membership'),
+          team_id: ravens,
+          user_id: userIdOfGumbo(mover)
+        }
       ])
       .execute()
 
-    await closeInto(db, mover, survivor)
+    await closeInto(db, userIdOfGumbo(mover), userIdOfGumbo(survivor))
 
     // The child still plays for the Ravens, and a roster asks for people who
     // are still open — so the membership has to move or the team loses them.
     const teams = await db
       .selectFrom('memberships')
       .select(['team_id'])
-      .where('user_id', '=', survivor)
+      .where('user_id', '=', userIdOfGumbo(survivor))
       .execute()
     expect(teams.map(row => row.team_id).sort()).deep.equals(
       [hawks, ravens].sort()
@@ -182,33 +186,38 @@ describe('one person, however many rows', function () {
       .insertInto('teams')
       .values({ id: team, name: 'Hawks II' })
       .execute()
-    await db
-      .insertInto('users')
-      .values([
-        {
-          id: keeper,
-          legacyId: legacyId(keeper),
-          display_name: 'Casey Mize'
-        },
-        { id: other, legacyId: legacyId(other), display_name: 'Casey Mize' }
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(keeper),
+        legacyId: legacyId(keeper),
+        display_name: 'Casey Mize'
+      },
+      {
+        id: userIdOfGumbo(other),
+        legacyId: legacyId(other),
+        display_name: 'Casey Mize'
+      }
+    ])
     await db
       .insertInto('memberships')
       .values([
         // The row somebody imported without a number, and the one with it.
-        { id: makeId('membership'), team_id: team, user_id: keeper },
         {
           id: makeId('membership'),
           team_id: team,
-          user_id: other,
+          user_id: userIdOfGumbo(keeper)
+        },
+        {
+          id: makeId('membership'),
+          team_id: team,
+          user_id: userIdOfGumbo(other),
           jersey: '12',
           is_player: true
         }
       ])
       .execute()
 
-    await closeInto(db, other, keeper)
+    await closeInto(db, userIdOfGumbo(other), userIdOfGumbo(keeper))
 
     const rows = await db
       .selectFrom('memberships')
@@ -216,7 +225,7 @@ describe('one person, however many rows', function () {
       .where('team_id', '=', team)
       .execute()
     expect(rows.length).equals(1)
-    expect(rows[0].user_id).equals(keeper)
+    expect(rows[0].user_id).equals(userIdOfGumbo(keeper))
     expect(rows[0].jersey).equals('12')
     expect(rows[0].is_player).equals(true)
   })
@@ -226,27 +235,24 @@ describe('one person, however many rows', function () {
     const team = await db
       .selectFrom('memberships')
       .select(['team_id'])
-      .where('user_id', '=', survivor)
+      .where('user_id', '=', userIdOfGumbo(survivor))
       .executeTakeFirstOrThrow()
     const twin = mintUser()
-    await db
-      .insertInto('users')
-      .values({
-        id: twin,
-        legacyId: legacyId(twin),
-        display_name: 'Miles Mikolas'
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(twin),
+      legacyId: legacyId(twin),
+      display_name: 'Miles Mikolas'
+    })
     await db
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
         team_id: team.team_id,
-        user_id: twin
+        user_id: userIdOfGumbo(twin)
       })
       .execute()
 
-    await closeInto(db, twin, survivor)
+    await closeInto(db, userIdOfGumbo(twin), userIdOfGumbo(survivor))
 
     const rows = await db
       .selectFrom('memberships')
@@ -264,14 +270,23 @@ describe('one person, however many rows', function () {
     const other = mintUser()
     const benched = mintUser()
     await db.insertInto('teams').values({ id: team, name: 'Widows' }).execute()
-    await db
-      .insertInto('users')
-      .values([
-        { id: one, legacyId: legacyId(one), display_name: 'Rowan' },
-        { id: other, legacyId: legacyId(other), display_name: 'Rowan Wick' },
-        { id: benched, legacyId: legacyId(benched), display_name: 'Rowan W' }
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(one),
+        legacyId: legacyId(one),
+        display_name: 'Rowan'
+      },
+      {
+        id: userIdOfGumbo(other),
+        legacyId: legacyId(other),
+        display_name: 'Rowan Wick'
+      },
+      {
+        id: userIdOfGumbo(benched),
+        legacyId: legacyId(benched),
+        display_name: 'Rowan W'
+      }
+    ])
     await db
       .insertInto('games')
       .values({
@@ -302,10 +317,20 @@ describe('one person, however many rows', function () {
       ])
       .execute()
 
-    const together = await bothPlayedTogether(db, [one, other, benched])
-    expect(together.has(`${one}|${other}`)).equals(true)
-    expect(together.has(`${other}|${one}`)).equals(true)
-    expect(together.has(`${one}|${benched}`)).equals(false)
+    const together = await bothPlayedTogether(db, [
+      userIdOfGumbo(one),
+      userIdOfGumbo(other),
+      userIdOfGumbo(benched)
+    ])
+    expect(
+      together.has(`${userIdOfGumbo(one)}|${userIdOfGumbo(other)}`)
+    ).equals(true)
+    expect(
+      together.has(`${userIdOfGumbo(other)}|${userIdOfGumbo(one)}`)
+    ).equals(true)
+    expect(
+      together.has(`${userIdOfGumbo(one)}|${userIdOfGumbo(benched)}`)
+    ).equals(false)
   })
 
   it('keeps the name with a surname on it', function () {
@@ -329,27 +354,32 @@ describe('one person, however many rows', function () {
     const [casey, mizeAllStars, mizeTitan, mizeStars] = [1, 2, 3, 4]
     const people = splitByClash(
       [
-        { userId: casey, weight: 219 },
-        { userId: mizeAllStars, weight: 84 },
-        { userId: mizeTitan, weight: 24 },
-        { userId: mizeStars, weight: 4 }
+        { userId: userIdOfGumbo(casey), weight: 219 },
+        { userId: userIdOfGumbo(mizeAllStars), weight: 84 },
+        { userId: userIdOfGumbo(mizeTitan), weight: 24 },
+        { userId: userIdOfGumbo(mizeStars), weight: 4 }
       ],
-      new Set([`${casey}|${mizeStars}`, `${mizeStars}|${casey}`])
+      new Set([
+        `${userIdOfGumbo(casey)}|${userIdOfGumbo(mizeStars)}`,
+        `${userIdOfGumbo(mizeStars)}|${userIdOfGumbo(casey)}`
+      ])
     )
     expect(people.length).equals(2)
-    expect(people[0]).deep.equals([casey, mizeAllStars, mizeTitan])
-    expect(people[1]).deep.equals([mizeStars])
+    expect(people[0]).deep.equals(
+      [casey, mizeAllStars, mizeTitan].map(userIdOfGumbo)
+    )
+    expect(people[1]).deep.equals([userIdOfGumbo(mizeStars)])
   })
 
   it('leaves a group that clashes nowhere as one person', function () {
     const people = splitByClash(
       [
-        { userId: 1, weight: 5 },
-        { userId: 2, weight: 1 }
+        { userId: userIdOfGumbo(1), weight: 5 },
+        { userId: userIdOfGumbo(2), weight: 1 }
       ],
       new Set()
     )
-    expect(people).deep.equals([[1, 2]])
+    expect(people).deep.equals([[userIdOfGumbo(1), userIdOfGumbo(2)]])
   })
 
   it('moves what an earlier merge left behind', async function () {
@@ -359,18 +389,19 @@ describe('one person, however many rows', function () {
     await db.insertInto('teams').values({ id: team, name: 'Badgers' }).execute()
     // Closed the way the first merge did it: the row was closed and its
     // membership was not moved with it.
-    await db
-      .insertInto('users')
-      .values({
-        id: stranded,
-        legacyId: legacyId(stranded),
-        display_name: 'Jordan Pujols',
-        merged_into: survivor
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(stranded),
+      legacyId: legacyId(stranded),
+      display_name: 'Jordan Pujols',
+      merged_into: userIdOfGumbo(survivor)
+    })
     await db
       .insertInto('memberships')
-      .values({ id: makeId('membership'), team_id: team, user_id: stranded })
+      .values({
+        id: makeId('membership'),
+        team_id: team,
+        user_id: userIdOfGumbo(stranded)
+      })
       .execute()
 
     expect((await tidyClosedRows(db)).moved).greaterThan(0)
@@ -380,7 +411,7 @@ describe('one person, however many rows', function () {
       .select(['user_id'])
       .where('team_id', '=', team)
       .executeTakeFirstOrThrow()
-    expect(moved.user_id).equals(survivor)
+    expect(moved.user_id).equals(userIdOfGumbo(survivor))
   })
 
   describe('a merge never closes a loop', function () {
@@ -390,16 +421,13 @@ describe('one person, however many rows', function () {
     ): Promise<number> {
       if (db == null) throw new Error('no database')
       const id = mintUser()
-      await db
-        .insertInto('users')
-        .values({
-          id,
-          legacyId: legacyId(id),
-          display_name: displayName,
-          first_name: name.first ?? null,
-          last_name: name.last ?? null
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id,
+        legacyId: legacyId(id),
+        display_name: displayName,
+        first_name: name.first ?? null,
+        last_name: name.last ?? null
+      })
       return id
     }
 
@@ -412,7 +440,11 @@ describe('one person, however many rows', function () {
         .execute()
       await db
         .insertInto('memberships')
-        .values({ id: makeId('membership'), team_id: team, user_id: userId })
+        .values({
+          id: makeId('membership'),
+          team_id: team,
+          user_id: userIdOfGumbo(userId)
+        })
         .execute()
       return team
     }
@@ -425,8 +457,8 @@ describe('one person, however many rows', function () {
       if (db == null) throw new Error('no database')
       await db
         .updateTable('users')
-        .set({ merged_into: keeping })
-        .where('id', '=', closing)
+        .set({ merged_into: userIdOfGumbo(keeping) })
+        .where('id', '=', userIdOfGumbo(closing))
         .execute()
     }
 
@@ -441,12 +473,12 @@ describe('one person, however many rows', function () {
           'last_name',
           'display_name'
         ])
-        .where('id', 'in', ids)
+        .where('id', 'in', ids.map(userIdOfGumbo))
         .orderBy('id')
         .execute()
     }
 
-    async function holder(team: string): Promise<number> {
+    async function holder(team: string): Promise<string> {
       if (db == null) throw new Error('no database')
       const found = await db
         .selectFrom('memberships')
@@ -461,17 +493,19 @@ describe('one person, however many rows', function () {
       const bare = await row('Bryce', { first: 'Bryce' })
       const full = await row('Bryce Harper', { first: 'Bryce', last: 'Harper' })
       const team = await onTeam(full)
-      await closeInto(db, bare, full)
+      await closeInto(db, userIdOfGumbo(bare), userIdOfGumbo(full))
       const before = await users([bare, full])
 
       // The other way round would make each row the other's, and copy
       // `Harper` onto the bare row on its way.
-      expect(await closeInto(db, full, bare)).deep.equals({
+      expect(
+        await closeInto(db, userIdOfGumbo(full), userIdOfGumbo(bare))
+      ).deep.equals({
         closed: false,
         moved: 0
       })
       expect(await users([bare, full])).deep.equals(before)
-      expect(await holder(team)).equals(full)
+      expect(await holder(team)).equals(userIdOfGumbo(full))
     })
 
     it('follows the whole chain, however long', async function () {
@@ -480,13 +514,19 @@ describe('one person, however many rows', function () {
       const chain: number[] = []
       for (let i = 0; i < 20; i += 1) chain.push(await row(`Kyle ${i}`))
       for (let i = 0; i < chain.length - 1; i += 1) {
-        await closeInto(db, chain[i], chain[i + 1])
+        await closeInto(
+          db,
+          userIdOfGumbo(chain[i]),
+          userIdOfGumbo(chain[i + 1])
+        )
       }
       const first = chain[0]
       const last = chain[chain.length - 1]
       const before = await users(chain)
 
-      expect(await closeInto(db, last, first)).deep.equals({
+      expect(
+        await closeInto(db, userIdOfGumbo(last), userIdOfGumbo(first))
+      ).deep.equals({
         closed: false,
         moved: 0
       })
@@ -499,15 +539,17 @@ describe('one person, however many rows', function () {
       const full = await row('Trea Turner')
       const other = await row('Kyle Schwarber')
       const team = await onTeam(full)
-      await closeInto(db, bare, full)
+      await closeInto(db, userIdOfGumbo(bare), userIdOfGumbo(full))
 
-      expect(await closeInto(db, full, other)).deep.equals({
+      expect(
+        await closeInto(db, userIdOfGumbo(full), userIdOfGumbo(other))
+      ).deep.equals({
         closed: true,
         moved: 1
       })
-      const [moved] = (await users([full])) as Array<{ merged_into: number }>
-      expect(moved.merged_into).equals(other)
-      expect(await holder(team)).equals(other)
+      const [moved] = (await users([full])) as Array<{ merged_into: string }>
+      expect(moved.merged_into).equals(userIdOfGumbo(other))
+      expect(await holder(team)).equals(userIdOfGumbo(other))
     })
 
     it('passes by a loop already in the data', async function () {
@@ -521,10 +563,15 @@ describe('one person, however many rows', function () {
 
       const tidied = await tidyClosedRows(db)
       expect(await users([one, other])).deep.equals(before)
-      expect(await holder(team)).equals(one)
+      expect(await holder(team)).equals(userIdOfGumbo(one))
       // Left where it is, and said so: the child is on no roster.
-      expect(tidied.stranded).to.include(one)
-      expect(strandedNote(tidied.stranded)).to.include(String(one))
+      expect(tidied.stranded).to.include(userIdOfGumbo(one))
+      expect(strandedNote(tidied.stranded)).to.include(userIdOfGumbo(one))
+      await db
+        .updateTable('users')
+        .set({ merged_into: null })
+        .where('id', '=', userIdOfGumbo(other))
+        .execute()
     })
 
     it('lets one of two merges at once win, whichever way round', async function () {
@@ -536,12 +583,12 @@ describe('one person, however many rows', function () {
         const one = await row('J.T.')
         const other = await row('J.T. Realmuto')
         await Promise.all([
-          closeInto(db, one, other),
-          closeInto(db, other, one)
+          closeInto(db, userIdOfGumbo(one), userIdOfGumbo(other)),
+          closeInto(db, userIdOfGumbo(other), userIdOfGumbo(one))
         ])
         const rows = (await users([one, other])) as Array<{
-          id: number
-          merged_into: number | null
+          id: string
+          merged_into: string | null
         }>
         const open = rows.filter(found => found.merged_into == null)
         expect(open.length, `trial ${trial}`).equals(1)
@@ -558,23 +605,30 @@ describe('one person, however many rows', function () {
       await db
         .transaction()
         .execute(async trx => {
-          await closeInto(trx, undone, kept)
+          await closeInto(trx, userIdOfGumbo(undone), userIdOfGumbo(kept))
           throw new Error('rolled back')
         })
         .catch(() => undefined)
       await db
         .transaction()
-        .execute(async trx => await closeInto(trx, done, kept))
+        .execute(
+          async trx =>
+            await closeInto(trx, userIdOfGumbo(done), userIdOfGumbo(kept))
+        )
 
       const rows = (await users([undone, done])) as Array<{
-        id: number
-        merged_into: number | null
+        id: string
+        merged_into: string | null
       }>
-      expect(rows.find(found => found.id === undone)?.merged_into).equals(null)
-      expect(rows.find(found => found.id === done)?.merged_into).equals(kept)
+      expect(
+        rows.find(found => found.id === userIdOfGumbo(undone))?.merged_into
+      ).equals(null)
+      expect(
+        rows.find(found => found.id === userIdOfGumbo(done))?.merged_into
+      ).equals(userIdOfGumbo(kept))
     })
 
-    it('closes a row into a loop it is not part of', async function () {
+    it('refuses to move a historical identity into a cyclic merge graph', async function () {
       if (db == null) this.skip()
       const one = await row('Bryson')
       const other = await row('Bryson Stott')
@@ -587,12 +641,21 @@ describe('one person, however many rows', function () {
       await closeByHand(stray, one)
       const team = await onTeam(stray)
 
-      const tidied = await tidyClosedRows(db)
-      const [closed] = (await users([stray])) as Array<{ merged_into: number }>
-      expect(closed.merged_into).equals(other)
-      expect(await holder(team)).equals(other)
-      // Moved, but onto a row that is closed too, so it is reported.
-      expect(tidied.stranded).to.include(other)
+      const before = await users([one, other, stray])
+      let failure: unknown
+      try {
+        await tidyClosedRows(db)
+      } catch (error) {
+        failure = error
+      }
+      expect(String(failure)).includes('Cyclic account merge')
+      expect(await users([one, other, stray])).deep.equals(before)
+      expect(await holder(team)).equals(userIdOfGumbo(stray))
+      await db
+        .updateTable('users')
+        .set({ merged_into: null })
+        .where('id', '=', userIdOfGumbo(other))
+        .execute()
     })
 
     it('moves a team row past the end of a walk that stopped counting', async function () {
@@ -608,9 +671,10 @@ describe('one person, however many rows', function () {
       const open = chain[chain.length - 1]
 
       const tidied = await tidyClosedRows(db)
-      expect(await holder(team)).equals(open)
+      expect(await holder(team)).equals(userIdOfGumbo(open))
       // Not a loop, and not reported as one.
-      for (const id of chain) expect(tidied.stranded).not.to.include(id)
+      for (const id of chain)
+        expect(tidied.stranded).not.to.include(userIdOfGumbo(id))
     })
 
     it('tells a loop from a long chain without writing anything', async function () {
@@ -628,10 +692,15 @@ describe('one person, however many rows', function () {
       const team = await onTeam(chain[0])
 
       const stranded = await strandedRows(db)
-      expect(stranded).to.include(one)
-      expect(stranded).not.to.include(chain[0])
+      expect(stranded).to.include(userIdOfGumbo(one))
+      expect(stranded).not.to.include(userIdOfGumbo(chain[0]))
       // A dry run reads; the long chain's team row has not moved.
-      expect(await holder(team)).equals(chain[0])
+      expect(await holder(team)).equals(userIdOfGumbo(chain[0]))
+      await db
+        .updateTable('users')
+        .set({ merged_into: null })
+        .where('id', '=', userIdOfGumbo(other))
+        .execute()
     })
 
     it('refuses a caller’s transaction stricter than read committed', async function () {
@@ -642,26 +711,29 @@ describe('one person, however many rows', function () {
       await db
         .transaction()
         .setIsolationLevel('repeatable read')
-        .execute(async trx => await closeInto(trx, closing, kept))
+        .execute(
+          async trx =>
+            await closeInto(trx, userIdOfGumbo(closing), userIdOfGumbo(kept))
+        )
         .catch((error: unknown) => {
           refused = error
         })
       expect(String(refused)).to.include('read committed')
       const [still] = (await users([closing])) as Array<{
-        merged_into: number | null
+        merged_into: string | null
       }>
       expect(still.merged_into).equals(null)
     })
 
     it('says nothing when no row is left stranded, and counts the rest', function () {
       expect(strandedNote([])).equals(undefined)
-      expect(strandedNote([7])).equals(
+      expect(strandedNote([userIdOfGumbo(7)])).equals(
         '1 closed row still holds team rows, in a merge loop that leaves no ' +
-          'row open: 7. That person is on no roster until the loop is ' +
+          `row open: ${userIdOfGumbo(7)}. That person is on no roster until the loop is ` +
           'opened by hand.'
       )
-      expect(strandedNote([7, 9])).to.match(
-        /^2 closed rows still hold .*: 7, 9\. Those people are/
+      expect(strandedNote([userIdOfGumbo(7), userIdOfGumbo(9)])).to.include(
+        `${userIdOfGumbo(7)}, ${userIdOfGumbo(9)}. Those people are`
       )
     })
   })
@@ -710,10 +782,11 @@ describe('a guardian across merges', function () {
 
   async function person(name: string): Promise<number> {
     const id = mintUser()
-    await database()
-      .insertInto('users')
-      .values({ id, legacyId: legacyId(id), display_name: name })
-      .execute()
+    await insertFixtureUsers(database(), {
+      id,
+      legacyId: legacyId(id),
+      display_name: name
+    })
     return id
   }
 
@@ -726,8 +799,8 @@ describe('a guardian across merges', function () {
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: from,
-        related_user_id: to,
+        user_id: userIdOfGumbo(from),
+        related_user_id: userIdOfGumbo(to),
         kind
       })
       .execute()
@@ -741,15 +814,21 @@ describe('a guardian across merges', function () {
     await database()
       .updateTable('users')
       .set({ merged_into: null })
-      .where('id', 'in', group)
+      .where('id', 'in', group.map(userIdOfGumbo))
       .execute()
     for (const [keep, ...rest] of parts) {
-      for (const id of rest) await closeInto(database(), id, keep)
+      for (const id of rest)
+        await closeInto(database(), userIdOfGumbo(id), userIdOfGumbo(keep))
     }
   }
 
   const may = async (actor: number, player: number): Promise<boolean> =>
-    await mayEditName(database(), actor, player, about)
+    await mayEditName(
+      database(),
+      userIdOfGumbo(actor),
+      userIdOfGumbo(player),
+      about
+    )
 
   const links = async (): Promise<unknown[]> =>
     await database()
@@ -767,7 +846,7 @@ describe('a guardian across merges', function () {
     const written = await links()
 
     expect(await may(parent, child)).equals(false)
-    await closeInto(db, placeholder, child)
+    await closeInto(db, userIdOfGumbo(placeholder), userIdOfGumbo(child))
     expect(await may(parent, child)).equals(true)
     expect(await may(parent, placeholder)).equals(true)
     // Nothing is written to make that so.
@@ -782,7 +861,7 @@ describe('a guardian across merges', function () {
     await link(imported, child)
 
     expect(await may(signsIn, child)).equals(false)
-    await closeInto(db, imported, signsIn)
+    await closeInto(db, userIdOfGumbo(imported), userIdOfGumbo(signsIn))
     expect(await may(signsIn, child)).equals(true)
   })
 
@@ -797,7 +876,7 @@ describe('a guardian across merges', function () {
 
     expect(await may(aunt, placeholder)).equals(true)
     expect(await may(neighbour, placeholder)).equals(false)
-    await closeInto(db, placeholder, child)
+    await closeInto(db, userIdOfGumbo(placeholder), userIdOfGumbo(child))
     expect(await may(aunt, child)).equals(true)
     expect(await may(neighbour, child)).equals(false)
   })
@@ -812,7 +891,7 @@ describe('a guardian across merges', function () {
     await link(parent, placeholder)
     await link(otherParent, stranger)
 
-    await closeInto(db, placeholder, child)
+    await closeInto(db, userIdOfGumbo(placeholder), userIdOfGumbo(child))
     expect(await may(otherParent, child)).equals(false)
     expect(await may(parent, stranger)).equals(false)
   })
@@ -824,8 +903,8 @@ describe('a guardian across merges', function () {
     const child = await person('Steven Kwan')
     const kept = await person('Steven Kwan')
     await link(parent, child)
-    await closeInto(db, child, kept)
-    await closeInto(db, parent, parentAgain)
+    await closeInto(db, userIdOfGumbo(child), userIdOfGumbo(kept))
+    await closeInto(db, userIdOfGumbo(parent), userIdOfGumbo(parentAgain))
     expect(await may(parentAgain, kept)).equals(true)
     const written = await links()
 
@@ -846,9 +925,9 @@ describe('a guardian across merges', function () {
     const otherChild = await person('Jared J')
     await link(parent, sameChild)
     await link(otherParent, otherChild)
-    await closeInto(db, sameChild, kept)
-    await closeInto(db, otherChild, kept)
-    await closeInto(db, parent, parentAgain)
+    await closeInto(db, userIdOfGumbo(sameChild), userIdOfGumbo(kept))
+    await closeInto(db, userIdOfGumbo(otherChild), userIdOfGumbo(kept))
+    await closeInto(db, userIdOfGumbo(parent), userIdOfGumbo(parentAgain))
     expect(await may(otherParent, kept)).equals(true)
 
     await split(
@@ -869,9 +948,9 @@ describe('a guardian across merges', function () {
     const placeholder = await person('Francisco')
     await link(parent, placeholder)
     await link(parentThird, kept)
-    await closeInto(db, placeholder, kept)
-    await closeInto(db, parent, parentAgain)
-    await closeInto(db, parentThird, parentAgain)
+    await closeInto(db, userIdOfGumbo(placeholder), userIdOfGumbo(kept))
+    await closeInto(db, userIdOfGumbo(parent), userIdOfGumbo(parentAgain))
+    await closeInto(db, userIdOfGumbo(parentThird), userIdOfGumbo(parentAgain))
 
     await split([kept, placeholder], [[kept], [placeholder]])
     expect(await may(parentAgain, kept)).equals(true)
@@ -883,7 +962,7 @@ describe('a guardian across merges', function () {
     const old = await person('Julio')
     const kept = await person('Julio Rodriguez')
     const stranger = await person('Cal Raleigh')
-    await closeInto(db, old, kept)
+    await closeInto(db, userIdOfGumbo(old), userIdOfGumbo(kept))
     expect(await may(old, kept)).equals(true)
     expect(await may(kept, old)).equals(true)
     expect(await may(stranger, kept)).equals(false)
@@ -900,8 +979,8 @@ describe('a guardian across merges', function () {
     ]) {
       await database()
         .updateTable('users')
-        .set({ merged_into: keeping })
-        .where('id', '=', closing)
+        .set({ merged_into: userIdOfGumbo(keeping) })
+        .where('id', '=', userIdOfGumbo(closing))
         .execute()
     }
     expect(await may(one, other)).equals(true)
@@ -918,30 +997,60 @@ describe('a guardian across merges', function () {
     const cousin = await person('Gavin Lux')
     await link(parent, placeholder)
     await link(parent, cousin)
-    await closeInto(db, placeholder, child)
+    await closeInto(db, userIdOfGumbo(placeholder), userIdOfGumbo(child))
 
     // Rows that hold the player are taken as given, not walked again: a row
     // the parent is linked to answers only because it was handed over.
     expect(await may(parent, stranger)).equals(false)
     expect(
-      await mayEditName(db, parent, stranger, about, {
-        player: { userId: stranger, userIds: [stranger, cousin] }
-      })
+      await mayEditName(
+        db,
+        userIdOfGumbo(parent),
+        userIdOfGumbo(stranger),
+        about,
+        {
+          player: {
+            userId: userIdOfGumbo(stranger),
+            userIds: [userIdOfGumbo(stranger), userIdOfGumbo(cousin)]
+          }
+        }
+      )
     ).equals(true)
 
-    const gathered = await onePerson(db, child)
+    const gathered = await onePerson(db, userIdOfGumbo(child))
     expect(
-      await mayEditName(db, parent, child, about, { player: gathered })
+      await mayEditName(
+        db,
+        userIdOfGumbo(parent),
+        userIdOfGumbo(child),
+        about,
+        { player: gathered }
+      )
     ).equals(true)
     // The child's rows handed over for somebody else are ignored, and the
     // question is answered about the one actually asked.
     expect(
-      await mayEditName(db, parent, stranger, about, { player: gathered })
+      await mayEditName(
+        db,
+        userIdOfGumbo(parent),
+        userIdOfGumbo(stranger),
+        about,
+        { player: gathered }
+      )
     ).equals(false)
     expect(
-      await mayEditName(db, parent, child, about, {
-        player: { userId: stranger, userIds: [stranger] }
-      })
+      await mayEditName(
+        db,
+        userIdOfGumbo(parent),
+        userIdOfGumbo(child),
+        about,
+        {
+          player: {
+            userId: userIdOfGumbo(stranger),
+            userIds: [userIdOfGumbo(stranger)]
+          }
+        }
+      )
     ).equals(true)
   })
 
@@ -968,7 +1077,7 @@ describe('a guardian across merges', function () {
         .insertInto('scope_roles')
         .values({
           id: makeId('scopeRole'),
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           scope_type: 'team',
           scope_id: teamId,
           role
@@ -980,7 +1089,7 @@ describe('a guardian across merges', function () {
       .values({
         id: makeId('membership'),
         team_id: team,
-        user_id: old,
+        user_id: userIdOfGumbo(old),
         is_player: true
       })
       .execute()
@@ -988,8 +1097,8 @@ describe('a guardian across merges', function () {
     // team rows: the membership is still under the closed row.
     await db
       .updateTable('users')
-      .set({ merged_into: kept })
-      .where('id', '=', old)
+      .set({ merged_into: userIdOfGumbo(kept) })
+      .where('id', '=', userIdOfGumbo(old))
       .execute()
 
     expect(await may(coach, kept)).equals(true)

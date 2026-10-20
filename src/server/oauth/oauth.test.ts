@@ -31,9 +31,11 @@ import { Pool } from 'pg'
 import { Agent } from 'undici'
 
 import { verifyOAuthWeb } from '../../app/oauth/oauthWeb.e2e'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { createSession } from '../auth/sessions'
 import { hashToken, makeToken } from '../auth/tokens'
 import { type Database, makeDatabase } from '../db/database'
@@ -170,31 +172,29 @@ describe('OAuth provider and native approval over HTTPS', function () {
     pool = new Pool({ connectionString: databaseUrl })
     await migrateUp(pool, migrations)
     db = makeDatabase(databaseUrl)
-    await db
-      .insertInto('users')
-      .values({
-        id: 123,
-        legacyId: 'usr_AAAAAAAAAAAAAAAA',
-        display_name: 'Alex Lee',
-        login_enabled: true
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(123),
+      legacyId: 'usr_AAAAAAAAAAAAAAAA',
+      display_name: 'Alex Lee',
+      login_enabled: true
+    })
     await db
       .insertInto('user_emails')
       .values({
         id: 'uem_fixture',
-        user_id: 123,
+        user_id: userIdOfGumbo(123),
         email: 'alex@example.test',
         is_primary: true,
         verified_at: new Date()
       })
       .execute()
-    session = await createSession(db, 123, 'fixture')
+    session = await createSession(db, userIdOfGumbo(123), 'fixture')
     await pool.query(
       "insert into teams (id,name) values ('tem_builds_fixture','Demo Hawks')"
     )
     await pool.query(
-      "insert into invites (id,code,scope_type,scope_id,created_by) values ('inv_builds_fixture','demo-builds','team','tem_builds_fixture',123)"
+      "insert into invites (id,code,scope_type,scope_id,created_by) values ('inv_builds_fixture','demo-builds','team','tem_builds_fixture',$1)",
+      [userIdOfGumbo(123)]
     )
     const app = express()
     const ui = express()
@@ -397,8 +397,12 @@ describe('OAuth provider and native approval over HTTPS', function () {
       expectedState: flow.state,
       expectedNonce: flow.nonce
     })
-    expect(tokens.claims()?.sub).equals('123')
-    const info = await client.fetchUserInfo(rp, tokens.access_token, '123')
+    expect(tokens.claims()?.sub).equals(userIdOfGumbo(123))
+    const info = await client.fetchUserInfo(
+      rp,
+      tokens.access_token,
+      userIdOfGumbo(123)
+    )
     expect(info.email).equals('alex@example.test')
     expect(info.email_verified).equals(true)
     try {
@@ -466,7 +470,7 @@ describe('OAuth provider and native approval over HTTPS', function () {
       expectedState: flow.state,
       expectedNonce: flow.nonce
     })
-    expect(tokens.claims()?.sub).equals('123')
+    expect(tokens.claims()?.sub).equals(userIdOfGumbo(123))
     expect(
       (
         await fetcher(`${origin}/api/v1/oauth/approvals/${handle}`, {
@@ -481,16 +485,13 @@ describe('OAuth provider and native approval over HTTPS', function () {
     const first = await start()
     first.browser.cookies.set('ts_session', session.token)
     await callback(first, await post(first, '/decision', { approve: true }))
-    await db
-      .insertInto('users')
-      .values({
-        id: 456,
-        legacyId: 'usr_BBBBBBBBBBBBBBBB',
-        display_name: 'Jordan Smith',
-        login_enabled: true
-      })
-      .execute()
-    const other = await createSession(db, 456, 'fixture')
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(456),
+      legacyId: 'usr_BBBBBBBBBBBBBBBB',
+      display_name: 'Jordan Smith',
+      login_enabled: true
+    })
+    const other = await createSession(db, userIdOfGumbo(456), 'fixture')
     first.browser.cookies.set('ts_session', other.token)
     const changed = await start(first.browser)
     const url = await callback(
@@ -502,7 +503,7 @@ describe('OAuth provider and native approval over HTTPS', function () {
       expectedState: changed.state,
       expectedNonce: changed.nonce
     })
-    expect(tokens.claims()?.sub).equals('456')
+    expect(tokens.claims()?.sub).equals(userIdOfGumbo(456))
     first.browser.cookies.delete('ts_session')
     const signedOut = await start(first.browser)
     expect(
@@ -653,12 +654,17 @@ describe('OAuth provider and native approval over HTTPS', function () {
     await db
       .updateTable('user_emails')
       .set({ verified_at: null })
-      .where('user_id', '=', 123)
+      .where('user_id', '=', userIdOfGumbo(123))
       .execute()
     const flow = await start()
     flow.browser.cookies.set('ts_session', session.token)
     expect(
-      (await post(flow, '/decision', { approve: true, userId: 456 })).status
+      (
+        await post(flow, '/decision', {
+          approve: true,
+          userId: userIdOfGumbo(456)
+        })
+      ).status
     ).equals(400)
     const url = await callback(
       flow,
@@ -670,13 +676,13 @@ describe('OAuth provider and native approval over HTTPS', function () {
       expectedNonce: flow.nonce
     })
     expect(
-      (await client.fetchUserInfo(rp, tokens.access_token, '123'))
+      (await client.fetchUserInfo(rp, tokens.access_token, userIdOfGumbo(123)))
         .email_verified
     ).equals(false)
     await db
       .updateTable('user_emails')
       .set({ verified_at: new Date() })
-      .where('user_id', '=', 123)
+      .where('user_id', '=', userIdOfGumbo(123))
       .execute()
   })
   it('rejects machine tokens and disabled or merged accounts at approval', async () => {
@@ -690,7 +696,7 @@ describe('OAuth provider and native approval over HTTPS', function () {
       .insertInto('api_tokens')
       .values({
         id: 'api_fixture',
-        user_id: 123,
+        user_id: userIdOfGumbo(123),
         token_hash: hashToken(token),
         label: 'fixture',
         scopes: []
@@ -709,19 +715,19 @@ describe('OAuth provider and native approval over HTTPS', function () {
     await db
       .updateTable('users')
       .set({ login_enabled: false })
-      .where('id', '=', 123)
+      .where('id', '=', userIdOfGumbo(123))
       .execute()
     expect((await decision(session.token)).status).equals(401)
     await db
       .updateTable('users')
-      .set({ login_enabled: true, merged_into: 123 })
-      .where('id', '=', 123)
+      .set({ login_enabled: true, merged_into: userIdOfGumbo(123) })
+      .where('id', '=', userIdOfGumbo(123))
       .execute()
     expect((await decision(session.token)).status).equals(401)
     await db
       .updateTable('users')
       .set({ merged_into: null })
-      .where('id', '=', 123)
+      .where('id', '=', userIdOfGumbo(123))
       .execute()
   })
   it('keeps native approval pending until a decision and rejects expired handles', async () => {
@@ -785,11 +791,7 @@ describe('OAuth provider and native approval over HTTPS', function () {
   it('authorizes through source and compiled server entrypoints and survives a restart', async () => {
     const repo = process.cwd()
     // Compilation is part of the entrypoint contract, not an alternate server fixture.
-    execFileSync(
-      path.join(repo, 'node_modules/.bin/tsc'),
-      ['-p', 'tsconfig.server.json'],
-      { stdio: 'pipe' }
-    )
+    execFileSync('npm', ['run', 'build'], { cwd: repo, stdio: 'pipe' })
     const { createServer: createHttpServer } = await import('node:http')
     const reservation = createHttpServer().listen(0, '127.0.0.1')
     await once(reservation, 'listening')
@@ -845,7 +847,7 @@ describe('OAuth provider and native approval over HTTPS', function () {
         const deadline = Date.now() + 15000
         while (!output.includes('listening on')) {
           if (child.exitCode != null || Date.now() > deadline)
-            throw new Error('OAuth server fixture did not start')
+            throw new Error(`OAuth server fixture did not start: ${output}`)
           await new Promise(resolve => setTimeout(resolve, 30))
         }
         backendPort = port
@@ -872,7 +874,7 @@ describe('OAuth provider and native approval over HTTPS', function () {
                 previous.sub
               )
             ).sub
-          ).equals('123')
+          ).equals(userIdOfGumbo(123))
         const flow = await start()
         flow.browser.cookies.set('ts_session', session.token)
         const url = await callback(
@@ -886,8 +888,13 @@ describe('OAuth provider and native approval over HTTPS', function () {
         })
         previous = { token: tokens.access_token, sub: tokens.claims()!.sub }
         expect(
-          (await client.fetchUserInfo(discovered, previous.token, '123'))
-            .email_verified
+          (
+            await client.fetchUserInfo(
+              discovered,
+              previous.token,
+              userIdOfGumbo(123)
+            )
+          ).email_verified
         ).equals(true)
         expect(output).not.includes(session.token)
         expect(output).not.includes(secret)
@@ -945,7 +952,7 @@ describe('OAuth provider and native approval over HTTPS', function () {
                 expectedNonce: nonce
               }
             )
-            expect(browserTokens.claims()?.sub).equals('123')
+            expect(browserTokens.claims()?.sub).equals(userIdOfGumbo(123))
           } finally {
             serveUi = false
           }

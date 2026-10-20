@@ -32,14 +32,14 @@ import type { Database } from '../db/database'
  */
 export async function bothPlayedTogether(
   db: Kysely<Database>,
-  userIds: number[]
+  userIds: string[]
 ): Promise<Set<string>> {
   const together = new Set<string>()
   if (userIds.length < 2) return together
 
   const wanted = [...new Set(userIds)]
-  const byGame = new Map<string, number[]>()
-  const note = (gameId: string, userId: number): void => {
+  const byGame = new Map<string, string[]>()
+  const note = (gameId: string, userId: string): void => {
     const held = byGame.get(gameId) ?? []
     if (!held.includes(userId)) held.push(userId)
     byGame.set(gameId, held)

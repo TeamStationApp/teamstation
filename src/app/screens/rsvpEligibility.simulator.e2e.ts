@@ -6,6 +6,7 @@ import { expect } from 'chai'
 
 import { asEventInfo } from '../../common/eventInfo'
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import { guardianFixture } from '../../test/guardianFixture'
 import { capture, maestro } from '../../test/refinementsMaestro.e2e'
 
@@ -41,7 +42,7 @@ async function main(): Promise<void> {
     await f.h.db
       .updateTable('users')
       .set({ onboarding_step: 'complete', onboarding_completed_at: new Date() })
-      .where('id', '=', user)
+      .where('id', '=', userIdOfGumbo(user))
       .execute()
     const game = f.games[0]
     const child = f.players[0].id
@@ -53,15 +54,15 @@ async function main(): Promise<void> {
         last_name: 'Griffey',
         display_name: 'Ken Griffey'
       })
-      .where('id', '=', outsider)
+      .where('id', '=', userIdOfGumbo(outsider))
       .execute()
     for (const id of [child, outsider])
       await f.h.db
         .insertInto('user_links')
         .values({
           id: makeId('userLink'),
-          user_id: user,
-          related_user_id: id,
+          user_id: userIdOfGumbo(user),
+          related_user_id: userIdOfGumbo(id),
           kind: 'guardian',
           can_manage: false
         })
@@ -72,11 +73,15 @@ async function main(): Promise<void> {
       ).json()
     )
     expect(info.replyUserIds)
-      .includes(user)
+      .includes(userIdOfGumbo(user))
       .and.includes(child)
       .and.not.includes(outsider)
-    const childName = info.attendees.find(row => row.userId === child)!.name
-    const ownName = info.attendees.find(row => row.userId === user)!.name
+    const childName = info.attendees.find(
+      row => row.userId === userIdOfGumbo(child)
+    )!.name
+    const ownName = info.attendees.find(
+      row => row.userId === userIdOfGumbo(user)
+    )!.name
     const path = `/games/${game.id}?tab=info`
     await m.openLink({
       link: f.h.origin + '/sign-in?next=' + encodeURIComponent(path)
@@ -96,7 +101,7 @@ async function main(): Promise<void> {
     await capture(m, out, 'eligible-rsvp-modal.png')
     await f.h.db
       .deleteFrom('memberships')
-      .where('user_id', '=', child)
+      .where('user_id', '=', userIdOfGumbo(child))
       .where('team_id', '=', f.teamA)
       .execute()
     const rejected = await f.h.request(

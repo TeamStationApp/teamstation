@@ -65,7 +65,21 @@ export function seedRoute(_url: string | null | undefined): void {
 /** Where the address bar currently points. */
 export function currentRoute(): Route {
   if (typeof window === 'undefined') return { name: 'home' }
-  return parseRoute(window.location.pathname, window.location.search)
+  const route = parseRoute(window.location.pathname, window.location.search)
+  if (route.name === 'player' || route.name === 'person') {
+    const path = window.location.pathname.replace(
+      /(?<=\/)([1-9][0-9]*)(?=\/?$)/,
+      route.userId
+    )
+    if (path !== window.location.pathname) {
+      window.history.replaceState(
+        window.history.state,
+        '',
+        path + window.location.search + window.location.hash
+      )
+    }
+  }
+  return route
 }
 
 /**

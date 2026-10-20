@@ -2,11 +2,13 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   type GroupFixture,
   groupFixture
 } from '../../test/groupFixtures'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { roleScopes, visibleScopes } from '../access'
 import { hashToken } from '../auth/tokens'
 import { changeNodeAccount, nodeAccounts } from './nodeAdministration'
@@ -21,25 +23,23 @@ describe('protected node account administration', function () {
     await f?.h.close()
   })
   it('returns all name/email matches and filters current admins only when requested', async () => {
-    await f.h.db
-      .insertInto('users')
-      .values(
-        Array.from({ length: 55 }, (_, i) => ({
-          id: 1000 + i,
-          legacyId: `usr_node_search_${i}`,
-          display_name: `Aaron ${i}`,
-          login_enabled: true,
-          is_admin: i === 54
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      f.h.db,
+      Array.from({ length: 55 }, (_, i) => ({
+        id: 1000 + i,
+        legacyId: `usr_node_search_${i}`,
+        display_name: `Aaron ${i}`,
+        login_enabled: true,
+        is_admin: i === 54
+      }))
+    )
     const matches = await nodeAccounts(f.h.db, actor(105), 'Aaron')
     expect(matches).length(55)
     expect(
       (await nodeAccounts(f.h.db, actor(105), 'Aaron', true)).map(
         row => row.userId
       )
-    ).deep.equals([1054])
+    ).deep.equals([1054].map(userIdOfGumbo))
     const all = await f.h.request(
       'GET',
       '/users?view=administration&nodeAdmin=true',
@@ -52,7 +52,7 @@ describe('protected node account administration', function () {
     await f.h.db
       .updateTable('users')
       .set({ avatar_path: 'fixture/avatar' })
-      .where('id', '=', 105)
+      .where('id', '=', userIdOfGumbo(105))
       .execute()
     const pictured = await f.h.request(
       'GET',
@@ -61,14 +61,14 @@ describe('protected node account administration', function () {
       105
     )
     const pictures = (await pictured.json()) as Array<{
-      userId: number
+      userId: string
       avatarUrl: string | null
     }>
-    expect(pictures.find(row => row.userId === 105)!.avatarUrl).includes(
-      'fixture/avatar'
-    )
+    expect(
+      pictures.find(row => row.userId === userIdOfGumbo(105))!.avatarUrl
+    ).includes('fixture/avatar')
     const byEmail = await nodeAccounts(f.h.db, actor(105), 'fixture106@')
-    expect(byEmail.map(row => row.userId)).deep.equals([106])
+    expect(byEmail.map(row => row.userId)).deep.equals([106].map(userIdOfGumbo))
     expect(await nodeAccounts(f.h.db, actor(105), '%')).length(0)
     for (const value of ['yes', 'true&nodeAdmin=false'])
       expect(
@@ -133,7 +133,7 @@ describe('protected node account administration', function () {
       (
         await f.h.request(
           'PATCH',
-          '/users/105/administration',
+          '/users/usr_111111111111111111112p/administration',
           { isNodeAdmin: false },
           101
         )
@@ -143,13 +143,20 @@ describe('protected node account administration', function () {
       (await f.h.request('PATCH', '/users/bad/administration', {}, 105)).status
     ).equals(400)
     expect(
-      (await f.h.request('PATCH', '/users/106/administration', {}, 105)).status
+      (
+        await f.h.request(
+          'PATCH',
+          '/users/usr_111111111111111111112q/administration',
+          {},
+          105
+        )
+      ).status
     ).equals(400)
     expect(
       (
         await f.h.request(
           'PATCH',
-          '/users/999/administration',
+          '/users/usr_11111111111111111111JE/administration',
           { suspended: true },
           105
         )
@@ -160,7 +167,7 @@ describe('protected node account administration', function () {
     for (const change of [{ isNodeAdmin: false }, { suspended: true }]) {
       const response = await f.h.request(
         'PATCH',
-        '/users/105/administration',
+        '/users/usr_111111111111111111112p/administration',
         change,
         105
       )
@@ -171,17 +178,27 @@ describe('protected node account administration', function () {
         await f.h.db
           .selectFrom('users')
           .selectAll()
-          .where('id', '=', 105)
+          .where('id', '=', userIdOfGumbo(105))
           .executeTakeFirstOrThrow()
       ).is_admin
     ).equals(true)
   })
   it('revalidates node privilege instead of trusting an old actor or socket snapshot', async () => {
-    await changeNodeAccount(f.h.db, actor(105), 106, { isNodeAdmin: true })
-    expect((await roleScopes(f.h.db, 106, false)).isAdmin).equals(true)
-    await changeNodeAccount(f.h.db, actor(105), 106, { isNodeAdmin: false })
-    expect((await roleScopes(f.h.db, 106, true)).isAdmin).equals(false)
-    expect((await visibleScopes(f.h.db, 106, true)).isAdmin).equals(false)
+    await changeNodeAccount(f.h.db, actor(105), userIdOfGumbo(106), {
+      isNodeAdmin: true
+    })
+    expect(
+      (await roleScopes(f.h.db, userIdOfGumbo(106), false)).isAdmin
+    ).equals(true)
+    await changeNodeAccount(f.h.db, actor(105), userIdOfGumbo(106), {
+      isNodeAdmin: false
+    })
+    expect((await roleScopes(f.h.db, userIdOfGumbo(106), true)).isAdmin).equals(
+      false
+    )
+    expect(
+      (await visibleScopes(f.h.db, userIdOfGumbo(106), true)).isAdmin
+    ).equals(false)
   })
   it('suspends and reactivates an ordinary account while preserving identity and revoking every session and machine token', async () => {
     const token = 'fixture-node-machine-token'
@@ -189,7 +206,7 @@ describe('protected node account administration', function () {
       .insertInto('api_tokens')
       .values({
         id: makeId('apiToken'),
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         token_hash: hashToken(token),
         label: 'fixture',
         scopes: []
@@ -198,13 +215,13 @@ describe('protected node account administration', function () {
     const before = await f.h.db
       .selectFrom('users')
       .select('legacyId')
-      .where('id', '=', 106)
+      .where('id', '=', userIdOfGumbo(106))
       .executeTakeFirstOrThrow()
     expect(
       (
         await f.h.request(
           'PATCH',
-          '/users/106/administration',
+          '/users/usr_111111111111111111112q/administration',
           { suspended: true },
           105
         )
@@ -216,12 +233,14 @@ describe('protected node account administration', function () {
     expect(
       (await f.h.request('GET', '/me/groups', undefined, token)).status
     ).equals(401)
-    expect((await roleScopes(f.h.db, 106, true)).isAdmin).equals(false)
+    expect((await roleScopes(f.h.db, userIdOfGumbo(106), true)).isAdmin).equals(
+      false
+    )
     expect(
       (
         await f.h.request(
           'PATCH',
-          '/users/106/administration',
+          '/users/usr_111111111111111111112q/administration',
           { suspended: false },
           105
         )
@@ -232,7 +251,7 @@ describe('protected node account administration', function () {
         await f.h.db
           .selectFrom('users')
           .select('legacyId')
-          .where('id', '=', 106)
+          .where('id', '=', userIdOfGumbo(106))
           .executeTakeFirstOrThrow()
       ).legacyId
     ).equals(before.legacyId)
@@ -245,7 +264,7 @@ describe('protected node account administration', function () {
       (
         await f.h.request(
           'PATCH',
-          '/users/101/administration',
+          '/users/usr_111111111111111111112k/administration',
           { suspended: true },
           105
         )
@@ -256,16 +275,22 @@ describe('protected node account administration', function () {
         await f.h.db
           .selectFrom('users')
           .select('disabled_at')
-          .where('id', '=', 101)
+          .where('id', '=', userIdOfGumbo(101))
           .executeTakeFirstOrThrow()
       ).disabled_at
     ).equals(null)
   })
   it('serializes simultaneous node-role removals and retains at least one active node administrator', async () => {
-    await changeNodeAccount(f.h.db, actor(105), 106, { isNodeAdmin: true })
+    await changeNodeAccount(f.h.db, actor(105), userIdOfGumbo(106), {
+      isNodeAdmin: true
+    })
     const results = await Promise.allSettled([
-      changeNodeAccount(f.h.db, actor(105), 105, { isNodeAdmin: false }),
-      changeNodeAccount(f.h.db, actor(106), 106, { isNodeAdmin: false })
+      changeNodeAccount(f.h.db, actor(105), userIdOfGumbo(105), {
+        isNodeAdmin: false
+      }),
+      changeNodeAccount(f.h.db, actor(106), userIdOfGumbo(106), {
+        isNodeAdmin: false
+      })
     ])
     expect(results.filter(r => r.status === 'fulfilled')).length(1)
     expect(

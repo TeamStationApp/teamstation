@@ -14,7 +14,7 @@ import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
-import { mintFreeUserId } from '../teams/addPlayers'
+import { ensureGumboId, insertUser } from '../users/insertUser'
 
 /** The game row serializes guest creation against lineup and play writes. */
 export async function createGuestPlayer(
@@ -50,40 +50,29 @@ export async function createGuestPlayer(
     } else if (game.currentPlay != null && recordOf(game.currentPlay) == null) {
       throw conflict('The stored game cannot be read')
     }
-    const minted = await mintFreeUserId(trx)
     const fullName = [player.firstName, player.lastName]
       .filter(Boolean)
       .join(' ')
-    await trx
-      .insertInto('users')
-      .values({
-        id: minted.userId,
-        legacyId: minted.legacyId,
-        display_name: fullName,
-        first_name: player.firstName === '' ? null : player.firstName,
-        last_name: player.lastName === '' ? null : player.lastName,
-        login_enabled: false,
-        bats: player.bats,
-        throws: player.throws,
-        bats_source:
-          player.bats != null || player.throws != null ? 'manual' : null
-      })
-      .execute()
+    const userId = await insertUser(trx, {
+      display_name: fullName,
+      first_name: player.firstName === '' ? null : player.firstName,
+      last_name: player.lastName === '' ? null : player.lastName,
+      login_enabled: false,
+      bats: player.bats,
+      throws: player.throws,
+      bats_source:
+        player.bats != null || player.throws != null ? 'manual' : null
+    })
     await trx
       .insertInto('game_guest_details')
       .values({
         game_id: gameId,
-        user_id: minted.userId,
+        user_id: userId,
         jersey: player.jersey,
         positions: player.positions
       })
       .execute()
-    const mapping = await trx
-      .selectFrom('gumbo_ids')
-      .select('gumbo_id')
-      .where('user_id', '=', minted.userId)
-      .executeTakeFirstOrThrow()
-    const gumboId = mapping.gumbo_id
+    const gumboId = await ensureGumboId(trx, userId)
     const guests = asGuests(game.guests)
     guests[side].push(gumboId)
     await trx
@@ -92,7 +81,7 @@ export async function createGuestPlayer(
       .where('id', '=', gameId)
       .execute()
     return {
-      userId: minted.userId,
+      userId,
       gumboId,
       shortName: fullName,
       nameDetails: {

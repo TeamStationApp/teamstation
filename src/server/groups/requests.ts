@@ -82,12 +82,12 @@ function invitationHash(body: RelationshipInvitation): string {
 export async function recordRequestRecipient(
   db: Kysely<Database>,
   requestId: string,
-  userId: number
+  userId: string
 ): Promise<void> {
   await db
     .updateTable('notification_events')
     .set({
-      recorded_recipients: sql`array(select distinct unnest(recorded_recipients || ARRAY[${userId}]::bigint[]))`
+      recorded_recipients: sql`array(select distinct unnest(recorded_recipients || ARRAY[${userId}]::text[]))`
     })
     .where('source_type', '=', 'groupRequest')
     .where('source_id', '=', requestId)
@@ -114,7 +114,7 @@ export interface RequestSide {
 export function relationshipSides(
   terms: RequestTerms,
   sender: GroupRef | null = null,
-  senderId?: number
+  senderId?: string
 ): RequestSide[] {
   if (terms.kind === 'membership')
     return [
@@ -290,7 +290,7 @@ function namesSide(
  */
 export async function hasGuardian(
   db: Kysely<Database>,
-  playerUserId: number
+  playerUserId: string
 ): Promise<boolean> {
   return (await guardiansWhoCanAct(db, [playerUserId])).length > 0
 }
@@ -321,7 +321,7 @@ async function coachesPlayer(
 async function approvesForPlayer(
   db: Kysely<Database>,
   actor: Actor,
-  playerUserId: number
+  playerUserId: string
 ): Promise<boolean> {
   const player = await onePerson(db, playerUserId)
   // `currentActor` already refused an account that cannot sign in.
@@ -342,7 +342,7 @@ async function approvesForPlayer(
 export async function guardianInviteAs(
   db: Kysely<Database>,
   actor: Actor,
-  playerUserId: number
+  playerUserId: string
 ): Promise<'guardian' | 'team' | null> {
   // Nobody who cannot manage invitations, like an API token or an account
   // that no longer signs in, invites one.
@@ -363,7 +363,7 @@ export async function guardianInviteAs(
 /** "Avery S has a guardian already", for a refusal. */
 async function hasGuardianAlready(
   db: Kysely<Database>,
-  playerUserId: number
+  playerUserId: string
 ): Promise<string> {
   const player = await db
     .selectFrom('users')
@@ -520,7 +520,7 @@ async function authorizeGuardian(
 async function namesPerson(
   db: Kysely<Database>,
   guardian: GuardianTerms['guardian'],
-  userId: number
+  userId: string
 ): Promise<boolean> {
   const person = await onePerson(db, userId)
   if ('userId' in guardian)
@@ -542,7 +542,7 @@ async function namesPerson(
  */
 async function refuseOwnGuardian(
   db: Kysely<Database>,
-  senderId: number,
+  senderId: string,
   invitation: boolean,
   terms: GuardianTerms
 ): Promise<void> {
@@ -591,7 +591,7 @@ async function refuseGuardianAgain(
  */
 async function waitingGuardianRequest(
   db: Kysely<Database>,
-  senderId: number,
+  senderId: string,
   sender: GroupRef | null,
   terms: GuardianTerms,
   now: Date
@@ -603,7 +603,7 @@ async function waitingGuardianRequest(
     .where('kind', '=', 'guardian')
     .where('status', '=', 'pending')
     .where('expires_at', '>', now)
-    .where(sql<number>`(terms->>'playerUserId')::bigint`, 'in', player.userIds)
+    .where(sql<string>`terms->>'playerUserId'`, 'in', player.userIds)
   query =
     sender == null
       ? query
@@ -655,7 +655,7 @@ export type SentRequest = StoredRequest & {
 /** A guardian invitation's mail did not go; a replay of its key sends it. */
 export async function oweGuardianMail(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   key: string,
   id: string,
   answer: NonNullable<SentRequest['answer']>

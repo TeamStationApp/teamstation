@@ -92,7 +92,7 @@ export async function publishPictureCatalog(
 /** A catalog choice is a manual selection, protected from subsequent imports. */
 export async function selectAccountCatalogPicture(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   raw: unknown
 ): Promise<void> {
   const entry = catalogPicture(asCatalogId(raw))!

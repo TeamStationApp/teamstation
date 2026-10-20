@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import type { GameProposal } from '../../common/gameApprovals'
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { roleScopes } from '../access'
 
@@ -43,7 +44,9 @@ describe('game approval readiness matches Express route semantics', function () 
   }
   it('refuses lowercase, uppercase, mixed-case and trailing-slash sends without publishing from legacy inherited rights', async () => {
     expect(
-      (await roleScopes(f.h.db, 101, false)).admin.teamIds.has(f.teamB)
+      (await roleScopes(f.h.db, userIdOfGumbo(101), false)).admin.teamIds.has(
+        f.teamB
+      )
     ).equals(true)
     for (const path of [
       '/game-requests',
@@ -95,7 +98,9 @@ describe('game approval readiness matches Express route semantics', function () 
       .values({ key: 'creation.hierarchyReady', value: true })
       .execute()
     expect(
-      (await roleScopes(f.h.db, 101, false)).admin.teamIds.has(f.teamB)
+      (await roleScopes(f.h.db, userIdOfGumbo(101), false)).admin.teamIds.has(
+        f.teamB
+      )
     ).equals(false)
     const sent = await f.h.request(
       'POST',

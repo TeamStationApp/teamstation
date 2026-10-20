@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { emptyStatExtras } from '../common/statExtras'
+import { userIdOfGumbo } from '../common/userId'
 import {
   battingLines,
   battingRates,
@@ -18,7 +19,7 @@ const TEAM = 'tem_one'
 /** One game's stored line, with only the figures a test is about. */
 function game(over: Partial<StatRow> = {}): StatRow {
   return {
-    userId: ROBIN,
+    userId: userIdOfGumbo(ROBIN),
     teamId: TEAM,
     pa: 0,
     ab: 0,
@@ -77,8 +78,13 @@ describe('stats', function () {
   })
 
   it('keeps players apart, and sorts by who batted most', function () {
-    const lines = battingLines([game({ pa: 2 }), game({ userId: SAM, pa: 1 })])
-    expect(lines.map(line => line.userId)).deep.equals([ROBIN, SAM])
+    const lines = battingLines([
+      game({ pa: 2 }),
+      game({ userId: userIdOfGumbo(SAM), pa: 1 })
+    ])
+    expect(lines.map(line => line.userId)).deep.equals(
+      [ROBIN, SAM].map(userIdOfGumbo)
+    )
   })
 
   it('drops the team when a total spans two of them', function () {
@@ -118,9 +124,11 @@ describe('stats', function () {
   it('adds a pitcher’s games together, most work first', function () {
     const lines = pitchingLines([
       game({ pitchBf: 10, pitchOuts: 6, pitchEr: 1, pitchR: 2, pitchH: 3 }),
-      game({ userId: SAM, pitchBf: 4, pitchOuts: 3 })
+      game({ userId: userIdOfGumbo(SAM), pitchBf: 4, pitchOuts: 3 })
     ])
-    expect(lines.map(line => line.userId)).deep.equals([ROBIN, SAM])
+    expect(lines.map(line => line.userId)).deep.equals(
+      [ROBIN, SAM].map(userIdOfGumbo)
+    )
     expect(lines[0].outs).equals(6)
     expect(lines[0].er).equals(1)
     expect(lines[0].r).equals(2)

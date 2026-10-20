@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import { rosterError } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { scoringSession } from '../../test/scoringSession'
 import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
@@ -185,7 +186,11 @@ describe('local player entry', function () {
       positions: ['SS', 'EH']
     }
     expect(rosterPlayerBody(draft).positions).deep.equals(['SS'])
-    const entry = { userId: 8800001, gumboId: 8800001, shortName: 'Cliff L' }
+    const entry = {
+      userId: userIdOfGumbo(8800001),
+      gumboId: 8800001,
+      shortName: 'Cliff L'
+    }
     const id = addRosteredPlayer(session, 'home', entry, draft)
     const player = session.gameData.players[id]
     expect(player.id).equals(8800001)

@@ -8,10 +8,12 @@ import { Pool } from 'pg'
 
 import { TeamStationClient } from '../../common/api'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo, userIdOfValue } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -133,10 +135,11 @@ describe('the users route', function () {
   }
   /** Ada's picture, signed, as every answer carries it. */
   const picture = (body: any[]): string | null =>
-    body.find(person => person.userId === ada.userId)?.avatarUrl ?? null
+    body.find(person => person.userId === userIdOfGumbo(ada.userId))
+      ?.avatarUrl ?? null
 
-  const byUserId = (a: { userId: number }, b: { userId: number }): number =>
-    a.userId - b.userId
+  const byUserId = (a: { userId: string }, b: { userId: string }): number =>
+    a.userId.localeCompare(b.userId)
 
   it('answers a site administrator for everybody, a merged row as its survivor', async function () {
     const answer = await ask(
@@ -151,13 +154,15 @@ describe('the users route', function () {
     expect(answer.body).deep.equals(
       [
         {
-          userId: ada.userId,
+          userId: userIdOfGumbo(ada.userId),
+          gumboId: ada.userId,
           externalIds: ['ext-ada', 'ext-ada-login'],
           shortName: 'Ada L',
           avatarUrl: picture(answer.body)
         },
         {
-          userId: bea.userId,
+          userId: userIdOfGumbo(bea.userId),
+          gumboId: bea.userId,
           externalIds: ['ext-bea', 'ext-bee'],
           shortName: 'Bea B',
           avatarUrl: null
@@ -172,13 +177,15 @@ describe('the users route', function () {
     expect(answer.body).deep.equals(
       [
         {
-          userId: ada.userId,
+          userId: userIdOfGumbo(ada.userId),
+          gumboId: ada.userId,
           externalIds: ['ext-ada'],
           shortName: 'Ada L',
           avatarUrl: picture(answer.body)
         },
         {
-          userId: cal.userId,
+          userId: userIdOfGumbo(cal.userId),
+          gumboId: cal.userId,
           externalIds: ['ext-cal'],
           shortName: 'Cal C',
           avatarUrl: null
@@ -195,13 +202,15 @@ describe('the users route', function () {
     expect(answer.body).deep.equals(
       [
         {
-          userId: ada.userId,
+          userId: userIdOfGumbo(ada.userId),
+          gumboId: ada.userId,
           externalIds: [],
           shortName: 'Ada L',
           avatarUrl: picture(answer.body)
         },
         {
-          userId: bea.userId,
+          userId: userIdOfGumbo(bea.userId),
+          gumboId: bea.userId,
           externalIds: [],
           shortName: 'Bea B',
           avatarUrl: null
@@ -237,6 +246,46 @@ describe('the users route', function () {
     expect(answer.body).deep.equals([])
   })
 
+  it('scopes external ids by system and reports an adult without a scoring identity', async function () {
+    const id = userIdOfValue(1n << 80n)
+    // A new account has no historical derivation or mapping.
+    await db!
+      .insertInto('users')
+      .values({ id, display_name: 'Hank Aaron' })
+      .execute()
+    await db!
+      .insertInto('external_ids')
+      .values({
+        id: makeId('externalId'),
+        entity_type: 'user',
+        entity_id: id,
+        system: 'gamechanger',
+        kind: 'player',
+        external_id: 'ext-ada'
+      })
+      .execute()
+    const client = new TeamStationClient({ baseUrl: base, token: ADMIN })
+    const scoped = await client.users({
+      externalIds: ['ext-ada'],
+      system: 'gamechanger'
+    })
+    expect(
+      scoped.map(({ userId, gumboId }) => ({ userId, gumboId }))
+    ).deep.equals([{ userId: id, gumboId: null }])
+    expect((await ask(ADMIN, 'ext-ada')).body).length(2)
+    expect(
+      (await askWith(ADMIN, 'externalId=ext-ada&system=acme')).body[0].userId
+    ).equals(userIdOfGumbo(ada.userId))
+    expect(
+      (await askWith(ADMIN, 'externalId=ext-ada&system=missing')).body
+    ).deep.equals([])
+    for (const query of ['system=', 'system=acme&system=gamechanger']) {
+      expect(
+        (await askWith(ADMIN, `externalId=ext-ada&${query}`)).status
+      ).equals(400)
+    }
+  })
+
   it('refuses an empty or a missing externalId', async function () {
     expect((await ask(ADMIN, '')).status).equals(400)
     expect((await ask(ADMIN, 'ext-ada', '')).status).equals(400)
@@ -245,35 +294,33 @@ describe('the users route', function () {
 
   async function seed(db: Kysely<Database>): Promise<void> {
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values(
-        [
-          { made: admin, name: 'An Admin', isAdmin: true },
-          { made: ada, name: 'Ada Lovelace', isAdmin: false },
-          { made: bea, name: 'Bea Brown', isAdmin: false },
-          { made: bee, name: 'Bea B', isAdmin: false },
-          { made: cal, name: 'Cal Carter', isAdmin: false },
-          { made: dot, name: 'Dot Dunn', isAdmin: false }
-        ].map(person => ({
-          id: person.made.userId,
-          legacyId: person.made.legacyId,
-          display_name: person.name,
-          is_admin: person.isAdmin,
-          created_at: now,
-          updated_at: now
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      [
+        { made: admin, name: 'An Admin', isAdmin: true },
+        { made: ada, name: 'Ada Lovelace', isAdmin: false },
+        { made: bea, name: 'Bea Brown', isAdmin: false },
+        { made: bee, name: 'Bea B', isAdmin: false },
+        { made: cal, name: 'Cal Carter', isAdmin: false },
+        { made: dot, name: 'Dot Dunn', isAdmin: false }
+      ].map(person => ({
+        id: person.made.userId,
+        legacyId: person.made.legacyId,
+        display_name: person.name,
+        is_admin: person.isAdmin,
+        created_at: now,
+        updated_at: now
+      }))
+    )
     await db
       .updateTable('users')
-      .set({ merged_into: bea.userId })
-      .where('id', '=', bee.userId)
+      .set({ merged_into: userIdOfGumbo(bea.userId) })
+      .where('id', '=', userIdOfGumbo(bee.userId))
       .execute()
     await db
       .updateTable('users')
       .set({ avatar_path: 'avatars/ada/1' })
-      .where('id', '=', ada.userId)
+      .where('id', '=', userIdOfGumbo(ada.userId))
       .execute()
     await db
       .insertInto('user_links')
@@ -286,8 +333,8 @@ describe('the users route', function () {
           ] as const
         ).map(([child, kind]) => ({
           id: makeId('userLink'),
-          user_id: cal.userId,
-          related_user_id: child.userId,
+          user_id: userIdOfGumbo(cal.userId),
+          related_user_id: userIdOfGumbo(child.userId),
           kind
         }))
       )
@@ -296,8 +343,8 @@ describe('the users route', function () {
       .insertInto('auth_sessions')
       .values(
         [
-          { token: ADMIN, userId: admin.userId },
-          { token: CAL, userId: cal.userId }
+          { token: ADMIN, userId: userIdOfGumbo(admin.userId) },
+          { token: CAL, userId: userIdOfGumbo(cal.userId) }
         ].map(session => ({
           id: makeId('authSession'),
           user_id: session.userId,
@@ -313,11 +360,15 @@ describe('the users route', function () {
       .values([
         {
           id: makeId('membership'),
-          user_id: ada.userId,
+          user_id: userIdOfGumbo(ada.userId),
           team_id: home,
           is_player: true
         },
-        { id: makeId('membership'), user_id: cal.userId, team_id: home }
+        {
+          id: makeId('membership'),
+          user_id: userIdOfGumbo(cal.userId),
+          team_id: home
+        }
       ])
       .execute()
     await db
@@ -325,11 +376,11 @@ describe('the users route', function () {
       .values(
         (
           [
-            ['user', String(ada.userId), 'player', 'ext-ada'],
-            ['user', String(ada.userId), 'account', 'ext-ada-login'],
-            ['user', String(bea.userId), 'player', 'ext-bea'],
-            ['user', String(bee.userId), 'player', 'ext-bee'],
-            ['user', String(cal.userId), 'user', 'ext-cal'],
+            ['user', userIdOfGumbo(ada.userId), 'player', 'ext-ada'],
+            ['user', userIdOfGumbo(ada.userId), 'account', 'ext-ada-login'],
+            ['user', userIdOfGumbo(bea.userId), 'player', 'ext-bea'],
+            ['user', userIdOfGumbo(bee.userId), 'player', 'ext-bee'],
+            ['user', userIdOfGumbo(cal.userId), 'user', 'ext-cal'],
             ['team', home, 'team', 'ext-home']
           ] as const
         ).map(([entityType, entityId, kind, externalId]) => ({

@@ -5,10 +5,12 @@ import { Pool } from 'pg'
 
 import { asPostEventsBody } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { creditsForHighlight, creditsForPlayer } from './credits'
@@ -52,16 +54,13 @@ describe('scoring events', function () {
         { id: away, name: 'Away', kind: 'full' }
       ])
       .execute()
-    await db
-      .insertInto('users')
-      .values({
-        id: player.userId,
-        legacyId: player.legacyId,
-        display_name: 'Ada',
-        created_at: now,
-        updated_at: now
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(player.userId),
+      legacyId: player.legacyId,
+      display_name: 'Ada',
+      created_at: now,
+      updated_at: now
+    })
     await db
       .insertInto('games')
       .values({
@@ -227,13 +226,13 @@ describe('scoring events', function () {
       .execute()
     expect(roles.map(row => row.role)).deep.equals(['fielder'])
 
-    const byPlayer = await creditsForPlayer(db, player.userId)
+    const byPlayer = await creditsForPlayer(db, userIdOfGumbo(player.userId))
     expect(byPlayer.get(replaced[0].id)?.[0].credit?.name).equals('Ada')
     expect(byPlayer.get(replaced[0].id)?.[0].creditUserId).equals(player.userId)
     expect(byPlayer.get(replaced[0].id)?.[0].label).equals('Single: Ada')
-    expect(await creditsForPlayer(db, 9_007_199_254_740_000)).deep.equals(
-      new Map()
-    )
+    expect(
+      await creditsForPlayer(db, userIdOfGumbo(9_007_199_254_740_000))
+    ).deep.equals(new Map())
 
     const highlights = await creditsForHighlight(db, [replaced[0].id])
     expect(highlights.get(replaced[0].id)?.[0].eventType).equals('single')
@@ -324,17 +323,17 @@ describe('scoring events', function () {
       })
       .execute()
     const other = mintUserId(() => false)
-    await db
-      .insertInto('users')
-      .values({
-        id: other.userId,
-        legacyId: other.legacyId,
-        display_name: 'Bea',
-        created_at: new Date(),
-        updated_at: new Date()
-      })
-      .execute()
-    const together = await bothPlayedTogether(db, [player.userId, other.userId])
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(other.userId),
+      legacyId: other.legacyId,
+      display_name: 'Bea',
+      created_at: new Date(),
+      updated_at: new Date()
+    })
+    const together = await bothPlayedTogether(db, [
+      userIdOfGumbo(player.userId),
+      userIdOfGumbo(other.userId)
+    ])
     expect(together.has(`${player.userId}|${other.userId}`)).equals(false)
   })
 

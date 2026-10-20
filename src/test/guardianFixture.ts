@@ -3,12 +3,14 @@ import { resolve } from 'node:path'
 
 import { makeId } from '../common/ids'
 import type { Role } from '../common/roles'
+import { userIdOfGumbo } from '../common/userId'
 import { createSession } from '../server/auth/sessions'
 import { posterSecond } from '../server/media/posters'
 import { stillKey } from '../server/media/stills'
 import { mediaRoutes } from '../server/routes/media'
 import type { MountExtra } from './accountHarness'
 import { demoLocality, type GroupFixture, groupFixture } from './groupFixtures'
+import { insertFixtureUsers } from './insertFixtureUsers'
 
 /**
  * The guardians-and-roles world, on `groupFixture`'s leagues, seasons and
@@ -140,31 +142,31 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
   ]
   const players = guardianPlayers.map(p => ({ ...p, email: null }))
   for (const p of [...players, ...adults]) {
-    await db
-      .insertInto('users')
-      .values({
-        id: p.id,
-        legacyId: `usr_guardian_${p.id}`,
-        display_name: `${p.first} ${p.last}`,
-        first_name: p.first,
-        last_name: p.last,
-        login_enabled: p.email != null
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(p.id),
+      legacyId: `usr_guardian_${p.id}`,
+      display_name: `${p.first} ${p.last}`,
+      first_name: p.first,
+      last_name: p.last,
+      login_enabled: p.email != null
+    })
     if (p.email == null) continue
     emails[p.id] = p.email
     await db
       .insertInto('user_emails')
       .values({
         id: `email_guardian_${p.id}`,
-        user_id: p.id,
+        user_id: userIdOfGumbo(p.id),
         email: p.email,
         is_primary: true,
         verified_at: new Date(),
         source: 'manual'
       })
       .execute()
-    f.h.tokens.set(p.id, (await createSession(db, p.id, 'guardian')).token)
+    f.h.tokens.set(
+      p.id,
+      (await createSession(db, userIdOfGumbo(p.id), 'guardian')).token
+    )
   }
 
   for (const p of guardianPlayers)
@@ -172,7 +174,7 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: p.id,
+        user_id: userIdOfGumbo(p.id),
         team_id: f.teamA,
         role: 'member',
         is_player: true,
@@ -185,8 +187,8 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
     .insertInto('user_links')
     .values({
       id: makeId('userLink'),
-      user_id: 106,
-      related_user_id: 201,
+      user_id: userIdOfGumbo(106),
+      related_user_id: userIdOfGumbo(201),
       kind: 'guardian',
       can_manage: true,
       created_at: new Date()
@@ -203,11 +205,11 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
       .insertInto('scope_roles')
       .values({
         id: makeId('scopeRole'),
-        user_id: userId,
+        user_id: userIdOfGumbo(userId),
         scope_type: scopeType,
         scope_id: scopeId,
         role: name,
-        granted_by: 101,
+        granted_by: userIdOfGumbo(101),
         granted_at: new Date()
       })
       .execute()
@@ -221,7 +223,7 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: userId,
+        user_id: userIdOfGumbo(userId),
         team_id: f.teamA,
         role: 'member',
         is_player: false
@@ -230,7 +232,11 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
 
   await db
     .insertInto('follows')
-    .values({ user_id: 207, group_type: 'team', group_id: f.teamA })
+    .values({
+      user_id: userIdOfGumbo(207),
+      group_type: 'team',
+      group_id: f.teamA
+    })
     .execute()
 
   const created = await f.h.request(
@@ -265,7 +271,7 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
     .insertInto('memberships')
     .values({
       id: makeId('membership'),
-      user_id: 201,
+      user_id: userIdOfGumbo(201),
       team_id: secondTeam,
       role: 'member',
       is_player: true,

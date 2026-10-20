@@ -403,6 +403,12 @@ describe('user identity snapshot across real database schemas', function () {
       expect(compareUserIds(rostered, separated).differences).deep.equals([])
       expect(separated.userColumns.gumbo_ids).deep.equals(['user_id'])
       expect(separated.tables.game_guest_details).not.equals(undefined)
+      await migrateUp(
+        pool,
+        migrations.filter(m => m.name >= '069')
+      )
+      const canonical = { ...(await snapshotSql(client)), api: {} }
+      expect(compareUserIds(separated, canonical).differences).deep.equals([])
     } finally {
       client.release()
     }
@@ -456,7 +462,7 @@ describe('user identity snapshot across real database schemas', function () {
 
   it('captures every listed endpoint from a real authenticated server and removes its session', async function () {
     baseline = await captureUserIds(pool, origin)
-    expect(baseline.userIdType).equals('bigint')
+    expect(baseline.userIdType).equals('text')
     expect(baseline.tables.users.rows).has.length(3)
     expect(Object.keys(baseline.api)).deep.equals(snapshotPaths(baseline))
     expect(Object.keys(baseline.api)).has.length(21)
@@ -475,7 +481,8 @@ describe('user identity snapshot across real database schemas', function () {
       async () => Response.json({}, { status: 500 }),
       async () => {
         await pool.query(
-          `update users set display_name = 'Hank Aaron' where id = 3`
+          `update users set display_name = 'Hank Aaron' where id = $1`,
+          [userIdOfGumbo(3)]
         )
         return Response.json([])
       }
@@ -501,11 +508,13 @@ describe('user identity snapshot across real database schemas', function () {
     } catch (error) {
       expect((error as Error).message).contains('No enabled node admin')
     }
-    await pool.query('update users set is_admin = true where id = 1')
+    await pool.query('update users set is_admin = true where id = $1', [
+      userIdOfGumbo(1)
+    ])
     const client = await pool.connect()
     try {
       const snap = await snapshotSql(client)
-      expect(snap.migrations.at(-1)).equals('068gumboIds')
+      expect(snap.migrations.at(-1)).equals(migrations.at(-1)!.name)
     } finally {
       client.release()
     }

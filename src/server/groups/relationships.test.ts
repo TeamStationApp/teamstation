@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { asParentActions } from '../../common/groupLinks'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   type GroupFixture,
@@ -185,10 +186,10 @@ describe('management parents independent of competition and games', function () 
       .set({ spectator_access: 'league' })
       .where('id', '=', f.leagueB)
       .execute()
-    const scopes = await visibleScopes(f.h.db, 101, false)
+    const scopes = await visibleScopes(f.h.db, userIdOfGumbo(101), false)
     expect(scopes.teamIds.has(f.teamB)).equals(false)
     expect(scopes.seasonIds.has(f.seasonB)).equals(false)
-    const rights = await roleScopes(f.h.db, 101, false)
+    const rights = await roleScopes(f.h.db, userIdOfGumbo(101), false)
     expect(rights.admin.teamIds.has(f.teamB)).equals(false)
     expect(rights.admin.teamIds.has(f.teamA)).equals(true) // direct creator grant survives unlink.
   })
