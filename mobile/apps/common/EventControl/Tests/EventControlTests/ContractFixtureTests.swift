@@ -11,7 +11,8 @@ struct ContractFixtureTests {
     let vectors = Fixtures.json("keys.json")["vectors"] as! [[String: String]]
     #expect(vectors.count >= 4)
     for vector in vectors {
-      var reply = vector
+      var reply: [String: Any] = vector
+      reply["version"] = 2
       reply["secret"] = nil
       reply["name"] = nil
       let data = try JSONSerialization.data(withJSONObject: reply)
