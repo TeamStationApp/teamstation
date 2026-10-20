@@ -13,6 +13,7 @@ import type { NodeAccount } from '../../common/nodeAdministration'
 import type { Notification } from '../../common/notifications'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
 import { seasonTimeFrames } from '../../common/seasonTimeFrames'
+import { userIdOfGumbo } from '../../common/userId'
 import { DateRangePicker } from '../components/DateRangePicker'
 import { GroupPictureChooser } from '../components/GroupPictureChooser'
 import { seasonParticipantDestination } from '../navigation/seasonParticipant'
@@ -735,7 +736,7 @@ describe('creation and organization interface behavior', () => {
   it('keeps the account list when account mail cannot load', async () => {
     const api = client()
     const account: NodeAccount = {
-      userId: 106,
+      userId: userIdOfGumbo(106),
       displayName: 'Demo Keeper',
       email: 'keeper@example.com',
       isNodeAdmin: false,
@@ -754,7 +755,7 @@ describe('creation and organization interface behavior', () => {
   it('does not report a mail refresh failure after an account change has been saved', async () => {
     const api = client()
     const account: NodeAccount = {
-      userId: 106,
+      userId: userIdOfGumbo(106),
       displayName: 'Demo Keeper',
       email: 'keeper@example.com',
       isNodeAdmin: false,
@@ -769,7 +770,7 @@ describe('creation and organization interface behavior', () => {
       return { accountMessages: false }
     }
     api.setAccountMail = async () => {}
-    let changed = 0
+    let changed = ''
     api.changeNodeAccount = async () => {}
     await mount(
       <NodeAdministrationScreen
@@ -781,7 +782,7 @@ describe('creation and organization interface behavior', () => {
     )
     await fill('Find an account', 'Demo Keeper')
     await press('Add Demo Keeper')
-    expect(changed).equals(106)
+    expect(changed).equals(userIdOfGumbo(106))
     expect(document.body.textContent).includes('Demo Keeper')
     expect(document.body.textContent).not.includes('Mail offline')
   })

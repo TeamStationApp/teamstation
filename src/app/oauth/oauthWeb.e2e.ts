@@ -147,7 +147,7 @@ export async function verifyOAuthWeb(options: {
       text: 'Example builds wants to use your TeamStation identity.',
       timeout: 10000
     })
-    await device.assertVisible({ text: '^Signed in as Alex Lee$' })
+    await device.assertVisible({ text: '^Signed in as Alex Liddi$' })
     await writeFile(
       path.join(artifacts, 'oauth-consent-web.png'),
       await device.screenshot()

@@ -16,6 +16,7 @@ import {
   sortedAttendees,
   withEventMetadata
 } from './eventInfo'
+import { userIdOfGumbo } from './userId'
 
 const body = {
   teamId: 'tem_demo',
@@ -26,7 +27,7 @@ const body = {
 describe('event information contracts', () => {
   it('counts only direct players, combines Maybe with unknown and validates count payloads', () => {
     const row = {
-      userId: 1,
+      userId: userIdOfGumbo(1),
       gumboId: 1,
       name: 'Babe R',
       avatarUrl: null,
@@ -37,11 +38,22 @@ describe('event information contracts', () => {
     expect(
       playerRsvpCounts([
         { ...row, response: 'yes' },
-        { ...row, userId: 2, response: 'maybe' },
-        { ...row, userId: 3, response: null },
-        { ...row, userId: 4, response: 'no' },
-        { ...row, userId: 5, gumboId: 5, response: 'yes', isPlayer: false },
-        { ...row, userId: 6, response: 'no', isTeamParticipant: false }
+        { ...row, userId: userIdOfGumbo(2), response: 'maybe' },
+        { ...row, userId: userIdOfGumbo(3), response: null },
+        { ...row, userId: userIdOfGumbo(4), response: 'no' },
+        {
+          ...row,
+          userId: userIdOfGumbo(5),
+          gumboId: 5,
+          response: 'yes',
+          isPlayer: false
+        },
+        {
+          ...row,
+          userId: userIdOfGumbo(6),
+          response: 'no',
+          isTeamParticipant: false
+        }
       ])
     ).deep.equals({ yes: 1, unknown: 2, no: 1 })
     expect(() => asPlayerRsvpCounts({ yes: -1, unknown: 0, no: 0 })).throws()
@@ -54,7 +66,7 @@ describe('event information contracts', () => {
   })
   it('decodes optional attendance fields without widening old shapes', () => {
     const row = {
-      userId: 1,
+      userId: userIdOfGumbo(1),
       name: 'Babe R',
       avatarUrl: null,
       response: null,
@@ -228,10 +240,10 @@ describe('event information contracts', () => {
         longitude: null,
         status: 'scheduled',
         canManage: true,
-        replyUserIds: [1],
+        replyUserIds: [userIdOfGumbo(1)],
         attendees: [
           {
-            userId: 1,
+            userId: userIdOfGumbo(1),
             name: 'Babe Ruth',
             avatarUrl: null,
             response: null,
@@ -276,7 +288,7 @@ describe('event information contracts', () => {
   })
   it('orders replies yes, maybe, no, then absence without changing its source', () => {
     const rows = [null, 'no', 'maybe', 'yes', 'yes'].map((response, i) => ({
-      userId: i + 1,
+      userId: userIdOfGumbo(i + 1),
       name: [
         'Nolan Ryan',
         'Lou Gehrig',
@@ -288,9 +300,9 @@ describe('event information contracts', () => {
       canReply: false,
       response: response as 'yes' | 'maybe' | 'no' | null
     }))
-    expect(sortedAttendees(rows).map(row => row.userId)).deep.equals([
-      4, 5, 3, 2, 1
-    ])
+    expect(sortedAttendees(rows).map(row => row.userId)).deep.equals(
+      [4, 5, 3, 2, 1].map(userIdOfGumbo)
+    )
     expect(rows[0].response).equals(null)
   })
 })

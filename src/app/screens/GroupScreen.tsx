@@ -31,7 +31,7 @@ export interface GroupScreenProps {
   onOpenTeam?: (team: TeamSummary) => void
   onOpenPlayer?: TeamScreenProps['onOpenPlayer']
   /** Somebody on a team's, season's or league's people list, as a profile. */
-  onOpenPerson?: (group: GroupRef, userId: number, name: string) => void
+  onOpenPerson?: (group: GroupRef, userId: string, name: string) => void
   onCreate: (
     kind: GroupKind,
     parent: GroupRef,

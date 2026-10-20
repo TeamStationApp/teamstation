@@ -169,7 +169,7 @@ export function directorUploadRoutes(
   /** The upload, if it is this account's and still worth talking about. */
   const mine = async (
     uploadId: string,
-    userId: number
+    userId: string
   ): Promise<Selectable<DirectorUploadsTable>> => {
     const row = await db
       .selectFrom('director_uploads')
@@ -191,7 +191,7 @@ export function directorUploadRoutes(
    */
   const gameIRun = async (
     gameId: string,
-    userId: number,
+    userId: string,
     isAdmin: boolean
   ): Promise<{ id: string; startAt: Date }> => {
     const game = await db

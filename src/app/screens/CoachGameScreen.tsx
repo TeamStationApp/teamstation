@@ -227,7 +227,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   const source = props.source ?? fallback
   const [opened, setOpened] = useState<Opened>()
   const [editingPlayer, setEditingPlayer] = useState<{
-    userId: number
+    userId: string
     name: string
     teamId: string
   }>()

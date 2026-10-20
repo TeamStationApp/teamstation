@@ -1,3 +1,4 @@
+import { userIdSchema } from '../userIdSchema'
 export const eventLocationProperties = {
   notes: { type: ['string', 'null'], maxLength: 2000 },
   arrivalTimeDelta: {
@@ -114,7 +115,7 @@ export function eventInfoPaths(
             name: 'userId',
             in: 'path',
             required: true,
-            schema: { type: 'integer', minimum: 1 }
+            schema: userIdSchema
           }
         ],
         requestBody: {

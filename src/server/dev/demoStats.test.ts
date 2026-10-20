@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { emptyStatExtras } from '../../common/statExtras'
+import { userIdOfGumbo } from '../../common/userId'
 import { statsDatabase } from '../../test/statsDatabase'
 import { sampleBatter } from './demoStats'
 
@@ -31,6 +32,6 @@ describe('demo sample batter', function () {
         pa: 2
       })
       .execute()
-    expect(await sampleBatter(db, 'tem_home')).equals(ids[1])
+    expect(await sampleBatter(db, 'tem_home')).equals(userIdOfGumbo(ids[1]))
   })
 })

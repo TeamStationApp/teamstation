@@ -176,7 +176,7 @@ describe('the tools’ shared helpers', function () {
 
   it('fetches a key, and says why when it cannot', async function () {
     const one = fixtureCredentials('one')
-    const answering = (async () => new Response(JSON.stringify(one))) as unknown as typeof fetch
+    const answering = (async () => new Response(JSON.stringify({ version: 2, ...one }))) as unknown as typeof fetch
     expect(await fetchCredentials('http://127.0.0.1:9', 'tok', answering)).deep.equals(one)
     const unreadable = (async () => new Response('nope', { status: 500 })) as unknown as typeof fetch
     let failed: unknown

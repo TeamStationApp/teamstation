@@ -1,11 +1,12 @@
 import type { Kysely, Transaction } from 'kysely'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import { addEmail, findUserByEmail } from '../auth/emails'
 import { hashPassword } from '../auth/passwords'
 import { type Database, makeDatabase } from '../db/database'
 import { serverConfig } from '../serverConfig'
+import { insertUser } from '../users/insertUser'
+import { mintUserId } from '../users/mintUserId'
 
 /**
  * A fresh game to score while developing: a league, a season, two teams in it
@@ -24,18 +25,11 @@ import { serverConfig } from '../serverConfig'
  */
 const POSITIONS = ['P', 'C', '1B', '2B', 'SS', '3B', 'LF', 'CF', 'RF']
 
-export type Mint = () => { userId: number; legacyId: string }
+export type Mint = () => string
 
-/** Mints user ids no user in the database, or minted before, holds. */
-export async function userMinter(trx: Transaction<Database>): Promise<Mint> {
-  const held = new Set(
-    (await trx.selectFrom('users').select('id').execute()).map(row => row.id)
-  )
-  return () => {
-    const minted = mintUserId(id => held.has(id))
-    held.add(minted.userId)
-    return minted
-  }
+/** Draws independent account identities; insertion reserves them. */
+export async function userMinter(_trx: Transaction<Database>): Promise<Mint> {
+  return mintUserId
 }
 
 export interface ScoringGameFixture {
@@ -45,7 +39,7 @@ export interface ScoringGameFixture {
   awayTeamId: string
   games: string[]
   /** Each side's players' user ids, in roster order. */
-  roster: Record<'home' | 'away', number[]>
+  roster: Record<'home' | 'away', string[]>
 }
 
 /**
@@ -104,7 +98,7 @@ export async function createScoringGame(
     ])
     .execute()
 
-  const roster: Record<'home' | 'away', number[]> = { home: [], away: [] }
+  const roster: Record<'home' | 'away', string[]> = { home: [], away: [] }
   for (const [side, teamId] of [
     ['away', awayTeamId],
     ['home', homeTeamId]
@@ -119,25 +113,23 @@ export async function createScoringGame(
           `${side === 'home' ? 'Host' : 'Visitor'} ${String(i + 1).padStart(2, '0')}`
       )
     for (const [i, name] of names.entries()) {
-      const minted = mint()
       const words = name.split(' ')
-      await trx
-        .insertInto('users')
-        .values({
-          id: minted.userId,
-          legacyId: minted.legacyId,
+      const userId = await insertUser(
+        trx,
+        {
           display_name: name,
           first_name: words.length > 1 ? words[0] : null,
           last_name: words.length > 1 ? words.slice(1).join(' ') : name,
           bats: i % 3 === 0 ? 'left' : 'right',
           throws: 'right'
-        })
-        .execute()
+        },
+        mint
+      )
       await trx
         .insertInto('memberships')
         .values({
           id: makeId('membership'),
-          user_id: minted.userId,
+          user_id: userId,
           team_id: teamId,
           role: 'member',
           is_player: true,
@@ -145,7 +137,7 @@ export async function createScoringGame(
           positions: i < POSITIONS.length ? [POSITIONS[i]] : []
         })
         .execute()
-      roster[side].push(minted.userId)
+      roster[side].push(userId)
     }
   }
 
@@ -180,7 +172,7 @@ export async function loginUser(
   email: string,
   password: string,
   displayName?: string
-): Promise<number> {
+): Promise<string> {
   const normalised = email.trim().toLowerCase()
   const passwordHash = await hashPassword(password)
   const existing = await findUserByEmail(trx, normalised)
@@ -196,23 +188,21 @@ export async function loginUser(
       .execute()
     return existing.id
   }
-  const minted = mint()
-  await trx
-    .insertInto('users')
-    .values({
-      id: minted.userId,
-      legacyId: minted.legacyId,
+  const userId = await insertUser(
+    trx,
+    {
       display_name: displayName ?? normalised.split('@')[0],
       password_hash: passwordHash,
       login_enabled: true,
       is_admin: false
-    })
-    .execute()
-  await addEmail(trx, minted.userId, normalised, {
+    },
+    mint
+  )
+  await addEmail(trx, userId, normalised, {
     isPrimary: true,
     source: 'manual'
   })
-  return minted.userId
+  return userId
 }
 
 /**

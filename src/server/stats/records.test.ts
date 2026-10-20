@@ -5,11 +5,12 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
-import { asUserId } from '../../common/userIdNumber'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { asUserId, mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { jsonBody } from '../jsonBody'
@@ -112,19 +113,16 @@ describe('team records, read from the games', function () {
     db = new Kysely<Database>({ dialect: new PostgresDialect({ pool }) })
 
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values({
-        id: viewer,
-        legacyId: made.legacyId,
-        display_name: 'Viewer View',
-        first_name: 'Viewer',
-        last_name: 'View',
-        is_admin: true,
-        created_at: now,
-        updated_at: now
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(viewer),
+      legacyId: made.legacyId,
+      display_name: 'Viewer View',
+      first_name: 'Viewer',
+      last_name: 'View',
+      is_admin: true,
+      created_at: now,
+      updated_at: now
+    })
     await db
       .insertInto('seasons')
       .values([
@@ -168,7 +166,11 @@ describe('team records, read from the games', function () {
     app.use((req, _res, next) => {
       const id = req.header('x-test-actor')
       if (id != null) {
-        req.actor = { userId: asUserId(id), isAdmin: true, scopes: [] }
+        req.actor = {
+          userId: userIdOfGumbo(asUserId(id)),
+          isAdmin: true,
+          scopes: []
+        }
       }
       next()
     })

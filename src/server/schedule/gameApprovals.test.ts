@@ -6,6 +6,7 @@ import { asGameProposal, type GameIntent } from '../../common/gameApprovals'
 import { asParentActions } from '../../common/groupLinks'
 import { asPostEventsBody } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   demoLocality,
@@ -89,9 +90,9 @@ describe('approved games and shared schedule ownership', function () {
       f.h.db,
       'team',
       f.teamA,
-      106,
+      userIdOfGumbo(106),
       { admin: true, flags: [] },
-      101
+      userIdOfGumbo(101)
     )
     const create = async (key: string): Promise<string> => {
       const response = await f.h.request(
@@ -198,9 +199,9 @@ describe('approved games and shared schedule ownership', function () {
       f.h.db,
       'team',
       f.teamB,
-      101,
+      userIdOfGumbo(101),
       { admin: true, flags: [] },
-      102
+      userIdOfGumbo(102)
     )
     const id = await send(
       { ...game(f.seasonA), homeTeamId: f.teamB, awayTeamId: f.standaloneTeam },
@@ -431,9 +432,9 @@ describe('approved games and shared schedule ownership', function () {
       f.h.db,
       'team',
       f.teamA,
-      102,
+      userIdOfGumbo(102),
       { admin: true, flags: [] },
-      101
+      userIdOfGumbo(101)
     )
     const snapshot = (await (
       await f.h.request(
@@ -507,9 +508,9 @@ describe('approved games and shared schedule ownership', function () {
       f.h.db,
       'team',
       f.teamA,
-      102,
+      userIdOfGumbo(102),
       { admin: true, flags: [] },
-      101
+      userIdOfGumbo(101)
     )
     const snapshot = (await (
       await f.h.request(
@@ -778,7 +779,7 @@ describe('approved games and shared schedule ownership', function () {
         id: makeId('scopeRole'),
         scope_type: 'season',
         scope_id: f.seasonB,
-        user_id: 103,
+        user_id: userIdOfGumbo(103),
         role: 'admin'
       })
       .execute()
@@ -788,14 +789,14 @@ describe('approved games and shared schedule ownership', function () {
         id: makeId('scopeRole'),
         scope_type: 'league',
         scope_id: f.leagueB,
-        user_id: 103,
+        user_id: userIdOfGumbo(103),
         role: 'admin'
       })
       .execute()
     const id = await send()
     await f.h.db
       .deleteFrom('scope_roles')
-      .where('user_id', '=', 102)
+      .where('user_id', '=', userIdOfGumbo(102))
       .where('scope_id', 'in', [f.seasonB, f.leagueB, f.teamB])
       .execute()
     expect((await accept(id, 101)).status).equals('pending')
