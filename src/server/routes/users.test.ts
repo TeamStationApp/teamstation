@@ -25,10 +25,10 @@ import { userRoutes } from './users'
 /**
  * `GET /users?externalId=`, through the real router.
  *
- * Ada plays for Home and is known by two ids of different kinds, and has a
- * picture. Bea plays for nobody, and Bee was merged into her. Cal is on Home
+ * Adam plays for Home and is known by two ids of different kinds, and has a
+ * picture. Brett plays for nobody, and his duplicate was merged into him. Cal is on Home
  * without playing, and is the one asking when the asker is not the site
- * administrator. Cal is Ada's guardian, and family of Bee's; Dot plays for
+ * administrator. Cal is Adam's guardian, and family of Brett's duplicate; Don plays for
  * nobody and is Cal's link of kind `other`.
  */
 const adminUrl = testDatabaseUrl
@@ -133,7 +133,7 @@ describe('the users route', function () {
     )
     return { status: response.status, body: await response.json() }
   }
-  /** Ada's picture, signed, as every answer carries it. */
+  /** Adam's picture, signed, as every answer carries it. */
   const picture = (body: any[]): string | null =>
     body.find(person => person.userId === userIdOfGumbo(ada.userId))
       ?.avatarUrl ?? null
@@ -157,14 +157,14 @@ describe('the users route', function () {
           userId: userIdOfGumbo(ada.userId),
           gumboId: ada.userId,
           externalIds: ['ext-ada', 'ext-ada-login'],
-          shortName: 'Ada L',
+          shortName: 'Adam L',
           avatarUrl: picture(answer.body)
         },
         {
           userId: userIdOfGumbo(bea.userId),
           gumboId: bea.userId,
           externalIds: ['ext-bea', 'ext-bee'],
-          shortName: 'Bea B',
+          shortName: 'Brett B',
           avatarUrl: null
         }
       ].sort(byUserId)
@@ -180,14 +180,14 @@ describe('the users route', function () {
           userId: userIdOfGumbo(ada.userId),
           gumboId: ada.userId,
           externalIds: ['ext-ada'],
-          shortName: 'Ada L',
+          shortName: 'Adam L',
           avatarUrl: picture(answer.body)
         },
         {
           userId: userIdOfGumbo(cal.userId),
           gumboId: cal.userId,
           externalIds: ['ext-cal'],
-          shortName: 'Cal C',
+          shortName: 'Cal R',
           avatarUrl: null
         }
       ].sort(byUserId)
@@ -205,14 +205,14 @@ describe('the users route', function () {
           userId: userIdOfGumbo(ada.userId),
           gumboId: ada.userId,
           externalIds: [],
-          shortName: 'Ada L',
+          shortName: 'Adam L',
           avatarUrl: picture(answer.body)
         },
         {
           userId: userIdOfGumbo(bea.userId),
           gumboId: bea.userId,
           externalIds: [],
-          shortName: 'Bea B',
+          shortName: 'Brett B',
           avatarUrl: null
         }
       ].sort((a, b) => a.shortName.localeCompare(b.shortName))
@@ -298,11 +298,11 @@ describe('the users route', function () {
       db,
       [
         { made: admin, name: 'An Admin', isAdmin: true },
-        { made: ada, name: 'Ada Lovelace', isAdmin: false },
-        { made: bea, name: 'Bea Brown', isAdmin: false },
-        { made: bee, name: 'Bea B', isAdmin: false },
-        { made: cal, name: 'Cal Carter', isAdmin: false },
-        { made: dot, name: 'Dot Dunn', isAdmin: false }
+        { made: ada, name: 'Adam LaRoche', isAdmin: false },
+        { made: bea, name: 'Brett Butler', isAdmin: false },
+        { made: bee, name: 'Brett B', isAdmin: false },
+        { made: cal, name: 'Cal Ripken', isAdmin: false },
+        { made: dot, name: 'Don Drysdale', isAdmin: false }
       ].map(person => ({
         id: person.made.userId,
         legacyId: person.made.legacyId,

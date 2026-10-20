@@ -175,7 +175,7 @@ describe('OAuth provider and native approval over HTTPS', function () {
     await insertFixtureUsers(db, {
       id: userIdOfGumbo(123),
       legacyId: 'usr_AAAAAAAAAAAAAAAA',
-      display_name: 'Alex Lee',
+      display_name: 'Alex Liddi',
       login_enabled: true
     })
     await db
@@ -488,7 +488,7 @@ describe('OAuth provider and native approval over HTTPS', function () {
     await insertFixtureUsers(db, {
       id: userIdOfGumbo(456),
       legacyId: 'usr_BBBBBBBBBBBBBBBB',
-      display_name: 'Jordan Smith',
+      display_name: 'Jordan Pacheco',
       login_enabled: true
     })
     const other = await createSession(db, userIdOfGumbo(456), 'fixture')

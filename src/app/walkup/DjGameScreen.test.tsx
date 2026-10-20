@@ -141,8 +141,8 @@ function side(
 
 function game(away: Partial<DjSide> = {}, home: Partial<DjSide> = {}): DjGame {
   return asDjGame({
-    away: side('tem_o', 'Owls', ['Otto', 'Olga'], away),
-    home: side('tem_t', 'Titan', ['Tom A', 'Bea B', 'Cal C'], home)
+    away: side('tem_o', 'Owls', ['Otto V', 'Omar V'], away),
+    home: side('tem_t', 'Titan', ['Tom A', 'Brett B', 'Cal R'], home)
   })
 }
 
@@ -295,7 +295,7 @@ describe('DJ Game’s team pill (U29)', function () {
     })
     await render({ client: djClient([game({ canEditWalkUp: true })]) })
     expect(labelled('Away Team')?.getAttribute('aria-selected')).equals('true')
-    expect(names()[0]).includes('Otto')
+    expect(names()[0]).includes('Otto V')
     await act(async () => {
       root?.unmount()
     })
@@ -313,8 +313,8 @@ describe('DJ Game’s team pill (U29)', function () {
     })
     await press('Away Team')
     expect(names().map(row => row.split('No walk')[0])).deep.equals([
-      'Otto',
-      'Olga'
+      'Otto V',
+      'Omar V'
     ])
     expect(sides).deep.equals(['away'])
   })
@@ -333,7 +333,7 @@ describe('DJ Game’s team pill (U29)', function () {
     expect(labelled('Away Team')?.getAttribute('aria-selected')).equals('true')
     const marks = document.querySelectorAll('[data-testid="DJ at bat"]')
     expect(marks.length).equals(1)
-    expect(marks[0].parentElement?.textContent).includes('Otto')
+    expect(marks[0].parentElement?.textContent).includes('Otto V')
   })
 
   it('fades to the next batter, and moves the pill when the half changes', async function () {
@@ -352,7 +352,7 @@ describe('DJ Game’s team pill (U29)', function () {
     expect(
       document.querySelector('[data-testid="DJ at bat"]')?.parentElement
         ?.textContent
-    ).includes('Otto')
+    ).includes('Otto V')
     const change = {
       type: 'change',
       gameId: 'g1',
@@ -369,7 +369,7 @@ describe('DJ Game’s team pill (U29)', function () {
     expect(
       document.querySelector('[data-testid="DJ at bat"]')?.parentElement
         ?.textContent
-    ).includes('Olga')
+    ).includes('Omar V')
     await socket.emit('g1', change)
     await act(async () => {
       await delay(AT_BAT_FADE_MS * 2 + 40)
@@ -379,7 +379,7 @@ describe('DJ Game’s team pill (U29)', function () {
     expect(
       document.querySelector('[data-testid="DJ at bat"]')?.parentElement
         ?.textContent
-    ).includes('Bea B')
+    ).includes('Brett B')
   })
 })
 
@@ -388,8 +388,8 @@ describe('DJ Game’s list (U29)', function () {
     await render({ client: djClient([game()]) })
     expect(names().map(row => row.split('No walk')[0])).deep.equals([
       'Tom A',
-      'Bea B',
-      'Cal C'
+      'Brett B',
+      'Cal R'
     ])
     expect(document.querySelector('[data-testid="DJ source note"]')).equals(
       null
@@ -435,7 +435,7 @@ describe('DJ Game on the socket (U29)', function () {
     const socket = new FakeSocket()
     const client = djClient([
       game(),
-      game({}, side('tem_t', 'Titan', ['Tom A', 'Pinch', 'Cal C'])),
+      game({}, side('tem_t', 'Titan', ['Tom A', 'Pinch', 'Cal R'])),
       game(),
       game({}, side('tem_t', 'Titan', ['Zed']))
     ])
@@ -521,7 +521,7 @@ describe('DJ Game on the socket (U29)', function () {
     expect(
       document.querySelector('[data-testid="DJ at bat"]')?.parentElement
         ?.textContent
-    ).includes('Otto')
+    ).includes('Otto V')
   })
 
   it('polls only while the socket is down', async function () {
@@ -615,7 +615,7 @@ describe('DJ Game on the socket (U29)', function () {
     const socket = new FakeSocket()
     const client = djClient([
       game(),
-      game({}, side('tem_t', 'Titan', ['Pinch', 'Bea B', 'Cal C']))
+      game({}, side('tem_t', 'Titan', ['Pinch', 'Brett B', 'Cal R']))
     ])
     await render({ client, socket })
     const list = document.querySelector('[data-testid="DJ list"]')
@@ -655,15 +655,23 @@ describe('DJ Game getting the songs onto the phone', function () {
     const first = game(
       {
         batters: [
-          { userId: userIdOfGumbo(9), name: 'Otto', walkUpSong: apple('111') },
-          { userId: userIdOfGumbo(8), name: 'Olga', walkUpSong: walk }
+          {
+            userId: userIdOfGumbo(9),
+            name: 'Otto V',
+            walkUpSong: apple('111')
+          },
+          { userId: userIdOfGumbo(8), name: 'Omar V', walkUpSong: walk }
         ]
       },
       {
         batters: [
           { userId: userIdOfGumbo(1), name: 'Tom A', walkUpSong: apple('222') },
-          { userId: userIdOfGumbo(2), name: 'Bea B', walkUpSong: apple('111') },
-          { userId: userIdOfGumbo(3), name: 'Cal C', walkUpSong: null }
+          {
+            userId: userIdOfGumbo(2),
+            name: 'Brett B',
+            walkUpSong: apple('111')
+          },
+          { userId: userIdOfGumbo(3), name: 'Cal R', walkUpSong: null }
         ]
       }
     )
@@ -732,7 +740,9 @@ describe('DJ Game’s rows on the screen (U29)', function () {
     const music = fakeMusic()
     const playing = game(
       {
-        batters: [{ userId: userIdOfGumbo(9), name: 'Otto', walkUpSong: walk }]
+        batters: [
+          { userId: userIdOfGumbo(9), name: 'Otto V', walkUpSong: walk }
+        ]
       },
       {
         batters: [{ userId: userIdOfGumbo(1), name: 'Tom A', walkUpSong: walk }]
@@ -747,14 +757,14 @@ describe('DJ Game’s rows on the screen (U29)', function () {
     expect(music.played).deep.equals([`file:tem_t:${userIdOfGumbo(1)}`])
     await press('Away Team')
     expect(music.stops).deep.equals([])
-    await press('Play Otto’s walk-up song')
+    await press('Play Otto V’s walk-up song')
     expect(music.played).deep.equals([
       `file:tem_t:${userIdOfGumbo(1)}`,
       `file:tem_o:${userIdOfGumbo(9)}`
     ])
-    await press('Stop Otto’s walk-up song')
+    await press('Stop Otto V’s walk-up song')
     expect(music.stops).deep.equals([1500])
-    await press('Play Otto’s walk-up song')
+    await press('Play Otto V’s walk-up song')
     await act(async () => {
       root?.unmount()
     })

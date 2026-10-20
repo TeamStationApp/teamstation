@@ -129,11 +129,11 @@ describe('account settings HTTP API', function () {
       ).equals(400)
     }
     const response = await h.request('PUT', ROOT + '/name', {
-      displayName: '  Alex   Rivera  ',
+      displayName: '  Alex   Rodriguez  ',
       userId: userIdOfGumbo(102)
     })
     expect(response.status).equals(200)
-    expect((await read()).user.displayName).equals('Alex Rivera')
+    expect((await read()).user.displayName).equals('Alex Rodriguez')
     const player = asPlayerDetail(
       await (
         await h.request('GET', '/players/usr_111111111111111111112k')
@@ -627,8 +627,8 @@ describe('account settings HTTP API', function () {
       passwordTargetMs: 1
     })
     expect((await client.accountSettings()).user.id).equals(userIdOfGumbo(102))
-    expect((await client.setAccountName('Casey Reed')).user.displayName).equals(
-      'Casey Reed'
+    expect((await client.setAccountName('Casey Mize')).user.displayName).equals(
+      'Casey Mize'
     )
     expect(
       (await client.setAccountPhoto(accountTestPicture)).user.avatarUrl
