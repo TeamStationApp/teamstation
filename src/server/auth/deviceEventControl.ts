@@ -1,5 +1,7 @@
 import { createHash, createHmac } from 'node:crypto'
 
+import { asUserId } from '../../common/userId'
+
 /**
  * The key a signed-in device uses to prove, on its own network, that another
  * device belongs to the same TeamStation account.
@@ -18,16 +20,16 @@ import { createHash, createHmac } from 'node:crypto'
  */
 
 /** Names the protocol and its version inside every derivation. */
-export const DEVICE_EVENT_CONTROL_DOMAIN = 'device-event-control:v1'
-const KEY_ID_DOMAIN = 'device-event-control:v1:keyid'
-const ACCOUNT_TAG_DOMAIN = 'device-event-control:v1:account-tag'
+export const DEVICE_EVENT_CONTROL_DOMAIN = 'device-event-control:v2'
+const KEY_ID_DOMAIN = 'device-event-control:v2:keyid'
+const ACCOUNT_TAG_DOMAIN = 'device-event-control:v2:account-tag'
 
 /** What `GET /device-event-control/key` answers. */
 export interface DeviceEventControlGrant {
-  version: 1
+  version: 2
   /** The server's canonical public origin, `https://host[:port]`. */
   issuer: string
-  /** The caller's user ID as a decimal string. */
+  /** The caller's user ID as a canonical string. */
   userId: string
   /** Opaque, equal for every device of the same account: 32 hex characters. */
   accountTag: string
@@ -78,7 +80,9 @@ export function deviceEventControlKey(
   userId: string
 ): Buffer {
   return createHmac('sha256', Buffer.from(secret, 'utf8'))
-    .update(lengthPrefixed(DEVICE_EVENT_CONTROL_DOMAIN, issuer, userId))
+    .update(
+      lengthPrefixed(DEVICE_EVENT_CONTROL_DOMAIN, issuer, asUserId(userId))
+    )
     .digest()
 }
 
@@ -107,14 +111,14 @@ export function deviceEventControlAccountTag(key: Buffer): string {
 export function deviceEventControlGrant(
   secret: string,
   issuer: string,
-  userId: number | string
+  userId: string
 ): DeviceEventControlGrant {
   const problem = deviceEventControlSecretProblem(secret)
   if (problem != null) throw new Error(problem)
-  const id = String(userId)
+  const id = asUserId(userId)
   const key = deviceEventControlKey(secret, issuer, id)
   return {
-    version: 1,
+    version: 2,
     issuer,
     userId: id,
     accountTag: deviceEventControlAccountTag(key),

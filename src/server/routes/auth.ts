@@ -39,6 +39,7 @@ import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { gumboIdOf } from '../users/insertUser'
 
 const asPasswordLogin = asObject({
   email: asString,
@@ -252,7 +253,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
   }
 
   /** The signed-in person's own picture, for the header. */
-  const avatarFor = async (userId: number): Promise<string | null> => {
+  const avatarFor = async (userId: string): Promise<string | null> => {
     if (options.space == null) return null
     const row = await db
       .selectFrom('users')
@@ -340,6 +341,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           expiresAt: session.expiresAt.toISOString(),
           user: {
             id: user.id,
+            gumboId: await gumboIdOf(db, user.id),
             displayName: user.displayName,
             email: await primaryEmail(db, user.id),
             isAdmin: user.isAdmin,
@@ -441,6 +443,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           expiresAt: session.expiresAt.toISOString(),
           user: {
             id: user.id,
+            gumboId: await gumboIdOf(db, user.id),
             displayName: user.displayName,
             email: await primaryEmail(db, user.id),
             isAdmin: user.isAdmin,
@@ -495,6 +498,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           expiresAt: session.expiresAt.toISOString(),
           user: {
             id: user.id,
+            gumboId: await gumboIdOf(db, user.id),
             displayName: user.displayName,
             email: await primaryEmail(db, user.id),
             isAdmin: user.isAdmin,
@@ -544,6 +548,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           expiresAt: session.expiresAt.toISOString(),
           user: {
             id: user.id,
+            gumboId: await gumboIdOf(db, user.id),
             displayName: user.displayName,
             email: await primaryEmail(db, user.id),
             isAdmin: user.isAdmin,
@@ -583,6 +588,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       if (user == null) throw unauthorized()
       res.json({
         id: user.id,
+        gumboId: await gumboIdOf(db, user.id),
         displayName: user.display_name,
         email: await primaryEmail(db, user.id),
         isAdmin: user.is_admin,

@@ -90,7 +90,7 @@ export interface LiveStreamRow {
   gameId: string
   teamId: string
   /** Whose key it is. A key publishes video as somebody. */
-  userId: number
+  userId: string
   /** Which of that person's four cameras for this game. */
   slot: number
   /** What the camera is called. */
@@ -218,7 +218,7 @@ export async function liveStreamsFor(
 export async function myLiveStreams(
   db: Kysely<Database>,
   gameId: string,
-  userId: number
+  userId: string
 ): Promise<LiveStreamRow[]> {
   const all = await liveStreamsFor(db, gameId)
   return all.filter(row => row.userId === userId)
@@ -261,7 +261,7 @@ export interface CreateLiveStreamOptions {
   teamId: string
   startAt: Date
   /** Whose key this is, which is also who asked for it. */
-  userId: number
+  userId: string
   /** Which of their four cameras. */
   slot: number
   /** What to call it. `Camera <slot>` where nobody has said. */
@@ -588,7 +588,7 @@ export async function deviceLabelTaken(
   db: Kysely<Database>,
   options: {
     gameId: string
-    userId: number
+    userId: string
     label: string | null
     exceptId?: string
   }
@@ -615,7 +615,7 @@ export interface DeviceStreamRequest {
   startAt: Date
   /** The game, in words, for a new stream's video title. */
   videoTitle: string
-  userId: number
+  userId: string
   deviceId: string
   deviceModel: string | null
   /** The camera name, already cleaned by `cameraLabelOf`. */
@@ -826,7 +826,7 @@ function nameIs(label: string | null): RawBuilder<boolean> {
 function activeStream(
   trx: Transaction<Database>,
   gameId: string,
-  userId: number
+  userId: string
 ) {
   return trx
     .selectFrom('live_streams')

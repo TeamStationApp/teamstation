@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import { SESSION_COOKIE } from '../../server/auth/tokens'
 import { serverConfig } from '../../server/serverConfig'
 import { groupFixture } from '../../test/groupFixtures'
@@ -29,7 +30,7 @@ async function main(): Promise<void> {
         .values({
           id: makeId('membership'),
           team_id: f.teamA,
-          user_id: id,
+          user_id: userIdOfGumbo(id),
           is_player: true
         })
         .execute()
@@ -37,8 +38,8 @@ async function main(): Promise<void> {
         .insertInto('user_links')
         .values({
           id: makeId('userLink'),
-          user_id: 101,
-          related_user_id: id,
+          user_id: userIdOfGumbo(101),
+          related_user_id: userIdOfGumbo(id),
           kind: 'guardian',
           can_manage: false
         })
@@ -46,7 +47,11 @@ async function main(): Promise<void> {
     }
     await f.h.db
       .insertInto('memberships')
-      .values({ id: makeId('membership'), team_id: f.teamB, user_id: 101 })
+      .values({
+        id: makeId('membership'),
+        team_id: f.teamB,
+        user_id: userIdOfGumbo(101)
+      })
       .execute()
     for (const [id, status, offset] of [
       ['gam_upcoming', 'scheduled', 86400000],

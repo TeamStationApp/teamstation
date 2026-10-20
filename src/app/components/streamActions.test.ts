@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { LiveStream, TeamStationClient } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   asksTwice,
   copyStreamUrl,
@@ -13,7 +14,7 @@ function camera(patch: Partial<LiveStream> = {}): LiveStream {
   return {
     id: 'liv_1',
     gameId: 'gam_1',
-    userId: 7,
+    userId: userIdOfGumbo(7),
     ownerName: 'Mookie Betts',
     slot: 1,
     label: 'Home Plate',

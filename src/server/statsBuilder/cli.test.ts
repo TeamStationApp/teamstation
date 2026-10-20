@@ -5,10 +5,12 @@ import { Pool } from 'pg'
 
 import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
@@ -59,16 +61,13 @@ describe('statsBuilder cli', function () {
       ])
       .execute()
     for (const user of [batter, pitcher]) {
-      await db
-        .insertInto('users')
-        .values({
-          id: user.userId,
-          legacyId: user.legacyId,
-          display_name: 'P',
-          created_at: now,
-          updated_at: now
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(user.userId),
+        legacyId: user.legacyId,
+        display_name: 'P',
+        created_at: now,
+        updated_at: now
+      })
     }
   })
 

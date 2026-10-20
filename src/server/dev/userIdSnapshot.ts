@@ -2,6 +2,9 @@ import { createHash, randomBytes } from 'node:crypto'
 
 import type { Pool, PoolClient } from 'pg'
 
+import { userIdOfGumbo } from '../../common/userId'
+import { type ApiInventory, captureEndpoint } from './userIdApiCapture'
+
 export type Json = null | boolean | number | string | Json[] | JsonObject
 export interface JsonObject {
   [key: string]: Json
@@ -9,17 +12,23 @@ export interface JsonObject {
 
 export interface TableSnapshot {
   columns: string[]
+  types?: Record<string, string>
   keys: string[]
   rows: JsonObject[]
 }
 
 export interface UserIdSnapshot {
   version: 1
+  captureStartedAt?: string
+  captureFinishedAt?: string
+  apiInventory?: Record<string, ApiInventory>
   migrations: string[]
   userIdType: 'bigint' | 'text'
   userColumns: Record<string, string[]>
   tables: Record<string, TableSnapshot>
   preserved: Record<string, string>
+  preservedCounts?: Record<string, number>
+  absentTables?: string[]
   api: Record<string, Json>
 }
 
@@ -84,6 +93,7 @@ const FIELDS: Record<string, string[]> = {
     'home_team_id',
     'away_team_id',
     'season_id',
+    'start_at',
     'guests',
     'unrostered',
     'currentPlay'
@@ -114,11 +124,15 @@ export async function snapshotSql(
      where table_schema = 'public' order by table_name, ordinal_position`
   )
   const schema = new Map<string, string[]>()
+  const types = new Map<string, Record<string, string>>()
   let userIdType: 'bigint' | 'text' | undefined
   for (const row of columns.rows) {
     const held = schema.get(row.table_name) ?? []
     held.push(row.column_name)
     schema.set(row.table_name, held)
+    const tableTypes = types.get(row.table_name) ?? {}
+    tableTypes[row.column_name] = row.data_type
+    types.set(row.table_name, tableTypes)
     if (row.table_name === 'users' && row.column_name === 'id') {
       if (row.data_type !== 'bigint' && row.data_type !== 'text') {
         throw new Error('Unsupported user id column type')
@@ -158,6 +172,7 @@ export async function snapshotSql(
     ;(primary[row.table_name] ??= []).push(row.column_name)
   }
   const tables: Record<string, TableSnapshot> = {}
+  const absentTables: string[] = []
   const names = new Set([
     ...WHOLE_TABLES,
     ...Object.keys(FIELDS),
@@ -165,7 +180,10 @@ export async function snapshotSql(
   ])
   for (const name of [...names].sort()) {
     const available = schema.get(name)
-    if (available == null) continue
+    if (available == null) {
+      absentTables.push(name)
+      continue
+    }
     const keys = primary[name] ?? []
     if (keys.length === 0) throw new Error(`Missing primary key: ${name}`)
     const selected = WHOLE_TABLES.includes(name)
@@ -179,13 +197,18 @@ export async function snapshotSql(
         ].filter(column => available.includes(column))
     const where =
       name === 'auth_sessions' && sessionId != null ? 'where id <> $1' : ''
-    const result = await client.query<{ row: JsonObject }>(
-      `select row_to_json(held) as row from
+    const documentField =
+      name === 'events' ? 'gumbo' : name === 'games' ? 'currentPlay' : undefined
+    const result = await client.query<{
+      row: JsonObject
+      raw_document: string | null
+    }>(
+      `select row_to_json(held) as row, ${documentField == null ? 'null' : `held.${identifier(documentField)}::text`} as raw_document from
         (select ${selected.map(identifier).join(', ')} from ${identifier(name)} ${where}
          order by ${keys.map(identifier).join(', ')}) held`,
       where === '' ? [] : [sessionId]
     )
-    const rows = result.rows.map(({ row }) => {
+    const rows = result.rows.map(({ row, raw_document: rawDocument }) => {
       for (const field of name === 'events'
         ? ['gumbo']
         : name === 'games'
@@ -199,33 +222,61 @@ export async function snapshotSql(
         const { teamStation = null, ...gumbo } = document
         row[field] = {
           documentHash: hash(document),
+          storedTextHash: createHash('sha256')
+            .update(rawDocument!)
+            .digest('hex'),
           gumboHash: hash(gumbo),
           teamStation
         }
       }
       return row
     })
-    tables[name] = { columns: [...selected].sort(), keys, rows }
+    tables[name] = {
+      columns: [...selected].sort(),
+      types: Object.fromEntries(
+        selected.map(column => [column, types.get(name)![column]])
+      ),
+      keys,
+      rows
+    }
   }
   const migrations = await client.query<{ name: string }>(
     'select name from schema_migrations order by name'
   )
   const preserved: Record<string, string> = {}
+  const preservedCounts: Record<string, number> = {}
   for (const name of [
     'audit_log',
     'rate_events',
     'creation_idempotency',
     'oauth_records'
   ]) {
-    if (!schema.has(name)) continue
+    if (!schema.has(name)) {
+      absentTables.push(name)
+      continue
+    }
     const result = await client.query<{ row: JsonObject }>(
       `select row_to_json(t) as row from ${identifier(name)} t`
     )
     preserved[name] = hash(
       result.rows
-        .map(item => item.row)
+        // Keep the row association, normalizing only declared account FKs.
+        // Embedded history identities remain byte-for-byte JSON values.
+        .map(item =>
+          Object.fromEntries(
+            Object.entries(item.row).map(([column, value]) => [
+              column,
+              userIdType === 'bigint' &&
+              (userColumns[name] ?? []).includes(column) &&
+              value != null
+                ? userIdOfGumbo(value as number)
+                : value
+            ])
+          )
+        )
         .sort((a, b) => canonical(a).localeCompare(canonical(b)))
     )
+    preservedCounts[name] = result.rows.length
   }
   return {
     version: 1,
@@ -233,7 +284,9 @@ export async function snapshotSql(
     userIdType,
     userColumns,
     tables,
-    preserved
+    preserved,
+    preservedCounts,
+    absentTables: absentTables.sort()
   }
 }
 
@@ -339,33 +392,20 @@ export function verifyCollections(snapshot: UserIdSnapshot): void {
   }
 }
 
-/** Current endpoints return complete arrays/objects; paginated responses are refused until adapted. */
+/** Capture complete responses and validate the explicitly supported pagination envelope. */
 export async function snapshotApi(
   paths: string[],
   origin: string,
   token: string,
-  request: typeof fetch = fetch
+  request: typeof fetch = fetch,
+  inventory?: Record<string, ApiInventory>
 ): Promise<Record<string, Json>> {
   const api: Record<string, Json> = {}
   for (const path of paths) {
     if (Object.hasOwn(api, path)) throw new Error('Duplicate snapshot endpoint')
-    const response = await request(origin.replace(/\/$/, '') + path, {
-      headers: { authorization: `Bearer ${token}` },
-      redirect: 'error',
-      signal: AbortSignal.timeout(30000)
-    })
-    if (!response.ok)
-      throw new Error(`Snapshot endpoint failed: ${path} (${response.status})`)
-    const body = (await response.json()) as Json
-    if (
-      body != null &&
-      !Array.isArray(body) &&
-      typeof body === 'object' &&
-      ('nextCursor' in body || 'nextPage' in body || 'hasMore' in body)
-    ) {
-      throw new Error(`Pagination needs an explicit adapter: ${path}`)
-    }
-    api[path] = body
+    const result = await captureEndpoint(path, origin, token, request)
+    api[path] = result.body
+    if (inventory != null) inventory[path] = result.inventory
   }
   return api
 }
@@ -375,6 +415,7 @@ export async function captureUserIds(
   apiOrigin: string,
   request: typeof fetch = fetch
 ): Promise<UserIdSnapshot> {
+  const captureStartedAt = new Date().toISOString()
   const client = await pool.connect()
   const token = randomBytes(32).toString('hex')
   const sessionId = 'ses_' + randomBytes(12).toString('hex')
@@ -399,11 +440,13 @@ export async function captureUserIds(
     await client.query('begin isolation level repeatable read read only')
     const before = await snapshotSql(client, sessionId)
     await client.query('commit')
+    const apiInventory: Record<string, ApiInventory> = {}
     const api = await snapshotApi(
       snapshotPaths(before),
       apiOrigin,
       token,
-      request
+      request,
+      apiInventory
     )
     await client.query('begin isolation level repeatable read read only')
     const after = await snapshotSql(client, sessionId)
@@ -416,7 +459,13 @@ export async function captureUserIds(
         'Database changed during snapshot; stop writers and retry'
       )
     }
-    const snapshot = { ...before, api }
+    const snapshot = {
+      ...before,
+      api,
+      apiInventory,
+      captureStartedAt,
+      captureFinishedAt: new Date().toISOString()
+    }
     verifyCollections(snapshot)
     return snapshot
   } finally {

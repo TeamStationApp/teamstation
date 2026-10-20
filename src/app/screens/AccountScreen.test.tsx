@@ -6,6 +6,7 @@ import { Platform } from 'react-native'
 
 import type { AccountSettings } from '../../common/accountSettings'
 import { TeamStationClient } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   testPasswordCosts,
   testPasswordParameters
@@ -73,11 +74,12 @@ function fixture(
 } {
   let state: AccountSettings = {
     user: {
-      id: 101,
+      id: userIdOfGumbo(101),
       displayName: 'Babe Ruth',
       email: 'alex@example.com',
       isAdmin: node,
-      avatarUrl: null
+      avatarUrl: null,
+      gumboId: null
     },
     hasPassword: legacy,
     passwordNeedsUpgrade: legacy,

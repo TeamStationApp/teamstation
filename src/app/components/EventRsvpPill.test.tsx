@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { View } from 'react-native'
 
 import type { RsvpChoice } from '../../common/eventInfo'
+import { userIdOfGumbo } from '../../common/userId'
 import { recordAnimationStarts, responderDrag } from '../../test/responderDrag'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { EventRsvpPill, oneLineLabelProps } from './EventRsvpPill'
@@ -21,7 +22,7 @@ async function render(disabled = false): Promise<string[]> {
     const [value, setValue] = useState<RsvpChoice>(null)
     return (
       <EventRsvpPill
-        userId={101}
+        userId={userIdOfGumbo(101)}
         name="Babe Ruth"
         value={value}
         disabled={disabled}
@@ -45,7 +46,9 @@ async function render(disabled = false): Promise<string[]> {
   return choices
 }
 const region = (index: number): HTMLElement =>
-  document.querySelector(`[data-testid="event-rsvp-101-${index}"]`)!
+  document.querySelector(
+    `[data-testid="event-rsvp-usr_111111111111111111112k-${index}"]`
+  )!
 async function click(index: number): Promise<void> {
   await act(async () => {
     region(index).click()
@@ -54,7 +57,7 @@ async function click(index: number): Promise<void> {
 async function measure(width: number): Promise<void> {
   // JSDOM's ResizeObserver does not measure. Deliver the actual RN web layout callback.
   const track = document.querySelector(
-    '[data-testid="event-rsvp-101"]'
+    '[data-testid="event-rsvp-usr_111111111111111111112k"]'
   ) as unknown as {
     __reactLayoutHandler: (event: {
       nativeEvent: { layout: { width: number } }
@@ -65,7 +68,9 @@ async function measure(width: number): Promise<void> {
   })
 }
 const fill = (): HTMLElement =>
-  document.querySelector('[data-testid="event-rsvp-101-fill"]')!
+  document.querySelector(
+    '[data-testid="event-rsvp-usr_111111111111111111112k-fill"]'
+  )!
 describe('the independent RSVP capsule', () => {
   it('keeps one-line labels on one line on phones, shrinking them, and lets a browser wrap enlarged text', () => {
     for (const os of ['ios', 'android'])
@@ -125,7 +130,7 @@ describe('the independent RSVP capsule', () => {
           }}
         >
           <EventRsvpPill
-            userId={101}
+            userId={userIdOfGumbo(101)}
             name="Babe Ruth"
             value={value}
             onChange={next => {
@@ -237,7 +242,7 @@ describe('the independent RSVP capsule', () => {
     expect(choices).deep.equals(['yes', 'maybe', 'no'])
     expect(region(2).getAttribute('aria-checked')).equals('true')
     const track = document.querySelector(
-      '[data-testid="event-rsvp-101"]'
+      '[data-testid="event-rsvp-usr_111111111111111111112k"]'
     ) as unknown as {
       __reactLayoutHandler: (event: {
         nativeEvent: { layout: { width: number } }
@@ -250,7 +255,7 @@ describe('the independent RSVP capsule', () => {
       await new Promise(resolve => setTimeout(resolve, 220))
     })
     const fill = document.querySelector<HTMLElement>(
-      '[data-testid="event-rsvp-101-fill"]'
+      '[data-testid="event-rsvp-usr_111111111111111111112k-fill"]'
     )!
     expect(getComputedStyle(fill).backgroundColor).equals('rgb(203, 57, 65)')
     expect(getComputedStyle(fill).transform).includes('144')
