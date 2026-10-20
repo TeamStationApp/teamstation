@@ -810,16 +810,23 @@ describe('useMultiCam on live angles', function () {
     videos: [liveVideo('A', 0), liveVideo('B', 60)],
     atMs: undefined
   }
+  /**
+   * Each at its newest footage: A's ends three minutes into the take, B's
+   * (a minute later to start) two and a half minutes into its own, which is
+   * half a minute later on the wall. Each holds the stretch 45 s behind A's.
+   */
   const atTheirEdges = (tiles: Record<string, FakeTile>): void => {
     tiles.A.duration = Number.POSITIVE_INFINITY
     tiles.B.duration = Number.POSITIVE_INFINITY
-    tiles.A.currentTime = 100
-    tiles.B.currentTime = 30
-    fill(tiles.A, [100, 116])
-    fill(tiles.B, [30, 46])
+    tiles.A.currentTime = 180
+    tiles.B.currentTime = 150
+    Object.assign(tiles.A, { seekable: { length: 1, end: () => 180 } })
+    Object.assign(tiles.B, { seekable: { length: 1, end: () => 150 } })
+    fill(tiles.A, [130, 180])
+    fill(tiles.B, [70, 150])
   }
 
-  it('opens on the moment the tile furthest ahead has reached, and plays every tile', async function () {
+  it('opens 45 s behind the newest footage of the slowest tile, and plays every tile (U25)', async function () {
     this.timeout(5000)
     const { mc, tiles } = await grid(live, {}, atTheirEdges)
     // No moment to open on until the tiles have said where they are.
@@ -828,9 +835,9 @@ describe('useMultiCam on live angles', function () {
     expect(tiles.B.paused).equals(true)
 
     await ticks(1)
-    expect(mc().atWallMs).equals(T0 + 100_000)
-    expect(tiles.A.currentTime).equals(100)
-    expect(tiles.B.currentTime).equals(40)
+    expect(mc().atWallMs).equals(T0 + 135_000)
+    expect(tiles.A.currentTime).equals(135)
+    expect(tiles.B.currentTime).equals(75)
     expect(tiles.A.paused).equals(false)
     expect(tiles.B.paused).equals(false)
     expect(mc().waiting).equals(false)
@@ -956,7 +963,7 @@ describe('useMultiCam on live angles', function () {
     await ticks(2)
     expect(mc().atWallMs).equals(null)
     await ticks(2)
-    expect(mc().atWallMs).equals(T0 + 100_000)
+    expect(mc().atWallMs).equals(T0 + 135_000)
   })
 })
 

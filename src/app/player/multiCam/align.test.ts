@@ -12,7 +12,6 @@ import {
   isOurSilence,
   LIVE_OPEN_WAIT_MS,
   liveOpeningMs,
-  liveTargetMs,
   masterOf,
   NUDGE_LIMIT,
   nudgeRate,
@@ -255,17 +254,6 @@ describe('telling our own doing from a tile that has stopped', function () {
   })
 })
 
-describe('four live edges', function () {
-  it('hold back to the one furthest behind', function () {
-    expect(liveTargetMs([5000, 3000, 4000])).equals(3000)
-  })
-
-  it('ignore tiles that have no edge to offer', function () {
-    expect(liveTargetMs([null, 4000, null])).equals(4000)
-    expect(liveTargetMs([null, null])).equals(null)
-  })
-})
-
 describe('bringing a phone tile back by speed', function () {
   it('runs at normal speed within the tolerance', function () {
     expect(nudgeRate(0)).equals(1)
@@ -290,12 +278,13 @@ describe('the moment a live grid opens on', function () {
     expect(liveOpeningMs([null, null], 60_000)).equals(null)
   })
 
-  it('is the moment of the tile furthest ahead, which the others hold already', function () {
-    expect(liveOpeningMs([5000, 3000, 4000], 0)).equals(5000)
+  it('is 45 s behind the newest footage of the slowest tile (U25)', function () {
+    expect(liveOpeningMs([500_000, 300_000, 400_000], 0)).equals(255_000)
   })
 
-  it('waits for every tile, but not for longer than the wait after the first', function () {
-    expect(liveOpeningMs([5000, null], LIVE_OPEN_WAIT_MS - 1)).equals(null)
-    expect(liveOpeningMs([null, 5000], LIVE_OPEN_WAIT_MS)).equals(5000)
+  it('waits up to three seconds for every tile, then leaves out one that never maps (U25)', function () {
+    expect(LIVE_OPEN_WAIT_MS).equals(3000)
+    expect(liveOpeningMs([500_000, null], LIVE_OPEN_WAIT_MS - 1)).equals(null)
+    expect(liveOpeningMs([null, 500_000], LIVE_OPEN_WAIT_MS)).equals(455_000)
   })
 })

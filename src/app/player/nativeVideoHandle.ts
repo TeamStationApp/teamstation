@@ -353,6 +353,14 @@ export class NativeVideoHandle implements VideoHandle {
     // playlist starts at its first segment and so ends at the newest one.
     if (Number.isFinite(data.seekableDuration) && data.seekableDuration > 0) {
       this.seekableTo = data.seekableDuration
+      // A live game's playlist grows. AVPlayer gives its length once, on
+      // load, and a browser's grows with it: held at that first length, a
+      // tile played up to it and the grid took it for the end of the footage
+      // and waited there for good. A recording never reaches past its length.
+      if (Number.isFinite(this.length) && data.seekableDuration > this.length) {
+        this.length = data.seekableDuration
+        this.emit('durationchange')
+      }
     }
     const adopt = shouldAdoptProgress({
       target: this.pendingSeekTo,

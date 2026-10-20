@@ -242,7 +242,7 @@ describe('starting a live game at the latest footage', function () {
           video.dispatchEvent(new window.Event('loadedmetadata'))
           video.dispatchEvent(new window.Event('play'))
         })
-        expect(video.currentTime).equals(startAt ?? 7140)
+        expect(video.currentTime).equals(startAt ?? 7155)
         video.currentTime = 200
         await act(async () => {
           video.dispatchEvent(new window.Event('play'))

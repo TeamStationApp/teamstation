@@ -17,6 +17,19 @@ import {
 } from './wallMapping'
 
 /**
+ * Whether a player's live stalls are reported: the viewer's own single live
+ * player, not a grid tile (the grid watches its tiles) and not a card
+ * preview, whose stalls would read as the viewer's.
+ */
+export function reportsLiveStalls(
+  intent: PlayIntent | undefined
+): intent is PlayIntent & { isLive: NonNullable<PlayIntent['isLive']> } {
+  return (
+    intent?.isLive != null && intent.buffer == null && intent.preview !== true
+  )
+}
+
+/**
  * Points a `<video>` at an HLS playlist, whichever way this browser needs.
  *
  * Apple's engine plays HLS itself, with hardware decoding, and is given the
@@ -81,14 +94,13 @@ export function attachHls(
     intent.startAtLiveEdge !== false
       ? joinLiveOnFirstPlay(video)
       : undefined
-  const stopDiagnostics =
-    intent?.isLive != null && intent.buffer == null
-      ? observeLiveStalls(video, {
-          engine,
-          isLive: intent.isLive,
-          wantsToPlay: intent.wantsToPlay
-        })
-      : undefined
+  const stopDiagnostics = reportsLiveStalls(intent)
+    ? observeLiveStalls(video, {
+        engine,
+        isLive: intent.isLive,
+        wantsToPlay: intent.wantsToPlay
+      })
+    : undefined
   return () => {
     stopDiagnostics?.()
     stopJoining?.()
@@ -463,15 +475,19 @@ function attachHlsJs(
   // as bandwidth allows, up to `maxMaxBufferLength`. A ceiling is the two set
   // to the same number.
   const limit = intent?.buffer
-  const singleLive = intent?.isLive != null && limit == null
+  const live = intent?.isLive != null
+  const singleLive = live && limit == null
   const hls = new Hls({
     // A game is watched by seeking around it, not straight through, so there
     // is no point buffering minutes ahead of a position about to change.
     maxBufferLength: limit?.aheadSec ?? (singleLive ? 60 : 30),
-    // Keep room for delayed playlist updates. A time-based live position
-    // avoids letting one unusually long segment choose the viewer's delay.
-    ...(singleLive ? { liveSyncDuration: LIVE_DELAY_SEC } : {}),
+    // Keep room for delayed playlist updates, on every live player, a grid's
+    // tiles included. A time-based live position avoids letting one
+    // unusually long segment choose the viewer's delay.
+    ...(live ? { liveSyncDuration: LIVE_DELAY_SEC } : {}),
     ...(limit == null ? {} : { maxMaxBufferLength: limit.aheadSec }),
+    // Where its owner has already placed it, if it has.
+    ...(intent?.startSec == null ? {} : { startPosition: intent.startSec }),
     // Left to itself hls.js keeps every second already played, and a long
     // game fills the browser's quota with the past until it refuses the
     // future. Two steps of ten seconds back still come from memory.

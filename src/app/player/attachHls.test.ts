@@ -10,6 +10,7 @@ import {
   attachNativeHls,
   HLS_MIME_TYPE,
   hlsEngine,
+  reportsLiveStalls,
   type RetryClock
 } from './attachHls'
 import type { PlayIntent } from './playIntent'
@@ -315,7 +316,7 @@ describe('attaching in a browser', function () {
     expect(video.attached()).equals(0)
   })
 
-  it('gives a single live viewer a minute of buffer and live delay', function () {
+  it('gives a single live viewer a minute of buffer and 45 s of live delay (U24)', function () {
     withMediaSource()
     const video = new FakeVideo()
     asBrowser('Google Inc.', () => {
@@ -329,13 +330,29 @@ describe('attaching in a browser', function () {
         }
       )
       expect(config.maxBufferLength).equals(60)
-      expect(config.liveSyncDuration).equals(60)
+      expect(config.liveSyncDuration).equals(45)
       expect(config.backBufferLength).equals(30)
       detach()
     })
   })
 
-  it('keeps recording buffers and coordinated live grid limits', function () {
+  it('starts a tile where its grid placed it, and leaves the rest to hls.js', function () {
+    withMediaSource()
+    const video = new FakeVideo()
+    asBrowser('Google Inc.', () => {
+      attachHls(video as unknown as VideoHandle, url, undefined, {
+        wantsToPlay: () => true,
+        isLive: () => true,
+        buffer: { aheadSec: 30 },
+        startSec: 2009
+      })()
+      expect(config.startPosition).equals(2009)
+      attachHls(video as unknown as VideoHandle, url)()
+      expect(config.startPosition).equals(-1)
+    })
+  })
+
+  it('keeps recording buffers, and a live grid tile’s limits with the same live delay (U24)', function () {
     withMediaSource()
     const video = new FakeVideo()
     asBrowser('Google Inc.', () => {
@@ -349,7 +366,7 @@ describe('attaching in a browser', function () {
       })()
       expect(config.maxBufferLength).equals(10)
       expect(config.maxMaxBufferLength).equals(10)
-      expect(config.liveSyncDuration).equals(undefined)
+      expect(config.liveSyncDuration).equals(45)
     })
   })
 
@@ -389,7 +406,7 @@ describe('attaching in a browser', function () {
         }
       )
       video.emit('play')
-      expect(video.currentTime).equals(7140)
+      expect(video.currentTime).equals(7155)
       video.currentTime = 300
       video.emit('play')
       expect(video.currentTime).equals(300)
@@ -1177,5 +1194,22 @@ describe('the player’s dates, handed out as a mapping (U21)', function () {
     expect(handed[2]?.newestWall()).equals(T0 + 34_000)
     // Detached, it listens to nothing more.
     expect(video.attached()).equals(0)
+  })
+})
+
+describe('which live players have their stalls reported', function () {
+  it('reports the viewer’s own live player, and neither a grid tile nor a card preview', function () {
+    const isLive = (): boolean => true
+    const wantsToPlay = (): boolean => true
+    expect(reportsLiveStalls({ wantsToPlay, isLive })).equals(true)
+    expect(
+      reportsLiveStalls({ wantsToPlay, isLive, buffer: { aheadSec: 30 } })
+    ).equals(false)
+    expect(reportsLiveStalls({ wantsToPlay, isLive, preview: true })).equals(
+      false
+    )
+    // A recording has no live stalls to report.
+    expect(reportsLiveStalls({ wantsToPlay })).equals(false)
+    expect(reportsLiveStalls(undefined)).equals(false)
   })
 })

@@ -56,6 +56,11 @@ export interface PlayIntent {
   /** False for a highlight link or an explicitly restored playback position. */
   startAtLiveEdge?: boolean
   /**
+   * A silent card preview rather than the viewer's own player: it joins and
+   * recovers as a live viewer, but its stalls are not reported as theirs.
+   */
+  preview?: boolean
+  /**
    * The player's own mapping onto the wall clock, each time it changes: from
    * the playlist's program date-times on hls.js, from Safari's start date on
    * its own player. Null once it is clear no dates are coming — a recording
@@ -75,6 +80,12 @@ export interface PlayIntent {
    * which can be from before the owner had set it.
    */
   muted?: () => boolean
+  /**
+   * Where the player starts, in its own seconds, for an owner that has
+   * placed it already: a grid tile opened on a moment. hls.js then loads
+   * from there, rather than from its own live position and moving it.
+   */
+  startSec?: number
 }
 
 /** Moves a running player's limit on how far ahead it loads. */

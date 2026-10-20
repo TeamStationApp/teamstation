@@ -44,7 +44,6 @@ import {
   isOurSilence,
   JOIN_LEAD_SEC,
   liveOpeningMs,
-  liveTargetMs,
   masterOf,
   NUDGE_MAX_SEC,
   nudgeRate,
@@ -862,6 +861,19 @@ export function useMultiCam(
   /** The angles and the heard one, for timers that outlive a render. */
   const chosenRef = useRef(chosen)
   chosenRef.current = chosen
+
+  /**
+   * Where a live angle's newest footage is on the wall, by its mapping, or
+   * failing that its player's seekable end; null where neither can say.
+   */
+  const newestWallOf = (video: VideoSummary & AngleVideo): number | null => {
+    const element = elements.current.get(video.id)
+    if (element == null) return null
+    const newest = video.clock?.()?.newestWall()
+    if (newest != null) return newest
+    const end = seekableEndOf(element)
+    return end == null ? null : wallAt(video, end)
+  }
   const heardRef = useRef(heardId)
   heardRef.current = heardId
 
@@ -1395,18 +1407,24 @@ export function useMultiCam(
         })
       }
 
-      // A live grid opens on the moment its tiles have reached
-      // (`liveOpeningMs`), once they have pictures to say where that is.
+      // A live grid opens behind the newest footage its tiles have
+      // (`liveOpeningMs`), once they have pictures and a mapping to say where
+      // that is.
       if (atWallRef.current == null) {
+        // Every live angle that may yet play, the ones still being asked
+        // for included: the opening waits for them (`LIVE_OPEN_WAIT_MS`).
+        // And only once each has a picture: before it, a player can say little
+        // about where its footage ends. A move or the bar does not wait for
+        // that, since a seek out of what they hold takes every tile's picture
+        // away at once while their footage is no less there.
         const at = chosen
           .filter(video => video.status === 'live' && urls[video.id] !== null)
-          .map(video => {
-            const element = elements.current.get(video.id)
-            if (element == null || element.readyState < HAVE_CURRENT_DATA) {
-              return null
-            }
-            return wallAt(video, element.currentTime)
-          })
+          .map(video =>
+            (elements.current.get(video.id)?.readyState ?? 0) <
+            HAVE_CURRENT_DATA
+              ? null
+              : newestWallOf(video)
+          )
         if (liveSince.current == null && at.some(one => one != null)) {
           liveSince.current = now
         }
@@ -1618,6 +1636,35 @@ export function useMultiCam(
   }, [])
 
   /**
+   * The furthest a live take may be moved to: where a live viewer plays,
+   * `LIVE_DELAY_SEC` behind the newest footage of its slowest angle
+   * (`liveOpeningMs`). Only the angles the grid plays count, as at the
+   * opening: one it has no address for, one left out, or one with no picture
+   * yet would hold every other angle back at its own last footage. Null for
+   * a take with nothing live, or none that can say yet.
+   */
+  const livePointMs = (): number | null => {
+    // Only angles with an address that are not left out: none still being
+    // asked for, which the opening waits for and a move need not. And none
+    // whose newest footage the grid has already played past: a camera that
+    // has stopped sending, though still listed live, is parked there and
+    // would otherwise hold every other angle back at its last picture.
+    const here = gameNowRef.current('') ?? atWallRef.current
+    const at = chosenRef.current
+      .filter(
+        video =>
+          video.status === 'live' &&
+          urls[video.id] != null &&
+          !leftOut.current.has(video.id)
+      )
+      .map(newestWallOf)
+      .filter(newest => newest == null || here == null || newest >= here)
+    return liveOpeningMs(at, Number.POSITIVE_INFINITY)
+  }
+  const livePointRef = useRef(livePointMs)
+  livePointRef.current = livePointMs
+
+  /**
    * A seek the viewer asked for: every tile, at once, to one instant.
    *
    * A step within what the tiles already hold plays straight on. One beyond
@@ -1625,7 +1672,19 @@ export function useMultiCam(
    * than starting each the moment it has a frame.
    */
   const goTo = useCallback(
-    (wallMs: number): void => {
+    (asked: number): void => {
+      // A drag or a tap at the end of a live bar lands at the live point:
+      // the newest pictures are still arriving, and asked for, every angle
+      // would wait for them. Never behind where the grid already is, though:
+      // the live point moves a segment at a time, and an angle whose camera
+      // has just gone holds it still while the pictures play on, so a move
+      // forward from there would have jumped back.
+      const limit = livePointRef.current()
+      const here = gameNowRef.current('') ?? atWallRef.current
+      const wallMs =
+        limit == null || asked <= limit
+          ? asked
+          : Math.max(limit, Math.min(asked, here ?? limit))
       atWallRef.current = wallMs
       setAtWallMs(wallMs)
       shortSince.current.clear()
@@ -2044,23 +2103,32 @@ export function useMultiCam(
     holding: () => slowFrame.current !== 0
   })
 
-  // A live take has no end of its own, so the furthest anybody has played to
-  // stands in for one. A finished take does not: letting the clock extend the
-  // window made the total in the corner of the bar grow by a second every time
-  // it was watched to the end.
+  // A live take has no end of its own: it ends at the newest footage any of
+  // its angles has, which grows as they stream, from the first picture of the
+  // first camera at 0. Held at the moment the viewer had reached, the bar
+  // could only ever go back: dragging it forward reached nothing, and a
+  // viewer who had fallen behind could not get back to live. A finished take
+  // has none: letting the clock extend the window made the total in the
+  // corner of the bar grow by a second every time it was watched to the end.
   const anyLive = chosen.some(video => video.status === 'live')
-  const take = windowOf(
-    chosen,
-    anyLive
-      ? (liveTargetMs(
-          chosen.map(video =>
-            video.status === 'live' && atWallMs != null ? atWallMs : null
-          )
-        ) ??
-          atWallMs ??
-          undefined)
-      : undefined
-  )
+  // Each angle read as the live point reads it (`newestWallOf`): by its
+  // mapping, or its player's seekable end where it has none, as a phone's
+  // tile before the server's timeline arrives.
+  const newest = anyLive
+    ? chosen
+        .filter(video => video.status === 'live')
+        .map(newestWallOf)
+        .reduce<number | null>(
+          (most, one) => (one == null ? most : Math.max(most ?? one, one)),
+          null
+        )
+    : null
+  const played = anyLive ? atWallMs : null
+  const liveEnd =
+    newest != null && played != null
+      ? Math.max(newest, played)
+      : (newest ?? played ?? undefined)
+  const take = windowOf(chosen, liveEnd)
   takeRef.current = take
 
   // The three seconds start when there is a bar to see, not when the view

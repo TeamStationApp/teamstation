@@ -71,8 +71,12 @@ const appSuites = [
   ...globSync('src/app/player/**/*.test.tsx').sort(),
   'src/app/App.membershipAccess.test.tsx',
   'src/app/App.player.test.tsx',
+  // The home screen's cards, which play a live game as a live viewer.
+  'src/app/components/VideoPoster.test.tsx',
   'src/app/navigation/stepBackNative.test.ts',
   'src/app/screens/GameScreen.player.test.tsx',
+  'src/app/screens/HomeScreen.recentGame.test.tsx',
+  'src/app/screens/HomeScreen.test.tsx',
   'src/app/screens/gameLivePlayback.test.tsx'
 ]
 

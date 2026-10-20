@@ -26,6 +26,13 @@ export interface VideoPosterProps {
    * sound is what `Watch Replay` is for.
    */
   videoUrl?: string | null
+  /**
+   * The video is streaming now. It then plays as every live viewer does,
+   * `LIVE_DELAY_SEC` behind its newest footage, and is brought back there if
+   * the network stalls it, rather than from wherever its playlist begins:
+   * Safari and the phones open a live game's playlist at its start.
+   */
+  live?: boolean
   /** The player has stopped trying; the URL is the thing left to doubt. */
   onVideoGone?: () => void
   /** `1:24:10` for a whole video, or where a highlight seeks to. */
@@ -127,6 +134,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   const {
     uri,
     videoUrl,
+    live = false,
     onVideoGone,
     time,
     showPlay = false,
@@ -145,6 +153,25 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   const frameRef = useRef<React.ComponentRef<typeof View>>(null)
   const [moving, setMoving] = useState(false)
   const teardown = useRef<(() => void) | undefined>(undefined)
+  // Asked when its playlist ends, so a game that has finished is let go.
+  const liveNow = useRef(live)
+  liveNow.current = live
+  // Whether this address has been live while shown: set once it turns live,
+  // and only cleared by a new address. The player is attached again when a
+  // card turns live, to join as a live viewer, but not when its game ends:
+  // attached again then, it opened the finished playlist at its start.
+  const wasLive = useRef<{ url: string | null | undefined; live: boolean }>({
+    url: videoUrl,
+    live
+  })
+  if (wasLive.current.url !== videoUrl)
+    wasLive.current = { url: videoUrl, live }
+  else if (live) wasLive.current.live = true
+  const joinedLive = wasLive.current.live
+  // Read when it is called, so a new function each render does not tear the
+  // player down and start it again.
+  const goneNow = useRef(onVideoGone)
+  goneNow.current = onVideoGone
 
   // The poster stays underneath until there are frames to cover it, so the
   // card never flashes empty while the first segment loads.
@@ -156,7 +183,20 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
       teardown.current = undefined
       if (video == null || videoUrl == null || videoUrl === '') return
 
-      const detach = attachHls(video, videoUrl, onVideoGone)
+      const detach = attachHls(
+        video,
+        videoUrl,
+        () => {
+          goneNow.current?.()
+        },
+        joinedLive
+          ? {
+              wantsToPlay: () => true,
+              isLive: () => liveNow.current,
+              preview: true
+            }
+          : undefined
+      )
       const start = (): void => {
         if (!video.paused) return
         setMoving(true)
@@ -178,7 +218,9 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
         detach()
       }
     },
-    [videoUrl, onVideoGone]
+    // Attached again when the card turns live, so it joins as a live viewer;
+    // a stream that has ended is let go by `isLive`, which reads the ref.
+    [videoUrl, joinedLive]
   )
   useEffect(() => {
     return () => teardown.current?.()
@@ -234,6 +276,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
           source={videoUrl}
           onHandle={takeVideo}
           muted
+          live={live}
           resizeMode="cover"
           // Faded in only once there are frames, so the card never flashes
           // empty over the poster while the first segment loads.

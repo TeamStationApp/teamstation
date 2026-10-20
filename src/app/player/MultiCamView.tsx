@@ -569,7 +569,8 @@ function Tile(props: {
         isLive,
         onWallMapping,
         onSoundHeld,
-        muted: () => mutedNow.current
+        muted: () => mutedNow.current,
+        startSec: toSec ?? undefined
       }
     )
     const start = (): void => {

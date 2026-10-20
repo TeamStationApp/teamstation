@@ -1,5 +1,6 @@
 import { onExplicitSeek } from './explicitSeek'
 import { joinLiveWithCushion } from './liveCushion'
+import { readRealEndSec } from './livePlaylistEnd'
 import { reloadStalledLive } from './liveReload'
 import { NativeVideoHandle } from './nativeVideoHandle'
 import type { PlayIntent } from './playIntent'
@@ -224,7 +225,7 @@ export function attachHls(
   // built (`VideoView.native.tsx`), and starts far enough back to be left.
   const stopJoining =
     singleLive && intent.startAtLiveEdge !== false
-      ? joinLiveWithCushion(handle)
+      ? joinLiveWithCushion(handle, async () => await readRealEndSec(url))
       : undefined
 
   return () => {

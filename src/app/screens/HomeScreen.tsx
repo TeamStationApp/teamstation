@@ -76,6 +76,8 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   /** Which game `liveUrl` belongs to, so it is not asked for twice. */
   const playing = useRef<string | undefined>(undefined)
   const [recentUrl, setRecentUrl] = useState<string | undefined>(undefined)
+  /** `recentUrl` is a stream that is live now. */
+  const [recentLive, setRecentLive] = useState(false)
   const recentPlaying = useRef<
     | {
         client: TeamStationClient
@@ -137,7 +139,12 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         return
       }
       // Refresh LIVE metadata without replacing the same video's signed URL.
-      if (recentPlaying.current?.videoId === playable.id) return
+      // Whether it still streams is read afresh: a game that has ended lets
+      // its card go as a live viewer.
+      if (recentPlaying.current?.videoId === playable.id) {
+        setRecentLive(playable.status === 'live')
+        return
+      }
       clear()
       const playback = await client.playback(playable.id)
       if (cancelled || playback.url == null) return
@@ -146,6 +153,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         gameId: recent.id,
         videoId: playable.id
       }
+      setRecentLive(playable.status === 'live')
       setRecentUrl(playback.url)
     }
     // A card that does not move is the whole of the failure, and the poster
@@ -368,6 +376,8 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               <VideoPoster
                 size="hero"
                 videoUrl={liveUrl}
+                // From where the game is now, as every live viewer plays it.
+                live
                 onVideoGone={() => {
                   // The player has given up on that address. Forgetting which
                   // game it belonged to is all it takes: the next look asks
@@ -457,6 +467,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               homeLogoUrl={recent.homeLogoUrl}
               posterUrl={recent.posterUrl}
               videoUrl={recentUrl}
+              videoLive={recentLive}
             />
             {/*
               Two buttons, not one. There was no way to reach a box score from
