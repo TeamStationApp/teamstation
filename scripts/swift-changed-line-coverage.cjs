@@ -1,7 +1,20 @@
 const { execFileSync } = require('node:child_process')
-const { mkdtempSync, realpathSync, writeFileSync } = require('node:fs')
+const {
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} = require('node:fs')
 const { tmpdir } = require('node:os')
-const { basename, dirname, join, relative, resolve } = require('node:path')
+const {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve
+} = require('node:path')
 
 const check = require('./changed-line-check.cjs')
 const {
@@ -99,10 +112,35 @@ function keyed(tops, counts) {
 }
 
 // `swift test --enable-code-coverage`, then its profile exported as lcov.
-function spmCounts(dir, run) {
+function spmCounts(dir, run, { mergeRawProfiles = false } = {}) {
   const at = ['--package-path', dir]
+  let codecov
+  if (mergeRawProfiles) {
+    codecov = run('swift', ['test', '--show-codecov-path', ...at]).trim()
+    if (!isAbsolute(codecov) || basename(dirname(codecov)) !== 'codecov')
+      throw new Error('Unexpected Swift coverage directory')
+    // A failed Swift Testing suite leaves raw profiles but skips SwiftPM's
+    // merge. Clear the generated directory first so old runs cannot count.
+    rmSync(dirname(codecov), { recursive: true, force: true })
+  }
   run('swift', ['test', '--enable-code-coverage', ...at])
-  const codecov = run('swift', ['test', '--show-codecov-path', ...at]).trim()
+  codecov ??= run('swift', ['test', '--show-codecov-path', ...at]).trim()
+  if (mergeRawProfiles) {
+    const profiles = readdirSync(dirname(codecov))
+      .filter(file => file.endsWith('.profraw'))
+      .sort()
+      .map(file => join(dirname(codecov), file))
+    if (profiles.length === 0)
+      throw new Error('No fresh Swift coverage profiles')
+    run('xcrun', [
+      'llvm-profdata',
+      'merge',
+      '-sparse',
+      ...profiles,
+      '-o',
+      join(dirname(codecov), 'default.profdata')
+    ])
+  }
   const bin = run('swift', ['build', '--show-bin-path', ...at]).trim()
   const name = JSON.parse(
     run('swift', ['package', ...at, 'describe', '--type', 'json'])

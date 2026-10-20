@@ -18,7 +18,8 @@ const { changedLines } = require('./changed-line-coverage.cjs')
 const {
   auditCoverage,
   digest,
-  readCounters
+  readCounters,
+  swiftTestResult
 } = require('./user-id-coverage.cjs')
 const { spmCounts } = require('./swift-changed-line-coverage.cjs')
 const args = process.argv.slice(2)
@@ -194,6 +195,7 @@ const nativeFiles = Object.keys(files).filter(file =>
 if (!args.includes('--check-only') && nativeFiles.length > 0) {
   const counts = {}
   let tests = 0
+  const failures = []
   const addCounts = raw => {
     for (const [file, lines] of Object.entries(raw)) {
       const name = isAbsolute(file) ? relative(root, file) : file
@@ -208,26 +210,26 @@ if (!args.includes('--check-only') && nativeFiles.length > 0) {
     let measuredTests = 0
     console.log('$ swift test --enable-code-coverage --package-path', path)
     const log = []
-    const raw = spmCounts(resolve(path), (command, argv) => {
-      const result = spawnSync(command, argv, {
-        encoding: 'utf8',
-        maxBuffer: 256 * 1024 * 1024
-      })
-      const output = (result.stdout ?? '') + (result.stderr ?? '')
-      log.push('$ ' + [command, ...argv].join(' '), output)
-      if (result.status !== 0)
-        throw new Error(
-          `${name} host tests/export failed: ${output.slice(-6000)}`
-        )
-      if (command === 'swift' && argv.includes('--enable-code-coverage')) {
-        measuredTests = Number(
-          /Test run with (\d+) tests?[^\n]* passed/.exec(output)?.[1] ?? 0
-        )
-        if (measuredTests < 1)
-          throw new Error(`No measured host tests: ${name}`)
-      }
-      return result.stdout ?? ''
-    })
+    const raw = spmCounts(
+      resolve(path),
+      (command, argv) => {
+        const result = spawnSync(command, argv, {
+          encoding: 'utf8',
+          maxBuffer: 256 * 1024 * 1024
+        })
+        const text = (result.stdout ?? '') + (result.stderr ?? '')
+        log.push('$ ' + [command, ...argv].join(' '), text)
+        writeFileSync(resolve(output, `${name}.log`), log.join('\n'))
+        if (command === 'swift' && argv.includes('--enable-code-coverage')) {
+          const measured = swiftTestResult(name, result.status, text)
+          measuredTests = measured.tests
+          failures.push(...measured.failures)
+        } else if (result.status !== 0)
+          throw new Error(`${name} host export failed: ${text.slice(-6000)}`)
+        return result.stdout ?? ''
+      },
+      { mergeRawProfiles: true }
+    )
     writeFileSync(resolve(output, `${name}.log`), log.join('\n'))
     tests += measuredTests
     addCounts(raw)
@@ -304,6 +306,7 @@ if (!args.includes('--check-only') && nativeFiles.length > 0) {
       base,
       head,
       tests,
+      failures,
       hashes: Object.fromEntries(
         Object.entries(files).map(([file, value]) => [file, value.hash])
       ),
