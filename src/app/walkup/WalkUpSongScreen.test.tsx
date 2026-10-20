@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Platform } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { HeaderSlotProvider } from '../components/headerSlot'
 import type { PreferenceStorage } from '../scoring/scoringPreferenceStore'
@@ -160,7 +161,7 @@ async function render(
             client={songClient([])}
             music={fakeMusic()}
             teamId="t1"
-            userId="7"
+            userId={userIdOfGumbo(7)}
             song={null}
             resolve={async () => null}
             onSaved={() => undefined}
@@ -379,7 +380,7 @@ describe('the song picker’s clip', function () {
     expect(sent).deep.equals([
       {
         teamId: 't1',
-        userId: '7',
+        userId: userIdOfGumbo(7),
         song: {
           provider: 'localFile',
           providerId: fixture.providerId,
@@ -395,7 +396,7 @@ describe('the song picker’s clip', function () {
       }
     ])
     expect(Object.fromEntries(storage.items)).deep.equals({
-      'walkUp:t1:7:lf:110f83a3e9419109': fixture.handle
+      [`walkUp:t1:${userIdOfGumbo(7)}:lf:110f83a3e9419109`]: fixture.handle
     })
     expect(done).length(1)
   })

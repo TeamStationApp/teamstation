@@ -90,7 +90,7 @@ describe('development game fixtures', function () {
     })
 
     /** Each team role `userId` holds, as `side:role`, in a stable order. */
-    const rolesOf = async (userId: number): Promise<string[]> => {
+    const rolesOf = async (userId: string): Promise<string[]> => {
       const rows = await db!
         .selectFrom('scope_roles')
         .select(['scope_type', 'scope_id', 'role'])
@@ -107,7 +107,7 @@ describe('development game fixtures', function () {
     }
 
     /** The sides of this run's game whose team `userId` belongs to. */
-    const sidesOf = async (userId: number): Promise<string[]> => {
+    const sidesOf = async (userId: string): Promise<string[]> => {
       const rows = await db!
         .selectFrom('memberships')
         .select(['team_id', 'role'])
@@ -219,7 +219,7 @@ describe('development game fixtures', function () {
         const value = asDefaultLineup(team.default_lineup)
         const nine = fixture.players[side]
           .slice(0, 9)
-          .map(({ userId, ...person }) => ({ ...person, gumboId: userId }))
+          .map(({ userId: _, ...person }) => person)
         expect(value.fromGameId).to.equal(null)
         expect(value.lineup?.batters).to.deep.equal(nine)
         expect(value.lineup?.defense.P).to.deep.equal(nine[0])
@@ -353,12 +353,9 @@ describe('development game fixtures', function () {
         expect(line).to.match(/^GAME_ID=/)
         return line.slice('GAME_ID='.length)
       })
-      const ids = (line: string, key: string): number[] => {
+      const ids = (line: string, key: string): string[] => {
         expect(line.startsWith(`${key}=`), line).to.equal(true)
-        return line
-          .slice(key.length + 1)
-          .split(',')
-          .map(Number)
+        return line.slice(key.length + 1).split(',')
       }
       const away = ids(printed[2], 'AWAY')
       const home = ids(printed[3], 'HOME')

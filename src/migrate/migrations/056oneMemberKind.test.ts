@@ -2,13 +2,18 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
-import { mintUserId } from '../../common/mintUserId'
-import { migrations } from '../migrations'
+import { mintUserId } from '../../test/historicalUserIds'
+import { migrations as allMigrations } from '../migrations'
 import { migrateDown, migrateUp } from '../runner'
 import { type SchemaSnapshot, schemaSnapshot } from '../schemaSnapshot'
 import { testDatabaseUrl } from '../testDatabase'
 
-const subjectMigrations = migrations.filter(m => m.name <= '056oneMemberKind')
+const subjectMigrations = allMigrations.filter(
+  m => m.name <= '056oneMemberKind'
+)
+
+// Exercise this historical migration independently of later identity changes.
+const migrations = allMigrations.filter(m => m.name <= '056oneMemberKind')
 
 describe('056 makes one kind of member at every level', function () {
   this.timeout(60000)

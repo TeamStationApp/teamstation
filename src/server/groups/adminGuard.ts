@@ -10,7 +10,7 @@ import { currentActor, requireGroupAdmin, requirePeopleManager } from './rights'
 export async function directAdminIds(
   db: Kysely<Database>,
   ref: GroupRef
-): Promise<number[]> {
+): Promise<string[]> {
   const granted = await db
     .selectFrom('scope_roles')
     .innerJoin('users', 'users.id', 'scope_roles.user_id')
@@ -70,8 +70,8 @@ export type PersonChangeAuthority = 'admin' | 'manager' | 'self'
 export async function authorizePersonChange(
   db: Kysely<Database>,
   ref: GroupRef,
-  targetId: number,
-  actorId: number,
+  targetId: string,
+  actorId: string,
   grantAdmin = false,
   authority: PersonChangeAuthority = 'admin'
 ): Promise<void> {

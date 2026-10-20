@@ -9,10 +9,12 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import {
   deviceEventControlGrant,
   deviceEventControlKeyId,
@@ -72,7 +74,7 @@ describe('device event-control key derivation', function () {
         vector.userId
       )
       expect(grant, vector.name).deep.equals({
-        version: 1,
+        version: 2,
         issuer: vector.issuer,
         userId: vector.userId,
         accountTag: vector.accountTag,
@@ -83,16 +85,24 @@ describe('device event-control key derivation', function () {
   })
 
   it('binds the key to the account and the server, and the ID to the secret', function () {
-    const one = deviceEventControlGrant(SECRET, ISSUER, 101)
-    expect(deviceEventControlGrant(SECRET, ISSUER, '101')).deep.equals(one)
-    expect(deviceEventControlGrant(SECRET, ISSUER, 102).key).not.equals(one.key)
-    expect(deviceEventControlGrant(SECRET, ISSUER, 102).accountTag).not.equals(
-      one.accountTag
+    const one = deviceEventControlGrant(SECRET, ISSUER, userIdOfGumbo(101))
+    expect(
+      deviceEventControlGrant(SECRET, ISSUER, userIdOfGumbo(101))
+    ).deep.equals(one)
+    expect(
+      deviceEventControlGrant(SECRET, ISSUER, userIdOfGumbo(102)).key
+    ).not.equals(one.key)
+    expect(
+      deviceEventControlGrant(SECRET, ISSUER, userIdOfGumbo(102)).accountTag
+    ).not.equals(one.accountTag)
+    const elsewhere = deviceEventControlGrant(
+      SECRET,
+      OTHER_ISSUER,
+      userIdOfGumbo(101)
     )
-    const elsewhere = deviceEventControlGrant(SECRET, OTHER_ISSUER, 101)
     expect(elsewhere.key).not.equals(one.key)
     expect(elsewhere.keyId).equals(one.keyId)
-    const rotated = deviceEventControlGrant(ROTATED, ISSUER, 101)
+    const rotated = deviceEventControlGrant(ROTATED, ISSUER, userIdOfGumbo(101))
     expect(rotated.key).not.equals(one.key)
     expect(rotated.keyId).not.equals(one.keyId)
     expect(one.keyId).matches(/^[0-9a-f]{16}$/)
@@ -107,7 +117,9 @@ describe('device event-control key derivation', function () {
     )
     expect(lengthPrefixed('a', 'bc')).not.deep.equals(lengthPrefixed('ab', 'c'))
     expect(() => lengthPrefixed(Buffer.alloc(0x10000))).throws(/65535/)
-    expect(() => deviceEventControlGrant('', ISSUER, 1)).throws(/not set/)
+    expect(() => deviceEventControlGrant('', ISSUER, userIdOfGumbo(1))).throws(
+      /not set/
+    )
   })
 
   it('refuses a secret shorter than 32 bytes', function () {
@@ -119,9 +131,9 @@ describe('device event-control key derivation', function () {
     expect(deviceEventControlSecretProblem('')).equals(
       'deviceEventControlSecret is not set'
     )
-    expect(() => deviceEventControlGrant('a'.repeat(31), ISSUER, 1)).throws(
-      /shorter than 32 bytes/
-    )
+    expect(() =>
+      deviceEventControlGrant('a'.repeat(31), ISSUER, userIdOfGumbo(1))
+    ).throws(/shorter than 32 bytes/)
   })
 })
 
@@ -171,16 +183,13 @@ describe('GET /device-event-control/key', function () {
     for (const person of ['one', 'two', 'locked']) {
       const made = mintUserId(id => [...users.values()].includes(id))
       users.set(person, made.userId)
-      await db
-        .insertInto('users')
-        .values({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: person,
-          is_admin: false,
-          login_enabled: person !== 'locked'
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(made.userId),
+        legacyId: made.legacyId,
+        display_name: person,
+        is_admin: false,
+        login_enabled: person !== 'locked'
+      })
     }
     const session = async (
       name: string,
@@ -192,7 +201,7 @@ describe('GET /device-event-control/key', function () {
         ?.insertInto('auth_sessions')
         .values({
           id: makeId('authSession'),
-          user_id: users.get(person) ?? 0,
+          user_id: userIdOfGumbo(users.get(person) ?? 0),
           token_hash: hashToken(token(name)),
           created_at: now,
           expires_at: expiresAt,
@@ -210,7 +219,7 @@ describe('GET /device-event-control/key', function () {
       .insertInto('api_tokens')
       .values({
         id: makeId('apiToken'),
-        user_id: users.get('one') ?? 0,
+        user_id: userIdOfGumbo(users.get('one')!),
         token_hash: hashToken(token('machine')),
         label: 'fixture',
         scopes: []
@@ -261,9 +270,9 @@ describe('GET /device-event-control/key', function () {
     expect(ipad.status).equals(200)
     expect(ipad.cache).equals('no-store')
     expect(ipad.body).deep.equals(
-      deviceEventControlGrant(SECRET, ISSUER, users.get('one') ?? 0)
+      deviceEventControlGrant(SECRET, ISSUER, userIdOfGumbo(users.get('one')!))
     )
-    expect(ipad.body.userId).equals(String(users.get('one')))
+    expect(ipad.body.userId).equals(userIdOfGumbo(users.get('one')!))
     expect(ipad.body.issuer).equals(ISSUER)
     expect(phone.body).deep.equals(ipad.body)
     // Nothing of the session that asked comes back.
@@ -274,7 +283,7 @@ describe('GET /device-event-control/key', function () {
     if (db == null) this.skip()
     const one = (await ask('main', 'oneIpad')).body
     const two = (await ask('main', 'two')).body
-    expect(two.userId).equals(String(users.get('two')))
+    expect(two.userId).equals(userIdOfGumbo(users.get('two')!))
     expect(two.key).not.equals(one.key)
     expect(two.accountTag).not.equals(one.accountTag)
     expect(two.keyId).equals(one.keyId)

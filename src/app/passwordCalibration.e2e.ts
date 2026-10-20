@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 
 import { TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
 import { readPasswordRecord } from '../server/auth/passwords'
 import { accountHarness } from '../test/accountHarness'
 import { testPasswordKdf } from '../test/passwordFixtures'
@@ -66,7 +67,7 @@ async function main(): Promise<void> {
       const row = await h.db
         .selectFrom('users')
         .select('password_hash')
-        .where('id', '=', 101)
+        .where('id', '=', userIdOfGumbo(101))
         .executeTakeFirstOrThrow()
       const saved = readPasswordRecord(row.password_hash)!
       assert.equal(saved.client.memoryKiB, 32768)

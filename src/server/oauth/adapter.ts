@@ -9,6 +9,7 @@ import { asObject, asString, asUnknown } from 'cleaners'
 import { type Kysely, sql } from 'kysely'
 import { type Adapter, type AdapterPayload, errors } from 'oidc-provider'
 
+import { asGumboId, asUserId } from '../../common/userId'
 import type { Database } from '../db/database'
 
 const GRANT_BOUND_MODELS = new Set([
@@ -19,6 +20,52 @@ const GRANT_BOUND_MODELS = new Set([
   'DeviceCode',
   'BackchannelAuthenticationRequest'
 ])
+
+/**
+ * The provider compares account IDs across tokens, grants and sessions.
+ * Normalize the known account fields in its decrypted read view so records
+ * issued before the cutover agree with newly issued canonical subjects.
+ * Authenticated ciphertext and application-defined claims stay untouched.
+ */
+async function normalizeAccounts(
+  db: Kysely<Database>,
+  model: string,
+  payload: AdapterPayload
+): Promise<boolean> {
+  if (
+    !GRANT_BOUND_MODELS.has(model) &&
+    model !== 'Session' &&
+    model !== 'Interaction'
+  )
+    return true
+  const records: Array<Record<string, unknown>> = [payload]
+  const object = (value: unknown): value is Record<string, unknown> =>
+    value != null && typeof value === 'object' && !Array.isArray(value)
+  if (model === 'Interaction') {
+    if (object(payload.session)) records.push(payload.session)
+    if (object(payload.result) && object(payload.result.login))
+      records.push(payload.result.login)
+  }
+  for (const record of records) {
+    if (record.accountId === undefined) continue
+    if (typeof record.accountId !== 'string') return false
+    try {
+      if (/^[1-9][0-9]*$/.test(record.accountId)) {
+        const mapping = await db
+          .selectFrom('gumbo_ids')
+          .select('user_id')
+          .where('gumbo_id', '=', asGumboId(Number(record.accountId)))
+          .executeTakeFirst()
+        if (mapping == null) return false
+        record.accountId = mapping.user_id
+      } else asUserId(record.accountId)
+    } catch (error) {
+      if (error instanceof TypeError) return false
+      throw error
+    }
+  }
+  return true
+}
 
 export const oauthHash = (value: string): string =>
   createHash('sha256').update(value).digest('hex')
@@ -126,6 +173,7 @@ export function makeOAuthAdapter(
         key,
         `${this.model}:${row.id_hash}`
       )
+      if (!(await normalizeAccounts(db, this.model, payload))) return undefined
       if (row.consumed_at != null) payload.consumed = true
       return payload
     }
