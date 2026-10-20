@@ -8,7 +8,7 @@ import type { Database } from '../db/database'
 
 export async function requestPasswordReset(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   stored: string | null
 ): Promise<{ id: string; code: string; email: string }> {
   const address = await db
@@ -31,7 +31,7 @@ export async function requestPasswordReset(
 /** Validate under account/code locks; consume only in the replacement transaction. */
 export async function confirmPasswordReset(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   stored: string | null,
   reset: ResetAuthorization,
   consume = true

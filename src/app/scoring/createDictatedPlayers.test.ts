@@ -8,6 +8,7 @@ import {
   rosterSituation
 } from '../../common/scoring/rosterCommands'
 import type { GameState } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { guestCreator } from '../../test/guestPlayers'
 import { scoringSession } from '../../test/scoringSession'
 import { createDictatedPlayers } from './createDictatedPlayers'
@@ -33,7 +34,7 @@ describe('persistent dictated player creation', () => {
       async (teamId, player) => {
         requests.push({ teamId, player })
         return asRosterEntry({
-          userId: 7001,
+          userId: userIdOfGumbo(7001),
           gumboId: 7001,
           shortName: 'Shohei O',
           isPlayer: true,
@@ -75,7 +76,7 @@ describe('persistent dictated player creation', () => {
       rosterSituation(draft),
       async () =>
         asRosterEntry({
-          userId: 7001,
+          userId: userIdOfGumbo(7001),
           gumboId,
           shortName: 'Shohei O',
           isPlayer: true,

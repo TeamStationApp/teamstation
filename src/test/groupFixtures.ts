@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 
+import { userIdOfGumbo } from '../common/userId'
 import type { Actor } from '../server/auth/sessions'
 import { createSession } from '../server/auth/sessions'
 import type { Clock } from '../server/groups/requests'
@@ -7,6 +8,7 @@ import type { GooglePlaces } from '../server/location/googlePlaces'
 import type { eventInfoRoutes } from '../server/routes/eventInfo'
 import type { AccountHarness, MountExtra } from './accountHarness'
 import { creationHarness } from './creationHarness'
+import { insertFixtureUsers } from './insertFixtureUsers'
 
 export const demoLocality = {
   city: 'Demo City',
@@ -16,7 +18,7 @@ export const demoLocality = {
   timezone: 'UTC'
 }
 export const actor = (userId: number): Actor => ({
-  userId,
+  userId: userIdOfGumbo(userId),
   isAdmin: false,
   scopes: []
 })
@@ -68,27 +70,24 @@ export async function groupFixture(
       [105, 'José Alvarez'],
       [106, 'Tim Raines']
     ] as const) {
-      await h.db
-        .insertInto('users')
-        .values({
-          id,
-          legacyId: `usr_creation_${id}`,
-          display_name: name,
-          first_name: name.split(' ')[0],
-          last_name: name.split(' ').slice(1).join(' '),
-          login_enabled: true,
-          is_admin: id === 105
-        })
-        .execute()
+      await insertFixtureUsers(h.db, {
+        id,
+        legacyId: `usr_creation_${id}`,
+        display_name: name,
+        first_name: name.split(' ')[0],
+        last_name: name.split(' ').slice(1).join(' '),
+        login_enabled: true,
+        is_admin: id === 105
+      })
       h.tokens.set(
         id,
-        (await createSession(h.db, id, 'creation-fixture')).token
+        (await createSession(h.db, userIdOfGumbo(id), 'creation-fixture')).token
       )
       await h.db
         .insertInto('user_emails')
         .values({
           id: `email_creation_${id}`,
-          user_id: id,
+          user_id: userIdOfGumbo(id),
           email: `fixture${id}@example.com`,
           is_primary: true,
           verified_at: new Date(),

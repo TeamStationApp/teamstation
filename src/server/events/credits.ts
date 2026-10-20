@@ -49,7 +49,7 @@ function asCredit(row: {
  */
 export async function creditsForPlayer(
   db: Kysely<Database>,
-  userId: number
+  userId: string
 ): Promise<Map<string, CreditedOutcome[]>> {
   const out = new Map<string, CreditedOutcome[]>()
   const person = await onePerson(db, userId)
