@@ -6,10 +6,12 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -152,18 +154,15 @@ describe('what TS Director is offered', function () {
       [filmerId, 'Filmer'],
       [scorerId, 'Scorer']
     ] as Array<[number, string]>) {
-      await db
-        .insertInto('users')
-        .values({
-          id,
-          legacyId: legacyId(id),
-          display_name: name,
-          first_name: null,
-          last_name: null,
-          created_at: now,
-          updated_at: now
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id,
+        legacyId: legacyId(id),
+        display_name: name,
+        first_name: null,
+        last_name: null,
+        created_at: now,
+        updated_at: now
+      })
     }
     for (const [id, user, token] of [
       ['ses_coach', coachId, COACH],
@@ -175,7 +174,7 @@ describe('what TS Director is offered', function () {
         .insertInto('auth_sessions')
         .values({
           id,
-          user_id: user,
+          user_id: userIdOfGumbo(user),
           token_hash: hashToken(token),
           expires_at: new Date(now.getTime() + HOUR),
           created_at: now
@@ -196,7 +195,7 @@ describe('what TS Director is offered', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_coach',
-        user_id: coachId,
+        user_id: userIdOfGumbo(coachId),
         team_id: 'tem_ours',
         role: 'manager'
       })
@@ -205,7 +204,7 @@ describe('what TS Director is offered', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_parent',
-        user_id: parentId,
+        user_id: userIdOfGumbo(parentId),
         team_id: 'tem_ours',
         role: 'member'
       })
@@ -221,7 +220,7 @@ describe('what TS Director is offered', function () {
         .insertInto('memberships')
         .values({
           id: `mem_${role}`,
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           team_id: 'tem_ours',
           role: 'member'
         })
@@ -230,7 +229,7 @@ describe('what TS Director is offered', function () {
         .insertInto('scope_roles')
         .values({
           id: `rol_${role}`,
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           scope_type: 'team',
           scope_id: 'tem_ours',
           role
@@ -358,7 +357,7 @@ describe('what TS Director is offered', function () {
           id: `liv_cam${slot}`,
           game_id: 'gam_third',
           team_id: 'tem_ours',
-          user_id: coachId,
+          user_id: userIdOfGumbo(coachId),
           slot,
           key_hash: `hash_cam${slot}`,
           key_prefix: 'ts_cam',
@@ -463,23 +462,20 @@ describe('what TS Director is offered', function () {
     // one refusal.
     const now = new Date()
     const secondId = mintUser()
-    await db
-      ?.insertInto('users')
-      .values({
-        id: secondId,
-        legacyId: legacyId(secondId),
-        display_name: 'Second Coach',
-        first_name: null,
-        last_name: null,
-        created_at: now,
-        updated_at: now
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(secondId),
+      legacyId: legacyId(secondId),
+      display_name: 'Second Coach',
+      first_name: null,
+      last_name: null,
+      created_at: now,
+      updated_at: now
+    })
     await db
       ?.insertInto('auth_sessions')
       .values({
         id: 'ses_second',
-        user_id: secondId,
+        user_id: userIdOfGumbo(secondId),
         token_hash: hashToken(SECOND),
         expires_at: new Date(now.getTime() + HOUR),
         created_at: now
@@ -489,7 +485,7 @@ describe('what TS Director is offered', function () {
       ?.insertInto('memberships')
       .values({
         id: 'mem_second',
-        user_id: secondId,
+        user_id: userIdOfGumbo(secondId),
         team_id: 'tem_ours',
         role: 'manager'
       })

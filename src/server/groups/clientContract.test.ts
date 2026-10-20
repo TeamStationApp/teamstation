@@ -5,6 +5,7 @@ import { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { asParentPreview } from '../../common/groupLinks'
 import { asGroupDetail } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import { accountTestPicture } from '../../test/accountHarness'
 import {
   demoLocality,
@@ -316,7 +317,10 @@ describe('group and inbox client contracts over real HTTP', function () {
       {
         choices: [],
         administrators: [
-          { group: { kind: 'team', id: 'legacyNoAdmin' }, userId: 103 }
+          {
+            group: { kind: 'team', id: 'legacyNoAdmin' },
+            userId: userIdOfGumbo(103)
+          }
         ],
         custodians: [
           {

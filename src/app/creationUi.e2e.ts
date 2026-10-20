@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { userIdOfGumbo } from '../common/userId'
 import { googlePlaces } from '../server/location/googlePlaces'
 import { googlePlacesStub } from '../test/googlePlacesStub'
 import { groupFixture } from '../test/groupFixtures'
@@ -38,7 +39,7 @@ async function main(): Promise<void> {
         first_name: 'Demo',
         last_name: 'Viewer'
       })
-      .where('id', '=', 106)
+      .where('id', '=', userIdOfGumbo(106))
       .execute()
     browser = await puppeteer.launch({ headless: true, args: ['--lang=en-US'] })
     async function login(user: number): Promise<Page> {
