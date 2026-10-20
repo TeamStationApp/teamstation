@@ -17,7 +17,7 @@ import path from 'node:path'
 
 import { asArray, asBoolean, asObject, asOptional, asString } from 'cleaners'
 
-import { asAppleLogin, privateJson } from './config'
+import { asAppleLogin, privateJson, type Settings } from './config'
 import { buildEnvironment, prepare } from './prepare'
 import { Processes } from './process'
 import { type BuildContext, type BuiltPackage, nativeNumber } from './runner'
@@ -364,10 +364,7 @@ export async function withSigning<T>(
       apple.profileNames,
       'adHoc'
     )
-    const testflight =
-      context.target.platform === 'ios'
-        ? context.settings.apps[context.target.app].ios?.testflight
-        : undefined
+    const testflight = testflightSettings(context)
     if (testflight == null)
       return await action({ keychain, directory, profiles })
     if (apple.appStoreProfileNames == null)
@@ -772,12 +769,26 @@ async function exportIpa(
   await verifyApp(context, path.join(payload, apps[0]), signing, kind)
   return file
 }
+/**
+ * The app's TestFlight settings, for a build of `master` only. Build numbers
+ * count per branch, and App Store Connect wants each one higher than the last
+ * for a version, so one branch owns the TestFlight numbers. A branch without
+ * settings of its own reads master's, testflight block included; this keeps
+ * its builds off TestFlight.
+ */
+export function testflightSettings(
+  context: BuildContext
+): NonNullable<Settings['apps'][string]['ios']>['testflight'] {
+  if (context.target.platform !== 'ios' || context.branch !== 'master')
+    return undefined
+  return context.settings.apps[context.target.app].ios?.testflight
+}
 export async function ios(
   context: BuildContext,
   profileHome = os.homedir()
 ): Promise<BuiltPackage> {
   // The key is read before the archive, so a bad one fails in seconds.
-  const testflight = context.settings.apps[context.target.app].ios?.testflight
+  const testflight = testflightSettings(context)
   if (testflight != null) apiKey(testflight.apiKeyFile)
   return await withSigning(
     context,
