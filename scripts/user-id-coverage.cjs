@@ -83,4 +83,34 @@ function readCounters(format, content) {
   throw new Error(`Unknown coverage format: ${format}`)
 }
 
-module.exports = { auditCoverage, digest, readCounters }
+/** A completed failing Swift suite still produces useful measured counters. */
+function swiftTestResult(name, status, output) {
+  const summary = /Test run with (\d+) tests?[^\n]* (passed|failed) after/.exec(
+    output
+  )
+  const tests = Number(summary?.[1] ?? 0)
+  if (
+    tests < 1 ||
+    !(
+      (status === 0 && summary[2] === 'passed') ||
+      (status === 1 && summary[2] === 'failed')
+    )
+  )
+    throw new Error(
+      `${name} host tests did not complete: ${output.slice(-6000)}`
+    )
+  const failed = [
+    ...output.matchAll(/^✘ Test (?!run with )(.+?) failed after/gm)
+  ].map(match => `${name}: ${match[1]}`)
+  return {
+    tests,
+    failures:
+      status === 0
+        ? []
+        : failed.length > 0
+          ? failed
+          : [`${name}: host test run failed`]
+  }
+}
+
+module.exports = { auditCoverage, digest, readCounters, swiftTestResult }

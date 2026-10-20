@@ -3,10 +3,38 @@ import { describe, it } from 'mocha'
 
 const {
   auditCoverage,
-  readCounters
+  readCounters,
+  swiftTestResult
 } = require('../../scripts/user-id-coverage.cjs')
 
 describe('user identity combined coverage gate', () => {
+  it('retains completed Swift failures without claiming a passing suite', () => {
+    expect(
+      swiftTestResult('Identity', 0, '✔ Test run with 2 tests passed after 1s.')
+    ).deep.equals({ tests: 2, failures: [] })
+    expect(
+      swiftTestResult(
+        'Identity',
+        1,
+        '✘ Test storage() failed after 0.1s.\n✘ Test run with 2 tests failed after 1s.'
+      )
+    ).deep.equals({ tests: 2, failures: ['Identity: storage()'] })
+    expect(
+      swiftTestResult('Identity', 1, '✘ Test run with 2 tests failed after 1s.')
+        .failures
+    ).deep.equals(['Identity: host test run failed'])
+    for (const [status, text] of [
+      [1, 'Build failed'],
+      [0, 'Test run with 0 tests passed after 1s.'],
+      [0, 'Test run with 2 tests failed after 1s.'],
+      [1, 'Test run with 2 tests passed after 1s.'],
+      [null, 'Test run with 2 tests failed after 1s.'],
+      [139, 'Test run with 2 tests failed after 1s.']
+    ])
+      expect(() => swiftTestResult('Identity', status, text)).throws(
+        'did not complete'
+      )
+  })
   const snapshot = {
     base: 'base',
     head: 'head',
