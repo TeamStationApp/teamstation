@@ -17,10 +17,6 @@ import {
 
 import type { RosterEntry } from '../../common/api'
 import {
-  reconcileRoster,
-  type ScoringRosterEntry
-} from '../../common/scoring/rosterAvailability'
-import {
   type ChosenRosterCommand,
   ROSTER_TAB,
   type RosterQuestion,
@@ -28,6 +24,10 @@ import {
   type StagedRunner
 } from '../../common/scoring/rosterCommands'
 import { rosterError } from '../../common/scoring/rules'
+import {
+  reconcileRoster,
+  type ScoringRosterEntry
+} from '../../common/scoring/startingSetup'
 import { setupOf } from '../../common/scoring/state'
 import type { Unrostered } from '../../common/unroster'
 import { Button } from '../components/Button'
@@ -229,11 +229,11 @@ export function RosterEditor({
   onDraftChange?: (draft: RosterEditorDraft) => void
   /** Whether the draft differs from the game it was opened over, as it changes. */
   onDirtyChange?: (dirty: boolean) => void
-  onEditPlayer?: (userId: number, name: string, teamId: string) => void
+  onEditPlayer?: (userId: string, name: string, teamId: string) => void
   unrostered?: Unrostered
   onRosteredChange?: (
     side: Side,
-    userId: number,
+    userId: string,
     rostered: boolean
   ) => Promise<Unrostered>
   rosterLoading?: boolean
@@ -356,7 +356,7 @@ export function RosterEditor({
     return next
   }
   const toggleRostered = async (
-    userId: number,
+    userId: string,
     rostered: boolean
   ): Promise<void> => {
     if (onRosteredChange == null || rosterBusy || savingRoster) return

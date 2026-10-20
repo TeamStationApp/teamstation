@@ -1,7 +1,8 @@
-import { asEither, asNumber, asObject, asString } from 'cleaners'
+import { asEither, asObject, asString } from 'cleaners'
 import { type Kysely, sql } from 'kysely'
 
 import { asLiteral } from '../../common/asLiteral'
+import { asUserId } from '../../common/userId'
 import type { Database } from '../db/database'
 
 /**
@@ -20,7 +21,7 @@ export type GameNotifyKind = 'plays' | 'game' | 'lineups'
 /** The two payloads: one game's change, or a player's song on one team. */
 export type GameChangePayload =
   | { game: string; kind: GameNotifyKind }
-  | { team: string; kind: 'walkUpSong'; userId: number }
+  | { team: string; kind: 'walkUpSong'; userId: string }
 
 export const asGameChangePayload = asEither(
   asObject({
@@ -30,7 +31,7 @@ export const asGameChangePayload = asEither(
   asObject({
     team: asString,
     kind: asLiteral('walkUpSong'),
-    userId: asNumber
+    userId: asUserId
   })
 )
 

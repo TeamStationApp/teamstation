@@ -12,7 +12,7 @@ export interface FixtureFile {
 }
 
 export interface RosterPlayer {
-  userId: number
+  userId: string
   gumboId: number | null
   isPlayer: boolean
 }
@@ -42,11 +42,11 @@ export function mapScorebookFixture(
 ): MappedFixture {
   const awayPlayers = awayRoster
     .filter(row => row.isPlayer)
-    .sort((a, b) => a.userId - b.userId)
+    .sort((a, b) => asGumboId(a.gumboId) - asGumboId(b.gumboId))
   const awayIds = new Set(awayPlayers.map(row => row.userId))
   const homePlayers = homeRoster
     .filter(row => row.isPlayer && !awayIds.has(row.userId))
-    .sort((a, b) => a.userId - b.userId)
+    .sort((a, b) => asGumboId(a.gumboId) - asGumboId(b.gumboId))
 
   if (awayPlayers.length < 10) {
     throw new Error(
@@ -283,7 +283,7 @@ async function fetchRoster(
     throw new Error(`GET roster failed: ${res.status} ${await res.text()}`)
   }
   const rows = (await res.json()) as Array<{
-    userId: number
+    userId: string
     gumboId: number | null
     isPlayer: boolean
   }>

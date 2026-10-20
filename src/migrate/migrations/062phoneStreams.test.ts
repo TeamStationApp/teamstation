@@ -2,11 +2,14 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
-import { mintUserId } from '../../common/mintUserId'
-import { migrations } from '../migrations'
+import { mintUserId } from '../../test/historicalUserIds'
+import { migrations as allMigrations } from '../migrations'
 import { migrateDown, migrateUp } from '../runner'
 import { type SchemaSnapshot, schemaSnapshot } from '../schemaSnapshot'
 import { testDatabaseUrl } from '../testDatabase'
+
+// Exercise this historical migration independently of later identity changes.
+const migrations = allMigrations.filter(m => m.name <= '062phoneStreams')
 
 describe('062 keys streams by device and keeps a phone’s recording', function () {
   this.timeout(60000)

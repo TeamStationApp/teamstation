@@ -49,6 +49,8 @@ function table(rows: JsonObject[], keys = ['id']): TableSnapshot {
 function sample(): UserIdSnapshot {
   return {
     version: 1,
+    captureStartedAt: '2026-01-01T00:00:00.000Z',
+    captureFinishedAt: '2026-01-01T00:00:00.000Z',
     migrations: ['065radarReadings'],
     userIdType: 'bigint',
     userColumns: {
@@ -98,7 +100,7 @@ function sample(): UserIdSnapshot {
     },
     preserved: { audit_log: 'unchanged' },
     api: {
-      '/players/1/stats': { userId: 1, hits: 2, lines: [{ userId: 1, h: 2 }] }
+      '/players/1/stats': { userId: 1, hits: 2, batting: { userId: 1, h: 2 } }
     }
   }
 }
@@ -107,6 +109,8 @@ function migrated(): UserIdSnapshot {
   const snapshot = sample()
   const id = userIdOfGumbo(1)
   snapshot.userIdType = 'text'
+  snapshot.captureStartedAt = '2026-01-02T00:00:00.000Z'
+  snapshot.captureFinishedAt = snapshot.captureStartedAt
   snapshot.migrations.push('068gumboIds', '069userIds', '070playerGumboIds')
   snapshot.userColumns = {
     users: ['merged_into'],
@@ -134,15 +138,14 @@ function migrated(): UserIdSnapshot {
     amount: 1
   }
   snapshot.tables.gumbo_ids = table(
-    [{ gumbo_id: 1, user_id: id }],
+    [{ gumbo_id: 1, user_id: id, created_at: '2026-01-01T12:00:00.000Z' }],
     ['gumbo_id']
   )
   snapshot.api = {
     [`/players/${id}/stats`]: {
       userId: id,
-      gumboId: 1,
       hits: 2,
-      lines: [{ userId: id, gumboId: 1, h: 2 }]
+      batting: { userId: id, h: 2 }
     }
   }
   return snapshot
@@ -213,6 +216,59 @@ describe('user identity comparison', function () {
     expect(compareUserIds(sample(), migrated()).equal).equals(true)
   })
 
+  it('preserves request inventories while mapping player paths and roster/stat identities', function () {
+    const before = sample()
+    const after = migrated()
+    before.apiInventory = {
+      '/players/1/stats': { status: 200, pages: 1, total: null, itemIds: [] },
+      '/teams/tem_one/roster': {
+        status: 200,
+        pages: 1,
+        total: 1,
+        itemIds: ['1']
+      }
+    }
+    after.apiInventory = {
+      [`/players/${userIdOfGumbo(1)}/stats`]: {
+        status: 200,
+        pages: 1,
+        total: null,
+        itemIds: []
+      },
+      '/teams/tem_one/roster': {
+        status: 200,
+        pages: 1,
+        total: 1,
+        itemIds: [userIdOfGumbo(1)]
+      }
+    }
+    for (const path of [
+      '/teams/tem_one/stats',
+      '/teams/tem_one/stats?kind=pitching'
+    ]) {
+      before.apiInventory[path] = {
+        status: 200,
+        pages: 1,
+        total: 1,
+        itemIds: ['1']
+      }
+      after.apiInventory[path] = {
+        status: 200,
+        pages: 1,
+        total: 1,
+        itemIds: [userIdOfGumbo(1)]
+      }
+    }
+    expect(compareUserIds(before, after).equal).equals(true)
+    after.apiInventory['/teams/tem_one/roster'].itemIds = []
+    expect(compareUserIds(before, after).equal).equals(false)
+    const decimal = sample()
+    decimal.tables.users.rows[0].id = '1'
+    expect((normalizeIdentity(decimal).tables as any).users[0].id).equals(
+      userIdOfGumbo(1)
+    )
+  })
+
   it('does not hide changed stats, missing fields, metadata or incorrect gumbo mappings', function () {
     for (const change of [
       (s: UserIdSnapshot) => {
@@ -245,13 +301,106 @@ describe('user identity comparison', function () {
       expect(compareUserIds(sample(), after).equal).equals(false)
     }
     const wrong = migrated()
-    wrong.api[`/players/${userIdOfGumbo(1)}/stats`] = {
-      userId: userIdOfGumbo(1),
-      gumboId: 2
-    }
+    wrong.api['/teams/tem_one/roster'] = [
+      {
+        userId: userIdOfGumbo(1),
+        gumboId: 2
+      }
+    ]
     expect(() => compareUserIds(sample(), wrong)).throws(
       'Incorrect API gumbo mapping'
     )
+  })
+
+  it('transforms only enumerated API object paths and retains all other identity-shaped fields', () => {
+    const id = userIdOfGumbo(1)
+    const cases: Array<[string, Json, Json]> = [
+      ['/teams/tem_one/roster', [{ userId: 1 }], [{ userId: id, gumboId: 1 }]],
+      ['/teams/tem_one/stats', [{ userId: 1 }], [{ userId: id }]],
+      ['/teams/tem_one/stats?kind=pitching', [{ userId: 1 }], [{ userId: id }]],
+      [
+        '/seasons/sea_one/stats',
+        { batting: [{ userId: 1 }], pitching: [{ userId: 1 }] },
+        { batting: [{ userId: id }], pitching: [{ userId: id }] }
+      ],
+      [
+        '/seasons/sea_one/stats?kind=pitching',
+        { batting: [], pitching: [{ userId: 1 }] },
+        { batting: [], pitching: [{ userId: id }] }
+      ],
+      [
+        '/games/gam_one/box-score',
+        { batting: [{ userId: 1 }], pitching: [] },
+        { batting: [{ userId: id }], pitching: [] }
+      ],
+      [
+        '/games/gam_one',
+        { guestPlayers: { away: [{ userId: 1 }], home: [] } },
+        { guestPlayers: { away: [{ userId: id, gumboId: 1 }], home: [] } }
+      ]
+    ]
+    for (const [path, oldBody, newBody] of cases) {
+      const before = sample()
+      const after = migrated()
+      before.api[path] = oldBody
+      after.api[path] = newBody
+      const raw = structuredClone(before)
+      const result = compareUserIds(before, after)
+      expect(result.equal, path).equals(true)
+      expect(
+        result.transformations.some(line =>
+          line.startsWith(`identity api:${path}`)
+        )
+      ).equals(true)
+      expect(before).deep.equals(raw)
+      for (const key of [
+        'userId',
+        'actorId',
+        'playerUserId',
+        'recipientUserId',
+        'guardianUserId',
+        'hostingAuthorizerUserId',
+        'gumboId'
+      ]) {
+        const a = structuredClone(before)
+        const b = structuredClone(after)
+        const target = (body: Json): JsonObject =>
+          (Array.isArray(body) ? body[0] : body) as JsonObject
+        target(a.api[path]).unexpected = { [key]: 1 }
+        target(b.api[path]).unexpected = { [key]: id }
+        expect(compareUserIds(a, b).equal, `${path}:${key}`).equals(false)
+      }
+    }
+    for (const path of ['/unknown', '/players/1/plays', '/players/1/unknown']) {
+      const before = sample()
+      const after = migrated()
+      before.api[path] = [{ userId: 1 }]
+      after.api[path.replace('/players/1/', `/players/${id}/`)] = [
+        { userId: id }
+      ]
+      expect(compareUserIds(before, after).equal).equals(false)
+    }
+    const before = sample()
+    const after = migrated()
+    before.api['/teams/tem_one/roster'] = [{ userId: 1 }]
+    after.api['/teams/tem_one/roster'] = [{ userId: id }]
+    expect(compareUserIds(before, after).equal).equals(false)
+    after.api['/teams/tem_one/roster'] = [{ userId: id, gumboId: 1 }]
+    expect(compareUserIds(before, after).equal).equals(true)
+    const malformedBodies: Json[] = [
+      null,
+      {},
+      [null],
+      [{ other: 1 }],
+      { items: [{ userId: 1 }] }
+    ]
+    for (const malformed of malformedBodies) {
+      const broken = structuredClone(after)
+      broken.api['/teams/tem_one/roster'] = malformed
+      expect(compareUserIds(before, broken).equal).equals(false)
+    }
+    ;(after.api[`/players/${id}/stats`] as JsonObject).gumboId = 1
+    expect(compareUserIds(before, after).equal).equals(false)
   })
 
   it('compares the same schema exactly, including gumbo timestamps and meaningful array order', function () {
@@ -306,9 +455,9 @@ describe('user identity comparison', function () {
         ['/one'],
         'https://example.test/',
         'synthetic',
-        request([1])
+        request([{ id: 'one' }])
       )
-    ).deep.equals({ '/one': [1] })
+    ).deep.equals({ '/one': [{ id: 'one' }] })
     for (const run of [
       async () =>
         await snapshotApi(
@@ -383,26 +532,82 @@ describe('user identity snapshot across real database schemas', function () {
       values ('gps_one', 'gam_one', 'tem_one', 1, 2, 2, 1)`)
     await pool.query(`insert into events (id, "gameId", gumbo) values
       ('evt_one', 'gam_one', '{"about":{"atBatIndex":0},"result":{"eventType":"game_advisory"}}')`)
+    await pool.query(`insert into audit_log (id, actor_user_id, method, path, before)
+      values ('aud_history', 1, 'POST', '/example', '{"userId":1}')`)
+    await pool.query(`insert into creation_idempotency (user_id, key, body_hash, response)
+      values (1, 'fixture-key', 'fixture-hash', '{"userId":1}')`)
     // Capture each schema with the final adapter. The HTTP server runs the
     // current application schema; older application APIs are proved by the
     // pinned A/B/C deployment comparison.
     const client = await pool.connect()
     try {
-      const original = { ...(await snapshotSql(client)), api: {} }
+      const capture = async (): Promise<UserIdSnapshot> => ({
+        ...(await snapshotSql(client)),
+        api: {},
+        captureStartedAt: new Date().toISOString(),
+        captureFinishedAt: new Date().toISOString()
+      })
+      const original = await capture()
       expect(original.migrations.at(-1)).equals('065radarReadings')
+      expect(original.absentTables).deep.equals([
+        'game_guest_details',
+        'game_placeholder_guests',
+        'gumbo_ids'
+      ])
+      expect(original.tables.users.types!.id).equals('bigint')
+      expect(original.preservedCounts!.audit_log).equals(1)
       await migrateUp(
         pool,
         migrations.filter(m => m.name > '065radarReadings' && m.name < '068')
       )
-      const rostered = { ...(await snapshotSql(client)), api: {} }
+      const rostered = await capture()
+      expect(
+        compareUserIds(original, rostered, {
+          allowPlaceholders: true,
+          allowMerged: true
+        }).differences
+      ).deep.equals([])
       await migrateUp(
         pool,
         migrations.filter(m => m.name.startsWith('068'))
       )
-      const separated = { ...(await snapshotSql(client)), api: {} }
+      const separated = await capture()
       expect(compareUserIds(rostered, separated).differences).deep.equals([])
       expect(separated.userColumns.gumbo_ids).deep.equals(['user_id'])
       expect(separated.tables.game_guest_details).not.equals(undefined)
+      await migrateUp(
+        pool,
+        migrations.filter(m => m.name >= '069')
+      )
+      const canonical = await capture()
+      expect(compareUserIds(separated, canonical).differences).deep.equals([])
+      expect(canonical.absentTables).deep.equals([])
+      expect(canonical.tables.users.types!.id).equals('text')
+      await pool.query(
+        `update audit_log set before = '{"userId":2}' where id = 'aud_history'`
+      )
+      expect(compareUserIds(canonical, await capture()).equal).equals(false)
+      await pool.query(
+        `update audit_log set before = '{"userId":1}' where id = 'aud_history'`
+      )
+      await pool.query(
+        `update creation_idempotency set response = '{"userId":2}' where key = 'fixture-key'`
+      )
+      expect(compareUserIds(canonical, await capture()).equal).equals(false)
+      await pool.query(
+        `update creation_idempotency set response = '{"userId":1}' where key = 'fixture-key'`
+      )
+      const missing = structuredClone(canonical)
+      missing.absentTables!.push('unexpected_table')
+      expect(compareUserIds(separated, missing).equal).equals(false)
+      const wrongType = structuredClone(canonical)
+      wrongType.tables.memberships.types!.user_id = 'bigint'
+      expect(() => compareUserIds(separated, wrongType)).throws(
+        'Incorrect user column type'
+      )
+      const changedHistory = structuredClone(canonical)
+      changedHistory.preservedCounts!.audit_log++
+      expect(compareUserIds(separated, changedHistory).equal).equals(false)
     } finally {
       client.release()
     }
@@ -456,7 +661,7 @@ describe('user identity snapshot across real database schemas', function () {
 
   it('captures every listed endpoint from a real authenticated server and removes its session', async function () {
     baseline = await captureUserIds(pool, origin)
-    expect(baseline.userIdType).equals('bigint')
+    expect(baseline.userIdType).equals('text')
     expect(baseline.tables.users.rows).has.length(3)
     expect(Object.keys(baseline.api)).deep.equals(snapshotPaths(baseline))
     expect(Object.keys(baseline.api)).has.length(21)
@@ -475,7 +680,8 @@ describe('user identity snapshot across real database schemas', function () {
       async () => Response.json({}, { status: 500 }),
       async () => {
         await pool.query(
-          `update users set display_name = 'Hank Aaron' where id = 3`
+          `update users set display_name = 'Hank Aaron' where id = $1`,
+          [userIdOfGumbo(3)]
         )
         return Response.json([])
       }
@@ -501,11 +707,13 @@ describe('user identity snapshot across real database schemas', function () {
     } catch (error) {
       expect((error as Error).message).contains('No enabled node admin')
     }
-    await pool.query('update users set is_admin = true where id = 1')
+    await pool.query('update users set is_admin = true where id = $1', [
+      userIdOfGumbo(1)
+    ])
     const client = await pool.connect()
     try {
       const snap = await snapshotSql(client)
-      expect(snap.migrations.at(-1)).equals('068gumboIds')
+      expect(snap.migrations.at(-1)).equals(migrations.at(-1)!.name)
     } finally {
       client.release()
     }

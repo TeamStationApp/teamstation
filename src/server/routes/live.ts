@@ -109,7 +109,7 @@ export function liveRoutes(
    * which its administrators are — or nothing at all.
    */
   const gameToManage = async (
-    userId: number,
+    userId: string,
     isAdmin: boolean,
     gameId: string
   ): Promise<{ game: GameRow; teamId: string }> => {
@@ -128,7 +128,7 @@ export function liveRoutes(
 
   /** One of this person's own cameras, or nothing. Never somebody else's. */
   const myStream = async (
-    userId: number,
+    userId: string,
     gameId: string,
     streamId: string
   ): Promise<LiveStreamRow> => {
@@ -631,7 +631,7 @@ export function liveRoutes(
 async function summaryOf(
   db: Kysely<Database>,
   row: LiveStreamRow,
-  askedBy: number
+  askedBy: string
 ): Promise<LiveStream> {
   const [status, names] = await Promise.all([
     statusOf(db, row.id),
@@ -652,7 +652,7 @@ function oneStream(
   row: LiveStreamRow,
   status: LiveStatus | null,
   ownerName: string,
-  askedBy: number,
+  askedBy: string,
   inList = false
 ): LiveStream {
   const device = inList || row.deviceId != null
@@ -687,7 +687,7 @@ function oneStream(
 async function listFor(
   db: Kysely<Database>,
   gameId: string,
-  askedBy: number
+  askedBy: string
 ): Promise<unknown> {
   const rows = await liveStreamsFor(db, gameId)
   const names = await namesFor(
@@ -723,8 +723,8 @@ async function listFor(
 /** Who these people are, in the words a screen would use. */
 async function namesFor(
   db: Kysely<Database>,
-  userIds: number[]
-): Promise<Map<number, string>> {
+  userIds: string[]
+): Promise<Map<string, string>> {
   const wanted = [...new Set(userIds)]
   if (wanted.length === 0) return new Map()
   const rows = await db

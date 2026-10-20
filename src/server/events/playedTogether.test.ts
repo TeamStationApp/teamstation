@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { emptyStatExtras } from '../../common/statExtras'
+import { userIdOfGumbo } from '../../common/userId'
 import { statsDatabase } from '../../test/statsDatabase'
 import { bothPlayedTogether } from './playedTogether'
 
@@ -24,9 +25,13 @@ describe('co-appearance with expanded stat rows', function () {
         }))
       )
       .execute()
-    const together = await bothPlayedTogether(db, ids)
-    expect(together.has(`${ids[0]}|${ids[1]}`)).equals(true)
-    expect(together.has(`${ids[0]}|${ids[2]}`)).equals(false)
+    const together = await bothPlayedTogether(db, ids.map(userIdOfGumbo))
+    expect(
+      together.has(`${userIdOfGumbo(ids[0])}|${userIdOfGumbo(ids[1])}`)
+    ).equals(true)
+    expect(
+      together.has(`${userIdOfGumbo(ids[0])}|${userIdOfGumbo(ids[2])}`)
+    ).equals(false)
     await db
       .insertInto('events')
       .values({
@@ -40,7 +45,9 @@ describe('co-appearance with expanded stat rows', function () {
       })
       .execute()
     expect(
-      (await bothPlayedTogether(db, ids)).has(`${ids[0]}|${ids[2]}`)
+      (await bothPlayedTogether(db, ids.map(userIdOfGumbo))).has(
+        `${userIdOfGumbo(ids[0])}|${userIdOfGumbo(ids[2])}`
+      )
     ).equals(true)
   })
 })

@@ -138,9 +138,9 @@ async function eventPeople(
   event: ResolvedEvent,
   actor: Actor,
   media?: MediaContext
-): Promise<{ attendees: EventAttendee[]; replyUserIds: number[] }> {
-  const identities = new Map<number, OnePerson>()
-  const identity = async (id: number): Promise<OnePerson> => {
+): Promise<{ attendees: EventAttendee[]; replyUserIds: string[] }> {
+  const identities = new Map<string, OnePerson>()
+  const identity = async (id: string): Promise<OnePerson> => {
     const cached = identities.get(id)
     if (cached != null) return cached
     const person = await onePerson(db, id)
@@ -159,21 +159,21 @@ async function eventPeople(
     .where('scope_id', '=', event.teamId)
     .execute()
   const participants = new Map<
-    number,
+    string,
     {
       isPlayer: boolean
       positions: Set<string>
       roles: Set<Role>
-      children: Set<number>
+      children: Set<string>
     }
   >()
   const participant = (
-    id: number
+    id: string
   ): {
     isPlayer: boolean
     positions: Set<string>
     roles: Set<Role>
-    children: Set<number>
+    children: Set<string>
   } => {
     let row = participants.get(id)
     if (row == null) {
@@ -211,7 +211,7 @@ async function eventPeople(
           .where('disabled_at', 'is', null)
           .where('merged_into', 'is', null)
           .execute()
-  const playerAliases = new Set<number>()
+  const playerAliases = new Set<string>()
   for (const player of activePlayers)
     for (const alias of (await identity(player.id)).userIds)
       playerAliases.add(alias)
@@ -249,7 +249,7 @@ async function eventPeople(
     .where('scope_id', 'in', event.teamIds)
     .where('role', 'in', ['admin', 'coach', 'assistant'])
     .execute()
-  const rostered = new Set<number>()
+  const rostered = new Set<string>()
   let mayReplySelf = false
   for (const member of eventMembers) {
     const id = (await identity(member.user_id)).userId
@@ -259,7 +259,7 @@ async function eventPeople(
   for (const staff of eventStaff)
     if ((await identity(staff.user_id)).userId === parent.userId)
       mayReplySelf = true
-  const ownIds = new Set<number>(mayReplySelf ? [parent.userId] : [])
+  const ownIds = new Set<string>(mayReplySelf ? [parent.userId] : [])
   for (const link of ownLinks) {
     const id = (await identity(link.related_user_id)).userId
     if (rostered.has(id)) ownIds.add(id)
@@ -294,7 +294,7 @@ async function eventPeople(
       })
     ])
   )
-  const aliases = new Set<number>()
+  const aliases = new Set<string>()
   for (const user of users)
     for (const alias of (await identity(user.id)).userIds) aliases.add(alias)
   const table = event.eventKind === 'game' ? 'game_rsvps' : 'team_event_rsvps'
@@ -309,7 +309,7 @@ async function eventPeople(
           .orderBy('updated_at', 'desc')
           .orderBy('user_id')
           .execute()
-  const replies = new Map<number, Rsvp>()
+  const replies = new Map<string, Rsvp>()
   for (const row of stored) {
     const id = (await identity(row.user_id)).userId
     if (!replies.has(id)) replies.set(id, row.response)
@@ -466,7 +466,7 @@ export async function saveEventRsvp(
   db: Kysely<Database>,
   actor: Actor,
   id: string,
-  userId: number,
+  userId: string,
   response: Rsvp
 ): Promise<void> {
   await atomic(db, async trx => {

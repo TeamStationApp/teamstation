@@ -5,6 +5,7 @@ import { expect } from 'chai'
 import { it } from 'mocha'
 
 import { asManagePage } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { groupFixture } from '../../test/groupFixtures'
 
 it('marks roster players independently of email and removes only the chosen team grant', async function () {
@@ -19,13 +20,16 @@ it('marks roster players independently of email and removes only the chosen team
       .values(
         [103, 104, 106].map(userId => ({
           id: `mem_manage_players_${userId}`,
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           team_id: f.teamA,
           is_player: userId !== 106
         }))
       )
       .execute()
-    await f.h.db.deleteFrom('user_emails').where('user_id', '=', 103).execute()
+    await f.h.db
+      .deleteFrom('user_emails')
+      .where('user_id', '=', userIdOfGumbo(103))
+      .execute()
     const response = await f.h.request(
       'GET',
       `/manage/team/${f.teamA}`,
@@ -39,21 +43,25 @@ it('marks roster players independently of email and removes only the chosen team
       '200 ' + JSON.stringify(page)
     )
     for (const userId of [103, 104, 106]) {
-      const person = page.people.find(row => row.userId === userId)!
+      const person = page.people.find(
+        row => row.userId === userIdOfGumbo(userId)
+      )!
       expect(person.teams.find(row => row.id === f.teamA)!.isPlayer).equals(
-        userId !== 106
+        userIdOfGumbo(userId) !== userIdOfGumbo(106)
       )
-      expect(person.emails.length > 0).equals(userId !== 103)
+      expect(person.emails.length > 0).equals(
+        userIdOfGumbo(userId) !== userIdOfGumbo(103)
+      )
     }
     const removal = await f.h.request(
       'DELETE',
-      `/manage/team/${f.teamA}/people/103`,
+      `/manage/team/${f.teamA}/people/${userIdOfGumbo(103)}`,
       undefined,
       101
     )
     const body = await removal.json()
     lines.push(
-      '$ DELETE /api/v1/manage/team/<fixture>/people/103',
+      '$ DELETE /api/v1/manage/team/<fixture>/people/usr_111111111111111111112n',
       `${removal.status} ${JSON.stringify(body)}`
     )
     expect(removal.status).equals(200)
@@ -62,7 +70,7 @@ it('marks roster players independently of email and removes only the chosen team
       await f.h.db
         .selectFrom('memberships')
         .select('id')
-        .where('user_id', '=', 103)
+        .where('user_id', '=', userIdOfGumbo(103))
         .where('team_id', '=', f.teamA)
         .execute()
     ).length(0)

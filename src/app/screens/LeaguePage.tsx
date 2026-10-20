@@ -40,9 +40,9 @@ export interface LeaguePageProps {
   onLink: (choice: GroupLinkChoice) => void
   onCreateExternal?: (custodian: GroupRef) => void
   /** A player on the People tab, opened on their page. */
-  onOpenPlayer?: (userId: number, name: string) => void
+  onOpenPlayer?: (userId: string, name: string) => void
   /** Anybody else on the People tab, as their profile. */
-  onOpenPerson?: (userId: number, name: string) => void
+  onOpenPerson?: (userId: string, name: string) => void
   /** Called after a relationship is broken, to load the page again. */
   onChanged: () => void
   initialTab?: string

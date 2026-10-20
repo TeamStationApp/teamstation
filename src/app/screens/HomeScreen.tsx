@@ -48,7 +48,7 @@ export interface HomeScreenProps {
    * A player the person is a guardian of, opened with no team: their whole
    * career rather than one team's part of it.
    */
-  onOpenPlayer?: (userId: number, title: string) => void
+  onOpenPlayer?: (userId: string, title: string) => void
 }
 
 /**
