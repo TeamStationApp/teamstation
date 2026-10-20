@@ -192,7 +192,8 @@ export function validateRoster(
  * else the man who took his place (a pinch hitter), `nextBatter` when the
  * batter due was on base, and otherwise the next one in the old order who is
  * still in the new one and not on base. Who took whose place is read by
- * `placesTaken`, and a change it cannot read is refused with its reason. A
+ * `placesTaken`, and a change it cannot read is refused with its reason;
+ * before the game nobody has taken a place, and every new order stands. A
  * man who takes the place of a runner of the side at bat takes his base, as
  * a pinch runner; the runner leaves the bases. `takers` is who took whose
  * place on each side, for the announcements.
@@ -245,6 +246,15 @@ export function applyRoster(
   const bases = baseIds(next)
   const places: Partial<Record<Side, Places>> = {}
   for (const side of ['away', 'home'] as const) {
+    // Before the game nobody has taken anybody's place: the new order stands
+    // as it is, however many men came into it or left it.
+    if (opening) {
+      places[side] = {
+        takers: new Map(),
+        order: [...setup.sides[side].battingOrder]
+      }
+      continue
+    }
     const before = state.liveData.boxscore.teams[side]
     const read = placesTaken(
       before.battingOrder,

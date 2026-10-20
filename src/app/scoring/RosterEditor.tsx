@@ -32,11 +32,13 @@ import { setupOf } from '../../common/scoring/state'
 import type { Unrostered } from '../../common/unroster'
 import { Button } from '../components/Button'
 import { Icon } from '../components/Icon'
-import { lstrings } from '../locales/strings'
+import { lstrings, plural, sprintf } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { withRosterDetails } from './currentSetup'
 import { DefensiveField } from './DefensiveField'
 import { EditRosterList } from './EditRosterList'
+import type { LineupQrResult } from './lineupQrImport'
+import { LineupShareSheet } from './LineupShareSheet'
 import { addPlaceholderPlayers } from './placeholderPlayers'
 import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
 import {
@@ -46,6 +48,7 @@ import {
   type PlayerDraft
 } from './playerDraft'
 import { PlayerEntrySheet } from './PlayerEntrySheet'
+import type { QrScannerProps } from './qrScannerProps'
 import type { ChatTurn } from './RosterChat'
 import {
   type RosterDictationOptions,
@@ -162,6 +165,7 @@ export function RosterEditor({
   dictation,
   dictate,
   dictationAvailable = false,
+  lineupScanner,
   initialDraft,
   defaultSide,
   rosters,
@@ -204,6 +208,15 @@ export function RosterEditor({
    * microphone's glyph only when it does.
    */
   dictationAvailable?: boolean
+  /**
+   * The camera Share Lineup's scan step uses, and whether it can scan: the
+   * platform's own by default (none on the web).
+   */
+  lineupScanner?: {
+    component: React.ComponentType<QrScannerProps>
+    supported: boolean
+    devBuild?: boolean
+  }
   /** A scorekeeper's Cancel: the screen closes the sheet, dropping the draft. */
   onCancel?: () => void
   /**
@@ -298,6 +311,14 @@ export function RosterEditor({
   const [areaHeight, setAreaHeight] = useState(0)
   const rosterMinimum = defense ? defenseRosterMinimum(areaHeight, dense) : 0
   const [adding, setAdding] = useState(false)
+  const [sharing, setSharing] = useState(false)
+  // The line under the lists after an import, held with the draft and side
+  // it describes, so the next change or a switch of team clears it.
+  const [importNote, setImportNote] = useState<{
+    draft: ScoringSessionState
+    side: Side
+    text: string
+  }>()
   const [created, setCreated] = useState<Record<string, RosterEntry[]>>({})
   const [editingLocal, setEditingLocal] = useState<number>()
   const [nextBatter, setNextBatter] = useState<number | undefined>(
@@ -534,16 +555,42 @@ export function RosterEditor({
   const row = scoringPlayerCardStyle(theme)
   const teamId = draft.gameData.teams[side].id
   const heldRoster = rosters?.[teamId] ?? []
-  const rosterRows = editRosterRows(
-    [
-      ...heldRoster,
-      ...(created[teamId] ?? []).filter(
-        entry => !heldRoster.some(held => held.userId === entry.userId)
-      )
-    ],
-    draft,
-    side
-  )
+  // The team's roster as the editor shows it: what was read, and the players
+  // created here since. Scan matches against the same list.
+  const teamRoster = [
+    ...heldRoster,
+    ...(created[teamId] ?? []).filter(
+      entry => !heldRoster.some(held => held.userId === entry.userId)
+    )
+  ]
+  const rosterRows = editRosterRows(teamRoster, draft, side)
+  const imported = (result: LineupQrResult): void => {
+    const count = result.added.length + result.reused.length
+    setDraft(result.draft)
+    // As Cancel does: a chosen next batter or a staged runner may name a
+    // player the import benched; the scorer chooses again on the new lineup.
+    setNextBatter(undefined)
+    setRunners([])
+    setMode('lineup')
+    setSharing(false)
+    setImportNote({
+      draft: result.draft,
+      side,
+      text:
+        plural(
+          count,
+          lstrings.lineupQr_imported_one,
+          lstrings.lineupQr_imported_other
+        ) +
+        (result.benched.length === 0
+          ? ''
+          : ' · ' + sprintf(lstrings.lineupQr_benched, result.benched.length))
+    })
+  }
+  const note =
+    importNote?.draft === draft && importNote.side === side
+      ? importNote.text
+      : undefined
   return (
     <View
       pointerEvents={spoken.busy ? 'none' : 'auto'}
@@ -581,6 +628,7 @@ export function RosterEditor({
                 onChange={index => {
                   sideChosen.current = true
                   setSide(index === 0 ? 'away' : 'home')
+                  setImportNote(undefined)
                 }}
               />
             </View>
@@ -660,6 +708,13 @@ export function RosterEditor({
               : undefined
           }
           onRetry={onRetryRoster}
+          {...(coach
+            ? {}
+            : {
+                onShareLineup: () => {
+                  setSharing(true)
+                }
+              })}
           onEditLocal={
             canEditLocal
               ? id => {
@@ -918,8 +973,44 @@ export function RosterEditor({
           }}
         />
       )}
+      {sharing && (
+        <LineupShareSheet
+          side={side}
+          draft={draft}
+          game={state.session}
+          nextBatter={nextBatter}
+          roster={teamRoster}
+          rosterLoading={rosterLoading}
+          rosterError={editError}
+          {...(lineupScanner == null
+            ? {}
+            : {
+                scanner: lineupScanner.component,
+                scannerSupported: lineupScanner.supported,
+                devBuild: lineupScanner.devBuild
+              })}
+          {...(onCreateGuest == null ? {} : { onCreateGuest })}
+          onImport={imported}
+          onClose={() => {
+            setSharing(false)
+          }}
+        />
+      )}
       <View testID="Roster footer" style={{ gap: dense && defense ? 2 : 6 }}>
         {!inlineValidation && <ScoringError message={validation} />}
+        {note != null && (
+          <Text
+            accessibilityRole="text"
+            numberOfLines={1}
+            style={{
+              color: theme.successColor,
+              fontFamily: theme.regularTextFont,
+              fontSize: 13
+            }}
+          >
+            {note}
+          </Text>
+        )}
         <View
           testID="Roster footer bar"
           style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}

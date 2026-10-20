@@ -287,6 +287,31 @@ describe('roster checks', function () {
     expect(pitched.liveData.plays.currentPlay!.matchup.batter.id).equals(3)
   })
 
+  it('takes a whole new order before the game, however many come in or leave', function () {
+    const order = (state: ReturnType<typeof game>): number[] =>
+      Array.from({ length: 11 }, (_, n) =>
+        addPlayer(state, 'away', 900 + n, `New ${n + 1}`, '')
+      )
+    // Nine men out and eleven in, as a lineup read from another app is:
+    // nobody can be said to have taken anybody's place.
+    const state = game()
+    const eleven = order(state)
+    const setup = setupOf(state)
+    setup.sides.away.battingOrder = eleven
+    const applied = applyRoster(state, setup)
+    expect(applied.error).equals(undefined)
+    expect(
+      applied.state!.liveData.boxscore.teams.away.battingOrder
+    ).deep.equals(setup.sides.away.battingOrder)
+    expect(applied.takers!.away.size).equals(0)
+    // Once the game has begun, the same change is still refused.
+    const begun = after(game(), { type: 'pitch', call: 'B' })
+    const late = order(begun)
+    const later = setupOf(begun)
+    later.sides.away.battingOrder = late
+    expect(applyRoster(begun, later).error).matches(/^Put only one man in/)
+  })
+
   it('refuses a next batter who is already on base', function () {
     const state = walk(game())
     const setup = setupOf(state)

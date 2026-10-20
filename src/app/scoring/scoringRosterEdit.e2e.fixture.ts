@@ -282,6 +282,12 @@ export async function rosterEditFixture(
     const gameId = `roster${Date.now()}`
     const stored: StoredGame = { plays: [], currentPlay: null }
     const trace: string[] = []
+    let nextGuest = 9000
+    // The game's guests, as the server lists them on the game.
+    const guests: Record<'away' | 'home', Array<Record<string, unknown>>> = {
+      away: [],
+      home: []
+    }
     let rosterFailure = false
     let saveFailure = false
     let paused = false
@@ -375,8 +381,46 @@ export async function rosterEditFixture(
             })),
             currentPlay: stored.currentPlay
           }
+        } else if (
+          req.method === 'POST' &&
+          /\/games\/[^/]+\/guest-players$/.test(u.pathname)
+        ) {
+          // A game-only guest, as the server makes one: a new gumbo id.
+          let text = ''
+          for await (const chunk of req) text += String(chunk)
+          const guest = JSON.parse(text) as {
+            side: 'away' | 'home'
+            firstName: string
+            lastName: string
+            jersey?: string | null
+          }
+          const id = nextGuest++
+          trace.push(`Guest ${guest.firstName} ${guest.lastName}`)
+          res.statusCode = 201
+          body = {
+            userId: userIdOfGumbo(id),
+            gumboId: id,
+            shortName: [guest.firstName, guest.lastName]
+              .filter(Boolean)
+              .join(' '),
+            jersey: guest.jersey ?? null,
+            bats: null,
+            throws: null,
+            positions: [],
+            isPlayer: false,
+            role: 'member',
+            section: 'player',
+            staffRoles: [],
+            inheritedFrom: null
+          }
+          guests[guest.side].push(body as Record<string, unknown>)
         } else if (/\/games\/[^/]+$/.test(u.pathname))
           body = {
+            guests: {
+              away: guests.away.map(row => row.gumboId),
+              home: guests.home.map(row => row.gumboId)
+            },
+            guestPlayers: guests,
             id: gameId,
             awayTeamId: 'away',
             homeTeamId: 'home',
