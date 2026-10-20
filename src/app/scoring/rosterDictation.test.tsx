@@ -19,6 +19,7 @@ import {
 } from '../../common/scoring/rosterCommands'
 import { ScoringSession as GameSession } from '../../common/scoring/session'
 import { copyState } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   dictatingHealth,
   type FakeDictation,
@@ -121,7 +122,7 @@ async function mount(
               // eslint-disable-next-line @typescript-eslint/only-throw-error -- Exercise an untyped transport rejection.
               if (more.createFailure != null) throw more.createFailure
               return asRosterEntry({
-                userId: 7001,
+                userId: userIdOfGumbo(7001),
                 gumboId: 7001,
                 shortName: player.firstName,
                 jersey: player.jersey,
@@ -245,7 +246,7 @@ describe('dictation on the roster screen', function () {
         }
         created.push(player.firstName)
         return asRosterEntry({
-          userId: 7000 + created.length,
+          userId: userIdOfGumbo(7000 + created.length),
           gumboId: 7000 + created.length,
           shortName: player.firstName,
           jersey: player.jersey,

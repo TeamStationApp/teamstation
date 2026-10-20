@@ -4,6 +4,7 @@ import {
   asNewRosterPlayer,
   type NewRosterPlayer
 } from '../common/playerSettings'
+import { userIdOfGumbo } from '../common/userId'
 
 let nextUserId = 8_800_001
 
@@ -16,7 +17,7 @@ export function mintedRosterEntry(
     .filter(part => part !== '')
     .join(' ')
   return {
-    userId,
+    userId: userIdOfGumbo(userId),
     gumboId: userId,
     shortName: shortName({
       id: userId,

@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { groupFixture } from '../test/groupFixtures'
 import {
@@ -64,7 +65,7 @@ async function main(): Promise<void> {
     await f.h.db
       .updateTable('users')
       .set({ is_admin: true })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     await f.h.db
       .updateTable('teams')
@@ -100,13 +101,16 @@ async function main(): Promise<void> {
       .values(
         [103, 104, 106].map(userId => ({
           id: `mem_pill_${userId}`,
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           team_id: f.teamA,
           is_player: true
         }))
       )
       .execute()
-    await f.h.db.deleteFrom('user_emails').where('user_id', '=', 103).execute()
+    await f.h.db
+      .deleteFrom('user_emails')
+      .where('user_id', '=', userIdOfGumbo(103))
+      .execute()
     for (let index = 0; index < 3; index++)
       await f.h.db
         .insertInto('games')
@@ -342,7 +346,7 @@ async function main(): Promise<void> {
       .insertInto('memberships')
       .values({
         id: 'mem_pill_self',
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         team_id: f.teamA,
         is_player: false
       })

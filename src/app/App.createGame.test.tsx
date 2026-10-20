@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 
 import { asSessionUser, TeamStationClient } from '../common/api'
 import { asGroupDetail, asSearchRow } from '../common/publicGroups'
+import { userIdOfGumbo } from '../common/userId'
 import { press, settle } from '../test/gameFormDom'
 import { App } from './App'
 
@@ -18,7 +19,11 @@ describe('actual app Create Game navigation', () => {
       const originals = Object.getOwnPropertyDescriptors(proto)
       const sent: Array<Parameters<TeamStationClient['proposeGame']>[0]> = []
       proto.whoAmI = async () =>
-        asSessionUser({ id: 101, displayName: 'Babe Ruth', isAdmin: false })
+        asSessionUser({
+          id: userIdOfGumbo(101),
+          displayName: 'Babe Ruth',
+          isAdmin: false
+        })
       proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
       proto.hasNotifications = async () => false
       proto.teams = async () => []

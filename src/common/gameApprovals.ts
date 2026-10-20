@@ -79,7 +79,7 @@ export interface GameRequestTerms {
   /** Reserved before publication, so pending new events keep one identity. */
   proposedGameId?: string
   replacesGameId?: string | null
-  hostingAuthorizerUserId?: number
+  hostingAuthorizerUserId?: string
   hostingAuthorizationSource?: 'initiator' | 'legacyReceipt'
 }
 

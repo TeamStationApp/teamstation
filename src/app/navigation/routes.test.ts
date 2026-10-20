@@ -403,20 +403,26 @@ describe('addresses', function () {
 
 describe('a player', function () {
   it('opens on Videos, with nothing else on the address', function () {
-    expect(parseRoute('/players/1')).deep.equals({
+    expect(parseRoute('/players/usr_1111111111111111111112')).deep.equals({
       name: 'player',
-      userId: '1'
+      userId: 'usr_1111111111111111111112'
     })
-    expect(routePath({ name: 'player', userId: '1' })).equals('/players/1')
-    expect(routePath({ name: 'player', userId: '1', tab: 'videos' })).equals(
-      '/players/1'
-    )
+    expect(
+      routePath({ name: 'player', userId: 'usr_1111111111111111111112' })
+    ).equals('/players/usr_1111111111111111111112')
+    expect(
+      routePath({
+        name: 'player',
+        userId: 'usr_1111111111111111111112',
+        tab: 'videos'
+      })
+    ).equals('/players/usr_1111111111111111111112')
   })
 
   it('carries what the stats are narrowed to, and reads it back', function () {
     const route = {
       name: 'player' as const,
-      userId: '1',
+      userId: 'usr_1111111111111111111112',
       tab: 'stats' as const,
       seasonId: 'sea_2',
       teamId: 'tem_3',
@@ -424,7 +430,7 @@ describe('a player', function () {
     }
     const path = routePath(route)
     expect(path).equals(
-      '/players/1?tab=stats&season=sea_2&team=tem_3&year=2026'
+      '/players/usr_1111111111111111111112?tab=stats&season=sea_2&team=tem_3&year=2026'
     )
     const [head, search] = path.split('?')
     expect(parseRoute(head, search)).deep.equals(route)
@@ -433,15 +439,23 @@ describe('a player', function () {
   // Each tab has a filter of its own, so one tab's narrowing on another's
   // address is a setting no screen honours. Dropped rather than carried.
   it('drops a filter from the tab it does not belong to', function () {
-    expect(parseRoute('/players/1', 'season=sea_2&team=tem_3')).deep.equals({
-      name: 'player',
-      userId: '1'
-    })
     expect(
-      parseRoute('/players/1', 'tab=stats&vseason=sea_2&vyear=2026')
+      parseRoute(
+        '/players/usr_1111111111111111111112',
+        'season=sea_2&team=tem_3'
+      )
     ).deep.equals({
       name: 'player',
-      userId: '1',
+      userId: 'usr_1111111111111111111112'
+    })
+    expect(
+      parseRoute(
+        '/players/usr_1111111111111111111112',
+        'tab=stats&vseason=sea_2&vyear=2026'
+      )
+    ).deep.equals({
+      name: 'player',
+      userId: 'usr_1111111111111111111112',
       tab: 'stats',
       seasonId: undefined,
       teamId: undefined,
@@ -450,25 +464,25 @@ describe('a player', function () {
     expect(
       routePath({
         name: 'player',
-        userId: '1',
+        userId: 'usr_1111111111111111111112',
         tab: 'stats',
         videoSeasonId: 'sea_2'
       })
-    ).equals('/players/1?tab=stats')
+    ).equals('/players/usr_1111111111111111111112?tab=stats')
     expect(
       routePath({
         name: 'player',
-        userId: '1',
+        userId: 'usr_1111111111111111111112',
         tab: 'teams',
         seasonId: 'sea_2'
       })
-    ).equals('/players/1?tab=teams')
+    ).equals('/players/usr_1111111111111111111112?tab=teams')
   })
 
   it('carries what the videos are narrowed to, and reads it back', function () {
     const route = {
       name: 'player' as const,
-      userId: '1',
+      userId: 'usr_1111111111111111111112',
       videoSeasonId: 'sea_2',
       videoTeamId: 'tem_3',
       videoYear: 2026,
@@ -476,25 +490,36 @@ describe('a player', function () {
     }
     const path = routePath(route)
     expect(path).equals(
-      '/players/1?vseason=sea_2&vteam=tem_3&vyear=2026&onTeam=t1'
+      '/players/usr_1111111111111111111112?vseason=sea_2&vteam=tem_3&vyear=2026&onTeam=t1'
     )
     const [head, search] = path.split('?')
     expect(parseRoute(head, search)).deep.equals(route)
     expect(
-      routePath({ name: 'player', userId: '1', tab: 'videos', videoYear: 2025 })
-    ).equals('/players/1?vyear=2025')
-    expect(parseRoute('/players/1', 'vyear=soon')).deep.equals({
+      routePath({
+        name: 'player',
+        userId: 'usr_1111111111111111111112',
+        tab: 'videos',
+        videoYear: 2025
+      })
+    ).equals('/players/usr_1111111111111111111112?vyear=2025')
+    expect(
+      parseRoute('/players/usr_1111111111111111111112', 'vyear=soon')
+    ).deep.equals({
       name: 'player',
-      userId: '1'
+      userId: 'usr_1111111111111111111112'
     })
   })
 
   it('carries the Teams tab, with or without a team, and reads it back', function () {
     for (const route of [
-      { name: 'player' as const, userId: 'u1', tab: 'teams' as const },
       {
         name: 'player' as const,
-        userId: 'u1',
+        userId: 'usr_1111111111111111111112',
+        tab: 'teams' as const
+      },
+      {
+        name: 'player' as const,
+        userId: 'usr_1111111111111111111112',
         tab: 'teams' as const,
         onTeam: 't1'
       }
@@ -503,15 +528,21 @@ describe('a player', function () {
       const [head, search] = path.split('?')
       expect(parseRoute(head, search)).deep.equals(route)
     }
-    expect(routePath({ name: 'player', userId: 'u1', tab: 'teams' })).equals(
-      '/players/u1?tab=teams'
-    )
+    expect(
+      routePath({
+        name: 'player',
+        userId: 'usr_1111111111111111111112',
+        tab: 'teams'
+      })
+    ).equals('/players/usr_1111111111111111111112?tab=teams')
   })
 
   it('ignores a year that is not one', function () {
-    expect(parseRoute('/players/1', 'tab=stats&year=soon')).deep.equals({
+    expect(
+      parseRoute('/players/usr_1111111111111111111112', 'tab=stats&year=soon')
+    ).deep.equals({
       name: 'player',
-      userId: '1',
+      userId: 'usr_1111111111111111111112',
       tab: 'stats',
       seasonId: undefined,
       teamId: undefined,
@@ -524,15 +555,25 @@ describe('a player', function () {
   })
 
   it('carries the team it was opened for to Settings, and reads it back', function () {
-    expect(parseRoute('/players/u1', 'tab=settings&onTeam=t1')).deep.equals({
+    expect(
+      parseRoute(
+        '/players/usr_1111111111111111111112',
+        'tab=settings&onTeam=t1'
+      )
+    ).deep.equals({
       name: 'player',
-      userId: 'u1',
+      userId: 'usr_1111111111111111111112',
       tab: 'settings',
       onTeam: 't1'
     })
     expect(
-      routePath({ name: 'player', userId: 'u1', tab: 'settings', onTeam: 't1' })
-    ).equals('/players/u1?tab=settings&onTeam=t1')
+      routePath({
+        name: 'player',
+        userId: 'usr_1111111111111111111112',
+        tab: 'settings',
+        onTeam: 't1'
+      })
+    ).equals('/players/usr_1111111111111111111112?tab=settings&onTeam=t1')
   })
 
   // `onTeam` is the team the page was opened for; `team` is what the Stats
@@ -540,7 +581,7 @@ describe('a player', function () {
   it('keeps the team it was opened for beside the Stats filter', function () {
     const route = {
       name: 'player' as const,
-      userId: 'u1',
+      userId: 'usr_1111111111111111111112',
       tab: 'stats' as const,
       seasonId: undefined,
       teamId: 'tem_3',
@@ -548,53 +589,80 @@ describe('a player', function () {
       onTeam: 't1'
     }
     const path = routePath(route)
-    expect(path).equals('/players/u1?tab=stats&team=tem_3&onTeam=t1')
+    expect(path).equals(
+      '/players/usr_1111111111111111111112?tab=stats&team=tem_3&onTeam=t1'
+    )
     const [head, search] = path.split('?')
     expect(parseRoute(head, search)).deep.equals(route)
     // And on Videos, which has no filter, it is still written.
-    expect(routePath({ name: 'player', userId: 'u1', onTeam: 't1' })).equals(
-      '/players/u1?onTeam=t1'
-    )
-    expect(parseRoute('/players/u1', 'onTeam=t1')).deep.equals({
+    expect(
+      routePath({
+        name: 'player',
+        userId: 'usr_1111111111111111111112',
+        onTeam: 't1'
+      })
+    ).equals('/players/usr_1111111111111111111112?onTeam=t1')
+    expect(
+      parseRoute('/players/usr_1111111111111111111112', 'onTeam=t1')
+    ).deep.equals({
       name: 'player',
-      userId: 'u1',
+      userId: 'usr_1111111111111111111112',
       onTeam: 't1'
     })
   })
 
   it('carries the team it was opened for to Walk-up, and reads it back', function () {
-    expect(parseRoute('/players/u1', 'tab=walkup&onTeam=t1')).deep.equals({
+    expect(
+      parseRoute('/players/usr_1111111111111111111112', 'tab=walkup&onTeam=t1')
+    ).deep.equals({
       name: 'player',
-      userId: 'u1',
+      userId: 'usr_1111111111111111111112',
       tab: 'walkup',
       onTeam: 't1'
     })
     expect(
-      routePath({ name: 'player', userId: 'u1', tab: 'walkup', onTeam: 't1' })
-    ).equals('/players/u1?tab=walkup&onTeam=t1')
+      routePath({
+        name: 'player',
+        userId: 'usr_1111111111111111111112',
+        tab: 'walkup',
+        onTeam: 't1'
+      })
+    ).equals('/players/usr_1111111111111111111112?tab=walkup&onTeam=t1')
   })
 
   it('opens Videos for Walk-up with no team whose song it would be', function () {
-    expect(parseRoute('/players/u1', 'tab=walkup')).deep.equals({
+    expect(
+      parseRoute('/players/usr_1111111111111111111112', 'tab=walkup')
+    ).deep.equals({
       name: 'player',
-      userId: 'u1'
+      userId: 'usr_1111111111111111111112'
     })
-    expect(routePath({ name: 'player', userId: 'u1', tab: 'walkup' })).equals(
-      '/players/u1'
-    )
+    expect(
+      routePath({
+        name: 'player',
+        userId: 'usr_1111111111111111111112',
+        tab: 'walkup'
+      })
+    ).equals('/players/usr_1111111111111111111112')
   })
 
   // Away from a team, Settings is how the player bats and throws: still a
   // tab, which the screen offers or not by who is asking.
   it('carries Settings with no team, and reads it back', function () {
-    expect(parseRoute('/players/u1', 'tab=settings')).deep.equals({
+    expect(
+      parseRoute('/players/usr_1111111111111111111112', 'tab=settings')
+    ).deep.equals({
       name: 'player',
-      userId: 'u1',
+      userId: 'usr_1111111111111111111112',
       tab: 'settings'
     })
-    expect(routePath({ name: 'player', userId: 'u1', tab: 'settings' })).equals(
-      '/players/u1?tab=settings'
-    )
+    expect(
+      routePath({
+        name: 'player',
+        userId: 'usr_1111111111111111111112',
+        tab: 'settings'
+      })
+    ).equals('/players/usr_1111111111111111111112?tab=settings')
   })
 })
 

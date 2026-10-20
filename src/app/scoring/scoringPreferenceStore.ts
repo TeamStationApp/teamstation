@@ -1,4 +1,8 @@
 import { DICTATION_MODELS, type DictationModel } from '../../common/api'
+import {
+  readUserSetting,
+  type UserSettingStorage
+} from '../platform/userSetting'
 
 export interface ScoringPreferences {
   sound?: boolean
@@ -9,10 +13,7 @@ export interface ScoringPreferences {
   help: boolean
   shown: number
 }
-export interface PreferenceStorage {
-  getItem: (key: string) => Promise<string | null>
-  setItem: (key: string, value: string) => Promise<void>
-}
+export type PreferenceStorage = UserSettingStorage
 export function scoringPreferenceStore(storage: PreferenceStorage): {
   read: (userId: string) => Promise<ScoringPreferences>
   write: (userId: string, value: ScoringPreferences) => Promise<void>
@@ -22,7 +23,7 @@ export function scoringPreferenceStore(storage: PreferenceStorage): {
   return {
     async read(userId) {
       try {
-        const raw = await storage.getItem(key(userId))
+        const raw = await readUserSetting(storage, userId, key)
         if (raw == null) return { help: true, shown: 0 }
         const value: unknown = JSON.parse(raw)
         if (

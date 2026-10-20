@@ -7,6 +7,7 @@ import { sql } from 'kysely'
 import type { Page } from 'puppeteer'
 
 import { TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { groupFixture } from '../test/groupFixtures'
 import {
@@ -127,7 +128,7 @@ async function main(): Promise<void> {
       .insertInto('scope_roles')
       .values({
         id: 'role_direct_team',
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         scope_type: 'team',
         scope_id: f.standaloneTeam,
         role: 'admin'
@@ -418,7 +419,7 @@ async function main(): Promise<void> {
         .insertInto('scope_roles')
         .values({
           id: 'role_resend_direct',
-          user_id: 101,
+          user_id: userIdOfGumbo(101),
           scope_type: 'team',
           scope_id: f.teamB,
           role: 'admin'
@@ -441,7 +442,7 @@ async function main(): Promise<void> {
         .insertInto('scope_roles')
         .values({
           id: 'role_baseline_away',
-          user_id: 101,
+          user_id: userIdOfGumbo(101),
           scope_type: 'team',
           scope_id: f.teamB,
           role: 'admin'
@@ -519,7 +520,7 @@ async function main(): Promise<void> {
         .insertInto('scope_roles')
         .values({
           id: 'role_baseline_away',
-          user_id: 101,
+          user_id: userIdOfGumbo(101),
           scope_type: 'team',
           scope_id: f.teamB,
           role: 'admin'

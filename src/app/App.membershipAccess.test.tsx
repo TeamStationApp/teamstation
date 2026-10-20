@@ -5,6 +5,7 @@ import React, { act } from 'react'
 import { asDjGame, asSessionUser, TeamStationClient } from '../common/api'
 import { HttpError } from '../common/errors'
 import { asGroupDetail } from '../common/publicGroups'
+import { userIdOfGumbo } from '../common/userId'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
 import { fill, mount, press, settle, text, unmount } from '../test/gameFormDom'
 import { App } from './App'
@@ -18,7 +19,7 @@ describe('actual app membership sign-in return', () => {
   let djSupported: boolean
   const originalSocket = globalThis.WebSocket
   const user = asSessionUser({
-    id: 101,
+    id: userIdOfGumbo(101),
     displayName: 'Babe Ruth',
     isAdmin: false
   })
@@ -87,7 +88,9 @@ describe('actual app membership sign-in return', () => {
           teamName: 'Demo Owls',
           source: 'lineup',
           canEditWalkUp: true,
-          batters: [{ userId: 101, name: 'Mookie B', walkUpSong: null }]
+          batters: [
+            { userId: userIdOfGumbo(101), name: 'Mookie B', walkUpSong: null }
+          ]
         },
         home: {
           teamId: 'home',

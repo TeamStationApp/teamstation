@@ -31,7 +31,7 @@ export async function teamPlayerRsvps(
           .where('merged_into', 'is', null)
           .execute()
   const players = new Set(active.map(row => row.id))
-  const aliases = new Map<number, number>()
+  const aliases = new Map<string, string>()
   for (const row of identities)
     if (players.has(row.userId))
       for (const alias of row.userIds) aliases.set(alias, row.userId)

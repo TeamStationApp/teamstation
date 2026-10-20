@@ -9,10 +9,12 @@ import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -129,18 +131,15 @@ describe('a Director sending a recording in', function () {
       [filmer, 'Filmer'],
       [scorer, 'Scorer']
     ] as const) {
-      await db
-        .insertInto('users')
-        .values({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: name,
-          first_name: null,
-          last_name: null,
-          created_at: now,
-          updated_at: now
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(made.userId),
+        legacyId: made.legacyId,
+        display_name: name,
+        first_name: null,
+        last_name: null,
+        created_at: now,
+        updated_at: now
+      })
     }
     for (const [id, user, token] of [
       ['ses_coach', coach.userId, COACH],
@@ -152,7 +151,7 @@ describe('a Director sending a recording in', function () {
         .insertInto('auth_sessions')
         .values({
           id,
-          user_id: user,
+          user_id: userIdOfGumbo(user),
           token_hash: hashToken(token),
           expires_at: new Date(now.getTime() + HOUR),
           created_at: now
@@ -173,7 +172,7 @@ describe('a Director sending a recording in', function () {
       .insertInto('memberships')
       .values({
         id: 'mem_coach',
-        user_id: coach.userId,
+        user_id: userIdOfGumbo(coach.userId),
         team_id: 'tem_ours',
         role: 'manager'
       })
@@ -187,7 +186,7 @@ describe('a Director sending a recording in', function () {
         .insertInto('scope_roles')
         .values({
           id: `rol_${role}`,
-          user_id: made.userId,
+          user_id: userIdOfGumbo(made.userId),
           scope_type: 'team',
           scope_id: 'tem_ours',
           role
