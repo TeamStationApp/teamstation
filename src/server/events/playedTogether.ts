@@ -17,8 +17,7 @@ import type { Database } from '../db/database'
  * share a half, and a game where one holds an empty line beside the other is
  * the re-added shape rather than two boys.
  *
- * A number settles nothing here, whatever it looks like: eleven numbers on the
- * server are worn by two different children on one team.
+ * A jersey number alone does not identify a player: teammates can share one.
  *
  * The figures are asked as well, because a game whose plays we never tagged
  * has no half-innings to compare — two rows that both batted in one game are
@@ -28,7 +27,7 @@ import type { Database } from '../db/database'
  * a candidate without another query. Ask about **every** pair in a group and
  * not just the two rows in front of you: `Casey Mize` was closed into
  * another `Casey Mize` and that one into `Casey`, and the two ends of the
- * chain both batted on 11 April — a pairwise test at each step saw nothing.
+ * chain both batted in the same game — a pairwise test at each step saw nothing.
  */
 export async function bothPlayedTogether(
   db: Kysely<Database>,

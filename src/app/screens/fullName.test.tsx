@@ -64,7 +64,7 @@ const jordan = asRosterEntry({
   gumboId: 7,
   shortName: 'Jordan P',
   // What an older server sent a coach. The cleaner drops it.
-  fullName: 'Jordan Pujols',
+  fullName: 'Jordan Pacheco',
   jersey: '12',
   positions: ['SS', '2B'],
   isPlayer: true,
@@ -183,7 +183,7 @@ describe('a player’s whole name is never shown', function () {
     const moments: string[] = []
     await render(
       <PlayerScreen
-        client={playerClient('Jordan Pujols')}
+        client={playerClient('Jordan Pacheco')}
         userId={userIdOfGumbo(7)}
         title="Jordan P"
         onOpenMoment={(_game, _video, _at, title) => {
@@ -192,7 +192,7 @@ describe('a player’s whole name is never shown', function () {
       />
     )
     expect(text()).includes('Jordan P')
-    expect(text()).not.includes('Pujols')
+    expect(text()).not.includes('Pacheco')
     await press('Show more')
     expect(text()).includes('Double')
     await press('Hawks')
@@ -212,7 +212,7 @@ describe('a player’s whole name is never shown', function () {
       />
     )
     expect(text()).includes('Jordan P')
-    expect(text()).not.includes('Jordan Pujols')
+    expect(text()).not.includes('Jordan Pacheco')
     expect(text()).includes('12 games')
     await press('Filter')
     await press('Spring 2026')
@@ -327,7 +327,7 @@ describe('a player’s whole name is never shown', function () {
       />
     )
     expect(text()).includes('SS · 2B')
-    expect(text()).not.includes('Pujols')
+    expect(text()).not.includes('Pacheco')
     expect(text()).includes('#12')
     await press('Jordan P')
     expect(opened).deep.equals([userIdOfGumbo(7)])
@@ -370,7 +370,7 @@ describe('a player’s whole name is never shown', function () {
     )
     expect(text()).includes('Jordan P')
     expect(text()).includes('SS · 2B')
-    expect(text()).not.includes('Pujols')
+    expect(text()).not.includes('Pacheco')
     // A player's page answers a non-member `404`, so the row is not a button
     // and carries no chevron.
     const row = [...document.querySelectorAll<HTMLElement>('*')].find(

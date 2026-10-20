@@ -71,20 +71,20 @@ describe('one person, however many rows', function () {
       {
         id: userIdOfGumbo(survivor),
         legacyId: legacyId(survivor),
-        display_name: 'Jordan Pujols'
+        display_name: 'Jordan Pacheco'
       },
       // Closed into the survivor, and one closed into that one: a child can
       // be merged twice as more teams turn up.
       {
         id: userIdOfGumbo(closed),
         legacyId: legacyId(closed),
-        display_name: 'Jordan Pujols',
+        display_name: 'Jordan Pacheco',
         merged_into: userIdOfGumbo(survivor)
       },
       {
         id: userIdOfGumbo(closedTwice),
         legacyId: legacyId(closedTwice),
-        display_name: 'Jordan Pujols',
+        display_name: 'Jordan Pacheco',
         merged_into: userIdOfGumbo(closed)
       },
       {
@@ -392,7 +392,7 @@ describe('one person, however many rows', function () {
     await insertFixtureUsers(db, {
       id: userIdOfGumbo(stranded),
       legacyId: legacyId(stranded),
-      display_name: 'Jordan Pujols',
+      display_name: 'Jordan Pacheco',
       merged_into: userIdOfGumbo(survivor)
     })
     await db
