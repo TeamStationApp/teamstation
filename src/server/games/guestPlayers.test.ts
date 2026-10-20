@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
@@ -189,6 +189,63 @@ describe('persistent game guests', function () {
         bats: null,
         throws: null
       })
+    }
+  })
+  it('rolls back the guest account, details and game list after five failed scoring allocations', async () => {
+    const before = await db
+      .selectFrom('games')
+      .select('guests')
+      .where('id', '=', 'gam_guests')
+      .executeTakeFirstOrThrow()
+    const details = await db
+      .selectFrom('game_guest_details')
+      .selectAll()
+      .orderBy('user_id')
+      .execute()
+    const users = await db
+      .selectFrom('users')
+      .select('id')
+      .orderBy('id')
+      .execute()
+    await sql`alter function ts_ensure_gumbo_id(text,bigint[]) rename to fixture_ensure_gumbo_id`.execute(
+      db
+    )
+    try {
+      await sql`create function ts_ensure_gumbo_id(value text, draws bigint[] default null) returns bigint
+        language sql as 'select fixture_ensure_gumbo_id(value,array[0,0,0,0,0]::bigint[])'`.execute(
+        db
+      )
+      let failure: any
+      try {
+        await createGuestPlayer(db, actor, 'gam_guests', 'away', player)
+      } catch (error) {
+        failure = error
+      }
+      expect(failure?.code).equals('TSG01')
+      expect(
+        await db.selectFrom('users').select('id').orderBy('id').execute()
+      ).deep.equals(users)
+      expect(
+        await db
+          .selectFrom('game_guest_details')
+          .selectAll()
+          .orderBy('user_id')
+          .execute()
+      ).deep.equals(details)
+      expect(
+        await db
+          .selectFrom('games')
+          .select('guests')
+          .where('id', '=', 'gam_guests')
+          .executeTakeFirstOrThrow()
+      ).deep.equals(before)
+    } finally {
+      await sql`drop function if exists ts_ensure_gumbo_id(text,bigint[])`.execute(
+        db
+      )
+      await sql`alter function fixture_ensure_gumbo_id(text,bigint[]) rename to ts_ensure_gumbo_id`.execute(
+        db
+      )
     }
   })
   it('rejects an unreadable game or an unfinished ball in play without minting', async function () {
