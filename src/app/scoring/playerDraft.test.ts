@@ -138,7 +138,7 @@ describe('local player entry', function () {
           side,
           {
             ...emptyPlayerDraft(),
-            firstName: ' Alex ',
+            firstName: ' Cliff ',
             lastName: ' Lee ',
             jersey: ' 00 ',
             bats,
@@ -148,9 +148,9 @@ describe('local player entry', function () {
           9000000 + session.meta.tagOrder.length
         )
         expect(session.gameData.players[id]).includes({
-          firstName: 'Alex',
+          firstName: 'Cliff',
           lastName: 'Lee',
-          fullName: 'Alex Lee',
+          fullName: 'Cliff Lee',
           jersey: '00',
           bats,
           throws: 'left',
