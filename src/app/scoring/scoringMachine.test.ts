@@ -26,7 +26,8 @@ import {
   initialScoringState,
   resumedScoringState,
   rosterRefusal,
-  scoringReducer
+  scoringReducer,
+  sessionAt
 } from './scoringMachine'
 import { scoringPreferenceStore } from './scoringPreferenceStore'
 import {
@@ -60,6 +61,27 @@ function initial(): ScoringState {
     createDevelopmentSession(gameFixture, roster, scoringRoster(10))
   )
 }
+
+it('reconstructs saved merged roster additions for history without permitting a new duplicate', () => {
+  const base = initial().session
+  const home = base.liveData.boxscore.teams.home
+  home.defense.C = null
+  const setup = setupOf(base)
+  setup.sides.home.defense.C = home.defense.P
+  const roster: ScoringState['log'][number] = {
+    type: 'lineup',
+    kind: 'roster',
+    setup
+  }
+  expect(applyAction(base, roster).problems).not.deep.equals([])
+  const history = sessionAt(
+    { log: [roster, { type: 'pitch', call: 'B' }], checkpoints: [] },
+    2,
+    () => base
+  )
+  expect(history.liveData.boxscore.teams.home.defense.C).equals(home.defense.P)
+  expect(history.liveData.linescore.balls).equals(1)
+})
 function pitch(
   state: ScoringState,
   kind: 'ball' | 'called' | 'swing' | 'foul',

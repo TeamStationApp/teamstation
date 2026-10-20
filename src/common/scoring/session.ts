@@ -510,7 +510,8 @@ export class ScoringSession {
     while (actions.length > 0 && awaitingResult(state)) {
       actions = actions.slice(0, -1)
       state = this.base
-      for (const action of actions) state = applyAction(state, action).state
+      for (const action of actions)
+        state = applyAction(state, action, { replay: true }).state
     }
     // An unfinished play cannot accept a roster action. Once the screen
     // rewinds it, present today's available players there too, without
@@ -1121,7 +1122,10 @@ export class ScoringSession {
     for (const action of this.log.slice(kept.length)) {
       // Each step on a copy that shares the finished plays: a whole copy per
       // action made the replay grow with the game.
-      const applied = applyAction(copyGame(game), action, { inPlace: true })
+      const applied = applyAction(copyGame(game), action, {
+        inPlace: true,
+        replay: true
+      })
       if (applied.problems.length > 0) break
       const split = segmentAfter(game, action, applied, segment)
       completed.push(...split.finished)
