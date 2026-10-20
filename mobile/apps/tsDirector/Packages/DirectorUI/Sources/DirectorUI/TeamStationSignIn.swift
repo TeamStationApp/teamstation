@@ -73,7 +73,12 @@ struct TeamStationSignIn: View {
     }
     .onReceive(poll) { _ in
       guard environment.teamStation.user == nil, environment.teamStation.waiting != nil else { return }
-      Task { await environment.teamStation.pollSignIn() }
+      Task {
+        let account = environment.teamStation
+        if !(await account.pollSignIn()), account.waiting == nil, let message = account.lastError {
+          login.restartSignIn(after: message)
+        }
+      }
     }
   }
 
@@ -132,8 +137,11 @@ struct TeamStationSignIn: View {
       do {
         try await environment.teamStation.completeSignIn(email: address, code: code)
       } catch {
-        login.codeRejected()
-        login.notice = LoginFlow.badCode
+        if error as? TeamStationError == .accountStorageUnavailable {
+          login.restartSignIn(after: error.localizedDescription)
+        } else {
+          login.codeRejected()
+        }
       }
       busy = false
     }

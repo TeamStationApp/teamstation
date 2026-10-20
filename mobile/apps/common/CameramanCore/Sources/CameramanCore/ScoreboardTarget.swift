@@ -33,7 +33,7 @@ public struct ScoreboardSaved: Equatable, Sendable {
   public var gameTitle: String
   public var gameStartAt: String
   /// The signed-in user's canonical ID on the account server. Empty until the server has said
-  /// who the token belongs to; a login saved by an older build fills it in through `auth/me`.
+  /// who the token belongs to. Stored accounts without a canonical ID require a new sign-in.
   public var userId: String
   /// "Allow Director Override". Off until the operator turns it on, and kept across sign-outs.
   public var allowDirectorOverride: Bool
@@ -249,13 +249,10 @@ public enum ScoreboardTarget {
     let token = store.string(forKey: Keys.token) ?? ""
     let game = loadGame(store)
     let storedId = store.string(forKey: Keys.userId) ?? ""
-    let userId = TeamStationUserID.upgradingStored(storedId) ?? ""
-    if !userId.isEmpty && userId != storedId {
-      store.setString(userId, forKey: Keys.userId)
-    }
+    let userId = TeamStationUserID.canonical(storedId) ?? ""
     let route: ScoreboardRoute =
       store.string(forKey: Keys.route) == "event" && !token.isEmpty ? .event : .v1
-    return ScoreboardSaved(
+    let saved = ScoreboardSaved(
       route: route,
       apiServer: store.string(forKey: Keys.apiServer) ?? defaultV1Server,
       v1EventId: store.string(forKey: Keys.v1Event) ?? "",
@@ -269,6 +266,12 @@ public enum ScoreboardTarget {
       userId: userId,
       allowDirectorOverride: store.string(forKey: Keys.allowOverride) == "true"
     )
+    if !token.isEmpty && userId.isEmpty {
+      let cleared = signedOut(saved)
+      save(cleared, to: store)
+      return cleared
+    }
+    return saved
   }
 
   /// The chosen game as one value: the record written in one go when there is one, otherwise the
