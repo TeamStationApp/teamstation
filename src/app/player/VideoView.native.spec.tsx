@@ -59,3 +59,14 @@ describe("the phone's picture and its audio session (U33a)", function () {
     expect(preview.disableFocus).equals(true)
   })
 })
+
+describe("the phone's picture and its buffer (U33a)", function () {
+  it('loads half a minute ahead, alone or as a tile', async function () {
+    expect((await handed({})).preferredForwardBufferDuration).equals(30)
+    const tile = await handed({
+      buffer: { aheadSec: 30, startSec: 5, behindSec: 20, heapShare: 0.15 }
+    })
+    expect(tile.preferredForwardBufferDuration).equals(30)
+    expect(tile.bufferingStrategy).equals('DependingOnMemory')
+  })
+})

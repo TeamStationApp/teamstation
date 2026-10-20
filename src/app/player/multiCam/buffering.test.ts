@@ -3,19 +3,19 @@ import { describe, it } from 'mocha'
 
 import {
   acrossStartHole,
+  AHEAD_SEC,
+  BEHIND_SEC,
   canStart,
-  ceilingSec,
   heldAhead,
   isDry,
   isReady,
-  LEAD_SEC,
   LEAVE_OUT_MS,
-  MAX_AHEAD_SEC,
   neededSec,
   RECORDED_START_GAP_SEC,
   START_AHEAD_SEC,
   START_GAP_SEC,
   strayed,
+  TILE_BUFFER,
   type TileBuffer,
   toLeaveOut
 } from './buffering'
@@ -81,21 +81,15 @@ describe('when the grid may start', function () {
   })
 })
 
-describe('how far ahead the tiles may load', function () {
-  it('is the emptiest tile plus the lead, so the line goes to it', function () {
-    expect(ceilingSec([web(2), web(30), web(40)])).equals(2 + LEAD_SEC)
-  })
-
-  it('climbs as the emptiest fills, up to the most', function () {
-    expect(ceilingSec([web(0), web(0)])).equals(LEAD_SEC)
-    expect(ceilingSec([web(52), web(58)])).equals(MAX_AHEAD_SEC)
-  })
-
-  it('leaves out a tile that holds all there is, and one that does not say', function () {
-    // The first holds the rest of its recording; it is short of nothing.
-    expect(ceilingSec([web(3, 3), web(25), phone(4)])).equals(25 + LEAD_SEC)
-    expect(ceilingSec([phone(4)])).equals(MAX_AHEAD_SEC)
-    expect(ceilingSec([])).equals(MAX_AHEAD_SEC)
+describe('how far ahead every player loads (U29)', function () {
+  it('is half a minute ahead and twenty seconds behind, and the phone tiles say so', function () {
+    expect(AHEAD_SEC).equals(30)
+    expect(BEHIND_SEC).equals(20)
+    expect(TILE_BUFFER).deep.include({
+      aheadSec: 30,
+      behindSec: 20,
+      heapShare: 0.15
+    })
   })
 })
 

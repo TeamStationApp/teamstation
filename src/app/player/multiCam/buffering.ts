@@ -13,13 +13,11 @@
  * the grid plays, and the grid only stops again when a tile is down to
  * `LOW_AHEAD_SEC`. Starting and stopping at the same level is the stutter.
  *
- * The other half is sharing the line. Four players asked to fill a deep buffer
- * all at once race each other for it, and the one that falls behind starves —
- * measured on a real take, four unrestrained players pulled 178 MB in their
- * first ten seconds. So no tile may load more than `LEAD_SEC` past the one
- * furthest behind: the leaders stop asking, and the line goes to the tile that
- * needs it. The ceiling climbs as the slowest tile fills, up to
- * `MAX_AHEAD_SEC`.
+ * The other half is the budget: every player, alone or one of four, loads
+ * `AHEAD_SEC` ahead and keeps `BEHIND_SEC` of what it has shown. Half a
+ * minute ahead is deep enough to ride out a dip in the line, and shallow
+ * enough that four of them never ask for minutes of a game somebody is about
+ * to scrub away from.
  */
 
 import { HAVE_ENOUGH_DATA } from '../videoHandle'
@@ -30,11 +28,8 @@ export const START_AHEAD_SEC = 5
 /** A playing tile with less than this is about to run dry. */
 export const LOW_AHEAD_SEC = 0.5
 
-/** The deepest any tile loads ahead of its picture. */
-export const MAX_AHEAD_SEC = 60
-
-/** How far past the tile furthest behind any other tile may load. */
-export const LEAD_SEC = 10
+/** How far ahead of its picture every player loads, single or tile. */
+export const AHEAD_SEC = 30
 
 /**
  * What a player keeps of the picture it has already shown.
@@ -43,7 +38,7 @@ export const LEAD_SEC = 10
  * and no more: kept without limit, four tiles hold the whole game in memory
  * until the browser refuses to take any more.
  */
-export const BEHIND_SEC = 30
+export const BEHIND_SEC = 20
 
 /**
  * How long one tile may keep the rest of the grid waiting.
@@ -69,9 +64,9 @@ export const LEAVE_OUT_MS = 10_000
  * whatever its seconds say, so a richer recording cannot do it again.
  */
 export const TILE_BUFFER = {
-  aheadSec: 30,
+  aheadSec: AHEAD_SEC,
   startSec: START_AHEAD_SEC,
-  behindSec: 0,
+  behindSec: BEHIND_SEC,
   heapShare: 0.15
 }
 
@@ -227,26 +222,6 @@ export function isDry(tile: TileBuffer): boolean {
 /** Every tile holds enough. An empty grid has nothing to wait for. */
 export function canStart(tiles: TileBuffer[]): boolean {
   return tiles.every(isReady)
-}
-
-/**
- * How far ahead every tile may load right now.
- *
- * The tile furthest behind plus `LEAD_SEC`, up to `MAX_AHEAD_SEC`. A tile
- * that already holds everything there is to hold is not short of anything and
- * is left out of the reckoning, and so is one whose player does not say.
- */
-export function ceilingSec(tiles: TileBuffer[]): number {
-  let lowest = Number.POSITIVE_INFINITY
-  for (const tile of tiles) {
-    if (tile.aheadSec == null) continue
-    if (tile.leftSec != null && tile.leftSec - tile.aheadSec <= LOW_AHEAD_SEC) {
-      continue
-    }
-    lowest = Math.min(lowest, tile.aheadSec)
-  }
-  if (!Number.isFinite(lowest)) return MAX_AHEAD_SEC
-  return Math.min(MAX_AHEAD_SEC, lowest + LEAD_SEC)
 }
 
 /**

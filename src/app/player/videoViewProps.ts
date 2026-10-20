@@ -1,3 +1,4 @@
+import { AHEAD_SEC } from './multiCam/buffering'
 import type { VideoHandle } from './videoHandle'
 
 /**
@@ -90,4 +91,13 @@ export function audioSession(primary: boolean): {
   return primary
     ? { disableFocus: false, ignoreSilentSwitch: 'ignore' }
     : { disableFocus: true, ignoreSilentSwitch: 'obey' }
+}
+
+/**
+ * How far ahead a phone's player loads, in seconds (AVPlayer's
+ * `preferredForwardBufferDuration`): the caller's buffer, or the budget every
+ * player has.
+ */
+export function forwardBufferSec(buffer?: { aheadSec: number }): number {
+  return buffer?.aheadSec ?? AHEAD_SEC
 }

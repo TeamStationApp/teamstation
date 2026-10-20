@@ -3,7 +3,6 @@ import Hls from 'hls.js'
 import { afterEach, describe, it } from 'mocha'
 
 import {
-  aheadControl,
   APPLE_VENDOR,
   atLiveEdge,
   attachHls,
@@ -76,29 +75,6 @@ describe('how far ahead a grid tile loads', function () {
   it('recognizes the configured time-based live position after an outage', function () {
     expect(atLiveEdge(540, 600, 4, 3, 60)).equals(true)
     expect(atLiveEdge(500, 600, 4, 3, 60)).equals(false)
-  })
-  it('moves both of hls.js’s limits together', function () {
-    const config = { maxBufferLength: 10, maxMaxBufferLength: 10 }
-    const control = aheadControl(config, 10)
-    control.setAheadSec(40)
-    expect(config).deep.equals({ maxBufferLength: 40, maxMaxBufferLength: 40 })
-    control.setAheadSec(15)
-    expect(config).deep.equals({ maxBufferLength: 15, maxMaxBufferLength: 15 })
-  })
-
-  it('keeps under a cut hls.js made when the browser ran out of room', function () {
-    const config = { maxBufferLength: 60, maxMaxBufferLength: 60 }
-    const control = aheadControl(config, 60)
-    // A refused append: hls.js halves its own ceiling.
-    config.maxMaxBufferLength = 30
-    control.setAheadSec(60)
-    expect(config.maxMaxBufferLength).equals(30)
-    expect(config.maxBufferLength).equals(30)
-    // Lower still is always allowed.
-    control.setAheadSec(20)
-    expect(config.maxMaxBufferLength).equals(20)
-    control.setAheadSec(60)
-    expect(config.maxMaxBufferLength).equals(30)
   })
 })
 
@@ -316,7 +292,7 @@ describe('attaching in a browser', function () {
     expect(video.attached()).equals(0)
   })
 
-  it('gives a single live viewer a minute of buffer and 45 s of live delay (U24)', function () {
+  it('gives a single live viewer half a minute ahead, twenty seconds behind and 45 s of live delay (U24, U29)', function () {
     withMediaSource()
     const video = new FakeVideo()
     asBrowser('Google Inc.', () => {
@@ -329,9 +305,10 @@ describe('attaching in a browser', function () {
           isLive: () => true
         }
       )
-      expect(config.maxBufferLength).equals(60)
+      expect(config.maxBufferLength).equals(30)
+      expect(config.maxMaxBufferLength).equals(30)
       expect(config.liveSyncDuration).equals(45)
-      expect(config.backBufferLength).equals(30)
+      expect(config.backBufferLength).equals(20)
       detach()
     })
   })
@@ -358,6 +335,8 @@ describe('attaching in a browser', function () {
     asBrowser('Google Inc.', () => {
       attachHls(video as unknown as VideoHandle, url)()
       expect(config.maxBufferLength).equals(30)
+      expect(config.maxMaxBufferLength).equals(30)
+      expect(config.backBufferLength).equals(20)
       expect(config.liveSyncDuration).equals(undefined)
       attachHls(video as unknown as VideoHandle, url, undefined, {
         wantsToPlay: () => true,
@@ -441,29 +420,18 @@ describe('attaching in a browser', function () {
   it('uses hls.js in Chrome and destroys it on teardown', function () {
     withMediaSource()
     const video = new FakeVideo()
-    let control: unknown = 'unset'
     asBrowser('Google Inc.', () => {
       const detach = attachHls(
         video as unknown as VideoHandle,
         url,
         undefined,
-        {
-          wantsToPlay: () => true,
-          buffer: {
-            aheadSec: 10,
-            onControl: next => {
-              control = next
-            }
-          }
-        }
+        { wantsToPlay: () => true, buffer: { aheadSec: 10 } }
       )
       expect(video.src).equals('')
       expect(calls).deep.equals([`loadSource ${url}`, 'attachMedia'])
-      expect(control).not.equals(null)
       detach()
     })
     expect(calls).deep.equals([`loadSource ${url}`, 'attachMedia', 'destroy'])
-    expect(control).equals(null)
     expect(video.attached()).equals(0)
   })
 

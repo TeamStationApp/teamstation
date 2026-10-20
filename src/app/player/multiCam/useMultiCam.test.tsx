@@ -1237,31 +1237,19 @@ describe('useMultiCam buffering', function () {
     expect(fresh.paused).equals(false)
   })
 
-  it('feeds the emptiest tile by holding the others back', async function () {
+  it('loads every tile half a minute ahead, however full the others are (U29)', async function () {
     this.timeout(5000)
     const { mc, tiles } = await grid({}, {}, tiles => {
       fill(tiles.A, [120, 128])
       fill(tiles.B, [60, 100])
     })
-    const asked: Record<string, number[]> = { A: [], B: [] }
-    await act(async () => {
-      for (const id of ['A', 'B']) {
-        mc()
-          .bufferFor(id)
-          ?.onControl?.({
-            setAheadSec: seconds => asked[id].push(seconds)
-          })
-      }
-    })
-    await ticks(1)
-    // A holds 8 s, so neither may load past 18 s: B, at 40, stops asking
-    // and the line goes to A.
-    expect(asked.A.at(-1)).equals(18)
-    expect(asked.B.at(-1)).equals(18)
-
+    // Half a minute each, whatever the others hold: nobody is held back for
+    // anybody else.
+    for (const id of ['A', 'B'])
+      expect(mc().bufferFor(id), id).deep.equals({ aheadSec: 30 })
     fill(tiles.A, [120, 175])
     await ticks(1)
-    expect(asked.A.at(-1)).equals(50)
+    expect(mc().bufferFor('A')).deep.equals({ aheadSec: 30 })
     expect(tiles.A.paused).equals(false)
   })
 

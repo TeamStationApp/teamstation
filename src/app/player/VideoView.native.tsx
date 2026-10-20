@@ -8,7 +8,11 @@ import Video, {
 
 import { nativeSource } from './nativeSource'
 import { NativeVideoHandle } from './nativeVideoHandle'
-import { audioSession, type VideoViewProps } from './videoViewProps'
+import {
+  audioSession,
+  forwardBufferSec,
+  type VideoViewProps
+} from './videoViewProps'
 
 export type { VideoViewProps }
 
@@ -171,7 +175,7 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
           : BufferingStrategyType.DEPENDING_ON_MEMORY
       }
       // iOS's half of `buffer`; AVPlayer decides for itself when to start.
-      preferredForwardBufferDuration={aheadSec}
+      preferredForwardBufferDuration={forwardBufferSec(buffer)}
       onReadyForDisplay={handle.handleReadyForDisplay}
       onVideoTracks={handle.handleVideoTracks}
       onAspectRatio={handle.handleAspectRatio}

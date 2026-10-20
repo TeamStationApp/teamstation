@@ -11,7 +11,7 @@ import type { TeamStationClient, VideoSummary } from '../../../common/api'
 import { lstrings } from '../../locales/strings'
 import { FLASH_MS, type SeekFlash, useFlash } from '../GestureFeedback'
 import { livePlaybackRetryDelay } from '../liveRejoin'
-import type { BufferControl, PlayIntent } from '../playIntent'
+import type { PlayIntent } from '../playIntent'
 import { SLOW_RATE } from '../slowMotion'
 import { useKeyboardShortcuts } from '../useKeyboardShortcuts'
 import { HAVE_CURRENT_DATA, HAVE_METADATA, seekableEndOf } from '../videoHandle'
@@ -54,12 +54,11 @@ import {
 } from './align'
 import {
   acrossStartHole,
+  AHEAD_SEC,
   canStart,
-  ceilingSec,
   heldAhead,
   isDry,
   isReady,
-  LEAD_SEC,
   START_GAP_SEC,
   strayed,
   type TileBuffer,
@@ -561,8 +560,6 @@ export function useMultiCam(
   /** Whether the viewer wants the grid playing, for a timer that outlives a render. */
   const playingRef = useRef(playing)
   playingRef.current = playing
-  /** Each browser tile's hold on how far ahead it loads. */
-  const controls = useRef(new Map<string, BufferControl>())
   /** `gate`, for a callback made before it in the render. */
   const gateRef = useRef<
     ((instant: number, finished?: Map<string, boolean>) => boolean) | null
@@ -1603,18 +1600,6 @@ export function useMultiCam(
         wallMs = Math.min(instant + WATCHDOG_MS, end ?? Number.MAX_SAFE_INTEGER)
       }
 
-      // How far ahead the browser tiles may load, from how full the emptiest
-      // of them is. Tiles that have been left out count most: they are the
-      // ones the line should be feeding.
-      const ceiling = ceilingSec(
-        covering
-          .filter(tile => tile.playable)
-          .map(tile => bufferOf(elements.current.get(tile.id)))
-      )
-      for (const control of controls.current.values()) {
-        control.setAheadSec(ceiling)
-      }
-
       // A tile that was left out joins in once it holds enough where the game
       // is now.
       let rejoined = false
@@ -1651,7 +1636,7 @@ export function useMultiCam(
           if (gate(instant, finishedNow)) return
           hold()
           setWaiting(anyPicture())
-          if (debug) showReadout(instant, ceiling)
+          if (debug) showReadout(instant, AHEAD_SEC)
           return
         }
       }
@@ -1668,7 +1653,7 @@ export function useMultiCam(
           (showing.length === 0 && end != null && wallMs >= end - 1000)
       )
 
-      if (debug) showReadout(wallMs, ceiling)
+      if (debug) showReadout(wallMs, AHEAD_SEC)
 
       setAtWallMs(wallMs)
       // A master that has stopped drawing is not a clock to pull everybody
@@ -2266,17 +2251,11 @@ export function useMultiCam(
   }
 
   /**
-   * What a browser tile's source is told: start by loading `LEAD_SEC` ahead,
-   * and hand the watchdog the control that moves it from there.
+   * What a browser tile's source is told: load `AHEAD_SEC` ahead, as every
+   * player does.
    */
   const bufferFor = useCallback(
-    (id: string): PlayIntent['buffer'] => ({
-      aheadSec: LEAD_SEC,
-      onControl: control => {
-        if (control == null) controls.current.delete(id)
-        else controls.current.set(id, control)
-      }
-    }),
+    (_id: string): PlayIntent['buffer'] => ({ aheadSec: AHEAD_SEC }),
     []
   )
 

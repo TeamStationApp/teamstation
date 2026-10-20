@@ -5,8 +5,8 @@ import { liveRejoin } from './liveRejoin'
 import { observeLiveStalls } from './liveStallDiagnostics'
 import { recoverLiveStalls } from './liveStallRecovery'
 import { joinLiveOnFirstPlay, LIVE_DELAY_SEC } from './liveStart'
-import { BEHIND_SEC } from './multiCam/buffering'
-import type { BufferControl, PlayIntent } from './playIntent'
+import { AHEAD_SEC, BEHIND_SEC } from './multiCam/buffering'
+import type { PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
 import { seekableEndOf, type VideoHandle } from './videoHandle'
 import {
@@ -479,16 +479,17 @@ function attachHlsJs(
   // to the same number.
   const limit = intent?.buffer
   const live = intent?.isLive != null
-  const singleLive = live && limit == null
   const hls = new Hls({
     // A game is watched by seeking around it, not straight through, so there
-    // is no point buffering minutes ahead of a position about to change.
-    maxBufferLength: limit?.aheadSec ?? (singleLive ? 60 : 30),
+    // is no point buffering minutes ahead of a position about to change:
+    // half a minute, for every player, a grid's tiles included. The same
+    // number twice is a ceiling.
+    maxBufferLength: limit?.aheadSec ?? AHEAD_SEC,
     // Keep room for delayed playlist updates, on every live player, a grid's
     // tiles included. A time-based live position avoids letting one
     // unusually long segment choose the viewer's delay.
     ...(live ? { liveSyncDuration: LIVE_DELAY_SEC } : {}),
-    ...(limit == null ? {} : { maxMaxBufferLength: limit.aheadSec }),
+    maxMaxBufferLength: limit?.aheadSec ?? AHEAD_SEC,
     // Where its owner has already placed it, if it has.
     ...(intent?.startSec == null ? {} : { startPosition: intent.startSec }),
     // Left to itself hls.js keeps every second already played, and a long
@@ -496,10 +497,6 @@ function attachHlsJs(
     // future. Two steps of ten seconds back still come from memory.
     backBufferLength: BEHIND_SEC
   })
-
-  if (limit?.onControl != null) {
-    limit.onControl(aheadControl(hls.config, limit.aheadSec))
-  }
 
   /**
    * A live game is watched while it is being written, and the writer is
@@ -702,7 +699,6 @@ function attachHlsJs(
     handle.removeEventListener('play', onPlay)
     handle.removeEventListener('pause', onPause)
     video.removeEventListener('ended', onEnded)
-    limit?.onControl?.(null)
     hls.destroy()
   }
 }
@@ -720,30 +716,4 @@ export function atLiveEdge(
   syncSec?: number
 ): boolean {
   return edgeSec - currentSec <= (syncSec ?? syncCount * targetSec) + targetSec
-}
-
-/**
- * Moves a running hls.js player's limit on how far ahead it loads.
- *
- * hls.js reads both numbers afresh on every tick, so writing them is enough.
- * When an append is refused for want of room, hls.js halves its own
- * ceiling; putting the old one back on the next call would only be refused
- * again, so a cut it made stands as the new top.
- */
-export function aheadControl(
-  config: { maxBufferLength: number; maxMaxBufferLength: number },
-  startSec: number
-): BufferControl {
-  let roomSec = Number.POSITIVE_INFINITY
-  let askedSec = startSec
-  return {
-    setAheadSec: seconds => {
-      if (config.maxMaxBufferLength < askedSec) {
-        roomSec = config.maxMaxBufferLength
-      }
-      askedSec = Math.min(seconds, roomSec)
-      config.maxBufferLength = askedSec
-      config.maxMaxBufferLength = askedSec
-    }
-  }
 }

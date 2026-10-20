@@ -29,17 +29,15 @@ export interface PlayIntent {
    * **240 MB, asked for at the same moment** — measured on a real take, the
    * grid pulled 178 MB in its first ten seconds for a game whose four streams
    * carry 11 Mbit/s between them. On a line that cannot serve that in ten
-   * seconds the four spend the opening minutes starving each other, which is
-   * how a camera stops drawing and takes the sound down with it.
+   * seconds the four spend the opening minutes starving each other.
    *
-   * So a grid starts each player at `aheadSec` and moves the limit itself
-   * while they play, through the control handed to `onControl`: raised as the
-   * slowest of them fills, lowered on the ones that have got ahead.
+   * So a grid's tile is held to `aheadSec` (`AHEAD_SEC`) as a ceiling, which
+   * it never grows past. Four live tiles on a line capped at 10.8 Mbit/s
+   * started together and recovered together from a cut with that and nothing
+   * more.
    */
   buffer?: {
     aheadSec: number
-    /** Called with the control once the player exists, and null when it goes. */
-    onControl?: (control: BufferControl | null) => void
   }
   /**
    * Whether the server still lists this video as live, asked when its
@@ -86,9 +84,4 @@ export interface PlayIntent {
    * from there, rather than from its own live position and moving it.
    */
   startSec?: number
-}
-
-/** Moves a running player's limit on how far ahead it loads. */
-export interface BufferControl {
-  setAheadSec: (seconds: number) => void
 }
