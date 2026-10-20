@@ -54,17 +54,15 @@ import Testing
     #expect(wait.clientSecret == "s3cret")
   }
 
-  @Test func readsASessionWhoseUserIdIsANumber() throws {
-    // asUserId on the server is a JSON number. A String-only decode left the
-    // Director flashing on the code screen while minting a session every poll.
+  @Test func readsASessionWhoseUserIdIsCanonical() throws {
     let json = """
     {
       "token": "tok_x",
       "expiresAt": "2027-03-26T04:56:21.869Z",
       "user": {
-        "id": 7131311135112542,
-        "displayName": "root",
-        "email": "paul@vtex.net",
+        "id": "usr_1111111111111111111112",
+        "displayName": "Hank Aaron",
+        "email": "fixture@example.test",
         "isAdmin": true,
         "avatarUrl": null
       }
@@ -74,8 +72,8 @@ import Testing
       TeamStationSession.self,
       from: Data(json.utf8)
     )
-    #expect(session.user.id == "7131311135112542")
-    #expect(session.user.email == "paul@vtex.net")
+    #expect(session.user.id == "usr_1111111111111111111112")
+    #expect(session.user.email == "fixture@example.test")
     #expect(session.user.isAdmin)
   }
 
@@ -85,8 +83,8 @@ import Testing
       "token": "tok_y",
       "expiresAt": "2027-03-26T04:56:21Z",
       "user": {
-        "id": "7131311135112542",
-        "displayName": "root",
+        "id": "usr_1111111111111111111113",
+        "displayName": "Babe Ruth",
         "isAdmin": false
       }
     }
@@ -95,7 +93,7 @@ import Testing
       TeamStationSession.self,
       from: Data(json.utf8)
     )
-    #expect(session.user.id == "7131311135112542")
+    #expect(session.user.id == "usr_1111111111111111111113")
     #expect(session.user.email == nil)
   }
 }
