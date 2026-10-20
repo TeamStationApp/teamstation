@@ -16,12 +16,16 @@ import {
   withHalfOuts
 } from '../../common/scoring/linescore'
 import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
+import { lockPlayerEdits } from '../admin/people'
 import { atomic } from '../db/atomic'
 import type { Database, EventsTable } from '../db/database'
 import { gameHasPlays, resolvedFenceDistance } from '../games/fenceDistance'
 import { scoringActivitySql } from '../games/scoringActivity'
 import { radarSettings } from '../nodeSettings'
+import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
 import { resolveScoringGame } from '../scoring/openRow'
+import { contextOf } from '../scoring/replayContext'
+import { assertAuthoredRosters } from '../scoring/rosterWrites'
 import { notifyGameChange } from '../socket/gameChanges'
 import { reconcileEventTags } from './eventTags'
 import {
@@ -102,6 +106,7 @@ export async function postGamePlays(
   let refreshDelay: number | undefined
 
   return await atomic(db, async (trx): Promise<PostedPlays> => {
+    await lockPlayerEdits(trx)
     // The game row stays locked until this post commits, so a second
     // post to the same game waits and then sees the plays, the final
     // status and the scoring owner this one leaves behind.
@@ -157,6 +162,40 @@ export async function postGamePlays(
         'Somebody else changed the lineups since this game was read',
         { stale: true }
       )
+
+    const previous = {
+      plays: (await readPlays(trx, gameId)).map(row => row.gumbo as GumboPlay),
+      currentPlay: game.currentPlay as CurrentPlay | null
+    }
+    const nextPlays = new Map(
+      (live ? previous.plays : []).map(play => [play.about.atBatIndex, play])
+    )
+    for (const index of body.remove ?? []) nextPlays.delete(index)
+    for (const play of body.plays) nextPlays.set(play.about.atBatIndex, play)
+    const next = {
+      plays: [...nextPlays.values()],
+      currentPlay:
+        live && body.currentPlay !== undefined
+          ? body.currentPlay
+          : previous.currentPlay
+    }
+    if (
+      [...next.plays, next.currentPlay].some(play => recordOf(play) != null)
+    ) {
+      const projected = await resolveScoringGame(trx, next)
+      await assertStoredScoringRoles(
+        trx,
+        { id: gameId, ...game },
+        next,
+        projected
+      )
+      const context = (await contextOf(trx, gameId, game, projected))!
+      assertAuthoredRosters(
+        await resolveScoringGame(trx, previous),
+        projected,
+        context
+      )
+    }
 
     const teams = {
       homeTeamId: game.home_team_id,

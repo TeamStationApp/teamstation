@@ -292,7 +292,10 @@ function replay(
   end: number
 ): ScoringSessionState {
   for (let index = start; index < end; index++) {
-    const applied = applyAction(session, log[index], { inPlace: true })
+    const applied = applyAction(session, log[index], {
+      inPlace: true,
+      replay: true
+    })
     if (applied.problems.length > 0)
       throw new Error(
         `The log does not replay at ${index}: ${applied.problems[0].message}`

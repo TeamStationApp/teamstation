@@ -116,11 +116,8 @@ function mapDocument<T>(
   return visit(document) as T
 }
 
-/** A read-only projection: callers keep raw documents and digests for writes and concurrency. */
-export async function resolveScoringGame<T extends StoredGame>(
-  db: Kysely<Database>,
-  stored: T
-): Promise<T> {
+/** Every scoring identity referenced by a saved setup, action, or play. */
+export function scoringIdsIn(stored: StoredGame): number[] {
   const ids = new Set<number>()
   const collect = (id: number): number => {
     ids.add(id)
@@ -128,7 +125,15 @@ export async function resolveScoringGame<T extends StoredGame>(
   }
   for (const document of [...stored.plays, stored.currentPlay])
     mapDocument(document, collect, new Map())
-  const resolved = await resolveGumboIds(db, [...ids]).catch(
+  return [...ids]
+}
+
+/** A read-only projection: callers keep raw documents and digests for writes and concurrency. */
+export async function resolveScoringGame<T extends StoredGame>(
+  db: Kysely<Database>,
+  stored: T
+): Promise<T> {
+  const resolved = await resolveGumboIds(db, scoringIdsIn(stored)).catch(
     (error: unknown) => {
       if (error instanceof UnresolvedAccount)
         throw conflict(

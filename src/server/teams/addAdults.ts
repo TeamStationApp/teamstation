@@ -56,6 +56,8 @@ export async function addAdults(
 ): Promise<TeamAdultsResponse> {
   return await db.transaction().execute(async trx => {
     await lockPlayerEdits(trx)
+    // Share the player import's ordering before either batch claims memberships.
+    await lockKeys(trx, [`teamRoster:${teamId}`])
     await lockKeys(
       trx,
       rows.flatMap(row => [

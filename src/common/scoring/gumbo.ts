@@ -244,8 +244,11 @@ export function replayPlays(
   onAction?: (
     state: GameState,
     atBatIndex: number,
-    actionTime: string | undefined
-  ) => void
+    actionTime: string | undefined,
+    action: ScoringAction,
+    before: GameState
+  ) => void,
+  beforeAction?: (state: GameState, action: ScoringAction) => void
 ): Replayed {
   const reopened = stored.currentPlay?.about.atBatIndex
   const plays = [...stored.plays]
@@ -286,11 +289,16 @@ export function replayPlays(
     const times: Array<string | undefined> = []
     for (const [i, action] of record.actions.entries()) {
       if (problems.length > 0) break
+      beforeAction?.(state, action)
       // `copyGame` shares the finished plays an earlier copy made, where
       // `applyAction`'s own copy copies every one of them again: at 85 plate
       // appearances that made a replay 330 ms, and every save replays the
       // game to keep its lineups. A refused action leaves `state` whole.
-      const applied = applyAction(copyGame(state), action, { inPlace: true })
+      const before = state
+      const applied = applyAction(copyGame(state), action, {
+        inPlace: true,
+        replay: true
+      })
       if (applied.problems.length > 0) {
         problems.push(...applied.problems)
         break
@@ -298,7 +306,7 @@ export function replayPlays(
       state = applied.state
       kept.push(action)
       times.push(record.actionTimes?.[i])
-      onAction?.(state, atBatIndex, record.actionTimes?.[i])
+      onAction?.(state, atBatIndex, record.actionTimes?.[i], action, before)
     }
     segments.push({
       atBatIndex,
