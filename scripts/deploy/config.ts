@@ -16,16 +16,28 @@ import {
   text
 } from './validation'
 
-const asUpload = object({
+const asUploadFields = object({
   kind: (value: unknown): 'mason' | 'zealot' => {
     if (value !== 'mason' && value !== 'zealot')
       throw new Error('Unknown upload service')
     return value
   },
   origin: httpsOrigin,
-  tokenFile: text(),
+  tokenFile: asOptional(text()),
+  credentialEnv: asOptional((value: unknown): string => {
+    const name = text(128)(value)
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+      throw new Error('Invalid upload credential environment name')
+    return name
+  }),
   channelKey: text(256)
 })
+const asUpload = (value: unknown): Upload => {
+  const out = asUploadFields(value)
+  if ((out.tokenFile == null) === (out.credentialEnv == null))
+    throw new Error('Choose one upload credential source')
+  return out
+}
 const asAndroid = object({
   keystore: text(),
   alias: text(256),
@@ -168,7 +180,13 @@ export const asSettings = object({
   apps: record(asApp)
 })
 export type Settings = ReturnType<typeof asSettings>
-export type Upload = ReturnType<typeof asUpload>
+export type Upload = Omit<
+  ReturnType<typeof asUploadFields>,
+  'tokenFile' | 'credentialEnv'
+> & {
+  tokenFile?: string
+  credentialEnv?: string
+}
 export type TestFlight = ReturnType<typeof asTestFlight>
 
 function clone(value: unknown, depth = 0): unknown {
@@ -293,7 +311,8 @@ export function loadSettings(file: string, branch: string): Settings {
     if (app.sentry != null) app.sentry.tokenFile = resolve(app.sentry.tokenFile)
     for (const platform of [app.ios, app.android, app.macos]) {
       if (platform == null) continue
-      platform.upload.tokenFile = resolve(platform.upload.tokenFile)
+      if (platform.upload.tokenFile != null)
+        platform.upload.tokenFile = resolve(platform.upload.tokenFile)
       if (platform.android != null)
         platform.android.keystore = resolve(platform.android.keystore)
       if (platform.apple?.notarizationKeychain != null)

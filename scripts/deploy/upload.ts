@@ -13,6 +13,7 @@ import { pipeline } from 'node:stream/promises'
 import { asObject, asOptional, asString } from 'cleaners'
 
 import { privateJson, type Upload } from './config'
+import { rememberSecret, rememberSecrets } from './redact'
 import { noSymlinks } from './state'
 import { httpsOrigin, integer, object, text } from './validation'
 
@@ -158,7 +159,24 @@ export async function upload(
     })
   }
 ): Promise<number> {
-  const credential = privateJson(config.tokenFile, asTokenFile)
+  const credential = (() => {
+    if (config.credentialEnv == null) {
+      if (config.tokenFile == null)
+        throw new Error('Missing upload credential source')
+      return privateJson(config.tokenFile, asTokenFile)
+    }
+    const encoded = process.env[config.credentialEnv]
+    if (encoded == null || encoded === '')
+      throw new Error('Missing upload credential secret')
+    rememberSecret(encoded)
+    try {
+      const out = asTokenFile(JSON.parse(encoded))
+      rememberSecrets(out)
+      return out
+    } catch {
+      throw new Error('Invalid upload credential secret')
+    }
+  })()
   if (
     credential.origin !== config.origin ||
     (credential.expiresAt != null && credential.expiresAt <= Date.now())

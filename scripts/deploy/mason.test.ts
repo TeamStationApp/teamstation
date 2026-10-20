@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
@@ -71,8 +71,7 @@ describe('Deployment runner with actual Mason', () => {
           input: `import {Store} from './lib/store.js'; import {loadConfig} from './lib/config.js'; import {ApiKeys} from './lib/upload/keys.js'; const store = new Store(loadConfig(process.argv[2])); const id = store.addApp({slug:'${app}',name:'Example',position:0}); store.addChannel({appId:id,platform:'ios',key:'fixture',allowedFormats:['ipa']}); process.stdout.write(JSON.stringify(new ApiKeys(store).create('Fixture',[id]))); store.close();`
         }
       )
-      const tokenFile = path.join(root, 'token.json')
-      writeFileSync(tokenFile, credential, { mode: 0o600 })
+      process.env.FIXTURE_UPLOAD_CREDENTIAL = credential
       const child = spawn(
         process.execPath,
         ['lib/cli.js', 'serve', '--config', configFile],
@@ -120,7 +119,7 @@ describe('Deployment runner with actual Mason', () => {
           kind: 'mason',
           origin: service.origin,
           channelKey: 'fixture',
-          tokenFile
+          credentialEnv: 'FIXTURE_UPLOAD_CREDENTIAL'
         }
         const config = path.join(root, 'deployConfig.json')
         writeFileSync(
@@ -224,12 +223,10 @@ describe('Deployment runner with actual Mason', () => {
           0
         )
         assert(
-          !logs.includes(
-            (JSON.parse(readFileSync(tokenFile, 'utf8')) as { token: string })
-              .token
-          )
+          !logs.includes((JSON.parse(credential) as { token: string }).token)
         )
       } finally {
+        delete process.env.FIXTURE_UPLOAD_CREDENTIAL
         const stopped = once(child, 'exit')
         child.kill('SIGTERM')
         await stopped

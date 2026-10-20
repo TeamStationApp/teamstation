@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import type { Upload } from './config'
 import { app, testRoot } from './config.test'
+import { redact } from './redact'
 import { fingerprint, type Package, upload } from './upload'
 export interface Endpoint {
   server: Server
@@ -161,8 +162,63 @@ describe('Portable Zealot and Mason uploader', () => {
     }
   })
   afterEach(async () => {
+    delete process.env.FIXTURE_UPLOAD_CREDENTIAL
     await service.close()
     rmSync(root, { recursive: true, force: true })
+  })
+  it('uploads with a stored environment credential and no credential file', async () => {
+    process.env.FIXTURE_UPLOAD_CREDENTIAL = readFileSync(
+      config.tokenFile!,
+      'utf8'
+    )
+    rmSync(config.tokenFile!)
+    const { tokenFile: _unused, ...rest } = config
+    assert.equal(
+      await upload(
+        { ...rest, credentialEnv: 'FIXTURE_UPLOAD_CREDENTIAL' },
+        file,
+        signal(),
+        fast
+      ),
+      7
+    )
+    assert(service.requests[0].body.includes('synthetic-upload-token'))
+    assert.equal(redact('synthetic-upload-token'), '[redacted]')
+    assert.equal(redact(process.env.FIXTURE_UPLOAD_CREDENTIAL), '[redacted]')
+  })
+  it('rejects missing, malformed, expired and wrong-origin environment credentials before sending', async () => {
+    const { tokenFile: _unused, ...rest } = config
+    const secret = { ...rest, credentialEnv: 'FIXTURE_UPLOAD_CREDENTIAL' }
+    const valid = JSON.parse(readFileSync(config.tokenFile!, 'utf8'))
+    await assert.rejects(
+      upload(secret, file, signal(), fast),
+      /Missing upload credential secret/
+    )
+    for (const value of ['', '{bad', '{}']) {
+      process.env.FIXTURE_UPLOAD_CREDENTIAL = value
+      await assert.rejects(
+        upload(secret, file, signal(), fast),
+        /upload credential secret/
+      )
+    }
+    for (const extra of [
+      { origin: 'https://other.example.test' },
+      { expiresAt: 1 }
+    ]) {
+      process.env.FIXTURE_UPLOAD_CREDENTIAL = JSON.stringify({
+        ...valid,
+        ...extra
+      })
+      await assert.rejects(
+        upload(secret, file, signal(), fast),
+        /origin or expiry/
+      )
+    }
+    assert.equal(service.requests.length, 0)
+    await assert.rejects(
+      upload(rest, file, signal(), fast),
+      /Missing upload credential source/
+    )
   })
   it('streams leading credentials without URL secrets and validates returned build identity', async () => {
     assert.equal(await upload(config, file, signal(), fast), 7)
@@ -239,7 +295,7 @@ describe('Portable Zealot and Mason uploader', () => {
       { expiresAt: 1 }
     ]) {
       writeFileSync(
-        config.tokenFile,
+        config.tokenFile!,
         JSON.stringify({
           schemaVersion: 1,
           origin: service.origin,
@@ -253,7 +309,7 @@ describe('Portable Zealot and Mason uploader', () => {
       )
     }
     writeFileSync(
-      config.tokenFile,
+      config.tokenFile!,
       JSON.stringify({
         schemaVersion: 1,
         origin: service.origin,

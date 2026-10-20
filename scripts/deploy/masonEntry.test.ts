@@ -32,7 +32,7 @@ function environment(): NodeJS.ProcessEnv {
     MASON_RESULT_FILE: path.join(root, 'result.json')
   }
 }
-function saveConfig(iosOnly = false): void {
+function saveConfig(iosOnly = false, credentialEnv?: string): void {
   const settings = fixtureSettings(root) as {
     apps: Record<
       string,
@@ -43,7 +43,9 @@ function saveConfig(iosOnly = false): void {
     kind: 'mason',
     origin: service.origin,
     channelKey: 'fixture',
-    tokenFile: path.join(root, 'token.json')
+    ...(credentialEnv == null
+      ? { tokenFile: path.join(root, 'token.json') }
+      : { credentialEnv })
   }
   settings.apps[app].ios.upload = upload
   if (iosOnly) delete settings.apps[app].android
@@ -103,8 +105,36 @@ describe('TeamStation Mason entrypoint', () => {
     )
   })
   afterEach(async () => {
+    delete process.env.FIXTURE_UPLOAD_CREDENTIAL
     await service.close()
     rmSync(root, { recursive: true, force: true })
+  })
+  it('builds and publishes both platforms using only the Mason environment secret', async () => {
+    process.env.FIXTURE_UPLOAD_CREDENTIAL = readFileSync(
+      path.join(root, 'token.json'),
+      'utf8'
+    )
+    rmSync(path.join(root, 'token.json'))
+    saveConfig(false, 'FIXTURE_UPLOAD_CREDENTIAL')
+    assert.equal(
+      await masonDeploy(
+        environment(),
+        source,
+        { ios: builder, android: builder },
+        false
+      ),
+      0
+    )
+    const result = JSON.parse(
+      readFileSync(environment().MASON_RESULT_FILE!, 'utf8')
+    )
+    assert.equal(result.status, 'succeeded')
+    assert.equal(service.requests.length, 2)
+    assert(
+      service.requests.every(request =>
+        request.body.includes('synthetic-token')
+      )
+    )
   })
   it('builds the supplied checkout with one counter allocation and reports success', async () => {
     assert.equal(

@@ -91,6 +91,42 @@ describe('Deployment configuration', () => {
   afterEach(() => {
     rmSync(root, { recursive: true, force: true })
   })
+  it('accepts an environment credential instead of a file and rejects ambiguous sources', () => {
+    const make = (upload: object): object => ({
+      schemaVersion: 1,
+      branches: {
+        master: {
+          settings: {
+            ...fixtureSettings(root),
+            apps: { [app]: { ios: { upload } } }
+          }
+        }
+      }
+    })
+    const upload = {
+      kind: 'mason',
+      origin: 'https://builds.example.test',
+      channelKey: 'fixture'
+    }
+    const settings = resolveSettings(
+      make({ ...upload, credentialEnv: 'FIXTURE_UPLOAD_CREDENTIAL' }),
+      'master'
+    )
+    assert.equal(
+      settings.apps[app].ios?.upload.credentialEnv,
+      'FIXTURE_UPLOAD_CREDENTIAL'
+    )
+    assert.equal(settings.apps[app].ios?.upload.tokenFile, undefined)
+    for (const extra of [
+      {},
+      { tokenFile: 'token.json', credentialEnv: 'FIXTURE_UPLOAD_CREDENTIAL' },
+      { credentialEnv: 'invalid-name' }
+    ]) {
+      assert.throws(() =>
+        resolveSettings(make({ ...upload, ...extra }), 'master')
+      )
+    }
+  })
   it('resolves multi-level branches, master fallback, replacement arrays and private relative paths', () => {
     const config = {
       schemaVersion: 1,
