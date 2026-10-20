@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { beforeEach, describe, it } from 'mocha'
 
 import type { LineupPerson } from '../../common/scoring/lineupHistory'
+import { userIdOfGumbo } from '../../common/userId'
 import { statsDatabase } from '../../test/statsDatabase'
 import {
   findDuplicatePeople,
@@ -27,7 +28,10 @@ describe('independent account and scoring identities', function () {
     await db
       .insertInto('gumbo_ids')
       .values(
-        ids.map((userId, i) => ({ user_id: userId, gumbo_id: scoring[i] }))
+        ids.map((userId, i) => ({
+          user_id: userIdOfGumbo(userId),
+          gumbo_id: scoring[i]
+        }))
       )
       .execute()
   })
@@ -48,17 +52,17 @@ describe('independent account and scoring identities', function () {
     const { db, ids } = fixture
     await db
       .updateTable('users')
-      .set({ merged_into: ids[1] })
-      .where('id', '=', ids[0])
+      .set({ merged_into: userIdOfGumbo(ids[1]) })
+      .where('id', '=', userIdOfGumbo(ids[0]))
       .execute()
     await db
       .updateTable('users')
-      .set({ merged_into: ids[2] })
-      .where('id', '=', ids[1])
+      .set({ merged_into: userIdOfGumbo(ids[2]) })
+      .where('id', '=', userIdOfGumbo(ids[1]))
       .execute()
     expect([...(await scoringUsers(db, [101, 102, 101]))]).deep.equals([
-      [101, ids[2]],
-      [102, ids[2]]
+      [101, userIdOfGumbo(ids[2])],
+      [102, userIdOfGumbo(ids[2])]
     ])
     expect([...(await resolveGumboIds(db, [101, 102, 103]))]).deep.equals([
       [101, 103],
@@ -66,7 +70,12 @@ describe('independent account and scoring identities', function () {
       [103, 103]
     ])
     expect(
-      (await gumboIdsOfUsers(db, [ids[0], ids[1]])).sort((a, b) => a - b)
+      (
+        await gumboIdsOfUsers(db, [
+          userIdOfGumbo(ids[0]),
+          userIdOfGumbo(ids[1])
+        ])
+      ).sort((a, b) => a - b)
     ).deep.equals([101, 102])
     expect(
       (
@@ -76,7 +85,7 @@ describe('independent account and scoring identities', function () {
           .where('gumbo_id', '=', 101)
           .executeTakeFirstOrThrow()
       ).user_id
-    ).equals(ids[0])
+    ).equals(userIdOfGumbo(ids[0]))
   })
   it('resolves saved lineup positions through merges without rewriting or collapsing historical turns', async () => {
     const { db, ids } = fixture
@@ -105,8 +114,8 @@ describe('independent account and scoring identities', function () {
     }
     await db
       .updateTable('users')
-      .set({ merged_into: ids[1] })
-      .where('id', '=', ids[0])
+      .set({ merged_into: userIdOfGumbo(ids[1]) })
+      .where('id', '=', userIdOfGumbo(ids[0]))
       .execute()
     const resolved = await resolvedDefaultOf(db, original)
     expect(resolved?.lineup?.batters.map(row => row.gumboId)).deep.equals([
@@ -125,13 +134,16 @@ describe('independent account and scoring identities', function () {
     await refuses(resolveGumboIds(db, [999]), 'Missing original')
     await db
       .updateTable('users')
-      .set({ merged_into: ids[1] })
-      .where('id', '=', ids[0])
+      .set({ merged_into: userIdOfGumbo(ids[1]) })
+      .where('id', '=', userIdOfGumbo(ids[0]))
       .execute()
-    await db.deleteFrom('gumbo_ids').where('user_id', '=', ids[1]).execute()
+    await db
+      .deleteFrom('gumbo_ids')
+      .where('user_id', '=', userIdOfGumbo(ids[1]))
+      .execute()
     await refuses(resolveGumboIds(db, [101]), 'Missing surviving')
-    expect(await gumboIdsOfUsers(db, [ids[1]])).deep.equals([])
-    expect((await creditsForPlayer(db, ids[1])).size).equals(0)
+    expect(await gumboIdsOfUsers(db, [userIdOfGumbo(ids[1])])).deep.equals([])
+    expect((await creditsForPlayer(db, userIdOfGumbo(ids[1]))).size).equals(0)
     expect(
       await db.selectFrom('gumbo_ids').select('gumbo_id').execute()
     ).length(2)
@@ -140,13 +152,13 @@ describe('independent account and scoring identities', function () {
     const { db, ids } = fixture
     await db
       .updateTable('users')
-      .set({ merged_into: ids[1] })
-      .where('id', '=', ids[0])
+      .set({ merged_into: userIdOfGumbo(ids[1]) })
+      .where('id', '=', userIdOfGumbo(ids[0]))
       .execute()
     await db
       .updateTable('users')
-      .set({ merged_into: ids[0] })
-      .where('id', '=', ids[1])
+      .set({ merged_into: userIdOfGumbo(ids[0]) })
+      .where('id', '=', userIdOfGumbo(ids[1]))
       .execute()
     await refuses(scoringUsers(db, [101]), 'Cyclic account merge')
   })
@@ -167,7 +179,7 @@ describe('independent account and scoring identities', function () {
         ids.slice(0, 2).map((userId, i) => ({
           id: `mem_mapping_${i}`,
           team_id: 'tem_away',
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           is_player: true
         }))
       )
@@ -179,12 +191,12 @@ describe('independent account and scoring identities', function () {
         last_name: 'Aaron',
         display_name: 'Hank Aaron'
       })
-      .where('id', 'in', ids.slice(0, 2))
+      .where('id', 'in', ids.slice(0, 2).map(userIdOfGumbo))
       .execute()
     await db
       .updateTable('users')
       .set({ last_name: '', display_name: 'Hank' })
-      .where('id', '=', ids[1])
+      .where('id', '=', userIdOfGumbo(ids[1]))
       .execute()
     await db
       .insertInto('events')
@@ -197,26 +209,32 @@ describe('independent account and scoring identities', function () {
     const duplicates = await findDuplicatePeople(db)
     expect(duplicates.pairs).length(1)
     expect(duplicates.pairs[0]).includes({
-      keepUserId: ids[0],
+      keepUserId: userIdOfGumbo(ids[0]),
       keepPlays: 1,
-      otherUserId: ids[1],
+      otherUserId: userIdOfGumbo(ids[1]),
       otherPlays: 0
     })
     await db
       .updateTable('users')
       .set({ last_name: 'Aaron' })
-      .where('id', '=', ids[1])
+      .where('id', '=', userIdOfGumbo(ids[1]))
       .execute()
     const same = await findSamePersonAcrossTeams(db)
     expect(same).length(1)
-    expect(same[0].keepUserId).equals(ids[0])
-    expect(same[0].members.find(row => row.userId === ids[0])?.plays).equals(1)
+    expect(same[0].keepUserId).equals(userIdOfGumbo(ids[0]))
+    expect(
+      same[0].members.find(row => row.userId === userIdOfGumbo(ids[0]))?.plays
+    ).equals(1)
     const roster = await levelPeople(db, undefined, {
       kind: 'season',
       id: 'sea_demo'
     })
-    expect(roster?.find(row => row.userId === ids[0])?.gumboId).equals(101)
-    expect(roster?.find(row => row.userId === ids[1])?.gumboId).equals(102)
+    expect(
+      roster?.find(row => row.userId === userIdOfGumbo(ids[0]))?.gumboId
+    ).equals(101)
+    expect(
+      roster?.find(row => row.userId === userIdOfGumbo(ids[1]))?.gumboId
+    ).equals(102)
   })
 
   it('returns account IDs in stats and guest profiles while keeping availability numeric', async () => {
@@ -232,10 +250,10 @@ describe('independent account and scoring identities', function () {
         h: 1
       })
       .execute()
-    const rows = await statRows(db, { userId: ids[0] })
+    const rows = await statRows(db, { userId: userIdOfGumbo(ids[0]) })
     expect(rows).length(1)
-    expect(rows[0]).includes({ userId: ids[0], pa: 1, h: 1 })
-    expect(await statRows(db, { userId: 101 })).length(0)
+    expect(rows[0]).includes({ userId: userIdOfGumbo(ids[0]), pa: 1, h: 1 })
+    expect(await statRows(db, { userId: userIdOfGumbo(101) })).length(0)
     const available = await gameAvailability(db, {
       id: 'gam_demo',
       home_team_id: 'tem_home',
@@ -247,7 +265,7 @@ describe('independent account and scoring identities', function () {
     expect(available.guests.away).deep.equals([101])
     expect(available.unrostered.away).deep.equals([101])
     expect(available.guestPlayers.away[0]).includes({
-      userId: ids[0],
+      userId: userIdOfGumbo(ids[0]),
       gumboId: 101
     })
   })

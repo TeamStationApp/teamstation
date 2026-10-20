@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import {
   analyzeOwnership,
@@ -123,14 +124,14 @@ describe('ownership cutover in PostgreSQL', function () {
           id: 'r1',
           scope_type: 'league',
           scope_id: 'l',
-          user_id: 101,
+          user_id: userIdOfGumbo(101),
           role: 'admin'
         },
         {
           id: 'r2',
           scope_type: 'season',
           scope_id: 's',
-          user_id: 101,
+          user_id: userIdOfGumbo(101),
           role: 'admin'
         }
       ])
@@ -171,7 +172,7 @@ describe('ownership cutover in PostgreSQL', function () {
       .insertInto('scope_roles')
       .values({
         id: 'guestAdmin',
-        user_id: 102,
+        user_id: userIdOfGumbo(102),
         scope_type: 'season',
         scope_id: 'guest',
         role: 'admin'

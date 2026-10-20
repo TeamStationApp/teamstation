@@ -7,7 +7,7 @@ import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { asFenceDistanceBody } from '../../common/fenceDistance'
 import { makeId } from '../../common/ids'
 import { asRoleFlags, type RoleFlag } from '../../common/roles'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import { adminScopes } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
@@ -102,7 +102,7 @@ export function manageRoutes(
   )
   /** The scope, refused as 404 to anybody who does not administer it. */
   const mustAdminister = async (
-    userId: number,
+    userId: string,
     isAdmin: boolean,
     scopeType: InviteScopeType,
     scopeId: string
@@ -271,7 +271,7 @@ export function manageRoutes(
    * roles take effect at once, with the level's membership, and they are
    * told so.
    */
-  const mustBePerson = async (userId: number): Promise<void> => {
+  const mustBePerson = async (userId: string): Promise<void> => {
     const person = await db
       .selectFrom('users')
       .select(['id'])
@@ -476,10 +476,10 @@ function pathParam(value: string | string[] | undefined): string {
   return value
 }
 
-function userIdParam(value: string | string[] | undefined): number {
+function userIdParam(value: string | string[] | undefined): string {
   try {
     return asUserId(pathParam(value))
   } catch {
-    throw notFound()
+    throw badRequest('Expected a canonical user id')
   }
 }

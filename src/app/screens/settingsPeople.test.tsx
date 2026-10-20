@@ -5,6 +5,7 @@ import React, { act } from 'react'
 import { asInvite, asManagePage, TeamStationClient } from '../../common/api'
 import { parseEmailList } from '../../common/emailList'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   fill,
   find,
@@ -45,13 +46,23 @@ function page(pending = true): ReturnType<typeof asManagePage> {
       : [],
     people: [
       {
-        userId: 101,
+        userId: userIdOfGumbo(101),
         displayName: 'Mookie Betts',
         emails: ['player@example.test'],
         player: true
       },
-      { userId: 102, displayName: 'Aaron Judge', emails: [], player: true },
-      { userId: 103, displayName: 'Babe Ruth', emails: [], player: false }
+      {
+        userId: userIdOfGumbo(102),
+        displayName: 'Aaron Judge',
+        emails: [],
+        player: true
+      },
+      {
+        userId: userIdOfGumbo(103),
+        displayName: 'Babe Ruth',
+        emails: [],
+        player: false
+      }
     ].map(row => ({
       ...row,
       teams: [
@@ -333,7 +344,11 @@ describe('settings people flows', function () {
         throw new Error('Delivery unavailable')
       return {
         added: true,
-        person: { userId: 101, displayName: 'Mookie Betts', email },
+        person: {
+          userId: userIdOfGumbo(101),
+          displayName: 'Mookie Betts',
+          email
+        },
         invited: undefined
       }
     }
@@ -427,7 +442,7 @@ describe('settings people flows', function () {
     let fail = true
     api.managePage = async () => page(false)
     api.removePerson = async (_kind, _id, user) => {
-      expect(user).equals(102)
+      expect(user).equals(userIdOfGumbo(102))
       if (fail) throw new Error('Removal unavailable')
       removed++
       return { removed: true }

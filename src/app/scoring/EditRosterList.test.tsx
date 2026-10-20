@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { asRosterEntry } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { EditRosterList } from './EditRosterList'
@@ -14,7 +15,7 @@ import type { EditRosterRow } from './scoringRosterEdit'
 const row = (id: number, jersey: string): EditRosterRow => ({
   id,
   key: `player:${id}`,
-  userId: id,
+  userId: id > 0 ? userIdOfGumbo(id) : undefined,
   name: 'Mookie Betts',
   navigationTitle: 'Mookie B',
   sortName: 'Mookie Betts',
@@ -29,7 +30,7 @@ describe('Roster tab cards and selector', function () {
     document.body.append(host)
     const root = createRoot(host)
     let edited = 0
-    const toggles: Array<[number, boolean]> = []
+    const toggles: Array<[string, boolean]> = []
     const render = async (coach: boolean): Promise<void> => {
       await act(async () => {
         root.render(
@@ -68,7 +69,7 @@ describe('Roster tab cards and selector', function () {
       await act(async () => {
         switches[0].click()
       })
-      expect(toggles).deep.equals([[1, false]])
+      expect(toggles).deep.equals([[userIdOfGumbo(1), false]])
       expect(edited).equals(0)
       await act(async () => {
         host
@@ -148,7 +149,7 @@ describe('Roster tab cards and selector', function () {
     const host = document.createElement('div')
     document.body.append(host)
     const root = createRoot(host)
-    let selected: number | undefined
+    let selected: string | undefined
     let local: number | undefined
     let retried = false
     try {
@@ -186,7 +187,7 @@ describe('Roster tab cards and selector', function () {
       await act(async () => {
         host.querySelector<HTMLElement>('[aria-label*="jersey 12"]')!.click()
       })
-      expect(selected).equals(2)
+      expect(selected).equals(userIdOfGumbo(2))
       await act(async () => {
         host
           .querySelector<HTMLElement>('[aria-label*="game-only player"]')!
@@ -258,7 +259,7 @@ describe('Roster tab cards and selector', function () {
               rosters={{
                 [state.session.gameData.teams.away.id]: [
                   asRosterEntry({
-                    userId: 100,
+                    userId: userIdOfGumbo(100),
                     gumboId: 100,
                     shortName: 'Mookie B',
                     jersey: '1',

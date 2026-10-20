@@ -7,9 +7,11 @@ import { makeId } from '../../common/ids'
 import { asNewRosterPlayer } from '../../common/playerSettings'
 import { currentDocumentOf } from '../../common/scoring/document'
 import { setupOf } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { after as score, game as fixture } from '../../test/scoringGames'
 import type { Actor } from '../auth/sessions'
 import { type Database, makeDatabase } from '../db/database'
@@ -20,7 +22,11 @@ describe('persistent game guests', function () {
   const name = `teamstation_guest_api_${process.pid}_${Date.now()}`
   let admin: Pool
   let db: Kysely<Database>
-  const actor: Actor = { userId: 123, isAdmin: false, scopes: [] }
+  const actor: Actor = {
+    userId: userIdOfGumbo(123),
+    isAdmin: false,
+    scopes: []
+  }
   const player = asNewRosterPlayer({
     firstName: 'Babe',
     lastName: 'Ruth',
@@ -37,14 +43,11 @@ describe('persistent game guests', function () {
     await migrateUp(pool, migrations)
     await pool.end()
     db = makeDatabase(url)
-    await db
-      .insertInto('users')
-      .values({
-        id: 123,
-        legacyId: 'usr_AAAAAAAAAAAAAAAA',
-        display_name: 'Hank Aaron'
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(123),
+      legacyId: 'usr_AAAAAAAAAAAAAAAA',
+      display_name: 'Hank Aaron'
+    })
     await db
       .insertInto('teams')
       .values([
@@ -65,7 +68,7 @@ describe('persistent game guests', function () {
       .insertInto('scope_roles')
       .values({
         id: 'rol_guest_coach',
-        user_id: 123,
+        user_id: userIdOfGumbo(123),
         scope_type: 'team',
         scope_id: 'team-away',
         role: 'coach'
@@ -117,7 +120,7 @@ describe('persistent game guests', function () {
       .executeTakeFirstOrThrow()
     expect(
       (game.guests as { away: number[] }).away.sort((a, b) => a - b)
-    ).deep.equals(ids.sort((a, b) => a - b))
+    ).deep.equals(entries.map(entry => entry.gumboId!).sort((a, b) => a - b))
     expect((game.guests as { home: number[] }).home).deep.equals([])
     const users = await db
       .selectFrom('users')
@@ -146,7 +149,7 @@ describe('persistent game guests', function () {
         .execute()
     ).deep.equals([])
   })
-  it('requires the side roster permission and an open game', async function () {
+  it('allows either side for a game scorekeeper, but keeps coaches side-specific and requires an open game', async function () {
     await refused(
       async () => await createGuestPlayer(db, actor, 'missing', 'away', player),
       'notFound'
@@ -186,7 +189,58 @@ describe('persistent game guests', function () {
         bats: null,
         throws: null
       })
+      if (role === 'assistant') {
+        await refused(
+          async () =>
+            await createGuestPlayer(db, actor, 'gam_guests', 'home', player),
+          'forbidden'
+        )
+      } else {
+        const guest = await createGuestPlayer(
+          db,
+          actor,
+          'gam_guests',
+          'home',
+          player
+        )
+        expect(
+          await db
+            .selectFrom('memberships')
+            .selectAll()
+            .where('user_id', '=', guest.userId)
+            .execute()
+        ).deep.equals([])
+        const game = await db
+          .selectFrom('games')
+          .select('guests')
+          .where('id', '=', 'gam_guests')
+          .executeTakeFirstOrThrow()
+        expect((game.guests as { home: number[] }).home).deep.equals([
+          guest.gumboId
+        ])
+      }
     }
+    await db
+      .updateTable('scope_roles')
+      .set({ scope_id: 'team-home' })
+      .where('id', '=', 'rol_guest_coach')
+      .execute()
+    await createGuestPlayer(db, actor, 'gam_guests', 'away', player)
+    await db
+      .updateTable('scope_roles')
+      .set({ scope_id: 'team-unrelated' })
+      .where('id', '=', 'rol_guest_coach')
+      .execute()
+    await refused(
+      async () =>
+        await createGuestPlayer(db, actor, 'gam_guests', 'away', player),
+      'forbidden'
+    )
+    await db
+      .updateTable('scope_roles')
+      .set({ scope_id: 'team-away' })
+      .where('id', '=', 'rol_guest_coach')
+      .execute()
   })
   it('rejects an unreadable game or an unfinished ball in play without minting', async function () {
     await db
@@ -199,16 +253,14 @@ describe('persistent game guests', function () {
         await createGuestPlayer(db, actor, 'gam_guests', 'away', player),
       'conflict'
     )
-    await db
-      .insertInto('users')
-      .values(
-        Array.from({ length: 18 }, (_, index) => ({
-          id: index + 1,
-          legacyId: makeId('user'),
-          display_name: `Player ${index + 1}`
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      Array.from({ length: 18 }, (_, index) => ({
+        id: index + 1,
+        legacyId: makeId('user'),
+        display_name: `Player ${index + 1}`
+      }))
+    )
     const state = fixture()
     const action = {
       type: 'ballInPlay' as const,

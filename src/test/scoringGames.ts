@@ -5,6 +5,7 @@ import { type Applied, applyAction } from '../common/scoring/apply'
 import { baseIds, freshGame, newSetup } from '../common/scoring/lineup'
 import { nextDecision } from '../common/scoring/rules'
 import type { GameState } from '../common/scoring/state'
+import { userIdOfGumbo } from '../common/userId'
 
 /**
  * Games for the scoring library's tests. Nine made-up players a side: the
@@ -31,13 +32,13 @@ export function game(): GameState {
   const roster = (
     start: number
   ): Array<{
-    userId: number
+    userId: string
     gumboId: number
     shortName: string
     jersey: string
   }> =>
     Array.from({ length: 9 }, (_, i) => ({
-      userId: start + i,
+      userId: userIdOfGumbo(start + i),
       gumboId: start + i,
       shortName: `Player ${i + 1}`,
       jersey: String(i + 1)

@@ -13,13 +13,15 @@ import WebSocket from 'ws'
 import type { GameSocketReply } from '../../common/gameSocket'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { newSetup } from '../../common/scoring/lineup'
 import { type EventStore, ScoringSession } from '../../common/scoring/session'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import { type Database, makeDatabase } from '../db/database'
 import { jsonBody } from '../jsonBody'
@@ -97,13 +99,13 @@ describe('the game socket (U14)', function () {
   const rosterOf = (
     users: Array<{ userId: number }>
   ): Array<{
-    userId: number
+    userId: string
     gumboId: number
     shortName: string
     jersey: string
   }> =>
     users.map((user, i) => ({
-      userId: user.userId,
+      userId: userIdOfGumbo(user.userId),
       gumboId: user.userId,
       shortName: `P${i + 1}`,
       jersey: String(i + 1)
@@ -311,21 +313,19 @@ describe('the game socket (U14)', function () {
     await pool.end()
     db = makeDatabase(scratchUrl)
     const at = new Date()
-    await db
-      .insertInto('users')
-      .values(
-        [scorer, viewer, other, fading, ...awayPlayers, ...homePlayers].map(
-          user => ({
-            id: user.userId,
-            legacyId: user.legacyId,
-            display_name: `User ${user.userId}`,
-            is_admin: user === scorer,
-            created_at: at,
-            updated_at: at
-          })
-        )
+    await insertFixtureUsers(
+      db,
+      [scorer, viewer, other, fading, ...awayPlayers, ...homePlayers].map(
+        user => ({
+          id: user.userId,
+          legacyId: user.legacyId,
+          display_name: `User ${user.userId}`,
+          is_admin: user === scorer,
+          created_at: at,
+          updated_at: at
+        })
       )
-      .execute()
+    )
     await db
       .insertInto('auth_sessions')
       .values(
@@ -338,7 +338,7 @@ describe('the game socket (U14)', function () {
           ] as const
         ).map(([user, token]) => ({
           id: `ses_${token}`,
-          user_id: user.userId,
+          user_id: userIdOfGumbo(user.userId),
           token_hash: hashToken(token),
           created_at: at,
           expires_at: new Date(at.getTime() + 3_600_000)
@@ -381,7 +381,7 @@ describe('the game socket (U14)', function () {
       .values(
         [viewer, other, fading].map(user => ({
           id: makeId('membership'),
-          user_id: user.userId,
+          user_id: userIdOfGumbo(user.userId),
           team_id: homeTeam,
           role: 'member'
         }))
@@ -883,7 +883,7 @@ describe('the game socket (U14)', function () {
       await subscribed(control, scored)
       await db!
         .deleteFrom('memberships')
-        .where('user_id', '=', fading.userId)
+        .where('user_id', '=', userIdOfGumbo(fading.userId))
         .execute()
       // The earlier subscription cache cannot authorize a later private frame.
       let from = listener.frames.length

@@ -362,7 +362,7 @@ describe('the receiver over TCP', function () {
     )
     socket.resume()
     // Two frames at once: the first closes the connection, the second is never answered.
-    socket.write(Buffer.concat([frame(Buffer.from([2, 1])), frame(Buffer.from([2, 1]))]))
+    socket.write(Buffer.concat([frame(Buffer.from([1, 1])), frame(Buffer.from([1, 1]))]))
     await new Promise(resolve => socket.on('close', resolve))
     expect(lines.filter(line => line.event === 'out')).has.length(1)
   })
@@ -466,7 +466,7 @@ describe('the receiver over TCP', function () {
     const asked: string[] = []
     const fetcher = (async (url: string, init?: RequestInit) => {
       asked.push(`${url} ${JSON.stringify(init?.headers)}`)
-      return new Response(JSON.stringify({ version: 1, ...one }), { status: 200 })
+      return new Response(JSON.stringify({ version: 2, ...one }), { status: 200 })
     }) as typeof fetch
     const lines: Array<Record<string, unknown>> = []
     const started = await main(
@@ -539,7 +539,7 @@ describe('the receiver over TCP', function () {
     const tokenFile = join(dir, 'token')
     writeFileSync(tokenFile, 'tok_one')
     const fetcher = (async () =>
-      new Response(JSON.stringify(one), { status: 200 })) as unknown as typeof fetch
+      new Response(JSON.stringify({ version: 2, ...one }), { status: 200 })) as unknown as typeof fetch
     const lines: Array<Record<string, unknown>> = []
     const started = await main(
       ['--server', 'http://127.0.0.1:9', '--token-file', tokenFile, '--port', '0', '--host', '127.0.0.1'],
