@@ -52,8 +52,7 @@ function parseArgs(argv) {
       args.exportCounts = argv[++i]
       if (args.exportCounts == null || args.exportCounts.startsWith('--'))
         throw new Error('--export-counts needs a file')
-    }
-    else args.rest.push(arg)
+    } else args.rest.push(arg)
   }
   if ((args.spm == null) === (args.xcresult == null))
     throw new Error('give one of --spm or --xcresult')
@@ -306,7 +305,10 @@ function main(argv, { run, log, cwd = process.cwd() }) {
   const file = join(dir, 'counts.json')
   writeFileSync(file, JSON.stringify(keyed(tops, counts)))
   if (args.exportCounts != null)
-    writeFileSync(resolve(cwd, args.exportCounts), JSON.stringify(keyed(tops, counts)))
+    writeFileSync(
+      resolve(cwd, args.exportCounts),
+      JSON.stringify(keyed(tops, counts))
+    )
   return check.main(['--counts', file, ...ALWAYS, ...args.rest], {
     run,
     log,

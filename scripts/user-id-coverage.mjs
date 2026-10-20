@@ -170,8 +170,7 @@ if (!args.includes('--check-only') && !args.includes('--native-only')) {
   )
   const suite = JSON.parse(readFileSync(testReport, 'utf8'))
   const stats = suite.stats
-  if (stats.passes < 1)
-    throw new Error('No passing measured suite')
+  if (stats.passes < 1) throw new Error('No passing measured suite')
   for (const [file, source] of Object.entries(files))
     if (digest(file) !== source.hash)
       throw new Error(`Source changed during coverage: ${file}`)
@@ -189,14 +188,16 @@ if (!args.includes('--check-only') && !args.includes('--native-only')) {
     })
   )
 }
-const nativeFiles = Object.keys(files).filter(file => /\.(swift|kt)$/.test(file))
+const nativeFiles = Object.keys(files).filter(file =>
+  /\.(swift|kt)$/.test(file)
+)
 if (!args.includes('--check-only') && nativeFiles.length > 0) {
   const counts = {}
   let tests = 0
   const addCounts = raw => {
     for (const [file, lines] of Object.entries(raw)) {
       const name = isAbsolute(file) ? relative(root, file) : file
-      const destination = counts[name] ??= {}
+      const destination = (counts[name] ??= {})
       for (const [line, hits] of Object.entries(lines))
         destination[line] = Math.max(destination[line] ?? 0, hits)
     }
@@ -208,13 +209,22 @@ if (!args.includes('--check-only') && nativeFiles.length > 0) {
     console.log('$ swift test --enable-code-coverage --package-path', path)
     const log = []
     const raw = spmCounts(resolve(path), (command, argv) => {
-      const result = spawnSync(command, argv, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
+      const result = spawnSync(command, argv, {
+        encoding: 'utf8',
+        maxBuffer: 256 * 1024 * 1024
+      })
       const output = (result.stdout ?? '') + (result.stderr ?? '')
       log.push('$ ' + [command, ...argv].join(' '), output)
-      if (result.status !== 0) throw new Error(`${name} host tests/export failed: ${output.slice(-6000)}`)
+      if (result.status !== 0)
+        throw new Error(
+          `${name} host tests/export failed: ${output.slice(-6000)}`
+        )
       if (command === 'swift' && argv.includes('--enable-code-coverage')) {
-        measuredTests = Number(/Test run with (\d+) tests?[^\n]* passed/.exec(output)?.[1] ?? 0)
-        if (measuredTests < 1) throw new Error(`No measured host tests: ${name}`)
+        measuredTests = Number(
+          /Test run with (\d+) tests?[^\n]* passed/.exec(output)?.[1] ?? 0
+        )
+        if (measuredTests < 1)
+          throw new Error(`No measured host tests: ${name}`)
       }
       return result.stdout ?? ''
     })
@@ -225,36 +235,99 @@ if (!args.includes('--check-only') && nativeFiles.length > 0) {
   if (nativeFiles.some(file => file.endsWith('.kt'))) {
     const path = resolve('mobile/apps/tsCameramanAndroid')
     console.log('$ ./gradlew JVM unit tests and Kover reports')
-    const result = spawnSync('./gradlew', [':app:testDebugUnitTest', ':streamcore:testDebugUnitTest', ':app:koverXmlReportDebug', ':streamcore:koverXmlReportDebug', '--console=plain', '--rerun-tasks'], {
-      cwd: path, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024
-    })
-    writeFileSync(resolve(output, 'jvm.log'), (result.stdout ?? '') + (result.stderr ?? ''))
-    if (result.status !== 0) throw new Error('JVM tests/coverage failed; see coverage/userIds/jvm.log')
-    for (const module of [resolve(path, 'app'), resolve(path, '../common/android/streamcore')]) {
+    const result = spawnSync(
+      './gradlew',
+      [
+        ':app:testDebugUnitTest',
+        ':streamcore:testDebugUnitTest',
+        ':app:koverXmlReportDebug',
+        ':streamcore:koverXmlReportDebug',
+        '--console=plain',
+        '--rerun-tasks'
+      ],
+      {
+        cwd: path,
+        encoding: 'utf8',
+        maxBuffer: 256 * 1024 * 1024
+      }
+    )
+    writeFileSync(
+      resolve(output, 'jvm.log'),
+      (result.stdout ?? '') + (result.stderr ?? '')
+    )
+    if (result.status !== 0)
+      throw new Error('JVM tests/coverage failed; see coverage/userIds/jvm.log')
+    for (const module of [
+      resolve(path, 'app'),
+      resolve(path, '../common/android/streamcore')
+    ]) {
       let moduleTests = 0
-      for (const file of readdirSync(resolve(module, 'build/test-results/testDebugUnitTest'))) {
+      for (const file of readdirSync(
+        resolve(module, 'build/test-results/testDebugUnitTest')
+      )) {
         if (!file.endsWith('.xml')) continue
-        const xml = readFileSync(resolve(module, 'build/test-results/testDebugUnitTest', file), 'utf8')
-        const attr = name => Number(new RegExp(`\\b${name}="(\\d+)"`).exec(xml)?.[1] ?? 0)
-        if (attr('failures') + attr('errors') > 0) throw new Error('Failing measured JVM suite')
+        const xml = readFileSync(
+          resolve(module, 'build/test-results/testDebugUnitTest', file),
+          'utf8'
+        )
+        const attr = name =>
+          Number(new RegExp(`\\b${name}="(\\d+)"`).exec(xml)?.[1] ?? 0)
+        if (attr('failures') + attr('errors') > 0)
+          throw new Error('Failing measured JVM suite')
         moduleTests += attr('tests') - attr('skipped')
       }
       if (moduleTests < 1) throw new Error('No measured JVM tests')
       tests += moduleTests
-      const raw = readCounters('jacoco', readFileSync(resolve(module, 'build/reports/kover/reportDebug.xml'), 'utf8'))
-      addCounts(Object.fromEntries(Object.entries(raw).map(([file, lines]) => [relative(root, resolve(module, 'src/main/kotlin', file)), lines])))
+      const raw = readCounters(
+        'jacoco',
+        readFileSync(
+          resolve(module, 'build/reports/kover/reportDebug.xml'),
+          'utf8'
+        )
+      )
+      addCounts(
+        Object.fromEntries(
+          Object.entries(raw).map(([file, lines]) => [
+            relative(root, resolve(module, 'src/main/kotlin', file)),
+            lines
+          ])
+        )
+      )
     }
   }
   for (const [file, source] of Object.entries(files))
-    if (digest(file) !== source.hash) throw new Error(`Source changed during coverage: ${file}`)
-  writeFileSync(resolve(output, 'native-report.json'), JSON.stringify({ base, head, tests, hashes: Object.fromEntries(Object.entries(files).map(([file, value]) => [file, value.hash])), counts }))
+    if (digest(file) !== source.hash)
+      throw new Error(`Source changed during coverage: ${file}`)
+  writeFileSync(
+    resolve(output, 'native-report.json'),
+    JSON.stringify({
+      base,
+      head,
+      tests,
+      hashes: Object.fromEntries(
+        Object.entries(files).map(([file, value]) => [file, value.hash])
+      ),
+      counts
+    })
+  )
 }
-const reportPaths = args.includes('--native-only') ? [] : [resolve(output, 'host-report.json')]
-if (nativeFiles.length > 0) reportPaths.push(resolve(output, 'native-report.json'))
+const reportPaths = args.includes('--native-only')
+  ? []
+  : [resolve(output, 'host-report.json')]
+if (nativeFiles.length > 0)
+  reportPaths.push(resolve(output, 'native-report.json'))
 for (let i = 0; i < args.length; i++)
   if (args[i] === '--report') reportPaths.push(resolve(args[++i]))
 const reports = reportPaths.map(path => JSON.parse(readFileSync(path, 'utf8')))
-const summary = auditCoverage(args.includes('--native-only') ? { ...snapshot, files: Object.fromEntries(nativeFiles.map(file => [file, files[file]])) } : snapshot, reports)
+const summary = auditCoverage(
+  args.includes('--native-only')
+    ? {
+        ...snapshot,
+        files: Object.fromEntries(nativeFiles.map(file => [file, files[file]]))
+      }
+    : snapshot,
+  reports
+)
 summary.testFailures = reports.flatMap(report => report.failures ?? [])
 writeFileSync(
   resolve(output, 'coverage-summary.json'),
