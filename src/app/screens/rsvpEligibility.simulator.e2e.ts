@@ -74,8 +74,8 @@ async function main(): Promise<void> {
     )
     expect(info.replyUserIds)
       .includes(userIdOfGumbo(user))
-      .and.includes(child)
-      .and.not.includes(outsider)
+      .and.includes(userIdOfGumbo(child))
+      .and.not.includes(userIdOfGumbo(outsider))
     const childName = info.attendees.find(
       row => row.userId === userIdOfGumbo(child)
     )!.name

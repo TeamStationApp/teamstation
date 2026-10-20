@@ -344,7 +344,7 @@ async function main(): Promise<void> {
     }
     const open = async (
       route: string,
-      target = 'event-reply-row-101'
+      target = 'event-reply-row-usr_111111111111111111112k'
     ): Promise<void> => {
       await m.openBrowser({ url: f.h.origin + route })
       await m.evalBrowserScript({
@@ -485,7 +485,7 @@ async function main(): Promise<void> {
         rowWidth: number
         heroWidth: number
       }>(`(()=>{
-        const root=document.querySelector('[data-testid="event-rsvp-101"]'), fill=root.querySelector('[data-testid$="-fill"]');
+        const root=document.querySelector('[data-testid="event-rsvp-usr_111111111111111111112k"]'), fill=root.querySelector('[data-testid$="-fill"]');
         const card=document.querySelector('[data-testid="event-replies"]').getBoundingClientRect(), hero=document.querySelector('[data-testid="event-hero"]').getBoundingClientRect();
         let safe=true, wordLines=0;
         for(const choice of root.querySelectorAll('[role="radio"]')){
@@ -534,15 +534,15 @@ async function main(): Promise<void> {
     // whose capsules the replies below are made with.
     await tap({ id: 'event-replies-open' })
     await m.assertVisible({ id: 'event-rsvp-modal', timeout: 20000 })
-    await tap({ id: 'event-rsvp-101-0' })
-    await tap({ id: 'event-rsvp-101-1' })
-    await tap({ id: 'event-rsvp-103-2' })
-    await tap({ id: 'event-rsvp-104-0' })
+    await tap({ id: 'event-rsvp-usr_111111111111111111112k-0' })
+    await tap({ id: 'event-rsvp-usr_111111111111111111112k-1' })
+    await tap({ id: 'event-rsvp-usr_111111111111111111112n-2' })
+    await tap({ id: 'event-rsvp-usr_111111111111111111112o-0' })
     await wait(
-      `document.querySelector('[data-testid="event-rsvp-101-1"]').getAttribute('aria-disabled')!=='true'`
+      `document.querySelector('[data-testid="event-rsvp-usr_111111111111111111112k-1"]').getAttribute('aria-disabled')!=='true'`
     )
     await shape()
-    await see({ id: 'quick-rsvp-row-101' }, 'UP')
+    await see({ id: `quick-rsvp-row-${userIdOfGumbo(101)}` }, 'UP')
     await shot('info-after.png')
     await m.evalBrowserScript({
       script: `window.__tracks=[];for(const track of document.querySelectorAll('[role="radiogroup"]')){window.__tracks.push([track,track.style.width]);track.style.width=(parseFloat(getComputedStyle(track).width)*2)+'px'}window.__fonts=[];for(const label of document.querySelectorAll('[role="radiogroup"] [role="radio"] > div')){window.__fonts.push([label,label.style.fontSize,label.style.lineHeight]);label.style.fontSize=(parseFloat(getComputedStyle(label).fontSize)*2)+'px';label.style.lineHeight=(parseFloat(getComputedStyle(label).lineHeight)*2)+'px'}`
@@ -552,18 +552,18 @@ async function main(): Promise<void> {
     await m.evalBrowserScript({
       script: `for(const [node,font,line] of window.__fonts){node.style.fontSize=font;node.style.lineHeight=line}delete window.__fonts;for(const [node,width]of window.__tracks)node.style.width=width;delete window.__tracks`
     })
-    await see({ id: 'event-rsvp-101' }, 'UP')
+    await see({ id: 'event-rsvp-usr_111111111111111111112k' }, 'UP')
     await wait(
-      `document.querySelector('[data-testid="event-rsvp-101-1"]').getAttribute('aria-disabled')!=='true'`
+      `document.querySelector('[data-testid="event-rsvp-usr_111111111111111111112k-1"]').getAttribute('aria-disabled')!=='true'`
     )
     await m.evalBrowserScript({
-      script: `document.querySelector('[data-testid="event-rsvp-101"]').scrollIntoView({block:'center'})`
+      script: `document.querySelector('[data-testid="event-rsvp-usr_111111111111111111112k"]').scrollIntoView({block:'center'})`
     })
     const dragPoints = await evaluate<Array<{ x: number; y: number }>>(
-      `[1,0].map(i=>{const r=document.querySelector('[data-testid="event-rsvp-101-'+i+'"]').getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2}})`
+      `[1,0].map(i=>{const r=document.querySelector('[data-testid="event-rsvp-usr_111111111111111111112k-'+i+'"]').getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2}})`
     )
     await m.evalBrowserScript({
-      script: `window.__colors=[];window.__sampling=true;function sample(){window.__colors.push(getComputedStyle(document.querySelector('[data-testid="event-rsvp-101-fill"]')).backgroundColor);if(window.__sampling)requestAnimationFrame(sample)}sample()`
+      script: `window.__colors=[];window.__sampling=true;function sample(){window.__colors.push(getComputedStyle(document.querySelector('[data-testid="event-rsvp-usr_111111111111111111112k-fill"]')).backgroundColor);if(window.__sampling)requestAnimationFrame(sample)}sample()`
     })
     await m.dragAndDrop({
       from: {
@@ -581,33 +581,36 @@ async function main(): Promise<void> {
       ...new Set(await evaluate<string[]>('window.__colors'))
     ])
     await wait(
-      `document.querySelector('[data-testid="event-rsvp-101-0"]').getAttribute('aria-checked')==='true'`
+      `document.querySelector('[data-testid="event-rsvp-usr_111111111111111111112k-0"]').getAttribute('aria-checked')==='true'`
     )
     assert(
       new Set(await evaluate<string[]>('window.__colors')).size > 2,
       'Drag passes through intermediate blue/green colors'
     )
-    await tap({ id: 'event-rsvp-101-1' })
+    await tap({ id: 'event-rsvp-usr_111111111111111111112k-1' })
     await m.assertVisible({
-      css: '[data-testid="event-rsvp-101-1"]:not([aria-disabled="true"])',
+      css: '[data-testid="event-rsvp-usr_111111111111111111112k-1"]:not([aria-disabled="true"])',
       timeout: 5000
     })
     await m.pressKey({ key: 'RIGHT' })
     await wait(
-      `document.querySelector('[data-testid="event-rsvp-101-2"]').getAttribute('aria-checked')==='true'`
+      `document.querySelector('[data-testid="event-rsvp-usr_111111111111111111112k-2"]').getAttribute('aria-checked')==='true'`
     )
-    await tap({ id: 'event-rsvp-101-1' })
+    await tap({ id: 'event-rsvp-usr_111111111111111111112k-1' })
     console.log(
       'Independent self/child replies, continuous gradient, keyboard and Maybe persistence passed'
     )
     await m.tapOn({ text: 'Done' })
     await wait(
-      `document.querySelector('[data-testid="event-rsvp-modal"]')==null && document.querySelector('[data-testid="event-reply-status-101"]')?.textContent==='Maybe'`
+      `document.querySelector('[data-testid="event-rsvp-modal"]')==null && document.querySelector('[data-testid="event-reply-status-usr_111111111111111111112k"]')?.textContent==='Maybe'`
     )
     const persisted = asEventInfo(
       await (await f.h.request('GET', `/events/${gameId}/info`)).json()
     )
-    assert.deepEqual(persisted.replyUserIds, [101, 103, 104, 115])
+    assert.deepEqual(
+      persisted.replyUserIds,
+      [101, 103, 104, 115].map(userIdOfGumbo)
+    )
     assert.equal(
       persisted.attendees.find(row => row.userId === userIdOfGumbo(101))?.name,
       'Babe R'
@@ -732,22 +735,22 @@ async function main(): Promise<void> {
     )
     await sql
       .raw(
-        `create function fail_event_rsvp_fixture() returns trigger language plpgsql as $$begin if new.user_id=103 then raise exception 'Synthetic RSVP write failure'; end if; return new; end$$;create trigger fail_event_rsvp_fixture before insert or update on game_rsvps for each row execute function fail_event_rsvp_fixture();`
+        `create function fail_event_rsvp_fixture() returns trigger language plpgsql as $$begin if new.user_id='${userIdOfGumbo(103)}' then raise exception 'Synthetic RSVP write failure'; end if; return new; end$$;create trigger fail_event_rsvp_fixture before insert or update on game_rsvps for each row execute function fail_event_rsvp_fixture();`
       )
       .execute(f.h.db)
     await tap({ id: 'event-replies-open' }, 'UP')
     await m.assertVisible({ id: 'event-rsvp-modal', timeout: 20000 })
-    await tap({ id: 'event-rsvp-103-0' })
+    await tap({ id: 'event-rsvp-usr_111111111111111111112n-0' })
     await m.assertVisible({ text: 'Something went wrong', timeout: 10000 })
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-rsvp-103-2"]').getAttribute('aria-checked')`
+        `document.querySelector('[data-testid="event-rsvp-usr_111111111111111111112n-2"]').getAttribute('aria-checked')`
       ),
       'true'
     )
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-rsvp-104-0"]').getAttribute('aria-checked')`
+        `document.querySelector('[data-testid="event-rsvp-usr_111111111111111111112o-0"]').getAttribute('aria-checked')`
       ),
       'true'
     )
@@ -760,7 +763,7 @@ async function main(): Promise<void> {
     await open(`/games/${gameId}`)
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-reply-status-101"]').textContent`
+        `document.querySelector('[data-testid="event-reply-status-usr_111111111111111111112k"]').textContent`
       ),
       'Maybe'
     )
@@ -780,7 +783,7 @@ async function main(): Promise<void> {
       })
     }
     await cookie(105)
-    await open(`/games/${gameId}`, 'event-reply-row-105')
+    await open(`/games/${gameId}`, 'event-reply-row-usr_111111111111111111112p')
     assert.equal(
       await evaluate(
         `document.querySelector('[data-testid="event-attendance-teams"]')==null`
@@ -796,7 +799,7 @@ async function main(): Promise<void> {
         is_player: false
       })
       .execute()
-    await open(`/games/${gameId}`, 'event-reply-row-105')
+    await open(`/games/${gameId}`, 'event-reply-row-usr_111111111111111111112p')
     await tap(
       { css: '[aria-label="RSVP teams"] [aria-label="Demo Eagles"]' },
       'UP'
@@ -813,7 +816,7 @@ async function main(): Promise<void> {
     )
     assert(
       await evaluate<boolean>(
-        `document.querySelector('[data-testid="event-reply-row-103"]')!=null`
+        `document.querySelector('[data-testid="event-reply-row-usr_111111111111111111112n"]')!=null`
       ),
       'An out-of-selected-team child keeps a private control'
     )
@@ -1068,7 +1071,10 @@ async function main(): Promise<void> {
     await tap({ id: 'event-type-0' }, 'UP')
     await tap({ id: 'event-type-2' }, 'UP')
     await tap({ text: 'Create event' })
-    await m.assertVisible({ id: 'event-reply-row-101', timeout: 20000 })
+    await m.assertVisible({
+      id: 'event-reply-row-usr_111111111111111111112k',
+      timeout: 20000
+    })
     const afterRetry = await f.h.db
       .selectFrom('team_events')
       .select('id')
@@ -1137,7 +1143,10 @@ async function main(): Promise<void> {
     await tap({ text: 'Set end time' })
     await tap({ text: 'Cancel event' })
     await tap({ text: 'Save event details' })
-    await m.assertVisible({ id: 'event-reply-row-101', timeout: 20000 })
+    await m.assertVisible({
+      id: 'event-reply-row-usr_111111111111111111112k',
+      timeout: 20000
+    })
     await m.assertVisible({ text: 'Canceled', timeout: 20000 })
     const edited = await f.h.db
       .selectFrom('team_events')
@@ -1278,7 +1287,10 @@ async function main(): Promise<void> {
     await see({ id: 'event-schedule-date' }, 'UP')
     await shot('game-settings-after.png')
     await tap({ text: 'Save' })
-    await m.assertVisible({ id: 'event-reply-row-101', timeout: 20000 })
+    await m.assertVisible({
+      id: 'event-reply-row-usr_111111111111111111112k',
+      timeout: 20000
+    })
     const request = await f.h.db
       .selectFrom('group_requests')
       .selectAll()
@@ -1327,7 +1339,7 @@ async function main(): Promise<void> {
     await open(`/games/${gameId}`)
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-reply-status-101"]').textContent`
+        `document.querySelector('[data-testid="event-reply-status-usr_111111111111111111112k"]').textContent`
       ),
       'Maybe'
     )
@@ -1470,7 +1482,10 @@ async function main(): Promise<void> {
     await tap({ text: 'Use time' })
     await shot('dst-end-reconfirmation.png')
     await tap({ text: 'Create event' })
-    await m.assertVisible({ id: 'event-reply-row-101', timeout: 20000 })
+    await m.assertVisible({
+      id: 'event-reply-row-usr_111111111111111111112k',
+      timeout: 20000
+    })
     const dstEvent = await f.h.db
       .selectFrom('team_events')
       .selectAll()
@@ -1499,7 +1514,10 @@ async function main(): Promise<void> {
     await tap({ id: 'event-schedule-endTime' })
     await tap({ text: 'Use time' })
     await tap({ text: 'Save event details' })
-    await m.assertVisible({ id: 'event-reply-row-101', timeout: 20000 })
+    await m.assertVisible({
+      id: 'event-reply-row-usr_111111111111111111112k',
+      timeout: 20000
+    })
     const savedFold = await f.h.db
       .selectFrom('team_events')
       .selectAll()
@@ -1524,7 +1542,10 @@ async function main(): Promise<void> {
     await tap({ id: 'event-schedule-time' })
     await tap({ text: 'Use time' })
     await tap({ text: 'Save event details' })
-    await m.assertVisible({ id: 'event-reply-row-101', timeout: 20000 })
+    await m.assertVisible({
+      id: 'event-reply-row-usr_111111111111111111112k',
+      timeout: 20000
+    })
     const roundedStart = await f.h.db
       .selectFrom('team_events')
       .select('start_at')
@@ -1540,13 +1561,19 @@ async function main(): Promise<void> {
     await tap({ text: 'Save event details' })
     await wait(`typeof window.releaseEventSettings==='function'`)
     await tap({ css: '[aria-label="Back"][role="button"]' }, 'UP')
-    await m.assertVisible({ id: 'event-reply-row-101', timeout: 20000 })
+    await m.assertVisible({
+      id: 'event-reply-row-usr_111111111111111111112k',
+      timeout: 20000
+    })
     const afterBack = await evaluate<string>(
       'location.pathname+location.search'
     )
     await m.evalBrowserScript({ script: 'window.releaseEventSettings()' })
     await wait('window.eventSettingsReplyDelivered===true')
-    await m.assertVisible({ id: 'event-reply-row-101', timeout: 20000 })
+    await m.assertVisible({
+      id: 'event-reply-row-usr_111111111111111111112k',
+      timeout: 20000
+    })
     assert.equal(
       await evaluate<string>('location.pathname+location.search'),
       afterBack
@@ -1566,7 +1593,10 @@ async function main(): Promise<void> {
     await m.assertVisible({ text: '.*Next day.*' })
     await tap({ text: 'Use time' })
     await tap({ text: 'Save event details' })
-    await m.assertVisible({ id: 'event-reply-row-101', timeout: 20000 })
+    await m.assertVisible({
+      id: 'event-reply-row-usr_111111111111111111112k',
+      timeout: 20000
+    })
     const midnight = await f.h.db
       .selectFrom('team_events')
       .selectAll()
@@ -1602,7 +1632,10 @@ async function main(): Promise<void> {
       })
       .execute()
     await cookie(109)
-    await open(`/games/${gameId}?tab=info`, 'event-reply-row-109')
+    await open(
+      `/games/${gameId}?tab=info`,
+      'event-reply-row-usr_111111111111111111112t'
+    )
     const direct = asEventInfo(
       await (
         await f.h.request('GET', `/events/${gameId}/info`, undefined, 109)
@@ -1617,7 +1650,7 @@ async function main(): Promise<void> {
     )
     assert(
       await evaluate<boolean>(
-        `document.querySelector('[data-testid="event-reply-row-103"]')!=null`
+        `document.querySelector('[data-testid="event-reply-row-usr_111111111111111111112n"]')!=null`
       )
     )
     console.log(
@@ -1643,19 +1676,19 @@ async function main(): Promise<void> {
     })
     await m.assertVisible({ id: 'event-rsvp-modal', timeout: 20000 })
     await wait(
-      `document.querySelector('[data-testid="quick-rsvp-row-104"]')!=null`
+      `document.querySelector('[data-testid="quick-rsvp-row-${userIdOfGumbo(104)}"]')!=null`
     )
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="quick-rsvp-row-115"]')==null&&document.querySelector('[data-testid="quick-rsvp-row-103"]')==null`
+        `document.querySelector('[data-testid="quick-rsvp-row-${userIdOfGumbo(115)}"]')==null&&document.querySelector('[data-testid="quick-rsvp-row-${userIdOfGumbo(103)}"]')==null`
       ),
       true
     )
     await m.waitForAnimationToEnd()
     await shot('team-schedule-rsvp-modal.png')
-    await tap({ id: 'event-rsvp-104-2' })
+    await tap({ id: 'event-rsvp-usr_111111111111111111112o-2' })
     await wait(
-      `document.querySelector('[data-testid="event-rsvp-104-2"]').getAttribute('aria-disabled')!=='true'`
+      `document.querySelector('[data-testid="event-rsvp-usr_111111111111111111112o-2"]').getAttribute('aria-disabled')!=='true'`
     )
     const counted = (
       await (await f.h.request('GET', `/teams/${f.teamA}/games`)).json()
