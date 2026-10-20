@@ -6,12 +6,12 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * Device event control, version 1: the constants every implementation shares. The specification
+ * Device event control, version 2: the constants every implementation shares. The specification
  * is `mobile/apps/common/EventControl/README.md`; the shared fixtures in its `Tests/Fixtures` are
  * the contract, and this app's test resources hold byte-identical copies.
  */
 internal object EventControlProtocol {
-    const val VERSION = 1
+    const val VERSION = 2
     val PORTS = listOf(47614, 47615)
     const val MAX_PAYLOAD = 4096
     const val RENEW_MS = 5_000L
@@ -25,7 +25,7 @@ internal object EventControlProtocol {
     const val MAX_GAME_ID_BYTES = 128
     const val MAX_TITLE_BYTES = 256
     const val START_AT_BYTES = 20
-    const val FRAME_DOMAIN = "device-event-control:v1:frame"
+    const val FRAME_DOMAIN = "device-event-control:v2:frame"
 }
 
 internal enum class EventControlMessageType(val byte: Int) {
