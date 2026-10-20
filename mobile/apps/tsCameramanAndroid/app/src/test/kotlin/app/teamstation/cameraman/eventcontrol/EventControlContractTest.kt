@@ -35,27 +35,30 @@ class EventControlContractTest {
             val secret = EventControlBytes.utf8(vector.getString("secret"))
             val key = EventControlBytes.hmac(
                 secret,
-                lp("device-event-control:v1", vector.getString("issuer"), vector.getString("userId"))
+                lp("device-event-control:v2", vector.getString("issuer"), vector.getString("userId"))
             )
             assertEquals(name, vector.getString("key"), EventControlBytes.hex(key))
             val keyId = MessageDigest.getInstance("SHA-256")
-                .digest(lp("device-event-control:v1:keyid") + EventControlBytes.lengthPrefixed(listOf(secret)))
+                .digest(lp("device-event-control:v2:keyid") + EventControlBytes.lengthPrefixed(listOf(secret)))
             assertEquals(name, vector.getString("keyId"), EventControlBytes.hex(keyId).substring(0, 16))
-            val tag = EventControlBytes.hmac(key, lp("device-event-control:v1:account-tag"))
+            val tag = EventControlBytes.hmac(key, lp("device-event-control:v2:account-tag"))
             assertEquals(name, vector.getString("accountTag"), EventControlBytes.hex(tag).substring(0, 32))
 
-            // Read as the server's reply, with userId as a string and as a number.
+            // The server contract requires a canonical string identity.
             val reply = JSONObject(vector.toString()).apply {
                 remove("name")
                 remove("secret")
-                put("version", 1)
+                put("version", 2)
             }
             val read = EventControlCredentials.decode(reply.toString())
             assertEquals(vector.getString("userId"), read.userId)
             assertEquals(vector.getString("issuer"), read.issuer)
             assertArrayEquals(key, read.keyBytes)
-            val numeric = JSONObject(reply.toString()).put("userId", vector.getString("userId").toLong())
-            assertEquals(read, EventControlCredentials.decode(numeric.toString()))
+            val numeric = JSONObject(reply.toString()).put("userId", 1001)
+            try {
+                EventControlCredentials.decode(numeric.toString())
+                fail("numeric identity accepted")
+            } catch (_: EventControlCredentialsException) {}
         }
         val one = EventControlFixtures.credentials("one")
         assertTrue(one.isSameAccount(EventControlFixtures.credentials("one")))
@@ -191,9 +194,9 @@ class EventControlContractTest {
     fun `credentials refuse every malformed field and never print the key`() {
         val good = EventControlFixtures.keyVector("one")
         fun reply(change: JSONObject.() -> Unit): String =
-            JSONObject(good.toString()).apply { remove("name"); remove("secret"); change() }.toString()
+            JSONObject(good.toString()).apply { remove("name"); remove("secret"); put("version", 2); change() }.toString()
         val problems = mapOf(
-            "unsupported key version" to reply { put("version", 2) },
+            "unsupported key version" to reply { put("version", 1) },
             "bad userId" to reply { put("userId", "10a") },
             "bad issuer" to reply { put("issuer", "") },
             "bad accountTag" to reply { put("accountTag", "AB") },
