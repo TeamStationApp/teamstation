@@ -135,7 +135,7 @@ struct ScoreboardTargetTests {
   func theUserIdConsentAndGameRoundTripAndTheGameIsOneRecord() {
     let store = InMemorySettingsStore()
     var saved = sample(route: .event, token: "tok", gameId: "g1")
-    saved.userId = "1001"
+    saved.userId = "usr_11111111111111111111JG"
     saved.allowDirectorOverride = true
     ScoreboardTarget.save(saved, to: store)
     #expect(ScoreboardTarget.load(store) == saved)
@@ -158,7 +158,7 @@ struct ScoreboardTargetTests {
   @Test
   func anAssignmentChangesTheGameOnly() {
     var saved = sample(route: .v1, token: "tok", gameId: "g1")
-    saved.userId = "1001"
+    saved.userId = "usr_11111111111111111111JG"
     let next = ScoreboardTarget.assigning(saved, gameId: "g2", title: "Visitors at Pioneers", startAt: "2026-09-21T17:30:00Z")
     #expect(next.gameId == "g2")
     #expect(next.gameTitle == "Visitors at Pioneers")
@@ -171,22 +171,12 @@ struct ScoreboardTargetTests {
   }
 
   @Test
-  func userIdsAreReadAsDecimal() {
-    #expect(ScoreboardTarget.decimalUserId("1001") == "1001")
-    #expect(ScoreboardTarget.decimalUserId(" 1001 ") == "1001")
-    #expect(ScoreboardTarget.decimalUserId("0042") == "42")
-    #expect(ScoreboardTarget.decimalUserId(1001) == "1001")
-    #expect(ScoreboardTarget.decimalUserId(NSNumber(value: 9_007_199_254_740_993 as Int64)) == "9007199254740993")
-    #expect(ScoreboardTarget.decimalUserId(NSNumber(value: 1.5)) == nil)
-    #expect(ScoreboardTarget.decimalUserId(0) == nil)
-    #expect(ScoreboardTarget.decimalUserId(-3) == nil)
-    #expect(ScoreboardTarget.decimalUserId(true) == nil)
-    #expect(ScoreboardTarget.decimalUserId("0") == nil)
-    #expect(ScoreboardTarget.decimalUserId("") == nil)
-    #expect(ScoreboardTarget.decimalUserId("12a") == nil)
-    #expect(ScoreboardTarget.decimalUserId(String(repeating: "9", count: 33)) == nil)
+  func userIdsAreReadAsCanonicalStrings() {
+    #expect(ScoreboardTarget.decimalUserId("usr_11111111111111111111JG") == "usr_11111111111111111111JG")
+    for raw in ["1001", " 1001 ", "0042", 1001, NSNumber(value: 9_007_199_254_740_993 as Int64), true, "", "12a"] as [Any] {
+      #expect(ScoreboardTarget.decimalUserId(raw) == nil)
+    }
     #expect(ScoreboardTarget.decimalUserId(nil) == nil)
-    #expect(ScoreboardTarget.decimalUserId([ "id": 1 ]) == nil)
   }
 
   @Test

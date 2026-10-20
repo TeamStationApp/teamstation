@@ -190,7 +190,7 @@ class EventControlListenerTest {
             assertTrue(director.closedByPeer())
         }
         Director(port).use { director ->
-            director.raw(EventControlCodec.frame(byteArrayOf(1, 1)))
+            director.raw(EventControlCodec.frame(byteArrayOf(2, 1)))
             assertTrue("a payload that does not decode closes silently", director.closedByPeer())
         }
         // Still listening for the next one.

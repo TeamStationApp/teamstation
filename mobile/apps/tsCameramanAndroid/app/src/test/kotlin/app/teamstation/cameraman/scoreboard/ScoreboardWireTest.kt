@@ -54,12 +54,12 @@ class ScoreboardWireTest {
     }
 
     @Test
-    fun `sign-in reads the user ID as a number or a string`() {
+    fun `sign-in reads canonical user IDs and refuses numeric identities`() {
         val numeric = Server { 200 to """{"token":"t","user":{"id":1001,"displayName":"Ken Griffey","email":"griffey@example.test"}}""" }
-        assertEquals("1001", OkHttpScoreboardAccount(numeric.client).completeSignIn(server, "griffey@example.test", "1", "d").userId)
-        val text = Server { 200 to """{"token":"t","user":{"id":"1002"}}""" }
+        assertEquals("", OkHttpScoreboardAccount(numeric.client).completeSignIn(server, "griffey@example.test", "1", "d").userId)
+        val text = Server { 200 to """{"token":"t","user":{"id":"usr_11111111111111111111JH"}}""" }
         val signedIn = OkHttpScoreboardAccount(text.client).completeSignIn(server, "griffey@example.test", "1", "d")
-        assertEquals("1002", signedIn.userId)
+        assertEquals("usr_11111111111111111111JH", signedIn.userId)
         assertEquals("griffey@example.test", signedIn.email)
         val none = Server { 200 to """{"token":"t","user":{}}""" }
         assertEquals("", OkHttpScoreboardAccount(none.client).completeSignIn(server, "a@example.test", "1", "d").userId)
@@ -67,8 +67,8 @@ class ScoreboardWireTest {
 
     @Test
     fun `auth me names the account, with the device's own token`() {
-        val ok = Server { 200 to """{"id":1001,"displayName":"Ken Griffey"}""" }
-        assertEquals("1001", OkHttpScoreboardAccount(ok.client).me(server, "token-one"))
+        val ok = Server { 200 to """{"id":"usr_11111111111111111111JG","displayName":"Ken Griffey"}""" }
+        assertEquals("usr_11111111111111111111JG", OkHttpScoreboardAccount(ok.client).me(server, "token-one"))
         assertEquals("https://app.example.test/api/v1/auth/me", ok.requests.single().url.toString())
         assertEquals("Bearer token-one", ok.requests.single().header("Authorization"))
 
@@ -137,9 +137,9 @@ class ScoreboardWireTest {
 
     @Test
     fun `a link is spent for this named device`() {
-        val ok = Server { 200 to """{"token":"session","user":{"id":1001,"displayName":"Ken Griffey","email":"griffey@example.test"}}""" }
+        val ok = Server { 200 to """{"token":"session","user":{"id":"usr_11111111111111111111JG","displayName":"Ken Griffey","email":"griffey@example.test"}}""" }
         val signedIn = OkHttpScoreboardAccount(ok.client).signInWithLink(server, "tok", "TS Cameraman")
-        assertEquals(ScoreboardSignedIn("session", "Ken Griffey", "griffey@example.test", "1001"), signedIn)
+        assertEquals(ScoreboardSignedIn("session", "Ken Griffey", "griffey@example.test", "usr_11111111111111111111JG"), signedIn)
         assertEquals("https://app.example.test/api/v1/auth/link/verify", ok.requests.single().url.toString())
         val body = ok.requests.single().json()
         assertTrue(body.contains(""""token":"tok""""))
@@ -179,10 +179,11 @@ class ScoreboardWireTest {
     }
 
     @Test
-    fun `user IDs are decimal or nothing`() {
-        assertEquals("7", decimalUserId(7))
-        assertEquals("70000000000", decimalUserId(70_000_000_000L))
-        assertEquals("12", decimalUserId(" 12 "))
+    fun `user IDs are canonical strings or nothing`() {
+        assertEquals("usr_1111111111111111111118", decimalUserId("usr_1111111111111111111118"))
+        assertEquals("", decimalUserId(7))
+        assertEquals("", decimalUserId(70_000_000_000L))
+        assertEquals("", decimalUserId(" 12 "))
         assertEquals("", decimalUserId("12a"))
         assertEquals("", decimalUserId(""))
         assertEquals("", decimalUserId(1.5))
