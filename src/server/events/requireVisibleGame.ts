@@ -13,7 +13,7 @@ import type { Database } from '../db/database'
  */
 export async function requireVisibleGame(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   isAdmin: boolean,
   gameId: string
 ): Promise<void> {

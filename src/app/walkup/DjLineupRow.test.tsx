@@ -8,6 +8,7 @@ import {
   type DjBatter,
   TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { GameScreen } from '../screens/GameScreen'
@@ -39,7 +40,11 @@ const walk: WalkUpSong = {
   startMs: 5000,
   endMs: 20000
 }
-const tom: DjBatter = { userId: 1, name: 'Tom A', walkUpSong: walk }
+const tom: DjBatter = {
+  userId: userIdOfGumbo(1),
+  name: 'Tom A',
+  walkUpSong: walk
+}
 
 async function render(element: React.ReactElement): Promise<void> {
   const node = document.createElement('div')

@@ -6,6 +6,7 @@ import {
   testPasswordParameters
 } from '../test/passwordFixtures'
 import { TeamStationClient } from './api'
+import { userIdOfGumbo } from './userId'
 
 describe('password API client', () => {
   it('cancels password submission when leaving during each preparation or hashing step', async () => {
@@ -27,7 +28,8 @@ describe('password API client', () => {
           return new Response(
             JSON.stringify({
               user: {
-                id: 101,
+                id: userIdOfGumbo(101),
+                gumboId: null,
                 displayName: 'Demo',
                 isAdmin: false,
                 avatarUrl: null
@@ -68,7 +70,13 @@ describe('password API client', () => {
     const calls: Array<{ route: string; body: Record<string, unknown> }> = []
     const derived: Array<{ password: string; iterations: number }> = []
     const account = {
-      user: { id: 101, displayName: 'Demo', isAdmin: false, avatarUrl: null },
+      user: {
+        id: userIdOfGumbo(101),
+        gumboId: null,
+        displayName: 'Demo',
+        isAdmin: false,
+        avatarUrl: null
+      },
       emails: [],
       hasPassword: true,
       passwordParameters: {

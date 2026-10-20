@@ -1,3 +1,4 @@
+import { userIdOfGumbo } from '../common/userId'
 import type { GroupFixture } from './groupFixtures'
 
 /** Shared fictional identities for browser and deferred native settings checks. */
@@ -19,7 +20,7 @@ export async function seedSettingsCleanup3(f: GroupFixture): Promise<void> {
   await f.h.db
     .updateTable('users')
     .set({ is_admin: true })
-    .where('id', '=', 101)
+    .where('id', '=', userIdOfGumbo(101))
     .execute()
   await f.h.db
     .updateTable('teams')
@@ -68,7 +69,7 @@ export async function seedSettingsCleanup3(f: GroupFixture): Promise<void> {
     .insertInto('memberships')
     .values({
       id: 'mem_settings3_player',
-      user_id: 104,
+      user_id: userIdOfGumbo(104),
       team_id: f.teamA,
       is_player: true
     })

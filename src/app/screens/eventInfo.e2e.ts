@@ -9,6 +9,7 @@ import { sql } from 'kysely'
 import puppeteer, { type Browser as CoverageBrowser } from 'puppeteer'
 
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import { SESSION_COOKIE } from '../../server/auth/tokens'
 import { groupFixture } from '../../test/groupFixtures'
 
@@ -147,7 +148,7 @@ async function main(): Promise<void> {
         .values({
           id: makeId('membership'),
           team_id: f.teamA,
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           is_player: true
         })
         .execute()
@@ -155,8 +156,8 @@ async function main(): Promise<void> {
         .insertInto('user_links')
         .values({
           id: makeId('userLink'),
-          user_id: 101,
-          related_user_id: userId,
+          user_id: userIdOfGumbo(101),
+          related_user_id: userIdOfGumbo(userId),
           kind: 'guardian',
           can_manage: false
         })
@@ -738,7 +739,7 @@ async function main(): Promise<void> {
         id: 'role_future_end_editor',
         scope_type: 'team',
         scope_id: f.teamB,
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         role: 'admin'
       })
       .execute()

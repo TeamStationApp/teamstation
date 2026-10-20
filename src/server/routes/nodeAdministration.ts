@@ -5,6 +5,7 @@ import type { Kysely } from 'kysely'
 import { badRequest, unauthorized } from '../../common/errors'
 import { asNodeAccountChange } from '../../common/nodeAdministration'
 import { asNodeSettings } from '../../common/nodeSettings'
+import { asUserId } from '../../common/userId'
 import {
   changeNodeAccount,
   nodeAccounts,
@@ -59,9 +60,7 @@ export function nodeAdministrationRoutes(
     requireActor,
     withAsync(async (req, res) => {
       if (req.actor == null) throw unauthorized()
-      const userId = Number(req.params.userId)
-      if (!Number.isSafeInteger(userId) || userId <= 0)
-        throw badRequest('Choose a valid account')
+      const userId = cleanBody(asUserId, req.params.userId)
       await changeNodeAccount(
         db,
         req.actor,

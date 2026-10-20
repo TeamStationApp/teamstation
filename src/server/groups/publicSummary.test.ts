@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 
 describe('limited public organization profiles', function () {
@@ -92,9 +93,9 @@ describe('limited public organization profiles', function () {
           id: `role_owned_extra_${index}`,
           scope_type: 'season' as const,
           scope_id: `season_owned_extra_${index}`,
-          user_id: 101,
+          user_id: userIdOfGumbo(101),
           role: 'admin' as const,
-          granted_by: 101,
+          granted_by: userIdOfGumbo(101),
           granted_at: new Date()
         }))
       )
@@ -177,17 +178,17 @@ describe('limited public organization profiles', function () {
       id: string
       scope_type: 'season' | 'team'
       scope_id: string
-      user_id: number
+      user_id: string
       role: 'assistant' | 'scorekeeper'
-      granted_by: number
+      granted_by: string
       granted_at: Date
     } => ({
       id: `role_staff_${userId}_${role}`,
       scope_type: scopeType,
       scope_id: scopeId,
-      user_id: userId,
+      user_id: userIdOfGumbo(userId),
       role,
-      granted_by: 101,
+      granted_by: userIdOfGumbo(101),
       granted_at: new Date()
     })
     await f.h.db
@@ -252,9 +253,13 @@ describe('limited public organization profiles', function () {
     await f.h.db
       .insertInto('follows')
       .values([
-        { user_id: 103, group_type: 'team', group_id: f.teamA },
-        { user_id: 103, group_type: 'season', group_id: f.seasonA },
-        { user_id: 101, group_type: 'team', group_id: f.teamA }
+        { user_id: userIdOfGumbo(103), group_type: 'team', group_id: f.teamA },
+        {
+          user_id: userIdOfGumbo(103),
+          group_type: 'season',
+          group_id: f.seasonA
+        },
+        { user_id: userIdOfGumbo(101), group_type: 'team', group_id: f.teamA }
       ])
       .execute()
     try {
@@ -276,7 +281,7 @@ describe('limited public organization profiles', function () {
     } finally {
       await f.h.db
         .deleteFrom('follows')
-        .where('user_id', 'in', [101, 103])
+        .where('user_id', 'in', [userIdOfGumbo(101), userIdOfGumbo(103)])
         .execute()
     }
   })

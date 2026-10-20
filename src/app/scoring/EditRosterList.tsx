@@ -37,11 +37,11 @@ export function EditRosterList({
   loading?: boolean
   error?: string
   onRetry?: () => void
-  onEdit?: (userId: number, name: string) => void
+  onEdit?: (userId: string, name: string) => void
   onEditLocal?: (id: number) => void
   unrostered?: readonly number[]
   rosterBusy?: boolean
-  onRosteredChange?: (userId: number, rostered: boolean) => void
+  onRosteredChange?: (userId: string, rostered: boolean) => void
   visible?: boolean
   initialScrollOffset?: number
   onScrollOffset?: (offset: number) => void

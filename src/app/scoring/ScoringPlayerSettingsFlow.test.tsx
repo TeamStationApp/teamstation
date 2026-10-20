@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 import React, { act, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 
+import { userIdOfGumbo } from '../../common/userId'
 import {
   backFromScoringPlayer,
   currentRoute,
@@ -54,11 +55,16 @@ describe('retained scoring host', function () {
     const marker = scoringOriginHistory()
     showRoute({
       name: 'player',
-      userId: '100',
+      userId: userIdOfGumbo(100),
       onTeam: 'away',
       tab: 'settings'
     })
-    showRoute({ name: 'player', userId: '100', onTeam: 'away', tab: 'stats' })
+    showRoute({
+      name: 'player',
+      userId: userIdOfGumbo(100),
+      onTeam: 'away',
+      tab: 'stats'
+    })
     expect(backFromScoringPlayer(marker)).equals(true)
     expect(currentRoute()).deep.equals({
       name: 'scoreGame',

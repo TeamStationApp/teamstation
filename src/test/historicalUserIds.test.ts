@@ -1,13 +1,13 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { mintUserId } from './mintUserId'
 import {
   asUserId,
   asUserIdNumber,
   heldUserId,
+  mintUserId,
   userIdNumber
-} from './userIdNumber'
+} from './historicalUserIds'
 
 describe('userIdNumber', function () {
   it('keeps the leading 53 bits of a 16-character payload', function () {
