@@ -102,7 +102,7 @@ export async function reconcileEventTags(
 
 export async function tagChoices(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   includeUnused = false
 ): Promise<TagChoices> {
   let popularQuery = db
@@ -138,7 +138,7 @@ export async function writeEventTag(
   db: Kysely<Database>,
   gameId: string,
   targetId: string,
-  userId: number,
+  userId: string,
   input: unknown
 ): Promise<{ targetId: string; tag: string | null; revision: string }> {
   let tag: string | null = null

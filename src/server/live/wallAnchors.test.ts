@@ -271,7 +271,7 @@ describe('the controller and the wall clock (U25, U26)', function () {
   let plain = ''
   let gameId = ''
   let teamId = ''
-  let userId = 0
+  let userId = ''
   const said: string[] = []
 
   before(async function () {

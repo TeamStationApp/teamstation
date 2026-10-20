@@ -12,6 +12,7 @@ import {
   type PitchingRow,
   TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -50,7 +51,7 @@ function pinned(container: HTMLElement, text: string): HTMLElement[] {
 }
 
 const BLAIR = asPitchingRow({
-  userId: 2,
+  userId: userIdOfGumbo(2),
   gumboId: 2,
   shortName: 'Blair',
   teamId: 'away',
@@ -84,7 +85,7 @@ async function boxScore(
     stats: undefined,
     batting: batting ?? [
       asBattingRow({
-        userId: 1,
+        userId: userIdOfGumbo(1),
         gumboId: 1,
         shortName: 'Alex L',
         teamId: 'away',
@@ -284,7 +285,7 @@ describe('the box score', function () {
     const rows = ['away', 'home'].flatMap((teamId, side) =>
       [0, 1].map(i =>
         asBattingRow({
-          userId: 100 + side * 2 + i,
+          userId: userIdOfGumbo(100 + side * 2 + i),
           gumboId: 100 + side * 2 + i,
           shortName: `${side === 0 ? 'Away' : 'Home'} ${i === 0 ? 'Lead' : 'Power'}`,
           teamId,
@@ -318,7 +319,7 @@ function batter(
   pa: number
 ): BattingRow {
   return asBattingRow({
-    userId,
+    userId: userIdOfGumbo(userId),
     gumboId: userId,
     shortName,
     teamId,
@@ -385,7 +386,7 @@ describe('the box score module (U24)', function () {
     BLAIR,
     asPitchingRow({
       ...BLAIR,
-      userId: 4,
+      userId: userIdOfGumbo(4),
       gumboId: 4,
       shortName: 'Drew Smyly',
       teamId: 'home'
@@ -436,11 +437,11 @@ describe('the box score module (U24)', function () {
       runner
     ]
     const order = [
-      { userId: 12, gumboId: 12, shortName: 'Early' },
-      { userId: 11, gumboId: 11, shortName: 'First' },
+      { userId: userIdOfGumbo(12), gumboId: 12, shortName: 'Early' },
+      { userId: userIdOfGumbo(11), gumboId: 11, shortName: 'First' },
       { userId: null, gumboId: null, shortName: 'Made Up' },
-      { userId: 15, gumboId: 15, shortName: 'Runner' },
-      { userId: 10, gumboId: 10, shortName: 'Late' }
+      { userId: userIdOfGumbo(15), gumboId: 15, shortName: 'Runner' },
+      { userId: userIdOfGumbo(10), gumboId: 10, shortName: 'Late' }
     ]
     const ordered = battingOrder(lines, order, 'away')
     expect(ordered.map(line => line.shortName)).deep.equals([
@@ -454,7 +455,7 @@ describe('the box score module (U24)', function () {
     ])
     // Those yet to bat have empty lines; a runner who scored keeps his.
     expect(ordered[2]).deep.include({
-      userId: 12,
+      userId: userIdOfGumbo(12),
       teamId: 'away',
       pa: 0,
       ab: 0,
@@ -474,7 +475,7 @@ describe('the box score module (U24)', function () {
   })
 
   it('lists a coach’s whole order and the opponent’s, before anyone has batted', async function () {
-    const opened: number[] = []
+    const opened: string[] = []
     const text = await moduleBoxScore({
       box: {
         batting: [batter(3, 'Casey M', 'home', 1)],
@@ -484,13 +485,13 @@ describe('the box score module (U24)', function () {
       first: 'home',
       lineups: {
         home: [
-          { userId: 5, shortName: 'Dana E' },
-          { userId: 3, shortName: 'Casey M' },
+          { userId: userIdOfGumbo(5), shortName: 'Dana E' },
+          { userId: userIdOfGumbo(3), shortName: 'Casey M' },
           { userId: null, shortName: 'Emil B' }
         ],
         away: [
-          { userId: 1, shortName: 'Alex L' },
-          { userId: 2, shortName: 'Blake S' }
+          { userId: userIdOfGumbo(1), shortName: 'Alex L' },
+          { userId: userIdOfGumbo(2), shortName: 'Blake S' }
         ]
       },
       onOpenPlayer: userId => {
@@ -515,7 +516,7 @@ describe('the box score module (U24)', function () {
     await act(async () => {
       host!.querySelector<HTMLElement>('[aria-label="Dana E"]')!.click()
     })
-    expect(opened).deep.equals([5])
+    expect(opened).deep.equals([userIdOfGumbo(5)])
   })
 
   it('draws a coach an empty line score before the game, over a word that it has not started', async function () {
@@ -523,7 +524,10 @@ describe('the box score module (U24)', function () {
       game: { ...gameFixture, linescore: null },
       box: { batting: [], pitching: [], stats: undefined },
       first: 'away',
-      lineups: { away: [{ userId: 1, shortName: 'Alex L' }], home: [] }
+      lineups: {
+        away: [{ userId: userIdOfGumbo(1), shortName: 'Alex L' }],
+        home: []
+      }
     })
     expect(text).includes('Owls')
     expect(text).includes('Hawks')

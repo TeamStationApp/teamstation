@@ -6,6 +6,7 @@ import { Platform } from 'react-native'
 
 import { asRosterEntry, TeamStationClient } from '../../common/api'
 import type { TagTarget } from '../../common/eventTags'
+import { userIdOfGumbo } from '../../common/userId'
 import { EventTagText } from '../components/EventTagText'
 import {
   BaseballScreen,
@@ -437,7 +438,7 @@ describe('event tag UI', function () {
     client.roster = async team =>
       Array.from({ length: 9 }, (_, at) =>
         asRosterEntry({
-          userId: (team === 'away' ? 101 : 201) + at,
+          userId: userIdOfGumbo((team === 'away' ? 101 : 201) + at),
           gumboId: (team === 'away' ? 101 : 201) + at,
           shortName: `Player ${at + 1}`,
           jersey: String(at + 1),

@@ -27,10 +27,10 @@ export interface PersonProfileScreenProps {
   /** The team, season or league the profile was opened from. */
   kind: 'league' | 'season' | 'team'
   id: string
-  userId: number
+  userId: string
   /** One of the players they guard, opened on the team found for them. */
   onOpenPlayer?: (
-    userId: number,
+    userId: string,
     name: string,
     from: { onTeam: string }
   ) => void

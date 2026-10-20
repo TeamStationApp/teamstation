@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { routeOfUrl } from './deepLink'
 
 describe('routeOfUrl', function () {
@@ -26,10 +27,10 @@ describe('routeOfUrl', function () {
 
   it('keeps the query on a scheme link', function () {
     expect(
-      routeOfUrl('teamstation://players/u1?tab=stats&season=s1')
+      routeOfUrl('teamstation://players/1?tab=stats&season=s1')
     ).deep.equals({
       name: 'player',
-      userId: 'u1',
+      userId: userIdOfGumbo(1),
       tab: 'stats',
       seasonId: 's1',
       teamId: undefined,

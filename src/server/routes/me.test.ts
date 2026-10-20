@@ -8,11 +8,13 @@ import { Pool } from 'pg'
 
 import { asMyRoles } from '../../common/api'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import { ROLES } from '../../common/roles'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -67,20 +69,17 @@ describe('what the signed-in person may do', function () {
     for (const person of PEOPLE) {
       const made = mintUserId(id => [...users.values()].includes(id))
       users.set(person, made.userId)
-      await db
-        .insertInto('users')
-        .values({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: person,
-          is_admin: person === 'site'
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(made.userId),
+        legacyId: made.legacyId,
+        display_name: person,
+        is_admin: person === 'site'
+      })
       await db
         .insertInto('auth_sessions')
         .values({
           id: makeId('authSession'),
-          user_id: made.userId,
+          user_id: userIdOfGumbo(made.userId),
           token_hash: hashToken(token(person)),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
@@ -125,21 +124,21 @@ describe('what the signed-in person may do', function () {
       .values([
         {
           id: makeId('scopeRole'),
-          user_id: user('keeper'),
+          user_id: userIdOfGumbo(user('keeper')),
           scope_type: 'league',
           scope_id: 'lea_me',
           role: 'scorekeeper'
         },
         {
           id: makeId('scopeRole'),
-          user_id: user('keeper'),
+          user_id: userIdOfGumbo(user('keeper')),
           scope_type: 'team',
           scope_id: 'tem_b',
           role: 'coach'
         },
         {
           id: makeId('scopeRole'),
-          user_id: user('assistant'),
+          user_id: userIdOfGumbo(user('assistant')),
           scope_type: 'season',
           scope_id: 'sea_me',
           role: 'assistant'
@@ -150,7 +149,7 @@ describe('what the signed-in person may do', function () {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: user('manager'),
+        user_id: userIdOfGumbo(user('manager')),
         team_id: 'tem_c',
         role: 'manager'
       })
@@ -159,8 +158,8 @@ describe('what the signed-in person may do', function () {
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: user('parent'),
-        related_user_id: user('child'),
+        user_id: userIdOfGumbo(user('parent')),
+        related_user_id: userIdOfGumbo(user('child')),
         kind: 'family'
       })
       .execute()
@@ -232,7 +231,9 @@ describe('what the signed-in person may do', function () {
       })
       return ((await response.json()) as { guardianOf: unknown }).guardianOf
     }
-    expect(await guardianOf('parent')).deep.equals([users.get('child')])
+    expect(await guardianOf('parent')).deep.equals([
+      userIdOfGumbo(users.get('child')!)
+    ])
     for (const person of ['child', 'keeper', 'site', 'nobody'] as const) {
       expect(await guardianOf(person), person).deep.equals([])
     }

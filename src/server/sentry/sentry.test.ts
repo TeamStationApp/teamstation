@@ -17,6 +17,7 @@ import type { Kysely } from 'kysely'
 import { after, afterEach, before, describe, it } from 'mocha'
 
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import type { Actor } from '../auth/sessions'
 import { deployedVersion, versionOf } from '../buildVersion'
 import type { Database } from '../db/database'
@@ -167,7 +168,7 @@ describe('server errors reach Sentry', function () {
         if (property === 'executeTakeFirst')
           return async () => ({
             sessionId: 1,
-            userId: 7,
+            userId: userIdOfGumbo(7),
             expiresAt: new Date(Date.now() + 60_000).toISOString(),
             revokedAt: null,
             isAdmin: true
@@ -202,7 +203,7 @@ describe('server errors reach Sentry', function () {
       const user = req.header('x-test-user')
       if (user != null) {
         const actor: Actor = {
-          userId: Number(user),
+          userId: userIdOfGumbo(Number(user)),
           isAdmin: req.header('x-test-admin') === '1',
           scopes: []
         }
@@ -264,8 +265,8 @@ describe('server errors reach Sentry', function () {
       headers: { authorization: 'Bearer token' }
     })
     expect(await response.json()).deep.equals({
-      userId: 7,
-      reported: { id: '7' }
+      userId: userIdOfGumbo(7),
+      reported: { id: userIdOfGumbo(7) }
     })
   })
 

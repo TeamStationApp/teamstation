@@ -32,7 +32,7 @@ interface Watched {
 export type SongReader = (
   db: Kysely<Database>,
   teamId: string,
-  userId: number
+  userId: string
 ) => Promise<WalkUpSong | null>
 
 export interface GameFanoutOptions {

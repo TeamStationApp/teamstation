@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import { asRosterEntry } from '../../common/api'
 import { ROLES } from '../../common/roles'
+import { userIdOfGumbo } from '../../common/userId'
 import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
 import {
@@ -19,7 +20,7 @@ const entry = (
   lastName = 'Betts'
 ): ReturnType<typeof asRosterEntry> =>
   asRosterEntry({
-    userId: id,
+    userId: userIdOfGumbo(id),
     gumboId: id,
     shortName: `${firstName} ${lastName[0]}`,
     nameDetails: {

@@ -3,6 +3,7 @@ import { after, afterEach, before, beforeEach, describe, it } from 'mocha'
 
 import type { GameRequestTerms } from '../../common/gameApprovals'
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { publicGames } from '../groups/publicSummary'
 import {
@@ -84,7 +85,7 @@ describe('season reader projections and privacy', function () {
           status: 'cancelled',
           cancellation_reason: 'withdrawal',
           withdrawn_by_team_id: canceledOnly,
-          withdrawn_by_user_id: 101,
+          withdrawn_by_user_id: userIdOfGumbo(101),
           withdrawn_at: new Date('2027-04-03T19:00:00Z'),
           home_score: 20,
           away_score: 0
@@ -316,7 +317,12 @@ describe('season reader projections and privacy', function () {
     const stats = await get(`/seasons/${f.seasonA}/stats`)
     expect(stats.batting).length(1)
     expect(stats.pitching).length(1)
-    expect(stats.batting[0]).deep.include({ userId: 104, ab: 3, h: 2, g: 1 })
+    expect(stats.batting[0]).deep.include({
+      userId: userIdOfGumbo(104),
+      ab: 3,
+      h: 2,
+      g: 1
+    })
     expect(stats.batting[0].rates.avg).equals(0.667)
     expect(stats.pitching[0]).deep.include({ outs: 6, ip: '2.0', g: 1 })
     expect(stats.pitching[0].rates.era).equals(3)
@@ -329,7 +335,7 @@ describe('season reader projections and privacy', function () {
       .values({
         id: makeId('membership'),
         team_id: f.teamA,
-        user_id: 104,
+        user_id: userIdOfGumbo(104),
         role: 'member'
       })
       .execute()
@@ -342,7 +348,7 @@ describe('season reader projections and privacy', function () {
     expect(season?.teams).deep.equals([])
     expect(
       (await peopleInScope(f.h.db, league!)).some(
-        person => person.userId === 104
+        person => person.userId === userIdOfGumbo(104)
       )
     ).equals(false)
     const placeholder = await managementPeopleTree(
@@ -352,17 +358,19 @@ describe('season reader projections and privacy', function () {
     )
     expect(
       (await peopleInScope(f.h.db, placeholder!)).some(
-        person => person.userId === 104
+        person => person.userId === userIdOfGumbo(104)
       )
     ).equals(true)
     const own = await managementPeopleTree(f.h.db, 'team', f.teamA)
     expect(
-      (await peopleInScope(f.h.db, own!)).some(person => person.userId === 104)
+      (await peopleInScope(f.h.db, own!)).some(
+        person => person.userId === userIdOfGumbo(104)
+      )
     ).equals(true)
     const page = await get(`/manage/season/${f.seasonA}`)
-    expect(page.people.some((person: any) => person.userId === 104)).equals(
-      false
-    )
+    expect(
+      page.people.some((person: any) => person.userId === userIdOfGumbo(104))
+    ).equals(false)
   })
   it('projects stable pending new identities on global/team/season/public schedules without private terms or scoring access', async () => {
     pendingId = 'req_reader_pending'
@@ -394,7 +402,7 @@ describe('season reader projections and privacy', function () {
         sender_scope_id: f.teamA,
         initiating_team_id: f.teamA,
         terms,
-        sender_id: 101,
+        sender_id: userIdOfGumbo(101),
         status: 'pending',
         sent_at: new Date(),
         expires_at: new Date('2090-01-01T00:00:00Z')
@@ -795,11 +803,11 @@ describe('replacement schedule participant visibility', function () {
       .insertInto('scope_roles')
       .values({
         id: makeId('scopeRole'),
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         scope_type: 'team',
         scope_id: f.teamB,
         role: 'admin',
-        granted_by: 105
+        granted_by: userIdOfGumbo(105)
       })
       .execute()
     const oldId = await original()

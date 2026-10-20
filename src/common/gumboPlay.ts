@@ -16,7 +16,7 @@ import {
   LEGACY_EVENT_TYPES,
   type LegacyEventType
 } from './gumboEventTypes'
-import { asUserIdNumber } from './userIdNumber'
+import { asGumboId } from './userId'
 
 /** The largest `integer` Postgres stores. */
 const MAX_INT4 = 2147483647
@@ -85,9 +85,7 @@ function asNullable<T>(cleaner: Cleaner<T>): Cleaner<T | null | undefined> {
 }
 
 /** A player named by a play, whose id the `events` trigger copies out. */
-const asPlayer = asAbsentOr(
-  asObject({ id: asNullable(asUserIdNumber) }).withRest
-)
+const asPlayer = asAbsentOr(asObject({ id: asNullable(asGumboId) }).withRest)
 
 /**
  * Who a credit names. A credit names people by `creditUserId` alone, so a
@@ -151,7 +149,7 @@ const asGumboPlayShape = asObject({
     asArray(
       asObject({
         teamId: asNullable(asString),
-        creditUserId: asNullable(asUserIdNumber),
+        creditUserId: asNullable(asGumboId),
         credit: asCreditPerson
       }).withRest
     )

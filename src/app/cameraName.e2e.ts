@@ -13,7 +13,7 @@ import puppeteer, {
 } from 'puppeteer'
 
 import { makeId } from '../common/ids'
-import { userIdNumber } from '../common/userIdNumber'
+import { userIdNumber } from '../test/historicalUserIds'
 import {
   bodyHas,
   bodyText,
