@@ -20,7 +20,7 @@ export function eventEnded(event: EventTabState, now = Date.now()): boolean {
   return event.status === 'final' || (end != null && now >= end)
 }
 
-export type GameSection = 'info' | 'boxScore' | 'watch'
+export type GameSection = 'info' | 'boxScore' | 'watch' | 'plays'
 
 export interface GameSectionInput extends EventTabState {
   /** A video whose status is `live` is streaming now. */
@@ -49,10 +49,19 @@ export function gameSectionOrder(
   if (event.eventKind === 'event') return ['info']
   const scored = event.hasScoringEvents === true
   const live = event.videos?.some(video => video.status === 'live') === true
-  if (live && (scored || startReached(event, now)))
-    return ['watch', 'boxScore', 'info']
-  if (scored || eventEnded(event, now)) return ['boxScore', 'watch', 'info']
-  return ['info', 'boxScore', 'watch']
+  const order: GameSection[] =
+    live && (scored || startReached(event, now))
+      ? ['watch', 'boxScore', 'info']
+      : scored || eventEnded(event, now)
+        ? ['boxScore', 'watch', 'info']
+        : ['info', 'boxScore', 'watch']
+  // Plays is the recount of a finished game. A game that has merely run out
+  // of clock is not finished. A non-game returned above: it has no at-bats.
+  if (event.status !== 'final') return order
+  const box = order.indexOf('boxScore')
+  const withPlays = order.slice()
+  withPlays.splice(box + 1, 0, 'plays')
+  return withPlays
 }
 
 export function defaultEventTab(

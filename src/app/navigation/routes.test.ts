@@ -348,6 +348,16 @@ describe('addresses', function () {
     expect(routePath({ name: 'game', gameId: 'gam_1', tab: 'watch' })).equals(
       '/games/gam_1?tab=watch'
     )
+    expect(routePath({ name: 'game', gameId: 'gam_1', tab: 'plays' })).equals(
+      '/games/gam_1?tab=plays'
+    )
+    expect(parseRoute('/games/gam_1', '?tab=plays')).deep.equals({
+      name: 'game',
+      gameId: 'gam_1',
+      tab: 'plays',
+      videoId: undefined,
+      at: undefined
+    })
     expect(parseRoute('/games/gam_1', '?tab=boxScore')).deep.equals({
       name: 'game',
       gameId: 'gam_1',

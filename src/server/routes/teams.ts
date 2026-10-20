@@ -51,6 +51,7 @@ import { warmVideoStills } from '../media/videoStills'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { registerPlayRoutes } from '../plays/playByPlay'
 import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
 import {
   type ScoreboardStore,
@@ -934,6 +935,8 @@ export function teamRoutes(
       })
     })
   )
+
+  registerPlayRoutes(router, db, media)
 
   return router
 }

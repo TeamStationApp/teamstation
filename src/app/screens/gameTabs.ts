@@ -7,7 +7,8 @@ import {
   gameSectionOrder
 } from './eventTabPolicy'
 
-export type GameTab = 'info' | 'boxScore' | 'watch' | 'score' | 'coach' | 'dj'
+export type GameTab =
+  'info' | 'boxScore' | 'watch' | 'plays' | 'score' | 'coach' | 'dj'
 
 export interface GameTabPill {
   id: GameTab
@@ -48,7 +49,8 @@ export interface GameTabsInput {
 const sectionLabel: Record<GameSection, string> = {
   info: 'Info',
   boxScore: lstrings.game_box_score,
-  watch: lstrings.game_videos
+  watch: lstrings.game_videos,
+  plays: 'Plays'
 }
 
 /**

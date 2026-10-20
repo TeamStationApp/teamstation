@@ -407,6 +407,51 @@ export type HighlightsResponse = Omit<
   'highlights'
 > & { highlights: Highlight[] }
 
+const asPlayScore = asObject({
+  awayLabel: asString,
+  awayScore: asNumber,
+  homeLabel: asString,
+  homeScore: asNumber,
+  batting: asLiteral('away', 'home')
+})
+
+const asPlayClip = asObject({
+  startOffsetSec: asNumber,
+  endOffsetSec: asNullable(asNumber),
+  stillUrl: asNullable(asString)
+})
+
+const asPlayRow = asObject({
+  eventId: asString,
+  outcome: asString,
+  sentence: asString,
+  outsLabel: asNullable(asString),
+  avatarUrl: asNullable(asString),
+  batterName: asNullable(asString),
+  score: asNullable(asPlayScore),
+  clip: asNullable(asPlayClip)
+})
+
+export const asPlayByPlay = asObject({
+  videoId: asNullable(asString),
+  prelude: asNullable(
+    asObject({
+      time: asString,
+      place: asNullable(asString)
+    })
+  ),
+  innings: asArray(
+    asObject({
+      heading: asString,
+      plays: asArray(asPlayRow)
+    })
+  )
+})
+export type PlayByPlay = ReturnType<typeof asPlayByPlay>
+export type PlayRow = PlayByPlay['innings'][number]['plays'][number]
+export type PlayClip = NonNullable<PlayRow['clip']>
+export type PlayScoreLine = NonNullable<PlayRow['score']>
+
 const asRates = asObject({
   avg: asOptional(asNumber),
   obp: asOptional(asNumber),
@@ -2768,6 +2813,22 @@ export class TeamStationClient {
       'GET',
       `/games/${encodeURIComponent(gameId)}/box-score`,
       asBoxScore
+    )
+  }
+
+  /**
+   * A game's at-bats, for the Plays tab. `videoId` is the recording the
+   * clip offsets are measured in.
+   */
+  async plays(gameId: string, videoId?: string): Promise<PlayByPlay> {
+    const query =
+      videoId == null || videoId === ''
+        ? ''
+        : `?videoId=${encodeURIComponent(videoId)}`
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/plays${query}`,
+      asPlayByPlay
     )
   }
 

@@ -14,6 +14,7 @@ import type {
   Highlight,
   LineScoreSide,
   Playback,
+  PlayByPlay,
   TeamStationClient,
   TeamSummary,
   VideoSummary
@@ -90,6 +91,7 @@ import { watchHandoff } from './gameWatchLayoutProps'
 import { showVideoLivePill } from './livePillPolicy'
 import { MembershipAccess } from './MembershipAccess'
 import { openableTeams as teamsWithAPage } from './openableTeams'
+import { PlaysTab } from './PlaysTab'
 import { VideoMembershipSheet } from './VideoMembershipSheet'
 
 export interface GamePlaybackReturn {
@@ -179,7 +181,7 @@ export interface GameScreenProps {
   ) => void
 }
 
-type Tab = 'info' | 'boxScore' | 'watch'
+type Tab = 'info' | 'boxScore' | 'watch' | 'plays'
 
 /**
  * What each of a game's videos is called on the strip under the picture.
@@ -865,6 +867,35 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // After the game, too, which says whether this is a non-member's, whose
   // tables are kept for members.
   const gameLoaded = game != null
+  const [plays, setPlays] = useState<PlayByPlay | undefined>(undefined)
+  const [playsFor, setPlaysFor] = useState('')
+  useEffect(() => {
+    setPlays(undefined)
+    setPlaysFor('')
+  }, [gameId])
+  useEffect(() => {
+    if (tab !== 'plays' || game == null || nonMemberView) return
+    if (game.status !== 'final') return
+    const videoKey = video?.id ?? ''
+    const key = `${gameId}:${videoKey}`
+    if (plays != null && playsFor === key) return
+    let live = true
+    client
+      .plays(gameId, video?.id)
+      .then(found => {
+        if (!live) return
+        setPlays(found)
+        setPlaysFor(key)
+      })
+      .catch(() => {
+        if (!live) return
+        setPlays({ videoId: null, prelude: null, innings: [] })
+        setPlaysFor(key)
+      })
+    return () => {
+      live = false
+    }
+  }, [client, game, gameId, nonMemberView, plays, playsFor, tab, video?.id])
   useEffect(() => {
     if (tab !== 'boxScore' || box != null || !gameLoaded || nonMemberView)
       return
@@ -1362,7 +1393,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       })}
       selected={tab}
       onSelect={next => {
-        if (next !== 'info' && next !== 'boxScore' && next !== 'watch') return
+        if (
+          next !== 'info' &&
+          next !== 'boxScore' &&
+          next !== 'watch' &&
+          next !== 'plays'
+        )
+          return
         selectSection(next)
       }}
       size="compact"
@@ -1716,6 +1753,31 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           eventId={gameId}
           event={game}
         />
+      ) : tab === 'plays' ? (
+        nonMemberView ? (
+          <MembershipAccess
+            key={`${game.id}:${props.signedIn === true}`}
+            client={client}
+            signedIn={props.signedIn === true}
+            teams={[
+              { id: game.homeTeamId, name: game.homeTeamName },
+              { id: game.awayTeamId, name: game.awayTeamName }
+            ]}
+            onSignIn={() => props.onSignIn?.()}
+          />
+        ) : (
+          <PlaysTab
+            plays={plays}
+            playbackUrl={
+              plays?.videoId != null && plays.videoId === video?.id
+                ? playbackUrl
+                : null
+            }
+            onLocked={() => {
+              setMembershipWarning(true)
+            }}
+          />
+        )
       ) : (
         <BoxScore
           membershipAccess={

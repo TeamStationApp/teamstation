@@ -124,7 +124,12 @@ describe('the pills across a game', function () {
       awayScore: 4,
       scoreboard: { open: false, mayOverride: true }
     })
-    expect(ids(gameTabs({ game }))).deep.equals(['boxScore', 'watch', 'info'])
+    expect(ids(gameTabs({ game }))).deep.equals([
+      'boxScore',
+      'plays',
+      'watch',
+      'info'
+    ])
     expect(gameActions({ game })).deep.equals([])
   })
 

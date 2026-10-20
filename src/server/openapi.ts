@@ -4773,6 +4773,38 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games/{gameId}/plays': {
+        get: {
+          summary: 'A finalized game, at-bat by at-bat',
+          description:
+            'Every recounted play in order, grouped by half-inning. A home ' +
+            'run, double, triple, or double play also carries a clip: it ' +
+            'starts at the highlight rewind for that play and stops five ' +
+            'seconds before the next scoring play. There is no win ' +
+            'probability. Anybody signed in who is a member of neither team ' +
+            'is answered 403 `membersOnly`. `videoId` picks which recording ' +
+            'the offsets are measured in; without one, the earliest recording ' +
+            'of the game is used.',
+          security: [{ bearer: [] }],
+          parameters: [
+            gameIdParam,
+            {
+              name: 'videoId',
+              in: 'query',
+              required: false,
+              schema: { type: 'string' }
+            }
+          ],
+          responses: {
+            200: {
+              description:
+                'Half-innings of at-bats, with a clip on the major plays'
+            },
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/videos/{videoId}/highlights': {
         get: {
           summary: 'Where to seek to in this video for each play',

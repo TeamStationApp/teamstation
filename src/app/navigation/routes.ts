@@ -154,7 +154,7 @@ export type Route =
   | {
       name: 'game'
       gameId: string
-      tab?: 'info' | 'boxScore' | 'watch' | 'score'
+      tab?: 'info' | 'boxScore' | 'watch' | 'plays' | 'score'
       videoId?: string
       /** Seconds into the video. The link somebody pastes into a group chat. */
       at?: number
@@ -470,16 +470,18 @@ export function parseRoute(path: string, search = ''): Route {
         tab:
           query.get('tab') === 'boxScore'
             ? 'boxScore'
-            : query.get('tab') === 'score'
-              ? 'score'
-              : query.get('tab') === 'info'
-                ? 'info'
-                : query.get('tab') === 'watch' ||
-                    query.has('video') ||
-                    query.has('t') ||
-                    angles.length > 0
-                  ? 'watch'
-                  : undefined,
+            : query.get('tab') === 'plays'
+              ? 'plays'
+              : query.get('tab') === 'score'
+                ? 'score'
+                : query.get('tab') === 'info'
+                  ? 'info'
+                  : query.get('tab') === 'watch' ||
+                      query.has('video') ||
+                      query.has('t') ||
+                      angles.length > 0
+                    ? 'watch'
+                    : undefined,
         videoId: query.get('video') ?? undefined,
         at: Number.isFinite(at) && at > 0 ? at : undefined,
         ...(angles.length > 0 ? { angles } : {}),

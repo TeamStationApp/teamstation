@@ -42,6 +42,15 @@ describe('event default and scheduled end policy', () => {
     expect(eventEndTime({ status: 'scheduled' })).equals(null)
     expect(defaultEventTab({ status: 'scheduled' })).equals('info')
     expect(defaultEventTab({ status: 'final' })).equals('boxScore')
+    expect(gameSectionOrder({ status: 'final' })).deep.equals([
+      'boxScore',
+      'plays',
+      'watch',
+      'info'
+    ])
+    expect(
+      gameSectionOrder({ ...event, status: 'final' }, Date.parse(endAt))
+    ).deep.equals(['boxScore', 'plays', 'watch', 'info'])
   })
   it('keeps non-game Info before and after their end or a supplied scoring flag', () => {
     const dinner = {
