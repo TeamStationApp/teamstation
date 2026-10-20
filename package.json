@@ -4,7 +4,7 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "author": "Paul Puey <paul@teamstation.app>",
-  "description": "TeamStation \u2014 a platform for youth sports team management, scoring, and video streaming",
+  "description": "TeamStation — a platform for youth sports team management, scoring, and video streaming",
   "engines": {
     "node": ">=24.9.0"
   },
@@ -96,7 +96,8 @@
     "coverage.guardian": "node scripts/guardian-coverage.mjs",
     "coverage.eventInfo": "node scripts/event-info-coverage.mjs",
     "coverage.gameForm": "node scripts/game-form-coverage.mjs",
-    "coverage.scoreboardEventLog": "node scripts/scoreboard-coverage.mjs"
+    "coverage.scoreboardEventLog": "node scripts/scoreboard-coverage.mjs",
+    "coverage.userIds": "node scripts/user-id-coverage.mjs"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",

@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { setScopeRoles } from '../invites/people'
 
@@ -273,15 +274,15 @@ describe('two-sided relationship invitations and shared inbox', function () {
       f.h.db,
       'team',
       f.teamA,
-      103,
+      userIdOfGumbo(103),
       { admin: true, flags: [] },
-      101
+      userIdOfGumbo(101)
     )
     await f.h.db
       .deleteFrom('scope_roles')
       .where('scope_type', '=', 'team')
       .where('scope_id', '=', f.teamA)
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .execute()
     // Still inherited from the real parent league/seasons, so removing one path preserves approval.
     expect(

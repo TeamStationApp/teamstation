@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import WebSocket from 'ws'
 
 import { NO_OVERRIDES, SCOREBOARD_CLOSE } from '../../common/scoreboard'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   type GroupFixture,
@@ -145,7 +146,7 @@ describe('live scoreboard credentials and current game authority', function () {
       .insertInto('memberships')
       .values({
         id: 'membership_demo_board_admin',
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         team_id: f.teamA,
         role: 'member'
       })
@@ -154,9 +155,9 @@ describe('live scoreboard credentials and current game authority', function () {
       f.h.db,
       'team',
       f.teamA,
-      106,
+      userIdOfGumbo(106),
       { admin: true, flags: [] },
-      101
+      userIdOfGumbo(101)
     )
   }
   for (const kind of ['publish', 'dashboard'] as const) {
@@ -168,8 +169,12 @@ describe('live scoreboard credentials and current game authority', function () {
       update(editor.socket, kind, 1)
       await until(() => viewer.frames.some(frame => frame.balls === 1))
       const before = await store.readScoreboard('gam_demo_scoreboard_authority')
-      await changeNodeAccount(f.h.db, actor(105), 106, { suspended: true })
-      await changeNodeAccount(f.h.db, actor(105), 106, { suspended: false })
+      await changeNodeAccount(f.h.db, actor(105), userIdOfGumbo(106), {
+        suspended: true
+      })
+      await changeNodeAccount(f.h.db, actor(105), userIdOfGumbo(106), {
+        suspended: false
+      })
       expect(await actorForToken(f.h.db, f.h.tokens.get(106)!)).equals(
         undefined
       )
@@ -179,7 +184,11 @@ describe('live scoreboard credentials and current game authority', function () {
       expect(
         await store.readScoreboard('gam_demo_scoreboard_authority')
       ).deep.equals(before)
-      const fresh = await createSession(f.h.db, 106, 'demo-scoreboard-fresh')
+      const fresh = await createSession(
+        f.h.db,
+        userIdOfGumbo(106),
+        'demo-scoreboard-fresh'
+      )
       const restored = await connect(kind, fresh.token)
       update(restored.socket, kind, 2)
       await until(() => viewer.frames.some(frame => frame.balls === 2))
@@ -191,7 +200,7 @@ describe('live scoreboard credentials and current game authority', function () {
             .insertInto('season_members')
             .values({
               id: 'membership_demo_board_parent',
-              user_id: 106,
+              user_id: userIdOfGumbo(106),
               season_id: f.seasonA
             })
             .execute()
@@ -199,9 +208,9 @@ describe('live scoreboard credentials and current game authority', function () {
             f.h.db,
             'season',
             f.seasonA,
-            106,
+            userIdOfGumbo(106),
             { admin: true, flags: [] },
-            101
+            userIdOfGumbo(101)
           )
         } else await grantDirect()
         const viewer = await connect('socket')
@@ -217,9 +226,9 @@ describe('live scoreboard credentials and current game authority', function () {
             f.h.db,
             'team',
             f.teamA,
-            106,
+            userIdOfGumbo(106),
             { admin: false, flags: [] },
-            101
+            userIdOfGumbo(101)
           )
         else if (change === 'parent')
           await applyParents(

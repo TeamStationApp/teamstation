@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { accountTestPicture } from '../../test/accountHarness'
 import {
   demoLocality,
@@ -30,7 +31,7 @@ describe('unresolved cutover gates new hierarchy writes while retained routes re
       .values({
         id: 'mem_demo_legacy_player',
         team_id: f.teamA,
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         role: 'member',
         is_player: true
       })
@@ -44,7 +45,7 @@ describe('unresolved cutover gates new hierarchy writes while retained routes re
       (
         await f.h.request(
           'DELETE',
-          `/teams/${f.teamA}/players/106/walk-up-song`,
+          `/teams/${f.teamA}/players/${userIdOfGumbo(106)}/walk-up-song`,
           undefined,
           101
         )
@@ -52,7 +53,7 @@ describe('unresolved cutover gates new hierarchy writes while retained routes re
     ).equals(204)
     for (const path of [
       `/teams/${f.teamA}/logo`,
-      `/teams/${f.teamA}/players/106/avatar`
+      `/teams/${f.teamA}/players/${userIdOfGumbo(106)}/avatar`
     ]) {
       const response = await f.h.request(
         'PUT',

@@ -84,7 +84,7 @@ interface Member {
   /** A `timeline=1` viewer: sent change notices, never boards. */
   timeline: boolean
   token?: string
-  userId?: number
+  userId?: string
 }
 
 interface Room {
@@ -207,7 +207,7 @@ export function makeScoreboardHub(
     gameId: string,
     result: WriteResult,
     cause: ScoreboardLogCause,
-    actorId: number | null,
+    actorId: string | null,
     radar?: Pick<RadarReading, 'pitchSpeed' | 'exitVelocity'>
   ): Promise<void> {
     if (result.kind !== 'written') return
@@ -442,7 +442,7 @@ export function makeScoreboardHub(
     }
     try {
       if (!store.isReady()) throw new ScoreboardUnavailable()
-      let runner: { userId: number; isAdmin: boolean } | undefined
+      let runner: { userId: string; isAdmin: boolean } | undefined
       if (kind !== 'viewer' || member.timeline) {
         const token = sessionToken(
           headerOf(req.headers.authorization),
@@ -522,7 +522,7 @@ export function makeScoreboardHub(
    * tells a player when to call it.
    */
   async function maySeeGame(
-    actor: { userId: number; isAdmin: boolean },
+    actor: { userId: string; isAdmin: boolean },
     gameId: string
   ): Promise<boolean> {
     const game = await db

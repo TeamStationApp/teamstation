@@ -11,6 +11,7 @@ import {
 } from '../../common/api'
 import { ScoringSession } from '../../common/scoring/session'
 import { POSITIONS, setupOf } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { startingSetup, teamsOf } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
@@ -53,7 +54,7 @@ const order = (): string[] =>
 function entries(first: number): RosterEntry[] {
   return Array.from({ length: 9 }, (_, index) =>
     asRosterEntry({
-      userId: first + index,
+      userId: userIdOfGumbo(first + index),
       gumboId: first + index,
       shortName: `Owl ${first + index}`,
       jersey: String(index + 1),

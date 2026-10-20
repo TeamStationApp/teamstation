@@ -4,7 +4,7 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -12,6 +12,8 @@ import {
   type GuardianFixture,
   guardianFixture
 } from '../../test/guardianFixture'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { teamsOf } from './players'
@@ -91,18 +93,15 @@ describe('the teams and seasons a player has played in', function () {
     db = new Kysely<Database>({ dialect: new PostgresDialect({ pool }) })
 
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values({
-        id: child,
-        legacyId: legacies.get(child)!,
-        display_name: 'Jordan P',
-        first_name: 'Jordan',
-        last_name: 'P',
-        created_at: now,
-        updated_at: now
-      })
-      .execute()
+    await insertFixtureUsers(db, {
+      id: userIdOfGumbo(child),
+      legacyId: legacies.get(child)!,
+      display_name: 'Jordan P',
+      first_name: 'Jordan',
+      last_name: 'P',
+      created_at: now,
+      updated_at: now
+    })
     await db
       .insertInto('seasons')
       .values([
@@ -138,7 +137,7 @@ describe('the teams and seasons a player has played in', function () {
     await line(badgers, spring)
     await line(badgers, spring)
     await line(comets, fall)
-    expect(await teamsOf(db!, [child])).deep.equals([
+    expect(await teamsOf(db!, [userIdOfGumbo(child)])).deep.equals([
       {
         teamId: badgers,
         teamName: 'Badgers',
@@ -166,13 +165,13 @@ describe('the teams and seasons a player has played in', function () {
 
   it('leaves out a team that has been merged into another', async function () {
     await line(closed, spring)
-    const teams = await teamsOf(db!, [child])
+    const teams = await teamsOf(db!, [userIdOfGumbo(child)])
     expect(teams.map(team => team.teamId)).not.include(closed)
   })
 
   it('lists a stat line in a game with no season after the seasons', async function () {
     await line(survivor, null)
-    const teams = await teamsOf(db!, [child])
+    const teams = await teamsOf(db!, [userIdOfGumbo(child)])
     expect(teams[teams.length - 1]).deep.equals({
       teamId: survivor,
       teamName: 'Survivor',
@@ -203,7 +202,7 @@ describe('the teams and seasons a player has played in', function () {
         {
           id: makeId('membership'),
           team_id: spare,
-          user_id: child,
+          user_id: userIdOfGumbo(child),
           role: 'member',
           is_player: true,
           joined_at: now
@@ -211,14 +210,14 @@ describe('the teams and seasons a player has played in', function () {
         {
           id: makeId('membership'),
           team_id: badgers,
-          user_id: child,
+          user_id: userIdOfGumbo(child),
           role: 'member',
           is_player: true,
           joined_at: now
         }
       ])
       .execute()
-    const teams = await teamsOf(db!, [child])
+    const teams = await teamsOf(db!, [userIdOfGumbo(child)])
     expect(teams.filter(team => team.teamId === spare)).to.have.length(1)
     expect(
       teams.filter(team => team.teamId === badgers && team.seasonId === spring)
@@ -229,21 +228,18 @@ describe('the teams and seasons a player has played in', function () {
     const now = new Date()
     // A closed row of the child's, from an earlier import, on two teams.
     const earlier = mint()
-    await db!
-      .insertInto('users')
-      .values({
-        id: earlier,
-        legacyId: legacies.get(earlier)!,
-        display_name: 'Jordan P',
-        merged_into: child,
-        created_at: now,
-        updated_at: now
-      })
-      .execute()
+    await insertFixtureUsers(db!, {
+      id: userIdOfGumbo(earlier),
+      legacyId: legacies.get(earlier)!,
+      display_name: 'Jordan P',
+      merged_into: userIdOfGumbo(child),
+      created_at: now,
+      updated_at: now
+    })
     await db!
       .updateTable('memberships')
       .set({ jersey: '7', positions: ['SS', '2B'] })
-      .where('user_id', '=', child)
+      .where('user_id', '=', userIdOfGumbo(child))
       .where('team_id', '=', badgers)
       .execute()
     await db!
@@ -253,7 +249,7 @@ describe('the teams and seasons a player has played in', function () {
         {
           id: makeId('membership'),
           team_id: badgers,
-          user_id: earlier,
+          user_id: userIdOfGumbo(earlier),
           role: 'member',
           is_player: true,
           jersey: '99',
@@ -264,7 +260,7 @@ describe('the teams and seasons a player has played in', function () {
         {
           id: makeId('membership'),
           team_id: comets,
-          user_id: earlier,
+          user_id: userIdOfGumbo(earlier),
           role: 'member',
           is_player: true,
           jersey: '12',
@@ -274,7 +270,10 @@ describe('the teams and seasons a player has played in', function () {
       ])
       .execute()
 
-    const teams = await teamsOf(db!, [child, earlier])
+    const teams = await teamsOf(db!, [
+      userIdOfGumbo(child),
+      userIdOfGumbo(earlier)
+    ])
     expect(
       teams.map(team => [
         team.teamName,
@@ -307,7 +306,7 @@ describe('the teams and seasons a player has played in', function () {
       .values({
         id: makeId('membership'),
         team_id: owls,
-        user_id: child,
+        user_id: userIdOfGumbo(child),
         role: 'member',
         is_player: true,
         jersey: '3',
@@ -315,7 +314,7 @@ describe('the teams and seasons a player has played in', function () {
       })
       .execute()
     const owlsRows = async (): Promise<unknown[]> =>
-      (await teamsOf(db!, [child]))
+      (await teamsOf(db!, [userIdOfGumbo(child)]))
         .filter(team => team.teamId === owls)
         .map(team => [team.seasonName, team.jersey])
     expect(await owlsRows()).deep.equals([['Spring 2026', '3']])
@@ -447,7 +446,7 @@ describe('a guardian reading their child’s page', function () {
     // Alfonso leaves the Comets.
     await db
       .deleteFrom('memberships')
-      .where('user_id', '=', avery)
+      .where('user_id', '=', userIdOfGumbo(avery))
       .where('team_id', '=', f.secondTeam)
       .execute()
   })
@@ -470,14 +469,23 @@ describe('a guardian reading their child’s page', function () {
           (answer.teams as Array<{ teamId: string }>).map(team => team.teamId)
         )
       ].sort()
-    const mine = await read(`/players/${avery}`, f.people.guardian)
+    const mine = await read(
+      `/players/${userIdOfGumbo(avery)}`,
+      f.people.guardian
+    )
     expect(teamIds(mine)).deep.equals([f.teamA, f.secondTeam].sort())
-    const coach = await read(`/players/${avery}`, f.people.teamCoach)
+    const coach = await read(
+      `/players/${userIdOfGumbo(avery)}`,
+      f.people.teamCoach
+    )
     expect(teamIds(coach)).deep.equals([f.teamA])
   })
 
   it('names the child’s number and positions on each team, and none on a team left', async function () {
-    const mine = await read(`/players/${avery}`, f.people.guardian)
+    const mine = await read(
+      `/players/${userIdOfGumbo(avery)}`,
+      f.people.guardian
+    )
     expect(
       (
         mine.teams as Array<{
@@ -500,13 +508,15 @@ describe('a guardian reading their child’s page', function () {
         team => [team.teamId, team.current]
       )
     expect(
-      current(await read(`/players/${avery}`, f.people.guardian))
+      current(await read(`/players/${userIdOfGumbo(avery)}`, f.people.guardian))
     ).deep.equals([
       [f.secondTeam, false],
       [f.teamA, true]
     ])
     expect(
-      current(await read(`/players/${avery}`, f.people.teamCoach))
+      current(
+        await read(`/players/${userIdOfGumbo(avery)}`, f.people.teamCoach)
+      )
     ).deep.equals([[f.teamA, true]])
   })
 
@@ -518,7 +528,10 @@ describe('a guardian reading their child’s page', function () {
       .where('id', '=', f.teamA)
       .execute()
     try {
-      const mine = await read(`/players/${avery}`, f.people.guardian)
+      const mine = await read(
+        `/players/${userIdOfGumbo(avery)}`,
+        f.people.guardian
+      )
       const logos = new Map(
         (mine.teams as Array<{ teamId: string; logoUrl: string | null }>).map(
           team => [team.teamId, team.logoUrl]
@@ -545,10 +558,12 @@ describe('a guardian reading their child’s page', function () {
         team => [team.teamId, team.seasonId]
       )
     expect(
-      seasons(await read(`/players/${avery}`, f.people.teamCoach))
+      seasons(
+        await read(`/players/${userIdOfGumbo(avery)}`, f.people.teamCoach)
+      )
     ).deep.equals([[f.teamA, f.seasonA]])
     expect(
-      seasons(await read(`/players/${avery}`, f.people.guardian))
+      seasons(await read(`/players/${userIdOfGumbo(avery)}`, f.people.guardian))
     ).deep.equals([
       [f.secondTeam, f.playoffs],
       [f.teamA, f.seasonA]
@@ -556,18 +571,30 @@ describe('a guardian reading their child’s page', function () {
   })
 
   it('adds up every figure for the guardian, and the coach’s team for the coach', async function () {
-    const mine = await read(`/players/${avery}/stats`, f.people.guardian)
+    const mine = await read(
+      `/players/${userIdOfGumbo(avery)}/stats`,
+      f.people.guardian
+    )
     expect(mine.games).equals(2)
     expect(
       (mine.options.teams as Array<{ teamId: string }>).map(team => team.teamId)
     ).deep.equals([f.secondTeam, f.teamA])
-    const coach = await read(`/players/${avery}/stats`, f.people.teamCoach)
+    const coach = await read(
+      `/players/${userIdOfGumbo(avery)}/stats`,
+      f.people.teamCoach
+    )
     expect(coach.games).equals(1)
-    const plays = await read(`/players/${avery}/plays`, f.people.guardian)
+    const plays = await read(
+      `/players/${userIdOfGumbo(avery)}/plays`,
+      f.people.guardian
+    )
     expect(
       (plays as Array<{ gameId: string }>).map(play => play.gameId).sort()
     ).deep.equals(['guardian-game-1', comets])
-    const coachPlays = await read(`/players/${avery}/plays`, f.people.teamCoach)
+    const coachPlays = await read(
+      `/players/${userIdOfGumbo(avery)}/plays`,
+      f.people.teamCoach
+    )
     expect(
       (coachPlays as Array<{ gameId: string }>).map(play => play.gameId)
     ).deep.equals(['guardian-game-1'])
@@ -582,24 +609,37 @@ describe('a guardian reading their child’s page', function () {
       )
     ]
     expect(
-      games(await read(`/players/${avery}/highlights`, f.people.guardian))
+      games(
+        await read(
+          `/players/${userIdOfGumbo(avery)}/highlights`,
+          f.people.guardian
+        )
+      )
     ).deep.equals([comets, 'guardian-game-1', 'guardian-game-2'])
     expect(
-      games(await read(`/players/${avery}/highlights`, f.people.teamCoach))
+      games(
+        await read(
+          `/players/${userIdOfGumbo(avery)}/highlights`,
+          f.people.teamCoach
+        )
+      )
     ).deep.equals(['guardian-game-1', 'guardian-game-2'])
   })
 
   it('still opens the child’s page for the guardian once the child is on no team', async function () {
     await f.h.db
       .deleteFrom('memberships')
-      .where('user_id', '=', avery)
+      .where('user_id', '=', userIdOfGumbo(avery))
       .execute()
-    const mine = await read(`/players/${avery}`, f.people.guardian)
-    expect(mine.userId).equals(avery)
+    const mine = await read(
+      `/players/${userIdOfGumbo(avery)}`,
+      f.people.guardian
+    )
+    expect(mine.userId).equals(userIdOfGumbo(avery))
     // Somebody who never saw a team of his sees nothing.
     const stranger = await f.h.request(
       'GET',
-      `/players/${avery}`,
+      `/players/${userIdOfGumbo(avery)}`,
       undefined,
       f.people.oneTeam
     )
