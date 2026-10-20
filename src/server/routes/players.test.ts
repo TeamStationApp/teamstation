@@ -140,9 +140,9 @@ describe('a player, and who may change their name', function () {
       {
         id: userIdOfGumbo(childId),
         legacyId: legacyId(childId),
-        display_name: 'Jordan Pujols',
+        display_name: 'Jordan Pacheco',
         first_name: 'Jordan',
-        last_name: 'Pujols',
+        last_name: 'Pacheco',
         bats: 'left'
       },
       ...[
@@ -516,7 +516,9 @@ describe('a player, and who may change their name', function () {
       const answer = await get(`/players/${userIdOfGumbo(childId)}`, viewer)
       expect(answer.status, String(viewer)).equals(200)
       expect(asPlayerDetail(answer.body).name).equals('Jordan P')
-      expect(JSON.stringify(answer.body), String(viewer)).not.includes('Pujols')
+      expect(JSON.stringify(answer.body), String(viewer)).not.includes(
+        'Pacheco'
+      )
       expect(answer.body, String(viewer)).not.have.property('fullName')
     }
   })
@@ -530,7 +532,9 @@ describe('a player, and who may change their name', function () {
         .map(asRosterEntry)
         .find(entry => entry.userId === userIdOfGumbo(childId))
       expect(child?.shortName).equals('Jordan P')
-      expect(JSON.stringify(answer.body), String(viewer)).not.includes('Pujols')
+      expect(JSON.stringify(answer.body), String(viewer)).not.includes(
+        'Pacheco'
+      )
     }
   })
 
@@ -549,7 +553,7 @@ describe('a player, and who may change their name', function () {
       expect(answer.status, String(viewer)).equals(200)
       expect(answer.body).deep.include({
         firstName: 'Jordan',
-        lastName: 'Pujols'
+        lastName: 'Pacheco'
       })
       const detail = asPlayerDetail(
         (await get(`/players/${userIdOfGumbo(childId)}`, viewer)).body
@@ -649,7 +653,7 @@ describe('a player, and who may change their name', function () {
       expect(asPlayerDetail(page.body).canEditName).equals(true)
       const name = await get(`/players/${userIdOfGumbo(childId)}/name`, parent)
       expect(name.status).equals(200)
-      expect(name.body).deep.include({ lastName: 'Pujols' })
+      expect(name.body).deep.include({ lastName: 'Pacheco' })
 
       const stranger = await get(
         `/players/${userIdOfGumbo(childId)}`,

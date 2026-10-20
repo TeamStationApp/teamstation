@@ -120,18 +120,18 @@ describe('two rows for one child', function () {
   })
 
   it('leaves a shirt two children have both played in', function () {
-    // Eleven numbers on the server are worn by two children who both played.
+    // Shared jersey numbers must not merge two players with recorded appearances.
     expect(
       shirtPairs([
         {
           userId: userIdOfGumbo(1),
-          displayName: 'Aaron A',
+          displayName: 'Aaron Altherr',
           jersey: '13',
           plays: 40
         },
         {
           userId: userIdOfGumbo(2),
-          displayName: 'Jack A',
+          displayName: 'Jack Aker',
           jersey: '13',
           plays: 12
         }
