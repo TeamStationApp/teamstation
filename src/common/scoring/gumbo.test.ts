@@ -5,6 +5,7 @@ import { describe, it } from 'mocha'
 
 import { after, F, game, TEAMS } from '../../test/scoringGames'
 import { asCurrentPlay, asGumboPlay, type GumboPlay } from '../gumboPlay'
+import { userIdOfGumbo } from '../userId'
 import type { ScoringAction } from './actions'
 import { applyAction } from './apply'
 import { comparablePlay } from './comparable'
@@ -85,12 +86,12 @@ const context = { gamePk: 'g1', teams: TEAMS, setup: setupOf(game()) }
 function rostered(): GameState {
   const setup = newSetup(TEAMS, {
     away: Array.from({ length: 9 }, (_, i) => ({
-      userId: 1 + i,
+      userId: userIdOfGumbo(1 + i),
       gumboId: 1 + i,
       shortName: `Away ${i + 1}`
     })),
     home: Array.from({ length: 8 }, (_, i) => ({
-      userId: 10 + i,
+      userId: userIdOfGumbo(10 + i),
       gumboId: 10 + i,
       shortName: `Home ${i + 1}`
     }))
@@ -535,12 +536,12 @@ describe('reading a game back', function () {
   it('rebuilds plays scored elsewhere from their documents, and marks the game derived', function () {
     const setup = newSetup(TEAMS, {
       away: Array.from({ length: 9 }, (_, i) => ({
-        userId: 7000 + i,
+        userId: userIdOfGumbo(7000 + i),
         gumboId: 7000 + i,
         shortName: `A${i}`
       })),
       home: Array.from({ length: 9 }, (_, i) => ({
-        userId: 8000 + i,
+        userId: userIdOfGumbo(8000 + i),
         gumboId: 8000 + i,
         shortName: `H${i}`
       }))

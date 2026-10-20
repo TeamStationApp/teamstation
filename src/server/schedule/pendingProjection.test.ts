@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   type GroupFixture,
@@ -149,7 +150,10 @@ describe('scoped pending schedules and request-local authority', function () {
       expect(rows.every(row => row.pendingRequestId == null)).equals(true)
       expect(rows[0]).not.property('terms')
     }
-    await f.h.db.deleteFrom('scope_roles').where('user_id', '=', 101).execute()
+    await f.h.db
+      .deleteFrom('scope_roles')
+      .where('user_id', '=', userIdOfGumbo(101))
+      .execute()
     const revoked = await pendingSchedule(f.h.db, actor(101), f.clock.now(), {
       teamId: f.teamA
     })
@@ -157,7 +161,7 @@ describe('scoped pending schedules and request-local authority', function () {
     await f.h.db
       .updateTable('users')
       .set({ login_enabled: false })
-      .where('id', '=', 102)
+      .where('id', '=', userIdOfGumbo(102))
       .execute()
     const disabled = await pendingSchedule(f.h.db, actor(102), f.clock.now(), {
       seasonIds: [f.seasonA]
@@ -189,7 +193,7 @@ describe('scoped pending schedules and request-local authority', function () {
       .insertInto('scope_roles')
       .values({
         id: 'query-b-admin',
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         scope_type: 'team',
         scope_id: f.teamB,
         role: 'admin'
@@ -361,7 +365,7 @@ describe('scoped pending schedules and request-local authority', function () {
       .insertInto('memberships')
       .values({
         id: 'query-legacy-placeholder-member',
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         team_id: placeholder,
         role: 'member'
       })
@@ -422,7 +426,7 @@ describe('scoped pending schedules and request-local authority', function () {
         id: 'pending-team-curator',
         scope_type: 'team',
         scope_id: f.teamA,
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         role: 'admin'
       })
       .execute()

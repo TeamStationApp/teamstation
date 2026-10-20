@@ -43,7 +43,7 @@ export interface Held {
 export async function heldAt(
   db: Kysely<Database>,
   ref: GroupRef,
-  userId: number
+  userId: string
 ): Promise<Held> {
   const roles = await rolesAt(db, ref.kind, ref.id, userId)
   if (ref.kind === 'team') {
@@ -84,7 +84,7 @@ export async function heldAt(
  */
 export async function canHoldRoles(
   db: Kysely<Database>,
-  userId: number
+  userId: string
 ): Promise<boolean> {
   const user = await db
     .selectFrom('users')
@@ -106,9 +106,9 @@ export async function canHoldRoles(
 export async function grantAt(
   db: Kysely<Database>,
   ref: GroupRef,
-  userId: number,
+  userId: string,
   wanted: readonly Grantable[],
-  grantedBy: number
+  grantedBy: string
 ): Promise<Grantable[]> {
   return await atomic(db, async trx => {
     await lockKeys(trx, [
@@ -151,9 +151,9 @@ export async function notifyGrant(
   db: Kysely<Database>,
   grant: {
     ref: GroupRef
-    userId: number
+    userId: string
     added: readonly Grantable[]
-    actorId: number
+    actorId: string
     at?: Date
   }
 ): Promise<string | undefined> {
@@ -216,7 +216,7 @@ export async function groupName(
  */
 export async function addressOf(
   db: Kysely<Database>,
-  userId: number
+  userId: string
 ): Promise<string | undefined> {
   const row = await db
     .selectFrom('user_emails')
@@ -237,7 +237,7 @@ export async function addressOf(
 export async function accountForAddress(
   db: Kysely<Database>,
   email: string
-): Promise<{ id: number; displayName: string } | undefined> {
+): Promise<{ id: string; displayName: string } | undefined> {
   const row = await db
     .selectFrom('user_emails')
     .innerJoin('users', 'users.id', 'user_emails.user_id')
@@ -268,9 +268,9 @@ export async function mailGrant(
   db: Kysely<Database>,
   grant: {
     ref: GroupRef
-    userId: number
+    userId: string
     added: readonly Grantable[]
-    actorId: number
+    actorId: string
     notificationId: string
     email?: string
   },

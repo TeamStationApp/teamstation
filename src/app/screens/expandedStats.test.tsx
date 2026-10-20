@@ -11,6 +11,7 @@ import {
   type TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { PlayerScreen } from './PlayerScreen'
 import { battingColumns, pitchingColumns } from './statColumns'
@@ -31,7 +32,7 @@ const team = asTeamSummary({
   record: null
 })
 const stats = asPlayerStats({
-  userId: 101,
+  userId: userIdOfGumbo(101),
   filter: { seasonId: null, teamId: null, year: null },
   games: 2,
   batting: battingFixture,
@@ -45,7 +46,7 @@ function client(over: Record<string, unknown> = {}): TeamStationClient {
     teamStats: async () => [battingFixture],
     teamPitchingStats: async () => [pitchingFixture],
     player: async () =>
-      asPlayerDetail({ userId: 101, name: 'Alex L', teams: [] }),
+      asPlayerDetail({ userId: userIdOfGumbo(101), name: 'Alex L', teams: [] }),
     playerHighlights: async () => ({
       highlights: [],
       nextBefore: null,
@@ -150,7 +151,7 @@ describe('expanded statistics screens', function () {
     expect(text())
       .includes('BATTING')
       .and.includes('PITCHING')
-      .and.includes('Blair R')
+      .and.includes('Babe R')
     for (const column of [...battingColumns, ...pitchingColumns])
       expect(leaves()).includes(column.label)
     expect(text()).includes('66.7%').and.includes('.182')
@@ -190,7 +191,11 @@ describe('expanded statistics screens', function () {
   })
   it('shares player columns and removes the absent pitching card', async function () {
     await render(
-      <PlayerScreen client={client()} userId="101" initialTab="stats" />
+      <PlayerScreen
+        client={client()}
+        userId={userIdOfGumbo(101)}
+        initialTab="stats"
+      />
     )
     for (const column of [...battingColumns, ...pitchingColumns])
       expect(leaves()).includes(column.label)
@@ -201,7 +206,7 @@ describe('expanded statistics screens', function () {
             client={client({
               playerStats: async () => ({ ...stats, pitching: null })
             })}
-            userId="101"
+            userId={userIdOfGumbo(101)}
             initialTab="stats"
           />
         </ThemeProvider>
@@ -217,7 +222,7 @@ describe('expanded statistics screens', function () {
         client={client({
           playerStats: async () => ({ ...stats, batting: null })
         })}
-        userId="101"
+        userId={userIdOfGumbo(101)}
         initialTab="stats"
       />
     )

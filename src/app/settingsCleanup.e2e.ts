@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 
 import { asLocality } from '../common/locality'
+import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { googlePlaces } from '../server/location/googlePlaces'
 import { googlePlacesStub } from '../test/googlePlacesStub'
@@ -54,7 +55,7 @@ async function main(): Promise<void> {
     await f.h.db
       .updateTable('users')
       .set({ is_admin: true })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     await page.setViewport({
       width: 402,
@@ -156,7 +157,7 @@ async function main(): Promise<void> {
         .values(
           [103, 104, 106].map(userId => ({
             id: `mem_settings_people_${userId}`,
-            user_id: userId,
+            user_id: userIdOfGumbo(userId),
             team_id: f.teamA,
             is_player: userId !== 106
           }))
@@ -164,7 +165,7 @@ async function main(): Promise<void> {
         .execute()
       await f.h.db
         .deleteFrom('user_emails')
-        .where('user_id', '=', 103)
+        .where('user_id', '=', userIdOfGumbo(103))
         .execute()
       await f.h.request(
         'POST',
@@ -520,7 +521,7 @@ async function main(): Promise<void> {
           id: 'role_card_coach',
           scope_type: 'team',
           scope_id: f.teamA,
-          user_id: 103,
+          user_id: userIdOfGumbo(103),
           role: 'coach'
         })
         .execute()
@@ -529,7 +530,7 @@ async function main(): Promise<void> {
         .values({
           id: 'mem_card_member',
           team_id: f.teamA,
-          user_id: 106,
+          user_id: userIdOfGumbo(106),
           is_player: false
         })
         .execute()

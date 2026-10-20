@@ -84,7 +84,7 @@ const hasher = new PasswordHasher()
 export async function createPasswordRecord(
   clientHash: string,
   parameters: ArgonParameters,
-  accountId?: number
+  accountId?: string
 ): Promise<string> {
   const client = asNewPasswordParameters(parameters)
   const input = Buffer.from(asClientHash(clientHash), 'hex')
@@ -112,7 +112,7 @@ export async function createPasswordRecord(
 export async function passwordMatches(
   clientHash: string,
   stored: string | null,
-  accountId?: number
+  accountId?: string
 ): Promise<boolean> {
   const record = readPasswordRecord(stored)
   if (record == null) return false

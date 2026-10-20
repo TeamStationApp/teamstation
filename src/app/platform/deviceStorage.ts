@@ -15,6 +15,9 @@ export const deviceStorage: PreferenceStorage = {
       return null
     }
   },
+  removeItem: async key => {
+    window.localStorage.removeItem(key)
+  },
   setItem: async (key, value) => {
     try {
       window.localStorage.setItem(key, value)

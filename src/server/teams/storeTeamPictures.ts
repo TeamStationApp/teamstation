@@ -278,7 +278,7 @@ export async function storeTeamLogo(
 export async function storePlayerAvatar(
   db: Kysely<Database>,
   store: PictureStore,
-  userId: number,
+  userId: string,
   picture: SentPicture,
   callerIsAdmin: boolean
 ): Promise<StoredPicture> {

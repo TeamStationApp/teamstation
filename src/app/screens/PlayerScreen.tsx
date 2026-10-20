@@ -79,7 +79,7 @@ export interface PlayerScreenProps {
    * Who is signed in, if anybody. Somebody who is not the player and has no
    * say over them yet is offered "Request to be a guardian".
    */
-  viewer?: { userId: number; isAdmin: boolean }
+  viewer?: { userId: string; isAdmin: boolean }
   /** The Walk-up tab. The song itself is read from `forTeam`'s roster. */
   walkUp?: {
     /** Finds the song on this phone, for Preview. */
@@ -254,7 +254,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   const guardian =
     roles == null
       ? undefined
-      : roles.guardianOf.includes(player?.userId ?? Number(userId))
+      : roles.guardianOf.includes(player?.userId ?? userId)
   const canManage =
     roles == null
       ? undefined
@@ -293,7 +293,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     player != null &&
     guardian === false &&
     viewer.userId !== player.userId &&
-    viewer.userId !== Number(userId) &&
+    viewer.userId !== userId &&
     !coachesTeam(roles, forTeam) &&
     !player.teams.some(team => team.current && coachesTeam(roles, team.teamId))
   const walkUpShown = canKeepSongs === true
@@ -731,7 +731,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
               <GuardianInvite
                 client={client}
                 teamId={inviteAs === 'team' ? forTeam : undefined}
-                playerUserId={player?.userId ?? Number(userId)}
+                playerUserId={player?.userId ?? userId}
                 playerName={shortShown}
               />
             )}
@@ -741,7 +741,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                 <PlayerTeamRoles
                   client={client}
                   teamId={forTeam}
-                  userId={player?.userId ?? Number(userId)}
+                  userId={player?.userId ?? userId}
                 />
               )
             }
@@ -752,7 +752,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                   client={client}
                   teamId={forTeam}
                   teamName={teamName}
-                  userId={player?.userId ?? Number(userId)}
+                  userId={player?.userId ?? userId}
                   shortName={shortShown}
                   onRemoved={notice => {
                     onRemovedFromTeam?.(forTeam, teamName, notice)
