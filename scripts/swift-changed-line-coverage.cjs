@@ -30,7 +30,7 @@ const {
 
 const USAGE =
   'usage: swift-changed-line-coverage.cjs (--spm <dir> | --xcresult <path> ' +
-  '[--derived-data <dir>]) [--exclude <path>] <pathspec>…'
+  '[--derived-data <dir>]) [--export-counts <file>] [--exclude <path>] <pathspec>…'
 
 const ALWAYS = [
   '--ext',
@@ -48,7 +48,11 @@ function parseArgs(argv) {
     if (arg === '--spm') args.spm = argv[++i]
     else if (arg === '--xcresult') args.xcresult = argv[++i]
     else if (arg === '--derived-data') args.derivedData = argv[++i]
-    else args.rest.push(arg)
+    else if (arg === '--export-counts') {
+      args.exportCounts = argv[++i]
+      if (args.exportCounts == null || args.exportCounts.startsWith('--'))
+        throw new Error('--export-counts needs a file')
+    } else args.rest.push(arg)
   }
   if ((args.spm == null) === (args.xcresult == null))
     throw new Error('give one of --spm or --xcresult')
@@ -300,6 +304,11 @@ function main(argv, { run, log, cwd = process.cwd() }) {
   const dir = mkdtempSync(join(tmpdir(), 'swift-changed-line-'))
   const file = join(dir, 'counts.json')
   writeFileSync(file, JSON.stringify(keyed(tops, counts)))
+  if (args.exportCounts != null)
+    writeFileSync(
+      resolve(cwd, args.exportCounts),
+      JSON.stringify(keyed(tops, counts))
+    )
   return check.main(['--counts', file, ...ALWAYS, ...args.rest], {
     run,
     log,
@@ -307,7 +316,7 @@ function main(argv, { run, log, cwd = process.cwd() }) {
   })
 }
 
-module.exports = { main }
+module.exports = { main, spmCounts }
 
 if (require.main === module) {
   process.exitCode = main(process.argv.slice(2), {

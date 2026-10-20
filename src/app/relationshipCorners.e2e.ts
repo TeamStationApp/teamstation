@@ -6,6 +6,7 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
 
 import { asParentActions } from '../common/groupLinks'
 import { makeId } from '../common/ids'
+import { userIdOfGumbo } from '../common/userId'
 import { createSession } from '../server/auth/sessions'
 import { applyParents, previewParents } from '../server/groups/relationships'
 import {
@@ -14,6 +15,7 @@ import {
   type GroupFixture,
   groupFixture
 } from '../test/groupFixtures'
+import { insertFixtureUsers } from '../test/insertFixtureUsers'
 import { recordBrowserCoverage } from './browserCoverage.e2e'
 import {
   frameText,
@@ -58,22 +60,19 @@ async function main(): Promise<void> {
       [207, 'Ted Williams', 'team', f.teamA, 'coach']
     ] as const
     for (const [id, name, kind, scope, role] of people) {
-      await f.h.db
-        .insertInto('users')
-        .values({
-          id,
-          legacyId: `usr_corner_${id}`,
-          display_name: name,
-          first_name: name.split(' ')[0],
-          last_name: name.split(' ').slice(1).join(' '),
-          login_enabled: true
-        })
-        .execute()
+      await insertFixtureUsers(f.h.db, {
+        id,
+        legacyId: `usr_corner_${id}`,
+        display_name: name,
+        first_name: name.split(' ')[0],
+        last_name: name.split(' ').slice(1).join(' '),
+        login_enabled: true
+      })
       await f.h.db
         .insertInto('user_emails')
         .values({
           id: makeId('userEmail'),
-          user_id: id,
+          user_id: userIdOfGumbo(id),
           email: `corner${id}@example.com`,
           is_primary: true,
           verified_at: new Date()
@@ -83,7 +82,7 @@ async function main(): Promise<void> {
         .insertInto('scope_roles')
         .values({
           id: makeId('scopeRole'),
-          user_id: id,
+          user_id: userIdOfGumbo(id),
           scope_type: kind,
           scope_id: scope,
           role
@@ -91,7 +90,7 @@ async function main(): Promise<void> {
         .execute()
       f.h.tokens.set(
         id,
-        (await createSession(f.h.db, id, 'corner-fixture')).token
+        (await createSession(f.h.db, userIdOfGumbo(id), 'corner-fixture')).token
       )
     }
     browser = await puppeteer.launch({ headless: true })
@@ -207,7 +206,7 @@ async function main(): Promise<void> {
       .values({
         id: 'membership_corner_private_spectator',
         season_id: f.seasonB,
-        user_id: 104
+        user_id: userIdOfGumbo(104)
       })
       .execute()
     const rosterBefore = await (

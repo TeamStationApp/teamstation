@@ -13,7 +13,6 @@ import {
   type CurrentPlay,
   type GumboPlay
 } from '../../common/gumboPlay'
-import { mintUserId } from '../../common/mintUserId'
 import {
   composeScoreboard,
   NO_OVERRIDES,
@@ -30,6 +29,9 @@ import {
   ScoringSession,
   type SessionContext
 } from '../../common/scoring/session'
+import { userIdOfGumbo } from '../../common/userId'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import {
   addGame,
   addPerson,
@@ -338,26 +340,24 @@ describe('the board timeline', function () {
       return one
     })
     const created = new Date()
-    await db
-      .insertInto('users')
-      .values(
-        made.map((one, i) => ({
-          id: one.userId,
-          legacyId: one.legacyId,
-          display_name: `Player ${i + 1}`,
-          created_at: created,
-          updated_at: created
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      made.map((one, i) => ({
+        id: one.userId,
+        legacyId: one.legacyId,
+        display_name: `Player ${i + 1}`,
+        created_at: created,
+        updated_at: created
+      }))
+    )
     setup = newSetup(teams, {
       away: made.slice(0, 9).map((one, i) => ({
-        userId: one.userId,
+        userId: userIdOfGumbo(one.userId),
         gumboId: one.userId,
         shortName: `Away ${i + 1}`
       })),
       home: made.slice(9).map((one, i) => ({
-        userId: one.userId,
+        userId: userIdOfGumbo(one.userId),
         gumboId: one.userId,
         shortName: `Home ${i + 1}`
       }))
@@ -766,7 +766,7 @@ describe('the board timeline', function () {
       const pat = await addPerson(db, 'Pat Neshek')
       const quinn = await addPerson(db, 'Quinn Priester')
       const ref = (person: Person | null): { id: number | null } => ({
-        id: person?.userId ?? null
+        id: person?.gumboId ?? null
       })
       const event = (
         seconds: number,

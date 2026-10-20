@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   type GroupFixture,
@@ -31,9 +32,9 @@ describe('competition removal uses current authority under the shared lock', fun
         f.h.db,
         loss === 'parent' ? 'season' : 'team',
         loss === 'parent' ? f.seasonA : f.teamA,
-        106,
+        userIdOfGumbo(106),
         { admin: true, flags: [] },
-        101
+        userIdOfGumbo(101)
       )
       let releaseRow!: () => void
       let releaseAuthority!: () => void
@@ -68,7 +69,9 @@ describe('competition removal uses current authority under the shared lock', fun
         authorityReady()
         await authorityWait
         if (loss === 'suspension')
-          await changeNodeAccount(trx, actor(105), 106, { suspended: true })
+          await changeNodeAccount(trx, actor(105), userIdOfGumbo(106), {
+            suspended: true
+          })
         else if (loss === 'parent')
           await applyParents(
             trx,
@@ -86,9 +89,9 @@ describe('competition removal uses current authority under the shared lock', fun
             trx,
             'team',
             f.teamA,
-            106,
+            userIdOfGumbo(106),
             { admin: false, flags: [] },
-            101
+            userIdOfGumbo(101)
           )
       })
       await authorityHeld

@@ -44,6 +44,7 @@ import {
   type PictureStore,
   storePlayerAvatar
 } from '../teams/storeTeamPictures'
+import { gumboIdOf } from '../users/insertUser'
 
 export interface AccountOptions extends PictureStore {
   sendCode: (email: string, code: string) => Promise<void>
@@ -51,7 +52,7 @@ export interface AccountOptions extends PictureStore {
 
 export async function readAccount(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   options: PictureStore
 ): Promise<AccountSettings> {
   const user = await db
@@ -78,6 +79,7 @@ export async function readAccount(
   return {
     user: {
       id: user.id,
+      gumboId: await gumboIdOf(db, user.id),
       displayName: user.display_name,
       isAdmin: user.is_admin,
       email: emails[0]?.email,
@@ -102,7 +104,7 @@ export async function readAccount(
 /** Protect each short authorization/write phase; never hold this lock during hashing. */
 async function lockAccount(
   db: Kysely<Database>,
-  userId: number
+  userId: string
 ): Promise<string | null> {
   const user = await db
     .selectFrom('users')
@@ -116,7 +118,7 @@ async function lockAccount(
   return user.password_hash
 }
 
-function accountId(req: Request): number {
+function accountId(req: Request): string {
   if (req.actor == null) throw unauthorized()
   if (req.actor.apiTokenId != null)
     throw forbidden('Sign in to manage your account')
@@ -125,7 +127,7 @@ function accountId(req: Request): number {
 
 async function limit(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   action: string,
   maximum: number,
   email?: string

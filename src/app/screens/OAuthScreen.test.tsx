@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Linking, NativeModules, Platform } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { App } from '../App'
 import { AppHeader } from '../components/AppHeader'
 import { BuildInfoModal } from '../components/BuildInfoModal'
@@ -70,8 +71,8 @@ describe('OAuth consent and loaded build information', () => {
       token: 'fixture-session',
       expiresAt: new Date(Date.now() + 60000).toISOString(),
       user: {
-        id: 123,
-        displayName: 'Alex Lee',
+        id: userIdOfGumbo(123),
+        displayName: 'Alex Liddi',
         isAdmin: false,
         avatarUrl: null
       }
@@ -175,8 +176,8 @@ describe('OAuth consent and loaded build information', () => {
       if (url.endsWith('/auth/me'))
         return new Response(
           JSON.stringify({
-            id: 123,
-            displayName: 'Alex Lee',
+            id: userIdOfGumbo(123),
+            displayName: 'Alex Liddi',
             email: 'alex@example.test',
             isAdmin: false,
             avatarUrl: null
@@ -192,7 +193,7 @@ describe('OAuth consent and loaded build information', () => {
     window.history.replaceState(null, '', '/oauth/approve/request')
     await show(<App key="signed" />)
     expect(window.location.pathname).equals('/oauth/approve/request')
-    expect(document.body.textContent).includes('Signed in as Alex Lee')
+    expect(document.body.textContent).includes('Signed in as Alex Liddi')
     signedIn = false
     await show(<App key="unsigned" />)
     await press('Sign in to continue')
@@ -216,8 +217,8 @@ describe('OAuth consent and loaded build information', () => {
       seen.push(url)
       if (url.endsWith('/auth/me'))
         return Response.json({
-          id: 123,
-          displayName: 'Alex Lee',
+          id: userIdOfGumbo(123),
+          displayName: 'Alex Liddi',
           email: 'alex@example.test',
           isAdmin: false,
           avatarUrl: null
@@ -270,8 +271,8 @@ describe('OAuth consent and loaded build information', () => {
           if (url.endsWith('/auth/me'))
             return new Response(
               JSON.stringify({
-                id: 123,
-                displayName: 'Alex Lee',
+                id: userIdOfGumbo(123),
+                displayName: 'Alex Liddi',
                 email: 'alex@example.test',
                 isAdmin: false,
                 avatarUrl: null
@@ -494,12 +495,12 @@ describe('OAuth consent and loaded build information', () => {
       <OAuthScreen
         client={nativeClient}
         handle="handle"
-        accountName="Alex Lee"
+        accountName="Alex Liddi"
         onLogin={() => undefined}
       />
     )
     expect(decisions).deep.equals([])
-    expect(document.body.textContent).includes('Signed in as Alex Lee')
+    expect(document.body.textContent).includes('Signed in as Alex Liddi')
     await press('Allow')
     expect(decisions).deep.equals([true])
     expect(document.body.textContent).includes('Your decision was saved')

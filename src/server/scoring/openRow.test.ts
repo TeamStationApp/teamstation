@@ -6,14 +6,18 @@ import {
   type CurrentPlay,
   type GumboPlay
 } from '../../common/gumboPlay'
-import { mintUserId } from '../../common/mintUserId'
+import { cleanAction } from '../../common/scoring/actions'
+import { applyAction } from '../../common/scoring/apply'
 import { recordOf } from '../../common/scoring/gumbo'
-import { newSetup } from '../../common/scoring/lineup'
+import { freshGame, newSetup } from '../../common/scoring/lineup'
 import {
   type EventStore,
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
+import { userIdOfGumbo } from '../../common/userId'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { statsDatabase } from '../../test/statsDatabase'
 import { closeInto, survivorsOf } from '../admin/people'
 import { postGamePlays, readPlays } from '../events/postPlays'
@@ -37,13 +41,13 @@ describe('opening scoring through account merges', function () {
   const roster = (
     start: number
   ): Array<{
-    userId: number
+    userId: string
     gumboId: number
     shortName: string
     jersey: string
   }> =>
     users.slice(start, start + 9).map((user, i) => ({
-      userId: user.userId,
+      userId: userIdOfGumbo(user.userId),
       gumboId: user.userId,
       shortName: `Player ${i + 1}`,
       jersey: String(i + 1)
@@ -55,19 +59,17 @@ describe('opening scoring through account merges', function () {
     await fixture.db
       .updateTable('users')
       .set({ first_name: 'Miguel', last_name: 'Cabrera' })
-      .where('id', '=', fixture.ids[0])
+      .where('id', '=', userIdOfGumbo(fixture.ids[0]))
       .execute()
-    await fixture.db
-      .insertInto('users')
-      .values(
-        users.map(user => ({
-          id: user.userId,
-          legacyId: user.legacyId,
-          display_name: 'Mike Trout',
-          login_enabled: false
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      fixture.db,
+      users.map(user => ({
+        id: user.userId,
+        legacyId: user.legacyId,
+        display_name: 'Mike Trout',
+        login_enabled: false
+      }))
+    )
   })
   const raw = async (): Promise<StoredGame> => ({
     plays: (await readPlays(fixture.db, 'gam_demo')).map(
@@ -128,18 +130,22 @@ describe('opening scoring through account merges', function () {
     const original = users[0].userId
     const survivor = fixture.ids[0]
     const oldTimelineVersion = await timelineVersion(fixture.db, 'gam_demo')
-    await closeInto(fixture.db, original, survivor)
+    await closeInto(
+      fixture.db,
+      userIdOfGumbo(original),
+      userIdOfGumbo(survivor)
+    )
     expect(await timelineVersion(fixture.db, 'gam_demo')).not.equals(
       oldTimelineVersion
     )
     expect(
       (await scoreboardFromGame(fixture.db, 'gam_demo', () => undefined))!.state
         .batterName
-    ).includes('Miguel')
+    ).equals('Miguel C')
     expect(
       (await computeBoardTimeline(fixture.db, 'gam_demo'))!.steps.at(-1)!.state
         .batterName
-    ).includes('Miguel')
+    ).equals('Miguel C')
     await fixture.db
       .updateTable('games')
       .set({ lineups_digest: null })
@@ -154,6 +160,11 @@ describe('opening scoring through account merges', function () {
       (await lineupsAnswer(fixture.db, gameRow)).digest
     )
     const projected = await resolveScoringGame(fixture.db, before)
+    const projectedPlayer = recordOf(projected.currentPlay)!.setupBefore
+      .players[survivor]
+    expect(projectedPlayer.fullName).equals('Miguel C')
+    expect(projectedPlayer.firstName).equals(undefined)
+    expect(projectedPlayer.lastName).equals(undefined)
     expect(JSON.stringify(before.plays)).equals(historical)
     expect(await raw()).deep.equals(before)
     const opened = await ScoringSession.open(
@@ -188,6 +199,67 @@ describe('opening scoring through account merges', function () {
     expect(
       (after.currentPlay!.matchup as { batter: { id: number } }).batter.id
     ).equals(survivor)
+  })
+  it('replays fielding routes after their fielder merges without changing coordinates or saved history', async () => {
+    const original = users[13].userId
+    const survivor = mintUserId(() => false)
+    await insertFixtureUsers(fixture.db, {
+      id: survivor.userId,
+      legacyId: survivor.legacyId,
+      display_name: 'Hank Aaron',
+      login_enabled: false
+    })
+    const actions = [
+      {
+        type: 'gameFlow',
+        kind: 'override',
+        bases: [users[1].userId, null, null]
+      },
+      { type: 'ballInPlay', contact: 'swing', fielder: original },
+      { type: 'result', eventType: 'fielders_choice' },
+      {
+        type: 'runnerMovement',
+        runner: users[1].userId,
+        to: '2B',
+        out: true,
+        fielders: [original],
+        fieldingRoute: [{ id: original, point: { x: 1, z: 2 } }]
+      }
+    ]
+    const saved = {
+      plays: [],
+      currentPlay: {
+        about: { atBatIndex: 0, isComplete: false as const },
+        teamStation: { version: 2, setupBefore: setup, actions }
+      }
+    }
+    const originalJson = JSON.stringify(saved)
+    await closeInto(
+      fixture.db,
+      userIdOfGumbo(original),
+      userIdOfGumbo(survivor.userId)
+    )
+    const projected = await resolveScoringGame(fixture.db, saved)
+    const record = recordOf(projected.currentPlay)!
+    expect(record.actions[3]).includes({
+      runner: users[1].userId
+    })
+    const movement = record.actions[3]
+    if (movement.type !== 'runnerMovement')
+      throw new Error('Expected runner movement')
+    expect(movement.fieldingRoute).deep.equals([
+      { id: survivor.userId, point: { x: 1, z: 2 } }
+    ])
+    let state = freshGame('gam_relay', teams, record.setupBefore)
+    for (const action of record.actions) {
+      const parsed = cleanAction(action)
+      if ('problem' in parsed) throw new Error(parsed.problem.message)
+      const applied = applyAction(state, parsed.action)
+      expect(applied.problems).deep.equals([])
+      state = applied.state
+    }
+    expect(state.liveData.linescore.outs).equals(1)
+    expect(JSON.stringify(saved)).equals(originalJson)
   })
   it('deduplicates merged options and sums pitch counts without dropping historical credits', async () => {
     const original = users[0].userId
@@ -300,7 +372,7 @@ describe('opening scoring through account merges', function () {
 
   it('follows a second merge, leaves open identities alone and refuses missing or cyclic chains', async () => {
     const [middle, survivor] = fixture.ids
-    await closeInto(fixture.db, middle, survivor)
+    await closeInto(fixture.db, userIdOfGumbo(middle), userIdOfGumbo(survivor))
     const projected = await resolveScoringGame(fixture.db, await raw())
     const opened = await ScoringSession.open(
       { ...store, load: async () => projected },
@@ -311,18 +383,26 @@ describe('opening scoring through account merges', function () {
     expect(opened.state.liveData.boxscore.teams.away.battingOrder[0]).equals(
       survivor
     )
-    const open = await survivorsOf(fixture.db, [survivor, users[0].userId])
-    expect([...open.values()]).deep.equals([survivor, survivor])
+    const open = await survivorsOf(fixture.db, [
+      userIdOfGumbo(survivor),
+      userIdOfGumbo(users[0].userId)
+    ])
+    expect([...open.values()]).deep.equals([
+      userIdOfGumbo(survivor),
+      userIdOfGumbo(survivor)
+    ])
     for (const corrupt of ['missing', 'cycle']) {
       if (corrupt === 'cycle')
         await fixture.db
           .updateTable('users')
-          .set({ merged_into: middle })
-          .where('id', '=', survivor)
+          .set({ merged_into: userIdOfGumbo(middle) })
+          .where('id', '=', userIdOfGumbo(survivor))
           .execute()
       let error: unknown
       try {
-        await survivorsOf(fixture.db, corrupt === 'missing' ? [1] : [middle])
+        await survivorsOf(fixture.db, [
+          userIdOfGumbo(corrupt === 'missing' ? 1 : middle)
+        ])
       } catch (caught) {
         error = caught
       }
@@ -331,7 +411,7 @@ describe('opening scoring through account merges', function () {
     await fixture.db
       .updateTable('users')
       .set({ merged_into: null })
-      .where('id', '=', survivor)
+      .where('id', '=', userIdOfGumbo(survivor))
       .execute()
   })
 })

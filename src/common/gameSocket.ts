@@ -33,7 +33,7 @@ export interface GameChangeData {
    */
   lineups: { home: TeamLineups; away: TeamLineups; digest: string }
   /** One player's song on one team, or null once it is removed. */
-  walkUpSong: { teamId: string; userId: number; song: WalkUpSong | null }
+  walkUpSong: { teamId: string; userId: string; song: WalkUpSong | null }
   game: {
     status: 'scheduled' | 'inProgress' | 'final' | 'cancelled'
     awayScore: number | null

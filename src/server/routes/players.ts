@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import { notFound, unauthorized } from '../../common/errors'
+import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { shortName } from '../../common/names'
 import { outcomeName } from '../../common/outcomes'
 import {
@@ -9,7 +9,7 @@ import {
   asPersonSettings,
   asPlayerSettings
 } from '../../common/playerSettings'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import {
   canManageRoster,
   canSeePerson,
@@ -21,7 +21,7 @@ import {
   teamsPlayedOnNow,
   visibleScopes
 } from '../access'
-import { onePerson } from '../admin/people'
+import { lockPlayerEdits, onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
 import { teamNames, teamStandings } from '../db/teamLookups'
@@ -45,6 +45,7 @@ import { highlightSettings } from '../settings'
 import { playerFilterOf } from '../stats/rows'
 import { createRosterPlayer } from '../teams/addPlayers'
 import { teamRoster } from '../teams/teamRoster'
+import { gumboIdOf } from '../users/insertUser'
 
 /**
  * One person: their picture, their name, how they bat and throw, and the teams
@@ -129,6 +130,7 @@ export function playerRoutes(
 
       res.json({
         userId,
+        gumboId: await gumboIdOf(db, userId),
         name: shortName({ ...user, id: userId }),
         /** Whether to offer this person the name field at all. */
         canEditName: mayEdit,
@@ -544,39 +546,42 @@ export function playerRoutes(
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
       const userId = userIdParam(req.params.userId)
-      if (!(await mayManagePlayer(db, actor, userId, teamId))) throw notFound()
+      const { place, body } = await db.transaction().execute(async trx => {
+        await lockPlayerEdits(trx)
+        if (!(await mayManagePlayer(trx, actor, userId, teamId)))
+          throw notFound()
+        const place = await trx
+          .selectFrom('memberships')
+          .innerJoin('users', 'users.id', 'memberships.user_id')
+          .select([
+            'memberships.id as membershipId',
+            'memberships.jersey as jersey',
+            'memberships.positions as positions',
+            'users.bats as bats',
+            'users.throws as throws',
+            'users.first_name as firstName',
+            'users.last_name as lastName',
+            'users.display_name as displayName'
+          ])
+          .where('memberships.team_id', '=', teamId)
+          .where('memberships.user_id', '=', userId)
+          .where('memberships.is_player', '=', true)
+          .where('users.merged_into', 'is', null)
+          // Imports also lock the account before changing its memberships.
+          .forNoKeyUpdate('users')
+          .executeTakeFirst()
+        if (place == null) throw notFound()
 
-      const place = await db
-        .selectFrom('memberships')
-        .innerJoin('users', 'users.id', 'memberships.user_id')
-        .select([
-          'memberships.id as membershipId',
-          'memberships.jersey as jersey',
-          'memberships.positions as positions',
-          'users.bats as bats',
-          'users.throws as throws',
-          'users.first_name as firstName',
-          'users.last_name as lastName',
-          'users.display_name as displayName'
-        ])
-        .where('memberships.team_id', '=', teamId)
-        .where('memberships.user_id', '=', userId)
-        .where('memberships.is_player', '=', true)
-        .where('users.merged_into', 'is', null)
-        .executeTakeFirst()
-      if (place == null) throw notFound()
+        const body = cleanBody(asPlayerSettings, req.body)
+        if (
+          body.name !== undefined &&
+          !(await mayEditName(trx, actor.userId, userId, {
+            isAdmin: actor.isAdmin
+          }))
+        ) {
+          throw notFound()
+        }
 
-      const body = cleanBody(asPlayerSettings, req.body)
-      if (
-        body.name !== undefined &&
-        !(await mayEditName(db, actor.userId, userId, {
-          isAdmin: actor.isAdmin
-        }))
-      ) {
-        throw notFound()
-      }
-
-      await db.transaction().execute(async trx => {
         if (body.jersey !== undefined || body.positions !== undefined) {
           await trx
             .updateTable('memberships')
@@ -618,6 +623,7 @@ export function playerRoutes(
             .where('id', '=', userId)
             .execute()
         }
+        return { place, body }
       })
 
       const before = {
@@ -763,7 +769,7 @@ export interface PlayerTeam {
  */
 export async function teamsOf(
   db: Kysely<Database>,
-  userIds: number[]
+  userIds: string[]
 ): Promise<PlayerTeam[]> {
   // Every row that is this person: a child on five teams was five imports,
   // and the teams of the four that were closed are still theirs.
@@ -876,10 +882,10 @@ function pathParam(value: string | string[] | undefined): string {
   return value
 }
 
-function userIdParam(value: string | string[] | undefined): number {
+function userIdParam(value: string | string[] | undefined): string {
   try {
     return asUserId(pathParam(value))
   } catch {
-    throw notFound()
+    throw badRequest('Expected a canonical user id')
   }
 }

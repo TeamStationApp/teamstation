@@ -11,6 +11,7 @@ import {
   asVideoSummary,
   TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { ScoreGameScreen } from '../scoreboard/ScoreGameScreen'
 import { GameScreen } from '../screens/GameScreen'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -223,7 +224,7 @@ describe('game actions preserve box score and videos', function () {
       stats: undefined,
       batting: [
         asBattingRow({
-          userId: 1,
+          userId: userIdOfGumbo(1),
           gumboId: 1,
           shortName: 'Alex',
           teamId: 'away',
@@ -243,7 +244,7 @@ describe('game actions preserve box score and videos', function () {
       ],
       pitching: [
         asPitchingRow({
-          userId: 2,
+          userId: userIdOfGumbo(2),
           gumboId: 2,
           shortName: 'Blake',
           teamId: 'home',
@@ -260,7 +261,7 @@ describe('game actions preserve box score and videos', function () {
         })
       ]
     })
-    const opened: number[] = []
+    const opened: string[] = []
     const from: unknown[] = []
     await render(
       <GameScreen
@@ -281,7 +282,7 @@ describe('game actions preserve box score and videos', function () {
       button('Alex')?.click()
       button('Blake')?.click()
     })
-    expect(opened).deep.equals([1, 2])
+    expect(opened).deep.equals([userIdOfGumbo(1), userIdOfGumbo(2)])
     // Each line opens the player on its own side: the Stats filter, and the
     // team a coach's Settings tab edits them on.
     expect(from).deep.equals([
