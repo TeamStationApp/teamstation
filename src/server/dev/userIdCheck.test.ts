@@ -100,7 +100,7 @@ function sample(): UserIdSnapshot {
     },
     preserved: { audit_log: 'unchanged' },
     api: {
-      '/players/1/stats': { userId: 1, hits: 2, lines: [{ userId: 1, h: 2 }] }
+      '/players/1/stats': { userId: 1, hits: 2, batting: { userId: 1, h: 2 } }
     }
   }
 }
@@ -144,9 +144,8 @@ function migrated(): UserIdSnapshot {
   snapshot.api = {
     [`/players/${id}/stats`]: {
       userId: id,
-      gumboId: 1,
       hits: 2,
-      lines: [{ userId: id, gumboId: 1, h: 2 }]
+      batting: { userId: id, h: 2 }
     }
   }
   return snapshot
@@ -302,13 +301,106 @@ describe('user identity comparison', function () {
       expect(compareUserIds(sample(), after).equal).equals(false)
     }
     const wrong = migrated()
-    wrong.api[`/players/${userIdOfGumbo(1)}/stats`] = {
-      userId: userIdOfGumbo(1),
-      gumboId: 2
-    }
+    wrong.api['/teams/tem_one/roster'] = [
+      {
+        userId: userIdOfGumbo(1),
+        gumboId: 2
+      }
+    ]
     expect(() => compareUserIds(sample(), wrong)).throws(
       'Incorrect API gumbo mapping'
     )
+  })
+
+  it('transforms only enumerated API object paths and retains all other identity-shaped fields', () => {
+    const id = userIdOfGumbo(1)
+    const cases: Array<[string, Json, Json]> = [
+      ['/teams/tem_one/roster', [{ userId: 1 }], [{ userId: id, gumboId: 1 }]],
+      ['/teams/tem_one/stats', [{ userId: 1 }], [{ userId: id }]],
+      ['/teams/tem_one/stats?kind=pitching', [{ userId: 1 }], [{ userId: id }]],
+      [
+        '/seasons/sea_one/stats',
+        { batting: [{ userId: 1 }], pitching: [{ userId: 1 }] },
+        { batting: [{ userId: id }], pitching: [{ userId: id }] }
+      ],
+      [
+        '/seasons/sea_one/stats?kind=pitching',
+        { batting: [], pitching: [{ userId: 1 }] },
+        { batting: [], pitching: [{ userId: id }] }
+      ],
+      [
+        '/games/gam_one/box-score',
+        { batting: [{ userId: 1 }], pitching: [] },
+        { batting: [{ userId: id }], pitching: [] }
+      ],
+      [
+        '/games/gam_one',
+        { guestPlayers: { away: [{ userId: 1 }], home: [] } },
+        { guestPlayers: { away: [{ userId: id, gumboId: 1 }], home: [] } }
+      ]
+    ]
+    for (const [path, oldBody, newBody] of cases) {
+      const before = sample()
+      const after = migrated()
+      before.api[path] = oldBody
+      after.api[path] = newBody
+      const raw = structuredClone(before)
+      const result = compareUserIds(before, after)
+      expect(result.equal, path).equals(true)
+      expect(
+        result.transformations.some(line =>
+          line.startsWith(`identity api:${path}`)
+        )
+      ).equals(true)
+      expect(before).deep.equals(raw)
+      for (const key of [
+        'userId',
+        'actorId',
+        'playerUserId',
+        'recipientUserId',
+        'guardianUserId',
+        'hostingAuthorizerUserId',
+        'gumboId'
+      ]) {
+        const a = structuredClone(before)
+        const b = structuredClone(after)
+        const target = (body: Json): JsonObject =>
+          (Array.isArray(body) ? body[0] : body) as JsonObject
+        target(a.api[path]).unexpected = { [key]: 1 }
+        target(b.api[path]).unexpected = { [key]: id }
+        expect(compareUserIds(a, b).equal, `${path}:${key}`).equals(false)
+      }
+    }
+    for (const path of ['/unknown', '/players/1/plays', '/players/1/unknown']) {
+      const before = sample()
+      const after = migrated()
+      before.api[path] = [{ userId: 1 }]
+      after.api[path.replace('/players/1/', `/players/${id}/`)] = [
+        { userId: id }
+      ]
+      expect(compareUserIds(before, after).equal).equals(false)
+    }
+    const before = sample()
+    const after = migrated()
+    before.api['/teams/tem_one/roster'] = [{ userId: 1 }]
+    after.api['/teams/tem_one/roster'] = [{ userId: id }]
+    expect(compareUserIds(before, after).equal).equals(false)
+    after.api['/teams/tem_one/roster'] = [{ userId: id, gumboId: 1 }]
+    expect(compareUserIds(before, after).equal).equals(true)
+    const malformedBodies: Json[] = [
+      null,
+      {},
+      [null],
+      [{ other: 1 }],
+      { items: [{ userId: 1 }] }
+    ]
+    for (const malformed of malformedBodies) {
+      const broken = structuredClone(after)
+      broken.api['/teams/tem_one/roster'] = malformed
+      expect(compareUserIds(before, broken).equal).equals(false)
+    }
+    ;(after.api[`/players/${id}/stats`] as JsonObject).gumboId = 1
+    expect(compareUserIds(before, after).equal).equals(false)
   })
 
   it('compares the same schema exactly, including gumbo timestamps and meaningful array order', function () {

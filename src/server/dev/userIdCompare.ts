@@ -69,32 +69,86 @@ function lineup(value: Json): Json {
   }
 }
 
-/** Exact named fields for the enumerated API contracts, never arbitrary *Id keys. */
-const API_USER_FIELDS = new Set([
-  'userId',
-  'actorId',
-  'recipientUserId',
-  'playerUserId',
-  'guardianUserId',
-  'hostingAuthorizerUserId'
-])
-
-function apiIds(value: Json, map: Map<string, Json>): Json {
-  if (Array.isArray(value)) return value.map(item => apiIds(item, map))
-  if (!object(value)) return value
-  const out: JsonObject = {}
-  for (const [key, child] of Object.entries(value)) {
-    out[key] = API_USER_FIELDS.has(key)
-      ? (map.get(identityKey(child)) ?? child)
-      : apiIds(child, map)
+/** Only these response objects carry account identities in captured endpoints. */
+const API_IDENTITIES: Array<{
+  endpoint: RegExp
+  objects: string[][]
+  gumbo?: boolean
+}> = [
+  { endpoint: /^\/teams\/[^/]+\/roster$/, objects: [['*']], gumbo: true },
+  {
+    endpoint: /^\/teams\/[^/]+\/stats(?:\?kind=pitching)?$/,
+    objects: [['*']]
+  },
+  {
+    endpoint:
+      /^\/(?:seasons\/[^/]+\/stats(?:\?kind=pitching)?|games\/[^/]+\/box-score)$/,
+    objects: [
+      ['batting', '*'],
+      ['pitching', '*']
+    ]
+  },
+  {
+    endpoint: /^\/players\/[^/]+\/stats$/,
+    objects: [[], ['batting'], ['pitching']]
+  },
+  {
+    endpoint: /^\/games\/[^/]+$/,
+    objects: [
+      ['guestPlayers', 'away', '*'],
+      ['guestPlayers', 'home', '*']
+    ],
+    gumbo: true
   }
-  return out
+]
+
+function apiIds(
+  path: string,
+  value: Json,
+  map: Map<string, Json>,
+  gumboByUser: Map<string, Json>,
+  addGumbo: boolean,
+  manifest: string[]
+): Json {
+  const rule = API_IDENTITIES.find(rule => rule.endpoint.test(path))
+  if (rule == null) return value
+  const visit = (held: Json, keys: string[], location: string): void => {
+    if (keys.length > 0) {
+      const [key, ...rest] = keys
+      if (key === '*') {
+        if (Array.isArray(held))
+          held.forEach((item, index) => {
+            visit(item, rest, `${location}[${index}]`)
+          })
+      } else if (object(held) && Object.hasOwn(held, key)) {
+        visit(held[key], rest, `${location}.${key}`)
+      }
+      return
+    }
+    if (!object(held) || !Object.hasOwn(held, 'userId')) return
+    const id = map.get(identityKey(held.userId)) ?? held.userId
+    if (id !== held.userId) {
+      held.userId = id
+      manifest.push(`identity api:${path}${location}.userId`)
+    }
+    if (rule.gumbo !== true) return
+    const expected = gumboByUser.get(identityKey(id)) ?? null
+    if (addGumbo && !Object.hasOwn(held, 'gumboId')) {
+      held.gumboId = expected
+      manifest.push(`identity api:${path}${location}.gumboId`)
+    } else if (Object.hasOwn(held, 'gumboId') && held.gumboId !== expected) {
+      throw new Error(`Incorrect API gumbo mapping: ${path}${location}`)
+    }
+  }
+  for (const keys of rule.objects) visit(value, keys, '')
+  return value
 }
 
 /** Normalize only the declared 068/069 identity changes; unexpected fields survive to diff. */
 export function normalizeIdentity(
   snapshot: UserIdSnapshot,
-  ignoreNewMappingTime = false
+  ignoreNewMappingTime = false,
+  manifest: string[] = []
 ): JsonObject {
   const copy = structuredClone(snapshot)
   for (const [name, table] of Object.entries(copy.tables)) {
@@ -246,28 +300,21 @@ export function normalizeIdentity(
   const api: JsonObject = {}
   for (const [path, body] of Object.entries(copy.api)) {
     const normalizedPath = path.replace(
-      /^\/players\/([^/]+)\//,
+      /^\/players\/([^/]+)\/(?=stats$|plays$)/,
       (_match, id: string) =>
         `/players/${identityKey(userMap.get(decodeURIComponent(id)) ?? id)}/`
     )
-    const normalized = apiIds(body, userMap)
-    const checkGumbo = (value: Json): Json => {
-      if (Array.isArray(value)) return value.map(checkGumbo)
-      if (!object(value)) return value
-      const out = Object.fromEntries(
-        Object.entries(value).map(([key, child]) => [key, checkGumbo(child)])
-      )
-      if (Object.hasOwn(out, 'gumboId') && Object.hasOwn(out, 'userId')) {
-        const expected = gumboByUser.get(identityKey(out.userId)) ?? null
-        if (out.gumboId !== expected)
-          throw new Error(`Incorrect API gumbo mapping: ${path}`)
-        delete out.gumboId
-      }
-      return out
-    }
+    const normalized = apiIds(
+      path,
+      body,
+      userMap,
+      gumboByUser,
+      copy.tables.gumbo_ids == null,
+      manifest
+    )
     if (Object.hasOwn(api, normalizedPath))
       throw new Error('Duplicate normalized endpoint')
-    api[normalizedPath] = checkGumbo(normalized)
+    api[normalizedPath] = normalized
   }
   return {
     tables,
@@ -289,7 +336,7 @@ export function normalizeIdentity(
           apiInventory: Object.fromEntries(
             Object.entries(copy.apiInventory).map(([path, entry]) => [
               path.replace(
-                /^\/players\/([^/]+)\//,
+                /^\/players\/([^/]+)\/(?=stats$|plays$)/,
                 (_match, id: string) =>
                   `/players/${identityKey(userMap.get(decodeURIComponent(id)) ?? id)}/`
               ),
@@ -396,8 +443,8 @@ export function compareUserIds(
     compare(before as unknown as Json, after as unknown as Json, '$')
   } else {
     compare(
-      normalizeIdentity(before, ignoreNewMappingTime),
-      normalizeIdentity(after, ignoreNewMappingTime),
+      normalizeIdentity(before, ignoreNewMappingTime, transformations),
+      normalizeIdentity(after, ignoreNewMappingTime, transformations),
       '$'
     )
   }
