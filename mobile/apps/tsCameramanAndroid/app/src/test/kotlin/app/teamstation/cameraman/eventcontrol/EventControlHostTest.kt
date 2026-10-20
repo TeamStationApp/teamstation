@@ -56,8 +56,8 @@ class EventControlHostTest {
         ClearSealer
     )
     private val server = "https://app.example.test"
-    private val one = EventControlAccount(server, "1001", "token-one")
-    private val two = EventControlAccount(server, "1002", "token-two")
+    private val one = EventControlAccount(server, "usr_11111111111111111111JG", "token-one")
+    private val two = EventControlAccount(server, "usr_11111111111111111111JH", "token-two")
     private var clock = 1_790_013_600_000L
 
     /** Answers by token; a token not listed throws [missing]. */
