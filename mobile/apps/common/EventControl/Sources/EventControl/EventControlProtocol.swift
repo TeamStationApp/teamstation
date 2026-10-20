@@ -1,11 +1,11 @@
 import Foundation
 import Security
 
-/// The fixed numbers of device event control, version 1. README.md is the specification; these are
+/// The fixed numbers of device event control, version 2. README.md is the specification; these are
 /// its constants, in one place for both ends.
 public enum EventControlProtocol {
   /// The only version this package speaks. A frame of any other version changes nothing.
-  public static let version: UInt8 = 1
+  public static let version: UInt8 = 2
 
   /// A receiver listens on the first of these it can bind. Two, so that two participating apps on
   /// one handset can both listen; which one a receiver got says nothing about what it is.
@@ -31,10 +31,10 @@ public enum EventControlProtocol {
 
   /// Domain separation for every MAC and derivation, so a value made for one purpose can never be
   /// accepted for another.
-  public static let keyDomain = "device-event-control:v1"
-  public static let keyIdDomain = "device-event-control:v1:keyid"
-  public static let accountTagDomain = "device-event-control:v1:account-tag"
-  public static let frameDomain = "device-event-control:v1:frame"
+  public static let keyDomain = "device-event-control:v2"
+  public static let keyIdDomain = "device-event-control:v2:keyid"
+  public static let accountTagDomain = "device-event-control:v2:account-tag"
+  public static let frameDomain = "device-event-control:v2:frame"
 }
 
 /// Bytes, hex and the length-prefixed encoding every field uses.
