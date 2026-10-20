@@ -52,6 +52,12 @@ public struct LoginFlow: Equatable, Sendable {
     notice = Self.badCode
   }
 
+  /// A completed server sign-in that could not be saved needs a fresh sign-in attempt.
+  public mutating func restartSignIn(after message: String) {
+    cancel()
+    notice = message
+  }
+
   /// Keeps at most six digits. True when this change is the one that reaches six.
   @discardableResult
   public mutating func replaceCode(_ raw: String) -> Bool {

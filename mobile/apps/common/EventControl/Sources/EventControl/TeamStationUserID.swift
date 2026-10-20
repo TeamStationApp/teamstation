@@ -16,19 +16,6 @@ public enum TeamStationUserID {
     return value > 0 && encode(value) == text ? text : nil
   }
 
-  /// Only stored pre-migration values take this path. Current API replies must be canonical.
-  public static func fromLegacyDecimal(_ text: String) -> String? {
-    guard let first = text.utf8.first, (49...57).contains(first),
-          text.utf8.allSatisfy({ (48...57).contains($0) }),
-          let value = UInt64(text), value <= 9_007_199_254_740_991
-    else { return nil }
-    return encode(UInt128(value))
-  }
-
-  public static func upgradingStored(_ text: String) -> String? {
-    canonical(text) ?? fromLegacyDecimal(text)
-  }
-
   private static func encode(_ input: UInt128) -> String {
     var value = input
     var digits = [UInt8]()
