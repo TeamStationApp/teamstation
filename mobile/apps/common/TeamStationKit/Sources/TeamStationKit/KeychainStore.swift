@@ -1,4 +1,5 @@
 import Foundation
+import EventControl
 import Security
 
 /// Where the device token and the chosen game are kept.
@@ -13,6 +14,9 @@ import Security
 public struct KeychainStore: Sendable {
   private let service: String
   private let memory: Memory?
+  private let updateItem: @Sendable (CFDictionary, CFDictionary) -> OSStatus
+  private let addItem: @Sendable (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
+  private let deleteItem: @Sendable (CFDictionary) -> OSStatus
   private static let tokenKey = "teamStationToken"
   private static let eventKey = "teamStationChosenEvent"
   private static let scopeKey = "teamStationAccountScope"
@@ -20,26 +24,49 @@ public struct KeychainStore: Sendable {
   public init(service: String) {
     self.service = service
     memory = nil
+    updateItem = SecItemUpdate
+    addItem = SecItemAdd
+    deleteItem = SecItemDelete
+  }
+
+  /// Host tests exercise the real atomic write path with controlled Security return codes.
+  init(service: String,
+       update: @escaping @Sendable (CFDictionary, CFDictionary) -> OSStatus,
+       add: @escaping @Sendable (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus,
+       delete: @escaping @Sendable (CFDictionary) -> OSStatus) {
+    self.service = service
+    memory = nil
+    updateItem = update
+    addItem = add
+    deleteItem = delete
   }
 
   /// A store that never touches the keychain, for tests: each one starts
   /// empty and forgets everything when it goes.
-  public static func inMemory() -> KeychainStore {
-    KeychainStore(memory: Memory())
+  public static func inMemory(acceptWrites: @escaping @Sendable () -> Bool = { true }) -> KeychainStore {
+    KeychainStore(memory: Memory(acceptWrites: acceptWrites))
   }
 
   private init(memory: Memory) {
     service = "inMemory"
     self.memory = memory
+    updateItem = SecItemUpdate
+    addItem = SecItemAdd
+    deleteItem = SecItemDelete
   }
 
   private final class Memory: @unchecked Sendable {
     private let lock = NSLock()
     private var items: [String: Data] = [:]
+    private let acceptWrites: @Sendable () -> Bool
+
+    init(acceptWrites: @escaping @Sendable () -> Bool) {
+      self.acceptWrites = acceptWrites
+    }
 
     subscript(key: String) -> Data? {
       get { lock.withLock { items[key] } }
-      set { lock.withLock { items[key] = newValue } }
+      set { lock.withLock { if acceptWrites() { items[key] = newValue } } }
     }
   }
 
@@ -74,7 +101,11 @@ public struct KeychainStore: Sendable {
   /// (including every keychain written before this was).
   public func accountScope() -> TeamStationAccountScope? {
     guard let data = read(Self.scopeKey) else { return nil }
-    return try? JSONDecoder().decode(TeamStationAccountScope.self, from: data)
+    guard let stored = try? JSONDecoder().decode(TeamStationAccountScope.self, from: data),
+          let userId = TeamStationUserID.upgradingStored(stored.userId) else { return nil }
+    let upgraded = TeamStationAccountScope(server: stored.server, userId: userId)
+    if upgraded != stored { setAccountScope(upgraded) }
+    return upgraded
   }
 
   public func setAccountScope(_ scope: TeamStationAccountScope?) {
@@ -91,7 +122,7 @@ public struct KeychainStore: Sendable {
     ]
   }
 
-  private func read(_ key: String) -> Data? {
+  func read(_ key: String) -> Data? {
     if let memory { return memory[key] }
     var request = query(key)
     request[kSecReturnData as String] = true
@@ -102,19 +133,24 @@ public struct KeychainStore: Sendable {
     return item as? Data
   }
 
-  private func write(_ key: String, data: Data?) {
+  func write(_ key: String, data: Data?) {
     if let memory {
       memory[key] = data
       return
     }
-    SecItemDelete(query(key) as CFDictionary)
-    guard let data else { return }
+    guard let data else {
+      deleteItem(query(key) as CFDictionary)
+      return
+    }
+    // Updating in place preserves the old value if the keychain refuses a write.
+    let status = updateItem(query(key) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+    guard status == errSecItemNotFound else { return }
     var request = query(key)
     request[kSecValueData as String] = data
     // The iPad lives in a bag and is unlocked before a game. `AfterFirstUnlock`
     // so a Director relaunched by the watchdog mid-game can still read its own
     // token without somebody typing a passcode.
     request[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-    SecItemAdd(request as CFDictionary, nil)
+    addItem(request as CFDictionary, nil)
   }
 }

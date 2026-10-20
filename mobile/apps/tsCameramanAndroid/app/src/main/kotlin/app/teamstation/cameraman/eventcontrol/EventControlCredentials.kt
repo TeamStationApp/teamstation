@@ -7,7 +7,7 @@ internal class EventControlCredentialsException(message: String) : Exception(mes
 
 /**
  * What `GET /api/v1/device-event-control/key` answers, held by a signed-in device: the account
- * scope (issuing server, user ID in decimal, opaque account tag), the key ID and the key.
+ * scope (issuing server, canonical user ID, opaque account tag), the key ID and the key.
  *
  * Each device fetches its own with its own session; devices of one account on one server hold
  * equal ones. The key authenticates the local protocol and nothing else, so it lives only in the
@@ -32,7 +32,7 @@ internal class EventControlCredentials private constructor(
 
     /** The server's shape, for the encrypted store only. */
     fun toJson(): String = JSONObject()
-        .put("version", 1)
+        .put("version", 2)
         .put("issuer", issuer)
         .put("userId", userId)
         .put("accountTag", accountTag)
@@ -53,7 +53,7 @@ internal class EventControlCredentials private constructor(
             if (issuer.isEmpty() || EventControlBytes.utf8(issuer).size > 512) {
                 throw EventControlCredentialsException("bad issuer")
             }
-            if (userId.isEmpty() || userId.length > 32 || !userId.all { it in '0'..'9' }) {
+            if (TeamStationUserId.canonical(userId) == null) {
                 throw EventControlCredentialsException("bad userId")
             }
             if (!lowerHex(accountTag, EventControlProtocol.ACCOUNT_TAG_BYTES)) {
@@ -68,19 +68,18 @@ internal class EventControlCredentials private constructor(
             return EventControlCredentials(issuer, userId, accountTag, keyId, key)
         }
 
-        /** The server's JSON reply. `userId` is read as a string or, defensively, a JSON number. */
+        /** The server's JSON reply. `userId` must be a canonical string. */
         fun decode(serverReply: String): EventControlCredentials {
             val json = try {
                 JSONObject(serverReply)
             } catch (error: Exception) {
                 throw EventControlCredentialsException("not a key reply")
             }
-            if (json.has("version") && json.opt("version") != 1) {
+            if (json.opt("version") != 2) {
                 throw EventControlCredentialsException("unsupported key version")
             }
             val userId = when (val raw = json.opt("userId")) {
                 is String -> raw
-                is Int, is Long -> raw.toString()
                 else -> throw EventControlCredentialsException("bad userId")
             }
             return of(
