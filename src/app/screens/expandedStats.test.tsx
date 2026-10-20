@@ -151,7 +151,7 @@ describe('expanded statistics screens', function () {
     expect(text())
       .includes('BATTING')
       .and.includes('PITCHING')
-      .and.includes('Blair R')
+      .and.includes('Babe R')
     for (const column of [...battingColumns, ...pitchingColumns])
       expect(leaves()).includes(column.label)
     expect(text()).includes('66.7%').and.includes('.182')

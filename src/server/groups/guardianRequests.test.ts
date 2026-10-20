@@ -286,7 +286,7 @@ describe('guardian invitations and requests', function () {
       expect(byAddress.status).equals(201)
       expect(f.h.invitations.get('follower@example.com')).deep.include({
         playerName: 'Cody D',
-        invitedBy: 'Owen Pratt'
+        invitedBy: 'Owen Miller'
       })
       const sides = await f.h.db
         .selectFrom('group_request_sides')
@@ -451,7 +451,7 @@ describe('guardian invitations and requests', function () {
       )!
       expect(notification).deep.include({
         type: 'guardian',
-        title: "Nora Quinn asks to be Cody D's guardian",
+        title: "Nick Punto asks to be Cody D's guardian",
         description:
           "Approving lets them see Cody D's teams and manage Cody D's details.",
         canAct: true
@@ -591,7 +591,7 @@ describe('guardian invitations and requests', function () {
         const refused = await invite(201, { email: 'more@example.com' }, user)
         expect(refused.status, String(user)).equals(403)
         expect(refused.body.message).equals(
-          'Avery S has a guardian already. Ask them to invite another guardian.'
+          'Alfonso S has a guardian already. Ask them to invite another guardian.'
         )
       }
       expect(f.h.invitations.has('more@example.com')).equals(false)
@@ -602,7 +602,7 @@ describe('guardian invitations and requests', function () {
       )
       expect(admin.status).equals(201)
       expect(f.h.invitations.get('more@example.com')).deep.include({
-        playerName: 'Avery S',
+        playerName: 'Alfonso S',
         teamName: 'Demo Hawks'
       })
     })
@@ -663,7 +663,7 @@ describe('guardian invitations and requests', function () {
       expect(
         waiting.items.find(item => item.requestId === sent.body.id)
       ).deep.include({
-        title: "Nora Quinn asks to be Avery S's guardian",
+        title: "Nick Punto asks to be Alfonso S's guardian",
         canAct: true
       })
       expect(
@@ -715,7 +715,7 @@ describe('guardian invitations and requests', function () {
     })
 
     it('gives a stranger’s team, which the child was only just added to, no say', async () => {
-      // Hank runs Demo Rookies, and adds Avery to it as a player.
+      // Hank runs Demo Rookies, and adds Alfonso to it as a player.
       await f.h.db
         .insertInto('memberships')
         .values({
@@ -734,7 +734,7 @@ describe('guardian invitations and requests', function () {
       )
       expect(invited.status).equals(403)
       expect(invited.body.message).equals(
-        'Avery S has a guardian already. Ask them to invite another guardian.'
+        'Alfonso S has a guardian already. Ask them to invite another guardian.'
       )
       expect(await inviteAs(201, f.people.oneTeam)).equals(null)
       const asked = await ask(201, f.people.follower)
@@ -784,7 +784,7 @@ describe('guardian invitations and requests', function () {
         [f.people.scorekeeper, 320].map(userIdOfGumbo)
       )
 
-      // Nora can sign in, so the say is hers now, not the staff's.
+      // Nick can sign in, so the say is his now, not the staff's.
       expect(await inviteAs(202, f.people.teamCoach)).equals(null)
       expect(await inviteAs(202, f.people.scorekeeper)).equals('guardian')
       const refused = await invite(202, { email: 'more@example.com' })
@@ -814,7 +814,7 @@ describe('guardian invitations and requests', function () {
       expect(sent.status).equals(201)
       const id: string = sent.body.id
       expect(f.h.invitations.get('second@example.com')).deep.equals({
-        playerName: 'Avery S',
+        playerName: 'Alfonso S',
         invitedBy: 'Tim Raines',
         link: `/notifications/${id}`
       })
@@ -872,8 +872,8 @@ describe('guardian invitations and requests', function () {
       ).deep.equals([
         {
           requestId: id,
-          title: 'Be a guardian of Avery S',
-          description: "Tim Raines invited you to be Avery S's guardian."
+          title: 'Be a guardian of Alfonso S',
+          description: "Tim Raines invited you to be Alfonso S's guardian."
         }
       ])
       expect((await decide(id, 'accept', 312)).body.status).equals('accepted')
@@ -963,7 +963,7 @@ describe('guardian invitations and requests', function () {
       })
       expect(existing.status).equals(409)
       expect(existing.body.message).equals(
-        "Hank M is already Avery S's guardian"
+        "Hank M is already Alfonso S's guardian"
       )
 
       // Nobody accepts one whose sender is no longer a guardian.
@@ -1038,7 +1038,7 @@ describe('guardian invitations and requests', function () {
 
   describe('GET /players/:userId guardianInviteAs', () => {
     it('says how each viewer may invite a guardian', async () => {
-      // Avery has a guardian; Ben has none.
+      // Alfonso has a guardian; Ben has none.
       for (const [player, user, expected] of [
         [201, f.people.guardian, 'guardian'],
         [201, f.people.teamCoach, null],
@@ -1479,7 +1479,7 @@ describe('guardian invitations and requests', function () {
     it('is not asked again, by their own request or a team’s invitation, by any of their rows', async () => {
       const asked = await ask(201, f.people.guardian)
       expect(asked.status).equals(409)
-      expect(asked.body.message).equals("You are already Avery S's guardian")
+      expect(asked.body.message).equals("You are already Alfonso S's guardian")
       // A site administrator may still invite from a team, as nobody else
       // may once the player has a guardian.
       const invited = await invite(
@@ -1488,7 +1488,9 @@ describe('guardian invitations and requests', function () {
         f.people.siteAdmin
       )
       expect(invited.status).equals(409)
-      expect(invited.body.message).equals("Tim R is already Avery S's guardian")
+      expect(invited.body.message).equals(
+        "Tim R is already Alfonso S's guardian"
+      )
 
       // A link to a closed row of Ben is a link to Ben.
       await insertFixtureUsers(f.h.db, {

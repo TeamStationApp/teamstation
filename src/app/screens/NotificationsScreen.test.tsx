@@ -64,8 +64,8 @@ const invitation: Notification = {
   id: 'event_guardian_invite',
   requestId: 'request_guardian_invite',
   type: 'guardian',
-  title: 'Be a guardian of Avery S',
-  description: "Ichiro from Demo Hawks invited you to be Avery S's guardian.",
+  title: 'Be a guardian of Alfonso S',
+  description: "Ichiro from Demo Hawks invited you to be Alfonso S's guardian.",
   sentAt: '2026-10-06T12:00:00Z',
   expiresAt: '2026-10-20T12:00:00Z',
   status: 'pending',
@@ -78,9 +78,9 @@ const request: Notification = {
   ...invitation,
   id: 'event_guardian_request',
   requestId: 'request_guardian_request',
-  title: "Grace Hill asks to be Avery S's guardian",
+  title: "Grant Hartwig asks to be Alfonso S's guardian",
   description:
-    "Approving lets them see Avery S's teams and manage Avery S's details."
+    "Approving lets them see Alfonso S's teams and manage Alfonso S's details."
 }
 
 describe('guardian notifications', function () {
@@ -106,7 +106,7 @@ describe('guardian notifications', function () {
       expect(text()).includes(item.description)
     }
     expect(text().split('Needs your approval')).has.length(3)
-    await press("Grace Hill asks to be Avery S's guardian")
+    await press("Grant Hartwig asks to be Alfonso S's guardian")
     expect(opened).deep.equals(['request_guardian_request'])
   })
 
@@ -132,7 +132,7 @@ describe('guardian notifications', function () {
         }}
       />
     )
-    expect(text()).includes('Be a guardian of Avery S')
+    expect(text()).includes('Be a guardian of Alfonso S')
     expect(text()).includes(invitation.description)
     await press('Accept invitation')
     expect(decided).deep.equals([['request_guardian_invite', 'accept']])
@@ -184,7 +184,7 @@ describe('guardian notifications', function () {
     })
     const roles = (): number =>
       asked.filter(line => line === 'GET /api/v1/me/roles').length
-    expect(text()).includes('Be a guardian of Avery S')
+    expect(text()).includes('Be a guardian of Alfonso S')
     const before = roles()
     expect(before).greaterThan(0)
     await press('Accept invitation')

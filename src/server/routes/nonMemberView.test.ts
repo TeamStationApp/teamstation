@@ -14,8 +14,8 @@ import {
  * and each game's score, line score and highlights, and is answered
  * `membersOnly` for the figures, the box score and the video itself.
  *
- * On `guardianFixture`: Grace Hill (207) follows Demo Hawks and belongs to
- * nothing. Hank Moss (208) runs Demo Rookies and follows nothing here; the
+ * On `guardianFixture`: Grant Hartwig (207) follows Demo Hawks and belongs to
+ * nothing. Hank Majeski (208) runs Demo Rookies and follows nothing here; the
  * team's coach (104) is a member. `guardian-game-1` is the Hawks at home and
  * is given a line score; `guardian-game-2` is the Hawks away.
  */
@@ -124,7 +124,7 @@ describe('the non-member view', function () {
             row => row.avatarUrl === null
           )
         ).equals(true)
-        // Avery's guardian is listed as family, without whom he guards.
+        // Alfonso's guardian is listed as family, without whom he guards.
         const rows = body as Array<{
           userId: string
           section: string
@@ -392,7 +392,7 @@ describe('the non-member view', function () {
       const guardian = (
         roster.body as Array<{ userId: string; guardianOf?: string[] }>
       ).find(row => row.userId === userIdOfGumbo(f.people.guardian))
-      expect(guardian?.guardianOf).deep.equals(['Avery S'])
+      expect(guardian?.guardianOf).deep.equals(['Alfonso S'])
 
       for (const path of [
         `/teams/${f.teamA}/stats`,

@@ -17,14 +17,14 @@ import { insertFixtureUsers } from './insertFixtureUsers'
  * teams, with the media routes mounted and stills already in the Space.
  *
  * Demo Hawks (`teamA`, in Demo Regular of Demo League A) has five players.
- * A guardian is linked to Avery, with no membership of his own. Demo Regular
+ * A guardian is linked to Alfonso, with no membership of his own. Demo Regular
  * has a coach; the team has a coach, an assistant and a scorekeeper, each a
  * member who does not play. A follower follows the team and belongs to
  * nothing. Two final games of the team each have a ready video in the Space
  * and credited plays, so highlights list, and every still those lists and the
  * schedule's posters point at is the checked-in `fixtures/still.jpg`: the
  * pages draw thumbnails without FFmpeg. A last user runs one standalone team
- * of their own, for Home. Avery also plays for Demo Comets, in Demo
+ * of their own, for Home. Alfonso also plays for Demo Comets, in Demo
  * Playoffs, which nobody else here belongs to.
  *
  * Users from `groupFixture`: 101 Babe Ruth (alex@example.com) created and
@@ -43,23 +43,23 @@ export interface GuardianFixture extends GroupFixture {
     seasonCoach: number
     /** Ichiro, coach of Demo Hawks. */
     teamCoach: number
-    /** Owen Pratt, assistant of Demo Hawks. */
+    /** Owen Miller, assistant of Demo Hawks. */
     assistant: number
-    /** Nora Quinn, scorekeeper of Demo Hawks. */
+    /** Nick Punto, scorekeeper of Demo Hawks. */
     scorekeeper: number
-    /** Tim Raines, guardian of Avery. */
+    /** Tim Raines, guardian of Alfonso. */
     guardian: number
-    /** Grace Hill, who follows Demo Hawks. */
+    /** Grant Hartwig, who follows Demo Hawks. */
     follower: number
-    /** Hank Moss, who runs Demo Rookies and nothing else. */
+    /** Hank Majeski, who runs Demo Rookies and nothing else. */
     oneTeam: number
   }
   players: GuardianPlayer[]
   emails: Record<number, string>
-  /** Demo Rookies, Hank Moss's team. */
+  /** Demo Rookies, Hank Majeski's team. */
   rookies: string
   /**
-   * Demo Comets, in Demo Playoffs, a second team Avery plays on (#9, P) and
+   * Demo Comets, in Demo Playoffs, a second team Alfonso plays on (#9, P) and
    * nobody else does: the team a guardian gains through the child, and loses
    * when the child leaves it.
    */
@@ -85,19 +85,19 @@ interface Person {
 export const guardianPlayers: GuardianPlayer[] = [
   {
     id: 201,
-    first: 'Avery',
-    last: 'Stone',
+    first: 'Alfonso',
+    last: 'Soriano',
     jersey: '7',
     positions: ['SS', '2B']
   },
   {
     id: 202,
     first: 'Ben',
-    last: 'Carter',
+    last: 'Chapman',
     jersey: '12',
     positions: ['P', '1B']
   },
-  { id: 203, first: 'Cody', last: 'Diaz', jersey: '23', positions: ['C'] },
+  { id: 203, first: 'Cody', last: 'Decker', jersey: '23', positions: ['C'] },
   {
     id: 204,
     first: 'Drew',
@@ -105,7 +105,7 @@ export const guardianPlayers: GuardianPlayer[] = [
     jersey: '4',
     positions: ['CF', 'LF']
   },
-  { id: 205, first: 'Eli', last: 'Fox', jersey: '15', positions: ['3B'] }
+  { id: 205, first: 'Elijah', last: 'Dukes', jersey: '15', positions: ['3B'] }
 ]
 
 export async function guardianFixture(
@@ -135,10 +135,10 @@ async function seed(f: GroupFixture): Promise<GuardianFixture> {
     106: 'fixture106@example.com'
   }
   const adults: Person[] = [
-    { id: 207, first: 'Grace', last: 'Hill', email: 'follower@example.com' },
-    { id: 208, first: 'Hank', last: 'Moss', email: 'oneteam@example.com' },
-    { id: 209, first: 'Nora', last: 'Quinn', email: 'scorekeeper@example.com' },
-    { id: 210, first: 'Owen', last: 'Pratt', email: 'assistant@example.com' }
+    { id: 207, first: 'Grant', last: 'Hartwig', email: 'follower@example.com' },
+    { id: 208, first: 'Hank', last: 'Majeski', email: 'oneteam@example.com' },
+    { id: 209, first: 'Nick', last: 'Punto', email: 'scorekeeper@example.com' },
+    { id: 210, first: 'Owen', last: 'Miller', email: 'assistant@example.com' }
   ]
   const players = guardianPlayers.map(p => ({ ...p, email: null }))
   for (const p of [...players, ...adults]) {

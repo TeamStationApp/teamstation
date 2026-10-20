@@ -1324,7 +1324,7 @@ describe('teams by external id, and making one', function () {
 /**
  * A guardian is a member of every team their child plays on now: `GET /teams`
  * lists them, and stops listing one the child leaves. On `guardianFixture`,
- * where Avery plays for Demo Hawks and Demo Comets and Tim Raines is his
+ * where Alfonso plays for Demo Hawks and Demo Comets and Tim Raines is his
  * guardian with no membership of his own.
  */
 describe('GET /teams for a guardian', function () {

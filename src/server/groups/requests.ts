@@ -360,7 +360,7 @@ export async function guardianInviteAs(
   return (await coachesPlayer(db, fresh, player)) ? 'team' : null
 }
 
-/** "Avery S has a guardian already", for a refusal. */
+/** "Alfonso S has a guardian already", for a refusal. */
 async function hasGuardianAlready(
   db: Kysely<Database>,
   playerUserId: string

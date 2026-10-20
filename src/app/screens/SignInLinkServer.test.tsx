@@ -16,7 +16,7 @@ const session: Session = {
   expiresAt: '2026-11-01T00:00:00.000Z',
   user: {
     id: userIdOfGumbo(1),
-    displayName: 'Pat',
+    displayName: 'Pat Neshek',
     email: 'pat@example.com',
     isAdmin: false,
     avatarUrl: null,
