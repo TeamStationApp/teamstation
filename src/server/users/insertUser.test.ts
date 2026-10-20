@@ -33,10 +33,7 @@ describe('atomic account creation', function () {
     await admin.query(`create database ${name}`)
     const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
     const pool = new Pool({ connectionString: url })
-    await migrateUp(
-      pool,
-      migrations.filter(m => m.name < '070')
-    )
+    await migrateUp(pool, migrations)
     await pool.end()
     db = makeDatabase(url)
   })
@@ -47,14 +44,15 @@ describe('atomic account creation', function () {
       await admin.end()
     }
   })
-  it('reserves the account through an insert, retries collisions, and returns its mapping', async () => {
+  it('reserves the account through an insert, retries collisions, and leaves scoring allocation explicit', async () => {
     await insertUser(db, { display_name: 'Hank Aaron' }, () => id(1))
     const draws = [id(1), id(2)]
     expect(
       await insertUser(db, { display_name: 'Babe Ruth' }, () => draws.shift()!)
     ).equals(id(2))
     expect(draws).deep.equals([])
-    const gumboId = await gumboIdOf(db, id(2))
+    expect(await gumboIdOf(db, id(2))).equals(null)
+    const gumboId = await ensureGumboId(db, id(2))
     expect(gumboId).greaterThan(0)
     expect(await ensureGumboId(db, id(2))).equals(gumboId)
     expect(await gumboIdOf(db, id(99))).equals(null)
@@ -99,7 +97,8 @@ describe('atomic account creation', function () {
         expect(
           await insertUser(trx, { display_name: 'Ichiro Suzuki' }, () => id(4))
         ).equals(id(4))
-        expect(await gumboIdOf(trx, id(4))).greaterThan(0)
+        expect(await gumboIdOf(trx, id(4))).equals(null)
+        await ensureGumboId(trx, id(4))
         throw new Error('later operation refused')
       }),
       'later operation refused'
@@ -118,7 +117,14 @@ describe('atomic account creation', function () {
       db
     )
     await rejects(
-      insertUser(db, { display_name: 'Lou Gehrig' }, () => id(5)),
+      db.transaction().execute(async trx => {
+        const userId = await insertUser(
+          trx,
+          { display_name: 'Lou Gehrig' },
+          () => id(5)
+        )
+        await ensureGumboId(trx, userId)
+      }),
       'fixture_mapping_rejected'
     )
     expect(
