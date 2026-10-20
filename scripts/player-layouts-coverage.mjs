@@ -58,7 +58,9 @@ const tsSuites = [
   'src/common/scoring/boardLine.test.ts',
   'src/server/scoring/lineTimeline.test.ts',
   'src/server/routes/lineScore.test.ts',
-  'src/app/navigation/gameAngles.test.ts'
+  'src/app/navigation/gameAngles.test.ts',
+  'src/server/live/timestampJump.test.ts',
+  'src/server/live/splitter.test.ts'
 ]
 
 /**

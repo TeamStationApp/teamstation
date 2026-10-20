@@ -2241,3 +2241,372 @@ describe('signalling the live HLS writer', function () {
     expect(sigterms(child.pid ?? 0)).equals(1)
   })
 })
+
+describe('a live publish that jumps (U19)', function () {
+  this.timeout(30_000)
+  const dir = spec().hlsDir
+  const spawns = join(tmpdir(), 'ts-live-test-jump-spawns.txt')
+
+  /** Stands in for FFmpeg, saying its pid and arguments as it starts. */
+  function fake(stubborn = false): void {
+    writeFileSync(
+      FAKE_FFMPEG,
+      `#!/bin/sh\necho "$$ $*" >> ${spawns}\n` +
+        (stubborn
+          ? "trap 'true' TERM\nwhile true; do sleep 30; done\n"
+          : 'exec sleep 30\n')
+    )
+    chmodSync(FAKE_FFMPEG, 0o755)
+  }
+  /** Every writer started, in order: pid, then arguments. */
+  const started = (which: 'hls' | 'rtmp'): string[][] => {
+    try {
+      return readFileSync(spawns, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map(line => line.split(' '))
+        .filter(
+          args =>
+            args.some(arg => arg.endsWith('master.m3u8')) === (which === 'hls')
+        )
+    } catch {
+      return []
+    }
+  }
+  const until = async (done: () => boolean, ms = 5000): Promise<void> => {
+    for (let waited = 0; !done() && waited < ms; waited += 20)
+      await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  const sleep = async (ms: number): Promise<void> => {
+    await new Promise(resolve => setTimeout(resolve, ms))
+  }
+
+  interface Broadcast {
+    subscribers: Map<
+      string,
+      { close?: () => void; streamQuery?: Record<string, unknown> }
+    >
+    flvGopCache: { clear: () => void }
+    rtmpGopCache: { clear: () => void }
+    broadcastMessage: (packet: { flags: number; dts: number }) => void
+    donePublish: (session: never) => void
+    publisher?: unknown
+  }
+  /** What reached the readers, and what was asked of the broadcast. */
+  let passed: Array<{ flags: number; dts: number; readers: string[] }>
+  let cleared: number
+  let hlsClosed: number
+  let otherClosed: number
+
+  /** A broadcast with the HLS writer's reader and one other on it. */
+  function broadcast(endsWriter = true): Broadcast {
+    const subscribers: Broadcast['subscribers'] = new Map()
+    subscribers.set('hls', {
+      streamQuery: { writer: 'hls' },
+      close: () => {
+        hlsClosed += 1
+        // Its input ends, and FFmpeg finishes and exits.
+        if (endsWriter) writerForTest(KEY)?.kill('SIGTERM')
+      }
+    })
+    subscribers.set('destination', {
+      streamQuery: {},
+      close: () => {
+        otherClosed += 1
+      }
+    })
+    const made: Broadcast = {
+      subscribers,
+      flvGopCache: { clear: () => (cleared += 1) },
+      rtmpGopCache: { clear: () => (cleared += 1) },
+      broadcastMessage: packet => {
+        passed.push({ ...packet, readers: [...made.subscribers.keys()] })
+      },
+      donePublish: session => {
+        // As node-media-server's: only the session publishing ends it.
+        if (made.publisher == null || made.publisher === session)
+          publishGoneForTest(session)
+      }
+    }
+    return made
+  }
+  function publisher(id: string, made: Broadcast): TestSession {
+    return {
+      id,
+      streamApp: 'live',
+      streamName: KEY,
+      streamPath: `/live/${KEY}`,
+      close: () => undefined,
+      socket: { destroy: () => undefined },
+      broadcast: made
+    }
+  }
+  /** Video from `fromDts`, a frame every 33 ms, a keyframe first. */
+  const video = (made: Broadcast, fromDts: number, frames = 3): void => {
+    for (let frame = 0; frame < frames; frame++)
+      made.broadcastMessage({
+        flags: frame === 0 ? 3 : 4,
+        dts: fromDts + frame * 33
+      })
+  }
+  /** What the first writer has left on disk, for the next to carry on. */
+  const writtenSoFar = (): void => {
+    writeFileSync(
+      join(dir, 'master.m3u8'),
+      [
+        '#EXTM3U',
+        '#EXT-X-VERSION:7',
+        '#EXT-X-TARGETDURATION:4',
+        '#EXT-X-MEDIA-SEQUENCE:0',
+        '#EXT-X-PLAYLIST-TYPE:EVENT',
+        '#EXT-X-MAP:URI="init.mp4"',
+        '#EXTINF:4.000000,',
+        'seg000000.m4s',
+        '#EXTINF:4.000000,',
+        'seg000001.m4s',
+        ''
+      ].join('\n')
+    )
+    for (const name of ['seg000000.m4s', 'seg000001.m4s'])
+      writeFileSync(join(dir, name), 'x')
+  }
+  /** Publishes on `made`, and waits for its HLS writer. */
+  async function publish(made: Broadcast, id = 'first'): Promise<TestSession> {
+    const session = publisher(id, made)
+    const before = started('hls').length
+    publishArrivedForTest(session)
+    await until(() => started('hls').length > before)
+    return session
+  }
+
+  beforeEach(function () {
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir, { recursive: true })
+    rmSync(spawns, { force: true })
+    passed = []
+    cleared = 0
+    hlsClosed = 0
+    otherClosed = 0
+    fake()
+    resetForTest()
+    configure()
+  })
+
+  afterEach(function () {
+    resetForTest()
+    try {
+      for (const line of readFileSync(spawns, 'utf8').trim().split('\n')) {
+        const pid = Number(line.split(' ')[0])
+        try {
+          if (pid > 0) process.kill(pid, 'SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }
+    } catch {
+      // Nothing started.
+    }
+    rmSync(spawns, { force: true })
+    writeFileSync(FAKE_FFMPEG, '#!/bin/sh\nexec sleep 30\n')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('ends the HLS writer at a jump, alone, and starts the next at the next keyframe at once', async function () {
+    setLive(KEY, spec())
+    const made = broadcast()
+    await publish(made)
+    const [first] = started('hls')
+    // The writer marks itself, and nothing holds the players back.
+    expect(first.find(arg => arg.startsWith('rtmp://'))).match(/\?writer=hls$/)
+    expect(first.join(' ')).not.includes('hold_back')
+    expect(first.join(' ').toUpperCase()).not.includes('HOLD-BACK')
+
+    video(made, 0, 30)
+    expect(hlsClosed).equals(0)
+    writtenSoFar()
+    // Five seconds on, in one step: a jump. The HLS reader alone is closed,
+    // and taken off before the packet goes on.
+    made.broadcastMessage({ flags: 4, dts: 29 * 33 + 5000 })
+    expect(hlsClosed).equals(1)
+    expect(otherClosed).equals(0)
+    expect(cleared).equals(2)
+    expect(passed.at(-1)?.readers).deep.equals(['destination'])
+    // Its writer exits, and nothing starts another: not a restart.
+    await until(() => writerForTest(KEY) == null)
+    expect(writerForTest(KEY)).equals(undefined)
+    await sleep(1500)
+    expect(started('hls')).length(1)
+    // Pictures before the next keyframe start nothing either.
+    made.broadcastMessage({ flags: 4, dts: 29 * 33 + 5033 })
+    await sleep(100)
+    expect(started('hls')).length(1)
+    // The keyframe does, with no restart delay, carrying the playlist on.
+    const at = Date.now()
+    made.broadcastMessage({ flags: 3, dts: 29 * 33 + 5066 })
+    await until(() => started('hls').length === 2)
+    expect(Date.now() - at).lessThan(900)
+    const next = started('hls')[1]
+    const flags = next[next.indexOf('-hls_flags') + 1].split('+')
+    expect(flags).includes('append_list')
+    expect(next[next.indexOf('-start_number') + 1]).equals('0')
+    expect(next.join(' ').toUpperCase()).not.includes('HOLD-BACK')
+    expect(readFileSync(join(dir, 'master.m3u8'), 'utf8')).not.includes(
+      'HOLD-BACK'
+    )
+  })
+
+  it('cuts again at a second jump', async function () {
+    setLive(KEY, spec())
+    const made = broadcast()
+    await publish(made)
+    video(made, 0, 10)
+    writtenSoFar()
+    made.broadcastMessage({ flags: 4, dts: 10_000 })
+    await until(() => writerForTest(KEY) == null)
+    // The new writer's reader comes back, as FFmpeg's connection would.
+    made.broadcastMessage({ flags: 3, dts: 10_033 })
+    await until(() => started('hls').length === 2)
+    await until(() => writerForTest(KEY) != null)
+    made.subscribers.set('hls', {
+      streamQuery: { writer: 'hls' },
+      close: () => {
+        hlsClosed += 1
+        writerForTest(KEY)?.kill('SIGTERM')
+      }
+    })
+    video(made, 10_066, 5)
+    made.broadcastMessage({ flags: 4, dts: 30_000 })
+    expect(hlsClosed).equals(2)
+    await until(() => writerForTest(KEY) == null)
+    made.broadcastMessage({ flags: 3, dts: 30_033 })
+    await until(() => started('hls').length === 3)
+    expect(started('hls')).length(3)
+  })
+
+  it('leaves a writer alone that is already finishing, and an onward destination through a cut', async function () {
+    setLive(KEY, spec(['rtmp://192.0.2.10/app/destinationkey']))
+    const made = broadcast()
+    await publish(made)
+    await until(() => started('rtmp').length === 1)
+    video(made, 0, 10)
+    made.broadcastMessage({ flags: 4, dts: 10_000 })
+    await until(() => writerForTest(KEY) == null)
+    made.broadcastMessage({ flags: 3, dts: 10_033 })
+    await until(() => started('hls').length === 2)
+    // The destination's one writer read straight on.
+    expect(started('rtmp')).length(1)
+    expect(otherClosed).equals(0)
+
+    // The publisher goes: its writer finishes, and a jump in what is still
+    // arriving is no cut.
+    forcePublishForTest(KEY, false)
+    const closedBefore = hlsClosed
+    made.broadcastMessage({ flags: 4, dts: 90_000 })
+    expect(hlsClosed).equals(closedBefore)
+  })
+
+  it('starts the next writer on the old one’s exit, once, when it is still finishing at the keyframe', async function () {
+    fake(true)
+    setLive(KEY, spec())
+    const made = broadcast(false)
+    await publish(made)
+    video(made, 0, 10)
+    made.broadcastMessage({ flags: 4, dts: 10_000 })
+    expect(hlsClosed).equals(1)
+    // Still alive: the keyframe starts nothing beside it.
+    made.broadcastMessage({ flags: 3, dts: 10_033 })
+    await sleep(600)
+    expect(started('hls')).length(1)
+    const old = Number(started('hls')[0][0])
+    process.kill(old, 'SIGKILL')
+    await until(() => started('hls').length === 2)
+    await sleep(1500)
+    expect(started('hls')).length(2)
+  })
+
+  it('restarts a writer that dies later after the usual delay, as before', async function () {
+    setLive(KEY, spec())
+    const made = broadcast()
+    await publish(made)
+    video(made, 0, 10)
+    made.broadcastMessage({ flags: 4, dts: 10_000 })
+    await until(() => writerForTest(KEY) == null)
+    made.broadcastMessage({ flags: 3, dts: 10_033 })
+    await until(() => started('hls').length === 2)
+    await until(() => writerForTest(KEY) != null)
+    writerForTest(KEY)?.kill('SIGKILL')
+    await sleep(500)
+    expect(started('hls'), 'not at once').length(2)
+    await until(() => started('hls').length === 3, 6000)
+    expect(started('hls')).length(3)
+  })
+
+  it('keeps a cut when a publisher already replaced closes late', async function () {
+    setLive(KEY, spec())
+    const made = broadcast()
+    const first = await publish(made)
+    // node-media-server has handed the broadcast to a second publisher.
+    made.publisher = publisher('second', made)
+    video(made, 0, 10)
+    made.broadcastMessage({ flags: 4, dts: 10_000 })
+    expect(hlsClosed).equals(1)
+    // The first's socket closes late: the cut still stands.
+    made.donePublish(first as never)
+    await until(() => writerForTest(KEY) == null)
+    made.broadcastMessage({ flags: 3, dts: 10_033 })
+    await until(() => started('hls').length === 2)
+    expect(started('hls')).length(2)
+  })
+
+  it('forgets a cut when the publisher goes, and wraps a broadcast once however often it is published on', async function () {
+    let release: () => void = () => undefined
+    let gated = false
+    configureIngest({
+      ffmpegPath: FAKE_FFMPEG,
+      bindHost: '127.0.0.1',
+      port: 19_361,
+      app: 'live',
+      segmentSeconds: 4,
+      log: message => {
+        logs.push(message)
+      },
+      onEvent: event => {
+        events.push(event)
+      },
+      resolve: async () => {
+        if (gated) await new Promise<void>(resolve => (release = resolve))
+        return spec()
+      }
+    })
+    const made = broadcast()
+    const first = await publish(made)
+    const wrapped = made.broadcastMessage
+    video(made, 0, 10)
+    made.broadcastMessage({ flags: 4, dts: 10_000 })
+    expect(hlsClosed).equals(1)
+    // The publisher goes before the keyframe: the cut is forgotten, and the
+    // keyframe that follows starts nothing.
+    made.donePublish(first as never)
+    await until(() => writerForTest(KEY) == null)
+    made.broadcastMessage({ flags: 3, dts: 10_033 })
+    await sleep(300)
+    expect(started('hls')).length(1)
+
+    // Back forty seconds later on the same path, its clock from nought, its
+    // first pictures flowing before its key has been looked up: no jump.
+    gated = true
+    const back = publisher('back', made)
+    publishArrivedForTest(back)
+    const cuts = (): number =>
+      logs.filter(line => line.includes('jumped')).length
+    const cutsBefore = cuts()
+    video(made, 0, 5)
+    release()
+    await until(() => started('hls').length === 2)
+    video(made, 165, 5)
+    expect(cuts()).equals(cutsBefore)
+    expect(made.broadcastMessage).equals(wrapped)
+    expect(started('hls')).length(2)
+  })
+})

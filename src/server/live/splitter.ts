@@ -20,6 +20,7 @@ import {
   segmentsFrom,
   stampNewSegments
 } from './segmentClock'
+import { type JumpDetector, jumpDetector } from './timestampJump'
 
 /**
  * The RTMP ingest, and the split.
@@ -73,10 +74,41 @@ interface NmsSession {
   //
   // `subscribers` are the sessions reading this stream, which here are our own
   // ffmpeg children and nothing else — viewers watch the HLS, not the RTMP.
-  broadcast?: {
-    donePublish?: (session: NmsSession) => void
-    subscribers?: Map<string, { close?: () => void }>
-  }
+  broadcast?: NmsBroadcast
+}
+
+/** A packet of the publish, as node-media-server passes it on (`AVPacket`). */
+interface NmsPacket {
+  /**
+   * 0 the audio header, 1 audio, 2 the video header, 3 a video keyframe, 4
+   * any other video, 5 metadata.
+   */
+  flags: number
+  /** Milliseconds, on the publisher's clock. */
+  dts: number
+}
+
+/**
+ * node-media-server's `BroadcastServer`: one per stream path, kept for the
+ * life of the process, so a reconnect on the same key is handed the same one.
+ */
+interface NmsBroadcast {
+  /** The session publishing now, as node-media-server keeps it. */
+  publisher?: NmsSession | null
+  donePublish?: (session: NmsSession) => void
+  broadcastMessage?: (packet: NmsPacket) => void
+  /**
+   * The sessions reading this stream, which here are our own FFmpeg children
+   * and nothing else: viewers watch the HLS, not the RTMP. The HLS writer
+   * says so in its address (`?writer=hls`).
+   */
+  subscribers?: Map<
+    string,
+    { close?: () => void; streamQuery?: Record<string, unknown> }
+  >
+  /** What a new reader is sent first: everything since the last keyframe. */
+  flvGopCache?: { clear: () => void } | null
+  rtmpGopCache?: { clear: () => void } | null
 }
 interface NmsInstance {
   on: (event: string, listener: (session: NmsSession) => void) => void
@@ -235,6 +267,11 @@ interface OutputRuntime {
   drainTimer?: NodeJS.Timeout
   /** The publisher came back while the last writer was still finishing. */
   pendingRespawn?: boolean
+  /**
+   * Cut at a jump in the publish (`cutAtJump`): the next writer starts at the
+   * next keyframe, and nothing else starts one meanwhile.
+   */
+  respawnAtKeyframe?: boolean
   /** A start is reading the playlist before its ffmpeg exists. */
   preparing?: boolean
   /** Another start arrived while that read was in progress. */
@@ -684,14 +721,17 @@ export function liveKeys(): string[] {
  * Outputs -------------------------------------------------------------------
  */
 
-function ingressUrl(entry: LiveEntry): string {
+function ingressUrl(entry: LiveEntry, output: OutputRuntime): string {
   const { bindHost, port, app } = requireConfig()
   const path = entry.ingress.path ?? `${app}/${entry.key}`
   // Always the loopback, whatever the ingest binds: this child is on the same
   // machine, and reading from a public address would leave the split at the
   // mercy of the host's own firewall.
   const host = bindHost === '0.0.0.0' ? '127.0.0.1' : bindHost
-  return `rtmp://${host}:${port}/${path}`
+  // The HLS writer says which reader it is, so a cut at a jump can end its
+  // input and leave an onward destination's alone.
+  const marker = output.kind === 'hls' ? '?writer=hls' : ''
+  return `rtmp://${host}:${port}/${path}${marker}`
 }
 
 /**
@@ -730,7 +770,7 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
     '-stats_period',
     '1',
     '-i',
-    ingressUrl(entry)
+    ingressUrl(entry, output)
   ]
   if (output.kind === 'rtmp') {
     return [
@@ -1220,6 +1260,11 @@ async function spawnPrepared(
     }
     output.pendingRespawn = false
 
+    // Cut at a jump: the next writer waits for the next keyframe.
+    if (output.respawnAtKeyframe === true) {
+      report(entry)
+      return
+    }
     if (output.released || output.state === 'stopped') {
       report(entry)
       return
@@ -1925,6 +1970,139 @@ function replaceQuietPublisher(entry: LiveEntry, session: NmsSession): void {
   report(entry)
 }
 
+/** What the ingest keeps beside each broadcast it has wrapped. */
+interface JumpWatch {
+  detector: JumpDetector
+  /** The stream whose publisher is on it now. */
+  entry: LiveEntry
+}
+const WRAPPED = Symbol('jump watch')
+type WatchedBroadcast = NmsBroadcast & { [WRAPPED]?: JumpWatch }
+
+/**
+ * Watches a broadcast's packets for a jump (`timestampJump.ts`), and cuts the
+ * HLS writer there.
+ *
+ * Wrapped once per broadcast: node-media-server keeps one per stream path for
+ * the life of the process, and hands a reconnect on the same key the same one.
+ * Its `donePublish` is wrapped too, because every publisher's end passes
+ * through it — a clean end, the forced close of a stale or replaced publisher,
+ * and a socket that closed — and there the detector is reset and a pending
+ * respawn forgotten, as they are on every accept. So a reconnect's first
+ * packet, whose clock starts again from nought however long the outage was,
+ * meets an empty detector, even when it flows before its key has resolved.
+ */
+function watchForJumps(entry: LiveEntry, raw: NmsBroadcast | undefined): void {
+  if (raw == null) return
+  const broadcast = raw as WatchedBroadcast
+  const known = broadcast[WRAPPED]
+  if (known != null) {
+    known.entry = entry
+    known.detector.reset()
+    forgetCut(entry)
+    return
+  }
+  const watch: JumpWatch = {
+    detector: jumpDetector(requireConfig().segmentSeconds * 1000),
+    entry
+  }
+  broadcast[WRAPPED] = watch
+  const pass = broadcast.broadcastMessage?.bind(broadcast)
+  const done = broadcast.donePublish?.bind(broadcast)
+  broadcast.broadcastMessage = packet => {
+    const video = packet.flags === 3 || packet.flags === 4
+    const jump = watch.detector.feed({
+      video,
+      dtsMs: packet.dts,
+      arrivalMs: Date.now()
+    })
+    if (jump) cutAtJump(watch.entry, broadcast, packet)
+    const hls = hlsOutputOf(watch.entry)
+    if (packet.flags === 3 && hls?.respawnAtKeyframe === true) {
+      // The new writer's first picture is this keyframe: node-media-server
+      // replays it to a reader from its cache, which it starts again here.
+      hls.respawnAtKeyframe = false
+      if (watch.entry.ingress.publishing && !hls.released) {
+        spawnOutput(watch.entry, hls)
+      }
+    }
+    pass?.(packet)
+  }
+  broadcast.donePublish = session => {
+    // As node-media-server's own: only the session publishing ends the
+    // publish. One it has already replaced, its socket closing late, must not
+    // call off the cut its successor's writer is waiting on — the playlist
+    // would stand still for the rest of the publish.
+    const current = broadcast.publisher
+    if (current == null || session === current) {
+      watch.detector.reset()
+      forgetCut(watch.entry)
+    }
+    done?.(session)
+  }
+}
+
+function hlsOutputOf(entry: LiveEntry): OutputRuntime | undefined {
+  return entry.outputs.find(output => output.kind === 'hls')
+}
+
+/** A publisher has ended or arrived: a cut waiting for its keyframe is off. */
+function forgetCut(entry: LiveEntry): void {
+  const hls = hlsOutputOf(entry)
+  if (hls != null) hls.respawnAtKeyframe = false
+}
+
+/**
+ * Ends the HLS writer at a jump, before the packet after the gap reaches it.
+ *
+ * Its reader alone is closed, so its FFmpeg reads the end of its input at the
+ * last picture before the gap, closes the segment that ends there and exits;
+ * an onward destination reads on. The output drains as it does when its
+ * publisher goes, and waits for the next keyframe to start the next writer,
+ * which carries the playlist on behind a discontinuity at the wall clock
+ * (`playlistContinuation`, `placeFromFrameWalls`). The pictures between the
+ * gap and that keyframe are not written. A writer that is already finishing,
+ * or not running, has nothing to cut.
+ */
+function cutAtJump(
+  entry: LiveEntry,
+  broadcast: NmsBroadcast,
+  packet: NmsPacket
+): void {
+  const hls = hlsOutputOf(entry)
+  if (
+    hls == null ||
+    hls.released ||
+    hls.child == null ||
+    hls.draining === true ||
+    hls.respawnAtKeyframe === true ||
+    hls.state === 'stopped' ||
+    !entry.ingress.publishing
+  ) {
+    return
+  }
+  requireConfig().log(
+    `[live:${entry.liveStreamId}] the publish jumped at ${String(packet.dts)} ms: the HLS writer is cut there`
+  )
+  const subscribers = broadcast.subscribers
+  for (const [id, subscriber] of subscribers ?? []) {
+    if (subscriber.streamQuery?.writer !== 'hls') continue
+    try {
+      subscriber.close?.()
+    } catch {
+      // The drain timer takes a writer that will not go.
+    }
+    // Closed now, not when its socket says so: the packet after the gap
+    // must not reach it.
+    subscribers?.delete(id)
+  }
+  drainOutput(hls)
+  hls.respawnAtKeyframe = true
+  broadcast.flvGopCache?.clear()
+  broadcast.rtmpGopCache?.clear()
+  report(entry)
+}
+
 /**
  * Takes a publisher on.
  *
@@ -1949,6 +2127,7 @@ function accept(entry: LiveEntry, session: NmsSession): void {
   entry.ingress.receivingPackets = false
   entry.ingress.bytesPerSecond = 0
   entry.ingress.zeroByteTicks = 0
+  watchForJumps(entry, session.broadcast)
   onEvent({
     type: 'publishStarted',
     key: entry.key,
@@ -2225,7 +2404,13 @@ export interface TestSession {
   socket?: { destroy?: () => void }
   broadcast?: {
     donePublish?: (session: never) => void
-    subscribers?: Map<string, { close?: () => void }>
+    broadcastMessage?: (packet: { flags: number; dts: number }) => void
+    subscribers?: Map<
+      string,
+      { close?: () => void; streamQuery?: Record<string, unknown> }
+    >
+    flvGopCache?: { clear: () => void } | null
+    rtmpGopCache?: { clear: () => void } | null
   }
 }
 
