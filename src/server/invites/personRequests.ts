@@ -118,7 +118,7 @@ export type AddedByAddress =
   | {
       /** An account holds the address: added at once. */
       applied: {
-        userId: number
+        userId: string
         displayName: string
         email: string
         /** What was new, `member` first when the membership was. */
@@ -232,7 +232,7 @@ export async function addPersonByAddress(
  */
 export async function applyWaitingInvitations(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   clock: Clock = realClock
 ): Promise<string[]> {
   const addresses = await db

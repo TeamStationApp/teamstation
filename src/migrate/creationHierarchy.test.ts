@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../common/userId'
 import { type AccountHarness, accountHarness } from '../test/accountHarness'
 
 describe('independent creation relations', function () {
@@ -30,7 +31,7 @@ describe('independent creation relations', function () {
     const user = await h.db
       .selectFrom('users')
       .select(['onboarding_step', 'onboarding_completed_at'])
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .executeTakeFirstOrThrow()
     expect(user.onboarding_step).equals('complete')
     expect(user.onboarding_completed_at).not.equals(null)
@@ -119,7 +120,7 @@ describe('independent creation relations', function () {
         source_type: 'parent',
         source_id: 'r',
         revision: 1,
-        actor_id: 101
+        actor_id: userIdOfGumbo(101)
       })
       .execute()
     const duplicate = await h.db
@@ -129,7 +130,7 @@ describe('independent creation relations', function () {
         source_type: 'parent',
         source_id: 'r',
         revision: 1,
-        actor_id: 101
+        actor_id: userIdOfGumbo(101)
       })
       .execute()
       .then(
@@ -139,13 +140,13 @@ describe('independent creation relations', function () {
     expect(duplicate).property('code', '23505')
     await h.db
       .insertInto('notification_receipts')
-      .values({ event_id: 'n', user_id: 101 })
+      .values({ event_id: 'n', user_id: userIdOfGumbo(101) })
       .execute()
     expect(
       await h.db
         .selectFrom('notification_receipts')
         .selectAll()
-        .where('user_id', '=', 102)
+        .where('user_id', '=', userIdOfGumbo(102))
         .execute()
     ).length(0)
     expect(
@@ -208,7 +209,7 @@ describe('independent creation relations', function () {
         cancellation_reason: 'withdrawal',
         withdrawn_at: new Date(),
         withdrawn_by_team_id: 'tem_account',
-        withdrawn_by_user_id: 101
+        withdrawn_by_user_id: userIdOfGumbo(101)
       })
       .where('id', '=', 'withdrawal')
       .execute()

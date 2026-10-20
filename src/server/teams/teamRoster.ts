@@ -71,7 +71,7 @@ export async function teamRoster(
   const given = await givenRoleLevelsAt(db, { teamId, ...levels })
   // A member of the team itself, unless a season or league above makes them
   // one too: the highest level is the one their pill names.
-  const memberLevels = new Map<number, RoleLevel>(
+  const memberLevels = new Map<string, RoleLevel>(
     members.map(row => [row.userId, 'team'])
   )
   for (const [userId, level] of await membersOfLevels(db, levels))
@@ -151,7 +151,7 @@ export async function levelPeople(
     levels = { seasonIds: [], leagueIds: [ref.id] }
   }
   const given = await givenRoleLevelsAt(db, levels)
-  const memberLevels: Map<number, RoleLevel> = await membersOfLevels(db, levels)
+  const memberLevels: Map<string, RoleLevel> = await membersOfLevels(db, levels)
 
   const teamIds = [...(await teamsUnder(db, ref))]
   const playing =
@@ -178,7 +178,7 @@ export async function levelPeople(
           .orderBy('users.display_name')
           .orderBy('teams.name')
           .execute()
-  const players = new Map<number, PeopleRow>()
+  const players = new Map<string, PeopleRow>()
   for (const row of playing) {
     const held = players.get(row.userId)
     if (held != null) {
@@ -249,7 +249,7 @@ export async function peopleAt(
 export async function onPeopleList(
   db: Kysely<Database>,
   ref: { kind: 'league' | 'season' | 'team'; id: string },
-  userId: number
+  userId: string
 ): Promise<boolean> {
   const people = await peopleAt(db, undefined, ref)
   return people?.some(person => person.userId === userId) === true
@@ -257,7 +257,7 @@ export async function onPeopleList(
 
 /** One person a people list is built from, before their section is known. */
 interface PeopleRow {
-  userId: number
+  userId: string
   displayName: string
   firstName: string | null
   lastName: string | null
@@ -278,8 +278,8 @@ interface PeopleRow {
  */
 async function outsiders(
   db: Kysely<Database>,
-  userIds: number[],
-  listed: Set<number>
+  userIds: string[],
+  listed: Set<string>
 ): Promise<PeopleRow[]> {
   const ids = [...new Set(userIds)].filter(userId => !listed.has(userId))
   if (ids.length === 0) return []
@@ -320,12 +320,12 @@ async function sectionPeople(
   facts: {
     ownLevel: RoleLevel
     /** The roles given here and above, each at the highest level giving it. */
-    given: Map<number, Map<Role, RoleLevel>>
+    given: Map<string, Map<Role, RoleLevel>>
     /** Members of this level or one above it, at the highest level. */
-    memberLevels: Map<number, RoleLevel>
+    memberLevels: Map<string, RoleLevel>
     /** Each guardian of a player on this list, and the players they guard. */
-    family: Map<number, number[]>
-    songs?: Map<number, WalkUpSong>
+    family: Map<string, string[]>
+    songs?: Map<string, WalkUpSong>
     /**
      * Whether the players carry their whole names (`nameDetails`): only for
      * a team's roster read by whoever manages it, as the route decides.
@@ -456,7 +456,9 @@ async function sectionPeople(
       const byLevel =
         Number(a.inheritedFrom != null) - Number(b.inheritedFrom != null)
       if (byLevel !== 0) return byLevel
-      return a.shortName.localeCompare(b.shortName)
+      const byName = a.shortName.localeCompare(b.shortName)
+      if (byName !== 0) return byName
+      return a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0
     })
 }
 
@@ -469,8 +471,8 @@ async function sectionPeople(
 export async function followersOf(
   db: Kysely<Database>,
   teamId: string
-): Promise<number[]> {
-  const { rows } = await sql<{ user_id: number }>`
+): Promise<string[]> {
+  const { rows } = await sql<{ user_id: string }>`
     with recursive merged(id) as (
       select ${teamId}::text
       union
@@ -485,5 +487,5 @@ export async function followersOf(
       and users.disabled_at is null
       and users.merged_into is null
   `.execute(db)
-  return rows.map(row => Number(row.user_id))
+  return rows.map(row => row.user_id)
 }

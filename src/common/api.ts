@@ -120,8 +120,7 @@ import {
 import type { SaveChange, StoredGame } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
 import { asUnrostered } from './unroster'
-import { asGumboId } from './userId'
-import { asUserId } from './userIdNumber'
+import { asGumboId, asUserId } from './userId'
 import { asWalkUpSong, type WalkUpSong } from './walkUpSong'
 import type { WallTimeline } from './wallTimeline'
 
@@ -724,6 +723,7 @@ export type PlayerName = ReturnType<typeof asPlayerName>
 
 export const asPlayerDetail = asObject({
   userId: asUserId,
+  gumboId: asOptional(asNullable(asGumboId), null),
   name: asString,
   /** Whether to offer this person the name field. A parent or an admin. */
   canEditName: asOptional(asBoolean, false),
@@ -891,6 +891,7 @@ export type SeasonGame = ReturnType<typeof asSeasonGame>
 /** A person another service knows, and which of the asked ids are theirs. */
 export const asUserMatch = asObject({
   userId: asUserId,
+  gumboId: asOptional(asNullable(asGumboId), null),
   externalIds: asArray(asString),
   /** `Jordan P`, told apart from anybody else in the same answer. */
   shortName: asOptional(asString),
@@ -1066,6 +1067,7 @@ export type LiveNow = ReturnType<typeof asLiveNow>
 
 const cleanSessionUser = asObject({
   id: asUserId,
+  gumboId: asOptional(asNullable(asGumboId), null),
   displayName: asString,
   email: asOptional(asString),
   isAdmin: asBoolean,
@@ -1647,7 +1649,7 @@ export class TeamStationClient {
   }
 
   async changeNodeAccount(
-    userId: number,
+    userId: string,
     change: NodeAccountChange
   ): Promise<void> {
     await this.request(
@@ -2480,10 +2482,16 @@ export class TeamStationClient {
    * The people another service knows by these ids, as far as this person may
    * see them. A merged row answers as whoever it was merged into.
    */
-  async users(options: { externalIds: string[] }): Promise<UserMatch[]> {
-    const query = options.externalIds
-      .map(id => `externalId=${encodeURIComponent(id)}`)
-      .join('&')
+  async users(options: {
+    externalIds: string[]
+    system?: string
+  }): Promise<UserMatch[]> {
+    const params = options.externalIds.map(
+      id => `externalId=${encodeURIComponent(id)}`
+    )
+    if (options.system != null)
+      params.push(`system=${encodeURIComponent(options.system)}`)
+    const query = params.join('&')
     return await this.request('GET', `/users?${query}`, asArray(asUserMatch))
   }
 
@@ -2587,13 +2595,13 @@ export class TeamStationClient {
 
   async saveRsvp(
     eventId: string,
-    userId: number,
+    userId: string,
     response: Rsvp
-  ): Promise<{ userId: number; response: Rsvp }> {
+  ): Promise<{ userId: string; response: Rsvp }> {
     return await this.request(
       'PUT',
       `/events/${encodeURIComponent(eventId)}/rsvps/${userId}`,
-      asObject({ userId: asNumber, response: asRsvp }),
+      asObject({ userId: asUserId, response: asRsvp }),
       { response }
     )
   }
@@ -2975,7 +2983,7 @@ export class TeamStationClient {
    */
   async setPlayerSettings(
     teamId: string,
-    userId: number | string,
+    userId: string,
     settings: PlayerSettings
   ): Promise<RosterEntry> {
     return await this.request(
@@ -2991,7 +2999,7 @@ export class TeamStationClient {
    * player, or a coach of a team they play on. Only the fields sent change.
    */
   async setPlayerBatsThrows(
-    userId: number | string,
+    userId: string,
     settings: PersonSettings
   ): Promise<PersonSettingsAnswer> {
     return await this.request(
@@ -3008,7 +3016,7 @@ export class TeamStationClient {
    */
   async setWalkUpSong(
     teamId: string,
-    userId: number | string,
+    userId: string,
     song: WalkUpSong
   ): Promise<WalkUpSong> {
     return await this.request(
@@ -3020,10 +3028,7 @@ export class TeamStationClient {
   }
 
   /** Removes a player's walk-up song on one team. Removing none is fine. */
-  async clearWalkUpSong(
-    teamId: string,
-    userId: number | string
-  ): Promise<void> {
+  async clearWalkUpSong(teamId: string, userId: string): Promise<void> {
     await this.request('DELETE', walkUpSongPath(teamId, userId), asUnknownOk)
   }
 
@@ -3256,7 +3261,7 @@ export class TeamStationClient {
   async removePerson(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: number
+    userId: string
   ): Promise<{ removed: boolean }> {
     return await this.request(
       'DELETE',
@@ -3275,7 +3280,7 @@ export class TeamStationClient {
   async setRole(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: number,
+    userId: string,
     role: 'admin' | 'member'
   ): Promise<void> {
     await this.request(
@@ -3293,7 +3298,7 @@ export class TeamStationClient {
   async setRoles(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: number,
+    userId: string,
     roles: { admin: boolean; flags: RoleFlag[] }
   ): Promise<Role[]> {
     const answer = await this.request(
@@ -3321,7 +3326,7 @@ export class TeamStationClient {
   async personProfile(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: number
+    userId: string
   ): Promise<PersonProfile> {
     return await this.request(
       'GET',
@@ -3337,7 +3342,7 @@ export class TeamStationClient {
   async addRole(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: number,
+    userId: string,
     role: Role | 'member'
   ): Promise<HeldAt> {
     return await this.request(
@@ -3355,7 +3360,7 @@ export class TeamStationClient {
   async removeRole(
     kind: 'league' | 'season' | 'team',
     id: string,
-    userId: number,
+    userId: string,
     role: Role | 'member'
   ): Promise<HeldAt> {
     return await this.request(
@@ -3460,7 +3465,7 @@ export class TeamStationClient {
   }
 }
 
-function walkUpSongPath(teamId: string, userId: number | string): string {
+function walkUpSongPath(teamId: string, userId: string): string {
   return `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/walk-up-song`
 }
 

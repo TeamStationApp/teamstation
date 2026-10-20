@@ -7,7 +7,7 @@ import { hashToken, makeToken } from './tokens'
 
 /** Who is making a request, once a token has been resolved. */
 export interface Actor {
-  userId: number
+  userId: string
   isAdmin: boolean
   /** Set when the caller used a machine token rather than signing in. */
   apiTokenId?: string
@@ -34,7 +34,7 @@ export interface SessionOptions {
 
 export async function createSession(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   userAgent: string | undefined,
   options: SessionOptions = {}
 ): Promise<NewSession> {
@@ -208,7 +208,7 @@ export interface SignedOut {
  */
 export async function signOutEverywhere(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   at = new Date()
 ): Promise<SignedOut> {
   const sessions = await db

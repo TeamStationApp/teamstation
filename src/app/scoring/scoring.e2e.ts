@@ -14,6 +14,7 @@ import {
 } from 'three'
 
 import { asGameDetail, type RosterEntry } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
@@ -262,7 +263,7 @@ async function open(
       body = url.pathname.includes('/away/')
         ? [
             {
-              userId: 101,
+              userId: userIdOfGumbo(101),
               gumboId: 101,
               shortName: 'Jordan K.',
               jersey: '00',
@@ -277,7 +278,7 @@ async function open(
             }
           ].concat(
             Array.from({ length: 8 }, (_, i) => ({
-              userId: 102 + i,
+              userId: userIdOfGumbo(102 + i),
               gumboId: 102 + i,
               shortName: `Player ${i + 2}`,
               jersey: String(i + 2),
@@ -292,7 +293,7 @@ async function open(
             }))
           )
         : Array.from({ length: 9 }, (_, i) => ({
-            userId: 201 + i,
+            userId: userIdOfGumbo(201 + i),
             gumboId: 201 + i,
             shortName: `Player ${i + 1}`,
             jersey: String(i + 1),

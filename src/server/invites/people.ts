@@ -44,7 +44,7 @@ export interface Grant {
 }
 
 export interface ScopePerson {
-  userId: number
+  userId: string
   displayName: string
   /** Every address on the account, the primary one first. */
   emails: string[]
@@ -261,8 +261,8 @@ export async function peopleInScope(
     named.set(item.id, item.name)
   }
 
-  const people = new Map<number, ScopePerson>()
-  const person = (userId: number, displayName: string): ScopePerson => {
+  const people = new Map<string, ScopePerson>()
+  const person = (userId: string, displayName: string): ScopePerson => {
     const held = people.get(userId)
     if (held != null) return held
     const made: ScopePerson = {
@@ -510,8 +510,8 @@ export async function removeFromScope(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
   scopeId: string,
-  userId: number,
-  actorId?: number,
+  userId: string,
+  actorId?: string,
   authority: PersonChangeAuthority = 'admin',
   keepPlayer = false
 ): Promise<{ removed: boolean }> {
@@ -573,7 +573,7 @@ export async function removeFromScope(
 async function refusePlayer(
   db: Kysely<Database>,
   teamId: string,
-  userId: number
+  userId: string
 ): Promise<void> {
   const player = await db
     .selectFrom('memberships')
@@ -601,7 +601,7 @@ export async function addToScope(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
   scopeId: string,
-  userId: number
+  userId: string
 ): Promise<{ added: boolean }> {
   if (scopeType === 'team') {
     const made = await db
@@ -652,7 +652,7 @@ export async function rolesAt(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
   scopeId: string,
-  userId: number
+  userId: string
 ): Promise<Role[]> {
   const rows = await db
     .selectFrom('scope_roles')
@@ -676,9 +676,9 @@ export async function setScopeRoles(
   db: Kysely<Database>,
   scopeType: InviteScopeType,
   scopeId: string,
-  userId: number,
+  userId: string,
   wanted: { admin: boolean; flags: RoleFlag[] },
-  grantedBy: number,
+  grantedBy: string,
   authority: PersonChangeAuthority = 'admin'
 ): Promise<Role[]> {
   const roles: Role[] = ROLES.filter(

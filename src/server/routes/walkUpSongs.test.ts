@@ -8,12 +8,14 @@ import { Pool } from 'pg'
 
 import type { GameChange } from '../../common/gameSocket'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import type { Role } from '../../common/roles'
+import { userIdOfGumbo } from '../../common/userId'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { GameScope } from '../access'
 import type { Database, ScopeRolesTable } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
@@ -115,7 +117,7 @@ describe('walk-up songs', function () {
   const parentId = mintUser()
 
   const songOf = (team: string, player: number): string =>
-    `/teams/${team}/players/${player}/walk-up-song`
+    `/teams/${team}/players/${userIdOfGumbo(player)}/walk-up-song`
 
   const send = async (
     method: 'PUT' | 'DELETE',
@@ -215,30 +217,28 @@ describe('walk-up songs', function () {
         { season_id: seasonId, team_id: rivalId }
       ])
       .execute()
-    await db
-      .insertInto('users')
-      .values(
-        [...taken].map(id => ({
-          id,
-          legacyId: legacyOf.get(id) ?? '',
-          display_name: `Person ${id}`,
-          is_admin: id === siteAdminId
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      [...taken].map(id => ({
+        id,
+        legacyId: legacyOf.get(id) ?? '',
+        display_name: `Person ${id}`,
+        is_admin: id === siteAdminId
+      }))
+    )
     const member = (
       userId: number,
       team: string,
       extra: { is_player?: boolean; role?: 'manager' } = {}
     ): {
       id: string
-      user_id: number
+      user_id: string
       team_id: string
       is_player?: boolean
       role?: 'manager'
     } => ({
       id: makeId('membership'),
-      user_id: userId,
+      user_id: userIdOfGumbo(userId),
       team_id: team,
       ...extra
     })
@@ -264,7 +264,7 @@ describe('walk-up songs', function () {
       role: Role
     ): Insertable<ScopeRolesTable> => ({
       id: makeId('scopeRole'),
-      user_id: userId,
+      user_id: userIdOfGumbo(userId),
       scope_type: scopeType,
       scope_id: scopeId,
       role,
@@ -287,8 +287,8 @@ describe('walk-up songs', function () {
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: parentId,
-        related_user_id: batterId,
+        user_id: userIdOfGumbo(parentId),
+        related_user_id: userIdOfGumbo(batterId),
         kind: 'guardian'
       })
       .execute()
@@ -326,7 +326,7 @@ describe('walk-up songs', function () {
       const id = req.header('x-test-user')
       if (id != null) {
         req.actor = {
-          userId: Number(id),
+          userId: userIdOfGumbo(Number(id)),
           isAdmin: Number(id) === siteAdminId,
           scopes: []
         }
@@ -377,15 +377,17 @@ describe('walk-up songs', function () {
       const answer = await send('PUT', songOf(teamId, batterId), viewer, song)
       expect(answer.status, String(viewer)).equals(200)
       expect(answer.body).deep.equals(song)
-      expect(await readWalkUpSong(db, teamId, batterId)).deep.equals(song)
+      expect(
+        await readWalkUpSong(db, teamId, userIdOfGumbo(batterId))
+      ).deep.equals(song)
     }
     const row = await db
       .selectFrom('walk_up_songs')
       .select(['set_by'])
       .where('team_id', '=', teamId)
-      .where('user_id', '=', batterId)
+      .where('user_id', '=', userIdOfGumbo(batterId))
       .executeTakeFirstOrThrow()
-    expect(row.set_by).equals(siteAdminId)
+    expect(row.set_by).equals(userIdOfGumbo(siteAdminId))
   })
 
   it('answers 404 to anybody else, and for anybody who is not a player on the team', async function () {
@@ -411,7 +413,7 @@ describe('walk-up songs', function () {
       songOf(teamId, rivalPlayerId),
       songOf(rivalId, rivalPlayerId),
       songOf('tem_none', batterId),
-      `/teams/${teamId}/players/nobody/walk-up-song`
+      `/teams/${teamId}/players/${userIdOfGumbo(1)}/walk-up-song`
     ]) {
       const answer = await send('PUT', path, songkeeperId, centerfield)
       expect(answer.status, path).equals(404)
@@ -421,18 +423,24 @@ describe('walk-up songs', function () {
       (await send('PUT', songOf(rivalId, rivalPlayerId), siteAdminId, fixture))
         .status
     ).equals(200)
-    expect(await readWalkUpSong(db, teamId, secondId)).equals(null)
+    expect(await readWalkUpSong(db, teamId, userIdOfGumbo(secondId))).equals(
+      null
+    )
   })
 
   it('lets a guardian set and remove their own child’s song, and nobody else’s', async function () {
-    const before = await readWalkUpSong(db, teamId, batterId)
+    const before = await readWalkUpSong(db, teamId, userIdOfGumbo(batterId))
     const mine = await send('PUT', songOf(teamId, batterId), parentId, fixture)
     expect(mine.status).equals(200)
-    expect(await readWalkUpSong(db, teamId, batterId)).deep.equals(fixture)
+    expect(
+      await readWalkUpSong(db, teamId, userIdOfGumbo(batterId))
+    ).deep.equals(fixture)
     expect(
       (await send('DELETE', songOf(teamId, batterId), parentId)).status
     ).equals(204)
-    expect(await readWalkUpSong(db, teamId, batterId)).equals(null)
+    expect(await readWalkUpSong(db, teamId, userIdOfGumbo(batterId))).equals(
+      null
+    )
     for (const method of ['PUT', 'DELETE'] as const) {
       const answer = await send(
         method,
@@ -442,7 +450,9 @@ describe('walk-up songs', function () {
       )
       expect(answer.status, method).equals(404)
     }
-    expect(await readWalkUpSong(db, teamId, secondId)).equals(null)
+    expect(await readWalkUpSong(db, teamId, userIdOfGumbo(secondId))).equals(
+      null
+    )
     if (before != null)
       await send('PUT', songOf(teamId, batterId), siteAdminId, before)
   })
@@ -470,7 +480,9 @@ describe('walk-up songs', function () {
       )
       expect(answer.status, JSON.stringify(body)).equals(400)
     }
-    expect(await readWalkUpSong(db, teamId, secondId)).equals(null)
+    expect(await readWalkUpSong(db, teamId, userIdOfGumbo(secondId))).equals(
+      null
+    )
   })
 
   it('removes a song, and answers 204 again when there is none', async function () {
@@ -478,7 +490,9 @@ describe('walk-up songs', function () {
     expect(
       (await send('DELETE', songOf(teamId, secondId), songkeeperId)).status
     ).equals(204)
-    expect(await readWalkUpSong(db, teamId, secondId)).equals(null)
+    expect(await readWalkUpSong(db, teamId, userIdOfGumbo(secondId))).equals(
+      null
+    )
     expect(
       (await send('DELETE', songOf(teamId, secondId), songkeeperId)).status
     ).equals(204)
@@ -495,7 +509,7 @@ describe('walk-up songs', function () {
         .selectFrom('audit_log')
         .select(['method', 'before', 'after', 'at'])
         .where('entity_type', '=', 'walkUpSong')
-        .where('entity_id', '=', String(leaverId))
+        .where('entity_id', '=', userIdOfGumbo(leaverId))
         .orderBy('at')
         .execute()
         .then(rows => rows.map(({ at: _, ...row }) => row))
@@ -521,8 +535,13 @@ describe('walk-up songs', function () {
 
   it('goes with its player, and with its team', async function () {
     await send('PUT', songOf(teamId, leaverId), songkeeperId, centerfield)
-    await db.deleteFrom('users').where('id', '=', leaverId).execute()
-    expect(await readWalkUpSong(db, teamId, leaverId)).equals(null)
+    await db
+      .deleteFrom('users')
+      .where('id', '=', userIdOfGumbo(leaverId))
+      .execute()
+    expect(await readWalkUpSong(db, teamId, userIdOfGumbo(leaverId))).equals(
+      null
+    )
 
     const gone = makeId('team')
     await db.insertInto('teams').values({ id: gone, name: 'Gone' }).execute()
@@ -530,21 +549,23 @@ describe('walk-up songs', function () {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: secondId,
+        user_id: userIdOfGumbo(secondId),
         team_id: gone,
         is_player: true
       })
       .execute()
     await send('PUT', songOf(gone, secondId), siteAdminId, fixture)
-    expect(await readWalkUpSong(db, gone, secondId)).deep.equals(fixture)
+    expect(await readWalkUpSong(db, gone, userIdOfGumbo(secondId))).deep.equals(
+      fixture
+    )
     await db.deleteFrom('teams').where('id', '=', gone).execute()
-    expect(await readWalkUpSong(db, gone, secondId)).equals(null)
+    expect(await readWalkUpSong(db, gone, userIdOfGumbo(secondId))).equals(null)
   })
 
   it('refuses a clip the table does not allow, whoever writes it', async function () {
     const row = {
       team_id: teamId,
-      user_id: secondId,
+      user_id: userIdOfGumbo(secondId),
       provider: 'appleMusic' as const,
       provider_id: '1',
       title: 'T',
@@ -552,7 +573,7 @@ describe('walk-up songs', function () {
       duration_ms: 60000,
       start_ms: 0,
       end_ms: 30000,
-      set_by: siteAdminId
+      set_by: userIdOfGumbo(siteAdminId)
     }
     for (const bad of [
       { provider: 'spotify' as 'appleMusic' },
@@ -608,7 +629,7 @@ describe('walk-up songs', function () {
       })
       expect(heard.sent[0].data).deep.equals({
         teamId,
-        userId: secondId,
+        userId: userIdOfGumbo(secondId),
         song: fixture
       })
     }
@@ -628,8 +649,8 @@ describe('walk-up songs', function () {
         return [data.userId, data.song]
       })
     )
-    expect(byPlayer.get(batterId)).deep.equals(centerfield)
-    expect(byPlayer.get(secondId)).equals(null)
+    expect(byPlayer.get(userIdOfGumbo(batterId))).deep.equals(centerfield)
+    expect(byPlayer.get(userIdOfGumbo(secondId))).equals(null)
 
     // A removal with nothing to remove announces nothing.
     await send('DELETE', songOf(teamId, secondId), songkeeperId)

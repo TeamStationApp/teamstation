@@ -239,3 +239,6 @@ export function defaultsUnaccepted(
       (defaults[side] ?? null) != null && unseenLineup(actions, side) != null
   )
 }
+
+// Public read projection shared by roster editors and the scoring source.
+export { reconcileRoster, type ScoringRosterEntry } from './rosterAvailability'

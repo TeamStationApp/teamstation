@@ -10,6 +10,7 @@ import {
   type GameIntent
 } from '../../common/gameApprovals'
 import { asScheduleGameRow } from '../../common/scheduleGames'
+import { userIdOfGumbo } from '../../common/userId'
 import { migration052SeasonGameRefinements } from '../../migrate/migrations/052seasonGameRefinements'
 import {
   actor,
@@ -117,7 +118,7 @@ describe('two-team scheduling and replacement history', function () {
             .update(JSON.stringify(normalized))
             .digest('hex')
         })
-        .where('user_id', '=', 101)
+        .where('user_id', '=', userIdOfGumbo(101))
         .where('key', '=', raw.idempotencyKey)
         .execute()
       const gameId =
@@ -178,7 +179,7 @@ describe('two-team scheduling and replacement history', function () {
           .update(JSON.stringify(normalized))
           .digest('hex')
       })
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .where('key', '=', raw.idempotencyKey)
       .execute()
     for (const changed of [
@@ -297,7 +298,7 @@ describe('two-team scheduling and replacement history', function () {
           .digest('hex'),
         response: sql`response - 'gameProposalVersion'`
       })
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .where('key', '=', raw.idempotencyKey)
       .execute()
     const repeated = await f.h.request('POST', '/game-requests', raw, 101)
@@ -486,9 +487,9 @@ describe('two-team scheduling and replacement history', function () {
       f.h.db,
       'team',
       team,
-      user,
+      userIdOfGumbo(user),
       { admin: true, flags: [] },
-      105
+      userIdOfGumbo(105)
     )
   }
   const replace = async (id: string, key = 'replace-unmanaged'): Promise<any> =>
@@ -627,17 +628,17 @@ describe('two-team scheduling and replacement history', function () {
         f.h.db,
         kind,
         id,
-        105,
+        userIdOfGumbo(105),
         { admin: true, flags: [] },
-        105
+        userIdOfGumbo(105)
       )
       await setScopeRoles(
         f.h.db,
         kind,
         id,
-        101,
+        userIdOfGumbo(101),
         { admin: false, flags: [] },
-        105
+        userIdOfGumbo(105)
       )
     }
   }
@@ -713,7 +714,7 @@ describe('two-team scheduling and replacement history', function () {
         .where('id', '=', proposal.id)
         .executeTakeFirstOrThrow()
       expect(stored.terms).includes({
-        hostingAuthorizerUserId: 101,
+        hostingAuthorizerUserId: userIdOfGumbo(101),
         hostingAuthorizationSource: 'initiator'
       })
       expect((await accept(proposal.id, 102)).status).equals('pending')
@@ -722,7 +723,7 @@ describe('two-team scheduling and replacement history', function () {
         await f.h.db
           .updateTable('users')
           .set({ login_enabled: false })
-          .where('id', '=', 101)
+          .where('id', '=', userIdOfGumbo(101))
           .execute()
       const blocked = await f.h.request(
         'POST',
@@ -767,7 +768,7 @@ describe('two-team scheduling and replacement history', function () {
       await f.h.db
         .updateTable('group_requests')
         .set({
-          sender_id: 102,
+          sender_id: userIdOfGumbo(102),
           sender_scope_type: 'team',
           sender_scope_id: f.teamB,
           terms: sql`terms - 'hostingAuthorizerUserId' - 'hostingAuthorizationSource'`
@@ -776,7 +777,7 @@ describe('two-team scheduling and replacement history', function () {
         .execute()
       await f.h.db
         .updateTable('group_request_sides')
-        .set({ approved_by: 102, approved_at: f.clock.now() })
+        .set({ approved_by: userIdOfGumbo(102), approved_at: f.clock.now() })
         .where('request_id', '=', request.id)
         .where('scope_id', '=', f.teamB)
         .execute()
@@ -790,8 +791,8 @@ describe('two-team scheduling and replacement history', function () {
             receipt === 'unapproved'
               ? null
               : receipt === 'wrong-season'
-                ? 102
-                : 101,
+                ? userIdOfGumbo(102)
+                : userIdOfGumbo(101),
           approved_at: receipt === 'unapproved' ? null : f.clock.now()
         })
         .execute()
@@ -806,7 +807,7 @@ describe('two-team scheduling and replacement history', function () {
         expect(upgraded.terms).not.property('hostingAuthorizerUserId')
       else
         expect(upgraded.terms).includes({
-          hostingAuthorizerUserId: 101,
+          hostingAuthorizerUserId: userIdOfGumbo(101),
           hostingAuthorizationSource: 'legacyReceipt'
         })
       if (receipt === 'revoked') await revokeHosting()
@@ -814,7 +815,7 @@ describe('two-team scheduling and replacement history', function () {
         await f.h.db
           .updateTable('users')
           .set({ disabled_at: f.clock.now() })
-          .where('id', '=', 101)
+          .where('id', '=', userIdOfGumbo(101))
           .execute()
       const finish = await f.h.request(
         'POST',
@@ -875,9 +876,9 @@ describe('two-team scheduling and replacement history', function () {
       f.h.db,
       'team',
       f.teamA,
-      103,
+      userIdOfGumbo(103),
       { admin: false, flags: [] },
-      105
+      userIdOfGumbo(105)
     )
     await grant(f.standaloneTeam, 106)
     const fresh = await f.h.request(
@@ -1104,9 +1105,9 @@ describe('two-team scheduling and replacement history', function () {
         f.h.db,
         'team',
         team,
-        103,
+        userIdOfGumbo(103),
         { admin: false, flags: [] },
-        105
+        userIdOfGumbo(105)
       )
     await grant(other, 103)
     const blocked = await f.h.request(
@@ -1148,7 +1149,7 @@ describe('two-team scheduling and replacement history', function () {
       .selectAll()
       .where('source_type', '=', 'gameReplacement')
       .executeTakeFirstOrThrow()
-    expect(audit.recorded_recipients.map(Number)).includes(102)
+    expect(audit.recorded_recipients).includes(userIdOfGumbo(102))
     expect(audit.metadata).includes({
       originalGameId: old,
       replacementGameId: proposal.proposedGameId
@@ -1498,13 +1499,13 @@ describe('two-team scheduling and replacement history', function () {
     expect(proposal.gameId).equals(old)
     await f.h.db
       .deleteFrom('scope_roles')
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .where('scope_type', '=', 'team')
       .where('scope_id', '=', f.teamB)
       .execute()
     await f.h.db
       .deleteFrom('memberships')
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .where('team_id', '=', f.teamB)
       .execute()
     const refused = await f.h.request(
@@ -1785,13 +1786,13 @@ describe('two-team scheduling and replacement history', function () {
     )
     await f.h.db
       .deleteFrom('scope_roles')
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .where('scope_type', '=', 'team')
       .where('scope_id', '=', f.teamA)
       .execute()
     await f.h.db
       .deleteFrom('memberships')
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .where('team_id', '=', f.teamA)
       .execute()
     await f.h.db
@@ -1869,9 +1870,9 @@ describe('two-team scheduling and replacement history', function () {
       f.h.db,
       'season',
       f.seasonB,
-      101,
+      userIdOfGumbo(101),
       { admin: true, flags: [] },
-      105
+      userIdOfGumbo(105)
     )
     const first = await scheduleGames(f.h.db, {
       teamId: f.teamA,
