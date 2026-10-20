@@ -22,7 +22,7 @@ interface IdentityFixture {
   gameId: string
   teamId: string
   local?: { email: string; passwordFile: string }
-  seat?: { email: string; codeFile: string }
+  seat?: { email: string; passwordFile: string }
 }
 
 async function seatSignIn(
@@ -35,25 +35,8 @@ async function seatSignIn(
   const { page, m } = session
   await page.goto(origin + '/sign-in', { waitUntil: 'domcontentloaded' })
   await fill(m, 'E-mail address', fixture.seat.email)
-  await m.tapOn({ text: 'Send me a sign-in code', timeout: 15000 })
-  const requested = Date.now()
-  console.log(
-    '$ Seat sign-in code requested; waiting for the task mailbox reader'
-  )
-  let code = ''
-  for (let attempt = 0; attempt < 120; attempt++) {
-    const stored = await readFile(fixture.seat.codeFile, 'utf8').catch(() => '')
-    if (stored !== '') {
-      const value = JSON.parse(stored)
-      if (value.requestedAt >= requested && /^\d{6}$/.test(value.code)) {
-        code = value.code
-        break
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, 1000))
-  }
-  if (code === '') throw new Error('No fresh seat verification code arrived')
-  await fill(m, 'Sign-in code', code)
+  await m.tapOn({ text: 'Use a password instead', timeout: 15000 })
+  await fill(m, 'Password', await readFile(fixture.seat.passwordFile, 'utf8'))
   await m.tapOn({ text: 'Sign in', timeout: 15000 })
   await page.waitForSelector('[aria-label^="Account, "]', { timeout: 60000 })
 }
@@ -97,7 +80,9 @@ describe('canonical account IDs in Maestro D Chromium', function () {
         if (cookie == null)
           throw new Error('Sign-in did not establish a session')
         const token = decodeURIComponent(cookie.value)
-        const suffix = before ? '' : '?tab=stats&identityProof=1#stats'
+        const suffix = before
+          ? '?tab=stats'
+          : '?tab=stats&identityProof=1#stats'
         await page.goto(
           `${origin}/players/${fixture.playerLegacyId}${suffix}`,
           { waitUntil: 'domcontentloaded' }
@@ -117,6 +102,19 @@ describe('canonical account IDs in Maestro D Chromium', function () {
           expect(new URL(page.url()).hash).equals('#stats')
         }
         await m.assertVisible({ text: 'Stats', timeout: 60000 })
+        await m.tapOn({ text: 'Stats', timeout: 15000 })
+        if (hosted) {
+          const response = await fetch(`${api}/players/${playerId}/stats`, {
+            headers: { Authorization: `Bearer ${token}` }
+          })
+          expect(response.status).equals(200)
+          const stats = await response.json()
+          expect(stats.batting != null || stats.pitching != null).equals(true)
+          await m.assertVisible({
+            text: stats.batting != null ? 'Batting' : 'Pitching',
+            timeout: 60000
+          })
+        }
         await capture(
           m,
           artifacts,
