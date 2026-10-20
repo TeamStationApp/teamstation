@@ -10,14 +10,20 @@ import {
   type GumboPlay
 } from '../../common/gumboPlay'
 import { recordOf } from '../../common/scoring/gumbo'
+import { newSetup } from '../../common/scoring/lineup'
 import { reconcileRoster } from '../../common/scoring/rosterAvailability'
 import { awaitingResult } from '../../common/scoring/rules'
 import { ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import type { Unrostered } from '../../common/unroster'
 import { isHeadCoach, roleScopes } from '../access'
-import { survivorsOf, UnresolvedAccount } from '../admin/people'
+import {
+  lockPlayerEdits,
+  survivorsOf,
+  UnresolvedAccount
+} from '../admin/people'
 import type { Actor } from '../auth/sessions'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { postGamePlays, readPlays } from '../events/postPlays'
 import { storedLineupsDigest } from '../events/teamLineups'
@@ -33,7 +39,8 @@ export async function setRostered(
   gameId: string,
   body: UnrosterBody
 ): Promise<Unrostered> {
-  return await db.transaction().execute(async trx => {
+  return await atomic(db, async trx => {
+    await lockPlayerEdits(trx)
     const game = await trx
       .selectFrom('games')
       .selectAll()
@@ -68,6 +75,24 @@ export async function setRostered(
     unrostered[body.side] = body.rostered
       ? unrostered[body.side].filter(id => id !== gumboId)
       : [...unrostered[body.side], gumboId]
+    // A merge can leave one person on both team rosters with one side
+    // excluded. Re-enabling that side must not make the next setup unreadable.
+    const teams = {
+      away: { id: game.away_team_id, name: '' },
+      home: { id: game.home_team_id, name: '' }
+    }
+    try {
+      reconcileRoster(
+        newSetup(teams, { away: [], home: [] }),
+        teams,
+        availability.roster,
+        availability.guestPlayers,
+        unrostered
+      )
+    } catch (error) {
+      if (!(error instanceof Error)) throw error
+      throw conflict(error.message)
+    }
     const stored = await resolveScoringGame(trx, {
       plays: (await readPlays(trx, gameId)).map(row => row.gumbo as GumboPlay),
       currentPlay: game.currentPlay as CurrentPlay | null

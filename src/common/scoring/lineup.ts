@@ -202,7 +202,9 @@ export function applyRoster(
   setup: GameSetup,
   nextBatter?: number,
   /** Who took whose place in the order: a substitute bats when his man was due. */
-  replaced: Record<number, number> = {}
+  replaced: Record<number, number> = {},
+  /** Stored actions may introduce another occurrence of a subsequently merged alias. */
+  replay = false
 ):
   | {
       state: GameState
@@ -214,7 +216,11 @@ export function applyRoster(
     gameData: { teams: state.gameData.teams, players: setup.players },
     liveData: { boxscore: { teams: setup.sides } }
   }
-  const error = validateRoster(draft, true, state.liveData.boxscore.teams)
+  const error = validateRoster(
+    draft,
+    true,
+    replay ? setup.sides : state.liveData.boxscore.teams
+  )
   if (error != null) return { error }
   const next = copyState(state)
   next.gameData.players = copyState(setup.players)
