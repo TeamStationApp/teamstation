@@ -251,6 +251,29 @@ export function expectedPlaceholders(
     keys: ['game_id', 'user_id'],
     rows: []
   }
+  if (expected.absentTables != null)
+    expected.absentTables = expected.absentTables.filter(
+      name => !['game_placeholder_guests', 'game_guest_details'].includes(name)
+    )
+  if (expected.tables.users.types != null) {
+    expected.tables.game_placeholder_guests.types = {
+      game_id: 'text',
+      session_id: 'bigint',
+      side: 'text',
+      user_id: 'bigint'
+    }
+    expected.tables.game_guest_details.types = {
+      game_id: 'text',
+      jersey: 'text',
+      positions: 'ARRAY',
+      user_id: 'bigint'
+    }
+    expected.tables.games.types = {
+      ...expected.tables.games.types,
+      guests: 'jsonb',
+      unrostered: 'jsonb'
+    }
+  }
   expected.userColumns.game_placeholder_guests = ['user_id']
   expected.userColumns.game_guest_details = ['user_id']
   expected.migrations.push('066gameGuests', '067gameUnroster')

@@ -436,6 +436,13 @@ describe('user identity snapshot across real database schemas', function () {
       })
       const original = await capture()
       expect(original.migrations.at(-1)).equals('065radarReadings')
+      expect(original.absentTables).deep.equals([
+        'game_guest_details',
+        'game_placeholder_guests',
+        'gumbo_ids'
+      ])
+      expect(original.tables.users.types!.id).equals('bigint')
+      expect(original.preservedCounts!.audit_log).equals(0)
       await migrateUp(
         pool,
         migrations.filter(m => m.name > '065radarReadings' && m.name < '068')
@@ -461,6 +468,19 @@ describe('user identity snapshot across real database schemas', function () {
       )
       const canonical = await capture()
       expect(compareUserIds(separated, canonical).differences).deep.equals([])
+      expect(canonical.absentTables).deep.equals([])
+      expect(canonical.tables.users.types!.id).equals('text')
+      const missing = structuredClone(canonical)
+      missing.absentTables!.push('unexpected_table')
+      expect(compareUserIds(separated, missing).equal).equals(false)
+      const wrongType = structuredClone(canonical)
+      wrongType.tables.memberships.types!.user_id = 'bigint'
+      expect(() => compareUserIds(separated, wrongType)).throws(
+        'Incorrect user column type'
+      )
+      const changedHistory = structuredClone(canonical)
+      changedHistory.preservedCounts!.audit_log++
+      expect(compareUserIds(separated, changedHistory).equal).equals(false)
     } finally {
       client.release()
     }

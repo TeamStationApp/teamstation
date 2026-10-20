@@ -11,6 +11,7 @@ export interface JsonObject {
 
 export interface TableSnapshot {
   columns: string[]
+  types?: Record<string, string>
   keys: string[]
   rows: JsonObject[]
 }
@@ -25,6 +26,8 @@ export interface UserIdSnapshot {
   userColumns: Record<string, string[]>
   tables: Record<string, TableSnapshot>
   preserved: Record<string, string>
+  preservedCounts?: Record<string, number>
+  absentTables?: string[]
   api: Record<string, Json>
 }
 
@@ -119,11 +122,15 @@ export async function snapshotSql(
      where table_schema = 'public' order by table_name, ordinal_position`
   )
   const schema = new Map<string, string[]>()
+  const types = new Map<string, Record<string, string>>()
   let userIdType: 'bigint' | 'text' | undefined
   for (const row of columns.rows) {
     const held = schema.get(row.table_name) ?? []
     held.push(row.column_name)
     schema.set(row.table_name, held)
+    const tableTypes = types.get(row.table_name) ?? {}
+    tableTypes[row.column_name] = row.data_type
+    types.set(row.table_name, tableTypes)
     if (row.table_name === 'users' && row.column_name === 'id') {
       if (row.data_type !== 'bigint' && row.data_type !== 'text') {
         throw new Error('Unsupported user id column type')
@@ -163,6 +170,7 @@ export async function snapshotSql(
     ;(primary[row.table_name] ??= []).push(row.column_name)
   }
   const tables: Record<string, TableSnapshot> = {}
+  const absentTables: string[] = []
   const names = new Set([
     ...WHOLE_TABLES,
     ...Object.keys(FIELDS),
@@ -170,7 +178,10 @@ export async function snapshotSql(
   ])
   for (const name of [...names].sort()) {
     const available = schema.get(name)
-    if (available == null) continue
+    if (available == null) {
+      absentTables.push(name)
+      continue
+    }
     const keys = primary[name] ?? []
     if (keys.length === 0) throw new Error(`Missing primary key: ${name}`)
     const selected = WHOLE_TABLES.includes(name)
@@ -218,19 +229,30 @@ export async function snapshotSql(
       }
       return row
     })
-    tables[name] = { columns: [...selected].sort(), keys, rows }
+    tables[name] = {
+      columns: [...selected].sort(),
+      types: Object.fromEntries(
+        selected.map(column => [column, types.get(name)![column]])
+      ),
+      keys,
+      rows
+    }
   }
   const migrations = await client.query<{ name: string }>(
     'select name from schema_migrations order by name'
   )
   const preserved: Record<string, string> = {}
+  const preservedCounts: Record<string, number> = {}
   for (const name of [
     'audit_log',
     'rate_events',
     'creation_idempotency',
     'oauth_records'
   ]) {
-    if (!schema.has(name)) continue
+    if (!schema.has(name)) {
+      absentTables.push(name)
+      continue
+    }
     const result = await client.query<{ row: JsonObject }>(
       `select row_to_json(t) as row from ${identifier(name)} t`
     )
@@ -239,6 +261,7 @@ export async function snapshotSql(
         .map(item => item.row)
         .sort((a, b) => canonical(a).localeCompare(canonical(b)))
     )
+    preservedCounts[name] = result.rows.length
   }
   return {
     version: 1,
@@ -246,7 +269,9 @@ export async function snapshotSql(
     userIdType,
     userColumns,
     tables,
-    preserved
+    preserved,
+    preservedCounts,
+    absentTables: absentTables.sort()
   }
 }
 

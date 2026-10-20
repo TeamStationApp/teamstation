@@ -96,6 +96,16 @@ export function normalizeIdentity(
   ignoreNewMappingTime = false
 ): JsonObject {
   const copy = structuredClone(snapshot)
+  for (const [name, table] of Object.entries(copy.tables)) {
+    if (table.types == null) continue
+    for (const column of [
+      ...(copy.userColumns[name] ?? []),
+      ...(name === 'users' ? ['id'] : [])
+    ]) {
+      if (table.types[column] !== copy.userIdType)
+        throw new Error(`Incorrect user column type: ${name}.${column}`)
+    }
+  }
   const userMap = new Map<string, Json>()
   const legacyMap = new Map<string, Json>()
   for (const user of copy.tables.users.rows) {
@@ -118,12 +128,26 @@ export function normalizeIdentity(
   )
   const tables: JsonObject = {}
   const schema: JsonObject = {}
+  const gumboTypes = {
+    gumbo_id: 'bigint',
+    user_id: 'text',
+    created_at: 'timestamp with time zone'
+  }
   schema.gumbo_ids =
     copy.tables.gumbo_ids == null
-      ? { columns: ['created_at', 'gumbo_id', 'user_id'], keys: ['gumbo_id'] }
+      ? {
+          columns: ['created_at', 'gumbo_id', 'user_id'],
+          keys: ['gumbo_id'],
+          ...(copy.tables.users.types == null ? {} : { types: gumboTypes })
+        }
       : {
           columns: [...copy.tables.gumbo_ids.columns].sort(),
-          keys: copy.tables.gumbo_ids.keys
+          keys: copy.tables.gumbo_ids.keys,
+          ...(copy.tables.gumbo_ids.types == null
+            ? {}
+            : {
+                types: { ...copy.tables.gumbo_ids.types, user_id: 'text' }
+              })
         }
   const foreignKeys: JsonObject = { gumbo_ids: ['user_id'] }
   for (const [name, table] of Object.entries(copy.tables)) {
@@ -136,7 +160,22 @@ export function normalizeIdentity(
         .sort(),
       keys: table.keys.map(column =>
         column === scoring?.[0] ? scoring[1] : column
-      )
+      ),
+      ...(table.types == null
+        ? {}
+        : {
+            types: Object.fromEntries(
+              Object.entries(table.types).map(([column, type]) => [
+                column === scoring?.[0] ? scoring[1] : column,
+                column === scoring?.[0]
+                  ? type
+                  : userColumns.includes(column) ||
+                      (name === 'users' && column === 'id')
+                    ? 'text'
+                    : type
+              ])
+            )
+          })
     }
     const normalizedFk = userColumns.filter(column => column !== scoring?.[0])
     if (normalizedFk.length > 0) foreignKeys[name] = normalizedFk
@@ -235,6 +274,14 @@ export function normalizeIdentity(
     schema,
     foreignKeys,
     preserved: copy.preserved,
+    ...(copy.preservedCounts == null
+      ? {}
+      : { preservedCounts: copy.preservedCounts }),
+    ...(copy.absentTables == null
+      ? {}
+      : {
+          absentTables: copy.absentTables.filter(name => name !== 'gumbo_ids')
+        }),
     ...(copy.apiInventory == null
       ? {}
       : {
