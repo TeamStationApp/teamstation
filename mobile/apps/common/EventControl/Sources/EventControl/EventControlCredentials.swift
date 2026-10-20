@@ -5,7 +5,7 @@ import Foundation
 public struct EventControlScope: Sendable, Codable, Hashable {
   /// The issuing server's canonical public origin, as the server states it.
   public let issuer: String
-  /// The user's ID on that server, in decimal.
+  /// The user's canonical account ID on that server.
   public let userId: String
   /// 32 lower-case hex characters; equal for every device of the account.
   public let accountTag: String
@@ -50,8 +50,7 @@ public struct EventControlCredentials: Sendable, Equatable, Codable, CustomStrin
     key: String
   ) throws(Problem) {
     guard !issuer.isEmpty, issuer.utf8.count <= 512 else { throw .badIssuer }
-    guard !userId.isEmpty, userId.utf8.count <= 32,
-          userId.utf8.allSatisfy({ (UInt8(ascii: "0") ... UInt8(ascii: "9")).contains($0) })
+    guard TeamStationUserID.canonical(userId) != nil
     else { throw .badUserId }
     guard let tag = Self.lowerHex(accountTag, bytes: EventControlProtocol.accountTagBytes)
     else { throw .badAccountTag }
@@ -72,7 +71,7 @@ public struct EventControlCredentials: Sendable, Equatable, Codable, CustomStrin
   }
 
   /// The server's JSON reply, as `TeamStationClient`, a Cameraman's own HTTP call or a test has
-  /// it. `userId` is read as a string or as a JSON number.
+  /// it. `userId` must be a canonical string.
   public static func decode(serverReply data: Data) throws -> EventControlCredentials {
     try JSONDecoder().decode(EventControlCredentials.self, from: data)
   }
@@ -98,14 +97,9 @@ public struct EventControlCredentials: Sendable, Equatable, Codable, CustomStrin
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    let version = try container.decodeIfPresent(Int.self, forKey: .version) ?? 1
-    guard version == 1 else { throw Problem.unsupportedVersion }
-    let userId: String
-    if let text = try? container.decode(String.self, forKey: .userId) {
-      userId = text
-    } else {
-      userId = String(try container.decode(Int64.self, forKey: .userId))
-    }
+    let version = try container.decode(Int.self, forKey: .version)
+    guard version == 2 else { throw Problem.unsupportedVersion }
+    let userId = try container.decode(String.self, forKey: .userId)
     try self.init(
       issuer: container.decode(String.self, forKey: .issuer),
       userId: userId,
@@ -117,7 +111,7 @@ public struct EventControlCredentials: Sendable, Equatable, Codable, CustomStrin
 
   public func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
-    try container.encode(1, forKey: .version)
+    try container.encode(2, forKey: .version)
     try container.encode(scope.issuer, forKey: .issuer)
     try container.encode(scope.userId, forKey: .userId)
     try container.encode(scope.accountTag, forKey: .accountTag)
