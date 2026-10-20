@@ -14,6 +14,7 @@ import type * as LineupQrGlyphNative from './LineupQrGlyph.native'
 import { lineupQrGlyphPaths } from './lineupQrGlyphs'
 import { qrMatrix } from './lineupQrMatrix'
 import type * as QrCodeNative from './QrCode.native'
+import type * as QrScannerNative from './qrScanner.native'
 
 interface Drawn {
   type: string
@@ -127,5 +128,279 @@ describe('lineup QR native twins', function () {
     expect(paths[0].props.strokeWidth).equals(1.7)
     expect(paths[1].props).deep.include({ stroke: '#0f0', strokeWidth: 1 })
     expect(drawn.find(node => node.type === 'svg')!.props.width).equals(24)
+  })
+})
+
+describe('the phone’s QR camera', function () {
+  interface Scanner {
+    QrScanner: typeof QrScannerNative.QrScanner
+    qrScannerSupported: boolean
+  }
+  type Native = Record<string, unknown> & {
+    active: boolean
+    onCode: (event: { nativeEvent: { text: string } }) => void
+    onStatus: (event: { nativeEvent: { status: string } }) => void
+  }
+  const camera = (
+    os: string,
+    request: () => Promise<string>,
+    check: () => Promise<boolean> = async () => false
+  ): { scanner: Scanner; drawn: Drawn[]; asked: string[] } => {
+    const drawn: Drawn[] = []
+    const asked: string[] = []
+    const scanner = loadNative<Scanner>(
+      './qrScanner.native',
+      {
+        'react-native': {
+          Platform: { OS: os },
+          PermissionsAndroid: {
+            PERMISSIONS: { CAMERA: 'android.permission.CAMERA' },
+            RESULTS: { GRANTED: 'granted' },
+            request: async (permission: string) => {
+              asked.push(permission)
+              return await request()
+            },
+            check: async () => await check()
+          },
+          codegenNativeComponent: (name: string) => host(`div`, drawn, name)
+        }
+      },
+      ['./TSQrScannerNativeComponent']
+    )
+    return { scanner, drawn, asked }
+  }
+  const last = (drawn: Drawn[]): Native =>
+    drawn.filter(node => node.name === 'TSQrScanner').at(-1)!
+      .props as unknown as Native
+  const mount = (
+    scanner: Scanner,
+    active = true
+  ): {
+    codes: string[]
+    statuses: string[]
+    root: ReturnType<typeof createRoot>
+  } => {
+    const codes: string[] = []
+    const statuses: string[] = []
+    const root = createRoot(document.createElement('div'))
+    act(() => {
+      root.render(
+        createElement(scanner.QrScanner, {
+          active,
+          onCode: (text: string) => codes.push(text),
+          onStatus: (status: string) => statuses.push(status)
+        })
+      )
+    })
+    return { codes, statuses, root }
+  }
+
+  it('asks Android for the camera once the view has one, then turns it on', async function () {
+    const { scanner, drawn, asked } = camera('android', async () => 'granted')
+    expect(scanner.qrScannerSupported).equals(true)
+    const { codes, statuses, root } = mount(scanner)
+    expect(last(drawn).active).equals(false)
+    expect(asked).deep.equals([])
+    await act(async () => {
+      last(drawn).onStatus({ nativeEvent: { status: 'available' } })
+    })
+    expect(asked).deep.equals(['android.permission.CAMERA'])
+    expect(last(drawn).active).equals(true)
+    act(() => {
+      last(drawn).onStatus({ nativeEvent: { status: 'ready' } })
+      last(drawn).onCode({ nativeEvent: { text: 'one' } })
+      last(drawn).onCode({ nativeEvent: { text: 'one' } })
+      last(drawn).onCode({ nativeEvent: { text: 'two' } })
+      last(drawn).onStatus({ nativeEvent: { status: 'mystery' } })
+    })
+    expect(codes).deep.equals(['one', 'two'])
+    expect(statuses).deep.equals(['ready', 'unavailable'])
+    act(() => {
+      root.unmount()
+    })
+  })
+
+  it('reports a refused or failed Android permission as denied', async function () {
+    for (const request of [
+      async () => 'denied',
+      async () => {
+        throw new Error('no activity')
+      }
+    ]) {
+      const { scanner, drawn } = camera('android', request)
+      const { statuses, root } = mount(scanner)
+      await act(async () => {
+        last(drawn).onStatus({ nativeEvent: { status: 'available' } })
+      })
+      expect(statuses).deep.equals(['denied'])
+      expect(last(drawn).active).equals(false)
+      act(() => {
+        root.unmount()
+      })
+    }
+  })
+
+  it('asks nobody on a phone with no camera, and drops an answer after it closes', async function () {
+    let answer: (value: string) => void = () => undefined
+    const { scanner, drawn, asked } = camera(
+      'android',
+      async () => await new Promise<string>(resolve => (answer = resolve))
+    )
+    const quiet = mount(scanner)
+    act(() => {
+      last(drawn).onStatus({ nativeEvent: { status: 'unavailable' } })
+    })
+    expect(asked).deep.equals([])
+    expect(quiet.statuses).deep.equals(['unavailable'])
+    act(() => {
+      quiet.root.unmount()
+    })
+    const late = mount(scanner)
+    await act(async () => {
+      last(drawn).onStatus({ nativeEvent: { status: 'available' } })
+    })
+    act(() => {
+      late.root.unmount()
+    })
+    await act(async () => {
+      answer('denied')
+    })
+    expect(late.statuses).deep.equals([])
+  })
+
+  it('asks Android once however often the sheet renders, and does not ask again after a refusal', async function () {
+    let answer: (value: string) => void = () => undefined
+    const { scanner, drawn, asked } = camera(
+      'android',
+      async () => await new Promise<string>(resolve => (answer = resolve))
+    )
+    const statuses: string[] = []
+    const root = createRoot(document.createElement('div'))
+    // As LineupShareSheet does, a new onStatus on every render.
+    const render = (): void => {
+      act(() => {
+        root.render(
+          createElement(scanner.QrScanner, {
+            active: true,
+            onCode: () => undefined,
+            onStatus: (status: string) => statuses.push(status)
+          })
+        )
+      })
+    }
+    render()
+    await act(async () => {
+      last(drawn).onStatus({ nativeEvent: { status: 'available' } })
+    })
+    render()
+    render()
+    expect(asked).has.length(1)
+    await act(async () => {
+      answer('granted')
+    })
+    expect(last(drawn).active).equals(true)
+    act(() => {
+      root.unmount()
+    })
+    const refused = camera('android', async () => 'never_ask_again')
+    const second = mount(refused.scanner)
+    await act(async () => {
+      last(refused.drawn).onStatus({ nativeEvent: { status: 'available' } })
+    })
+    act(() => {
+      second.root.render(
+        createElement(refused.scanner.QrScanner, {
+          active: true,
+          onCode: () => undefined,
+          onStatus: (status: string) => second.statuses.push(status)
+        })
+      )
+    })
+    expect(refused.asked).has.length(1)
+    expect(second.statuses).deep.equals(['denied'])
+    // Scan Again: the sheet turns the camera off for the warning, then on.
+    for (const active of [false, true])
+      await act(async () => {
+        second.root.render(
+          createElement(refused.scanner.QrScanner, {
+            active,
+            onCode: () => undefined,
+            onStatus: (status: string) => second.statuses.push(status)
+          })
+        )
+      })
+    expect(second.statuses).deep.equals(['denied', 'denied'])
+    expect(refused.asked).has.length(1)
+    act(() => {
+      second.root.unmount()
+    })
+  })
+
+  it('starts the camera on Scan Again once it was allowed in Settings, and reads a code again', async function () {
+    let allowedInSettings = false
+    const { scanner, drawn, asked } = camera(
+      'android',
+      async () => 'denied',
+      async () => allowedInSettings
+    )
+    const codes: string[] = []
+    const root = createRoot(document.createElement('div'))
+    const render = async (active: boolean): Promise<void> => {
+      await act(async () => {
+        root.render(
+          createElement(scanner.QrScanner, {
+            active,
+            onCode: (text: string) => codes.push(text),
+            onStatus: () => undefined
+          })
+        )
+      })
+    }
+    await render(true)
+    await act(async () => {
+      last(drawn).onStatus({ nativeEvent: { status: 'available' } })
+    })
+    expect(last(drawn).active).equals(false)
+    allowedInSettings = true
+    await render(false)
+    await render(true)
+    expect(asked).has.length(1)
+    expect(last(drawn).active).equals(true)
+    // A code, a warning (the camera off), and the same code again.
+    act(() => {
+      last(drawn).onCode({ nativeEvent: { text: 'same' } })
+    })
+    await render(false)
+    await render(true)
+    act(() => {
+      last(drawn).onCode({ nativeEvent: { text: 'same' } })
+    })
+    expect(codes).deep.equals(['same', 'same'])
+    act(() => {
+      root.unmount()
+    })
+  })
+
+  it('lets iOS ask in the view, and keeps the camera off while inactive', async function () {
+    const { scanner, drawn, asked } = camera('ios', async () => 'granted')
+    const { root } = mount(scanner, false)
+    act(() => {
+      last(drawn).onStatus({ nativeEvent: { status: 'available' } })
+    })
+    expect(asked).deep.equals([])
+    expect(last(drawn).active).equals(false)
+    act(() => {
+      root.render(
+        createElement(scanner.QrScanner, {
+          active: true,
+          onCode: () => undefined,
+          onStatus: () => undefined
+        })
+      )
+    })
+    expect(last(drawn).active).equals(true)
+    act(() => {
+      root.unmount()
+    })
   })
 })

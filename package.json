@@ -23,7 +23,8 @@
         "TSPhoneStream": "RCTPhoneStream"
       },
       "componentProvider": {
-        "TSPhoneStreamPreview": "TSPhoneStreamPreviewComponentView"
+        "TSPhoneStreamPreview": "TSPhoneStreamPreviewComponentView",
+        "TSQrScanner": "TSQrScannerComponentView"
       }
     }
   },

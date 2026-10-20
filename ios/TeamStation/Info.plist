@@ -53,7 +53,7 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>TeamStation uses the microphone to score a game from what you say, and for the sound of the video you record.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>TeamStation records and streams video of the game from this phone's camera.</string>
+	<string>TeamStation records and streams video of the game from this phone's camera, and scans lineup QR codes.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>TeamStation connects to your radar to show pitch and exit speeds on the scoreboard.</string>
 	<key>NSAppleMusicUsageDescription</key>
