@@ -6,7 +6,7 @@ import { signOutEverywhere } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { directAdminIds, requireDirectAdmin } from '../groups/adminGuard'
-import { ensureGumboId, gumboIdOf } from '../users/insertUser'
+import { ensureGumboId } from '../users/insertUser'
 
 /**
  * Every row that is one person.
@@ -245,17 +245,20 @@ export async function closeInto(
         'Add another active node administrator before merging the last one'
       )
     const final = (await survivorsOf(trx, [keeping])).get(keeping)!
+    const closingIds = (await onePerson(trx, closing)).userIds
     await trx
       .selectFrom('users')
       .select('id')
-      .where('id', 'in', [...new Set([closing, keeping, final])])
+      .where('id', 'in', [...new Set([...closingIds, keeping, final])])
       .orderBy('id')
       .forUpdate()
       .execute()
-    if ((await gumboIdOf(trx, closing)) != null) {
-      await ensureGumboId(trx, keeping)
-      if (final !== keeping) await ensureGumboId(trx, final)
-    }
+    const inherited = await trx
+      .selectFrom('gumbo_ids')
+      .select('gumbo_id')
+      .where('user_id', 'in', closingIds)
+      .executeTakeFirst()
+    if (inherited != null) await ensureGumboId(trx, final)
     const moved = await moveAndClose(trx, closing, keeping)
     for (const ref of refs) await requireDirectAdmin(trx, ref)
     if (
