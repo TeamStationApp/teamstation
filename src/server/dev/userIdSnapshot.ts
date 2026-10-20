@@ -93,6 +93,7 @@ const FIELDS: Record<string, string[]> = {
     'home_team_id',
     'away_team_id',
     'season_id',
+    'start_at',
     'guests',
     'unrostered',
     'currentPlay'

@@ -1,4 +1,5 @@
 import { userIdOfGumbo } from '../../common/userId'
+import { expectedStableApiOrder } from './userIdOrdering'
 import {
   canonical,
   identityKey,
@@ -392,6 +393,8 @@ export function compareUserIds(
       throw new Error('Merge transformation is restricted to A to B')
     expectedMergedApi(before, transformations)
   }
+  if (before.userIdType === 'bigint' && after.userIdType === 'text')
+    expectedStableApiOrder(before, transformations)
   normalizeTransport(before, transformations)
   normalizeTransport(after, transformations)
   orderSnapshotTables(before)

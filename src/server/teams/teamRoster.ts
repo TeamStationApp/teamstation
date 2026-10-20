@@ -456,7 +456,9 @@ async function sectionPeople(
       const byLevel =
         Number(a.inheritedFrom != null) - Number(b.inheritedFrom != null)
       if (byLevel !== 0) return byLevel
-      return a.shortName.localeCompare(b.shortName)
+      const byName = a.shortName.localeCompare(b.shortName)
+      if (byName !== 0) return byName
+      return a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0
     })
 }
 

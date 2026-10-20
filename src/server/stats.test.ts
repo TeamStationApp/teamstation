@@ -95,6 +95,32 @@ describe('stats', function () {
     expect(line.teamId).equals(null)
   })
 
+  it('breaks equal batting and pitching ranks by case-sensitive canonical id', function () {
+    // These Base58 suffixes straddle uppercase/lowercase ordering.
+    const ids = [33, 34, 35].map(userIdOfGumbo)
+    const rows = ids.map((userId, index) =>
+      game({ userId, pa: 3, h: index, pitchBf: 4, pitchOuts: 3 })
+    )
+    for (const order of [
+      rows,
+      [...rows].reverse(),
+      [rows[1], rows[2], rows[0]]
+    ]) {
+      expect(battingLines(order)).deep.equals(battingLines(rows))
+      expect(pitchingLines(order)).deep.equals(pitchingLines(rows))
+      expect(battingLines(order).map(line => line.userId)).deep.equals(ids)
+      expect(pitchingLines(order).map(line => line.userId)).deep.equals(ids)
+    }
+    const leader = game({
+      userId: userIdOfGumbo(100),
+      pa: 5,
+      pitchOuts: 6,
+      pitchBf: 8
+    })
+    expect(battingLines([...rows, leader])[0].userId).equals(leader.userId)
+    expect(pitchingLines([...rows, leader])[0].userId).equals(leader.userId)
+  })
+
   it('works out the usual rates from the counts', function () {
     const [line] = battingLines([
       game({ pa: 5, ab: 4, h: 2, singles: 1, doubles: 1, bb: 1 })
