@@ -6,6 +6,7 @@ import { asAccountSettings } from '../../common/accountSettings'
 import { asAddedPerson, TeamStationClient } from '../../common/api'
 import type { GroupRef } from '../../common/groupCreation'
 import { asGroupDetail, asPublicGroup } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   fill,
   find,
@@ -41,7 +42,7 @@ function fixture(): TeamStationClient {
   client.accountSettings = async () =>
     asAccountSettings({
       user: {
-        id: 101,
+        id: userIdOfGumbo(101),
         displayName: 'Babe Ruth',
         avatarUrl: null,
         isAdmin: false
@@ -511,7 +512,11 @@ describe('direct action request forms', () => {
           kinds[index++]
             ? {
                 added: true,
-                person: { userId: 102, displayName: 'Lou Gehrig', email }
+                person: {
+                  userId: userIdOfGumbo(102),
+                  displayName: 'Lou Gehrig',
+                  email
+                }
               }
             : {
                 added: false,

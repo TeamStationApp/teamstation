@@ -9,6 +9,7 @@ import type {
   LiveStream,
   TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { fakePhoneStreamModule, RECORDING } from './fakePhoneStreamModule'
 import { makePhoneStream } from './phoneStreamClient'
@@ -20,7 +21,7 @@ const originalPlatform = Platform.OS
 const held: LiveStream = {
   id: 'liv_00000000000000000001',
   gameId: 'gam_1',
-  userId: 7,
+  userId: userIdOfGumbo(7),
   ownerName: 'Mookie Betts',
   slot: 1,
   label: 'Home',

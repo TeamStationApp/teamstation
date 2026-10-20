@@ -109,30 +109,66 @@ describe('migrations', function () {
     )
   })
 
-  it('rolls every migration back, leaving only its own bookkeeping', async function () {
-    const rolledBack = await migrateDown(pool, migrations, migrations.length)
-    expect(rolledBack.length).equals(migrations.length)
+  it('refuses reverse identity migrations without changing the applied schema', async () => {
+    const before = (
+      await pool.query('select name from schema_migrations order by name')
+    ).rows
+    let failure: unknown
+    try {
+      await migrateDown(pool, migrations, migrations.length)
+    } catch (error) {
+      failure = error
+    }
+    expect(String(failure)).matches(/Restore the (?:verified )?pre-cutover/)
+    expect(
+      (await pool.query('select name from schema_migrations order by name'))
+        .rows
+    ).deep.equals(before)
+    expect((await migrateUp(pool, migrations)).applied).deep.equals([])
+  })
+})
 
-    const { rows } = await pool.query<{ tablename: string }>(
+describe('reversible migration history before the identity cutover', function () {
+  this.timeout(60000)
+  const name = `teamstation_history_${process.pid}_${Date.now()}`
+  const history = migrations.filter(m => m.name < '068')
+  let admin: Pool
+  let pool: Pool
+  before(async () => {
+    admin = new Pool({ connectionString: adminUrl })
+    await admin.query(`create database ${name}`)
+    pool = new Pool({
+      connectionString: adminUrl.replace(/\/[^/]*$/, `/${name}`)
+    })
+  })
+  after(async () => {
+    await pool?.end()
+    await admin.query(`drop database if exists ${name}`)
+    await admin.end()
+  })
+  it('rolls back and reapplies historical schemas, including below the baseline', async () => {
+    await migrateUp(pool, history)
+    expect(await migrateDown(pool, history, history.length)).length(
+      history.length
+    )
+    const tables = await pool.query(
       "select tablename from pg_tables where schemaname = 'public'"
     )
-    expect(rows.map(row => row.tablename)).deep.equals(['schema_migrations'])
-  })
-
-  it('applies cleanly a second time after a rollback', async function () {
-    const again = await migrateUp(pool, migrations)
-    expect(again.applied).deep.equals(migrations.map(item => item.name))
-  })
-
-  it('migrates up again after rolling back below the baseline', async function () {
-    const rolledBack = await migrateDown(
-      pool,
-      migrations,
-      migrations.filter(migration => migration.name >= BASELINE).length
+    expect(tables.rows.map(row => row.tablename)).deep.equals([
+      'schema_migrations'
+    ])
+    expect((await migrateUp(pool, history)).applied).deep.equals(
+      history.map(m => m.name)
     )
-    expect(rolledBack[rolledBack.length - 1]).equals(BASELINE)
-    const again = await migrateUp(pool, migrations)
-    expect(again.applied).deep.equals([...rolledBack].reverse())
+    const down = await migrateDown(
+      pool,
+      history,
+      history.filter(m => m.name >= BASELINE).length
+    )
+    expect(down.at(-1)).equals(BASELINE)
+    expect((await migrateUp(pool, history)).applied).deep.equals(
+      [...down].reverse()
+    )
   })
 })
 

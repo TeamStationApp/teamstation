@@ -18,7 +18,7 @@ export interface GuardianInviteProps {
    * invitation. Absent for a guardian's, which goes out in their own name.
    */
   teamId?: string
-  playerUserId: number
+  playerUserId: string
   /** The player's short name, for the sentence that says what a guardian is. */
   playerName: string
 }
@@ -116,11 +116,11 @@ export function GuardianInvite(props: GuardianInviteProps): React.ReactElement {
 
 export interface GuardianRequestProps {
   client: TeamStationClient
-  playerUserId: number
+  playerUserId: string
   /** The player's short name, for the question the sheet asks. */
   playerName: string
   /** The signed-in viewer, who asks for themselves. */
-  viewerId: number
+  viewerId: string
 }
 
 /**

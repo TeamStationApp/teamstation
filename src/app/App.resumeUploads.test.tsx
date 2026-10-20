@@ -8,6 +8,7 @@ import {
   asSessionUser,
   TeamStationClient
 } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
 import { App } from './App'
 import { phoneStream } from './stream/phoneStream'
 
@@ -62,7 +63,7 @@ describe('the app at launch', () => {
           {
             id: 'liv_00000000000000000001',
             gameId,
-            userId: 1,
+            userId: userIdOfGumbo(1),
             ownerName: 'Demo Fan',
             slot: 1,
             label: 'Home Plate',
@@ -80,7 +81,11 @@ describe('the app at launch', () => {
         maxCameras: 4
       })
     proto.whoAmI = async () =>
-      asSessionUser({ id: 1, displayName: 'Demo Fan', isAdmin: false })
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo Fan',
+        isAdmin: false
+      })
     proto.myRoles = async () => {
       throw new Error('offline')
     }

@@ -17,7 +17,7 @@ const DECLINES_TO_BLOCK = 3
  * somebody else. A team's invitation is never a request.
  */
 export function isGuardianRequest(request: {
-  sender_id: number
+  sender_id: string
   sender_scope_type: string | null
   terms: unknown
 }): boolean {
@@ -52,7 +52,7 @@ export function isGuardianRequest(request: {
  */
 export async function checkGuardianLimits(
   db: Kysely<Database>,
-  senderId: number,
+  senderId: string,
   clock: Clock,
   options: { declines: boolean } = { declines: true }
 ): Promise<void> {

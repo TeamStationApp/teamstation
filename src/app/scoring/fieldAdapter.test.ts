@@ -12,6 +12,7 @@ import {
 } from 'three'
 
 import { asRosterEntry } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { scoringRoster } from '../../test/scoringSession'
 import { pitchingPose } from '../field/athletePose'
 import { FieldScene } from '../field/FieldScene'
@@ -24,7 +25,7 @@ import { gameFixture } from './isUnscoredGame.test'
 
 const roster = [
   asRosterEntry({
-    userId: 103,
+    userId: userIdOfGumbo(103),
     gumboId: 103,
     shortName: 'Casey M.',
     jersey: '00',

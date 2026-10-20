@@ -1,5 +1,8 @@
+/** Historical identity encoding, retained only for pre-migration fixtures. */
 import { asString, type Cleaner } from 'cleaners'
 import { base64url } from 'rfc4648'
+
+import { makeId } from '../common/ids'
 
 // The leading 53 bits of a `usr_` plus 16 base64url characters, a JSON number.
 // Fifty-three bits is the largest integer JSON and a TypeScript `number` both
@@ -60,4 +63,22 @@ export function heldUserId(entityId: string): number {
       `external id points at ${JSON.stringify(entityId)}, which is not a user id`
     )
   }
+}
+
+/**
+ * Draws a user id. `isTaken` is the caller's lookup. When the first number is
+ * already in use, one more is drawn and not checked: two collisions in a
+ * 53-bit space do not happen, and the insert's primary key refuses one if
+ * they did. Minting reads node crypto, so it lives apart from the module the
+ * browser bundle imports.
+ */
+export function mintUserId(isTaken: (userId: number) => boolean): {
+  legacyId: string
+  userId: number
+} {
+  const first = makeId('user')
+  const firstId = userIdNumber(first)
+  if (!isTaken(firstId)) return { legacyId: first, userId: firstId }
+  const second = makeId('user')
+  return { legacyId: second, userId: userIdNumber(second) }
 }

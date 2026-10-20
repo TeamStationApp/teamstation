@@ -207,7 +207,7 @@ export function seasonRoutes(
  */
 export async function schedulableSeasonIds(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   isAdmin: boolean
 ): Promise<Set<string>> {
   const rights = await scheduleRights(db, userId, isAdmin)

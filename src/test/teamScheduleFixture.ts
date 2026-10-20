@@ -1,3 +1,4 @@
+import { userIdOfGumbo } from '../common/userId'
 /**
  * A team with a season either side of today, for the team screen's
  * end-to-end tests: the browser run answers the app's API from this, and the
@@ -186,7 +187,7 @@ const ROSTER = [
   }))
 ].map((person, index) => ({
   ...person,
-  userId: 100 + index,
+  userId: userIdOfGumbo(100 + index),
   gumboId: 100 + index,
   avatarUrl: null,
   isPlayer: person.section === 'player',
@@ -202,7 +203,7 @@ const BATTING = PLAYERS.map(([shortName], index) => {
   const ab = 20 + index
   const h = 5 + (index % 7)
   return {
-    userId: 103 + index,
+    userId: userIdOfGumbo(103 + index),
     gumboId: 103 + index,
     shortName,
     teamId: TEAM_ID,
@@ -234,7 +235,7 @@ const BATTING = PLAYERS.map(([shortName], index) => {
 const PITCHING = PLAYERS.filter(([, , positions]) =>
   (positions as readonly string[]).includes('P')
 ).map(([shortName], index) => ({
-  userId: 200 + index,
+  userId: userIdOfGumbo(200 + index),
   gumboId: 200 + index,
   shortName,
   teamId: TEAM_ID,
