@@ -14,6 +14,7 @@ import {
   GRID_VIDEOS,
   gridState,
   open,
+  pause,
   shot,
   signedIn,
   type WebSession,
@@ -672,5 +673,39 @@ describe('player layouts in a browser', function () {
       }
       await shot(session, `web-gestures-${what}-after.png`)
     }
+  })
+
+  it('says a browser without HEVC cannot play the video, inline and on every tile, and fetches none (E8)', async function () {
+    const { S } = fixture().games
+    const session = await webSession('e8', 1280, 720)
+    const { page } = session
+    // Chrome without HEVC: Media Source says no to it alone; everything else
+    // answers as Chrome does, `canPlayType` included.
+    await page.evaluateOnNewDocument(`(() => {
+      const supported = MediaSource.isTypeSupported.bind(MediaSource)
+      MediaSource.isTypeSupported = type => !/hvc1|hev1/.test(type) && supported(type)
+    })()`)
+    const media: string[] = []
+    page.on('request', request => {
+      const url = request.url()
+      if (/\.(m3u8|m4s|mp4|ts)(\?|$)/.test(url)) media.push(url)
+    })
+    await open(session, `/games/${S.id}?tab=watch&video=${S.videos[0]}`)
+    await page.waitForFunction(
+      `document.body.innerText.includes(${JSON.stringify(lstrings.video_not_supported)})`,
+      { timeout: 30_000 }
+    )
+    expect(
+      await page.evaluate(`document.querySelectorAll('#root video').length`)
+    ).equals(0)
+    await shot(session, 'web-unsupported-after.png')
+
+    await open(session, grid(S, 2, 60))
+    await page.waitForFunction(
+      `(() => [...document.querySelectorAll('[data-tile-state]')].filter(tile => tile.getAttribute('data-tile-state') === 'unsupported').length === 2)()`,
+      { timeout: 30_000 }
+    )
+    await pause(3000)
+    expect(media, 'no media asked for').deep.equals([])
   })
 })

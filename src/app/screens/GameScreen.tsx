@@ -65,6 +65,7 @@ import { livePlaybackRetryDelay } from '../player/liveRejoin'
 import { multiAngleSupported } from '../player/multiCam/support'
 import { angleLabels, defaultAngles } from '../player/multiCam/takes'
 import { MultiCamView } from '../player/MultiCamView'
+import { playableHere } from '../player/playable'
 import { PlayerSurface } from '../player/PlayerSurface'
 import { pictureRect } from '../player/scoreboardOverlay/overlayLayout'
 import { isStillLive } from '../player/stillLive'
@@ -571,6 +572,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * this one, taking the `<video>` with it and stopping playback dead.
    */
   const engine = useMemo(() => playerEngine(), [])
+  /** Whether this browser can play the video at all (`playable.ts`). */
+  const playable = useMemo(() => playableHere(), [])
   /** "All angles": several at once. */
   const anglesOffered = multiAngleSupported(engine, 2)
   /**
@@ -1317,8 +1320,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // The picture behind goes there too, so it is there on the way back.
     const player = playerRef.current
     if (player != null) seekTo(player, highlight.startOffsetSec)
-    // Watched in the player, from the play on.
-    openPlayer(highlight.startOffsetSec)
+    // Watched in the player, from the play on — when it can play here at
+    // all, as the picture's own tap: otherwise the player opens on a picture
+    // that can only say it cannot.
+    if (playback?.url != null && playable) openPlayer(highlight.startOffsetSec)
   }
 
   // The chosen play's full account clears itself a minute and a half after the
@@ -1674,7 +1679,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           active={!showAngles}
           scoreboard={pictureBoard}
           onOpen={
-            playback?.url == null
+            playback?.url == null || !playable
               ? undefined
               : () => {
                   openPlayer(playerRef.current?.currentTime ?? lastTime.current)
@@ -1683,13 +1688,23 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         >
           {isLive && <LivePill />}
           {playback == null ? (
-            <ActivityIndicator color={theme.primaryTextColor} />
+            <View style={styles.inPlace}>
+              <ActivityIndicator color={theme.primaryTextColor} />
+            </View>
           ) : playback.url == null ? (
             // The row says there is a video and its files are not there. Saying
             // so beats a player that shows black and never explains itself.
-            <Text style={styles.message}>
-              {lstrings.game_video_unavailable}
-            </Text>
+            <View style={styles.inPlace}>
+              <Text style={styles.message}>
+                {lstrings.game_video_unavailable}
+              </Text>
+            </View>
+          ) : !playable ? (
+            // Nothing here can decode it: said, rather than a dead picture,
+            // and nothing is fetched for it.
+            <View style={styles.inPlace}>
+              <Text style={styles.message}>{lstrings.video_not_supported}</Text>
+            </View>
           ) : (
             // No controls of its own: a tap opens the full-screen player,
             // which has them, and its sound. This one always plays silent, so
@@ -2416,6 +2431,20 @@ const getStyles = cacheStyles((theme: Theme) =>
       maxWidth: theme.rem(22),
       padding: theme.rem(0.75),
       textAlign: 'center'
+    },
+    /**
+     * What stands in the picture's place — loading, gone, or not playable
+     * here — in the middle of it: at the top it sat under the game's board,
+     * which hid the first half of the words.
+     */
+    inPlace: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      alignItems: 'center',
+      justifyContent: 'center'
     }
   })
 )

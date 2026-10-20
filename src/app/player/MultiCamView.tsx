@@ -21,6 +21,7 @@ import {
   playerLayout,
   topOfAngles
 } from './multiCam/playerLayout'
+import { tileNotice } from './multiCam/tileNotice'
 import {
   type MultiCamProps,
   type PressMode,
@@ -28,6 +29,7 @@ import {
   useMultiCam
 } from './multiCam/useMultiCam'
 import { MultiCamBar } from './MultiCamBar'
+import { playableHere } from './playable'
 import type { PlayIntent } from './playIntent'
 import {
   GridScoreboard,
@@ -90,6 +92,8 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
    * to somebody on a gigabit line who can see the same view stall. This shows
    * the numbers it reached that conclusion from.
    */
+  /** Whether this browser can play the video at all (`playable.ts`). */
+  const playable = useMemo(() => playableHere(), [])
   const debug = useMemo(
     () =>
       typeof location !== 'undefined' &&
@@ -312,6 +316,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           videoId={video.id}
           url={mc.urls[video.id] ?? null}
           unavailable={mc.urls[video.id] === null}
+          unsupported={!playable}
           onGiveUp={askAgain}
           // Silent throughout a crawl, whichever angle is heard: the sound
           // follows the moment, and a crawl across two recordings would
@@ -468,6 +473,8 @@ function Tile(props: {
   unplaceable: boolean
   /** Its media is not there — the server answered, and there is nothing to play. */
   unavailable: boolean
+  /** Nothing in this browser can play it: nothing is attached. */
+  unsupported: boolean
   takeRef: (node: TileHandle | null) => void
   /** Where its player hands its own wall-clock mapping. */
   onWallMapping: (mapping: WallMapping | null) => void
@@ -499,6 +506,7 @@ function Tile(props: {
     name,
     parked,
     unavailable,
+    unsupported,
     unplaceable,
     waiting,
     takeRef,
@@ -554,9 +562,10 @@ function Tile(props: {
       buffer,
       isLive,
       onWallMapping,
-      onSoundHeld
+      onSoundHeld,
+      unsupported
     } = props
-    if (node == null || url == null) return
+    if (node == null || url == null || unsupported) return
     const toSec = onAttaching(videoId)
     const detach = attachHls(
       node,
@@ -648,17 +657,18 @@ function Tile(props: {
   }
 
   // What the tile is doing, as its label says it, for the e2e readings.
-  const tileState =
-    parked ??
-    (unavailable
-      ? 'unavailable'
-      : unplaceable
-        ? 'unplaceable'
-        : waiting
-          ? 'waiting'
-          : hasPicture
-            ? 'playing'
-            : 'loading')
+  const tileState = unsupported
+    ? 'unsupported'
+    : (parked ??
+      (unavailable
+        ? 'unavailable'
+        : unplaceable
+          ? 'unplaceable'
+          : waiting
+            ? 'waiting'
+            : hasPicture
+              ? 'playing'
+              : 'loading'))
   return (
     <View
       dataSet={{ tileState }}
@@ -716,25 +726,20 @@ function Tile(props: {
         </Text>
       </View>
       {parked != null ||
+      unsupported ||
       unavailable ||
       unplaceable ||
       waiting ||
       !hasPicture ? (
         <View style={styles.tileParked} pointerEvents="none">
           <Text style={styles.tileParkedText}>
-            {unavailable
-              ? lstrings.game_video_unavailable
-              : unplaceable
-                ? lstrings.angles_unplaceable
-                : parked === 'beforeStart'
-                  ? lstrings.angles_not_recording_yet
-                  : parked === 'afterEnd'
-                    ? lstrings.angles_stopped
-                    : parked === 'notYet'
-                      ? lstrings.angles_tile_waiting_live
-                      : waiting
-                        ? lstrings.angles_tile_catching_up
-                        : lstrings.angles_tile_loading}
+            {tileNotice({
+              unsupported,
+              unavailable,
+              unplaceable,
+              parked,
+              waiting
+            })}
           </Text>
         </View>
       ) : null}

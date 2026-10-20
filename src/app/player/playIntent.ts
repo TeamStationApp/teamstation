@@ -66,6 +66,8 @@ export interface PlayIntent {
    * back to the server's wall timeline or the start time (`wallMapping.ts`).
    */
   onWallMapping?: (mapping: WallMapping | null) => void
+  /** Nothing in this browser can play the video, and nothing was attached. */
+  onUnsupported?: () => void
   /**
    * This player was left playing silent because its sound needs a tap here:
    * WebKit's own player, started silently to its first frame and wanted

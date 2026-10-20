@@ -34,6 +34,7 @@ import {
   playerLayout,
   topOfAngles
 } from './multiCam/playerLayout'
+import { tileNotice } from './multiCam/tileNotice'
 import {
   type MultiCamProps,
   type TileDrag,
@@ -544,19 +545,7 @@ function Tile(props: {
       !hasPicture ? (
         <View style={styles.tileParked}>
           <Text style={styles.tileParkedText}>
-            {unavailable
-              ? lstrings.game_video_unavailable
-              : unplaceable
-                ? lstrings.angles_unplaceable
-                : parked === 'beforeStart'
-                  ? lstrings.angles_not_recording_yet
-                  : parked === 'afterEnd'
-                    ? lstrings.angles_stopped
-                    : parked === 'notYet'
-                      ? lstrings.angles_tile_waiting_live
-                      : waiting
-                        ? lstrings.angles_tile_catching_up
-                        : lstrings.angles_tile_loading}
+            {tileNotice({ unavailable, unplaceable, parked, waiting })}
           </Text>
         </View>
       ) : null}

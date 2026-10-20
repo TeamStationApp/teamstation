@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import Hls from 'hls.js'
-import { afterEach, describe, it } from 'mocha'
+import { after, afterEach, before, describe, it } from 'mocha'
 
 import {
   APPLE_VENDOR,
@@ -15,6 +15,24 @@ import {
 import type { PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
 import type { VideoHandle } from './videoHandle'
+
+// A browser whose Media Source takes HEVC, as every one these tests stand
+// for does; the one that does not says so for itself.
+const mediaSourceBefore = Object.getOwnPropertyDescriptor(
+  globalThis,
+  'MediaSource'
+)
+before(function () {
+  Object.defineProperty(globalThis, 'MediaSource', {
+    configurable: true,
+    value: { isTypeSupported: () => true }
+  })
+})
+after(function () {
+  if (mediaSourceBefore == null)
+    Reflect.deleteProperty(globalThis, 'MediaSource')
+  else Object.defineProperty(globalThis, 'MediaSource', mediaSourceBefore)
+})
 
 /**
  * What happens to a live game when the stream stumbles.
@@ -221,13 +239,15 @@ describe('who plays the playlist', function () {
     }
   })
 
-  it('is the browser where there is no Media Source but native HLS', function () {
+  it('is the browser where there is no Media Source but Apple’s own HLS, and nobody else there', function () {
     expect(
       hlsEngine({ vendor: APPLE_VENDOR, nativeHls: true, mediaSource: false })
     ).equals('native')
+    // Chrome answers `maybe` to HLS either way: without Media Source to
+    // decode through, nothing plays it.
     expect(
       hlsEngine({ vendor: 'Google Inc.', nativeHls: true, mediaSource: false })
-    ).equals('native')
+    ).equals('none')
   })
 
   it('is nobody without either', function () {
@@ -1161,6 +1181,44 @@ describe('the player’s dates, handed out as a mapping (U21)', function () {
     expect(handed[1]?.wallAt(10)).equals(T0 + 10_000)
     expect(handed[2]?.newestWall()).equals(T0 + 34_000)
     // Detached, it listens to nothing more.
+    expect(video.attached()).equals(0)
+  })
+})
+
+describe('a browser that cannot play the video (U31)', function () {
+  it('is told, and nothing is attached', function () {
+    const video = new FakeVideo('maybe')
+    const realMediaSource = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'MediaSource'
+    )
+    Object.defineProperty(globalThis, 'MediaSource', {
+      configurable: true,
+      value: { isTypeSupported: () => false }
+    })
+    let told = 0
+    try {
+      asBrowser('Google Inc.', () => {
+        const detach = attachHls(
+          video as unknown as VideoHandle,
+          'https://example.com/media/vid_example/master.m3u8',
+          undefined,
+          {
+            wantsToPlay: () => true,
+            onUnsupported: () => {
+              told += 1
+            }
+          }
+        )
+        detach()
+      })
+    } finally {
+      if (realMediaSource == null)
+        Reflect.deleteProperty(globalThis, 'MediaSource')
+      else Object.defineProperty(globalThis, 'MediaSource', realMediaSource)
+    }
+    expect(told).equals(1)
+    expect(video.src).equals('')
     expect(video.attached()).equals(0)
   })
 })

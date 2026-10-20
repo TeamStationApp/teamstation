@@ -187,6 +187,8 @@ export const enUs = {
   angles_tile_loading: 'Camera loading…',
   angles_tile_catching_up: 'Camera catching up…',
   angles_tile_waiting_live: 'Waiting for this camera to catch up to the game…',
+  video_not_supported:
+    "This browser can't play TeamStation video. Try Chrome, Edge or Safari.",
   angles_close: 'Close',
   angles_play: 'Play',
   angles_pause: 'Pause',

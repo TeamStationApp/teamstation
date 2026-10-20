@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
@@ -589,5 +589,59 @@ describe('another angle, at the same moment (U23)', function () {
       video.dispatchEvent(new window.Event('loadedmetadata'))
     })
     expect(video.currentTime).equals(100)
+  })
+})
+
+describe('a browser that cannot play the video (U32)', function () {
+  let mediaSource: PropertyDescriptor | undefined
+  beforeEach(function () {
+    mediaSource = Object.getOwnPropertyDescriptor(globalThis, 'MediaSource')
+    // No HEVC through Media Source, and no HLS of its own.
+    Object.defineProperty(globalThis, 'MediaSource', {
+      configurable: true,
+      value: { isTypeSupported: () => false }
+    })
+  })
+  afterEach(async function () {
+    // The grid is portalled into the body: React takes it out first.
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    if (mediaSource == null) Reflect.deleteProperty(globalThis, 'MediaSource')
+    else Object.defineProperty(globalThis, 'MediaSource', mediaSource)
+  })
+
+  it('says so in place of the picture, with nothing to open', async function () {
+    const view = await page([videoOf('v1', START)], {}, { highlight: true })
+    expect(document.body.textContent).includes(lstrings.video_not_supported)
+    expect(document.querySelector('#root video, body > div video')).equals(null)
+    expect(document.querySelector('[data-testid="gameVideoOpen"]')).equals(null)
+    // Nor does a highlight open the player on it.
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(
+          '[aria-label="Play highlight: Selected single"]'
+        )!
+        .click()
+    })
+    expect(view.changes.some(change => change.from != null)).equals(false)
+  })
+
+  it('says so on every tile of All Angles, attaching nothing', async function () {
+    await page([videoOf('v1', START), videoOf('v2', START)], {
+      angles: ['v1', 'v2'],
+      audioId: 'v1'
+    })
+    const states = [...document.querySelectorAll('[data-tile-state]')].map(
+      tile => tile.getAttribute('data-tile-state')
+    )
+    expect(states).deep.equals(['unsupported', 'unsupported'])
+    const said = [...document.querySelectorAll('div')].filter(
+      node => node.textContent === lstrings.video_not_supported
+    )
+    expect(said.length).at.least(2)
+    for (const video of document.querySelectorAll('video'))
+      expect(video.getAttribute('src')).equals(null)
   })
 })
