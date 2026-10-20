@@ -1095,7 +1095,7 @@
           "connection": 1,
           "director": "dirA",
           "send": "raw",
-          "hex": "0201",
+          "hex": "9901",
           "expect": {
             "reply": {
               "type": "ack",
@@ -1115,7 +1115,7 @@
           "connection": 1,
           "director": "dirA",
           "send": "raw",
-          "hex": "0101",
+          "hex": "0201",
           "expect": {
             "reply": null,
             "close": true

@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { after, ball, TEAMS, walk } from '../../test/scoringGames'
+import { userIdOfGumbo } from '../userId'
 import type { JsonSchema } from './actions'
 import { freshGame, newSetup, type RosterPlayer } from './lineup'
 import {
@@ -60,13 +61,14 @@ const id = (name: string): number =>
 function pregame(): GameState {
   const roster = (names: string[], first: number): RosterPlayer[] =>
     names.map((shortName, i) => ({
-      userId: first + i,
+      userId: userIdOfGumbo(first + i),
+      gumboId: first + i,
       shortName,
       jersey: String(i + 2)
     }))
   const setup = newSetup(TEAMS, {
-    away: roster(AWAY, 101),
-    home: roster(HOME, 201)
+    away: roster(AWAY, 1),
+    home: roster(HOME, 11)
   })
   for (const side of ['away', 'home'] as const)
     setup.sides[side].battingOrder = setup.sides[side].battingOrder.slice(0, 9)
@@ -293,6 +295,7 @@ describe('roster commands: lineups, defenses and players (U1)', function () {
     const numbered = staged(state, [
       {
         type: 'addPlayer',
+        player: 9000000,
         side: 'home',
         name: ' Shohei  Ohtani ',
         jersey: '17'
@@ -307,7 +310,7 @@ describe('roster commands: lineups, defenses and players (U1)', function () {
       firstName: 'Shohei',
       lastName: 'Ohtani',
       jersey: '17',
-      userId: null,
+      id: 9000000,
       local: true,
       teamId: TEAMS.home.id
     })
@@ -317,7 +320,7 @@ describe('roster commands: lineups, defenses and players (U1)', function () {
       lines: ['Shohei O. #17 added to the roster']
     })
     const plain = staged(state, [
-      { type: 'addPlayer', side: 'away', name: 'Ohtani' }
+      { type: 'addPlayer', player: 9000000, side: 'away', name: 'Ohtani' }
     ])
     const player =
       plain.draft.gameData.players[

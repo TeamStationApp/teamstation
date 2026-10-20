@@ -8,10 +8,12 @@ import { Client, Pool } from 'pg'
 
 import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -86,23 +88,20 @@ describe('scheduling a team’s games over HTTP', function () {
     for (const person of PEOPLE) {
       const made = mintUserId(id => [...users.values()].includes(id))
       users.set(person, made.userId)
-      await db
-        .insertInto('users')
-        .values({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: person,
-          is_admin: person === 'site',
-          login_enabled: true,
-          created_at: now,
-          updated_at: now
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(made.userId),
+        legacyId: made.legacyId,
+        display_name: person,
+        is_admin: person === 'site',
+        login_enabled: true,
+        created_at: now,
+        updated_at: now
+      })
       await db
         .insertInto('auth_sessions')
         .values({
           id: makeId('authSession'),
-          user_id: made.userId,
+          user_id: userIdOfGumbo(made.userId),
           token_hash: hashToken(token(person)),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
@@ -175,31 +174,31 @@ describe('scheduling a team’s games over HTTP', function () {
       .values([
         {
           id: makeId('membership'),
-          user_id: user('owner'),
+          user_id: userIdOfGumbo(user('owner')),
           team_id: hawks,
           role: 'owner'
         },
         {
           id: makeId('membership'),
-          user_id: user('manager'),
+          user_id: userIdOfGumbo(user('manager')),
           team_id: hawks,
           role: 'manager'
         },
         {
           id: makeId('membership'),
-          user_id: user('member'),
+          user_id: userIdOfGumbo(user('member')),
           team_id: hawks,
           role: 'member'
         },
         {
           id: makeId('membership'),
-          user_id: user('flagged'),
+          user_id: userIdOfGumbo(user('flagged')),
           team_id: hawks,
           role: 'member'
         },
         {
           id: makeId('membership'),
-          user_id: user('parent'),
+          user_id: userIdOfGumbo(user('parent')),
           team_id: hawks,
           role: 'member'
         }
@@ -221,7 +220,7 @@ describe('scheduling a team’s games over HTTP', function () {
           ] as const
         ).map(([person, scopeType, scopeId]) => ({
           id: makeId('scopeRole'),
-          user_id: user(person),
+          user_id: userIdOfGumbo(user(person)),
           scope_type: scopeType,
           scope_id: scopeId
         }))
@@ -243,7 +242,7 @@ describe('scheduling a team’s games over HTTP', function () {
             ] as const
           ).map(([scopeType, scopeId]) => ({
             id: makeId('scopeRole'),
-            user_id: user('flagged'),
+            user_id: userIdOfGumbo(user('flagged')),
             scope_type: scopeType,
             scope_id: scopeId,
             role
@@ -991,7 +990,7 @@ describe('scheduling a team’s games over HTTP', function () {
       .values({
         id: makeId('eventPlayer'),
         event_id: top.id,
-        user_id: userOf('leagueAdmin'),
+        gumbo_id: userOf('leagueAdmin'),
         team_id: placeholder,
         role: 'fielder',
         position: 'SS'
@@ -1003,7 +1002,7 @@ describe('scheduling a team’s games over HTTP', function () {
         id: makeId('liveStream'),
         game_id: gameId,
         team_id: placeholder,
-        user_id: userOf('site'),
+        user_id: userIdOfGumbo(userOf('site')),
         key_hash: `hash_${key}`,
         key_prefix: 'prefix',
         key_cipher: 'cipher',
@@ -1024,22 +1023,20 @@ describe('scheduling a team’s games over HTTP', function () {
             .selectFrom('event_players')
             .innerJoin('events', 'events.id', 'event_players.event_id')
             .select([
-              'event_players.user_id as userId',
+              'event_players.gumbo_id as userId',
               'event_players.team_id as teamId'
             ])
             .where('events.gameId', '=', gameId)
             .execute()
         : await db!
             .selectFrom('game_player_stats')
-            .select(['user_id as userId', 'team_id as teamId'])
+            .select(['gumbo_id as userId', 'team_id as teamId'])
             .where('game_id', '=', gameId)
             .execute()
     const byPerson: Record<string, string | null> = {}
     for (const person of PEOPLE) {
       const teams = new Set(
-        rows
-          .filter(row => Number(row.userId) === userOf(person))
-          .map(row => row.teamId)
+        rows.filter(row => row.userId === userOf(person)).map(row => row.teamId)
       )
       if (teams.size > 1) throw new Error(`${person} is on two teams`)
       if (teams.size === 1) byPerson[person] = [...teams][0]
@@ -2006,7 +2003,7 @@ describe('scheduling a team’s games over HTTP', function () {
   it('refuses a game’s fence to anybody who does not run the game', async function () {
     await db!
       .deleteFrom('scope_roles')
-      .where('user_id', '=', userOf('otherSeasonAdmin'))
+      .where('user_id', '=', userIdOfGumbo(userOf('otherSeasonAdmin')))
       .where('scope_type', '=', 'team')
       .where('scope_id', '=', hawks)
       .execute()
@@ -2062,7 +2059,7 @@ describe('scheduling a team’s games over HTTP', function () {
       expect(queued).equals(true)
       await connection.query(
         'delete from scope_roles where user_id = $1 and scope_type = $2 and scope_id = $3',
-        [userOf('seasonAdmin'), 'season', spring]
+        [userIdOfGumbo(userOf('seasonAdmin')), 'season', spring]
       )
       await connection.query('commit')
       expect((await pending).status).equals(403)
@@ -2074,7 +2071,7 @@ describe('scheduling a team’s games over HTTP', function () {
         .insertInto('scope_roles')
         .values({
           id: makeId('scopeRole'),
-          user_id: userOf('seasonAdmin'),
+          user_id: userIdOfGumbo(userOf('seasonAdmin')),
           scope_type: 'season',
           scope_id: spring,
           role: 'admin'

@@ -455,7 +455,7 @@ const PLAYERS_FIELDS = ['fielders', 'order', 'bases']
  * Each player an action names, through `each`, field by field: a runner of a
  * battery event's advances too. A null among `bases` is an empty base.
  */
-function mapPlayers(
+export function mapPlayers(
   raw: Record<string, unknown>,
   each: (value: unknown, field: string) => unknown
 ): Record<string, unknown> {
@@ -473,6 +473,12 @@ function mapPlayers(
         ? mapPlayers(advance as Record<string, unknown>, each)
         : advance
     )
+  if (Array.isArray(out.fieldingRoute))
+    out.fieldingRoute = out.fieldingRoute.map((step: unknown) => {
+      if (step == null || typeof step !== 'object') return step
+      const held = step as Record<string, unknown>
+      return held.id == null ? step : { ...held, id: each(held.id, 'fielders') }
+    })
   return out
 }
 
@@ -579,6 +585,26 @@ export function taggedAction(action: ScoringAction): Record<string, unknown> {
   return mapPlayers(action, value =>
     typeof value === 'number' ? tagOf(value) : value
   )
+}
+
+/** Interpreter tags are slots; only the saved order gives them a persistent identity. */
+export function actionFromTagSlots(
+  action: ScoringAction,
+  order: readonly number[]
+): ScoringAction {
+  const mapped = mapPlayers(action, value => {
+    if (
+      typeof value !== 'number' ||
+      !Number.isSafeInteger(value) ||
+      value < 0 ||
+      order[value] == null
+    )
+      throw new Error('Unknown player tag')
+    return order[value]
+  })
+  const result = cleanAction(mapped)
+  if ('problem' in result) throw new Error(result.problem.message)
+  return result.action
 }
 
 export function destinationBase(to: Destination): number {
@@ -853,7 +879,7 @@ export function promptContext(state: GameState): string {
     if (ref == null) return 'nobody'
     const player = players[ref.id]
     const jersey = player?.jersey.trim() ?? ''
-    return `${shortName(player ?? ref)}${jersey === '' ? '' : ` #${jersey}`} ${writtenTag(ref.id)}`
+    return `${shortName(player ?? ref)}${jersey === '' ? '' : ` #${jersey}`} ${writtenTag(state.meta.tagOrder.indexOf(ref.id))}`
   }
   const batting = line.isTopInning ? 'away' : 'home'
   const fielding = batting === 'away' ? 'home' : 'away'

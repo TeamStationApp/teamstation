@@ -200,8 +200,8 @@ export function describePlay(
   // The batter of the play these actions open: after a decided play the
   // first of them brings the next batter up.
   const batter =
-    applyAction(before, actions[0]).state.liveData.plays.currentPlay?.matchup
-      .batter.id ?? words.batter()
+    applyAction(before, actions[0], { replay: true }).state.liveData.plays
+      .currentPlay?.matchup.batter.id ?? words.batter()
   const pitches = actions.filter(
     (action): action is Extract<ScoringAction, { type: 'pitch' }> =>
       action.type === 'pitch'
@@ -533,7 +533,7 @@ function batterRuns(
   let open: number | undefined
   actions.forEach((action, index) => {
     const prior = state
-    state = applyAction(state, action).state
+    state = applyAction(state, action, { replay: true }).state
     const last = runs.at(-1)
     const atBat = state.liveData.plays.currentPlay?.about.atBatIndex
     if (last != null && (closesPlay(action) || atBat === open)) {

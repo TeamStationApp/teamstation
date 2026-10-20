@@ -2,6 +2,7 @@ import { createServer, request as proxyRequest, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import { makeId } from '../common/ids'
+import { userIdOfGumbo } from '../common/userId'
 import { demoLocality, type GroupFixture, groupFixture } from './groupFixtures'
 
 export interface RefinementsFixture {
@@ -29,7 +30,7 @@ export async function refinementsFixture(
     await f.h.db
       .updateTable('users')
       .set({ display_name: name, first_name: 'Demo', last_name: name.slice(5) })
-      .where('id', '=', id)
+      .where('id', '=', userIdOfGumbo(id))
       .execute()
   const teams: Record<string, string> = {
     Hawks: f.teamA,
@@ -69,7 +70,7 @@ export async function refinementsFixture(
     .insertInto('memberships')
     .values({
       id: 'baseline-child-only-player',
-      user_id: 104,
+      user_id: userIdOfGumbo(104),
       team_id: teams.Comets,
       role: 'member',
       is_player: true
@@ -190,7 +191,7 @@ export async function refinementsFixture(
     .values({
       id: makeId('gamePlayerStats'),
       game_id: 'baseline-hawks-eagles',
-      user_id: 104,
+      gumbo_id: 104,
       team_id: f.teamA,
       pa: 4,
       ab: 3,

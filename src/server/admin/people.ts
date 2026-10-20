@@ -6,6 +6,8 @@ import { signOutEverywhere } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { directAdminIds, requireDirectAdmin } from '../groups/adminGuard'
+import { assertMergeScoringSafe } from '../scoring/mergeConflicts'
+import { ensureGumboId } from '../users/insertUser'
 
 /**
  * Every row that is one person.
@@ -26,9 +28,9 @@ import { directAdminIds, requireDirectAdmin } from '../groups/adminGuard'
  */
 export interface OnePerson {
   /** The row still open, which is the one to answer as. */
-  userId: number
+  userId: string
   /** That row and every one closed into it, for a query to sum over. */
-  userIds: number[]
+  userIds: string[]
 }
 
 /** However deep a chain of merges can sensibly go before it is a mistake. */
@@ -36,12 +38,12 @@ const MAX_DEPTH = 16
 
 export async function onePerson(
   db: Kysely<Database>,
-  userId: number
+  userId: string
 ): Promise<OnePerson> {
   // Up the chain to whoever is still open. A cycle would be a bug in whatever
   // wrote it; the guard means it cannot become a hung request.
   let survivor = userId
-  const walked = new Set<number>([userId])
+  const walked = new Set<string>([userId])
   for (let step = 0; step < MAX_DEPTH; step += 1) {
     const row = await db
       .selectFrom('users')
@@ -55,7 +57,7 @@ export async function onePerson(
   }
 
   // And back down it, gathering everybody who became them.
-  const userIds = new Set<number>([survivor])
+  const userIds = new Set<string>([survivor])
   let frontier = [survivor]
   for (let step = 0; step < MAX_DEPTH && frontier.length > 0; step += 1) {
     const rows = await db
@@ -81,8 +83,8 @@ export async function onePerson(
  */
 export async function openRowOf(
   db: Kysely<Database>,
-  userId: number
-): Promise<number | undefined> {
+  userId: string
+): Promise<string | undefined> {
   let at = userId
   for (let step = 0; step <= MAX_DEPTH; step += 1) {
     const row = await db
@@ -145,8 +147,8 @@ export async function openRowOf(
  */
 export async function closeInto(
   db: Kysely<Database>,
-  closing: number,
-  keeping: number
+  closing: string,
+  keeping: string
 ): Promise<Merge> {
   const nothing: Merge = { closed: false, moved: 0 }
   if (closing === keeping) return nothing
@@ -243,6 +245,26 @@ export async function closeInto(
       throw conflict(
         'Add another active node administrator before merging the last one'
       )
+    const final = (await survivorsOf(trx, [keeping])).get(keeping)!
+    const closingIds = (await onePerson(trx, closing)).userIds
+    await assertMergeScoringSafe(
+      trx,
+      closingIds,
+      (await onePerson(trx, final)).userIds
+    )
+    await trx
+      .selectFrom('users')
+      .select('id')
+      .where('id', 'in', [...new Set([...closingIds, keeping, final])])
+      .orderBy('id')
+      .forUpdate()
+      .execute()
+    const inherited = await trx
+      .selectFrom('gumbo_ids')
+      .select('gumbo_id')
+      .where('user_id', 'in', closingIds)
+      .executeTakeFirst()
+    if (inherited != null) await ensureGumboId(trx, final)
     const moved = await moveAndClose(trx, closing, keeping)
     for (const ref of refs) await requireDirectAdmin(trx, ref)
     if (
@@ -288,11 +310,24 @@ export interface Merge {
 /** The advisory lock every merge holds while it checks and writes. */
 const MERGE_LOCK = 'users.closeInto'
 
+/**
+ * Roster writers take this before reading identities or locking any rows.
+ * They may run together, but a merge must finish moving a person's rows
+ * before another writer chooses their surviving account and membership.
+ */
+export async function lockPlayerEdits(
+  trx: Transaction<Database>
+): Promise<void> {
+  await sql`select pg_advisory_xact_lock_shared(hashtextextended(${MERGE_LOCK}, 0))`.execute(
+    trx
+  )
+}
+
 /** The merge itself, once `closeInto` has the lock and has ruled out a loop. */
 async function moveAndClose(
   db: Kysely<Database>,
-  closing: number,
-  keeping: number
+  closing: string,
+  keeping: string
 ): Promise<number> {
   const theirs = await db
     .selectFrom('memberships')
@@ -379,10 +414,10 @@ async function moveAndClose(
  */
 async function closedInto(
   db: Kysely<Database>,
-  row: number,
-  into: number
+  row: string,
+  into: string
 ): Promise<boolean> {
-  const seen = new Set<number>([row])
+  const seen = new Set<string>([row])
   let at = row
   while (true) {
     const found = await db
@@ -426,8 +461,8 @@ export function isFullerName(
 
 export async function keepTheFullerName(
   db: Kysely<Database>,
-  closing: number,
-  keeping: number
+  closing: string,
+  keeping: string
 ): Promise<boolean> {
   const rows = await db
     .selectFrom('users')
@@ -472,7 +507,7 @@ export async function keepTheFullerName(
  */
 export async function tidyClosedRows(
   db: Kysely<Database>
-): Promise<{ moved: number; stranded: number[] }> {
+): Promise<{ moved: number; stranded: string[] }> {
   let moved = 0
   while (true) {
     let pass = 0
@@ -493,16 +528,16 @@ export async function tidyClosedRows(
  * its end, reaches no open row. Read-only, so a dry run can show them too.
  * Each keeps a person off every roster until somebody opens the loop by hand.
  */
-export async function strandedRows(db: Kysely<Database>): Promise<number[]> {
-  const stranded: number[] = []
+export async function strandedRows(db: Kysely<Database>): Promise<string[]> {
+  const stranded: string[] = []
   for (const userId of await closedRowsHoldingTeams(db)) {
     if ((await openEnd(db, userId)) == null) stranded.push(userId)
   }
-  return stranded.sort((a, b) => a - b)
+  return stranded.sort()
 }
 
 /** Every closed row that still holds a team row. */
-async function closedRowsHoldingTeams(db: Kysely<Database>): Promise<number[]> {
+async function closedRowsHoldingTeams(db: Kysely<Database>): Promise<string[]> {
   const rows = await db
     .selectFrom('memberships')
     .innerJoin('users', 'users.id', 'memberships.user_id')
@@ -519,9 +554,9 @@ async function closedRowsHoldingTeams(db: Kysely<Database>): Promise<number[]> {
  */
 async function openEnd(
   db: Kysely<Database>,
-  row: number
-): Promise<number | undefined> {
-  const seen = new Set<number>([row])
+  row: string
+): Promise<string | undefined> {
+  const seen = new Set<string>([row])
   let at = row
   while (true) {
     const found = await db
@@ -538,7 +573,7 @@ async function openEnd(
 }
 
 /** The line a merge tool prints for the rows `strandedRows` finds. */
-export function strandedNote(stranded: number[]): string | undefined {
+export function strandedNote(stranded: string[]): string | undefined {
   if (stranded.length === 0) return undefined
   const one = stranded.length === 1
   return (
@@ -550,43 +585,44 @@ export function strandedNote(stranded: number[]): string | undefined {
   )
 }
 
+export class UnresolvedAccount extends Error {}
+
 /** Who each of these ids is now, for a read that has rows rather than a name. */
 export async function survivorsOf(
   db: Kysely<Database>,
-  userIds: number[]
-): Promise<Map<number, number>> {
-  const survivors = new Map<number, number>()
-  if (userIds.length === 0) return survivors
-  const rows = await db
-    .selectFrom('users')
-    .select(['id', 'merged_into'])
-    .where('id', 'in', [...new Set(userIds)])
-    .execute()
-
-  const mergedInto = new Map<number, number>()
-  for (const row of rows) {
-    if (row.merged_into != null) mergedInto.set(row.id, row.merged_into)
+  userIds: string[]
+): Promise<Map<string, string>> {
+  const next = new Map<string, string | null>()
+  let pending = [...new Set(userIds)]
+  while (pending.length > 0) {
+    const rows = await db
+      .selectFrom('users')
+      .select(['id', 'merged_into'])
+      .where('id', 'in', pending)
+      .execute()
+    if (rows.length !== pending.length)
+      throw new UnresolvedAccount('Missing account in merge chain')
+    for (const row of rows) next.set(row.id, row.merged_into)
+    pending = [
+      ...new Set(
+        rows.flatMap(row =>
+          row.merged_into == null || next.has(row.merged_into)
+            ? []
+            : [row.merged_into]
+        )
+      )
+    ]
   }
-  for (const row of rows) {
-    let id = row.id
-    const walked = new Set<number>([id])
-    while (true) {
-      const next = mergedInto.get(id)
-      if (next == null || walked.has(next)) break
-      walked.add(next)
-      id = next
-      // The chain can leave the batch, and then one more lookup settles it.
-      if (!mergedInto.has(id)) {
-        const beyond = await db
-          .selectFrom('users')
-          .select(['merged_into'])
-          .where('id', '=', id)
-          .executeTakeFirst()
-        if (beyond?.merged_into == null) break
-        mergedInto.set(id, beyond.merged_into)
-      }
+  const survivors = new Map<string, string>()
+  for (const source of userIds) {
+    const seen = new Set<string>()
+    let id = source
+    while (next.get(id) != null) {
+      if (seen.has(id)) throw new UnresolvedAccount('Cyclic account merge')
+      seen.add(id)
+      id = next.get(id)!
     }
-    survivors.set(row.id, id)
+    survivors.set(source, id)
   }
   return survivors
 }
@@ -606,11 +642,11 @@ export async function survivorsOf(
  * clashes with everybody ends up alone, which is what it should be.
  */
 export function splitByClash(
-  rows: Array<{ userId: number; weight: number }>,
+  rows: Array<{ userId: string; weight: number }>,
   clashes: Set<string>
-): number[][] {
+): string[][] {
   const order = [...rows].sort((a, b) => b.weight - a.weight)
-  const people: number[][] = []
+  const people: string[][] = []
   for (const row of order) {
     const home = people.find(
       person => !person.some(held => clashes.has(`${held}|${row.userId}`))

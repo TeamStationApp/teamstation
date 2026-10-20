@@ -4,7 +4,8 @@ import { after, before, describe, it } from 'mocha'
 
 import { asBattingRow, asBoxScore, asPitchingRow } from '../../common/api'
 import { emptyStatExtras } from '../../common/statExtras'
-import { asUserId } from '../../common/userIdNumber'
+import { userIdOfGumbo } from '../../common/userId'
+import { asUserId } from '../../test/historicalUserIds'
 import { statsDatabase } from '../../test/statsDatabase'
 import type { MediaContext } from '../media/mediaContext'
 import { errorHandler } from '../middleware/withErrors'
@@ -38,14 +39,16 @@ describe('expanded statistics routes', function () {
     await db
       .updateTable('users')
       .set({ is_admin: true })
-      .where('id', '=', ids[0])
+      .where('id', '=', userIdOfGumbo(ids[0]))
       .execute()
     const app = express()
     app.use((req, _res, next) => {
       const actor = req.header('x-test-actor')
       if (actor !== 'none')
         req.actor = {
-          userId: asUserId(String(actor === 'admin' ? ids[0] : ids[1])),
+          userId: userIdOfGumbo(
+            asUserId(String(actor === 'admin' ? ids[0] : ids[1]))
+          ),
           isAdmin: actor === 'admin',
           scopes: []
         }
@@ -65,7 +68,7 @@ describe('expanded statistics routes', function () {
           id: 'gps_pitcher',
           game_id: 'gam_demo',
           team_id: 'tem_home',
-          user_id: ids[0],
+          gumbo_id: ids[0],
           extra: JSON.stringify({
             ...emptyStatExtras(),
             appeared: true,
@@ -81,7 +84,7 @@ describe('expanded statistics routes', function () {
           id: 'gps_batter',
           game_id: 'gam_demo',
           team_id: 'tem_home',
-          user_id: ids[1],
+          gumbo_id: ids[1],
           pa: 2,
           ab: 2,
           h: 1,
@@ -95,7 +98,9 @@ describe('expanded statistics routes', function () {
     const batting = (
       (await (await ask('/teams/tem_home/stats')).json()) as unknown[]
     ).map(asBattingRow)
-    expect(batting.map(row => row.userId)).deep.equals([fixture.ids[1]])
+    expect(batting.map(row => row.userId)).deep.equals(
+      [fixture.ids[1]].map(userIdOfGumbo)
+    )
     expect(batting[0].roe).equals(1)
     const pitching = (
       (await (
@@ -104,7 +109,7 @@ describe('expanded statistics routes', function () {
     ).map(asPitchingRow)
     expect(pitching).has.length(1)
     expect(pitching[0]).includes({
-      userId: fixture.ids[0],
+      userId: userIdOfGumbo(fixture.ids[0]),
       ip: '0.0',
       g: 1,
       pitches: 3,
@@ -125,7 +130,7 @@ describe('expanded statistics routes', function () {
       (await ask('/teams/tem_home/stats?kind=pitching', 'none')).status
     ).equals(401)
     expect(
-      (await teamsOf(fixture.db, [fixture.ids[0]])).map(team => [
+      (await teamsOf(fixture.db, [userIdOfGumbo(fixture.ids[0])])).map(team => [
         team.teamId,
         team.seasonId
       ])
@@ -147,12 +152,14 @@ describe('expanded statistics routes', function () {
       .where('id', '=', 'gps_pitcher')
       .execute()
     let box = asBoxScore(await (await ask('/games/gam_demo/box-score')).json())
-    expect(box.batting.map(row => row.userId)).deep.equals([ids[1], ids[0]])
+    expect(box.batting.map(row => row.userId)).deep.equals(
+      [ids[1], ids[0]].map(userIdOfGumbo)
+    )
     await db.updateTable('game_player_stats').set({ extra: null }).execute()
     await db
       .updateTable('users')
-      .set({ merged_into: ids[0] })
-      .where('id', '=', ids[2])
+      .set({ merged_into: userIdOfGumbo(ids[0]) })
+      .where('id', '=', userIdOfGumbo(ids[2]))
       .execute()
     await db
       .insertInto('events')
@@ -187,6 +194,8 @@ describe('expanded statistics routes', function () {
       ])
       .execute()
     box = asBoxScore(await (await ask('/games/gam_demo/box-score')).json())
-    expect(box.batting.map(row => row.userId)).deep.equals([ids[0], ids[1]])
+    expect(box.batting.map(row => row.userId)).deep.equals(
+      [ids[0], ids[1]].map(userIdOfGumbo)
+    )
   })
 })

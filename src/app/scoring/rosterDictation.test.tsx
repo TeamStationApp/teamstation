@@ -19,16 +19,18 @@ import {
 } from '../../common/scoring/rosterCommands'
 import { ScoringSession as GameSession } from '../../common/scoring/session'
 import { copyState } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   dictatingHealth,
   type FakeDictation,
   fakeDictation,
   FakeDictationSocket
 } from '../../test/dictationFakes'
+import { guestCreator } from '../../test/guestPlayers'
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { CreateRosterPlayer } from './createDictatedPlayers'
-import { createDevelopmentSession } from './developmentSession'
 import { useDictationControls } from './DictationButton'
 import { upcoming } from './dictationHook'
 import { gameFixture } from './isUnscoredGame.test'
@@ -70,7 +72,7 @@ async function settle(): Promise<void> {
 }
 
 function fresh(): ScoringState {
-  return initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  return initialScoringState(scoringSession(gameFixture))
 }
 
 interface Mounted {
@@ -112,6 +114,7 @@ async function mount(
     root!.render(
       <ThemeProvider>
         <RosterEditor
+          onCreateGuest={guestCreator()}
           state={state}
           onCreatePlayer={
             more.create ??
@@ -119,7 +122,8 @@ async function mount(
               // eslint-disable-next-line @typescript-eslint/only-throw-error -- Exercise an untyped transport rejection.
               if (more.createFailure != null) throw more.createFailure
               return asRosterEntry({
-                userId: 7001,
+                userId: userIdOfGumbo(7001),
+                gumboId: 7001,
                 shortName: player.firstName,
                 jersey: player.jersey,
                 isPlayer: true,
@@ -228,7 +232,7 @@ describe('dictation on the roster screen', function () {
       player => player.firstName === 'Ohtani'
     )
     expect(named).length(1)
-    expect(named[0]).includes({ userId: 7001, local: false })
+    expect(named[0]).includes({ id: 7001, local: false })
   })
 
   it('reuses successful player creations when retrying a failed dictated sentence', async () => {
@@ -242,7 +246,8 @@ describe('dictation on the roster screen', function () {
         }
         created.push(player.firstName)
         return asRosterEntry({
-          userId: 7000 + created.length,
+          userId: userIdOfGumbo(7000 + created.length),
+          gumboId: 7000 + created.length,
           shortName: player.firstName,
           jersey: player.jersey,
           isPlayer: true,
@@ -269,7 +274,7 @@ describe('dictation on the roster screen', function () {
     })
     expect(
       Object.values(saved[0].draft.gameData.players).filter(player =>
-        [7001, 7002].includes(player.userId!)
+        [7001, 7002].includes(player.id)
       )
     ).length(2)
   })
@@ -286,7 +291,7 @@ describe('dictation on the roster screen', function () {
       Object.values(saved[0].draft.gameData.players).find(
         player => player.firstName === 'Ohtani'
       )
-    ).includes({ userId: null, local: true })
+    ).includes({ id: 9000000, local: true })
   })
 
   for (const failure of [new Error('Roster save refused'), 'offline'])
@@ -399,7 +404,7 @@ describe('dictation on the roster screen', function () {
     })
     expect(
       Object.values(saved[0].draft.gameData.players).find(
-        player => player.userId === 7001
+        player => player.id === 7001
       )
     ).includes({ local: false, firstName: 'Ohtani' })
   })
@@ -893,11 +898,7 @@ describe('a substitution said on the scoring screen', function () {
     const source: ScoringSource = {
       persistent: true,
       open: async game =>
-        GameSession.start(
-          store,
-          game.id,
-          createDevelopmentSession(game, [], [])
-        )
+        GameSession.start(store, game.id, scoringSession(game))
     }
     host = document.createElement('div')
     document.body.appendChild(host)

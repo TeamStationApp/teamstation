@@ -9,7 +9,10 @@ import {
   ScoringSession
 } from '../../common/scoring/session'
 import { copyState, setupOf } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
+import { guestCreator } from '../../test/guestPlayers'
 import { completeMotions } from '../../test/scoringHelpers'
+import { scoringSession } from '../../test/scoringSession'
 import { fieldKey } from '../field/fieldKeyboard'
 import { projectPlayerLabel } from '../field/playerPresentation'
 import {
@@ -24,7 +27,6 @@ import {
   shortPlayerNames,
   withRosterDetails
 } from './currentSetup'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { addPlaceholderPlayers } from './placeholderPlayers'
 import { initialScoringState, scoringReducer } from './scoringMachine'
@@ -40,8 +42,8 @@ const applyAction = (
   action: ScoringAction
 ): ReturnType<typeof applyStoredAction> =>
   applyStoredAction(state, action, { requireCurrentSetup: true })
-const game = (): ReturnType<typeof createDevelopmentSession> =>
-  createDevelopmentSession(gameFixture, [], [])
+const game = (): ReturnType<typeof scoringSession> =>
+  scoringSession(gameFixture)
 describe('current scoring setup', function () {
   it('retains lineup acceptance through queued sentences and question answers', function () {
     const initial = game()
@@ -296,7 +298,7 @@ describe('current scoring setup', function () {
       defensiveRosterLabel({
         ...player,
         local: false,
-        userId: 8800001,
+
         firstName: 'Cliff',
         lastName: 'Lee',
         fullName: 'Cliff L',
@@ -307,7 +309,7 @@ describe('current scoring setup', function () {
       defensiveRosterLabel({
         ...player,
         local: false,
-        userId: 42,
+
         firstName: undefined,
         lastName: undefined,
         fullName: 'Luis Ga',
@@ -329,14 +331,15 @@ describe('current scoring setup', function () {
       original.gameData.players[id] = {
         ...original.gameData.players[id],
         local: false,
-        userId: 200 + index,
+
         firstName,
         lastName,
         fullName: `${firstName} ${lastName}`,
         jersey: ''
       }
       return asRosterEntry({
-        userId: 200 + index,
+        userId: userIdOfGumbo(200 + index),
+        gumboId: id,
         shortName: index === 0 ? 'Luis Ga' : 'Luis Go',
         jersey: null,
         positions: [],
@@ -359,12 +362,12 @@ describe('current scoring setup', function () {
     const original = game()
     const player = original.gameData.players[1]
     player.local = false
-    player.userId = 101
     player.fullName = 'Mookie B'
     player.jersey = ''
     const before = JSON.stringify(original)
     const entry = asRosterEntry({
-      userId: 101,
+      userId: userIdOfGumbo(101),
+      gumboId: 1,
       shortName: 'Mookie B',
       jersey: '00',
       positions: [],
@@ -551,7 +554,7 @@ describe('current scoring setup', function () {
       applyAction(half.state, { type: 'pitch', call: 'B' }).problems[0].message
     ).includes('C')
   })
-  it('preserves awaiting-batter state on defense-only edits and placeholder creation, including Undo', function () {
+  it('preserves awaiting-batter state on defense-only edits and placeholder creation, including Undo', async function () {
     const initial = game()
     initial.liveData.boxscore.teams.away.battingOrder = [1]
     initial.liveData.linescore.offense.first = {
@@ -571,7 +574,7 @@ describe('current scoring setup', function () {
       'C',
       initial.liveData.boxscore.teams.home.defense.P!
     )
-    addPlaceholderPlayers(draft, 'home', 2)
+    await addPlaceholderPlayers(draft, 'home', 2, guestCreator())
     const next = scoringReducer(state, { type: 'ROSTER', draft })
     expect(next.phase).equals('awaitingBatter')
     expect(next.session.awaitingBatter).deep.equals(initial.awaitingBatter)
@@ -597,7 +600,7 @@ describe('names drawn on the field', function () {
     parts?: { firstName: string; lastName: string }
   ): ScoringPlayer => ({
     id,
-    userId: null,
+
     teamId: 'home',
     fullName,
     firstName: parts?.firstName,

@@ -7,6 +7,7 @@ import type { Kysely } from 'kysely'
 import { Pool } from 'pg'
 
 import { makeId } from '../common/ids'
+import { userIdOfGumbo } from '../common/userId'
 import { migrations } from '../migrate/migrations'
 import { migrateUp } from '../migrate/runner'
 import { testDatabaseUrl } from '../migrate/testDatabase'
@@ -26,6 +27,7 @@ import { meRoutes } from '../server/routes/me'
 import { playerRoutes } from '../server/routes/players'
 import { teamRoutes } from '../server/routes/teams'
 import { traceHttp } from './httpTrace'
+import { insertFixtureUsers } from './insertFixtureUsers'
 
 /**
  * More routes for one fixture, mounted after every API route the harness
@@ -57,7 +59,8 @@ export async function accountHarness(
     }
   ) => void,
   bindHost = '127.0.0.1',
-  mountExtra?: MountExtra
+  mountExtra?: MountExtra,
+  schema = migrations
 ): Promise<AccountHarness> {
   const name = `account_test_${Date.now()}_${Math.floor(Math.random() * 100000)}`
   const admin = new Pool({ connectionString: testDatabaseUrl })
@@ -65,29 +68,34 @@ export async function accountHarness(
   await admin.query(`create database ${name}`)
   const url = testDatabaseUrl.replace(/\/[^/]*$/, `/${name}`)
   const pool = new Pool({ connectionString: url })
-  await migrateUp(pool, migrations)
-  await pool.end()
+  await migrateUp(pool, schema)
+  const historical = !schema.some(m => m.name.startsWith('069'))
+  const accountId = (id: number): string =>
+    historical ? String(id) : userIdOfGumbo(id)
   const db = makeDatabase(url)
   for (const [id, label] of [
     [101, 'Babe Ruth'],
     [102, 'Lou Gehrig']
   ] as const) {
-    await db
-      .insertInto('users')
-      .values({
-        id,
-        legacyId: `usr_account_${id}`,
-        display_name: label,
-        login_enabled: true,
-        first_name: label.split(' ')[0],
-        last_name: label.split(' ')[1]
-      })
-      .execute()
+    const values = {
+      id,
+      legacyId: `usr_account_${id}`,
+      display_name: label,
+      login_enabled: true,
+      first_name: label.split(' ')[0],
+      last_name: label.split(' ')[1]
+    }
+    if (historical) {
+      await pool.query(
+        'insert into users(id,"legacyId",display_name,login_enabled,first_name,last_name) values($1,$2,$3,$4,$5,$6)',
+        [id, values.legacyId, label, true, values.first_name, values.last_name]
+      )
+    } else await insertFixtureUsers(db, values)
     await db
       .insertInto('user_emails')
       .values({
         id: `email_${id}`,
-        user_id: id,
+        user_id: accountId(id),
         email: id === 101 ? 'alex@example.com' : 'casey@example.com',
         is_primary: true,
         verified_at: new Date(),
@@ -103,7 +111,7 @@ export async function accountHarness(
     .insertInto('memberships')
     .values({
       id: makeId('membership'),
-      user_id: 101,
+      user_id: accountId(101),
       team_id: 'tem_account',
       role: 'member',
       is_player: true
@@ -111,7 +119,11 @@ export async function accountHarness(
     .execute()
   const tokens = new Map<number, string>()
   for (const id of [101, 102])
-    tokens.set(id, (await createSession(db, id, 'account-test')).token)
+    tokens.set(
+      id,
+      (await createSession(db, accountId(id), 'account-test')).token
+    )
+  await pool.end()
   const controls = { failMail: false, failPut: false }
   const objects = new Map<string, Buffer>()
   const objectServer = createServer((req, res) => {

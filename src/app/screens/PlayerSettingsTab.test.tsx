@@ -12,6 +12,7 @@ import type {
   PersonSettings,
   PlayerSettings
 } from '../../common/playerSettings'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { changesOf, PlayerSettingsTab } from './PlayerSettingsTab'
 
@@ -69,7 +70,8 @@ const saveDisabled = (): boolean =>
 const text = (): string => document.body.textContent ?? ''
 
 const jordan = asRosterEntry({
-  userId: 7,
+  userId: userIdOfGumbo(7),
+  gumboId: 7,
   shortName: 'Jordan P',
   jersey: '4',
   positions: ['CF', 'OF'],
@@ -100,13 +102,23 @@ function settingsClient(
     },
     player: async () => {
       if (roster instanceof Error) throw roster
-      return { userId: 7, name: 'Jordan P', bats: 'right', throws: null }
+      return {
+        userId: userIdOfGumbo(7),
+        name: 'Jordan P',
+        bats: 'right',
+        throws: null
+      }
     },
     setPlayerBatsThrows: async (userId: string, settings: PersonSettings) => {
       saves.push({ teamId: null, userId, settings })
       const result = answer?.(settings)
       if (result instanceof Error) throw result
-      return { userId: 7, bats: 'right', throws: null, ...settings }
+      return {
+        userId: userIdOfGumbo(7),
+        bats: 'right',
+        throws: null,
+        ...settings
+      }
     },
     setPlayerSettings: async (
       teamId: string,
@@ -154,7 +166,13 @@ describe('a player’s settings form', function () {
             nameDetails: { ...settings.name!, displayName: 'Paul Goldschmidt' }
           }
     )
-    await render(<PlayerSettingsTab client={client} teamId="t1" userId="7" />)
+    await render(
+      <PlayerSettingsTab
+        client={client}
+        teamId="t1"
+        userId={userIdOfGumbo(7)}
+      />
+    )
     expect((labelled('First name') as HTMLInputElement).value).equals('Mookie')
     expect(labelled('Jersey number')?.getAttribute('inputmode')).equals(
       'numeric'
@@ -196,7 +214,7 @@ describe('a player’s settings form', function () {
             []
           )}
           teamId="t1"
-          userId="7"
+          userId={userIdOfGumbo(7)}
         />
       )
       expect((labelled('First name') as HTMLInputElement).value).equals(
@@ -226,7 +244,7 @@ describe('a player’s settings form', function () {
           nameDetails: { ...settings.name!, displayName: 'Mookie Betts' }
         }))}
         teamId="t1"
-        userId="7"
+        userId={userIdOfGumbo(7)}
       />
     )
     expect((labelled('First name') as HTMLInputElement).value).equals('')
@@ -265,7 +283,13 @@ describe('a player’s settings form', function () {
       return current
     })
     client.roster = async () => [current]
-    await render(<PlayerSettingsTab client={client} teamId="t1" userId="7" />)
+    await render(
+      <PlayerSettingsTab
+        client={client}
+        teamId="t1"
+        userId={userIdOfGumbo(7)}
+      />
+    )
     await type('Last name', '')
     await press('Save')
     expect((labelled('First name') as HTMLInputElement).value).equals(
@@ -276,7 +300,13 @@ describe('a player’s settings form', function () {
       root?.unmount()
     })
     root = undefined
-    await render(<PlayerSettingsTab client={client} teamId="t1" userId="7" />)
+    await render(
+      <PlayerSettingsTab
+        client={client}
+        teamId="t1"
+        userId={userIdOfGumbo(7)}
+      />
+    )
     expect((labelled('First name') as HTMLInputElement).value).equals(
       'Hyun Jin'
     )
@@ -293,7 +323,7 @@ describe('a player’s settings form', function () {
       <PlayerSettingsTab
         client={settingsClient([jordan], [])}
         teamId="t1"
-        userId="7"
+        userId={userIdOfGumbo(7)}
       />
     )
     expect((labelled('Jersey number') as HTMLInputElement).value).equals('4')
@@ -312,7 +342,7 @@ describe('a player’s settings form', function () {
       <PlayerSettingsTab
         client={settingsClient([jordan], saves)}
         teamId="t1"
-        userId="7"
+        userId={userIdOfGumbo(7)}
         onSaved={entry => {
           saved.push(entry)
         }}
@@ -333,7 +363,7 @@ describe('a player’s settings form', function () {
     expect(saves).deep.equals([
       {
         teamId: 't1',
-        userId: '7',
+        userId: userIdOfGumbo(7),
         settings: { jersey: '12', positions: ['2B', 'SS'] }
       }
     ])
@@ -354,7 +384,7 @@ describe('a player’s settings form', function () {
     await render(
       <PlayerSettingsTab
         client={settingsClient([], saves)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         onSaved={entry => {
           saved.push(entry)
         }}
@@ -372,7 +402,7 @@ describe('a player’s settings form', function () {
     expect(saves).deep.equals([
       {
         teamId: null,
-        userId: '7',
+        userId: userIdOfGumbo(7),
         settings: { bats: 'left', throws: 'left' }
       }
     ])
@@ -386,7 +416,7 @@ describe('a player’s settings form', function () {
     await render(
       <PlayerSettingsTab
         client={settingsClient([], [], () => new Error(''))}
-        userId="7"
+        userId={userIdOfGumbo(7)}
       />
     )
     await press('Throws Right')
@@ -399,7 +429,7 @@ describe('a player’s settings form', function () {
     await render(
       <PlayerSettingsTab
         client={settingsClient(new Error('offline'), [])}
-        userId="7"
+        userId={userIdOfGumbo(7)}
       />
     )
     expect(text()).includes('Cannot load this player')
@@ -415,7 +445,7 @@ describe('a player’s settings form', function () {
           () => new Error('jersey: A jersey number is at most 3 characters')
         )}
         teamId="t1"
-        userId="7"
+        userId={userIdOfGumbo(7)}
       />
     )
     await type('Jersey number', '1234')
@@ -428,9 +458,9 @@ describe('a player’s settings form', function () {
   it('says why when there is nothing to edit', async function () {
     await render(
       <PlayerSettingsTab
-        client={settingsClient([{ ...jordan, userId: 8 }], [])}
+        client={settingsClient([{ ...jordan, userId: userIdOfGumbo(8) }], [])}
         teamId="t1"
-        userId="7"
+        userId={userIdOfGumbo(7)}
       />
     )
     expect(text()).includes('not on this team')
@@ -441,7 +471,7 @@ describe('a player’s settings form', function () {
       <PlayerSettingsTab
         client={settingsClient(new Error('offline'), [])}
         teamId="t1"
-        userId="7"
+        userId={userIdOfGumbo(7)}
       />
     )
     expect(text()).includes('Cannot load this player')

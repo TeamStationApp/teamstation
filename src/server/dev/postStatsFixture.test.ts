@@ -10,10 +10,12 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -97,31 +99,28 @@ describe('postStatsFixture', function () {
         [...awayPlayers, ...homePlayers].map(u => [u.userId, u])
       ).values()
     ]
-    await db
-      .insertInto('users')
-      .values([
-        {
-          id: adminUser.userId,
-          legacyId: adminUser.legacyId,
-          display_name: 'Admin',
-          is_admin: true,
-          created_at: now,
-          updated_at: now
-        },
-        ...uniqueUsers.map((u, index) => ({
-          id: u.userId,
-          legacyId: u.legacyId,
-          display_name: `P${index}`,
-          created_at: now,
-          updated_at: now
-        }))
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(adminUser.userId),
+        legacyId: adminUser.legacyId,
+        display_name: 'Admin',
+        is_admin: true,
+        created_at: now,
+        updated_at: now
+      },
+      ...uniqueUsers.map((u, index) => ({
+        id: u.userId,
+        legacyId: u.legacyId,
+        display_name: `P${index}`,
+        created_at: now,
+        updated_at: now
+      }))
+    ])
     await db
       .insertInto('auth_sessions')
       .values({
         id: 'ses_fixture',
-        user_id: adminUser.userId,
+        user_id: userIdOfGumbo(adminUser.userId),
         token_hash: hashToken(TOKEN),
         created_at: now,
         expires_at: new Date(now.getTime() + 3_600_000)
@@ -139,28 +138,28 @@ describe('postStatsFixture', function () {
       .values([
         ...awayPlayers.map(u => ({
           id: makeId('membership'),
-          user_id: u.userId,
+          user_id: userIdOfGumbo(u.userId),
           team_id: away,
           role: 'member' as const,
           is_player: true
         })),
         ...homePlayers.map(u => ({
           id: makeId('membership'),
-          user_id: u.userId,
+          user_id: userIdOfGumbo(u.userId),
           team_id: home,
           role: 'member' as const,
           is_player: true
         })),
         {
           id: makeId('membership'),
-          user_id: adminUser.userId,
+          user_id: userIdOfGumbo(adminUser.userId),
           team_id: away,
           role: 'owner' as const,
           is_player: false
         },
         {
           id: makeId('membership'),
-          user_id: adminUser.userId,
+          user_id: userIdOfGumbo(adminUser.userId),
           team_id: home,
           role: 'owner' as const,
           is_player: false
@@ -250,14 +249,45 @@ describe('postStatsFixture', function () {
     })
   })
 
+  it('maps nested credits with unequal scoring IDs and preserves baseball numbers', () => {
+    const fixture = loadScorebookFixture()
+    fixture.plays[0].credits = [
+      { creditUserId: 1, creditType: 'assist' },
+      { creditUserId: 999, creditType: 'putout' }
+    ]
+    const original = structuredClone(fixture.plays[0])
+    const roster = Array.from({ length: 19 }, (_, i) => ({
+      userId: userIdOfGumbo(1000 + i),
+      gumboId: 2000 + i,
+      isPlayer: true
+    }))
+    const mapped = mapScorebookFixture(
+      fixture,
+      roster.slice(0, 10),
+      roster.slice(10),
+      {
+        awayTeamId: 'away',
+        homeTeamId: 'home'
+      }
+    )
+    expect(mapped.plays[0].credits).deep.equals([
+      { creditUserId: 2000, creditType: 'assist' },
+      { creditUserId: null, creditType: 'putout' }
+    ])
+    expect(mapped.plays[0].count).deep.equals(original.count)
+    expect(fixture.plays[0]).deep.equals(original)
+  })
+
   it('maps dual-roster skip and leaves placeholder 20 without an id', function () {
     const fixture = loadScorebookFixture()
     const awayRoster: RosterPlayer[] = awayPlayers.map(u => ({
-      userId: u.userId,
+      userId: userIdOfGumbo(u.userId),
+      gumboId: u.userId,
       isPlayer: true
     }))
     const homeRoster: RosterPlayer[] = homePlayers.map(u => ({
-      userId: u.userId,
+      userId: userIdOfGumbo(u.userId),
+      gumboId: u.userId,
       isPlayer: true
     }))
     const mapped = mapScorebookFixture(fixture, awayRoster, homeRoster, {
@@ -331,7 +361,7 @@ describe('postStatsFixture', function () {
       }
     })
     expect(written[`${gameId}.expected.json`]).includes(
-      String(mapped.expected[0].userId)
+      String(mapped.expected[0].gumboId)
     )
 
     const stored = await db
@@ -428,8 +458,16 @@ describe('postStatsFixture', function () {
     expect(() =>
       mapScorebookFixture(
         fixture,
-        awayPlayers.map(u => ({ userId: u.userId, isPlayer: true })),
-        homePlayers.map(u => ({ userId: u.userId, isPlayer: true })),
+        awayPlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
+        homePlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
         { awayTeamId: away, homeTeamId: home },
         { drop: 'bad' }
       )
@@ -437,8 +475,16 @@ describe('postStatsFixture', function () {
     expect(() =>
       mapScorebookFixture(
         fixture,
-        awayPlayers.map(u => ({ userId: u.userId, isPlayer: true })),
-        homePlayers.map(u => ({ userId: u.userId, isPlayer: true })),
+        awayPlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
+        homePlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
         { awayTeamId: away, homeTeamId: home },
         { drop: 'matchup.pitcher@notanumber' }
       )
@@ -446,8 +492,16 @@ describe('postStatsFixture', function () {
     expect(() =>
       mapScorebookFixture(
         fixture,
-        awayPlayers.map(u => ({ userId: u.userId, isPlayer: true })),
-        homePlayers.map(u => ({ userId: u.userId, isPlayer: true })),
+        awayPlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
+        homePlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
         { awayTeamId: away, homeTeamId: home },
         { drop: 'matchup.pitcher@9999' }
       )
@@ -455,8 +509,16 @@ describe('postStatsFixture', function () {
     expect(() =>
       mapScorebookFixture(
         fixture,
-        awayPlayers.map(u => ({ userId: u.userId, isPlayer: true })),
-        homePlayers.map(u => ({ userId: u.userId, isPlayer: true })),
+        awayPlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
+        homePlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
         { awayTeamId: away, homeTeamId: home },
         { drop: 'nowhere.at.all@5' }
       )
@@ -464,8 +526,16 @@ describe('postStatsFixture', function () {
     expect(() =>
       mapScorebookFixture(
         fixture,
-        awayPlayers.map(u => ({ userId: u.userId, isPlayer: true })),
-        homePlayers.map(u => ({ userId: u.userId, isPlayer: true })),
+        awayPlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
+        homePlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
         { awayTeamId: away, homeTeamId: home },
         { drop: 'matchup.missing.deep@0' }
       )
@@ -473,26 +543,43 @@ describe('postStatsFixture', function () {
 
     // Roster size checks.
     const nineAway = awayPlayers.slice(0, 9).map(u => ({
-      userId: u.userId,
+      userId: userIdOfGumbo(u.userId),
+      gumboId: u.userId,
       isPlayer: true
     }))
     expect(() =>
       mapScorebookFixture(
         fixture,
         nineAway,
-        homePlayers.map(u => ({ userId: u.userId, isPlayer: true })),
+        homePlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
         { awayTeamId: away, homeTeamId: home }
       )
     ).throws(/Away roster needs 10/)
     const homeEight = homePlayers
       .filter(u => u.userId !== shared.userId)
       .slice(0, 8)
-      .map(u => ({ userId: u.userId, isPlayer: true }))
-    homeEight.push({ userId: shared.userId, isPlayer: true })
+      .map(u => ({
+        userId: userIdOfGumbo(u.userId),
+        gumboId: u.userId,
+        isPlayer: true
+      }))
+    homeEight.push({
+      userId: userIdOfGumbo(shared.userId),
+      gumboId: shared.userId,
+      isPlayer: true
+    })
     expect(() =>
       mapScorebookFixture(
         fixture,
-        awayPlayers.map(u => ({ userId: u.userId, isPlayer: true })),
+        awayPlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
         homeEight,
         { awayTeamId: away, homeTeamId: home }
       )
@@ -500,12 +587,24 @@ describe('postStatsFixture', function () {
     const homeNine = homePlayers
       .filter(u => u.userId !== shared.userId)
       .slice(0, 9)
-      .map(u => ({ userId: u.userId, isPlayer: true }))
-    homeNine.push({ userId: shared.userId, isPlayer: true })
+      .map(u => ({
+        userId: userIdOfGumbo(u.userId),
+        gumboId: u.userId,
+        isPlayer: true
+      }))
+    homeNine.push({
+      userId: userIdOfGumbo(shared.userId),
+      gumboId: shared.userId,
+      isPlayer: true
+    })
     expect(
       mapScorebookFixture(
         fixture,
-        awayPlayers.map(u => ({ userId: u.userId, isPlayer: true })),
+        awayPlayers.map(u => ({
+          userId: userIdOfGumbo(u.userId),
+          gumboId: u.userId,
+          isPlayer: true
+        })),
         homeNine,
         { awayTeamId: away, homeTeamId: home }
       ).idMap.size

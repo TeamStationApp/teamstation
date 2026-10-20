@@ -11,6 +11,7 @@ import { asGameDetail, asRosterEntry } from '../../common/api'
 import { shortName } from '../../common/names'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { ScoringSession, type StoredGame } from '../../common/scoring/session'
+import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
 import { createPlayers } from '../field/fieldModel'
@@ -63,7 +64,8 @@ const roster = (
   count = 10,
   collisionNames = false
 ): Array<{
-  userId: number
+  userId: string
+  gumboId: number
   shortName: string
   jersey: string
   positions: string[]
@@ -76,7 +78,8 @@ const roster = (
   throws: string
 }> =>
   Array.from({ length: count }, (_, i) => ({
-    userId: (side === 'away' ? 100 : 200) + i,
+    userId: userIdOfGumbo((side === 'away' ? 100 : 200) + i),
+    gumboId: (side === 'away' ? 100 : 200) + i,
     shortName:
       collisionNames && side === 'home' && i < 2
         ? ['Luis Ga', 'Luis Gi'][i]
@@ -93,8 +96,8 @@ const roster = (
   }))
 const person = (
   row: ReturnType<typeof roster>[0]
-): { userId: number; name: string; jersey: string } => ({
-  userId: row.userId,
+): { gumboId: number; name: string; jersey: string } => ({
+  gumboId: row.gumboId,
   name: row.shortName,
   jersey: row.jersey
 })

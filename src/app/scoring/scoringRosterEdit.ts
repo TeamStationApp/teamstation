@@ -1,6 +1,7 @@
 import type { MyRoles, RosterEntry } from '../../common/api'
 import { rosterFullName } from '../../common/names'
 import type { GameState, Side } from '../../common/scoring/state'
+import { asGumboId } from '../../common/userId'
 import { byJersey } from './rosterOrder'
 
 /** Prefer the one team where the scorer holds an admin or staff role. */
@@ -17,7 +18,7 @@ export function rosterStaffSide(
 export interface EditRosterRow {
   key: string
   id: number
-  userId?: number
+  userId?: string
   name: string
   /** Public name for the normal app's navigation frame. */
   navigationTitle: string
@@ -40,7 +41,7 @@ export function editRosterRows(
   const rows: EditRosterRow[] = entries
     .filter(entry => entry.isPlayer)
     .map(entry => ({
-      id: entry.userId,
+      id: asGumboId(entry.gumboId),
       navigationTitle: entry.shortName,
       key: `player:${entry.userId}`,
       userId: entry.userId,
@@ -56,7 +57,7 @@ export function editRosterRows(
     }))
   for (const id of draft.liveData.boxscore.teams[side].players) {
     const player = draft.gameData.players[id]
-    if (player.userId != null) continue
+    if (!player.local || rows.some(row => row.id === id)) continue
     rows.push({
       id,
       navigationTitle: player.fullName,
@@ -69,8 +70,7 @@ export function editRosterRows(
       positions: player.positions
     })
   }
-  // Session ids and account ids are different namespaces. Virtual sort ids
-  // keep a local player's card when its session id equals an account id.
+  // Sort presentation rows without changing their persistent identities.
   rows.sort((a, b) => {
     const difference = a.id - b.id
     return difference !== 0

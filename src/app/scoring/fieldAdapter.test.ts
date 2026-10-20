@@ -12,6 +12,8 @@ import {
 } from 'three'
 
 import { asRosterEntry } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
+import { scoringRoster } from '../../test/scoringSession'
 import { pitchingPose } from '../field/athletePose'
 import { FieldScene } from '../field/FieldScene'
 import type { FieldCanvasProps } from '../field/fieldTypes'
@@ -23,7 +25,8 @@ import { gameFixture } from './isUnscoredGame.test'
 
 const roster = [
   asRosterEntry({
-    userId: 103,
+    userId: userIdOfGumbo(103),
+    gumboId: 103,
     shortName: 'Casey M.',
     jersey: '00',
     positions: [],
@@ -37,7 +40,11 @@ const roster = [
 ]
 describe('scoring renderer identities', function () {
   it('renders a mirrored left-handed batter with a string jersey and no field name', async function () {
-    const session = createDevelopmentSession(gameFixture, roster, [])
+    const session = createDevelopmentSession(
+      gameFixture,
+      roster,
+      scoringRoster(10)
+    )
     const player = fieldPlayersFor(session).find(
       player => player.batting === true
     )
@@ -67,7 +74,11 @@ describe('scoring renderer identities', function () {
     }
   })
   it('reports accepted switch-box placement, never accepts a cancellation, and rejects locked fallback selection', async function () {
-    const session = createDevelopmentSession(gameFixture, roster, [])
+    const session = createDevelopmentSession(
+      gameFixture,
+      roster,
+      scoringRoster(10)
+    )
     const original = JSON.stringify(session)
     const players = fieldPlayersFor(session)
     const batter = players.find(player => player.batting === true)
@@ -121,7 +132,7 @@ describe('scoring renderer identities', function () {
 describe('a player on the field', function () {
   it('moves without drawing his body again, and draws it again when it changes', async function () {
     const player = fieldPlayersFor(
-      createDevelopmentSession(gameFixture, roster, [])
+      createDevelopmentSession(gameFixture, roster, scoringRoster(10))
     ).find(item => item.team === 'defense')!
     const renderer = await create(
       React.createElement(Player, { player, selected: false })
@@ -201,7 +212,7 @@ describe('a player on the field', function () {
 describe('scoring field policy', function () {
   it('removes offensive labels and keeps full height at half opacity during defensive selection', async function () {
     const player = fieldPlayersFor(
-      createDevelopmentSession(gameFixture, roster, [])
+      createDevelopmentSession(gameFixture, roster, scoringRoster(10))
     ).find(item => item.batting === true)!
     const renderer = await create(
       React.createElement(Player, {
@@ -238,7 +249,7 @@ describe('scoring field policy', function () {
   })
   it('cancels an arc without acceptance and ignores a stale pointer after policy replacement', async function () {
     const players = fieldPlayersFor(
-      createDevelopmentSession(gameFixture, roster, [])
+      createDevelopmentSession(gameFixture, roster, scoringRoster(10))
     )
     let accepted = 0
     let previews = 0

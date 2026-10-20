@@ -4,6 +4,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { GameScoreboard } from '../scoreboard'
+import { userIdOfGumbo } from '../userId'
 import type { ScoringAction } from './actions'
 import { applyAction } from './apply'
 import { freshGame, newSetup } from './lineup'
@@ -29,11 +30,13 @@ const TEAMS = {
 }
 const setup = newSetup(TEAMS, {
   away: Array.from({ length: 9 }, (_, i) => ({
-    userId: 1000 + i,
+    userId: userIdOfGumbo(1 + i),
+    gumboId: 1 + i,
     shortName: `Away ${i + 1}`
   })),
   home: Array.from({ length: 9 }, (_, i) => ({
-    userId: 2000 + i,
+    userId: userIdOfGumbo(10 + i),
+    gumboId: 10 + i,
     shortName: `Home ${i + 1}`
   }))
 })

@@ -108,7 +108,7 @@ export function lineupsBody(
   const players = team.players.map(id => {
     const player = draft.gameData.players[id]
     return {
-      userId: player.userId,
+      gumboId: player.id,
       fullName: player.fullName,
       jersey: player.jersey
     }
@@ -143,7 +143,8 @@ export function lineupsBody(
  */
 export function battingOrders(
   game: GameState,
-  sides: readonly Side[] = ['away', 'home']
+  sides: readonly Side[] = ['away', 'home'],
+  accounts: readonly RosterEntry[] = []
 ): Partial<Record<Side, LineupBatter[]>> {
   return Object.fromEntries(
     sides.map(side => [
@@ -152,7 +153,13 @@ export function battingOrders(
         const player = game.gameData.players[id]
         return player == null
           ? []
-          : [{ userId: player.userId, shortName: player.fullName }]
+          : [
+              {
+                userId:
+                  accounts.find(row => row.gumboId === id)?.userId ?? null,
+                shortName: player.fullName
+              }
+            ]
       })
     ])
   )
@@ -220,7 +227,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   const source = props.source ?? fallback
   const [opened, setOpened] = useState<Opened>()
   const [editingPlayer, setEditingPlayer] = useState<{
-    userId: number
+    userId: string
     name: string
     teamId: string
   }>()
@@ -598,6 +605,34 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
               initialDraft={held}
               onDraftChange={setHeld}
               rosters={opened.rosters}
+              unrostered={(detail ?? opened.game).unrostered}
+              onRosteredChange={async (side, userId, rostered) => {
+                const posted = client.setRostered(gameId, {
+                  side,
+                  userId,
+                  rostered
+                })
+                live.saving(
+                  posted
+                    .then(async () => {
+                      const lineups = await client.gameLineups(gameId)
+                      heard(lineups, side)
+                      return lineups.digest
+                    })
+                    .catch(() => digest.current)
+                )
+                const unrostered = await posted
+                setDetail(current => ({
+                  ...(current ?? opened.game),
+                  unrostered
+                }))
+                setOpened(current =>
+                  current == null
+                    ? current
+                    : { ...current, game: { ...current.game, unrostered } }
+                )
+                return unrostered
+              }}
               onEditPlayer={(userId, name, id) => {
                 if (id === teamId)
                   setEditingPlayer({ userId, name, teamId: id })
@@ -625,6 +660,13 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
                 )
                 return entry
               }}
+              onCreateGuest={async (side, player) =>
+                await client.createGuestPlayer(
+                  gameId,
+                  side,
+                  rosterPlayerBody(player)
+                )
+              }
               unaccepted={unaccepted}
               conflict={live.conflict}
               onDirtyChange={setDirty}
@@ -638,7 +680,13 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
                     first={side}
                     lineups={battingOrders(
                       state.session,
-                      theirsHeld ? ['away', 'home'] : [opened.side]
+                      theirsHeld ? ['away', 'home'] : [opened.side],
+                      [
+                        ...Object.values(opened.rosters).flat(),
+                        ...Object.values(
+                          (detail ?? opened.game).guestPlayers
+                        ).flat()
+                      ]
                     )}
                   />
                 </ScrollView>

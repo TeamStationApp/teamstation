@@ -15,6 +15,7 @@ import {
   type RosterCommand,
   rosterSituation
 } from '../../common/scoring/rosterCommands'
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { seedSettingsCleanup3 } from '../../test/settingsCleanup3Fixture'
 import { startingContext } from './lineups'
@@ -37,7 +38,8 @@ describe('created roster players saved into coach lineups', function () {
       { type: 'addPlayer', side: 'home', name: 'Aaron Judge', jersey: '99' }
     ]
     const completed = new Map<string, RosterEntry>()
-    const created: number[] = []
+    const created: string[] = []
+    const scoringIds: number[] = []
     let refuseSecond = true
     const create: Parameters<typeof createDictatedPlayers>[3] = async (
       teamId,
@@ -56,6 +58,7 @@ describe('created roster players saved into coach lineups', function () {
       expect(response.status).equals(201)
       const entry = asRosterEntry(await response.json())
       created.push(entry.userId)
+      scoringIds.push(entry.gumboId!)
       return entry
     }
     let failed = false
@@ -74,7 +77,7 @@ describe('created roster players saved into coach lineups', function () {
     }
     expect(failed).equals(true)
     expect(created).length(1)
-    const firstId = created[0]
+    const firstId = scoringIds[0]
     const result = await createDictatedPlayers(
       draft,
       commands,
@@ -86,12 +89,12 @@ describe('created roster players saved into coach lineups', function () {
     if ('problem' in result) throw new Error(result.problem)
     expect(created).length(2)
     const players = Object.values(result.draft.gameData.players).filter(
-      player => created.includes(player.userId!)
+      player => scoringIds.includes(player.id)
     )
     expect(players).length(2)
     expect(
       players.some(
-        player => player.userId === firstId && player.firstName === 'Shohei'
+        player => player.id === firstId && player.firstName === 'Shohei'
       )
     ).equals(true)
     const roster = await f.h.db
@@ -124,7 +127,7 @@ describe('created roster players saved into coach lineups', function () {
         .insertInto('memberships')
         .values({
           id: 'mem_review_other',
-          user_id: 105,
+          user_id: userIdOfGumbo(105),
           team_id: f.teamB,
           is_player: true
         })
@@ -155,7 +158,7 @@ describe('created roster players saved into coach lineups', function () {
         side: 'home',
         base,
         players: side.players.map(id => ({
-          userId: setup.players[id].userId,
+          gumboId: setup.players[id].id,
           fullName: setup.players[id].fullName,
           jersey: setup.players[id].jersey
         })),
@@ -192,7 +195,11 @@ describe('created roster players saved into coach lineups', function () {
         base,
         players: [
           ...body.players,
-          { userId: player.userId, fullName: 'Untrusted label', jersey: '99' }
+          {
+            gumboId: player.gumboId!,
+            fullName: 'Untrusted label',
+            jersey: '99'
+          }
         ],
         battingOrder: [...body.battingOrder, body.players.length]
       }
@@ -202,7 +209,7 @@ describe('created roster players saved into coach lineups', function () {
       )
       const read = await current()
       expect(
-        read.home.current?.batters.find(row => row.userId === player.userId)
+        read.home.current?.batters.find(row => row.gumboId === player.gumboId)
           ?.name
       ).equals('Mookie B')
       // A role holder and a player of another team cannot be injected as this team's new player.
@@ -212,7 +219,7 @@ describe('created roster players saved into coach lineups', function () {
           base: read.digest,
           players: [
             ...added.players,
-            { userId, fullName: 'Outsider', jersey: '' }
+            { gumboId: userId, fullName: 'Outsider', jersey: '' }
           ]
         })
         expect(refused.status).equals(400)

@@ -12,6 +12,7 @@ import {
   type PlayerStats,
   type TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { PlayerScreen } from './PlayerScreen'
 import { rosterSubtitle, TeamScreen } from './TeamScreen'
@@ -59,10 +60,11 @@ async function press(label: string): Promise<void> {
 const text = (): string => document.body.textContent ?? ''
 
 const jordan = asRosterEntry({
-  userId: 7,
+  userId: userIdOfGumbo(7),
+  gumboId: 7,
   shortName: 'Jordan P',
   // What an older server sent a coach. The cleaner drops it.
-  fullName: 'Jordan Pujols',
+  fullName: 'Jordan Pacheco',
   jersey: '12',
   positions: ['SS', '2B'],
   isPlayer: true,
@@ -73,7 +75,8 @@ const jordan = asRosterEntry({
 })
 
 const batting = asBattingRow({
-  userId: 7,
+  userId: userIdOfGumbo(7),
+  gumboId: 7,
   shortName: 'Jordan P',
   teamId: 'tem_hawks',
   pa: 4,
@@ -91,7 +94,8 @@ const batting = asBattingRow({
 })
 
 const pitching = asPitchingRow({
-  userId: 7,
+  userId: userIdOfGumbo(7),
+  gumboId: 7,
   shortName: 'Jordan P',
   teamId: 'tem_hawks',
   ip: '2.0',
@@ -113,7 +117,7 @@ function statsFor(filter: {
 }): PlayerStats {
   const narrowed = filter.seasonId ?? filter.teamId ?? filter.year
   return {
-    userId: 7,
+    userId: userIdOfGumbo(7),
     filter: {
       seasonId: filter.seasonId ?? null,
       teamId: filter.teamId ?? null,
@@ -134,7 +138,7 @@ function playerClient(fullName: string | null): TeamStationClient {
   return {
     player: async () =>
       asPlayerDetail({
-        userId: 7,
+        userId: userIdOfGumbo(7),
         name: 'Jordan P',
         fullName,
         bats: 'left',
@@ -179,8 +183,8 @@ describe('a player’s whole name is never shown', function () {
     const moments: string[] = []
     await render(
       <PlayerScreen
-        client={playerClient('Jordan Pujols')}
-        userId="7"
+        client={playerClient('Jordan Pacheco')}
+        userId={userIdOfGumbo(7)}
         title="Jordan P"
         onOpenMoment={(_game, _video, _at, title) => {
           moments.push(title)
@@ -188,7 +192,7 @@ describe('a player’s whole name is never shown', function () {
       />
     )
     expect(text()).includes('Jordan P')
-    expect(text()).not.includes('Pujols')
+    expect(text()).not.includes('Pacheco')
     await press('Show more')
     expect(text()).includes('Double')
     await press('Hawks')
@@ -200,7 +204,7 @@ describe('a player’s whole name is never shown', function () {
     await render(
       <PlayerScreen
         client={playerClient(null)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         initialTab="stats"
         onFilter={filter => {
           filters.push(filter)
@@ -208,7 +212,7 @@ describe('a player’s whole name is never shown', function () {
       />
     )
     expect(text()).includes('Jordan P')
-    expect(text()).not.includes('Jordan Pujols')
+    expect(text()).not.includes('Jordan Pacheco')
     expect(text()).includes('12 games')
     await press('Filter')
     await press('Spring 2026')
@@ -248,7 +252,7 @@ describe('a player’s whole name is never shown', function () {
   })
 
   it('is not on the team’s roster, and a row still opens the player', async function () {
-    const opened: number[] = []
+    const opened: string[] = []
     const froms: unknown[] = []
     const client = {
       teamGames: async () => [
@@ -271,7 +275,8 @@ describe('a player’s whole name is never shown', function () {
       roster: async () => [
         jordan,
         asRosterEntry({
-          userId: 8,
+          userId: userIdOfGumbo(8),
+          gumboId: 8,
           shortName: 'Coach C',
           jersey: null,
           positions: [],
@@ -322,10 +327,10 @@ describe('a player’s whole name is never shown', function () {
       />
     )
     expect(text()).includes('SS · 2B')
-    expect(text()).not.includes('Pujols')
+    expect(text()).not.includes('Pacheco')
     expect(text()).includes('#12')
     await press('Jordan P')
-    expect(opened).deep.equals([7])
+    expect(opened).deep.equals([userIdOfGumbo(7)])
     // The team goes as the one the page was opened for: both of the player's
     // filters start on it, and a coach's Settings tab edits the player on it.
     expect(froms).deep.equals([{ onTeam: 'tem_hawks' }])
@@ -334,7 +339,7 @@ describe('a player’s whole name is never shown', function () {
   })
 
   it('is not on a non-member’s roster either, whose rows open nothing', async function () {
-    const opened: number[] = []
+    const opened: string[] = []
     const client = {
       teamGames: async () => [],
       roster: async () => [jordan],
@@ -365,7 +370,7 @@ describe('a player’s whole name is never shown', function () {
     )
     expect(text()).includes('Jordan P')
     expect(text()).includes('SS · 2B')
-    expect(text()).not.includes('Pujols')
+    expect(text()).not.includes('Pacheco')
     // A player's page answers a non-member `404`, so the row is not a button
     // and carries no chevron.
     const row = [...document.querySelectorAll<HTMLElement>('*')].find(

@@ -1,8 +1,8 @@
 import type { Kysely } from 'kysely'
 
 import type { GumboPlay } from '../../common/gumboPlay'
-import { survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
+import { scoringUsers } from '../scoring/gumboIds'
 import type { BattingLine } from '../stats'
 import { eventTypeCounts } from './gumboStats'
 
@@ -12,7 +12,7 @@ export async function boxScoreOrder(
   gameId: string,
   lines: BattingLine[]
 ): Promise<BattingLine[]> {
-  const first = new Map<number, number>()
+  const first = new Map<string, number>()
   for (const line of lines)
     if (line.firstPa != null) first.set(line.userId, line.firstPa)
   if (lines.some(line => line.firstPa == null)) {
@@ -30,11 +30,11 @@ export async function boxScoreOrder(
         ? [play.matchup.batter.id]
         : []
     )
-    const survivors = await survivorsOf(db, ids)
+    const survivors = await scoringUsers(db, ids)
     for (const play of plays) {
       const id = play.matchup?.batter?.id
       if (typeof id !== 'number') continue
-      const survivor = survivors.get(id) ?? id
+      const survivor = survivors.get(id)!
       first.set(
         survivor,
         Math.min(first.get(survivor) ?? Infinity, play.about.atBatIndex)
@@ -44,6 +44,14 @@ export async function boxScoreOrder(
   return [...lines].sort((a, b) => {
     const delta =
       (first.get(a.userId) ?? Infinity) - (first.get(b.userId) ?? Infinity)
-    return Number.isNaN(delta) || delta === 0 ? a.userId - b.userId : delta
+    return Number.isNaN(delta) || delta === 0
+      ? // Fixed-width Base58 uses code-point order. Locale collation reorders
+        // upper/lowercase digits and changes the historical numeric tiebreak.
+        a.userId < b.userId
+        ? -1
+        : a.userId > b.userId
+          ? 1
+          : 0
+      : delta
   })
 }

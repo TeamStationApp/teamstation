@@ -2,14 +2,14 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { BallInPlayAction } from '../../common/scoring/actions'
+import { scoringSession } from '../../test/scoringSession'
 import { allowedAngle, startingAngle, trajectoryLabel } from './battedBall'
-import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import { type Outcome, outcomeEvents } from './scoringContract'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
 const initial = (): ReturnType<typeof initialScoringState> =>
-  initialScoringState(createDevelopmentSession(gameFixture, [], []))
+  initialScoringState(scoringSession(gameFixture))
 describe('batted-ball draft', function () {
   for (const outcome of Object.keys(outcomeEvents) as Outcome[])
     it(`records ${outcome} once and stores the fielder and accepted trajectory`, function () {

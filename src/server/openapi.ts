@@ -18,6 +18,7 @@ import {
 import { createEventOperation, eventInfoPaths } from './events/eventInfoOpenApi'
 import { creationPaths } from './groups/openApi'
 import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
+import { nullableGumboIdSchema, userIdSchema } from './userIdSchema'
 
 const recordSchema = {
   type: 'object',
@@ -60,7 +61,7 @@ const pitchingCounts = [
   'k'
 ]
 const statIdentity = {
-  userId: { type: 'integer' },
+  userId: userIdSchema,
   shortName: { type: 'string' },
   teamId: { type: ['string', 'null'] }
 }
@@ -511,7 +512,7 @@ const userIdParam = {
   name: 'userId',
   in: 'path',
   required: true,
-  schema: { type: 'string' }
+  schema: userIdSchema
 }
 
 const errorResponse = {
@@ -1294,12 +1295,14 @@ const gumboSchemas = {
       "engine's own vocabulary, and `detail` the scorer's own picks and " +
       'estimates (trajectory, launch angle). Replay and undo read it; ' +
       '`npm run refold-scored-games` rebuilds the rest of the play from it.' +
-      ' `version` is 1; a post whose record has any other version is ' +
+      ' New records use `version` 2 with persistent numeric player ids and ' +
+      'an append-only `tagOrder`. Historical version 1 records are read ' +
+      'through their saved identity maps. Invalid or unsupported records are ' +
       'refused with 400. Scoring sessions preserve historical playback times ' +
       'and the server adds radar measurement provenance when necessary.',
     required: ['version', 'setupBefore', 'actions'],
     properties: {
-      version: { type: 'integer', enum: [1] },
+      version: { type: 'integer', enum: [1, 2] },
       setupBefore: { type: 'object' },
       actions: { type: 'array', items: { type: 'object' } },
       actionTimes: {
@@ -1417,9 +1420,10 @@ export function openApiDocument(version: string): OpenApiDocument {
         },
         User: {
           type: 'object',
-          required: ['id', 'displayName', 'isAdmin'],
+          required: ['id', 'gumboId', 'displayName', 'isAdmin'],
           properties: {
-            id: { type: 'integer', minimum: 0, maximum: 9007199254740991 },
+            id: userIdSchema,
+            gumboId: nullableGumboIdSchema,
             displayName: { type: 'string' },
             email: { type: ['string', 'null'] },
             isAdmin: { type: 'boolean' },
@@ -1557,7 +1561,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'administrator who removes one and sees nothing change has been ' +
             'told a half-truth.',
           properties: {
-            userId: { type: 'string' },
+            userId: userIdSchema,
             displayName: { type: 'string' },
             emails: { type: 'array', items: { type: 'string' } },
             teams: {
@@ -1614,13 +1618,13 @@ export function openApiDocument(version: string): OpenApiDocument {
         },
         LineupPerson: {
           type: 'object',
-          required: ['userId', 'name', 'jersey'],
+          required: ['gumboId', 'name', 'jersey'],
           description:
-            'A player in a lineup: his user id, or null for a placeholder ' +
+            'A player in a lineup: his scoring id, or null for a placeholder ' +
             'named at the field, the short name the scoring screen shows ' +
             '(never a full name), and his jersey.',
           properties: {
-            userId: { type: ['integer', 'null'] },
+            gumboId: { type: ['integer', 'null'] },
             name: { type: 'string' },
             jersey: { type: 'string' }
           }
@@ -1776,7 +1780,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 properties: {
                   userId: {
                     description: 'Null for a placeholder named at the field.',
-                    oneOf: [{ type: 'integer' }, { type: 'null' }]
+                    oneOf: [userIdSchema, { type: 'null' }]
                   },
                   name: { type: 'string' },
                   walkUpSong: {
@@ -1898,6 +1902,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           type: 'object',
           required: [
             'userId',
+            'gumboId',
             'shortName',
             'avatarUrl',
             'jersey',
@@ -1918,7 +1923,12 @@ export function openApiDocument(version: string): OpenApiDocument {
             'of its players, or a follower) has `role` `member`, `isPlayer` ' +
             'false, no jersey, no positions and no walk-up song.',
           properties: {
-            userId: { type: 'integer' },
+            userId: userIdSchema,
+            gumboId: {
+              type: ['integer', 'null'],
+              minimum: 1,
+              maximum: 9007199254740991
+            },
             shortName: {
               type: 'string',
               description: 'First name and last initial.'
@@ -2048,7 +2058,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'canHoldRoles'
               ],
               properties: {
-                userId: { type: 'integer' },
+                userId: userIdSchema,
                 shortName: { type: 'string' },
                 fullName: {
                   type: ['string', 'null'],
@@ -2075,7 +2085,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 type: 'object',
                 required: ['userId', 'shortName', 'avatarUrl', 'teamId'],
                 properties: {
-                  userId: { type: 'integer' },
+                  userId: userIdSchema,
                   shortName: { type: 'string' },
                   avatarUrl: { type: ['string', 'null'] },
                   teamId: { type: 'string' }
@@ -2149,7 +2159,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           required: ['userId', 'roles', 'member'],
           description: 'What somebody holds at one level itself, now.',
           properties: {
-            userId: { type: 'integer' },
+            userId: userIdSchema,
             roles: {
               type: 'array',
               items: { $ref: '#/components/schemas/Role' }
@@ -2305,15 +2315,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                       'key'
                     ],
                     properties: {
-                      version: { type: 'integer', enum: [1] },
+                      version: { type: 'integer', enum: [2] },
                       issuer: {
                         type: 'string',
                         description: "The server's canonical public origin"
                       },
-                      userId: {
-                        type: 'string',
-                        description: "The caller's user ID, in decimal"
-                      },
+                      userId: userIdSchema,
                       accountTag: {
                         type: 'string',
                         description:
@@ -3566,7 +3573,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                               type: 'string',
                               enum: ['created', 'joined', 'unchanged', 'error']
                             },
-                            userId: { type: 'integer' },
+                            userId: userIdSchema,
                             error: memberRowError
                           }
                         }
@@ -3710,7 +3717,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                               type: 'string',
                               enum: ['created', 'matched', 'unchanged', 'error']
                             },
-                            userId: { type: 'integer' },
+                            userId: userIdSchema,
                             joined: { type: 'boolean' },
                             guardianLinks: { type: 'integer' },
                             guardiansMissing: { type: 'integer' },
@@ -4387,6 +4394,138 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/games/{gameId}/unroster': {
+        put: {
+          summary: 'Change one roster player’s availability for this game',
+          description:
+            'Only the head coach of the selected side may toggle a team player. Off removes the player from lineup and defense options and current placements; on restores the option without placing the player. Guests cannot be toggled. The exclusion and lineup changes commit together, and a play awaiting its result refuses the change. Repeating the current value is idempotent.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['side', 'userId', 'rostered'],
+                  properties: {
+                    side: { type: 'string', enum: ['away', 'home'] },
+                    userId: userIdSchema,
+                    rostered: { type: 'boolean' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: {
+              description: 'The game’s unrostered lists',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['away', 'home'],
+                    properties: {
+                      away: {
+                        type: 'array',
+                        uniqueItems: true,
+                        items: { type: 'integer' }
+                      },
+                      home: {
+                        type: 'array',
+                        uniqueItems: true,
+                        items: { type: 'integer' }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/guest-players': {
+        post: {
+          summary: 'Create a persistent player for one game',
+          description:
+            'A roster manager for the selected side or a scorekeeper of either ' +
+            'game team creates a guest with no ' +
+            'login, email or team membership. The returned identity is appended ' +
+            'to that side of GameDetail.guests before the client adds the player ' +
+            'to its lineup. GameDetail.guestPlayers returns the saved guest details on reopen. Final, cancelled or unresolved plays refuse creation.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: [
+                    'side',
+                    'firstName',
+                    'lastName',
+                    'jersey',
+                    'positions',
+                    'bats',
+                    'throws'
+                  ],
+                  properties: {
+                    side: { type: 'string', enum: ['away', 'home'] },
+                    firstName: {
+                      type: 'string',
+                      maxLength: PLAYER_NAME_MAX_LENGTH
+                    },
+                    lastName: {
+                      type: 'string',
+                      maxLength: PLAYER_NAME_MAX_LENGTH
+                    },
+                    jersey: {
+                      type: 'string',
+                      nullable: true,
+                      maxLength: JERSEY_MAX_LENGTH
+                    },
+                    positions: {
+                      type: 'array',
+                      items: { type: 'string', enum: [...PLAYER_POSITIONS] }
+                    },
+                    bats: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right', 'switch']
+                    },
+                    throws: {
+                      type: 'string',
+                      nullable: true,
+                      enum: ['left', 'right']
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            201: {
+              description: 'The saved guest',
+              content: {
+                'application/json': {
+                  schema: { $ref: '#/components/schemas/RosterEntry' }
+                }
+              }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse,
+            409: errorResponse
+          }
+        }
+      },
       '/games/{gameId}/lineups': {
         get: {
           summary: "Both sides' lineups in a game",
@@ -4417,9 +4556,8 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             "One side's players, batting order and defence, as its head " +
             'coach sets them between plays. The players are named by who ' +
-            'they are: `userId`, or for a player made up at the field ' +
-            '`fullName` and `jersey`, matched against the side’s made-up ' +
-            'players and added when none matches. Every other number is an ' +
+            'they are: `gumboId`, including persisted game guests. ' +
+            'Every other number is an ' +
             'index into `players`. The game is replayed as the scoring ' +
             'screen replays it, the lineup is applied as a scorer’s roster ' +
             'change, followed by a pinch runner who keeps the batting order ' +
@@ -4468,10 +4606,12 @@ export function openApiDocument(version: string): OpenApiDocument {
                       description: "Every player on the side's roster",
                       items: {
                         type: 'object',
-                        required: ['userId', 'fullName', 'jersey'],
+                        required: ['gumboId', 'fullName', 'jersey'],
                         properties: {
-                          userId: {
-                            oneOf: [{ type: 'integer' }, { type: 'null' }]
+                          gumboId: {
+                            type: 'integer',
+                            minimum: 1,
+                            maximum: 9007199254740991
                           },
                           fullName: { type: 'string' },
                           jersey: { type: 'string' }
@@ -4570,7 +4710,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                             properties: {
                               side: { enum: ['away', 'home'] },
                               userId: {
-                                oneOf: [{ type: 'integer' }, { type: 'null' }]
+                                oneOf: [userIdSchema, { type: 'null' }]
                               }
                             }
                           },
@@ -4818,9 +4958,10 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'application/json': {
                   schema: {
                     type: 'object',
-                    required: ['userId', 'name', 'teams'],
+                    required: ['userId', 'gumboId', 'name', 'teams'],
                     properties: {
-                      userId: { type: 'integer' },
+                      userId: userIdSchema,
+                      gumboId: nullableGumboIdSchema,
                       name: {
                         type: 'string',
                         description: 'First name and last initial.'
@@ -5183,7 +5324,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               name: 'userId',
               in: 'path',
               required: true,
-              schema: { type: 'integer' }
+              schema: userIdSchema
             }
           ],
           requestBody: {
@@ -5219,9 +5360,11 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary:
             'Who people are here, by the ids another service has, or the players you guard',
           description:
-            'A play names people by TeamStation user id alone, so a sender ' +
+            'A play names people by their numeric gumboId, so a sender ' +
             'asks this with the ids it holds first. Each answer is ' +
-            '`{ userId, externalIds, shortName, avatarUrl }`: a person, ' +
+            '`{ userId, gumboId, externalIds, shortName, avatarUrl }`: a person, ' +
+            'their canonical account userId and separate scoring gumboId ' +
+            '(null until allocated), ' +
             'which of the asked ids are theirs, their short name and their ' +
             'signed picture (null when none). A merged row answers as the ' +
             'person it was merged ' +
@@ -5266,6 +5409,12 @@ export function openApiDocument(version: string): OpenApiDocument {
               style: 'form',
               explode: true,
               description: "Another service's ids for the people"
+            },
+            {
+              name: 'system',
+              in: 'query',
+              schema: { type: 'string', minLength: 1 },
+              description: 'Restrict external IDs to this source system'
             },
             {
               name: 'guardedBy',
@@ -5559,7 +5708,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                     type: 'object',
                     required: ['userId', 'bats', 'throws'],
                     properties: {
-                      userId: { type: 'integer' },
+                      userId: userIdSchema,
                       bats: {
                         type: 'string',
                         nullable: true,
@@ -6100,7 +6249,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                       person: {
                         type: 'object',
                         properties: {
-                          userId: { type: 'string' },
+                          userId: userIdSchema,
                           displayName: { type: 'string' },
                           email: { type: 'string' }
                         }
@@ -6190,7 +6339,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                     type: 'object',
                     required: ['userId', 'roles'],
                     properties: {
-                      userId: { type: 'integer' },
+                      userId: userIdSchema,
                       roles: {
                         type: 'array',
                         items: { $ref: '#/components/schemas/Role' }
@@ -6402,7 +6551,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                     type: 'object',
                     required: ['userId', 'role'],
                     properties: {
-                      userId: { type: 'string' },
+                      userId: userIdSchema,
                       role: { type: 'string', enum: ['admin', 'member'] }
                     }
                   }

@@ -1,6 +1,8 @@
 import type { GameDetail, RosterEntry } from '../api'
+import type { Unrostered } from '../unroster'
+import { asGumboId } from '../userId'
 import type { ScoringAction } from './actions'
-import { addPlayer, begun, newSetup, type RosterPlayer } from './lineup'
+import { begun, newSetup, type RosterPlayer } from './lineup'
 import {
   type Lineup,
   lineupOf,
@@ -8,6 +10,7 @@ import {
   sameArrangement,
   unseenLineup
 } from './lineupHistory'
+import { reconcileRoster } from './rosterAvailability'
 import {
   copyState,
   type GameSetup,
@@ -50,7 +53,7 @@ function rosterOf(rows: RosterEntry[]): RosterPlayer[] {
   return rows
     .filter(row => row.isPlayer)
     .map(row => ({
-      userId: row.userId,
+      gumboId: asGumboId(row.gumboId),
       shortName: row.shortName,
       jersey: row.jersey,
       bats: row.bats,
@@ -69,7 +72,10 @@ export type DefaultLineups = Partial<Record<Side, Lineup | null>>
  * `arrangeFromDefault`).
  */
 export function startingSetup(
-  game: GameTeams,
+  game: GameTeams & {
+    unrostered?: Unrostered
+    guestPlayers?: Record<Side, RosterEntry[]>
+  },
   away: RosterEntry[],
   home: RosterEntry[],
   defaults: DefaultLineups = {},
@@ -78,16 +84,36 @@ export function startingSetup(
   const setup = newSetup(
     teamsOf(game),
     {
-      away: rosterOf(away),
-      home: rosterOf(home)
+      away: rosterOf(
+        away.filter(
+          row =>
+            !row.isPlayer ||
+            game.unrostered?.away.includes(asGumboId(row.gumboId)) !== true
+        )
+      ),
+      home: rosterOf(
+        home.filter(
+          row =>
+            !row.isPlayer ||
+            game.unrostered?.home.includes(asGumboId(row.gumboId)) !== true
+        )
+      )
     },
     fillRoster
   )
+  const reconciled = reconcileRoster(
+    setup,
+    teamsOf(game),
+    { away, home },
+    game.guestPlayers ?? { away: [], home: [] },
+    game.unrostered ?? { away: [], home: [] }
+  )
   for (const side of ['away', 'home'] as const) {
     const lineup = defaults[side]
-    if (lineup != null) arrangeFromDefault(setup, teamsOf(game), side, lineup)
+    if (lineup != null)
+      arrangeFromDefault(reconciled, teamsOf(game), side, lineup)
   }
-  return setup
+  return reconciled
 }
 
 /**
@@ -104,37 +130,11 @@ function arrangeFromDefault(
   lineup: Lineup
 ): void {
   const team = setup.sides[side]
-  const rosterIds = team.players.filter(id => !setup.players[id].local)
-  const byUser = new Map<number, number>()
-  for (const id of rosterIds) {
-    const userId = setup.players[id].userId
-    if (userId != null) byUser.set(userId, id)
-  }
-  // The roster's made-up players give way to the default's own.
-  for (const id of team.players)
-    if (setup.players[id].local) {
-      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-      delete setup.players[id]
-      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-      delete setup.identities.sessionToSource[id]
-    }
-  team.players = [...rosterIds]
-  const draft = {
-    gameData: { teams, players: setup.players },
-    liveData: { boxscore: { teams: setup.sides } },
-    meta: { identities: setup.identities }
-  }
-  const placeholders = new Map<string, number>()
-  const idOf = (person: LineupPerson | null): number | null => {
-    if (person == null) return null
-    if (person.userId != null) return byUser.get(person.userId) ?? null
-    let id = placeholders.get(person.name)
-    if (id == null) {
-      id = addPlayer(draft, side, person.name, person.jersey)
-      placeholders.set(person.name, id)
-    }
-    return id
-  }
+  const available = new Set(team.players)
+  const idOf = (person: LineupPerson | null): number | null =>
+    person?.gumboId != null && available.has(person.gumboId)
+      ? person.gumboId
+      : null
   const order: number[] = []
   for (const person of lineup.batters) {
     const id = idOf(person)
@@ -167,7 +167,7 @@ export function withSideLineup(
   arrangeFromDefault(setup, next.gameData.teams, side, lineup)
   next.gameData.players = setup.players
   next.liveData.boxscore.teams = setup.sides
-  next.meta.identities = setup.identities
+  next.meta.tagOrder = setup.tagOrder
   return next
 }
 
@@ -239,3 +239,6 @@ export function defaultsUnaccepted(
       (defaults[side] ?? null) != null && unseenLineup(actions, side) != null
   )
 }
+
+// Public read projection shared by roster editors and the scoring source.
+export { reconcileRoster, type ScoringRosterEntry } from './rosterAvailability'

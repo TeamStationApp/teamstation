@@ -3,7 +3,11 @@ import type { Kysely } from 'kysely'
 
 import { badRequest, conflict, notFound } from '../../common/errors'
 import { gumboViolations } from '../../common/gumbo/validate'
+import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
+import { lockPlayerEdits } from '../admin/people'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
 import { notifyGameChange } from '../socket/gameChanges'
 import { withoutDescriptions } from './eventWrite'
 
@@ -99,10 +103,17 @@ export async function addPlayEvents(
   const indexes = body.plays.map(play => play.atBatIndex)
   if (new Set(indexes).size !== indexes.length)
     throw badRequest('Two plays share an atBatIndex')
-  return await db.transaction().execute(async trx => {
+  return await atomic(db, async trx => {
+    await lockPlayerEdits(trx)
     const game = await trx
       .selectFrom('games')
-      .select('scoringOwner')
+      .select([
+        'id',
+        'scoringOwner',
+        'home_team_id',
+        'away_team_id',
+        'currentPlay'
+      ])
       .where('id', '=', gameId)
       .forUpdate()
       .executeTakeFirst()
@@ -159,11 +170,11 @@ export async function addPlayEvents(
       const users = new Set(
         (
           await trx
-            .selectFrom('users')
-            .select('id')
-            .where('id', 'in', [...named.keys()])
+            .selectFrom('gumbo_ids')
+            .select('gumbo_id')
+            .where('gumbo_id', 'in', [...named.keys()])
             .execute()
-        ).map(row => row.id)
+        ).map(row => row.gumbo_id)
       )
       const unknown = [...named].find(([id]) => !users.has(id))
       if (unknown != null)
@@ -171,6 +182,13 @@ export async function addPlayEvents(
           `${unknown[1]} names person ${unknown[0]}, who is not a user`
         )
     }
+    const replacements = new Map(writes.map(write => [write.id, write.gumbo]))
+    await assertStoredScoringRoles(trx, game, {
+      plays: [...stored.values()].map(
+        row => (replacements.get(row.id) ?? row.gumbo) as GumboPlay
+      ),
+      currentPlay: game.currentPlay as CurrentPlay | null
+    })
     const now = new Date()
     for (const write of writes) {
       await trx

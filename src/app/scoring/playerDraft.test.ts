@@ -3,7 +3,8 @@ import { describe, it } from 'mocha'
 
 import { rosterError } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
-import { createDevelopmentSession } from './developmentSession'
+import { userIdOfGumbo } from '../../common/userId'
+import { scoringSession } from '../../test/scoringSession'
 import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
 import {
@@ -20,7 +21,7 @@ import { initialScoringState, scoringReducer } from './scoringMachine'
 
 describe('local player entry', function () {
   it('renders the current local batter’s edited handedness when the rosters are saved before pitching', function () {
-    const session = createDevelopmentSession(gameFixture, [], [])
+    const session = scoringSession(gameFixture)
     const state = initialScoringState(session)
     const id = session.liveData.plays.currentPlay!.matchup.batter.id
     const draft = structuredClone(session)
@@ -41,10 +42,10 @@ describe('local player entry', function () {
     )
   })
   it('corrects a named placeholder in place while preserving its lineup, defense and Undo identity', function () {
-    const session = createDevelopmentSession(gameFixture, [], [])
+    const session = scoringSession(gameFixture)
     const id = session.liveData.boxscore.teams.away.players[0]
     const before = JSON.stringify(session.liveData.boxscore)
-    const identities = JSON.stringify(session.meta.identities)
+    const identities = JSON.stringify(session.meta.tagOrder)
     const state = initialScoringState(session)
     const edited = structuredClone(session)
     const player = draftOfLocalPlayer(edited.gameData.players[id])
@@ -59,7 +60,6 @@ describe('local player entry', function () {
     })
     expect(edited.gameData.players[id]).includes({
       id,
-      userId: null,
       fullName: 'Jose Altuve',
       jersey: '00',
       bats: 'switch',
@@ -67,7 +67,7 @@ describe('local player entry', function () {
     })
     expect(edited.gameData.players[id].positions).deep.equals(['P', 'DH'])
     expect(JSON.stringify(edited.liveData.boxscore)).equals(before)
-    expect(JSON.stringify(edited.meta.identities)).equals(identities)
+    expect(JSON.stringify(edited.meta.tagOrder)).equals(identities)
     const saved = scoringReducer(state, { type: 'ROSTER', draft: edited })
     expect(saved.session.gameData.players[id].fullName).equals('Jose Altuve')
     const undone = scoringReducer(saved, { type: 'UNDO' })
@@ -89,14 +89,14 @@ describe('local player entry', function () {
       })
     }).throws('Enter a player name')
     expect(JSON.stringify(edited)).equals(snapshot)
-    edited.gameData.players[id].userId = 100
+    edited.gameData.players[id].local = false
     expect(() => {
       editLocalPlayerDraft(edited, 'away', id, player)
     }).throws('not on the roster')
   })
 
   it('starts legacy game-only names and unknown throwing hands without inventing a hand', function () {
-    const session = createDevelopmentSession(gameFixture, [], [])
+    const session = scoringSession(gameFixture)
     const player =
       session.gameData.players[session.liveData.boxscore.teams.away.players[0]]
     player.fullName = 'Jose Ramirez'
@@ -112,13 +112,13 @@ describe('local player entry', function () {
     expect(draft.positions).not.equals(player.positions)
   })
   it('validates names and jersey without mutating a draft on failure', function () {
-    const session = createDevelopmentSession(gameFixture, [], [])
+    const session = scoringSession(gameFixture)
     const before = JSON.stringify(session)
     const draft = emptyPlayerDraft()
     expect(draft).includes({ bats: 'right', throws: 'right' })
     expect(draft.positions).deep.equals([])
     expect(playerDraftError(draft)).equals('Enter a player name.')
-    expect(() => addPlayerDraft(session, 'home', draft)).throws(
+    expect(() => addPlayerDraft(session, 'home', draft, 9000000)).throws(
       'Enter a player name'
     )
     expect(JSON.stringify(session)).equals(before)
@@ -128,24 +128,29 @@ describe('local player entry', function () {
     expect(playerDraftError({ ...draft, lastName: 'Only' })).equals(undefined)
   })
   it('preserves names, leading zeros, handedness and optional preferences through save and undo', function () {
-    const session = createDevelopmentSession(gameFixture, [], [])
+    const session = scoringSession(gameFixture)
     const state = initialScoringState(session)
     const before = JSON.stringify(session.liveData.boxscore)
     for (const side of ['away', 'home'] as const)
       for (const bats of ['left', 'switch', 'right'] as const) {
-        const id = addPlayerDraft(session, side, {
-          ...emptyPlayerDraft(),
-          firstName: ' Alex ',
-          lastName: ' Lee ',
-          jersey: ' 00 ',
-          bats,
-          throws: 'left',
-          positions: [...PLAYER_POSITIONS, 'bad', 'P']
-        })
+        const id = addPlayerDraft(
+          session,
+          side,
+          {
+            ...emptyPlayerDraft(),
+            firstName: ' Cliff ',
+            lastName: ' Lee ',
+            jersey: ' 00 ',
+            bats,
+            throws: 'left',
+            positions: [...PLAYER_POSITIONS, 'bad', 'P']
+          },
+          9000000 + session.meta.tagOrder.length
+        )
         expect(session.gameData.players[id]).includes({
-          firstName: 'Alex',
+          firstName: 'Cliff',
           lastName: 'Lee',
-          fullName: 'Alex Lee',
+          fullName: 'Cliff Lee',
           jersey: '00',
           bats,
           throws: 'left',
@@ -172,7 +177,7 @@ describe('local player entry', function () {
   })
 
   it('adds a created roster player under their user id, once', function () {
-    const session = createDevelopmentSession(gameFixture, [], [])
+    const session = scoringSession(gameFixture)
     const draft = {
       ...emptyPlayerDraft(),
       firstName: 'Cliff',
@@ -181,10 +186,14 @@ describe('local player entry', function () {
       positions: ['SS', 'EH']
     }
     expect(rosterPlayerBody(draft).positions).deep.equals(['SS'])
-    const entry = { userId: 8800001, shortName: 'Cliff L' }
+    const entry = {
+      userId: userIdOfGumbo(8800001),
+      gumboId: 8800001,
+      shortName: 'Cliff L'
+    }
     const id = addRosteredPlayer(session, 'home', entry, draft)
     const player = session.gameData.players[id]
-    expect(player.userId).equals(8800001)
+    expect(player.id).equals(8800001)
     expect(player.local).equals(false)
     expect(player.fullName).equals('Cliff L')
     expect(player.positions).deep.equals(['SS', 'EH'])

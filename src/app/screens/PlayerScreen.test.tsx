@@ -19,6 +19,7 @@ import type {
   PlayerSettings
 } from '../../common/playerSettings'
 import type { Role } from '../../common/roles'
+import { userIdOfGumbo } from '../../common/userId'
 import { App } from '../App'
 import { parseRoute, routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
@@ -122,11 +123,12 @@ async function typeName(label: string, value: string): Promise<void> {
 const roles = (
   teams: Record<string, Role[]>,
   guardianOf: number[] = []
-): MyRoles => ({ teams, guardianOf })
+): MyRoles => ({ teams, guardianOf: guardianOf.map(userIdOfGumbo) })
 const coach = roles({ t1: ['coach'] })
 
 const jordan = asRosterEntry({
-  userId: 7,
+  userId: userIdOfGumbo(7),
+  gumboId: 7,
   shortName: 'Jordan P',
   jersey: '4',
   positions: ['CF'],
@@ -140,7 +142,7 @@ const jordan = asRosterEntry({
 })
 
 const stats: PlayerStats = {
-  userId: 7,
+  userId: userIdOfGumbo(7),
   filter: { seasonId: null, teamId: null, year: null },
   games: 3,
   batting: null,
@@ -198,7 +200,7 @@ function playerClient(
   return {
     player: async () =>
       asPlayerDetail({
-        userId: 7,
+        userId: userIdOfGumbo(7),
         name: 'Jordan P',
         bats: 'right',
         throws: 'right',
@@ -236,7 +238,12 @@ function playerClient(
     },
     setPlayerBatsThrows: async (_userId: string, settings: PersonSettings) => {
       saves.push({ teamId: null, settings })
-      return { userId: 7, bats: 'right', throws: 'right', ...settings }
+      return {
+        userId: userIdOfGumbo(7),
+        bats: 'right',
+        throws: 'right',
+        ...settings
+      }
     }
   } as unknown as TeamStationClient
 }
@@ -254,7 +261,7 @@ describe('a player’s tabs', function () {
     await render(
       <PlayerScreen
         client={playerClient()}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         roles={roles({ t1: ['coach', 'songkeeper'] })}
       />
@@ -274,7 +281,11 @@ describe('a player’s tabs', function () {
       { forTeam: 't1', roles: roles({}, [8]) }
     ]) {
       await render(
-        <PlayerScreen client={playerClient()} userId="7" {...props} />
+        <PlayerScreen
+          client={playerClient()}
+          userId={userIdOfGumbo(7)}
+          {...props}
+        />
       )
       expect(tabNames(), JSON.stringify(props)).deep.equals([
         'Videos',
@@ -291,7 +302,7 @@ describe('a player’s tabs', function () {
     await render(
       <PlayerScreen
         client={playerClient([], [], { teams: [hawks, owls] })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         roles={roles({ tem_other: ['assistant'] })}
       />
     )
@@ -304,7 +315,7 @@ describe('a player’s tabs', function () {
     await render(
       <PlayerScreen
         client={playerClient([], [], { teams: [hawks] })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         roles={roles({ tem_other: ['coach'] })}
       />
     )
@@ -316,7 +327,7 @@ describe('a player’s tabs', function () {
     await render(
       <PlayerScreen
         client={playerClient([], [], { teams: [hawks, owlsLeft] })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         roles={roles({ tem_other: ['coach'] })}
       />
     )
@@ -329,7 +340,7 @@ describe('a player’s tabs', function () {
     await render(
       <PlayerScreen
         client={playerClient()}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         roles={roles({}, [7])}
       />
@@ -344,7 +355,11 @@ describe('a player’s tabs', function () {
     })
     // From Home: Settings, and no Walk-up without a team for the song.
     await render(
-      <PlayerScreen client={playerClient()} userId="7" roles={roles({}, [7])} />
+      <PlayerScreen
+        client={playerClient()}
+        userId={userIdOfGumbo(7)}
+        roles={roles({}, [7])}
+      />
     )
     expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
   })
@@ -355,7 +370,7 @@ describe('a player’s tabs', function () {
     await render(
       <PlayerScreen
         client={playerClient()}
-        userId="3"
+        userId={userIdOfGumbo(3)}
         forTeam="t1"
         roles={roles({}, [7])}
       />
@@ -370,7 +385,7 @@ describe('a player’s filters', function () {
     await render(
       <PlayerScreen
         client={playerClient([], [], { asked })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
       />
     )
@@ -387,7 +402,7 @@ describe('a player’s filters', function () {
     await render(
       <PlayerScreen
         client={playerClient([], [], { asked })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         initialFilter={{}}
         initialVideoFilter={{}}
       />
@@ -404,7 +419,7 @@ describe('a player’s filters', function () {
     await render(
       <PlayerScreen
         client={playerClient([], [], { asked })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         // A box score: the game's season and side.
         initialFilter={{ seasonId: 's1', teamId: 't1' }}
@@ -450,7 +465,7 @@ describe('a player’s filters', function () {
                     withoutVideo: 0
                   }
         })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         onVideoFilter={filter => {
           chosen.push(filter)
@@ -482,7 +497,7 @@ describe('a player’s filters', function () {
     await render(
       <PlayerScreen
         client={playerClient([], [], { asked })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         onVideoFilter={filter => {
           chosen.push(filter)
@@ -506,7 +521,7 @@ describe('a player’s Teams tab', function () {
     await render(
       <PlayerScreen
         client={playerClient([], [], { teams: [hawks, owls] })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         onTab={tab => {
           tabs.push(tab)
         }}
@@ -537,7 +552,7 @@ describe('a player’s Teams tab', function () {
         client={playerClient([], [], {
           teams: [{ ...hawks, logoUrl: 'https://img.example/hawks.png' }, owls]
         })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         initialTab="teams"
         onOpenTeam={() => {}}
       />
@@ -554,7 +569,11 @@ describe('a player’s Teams tab', function () {
 
   it('says so when there are none', async function () {
     await render(
-      <PlayerScreen client={playerClient()} userId="7" initialTab="teams" />
+      <PlayerScreen
+        client={playerClient()}
+        userId={userIdOfGumbo(7)}
+        initialTab="teams"
+      />
     )
     expect(text()).includes('Not on any team yet.')
   })
@@ -580,13 +599,17 @@ describe('a player’s Settings tab', function () {
           ? await new Promise(resolve => {
               release = resolve
             })
-          : asPlayerDetail({ userId: 7, name: 'Paul G', teams: [] })
+          : asPlayerDetail({
+              userId: userIdOfGumbo(7),
+              name: 'Paul G',
+              teams: []
+            })
       client.roster = async () => [entry]
       client.setPlayerSettings = async () => ({ ...entry, jersey: '9' })
       await render(
         <PlayerScreen
           client={client}
-          userId="7"
+          userId={userIdOfGumbo(7)}
           forTeam="t1"
           roles={coach}
           initialTab="settings"
@@ -598,7 +621,13 @@ describe('a player’s Settings tab', function () {
       await press('Videos')
       expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
       await act(async () => {
-        release?.(asPlayerDetail({ userId: 7, name: 'Paul G', teams: [] }))
+        release?.(
+          asPlayerDetail({
+            userId: userIdOfGumbo(7),
+            name: 'Paul G',
+            teams: []
+          })
+        )
         await delay(20)
       })
       expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
@@ -637,7 +666,7 @@ describe('a player’s Settings tab', function () {
     await render(
       <PlayerScreen
         client={client}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         roles={coach}
         initialTab="settings"
@@ -679,7 +708,7 @@ describe('a player’s Settings tab', function () {
     await render(
       <PlayerScreen
         client={client}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         roles={coach}
         initialTab="settings"
@@ -691,7 +720,13 @@ describe('a player’s Settings tab', function () {
     await press('Videos')
     expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
     await act(async () => {
-      release?.(asPlayerDetail({ userId: 7, name: 'Mookie B', teams: [] }))
+      release?.(
+        asPlayerDetail({
+          userId: userIdOfGumbo(7),
+          name: 'Mookie B',
+          teams: []
+        })
+      )
       await delay(20)
     })
     expect(text()).includes('Paul G').and.not.includes('Mookie B')
@@ -726,7 +761,7 @@ describe('a player’s Settings tab', function () {
     await render(
       <PlayerScreen
         client={client}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         roles={coach}
         initialTab="settings"
@@ -773,7 +808,7 @@ describe('a player’s Settings tab', function () {
     await render(
       <PlayerScreen
         client={client}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         roles={coach}
         initialTab="settings"
@@ -795,7 +830,7 @@ describe('a player’s Settings tab', function () {
     await render(
       <PlayerScreen
         client={playerClient(saves)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         roles={coach}
         onTab={tab => {
@@ -820,7 +855,7 @@ describe('a player’s Settings tab', function () {
     await render(
       <PlayerScreen
         client={playerClient(saves)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         initialTab="settings"
         roles={roles({}, [7])}
       />
@@ -843,7 +878,7 @@ describe('a player’s Settings tab', function () {
       await render(
         <PlayerScreen
           client={playerClient()}
-          userId="7"
+          userId={userIdOfGumbo(7)}
           initialTab="settings"
           {...props}
           onTab={(tab, correcting) => {
@@ -864,7 +899,7 @@ describe('a player’s Settings tab', function () {
     await render(
       <PlayerScreen
         client={playerClient()}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         initialTab="settings"
         forTeam="t1"
         onTab={tab => {
@@ -884,7 +919,7 @@ describe('a player’s Settings tab', function () {
     await render(
       <PlayerScreen
         client={playerClient([], rosters)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         initialTab="stats"
         initialFilter={{ teamId: 't1' }}
         forTeam="t1"
@@ -926,9 +961,10 @@ describe('taking a player off the team from Settings', function () {
           asPersonProfile({
             context: { kind: 'team', id: 't1', name: 'Hawks' },
             person: {
-              userId: 7,
+              userId: userIdOfGumbo(7),
+              gumboId: 7,
               shortName: 'Jordan P',
-              fullName: 'Jordan Pujols',
+              fullName: 'Jordan Pacheco',
               avatarUrl: null,
               canHoldRoles: options.canHoldRoles ?? true
             },
@@ -945,7 +981,7 @@ describe('taking a player off the team from Settings', function () {
             ],
             viewer: { manages: true, admin: true }
           }),
-        removePerson: async (kind: string, id: string, userId: number) => {
+        removePerson: async (kind: string, id: string, userId: string) => {
           asked.push(['remove', kind, id, userId])
           if (options.refuse != null)
             throw new HttpError('conflict', options.refuse)
@@ -964,7 +1000,7 @@ describe('taking a player off the team from Settings', function () {
       await render(
         <PlayerScreen
           client={removeClient([], { canHoldRoles })}
-          userId="7"
+          userId={userIdOfGumbo(7)}
           forTeam="t1"
           initialTab="settings"
           roles={roles({ t1: ['admin'] })}
@@ -996,7 +1032,7 @@ describe('taking a player off the team from Settings', function () {
       await render(
         <PlayerScreen
           client={removeClient([])}
-          userId="7"
+          userId={userIdOfGumbo(7)}
           initialTab="settings"
           {...props}
         />
@@ -1013,7 +1049,7 @@ describe('taking a player off the team from Settings', function () {
     await render(
       <PlayerScreen
         client={removeClient([], { teams: [{ ...hawks, current: false }] })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         initialTab="settings"
         roles={roles({ t1: ['admin'] })}
@@ -1030,7 +1066,7 @@ describe('taking a player off the team from Settings', function () {
     await render(
       <PlayerScreen
         client={removeClient(asked, { removed: false })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         initialTab="settings"
         roles={roles({ t1: ['admin'] })}
@@ -1041,7 +1077,7 @@ describe('taking a player off the team from Settings', function () {
     )
     await press('Remove from Hawks')
     await press('Remove Jordan P')
-    expect(asked).deep.equals([['remove', 'team', 't1', 7]])
+    expect(asked).deep.equals([['remove', 'team', 't1', userIdOfGumbo(7)]])
     expect(removed).deep.equals([])
     expect(text()).not.includes('Removed Jordan P from Hawks')
     expect(
@@ -1058,7 +1094,7 @@ describe('taking a player off the team from Settings', function () {
     await render(
       <PlayerScreen
         client={removeClient(asked)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         initialTab="settings"
         roles={roles({ t1: ['admin'] })}
@@ -1078,7 +1114,7 @@ describe('taking a player off the team from Settings', function () {
     expect(text()).not.includes('Remove Jordan P from Hawks?')
     await press('Remove from Hawks')
     await press('Remove Jordan P')
-    expect(asked).deep.equals([['remove', 'team', 't1', 7]])
+    expect(asked).deep.equals([['remove', 'team', 't1', userIdOfGumbo(7)]])
     expect(removed).deep.equals([
       ['t1', 'Hawks', 'Removed Jordan P from Hawks']
     ])
@@ -1093,7 +1129,7 @@ describe('taking a player off the team from Settings', function () {
           refuse:
             'Add another active direct administrator before removing the last one'
         })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         initialTab="settings"
         roles={roles({ t1: ['admin'] })}
@@ -1119,14 +1155,16 @@ describe('taking a player off the team from Settings', function () {
   it('goes back to the team’s roster through the app, with a confirmation', async function () {
     const asked: string[] = []
     fixtureFetch({ t1: ['admin'] }, [], asked)
-    await open('/players/7', 'tab=settings&onTeam=t1')
+    await open('/players/usr_1111111111111111111118', 'tab=settings&onTeam=t1')
     expect(selectedTab()).equals('Settings')
     await press('Remove from Hawks')
     await press('Remove Jordan P')
     await act(async () => {
       await delay(50)
     })
-    expect(asked).include('DELETE /api/v1/manage/team/t1/people/7')
+    expect(asked).include(
+      'DELETE /api/v1/manage/team/t1/people/usr_1111111111111111111118'
+    )
     expect(routePath(currentRoute())).equals('/teams/t1?tab=team')
     expect(text()).includes('Removed Jordan P from Hawks')
   })
@@ -1148,20 +1186,22 @@ function fixtureFetch(
     const method = init?.method ?? 'GET'
     asked.push(method === 'GET' ? url : `${method} ${url}`)
     const path = url.split('?')[0]
-    const data = path.endsWith('/manage/team/t1/people/7')
+    const data = path.endsWith(
+      '/manage/team/t1/people/usr_1111111111111111111118'
+    )
       ? { removed: true }
       : path.endsWith('/auth/me')
-        ? { id: 100, displayName: 'Coach', isAdmin: false }
+        ? { id: userIdOfGumbo(100), displayName: 'Coach', isAdmin: false }
         : path.endsWith('/me/roles')
-          ? { teams: roles, guardianOf }
-          : path.endsWith('/players/7')
-            ? { userId: 7, name: 'Jordan P', teams: [hawks] }
-            : path.endsWith('/players/7/highlights')
+          ? { teams: roles, guardianOf: guardianOf.map(userIdOfGumbo) }
+          : path.endsWith('/players/usr_1111111111111111111118')
+            ? { userId: userIdOfGumbo(7), name: 'Jordan P', teams: [hawks] }
+            : path.endsWith('/players/usr_1111111111111111111118/highlights')
               ? { highlights: [], nextBefore: null, withoutVideo: 0 }
-              : path.endsWith('/players/7/stats')
+              : path.endsWith('/players/usr_1111111111111111111118/stats')
                 ? stats
                 : path.endsWith('/teams/t1/roster')
-                  ? [{ ...jordan, userId: 7 }]
+                  ? [{ ...jordan, userId: userIdOfGumbo(7) }]
                   : []
     return new Response(JSON.stringify(data), {
       status: 200,
@@ -1181,38 +1221,46 @@ async function open(path: string, search = ''): Promise<void> {
 describe('a player’s Settings address, through the app', function () {
   it('opens Settings for a coach of the team, and keeps it on the address', async function () {
     fixtureFetch({ t1: ['coach'] })
-    await open('/players/7', 'tab=settings&onTeam=t1')
+    await open('/players/usr_1111111111111111111118', 'tab=settings&onTeam=t1')
     expect(selectedTab()).equals('Settings')
     expect(routePath(currentRoute())).equals(
-      '/players/7?tab=settings&onTeam=t1'
+      '/players/usr_1111111111111111111118?tab=settings&onTeam=t1'
     )
     await press('Stats')
-    expect(routePath(currentRoute())).equals('/players/7?tab=stats&onTeam=t1')
+    expect(routePath(currentRoute())).equals(
+      '/players/usr_1111111111111111111118?tab=stats&onTeam=t1'
+    )
   })
 
   it('opens Videos for anybody else, and says so on the address', async function () {
     fixtureFetch({ t1: ['videographer'] })
-    await open('/players/7', 'tab=settings&onTeam=t1')
+    await open('/players/usr_1111111111111111111118', 'tab=settings&onTeam=t1')
     expect(selectedTab()).equals('Videos')
     expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
-    expect(routePath(currentRoute())).equals('/players/7?onTeam=t1')
+    expect(routePath(currentRoute())).equals(
+      '/players/usr_1111111111111111111118?onTeam=t1'
+    )
   })
 
   it('opens a guardian’s Settings with no team, for how the child bats', async function () {
     fixtureFetch({}, [7])
-    await open('/players/7', 'tab=settings')
+    await open('/players/usr_1111111111111111111118', 'tab=settings')
     expect(selectedTab()).equals('Settings')
     expect(document.querySelector('[aria-label="Jersey number"]')).equals(null)
-    expect(routePath(currentRoute())).equals('/players/7?tab=settings')
+    expect(routePath(currentRoute())).equals(
+      '/players/usr_1111111111111111111118?tab=settings'
+    )
   })
 })
 
 describe('a player’s Teams and Videos addresses, through the app', function () {
   it('reopens Teams, and opens a team from it', async function () {
     fixtureFetch({})
-    await open('/players/7', 'tab=teams')
+    await open('/players/usr_1111111111111111111118', 'tab=teams')
     expect(selectedTab()).equals('Teams')
-    expect(routePath(currentRoute())).equals('/players/7?tab=teams')
+    expect(routePath(currentRoute())).equals(
+      '/players/usr_1111111111111111111118?tab=teams'
+    )
     await press('Hawks')
     expect(routePath(currentRoute())).equals('/teams/t1')
   })
@@ -1220,17 +1268,23 @@ describe('a player’s Teams and Videos addresses, through the app', function ()
   it('reads the Videos filter from the address, and writes the one chosen', async function () {
     const asked: string[] = []
     fixtureFetch({}, [], asked)
-    await open('/players/7', 'vseason=s1&onTeam=t1')
+    await open('/players/usr_1111111111111111111118', 'vseason=s1&onTeam=t1')
     expect(
-      asked.filter(url => url.includes('/players/7/highlights'))
-    ).deep.equals(['/api/v1/players/7/highlights?seasonId=s1'])
+      asked.filter(url =>
+        url.includes('/players/usr_1111111111111111111118/highlights')
+      )
+    ).deep.equals([
+      '/api/v1/players/usr_1111111111111111111118/highlights?seasonId=s1'
+    ])
     expect(find('Filter videos')?.textContent).equals('filter_altSpring 2026')
     await press('Filter videos')
     await press('2026')
     await press('Show these')
-    expect(routePath(currentRoute())).equals('/players/7?vyear=2026&onTeam=t1')
+    expect(routePath(currentRoute())).equals(
+      '/players/usr_1111111111111111111118?vyear=2026&onTeam=t1'
+    )
     expect(asked.filter(url => url.includes('/highlights')).at(-1)).equals(
-      '/api/v1/players/7/highlights?year=2026'
+      '/api/v1/players/usr_1111111111111111111118/highlights?year=2026'
     )
   })
 })
@@ -1242,7 +1296,7 @@ describe('a player’s Walk-up tab', function () {
     await render(
       <PlayerScreen
         client={playerClient([], rosters)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         roles={roles({ t1: ['songkeeper'] })}
         onTab={tab => {
@@ -1277,7 +1331,7 @@ describe('a player’s Walk-up tab', function () {
     await render(
       <PlayerScreen
         client={playerClient()}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         initialTab="walkup"
         forTeam="t1"
         music={music}
@@ -1308,7 +1362,11 @@ describe('a player’s Walk-up tab', function () {
       { forTeam: 't1', roles: undefined }
     ]) {
       await render(
-        <PlayerScreen client={playerClient()} userId="7" {...props} />
+        <PlayerScreen
+          client={playerClient()}
+          userId={userIdOfGumbo(7)}
+          {...props}
+        />
       )
       expect(tabNames(), JSON.stringify(props)).not.includes('Walk-up')
       await act(async () => {
@@ -1322,7 +1380,7 @@ describe('a player’s Walk-up tab', function () {
     await render(
       <PlayerScreen
         client={playerClient()}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         initialTab="walkup"
         forTeam="t1"
         roles={coach}
@@ -1340,7 +1398,7 @@ describe('a player’s Walk-up tab', function () {
     await render(
       <PlayerScreen
         client={playerClient()}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         initialTab="walkup"
         forTeam="t1"
         onTab={tab => {
@@ -1356,20 +1414,24 @@ describe('a player’s Walk-up tab', function () {
 describe('a player’s Walk-up address, through the app', function () {
   it('opens Walk-up for a songkeeper, with the short name and nothing to edit it', async function () {
     fixtureFetch({ t1: ['songkeeper'] })
-    await open('/players/7', 'tab=walkup&onTeam=t1')
+    await open('/players/usr_1111111111111111111118', 'tab=walkup&onTeam=t1')
     expect(selectedTab()).equals('Walk-up')
     expect(tabNames()).deep.equals(['Videos', 'Stats', 'Walk-up', 'Teams'])
-    expect(routePath(currentRoute())).equals('/players/7?tab=walkup&onTeam=t1')
+    expect(routePath(currentRoute())).equals(
+      '/players/usr_1111111111111111111118?tab=walkup&onTeam=t1'
+    )
     expect(text()).includes('Jordan P')
     expect(document.querySelector('input')).equals(null)
   })
 
   it('opens Videos for anybody else, and says so on the address', async function () {
     fixtureFetch({ t1: ['coach'] })
-    await open('/players/7', 'tab=walkup&onTeam=t1')
+    await open('/players/usr_1111111111111111111118', 'tab=walkup&onTeam=t1')
     expect(selectedTab()).equals('Videos')
     expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
-    expect(routePath(currentRoute())).equals('/players/7?onTeam=t1')
+    expect(routePath(currentRoute())).equals(
+      '/players/usr_1111111111111111111118?onTeam=t1'
+    )
   })
 })
 
@@ -1412,7 +1474,7 @@ async function typeInto(label: string, value: string): Promise<void> {
   })
 }
 
-const stranger = { userId: 100, isAdmin: false }
+const stranger = { userId: userIdOfGumbo(100), isAdmin: false }
 const requestButton = (): HTMLElement | undefined =>
   find('Request to be a guardian') ?? find('Guardian request sent')
 
@@ -1434,7 +1496,7 @@ describe('inviting a guardian from a player’s Settings', function () {
       await render(
         <PlayerScreen
           client={guardianClient([], undefined, [hawks], inviteAs)}
-          userId="7"
+          userId={userIdOfGumbo(7)}
           initialTab="settings"
           {...props}
         />
@@ -1456,7 +1518,7 @@ describe('inviting a guardian from a player’s Settings', function () {
           if (fail) throw new Error('Network request failed')
           return { id: 'req_1', status: 'pending' }
         })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         initialTab="settings"
         roles={coach}
@@ -1474,7 +1536,7 @@ describe('inviting a guardian from a player’s Settings', function () {
     const [first, second] = sent
     expect(first).deep.include({
       kind: 'guardian',
-      playerUserId: 7,
+      playerUserId: userIdOfGumbo(7),
       guardian: { email: 'parent@example.com' },
       sender: { kind: 'team', id: 't1' }
     })
@@ -1497,7 +1559,7 @@ describe('inviting a guardian from a player’s Settings', function () {
       await render(
         <PlayerScreen
           client={guardianClient(sent, undefined, [hawks], 'guardian')}
-          userId="7"
+          userId={userIdOfGumbo(7)}
           forTeam={forTeam}
           initialTab="settings"
           roles={roles({}, [7])}
@@ -1508,7 +1570,7 @@ describe('inviting a guardian from a player’s Settings', function () {
       expect(sent, String(forTeam)).has.length(1)
       expect(sent[0]).deep.include({
         kind: 'guardian',
-        playerUserId: 7,
+        playerUserId: userIdOfGumbo(7),
         guardian: { email: 'second@example.com' }
       })
       expect(sent[0]).not.has.property('sender')
@@ -1526,7 +1588,7 @@ describe('inviting a guardian from a player’s Settings', function () {
     await render(
       <PlayerScreen
         client={guardianClient(sent)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         initialTab="settings"
         roles={coach}
@@ -1548,21 +1610,40 @@ describe('asking to be a player’s guardian', function () {
       [{ viewer: undefined, roles: roles({}) }, false],
       [{ viewer: stranger, roles: undefined }, false],
       // The player themselves, and their guardian.
-      [{ viewer: { userId: 7, isAdmin: false }, roles: roles({}) }, false],
+      [
+        {
+          viewer: { userId: userIdOfGumbo(7), isAdmin: false },
+          roles: roles({})
+        },
+        false
+      ],
       [{ viewer: stranger, roles: roles({}, [7]) }, false],
       // Their guardian from an address made before a merge, which names a
       // row since closed into 7.
-      [{ viewer: stranger, roles: roles({}, [7]), userId: '3' }, false],
+      [
+        { viewer: stranger, roles: roles({}, [7]), userId: userIdOfGumbo(3) },
+        false
+      ],
       // Their coaches, beside the team or from Home, and a site admin.
       [
         { viewer: stranger, roles: roles({ t1: ['coach'] }), forTeam: 't1' },
         false
       ],
       [{ viewer: stranger, roles: roles({ t1: ['assistant'] }) }, false],
-      [{ viewer: { userId: 100, isAdmin: true }, roles: roles({}) }, false]
+      [
+        {
+          viewer: { userId: userIdOfGumbo(100), isAdmin: true },
+          roles: roles({})
+        },
+        false
+      ]
     ] as const) {
       await render(
-        <PlayerScreen client={guardianClient([])} userId="7" {...props} />
+        <PlayerScreen
+          client={guardianClient([])}
+          userId={userIdOfGumbo(7)}
+          {...props}
+        />
       )
       expect(requestButton() != null, JSON.stringify(props)).equals(shown)
       await act(async () => {
@@ -1575,7 +1656,7 @@ describe('asking to be a player’s guardian', function () {
     await render(
       <PlayerScreen
         client={guardianClient([], undefined, [hawks, owlsLeft])}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         viewer={stranger}
         roles={roles({ tem_other: ['coach'] })}
       />
@@ -1589,7 +1670,7 @@ describe('asking to be a player’s guardian', function () {
     await render(
       <PlayerScreen
         client={guardianClient(sent)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         viewer={stranger}
         roles={roles({})}
       />
@@ -1608,8 +1689,8 @@ describe('asking to be a player’s guardian', function () {
     expect(sent).has.length(1)
     expect(sent[0]).deep.include({
       kind: 'guardian',
-      playerUserId: 7,
-      guardian: { userId: 100 }
+      playerUserId: userIdOfGumbo(7),
+      guardian: { userId: userIdOfGumbo(100) }
     })
     expect(sent[0]).not.has.property('sender')
     expect(sent[0].idempotencyKey).a('string')
@@ -1631,7 +1712,7 @@ describe('asking to be a player’s guardian', function () {
           if (message != null) throw new HttpError('rateLimited', message)
           return { id: 'req_1', status: 'pending' }
         })}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         viewer={stranger}
         roles={roles({})}
       />
@@ -1655,7 +1736,7 @@ describe('asking to be a player’s guardian', function () {
 
   it('is offered through the app to the signed-in viewer', async function () {
     fixtureFetch({})
-    await open('/players/7')
+    await open('/players/usr_1111111111111111111118')
     expect(requestButton()?.textContent).equals('Request to be a guardian')
   })
 })
@@ -1670,14 +1751,15 @@ describe('a player’s Team roles on Settings', function () {
   ): TeamStationClient {
     let held: Role[] = given
     return Object.assign(playerClient(), {
-      personProfile: async (kind: string, id: string, userId: number) => {
+      personProfile: async (kind: string, id: string, userId: string) => {
         asked.push(['profile', kind, id, userId])
         return asPersonProfile({
           context: { kind: 'team', id: 't1', name: 'Hawks' },
           person: {
-            userId: 7,
+            userId: userIdOfGumbo(7),
+            gumboId: 7,
             shortName: 'Jordan P',
-            fullName: 'Jordan Pujols',
+            fullName: 'Jordan Pacheco',
             avatarUrl: null,
             canHoldRoles
           },
@@ -1703,7 +1785,7 @@ describe('a player’s Team roles on Settings', function () {
           viewer: { manages: true, admin }
         })
       },
-      addRole: async (kind: string, id: string, userId: number, role: Role) => {
+      addRole: async (kind: string, id: string, userId: string, role: Role) => {
         asked.push(['add', kind, id, userId, role])
         held = [...held, role]
         return { userId, roles: held, member: true }
@@ -1716,13 +1798,13 @@ describe('a player’s Team roles on Settings', function () {
     await render(
       <PlayerScreen
         client={rolesClient(true, asked)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         initialTab="settings"
         roles={coach}
       />
     )
-    expect(asked[0]).deep.equals(['profile', 'team', 't1', 7])
+    expect(asked[0]).deep.equals(['profile', 'team', 't1', userIdOfGumbo(7)])
     const section = document.querySelector('[data-testid="playerTeamRoles"]')
     expect(section).not.equals(null)
     // Last on the tab, after the player's own settings.
@@ -1751,7 +1833,13 @@ describe('a player’s Team roles on Settings', function () {
     expect(member?.querySelector('[role="switch"]')).equals(null)
     expect(member?.textContent).equals('MemberPlayer')
     await press('Assistant')
-    expect(asked).deep.include(['add', 'team', 't1', 7, 'assistant'])
+    expect(asked).deep.include([
+      'add',
+      'team',
+      't1',
+      userIdOfGumbo(7),
+      'assistant'
+    ])
     expect(
       section!
         .querySelector('[data-testid="role-team-assistant"] [role="switch"]')
@@ -1764,7 +1852,7 @@ describe('a player’s Team roles on Settings', function () {
     await render(
       <PlayerScreen
         client={rolesClient(true, asked, true, ['admin'])}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         initialTab="settings"
         roles={roles({ t1: ['admin'] })}
@@ -1790,7 +1878,7 @@ describe('a player’s Team roles on Settings', function () {
       ).equals('false')
     }
     await press('Coach')
-    expect(asked).deep.include(['add', 'team', 't1', 7, 'coach'])
+    expect(asked).deep.include(['add', 'team', 't1', userIdOfGumbo(7), 'coach'])
     expect(
       section!
         .querySelector('[data-testid="role-team-coach"] [role="switch"]')
@@ -1810,7 +1898,7 @@ describe('a player’s Team roles on Settings', function () {
     await render(
       <PlayerScreen
         client={rolesClient(true, [], false, [], false)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         initialTab="settings"
         roles={coach}
@@ -1830,7 +1918,7 @@ describe('a player’s Team roles on Settings', function () {
     await render(
       <PlayerScreen
         client={rolesClient(false, asked)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         initialTab="settings"
         roles={coach}
@@ -1848,7 +1936,7 @@ describe('a player’s Team roles on Settings', function () {
     await render(
       <PlayerScreen
         client={rolesClient(true, guardian)}
-        userId="7"
+        userId={userIdOfGumbo(7)}
         forTeam="t1"
         initialTab="settings"
         roles={roles({}, [7])}

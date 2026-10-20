@@ -6,16 +6,18 @@ import { Pool } from 'pg'
 
 import { asBoxScore } from '../../common/api'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
-import { asUserId } from '../../common/userIdNumber'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { asUserId, mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import type { MediaContext } from '../media/mediaContext'
 import { errorHandler } from '../middleware/withErrors'
 import { battingLines, pitchingLines } from '../stats'
+import { boxScoreOrder } from '../stats/boxScoreOrder'
 import { statRows } from '../stats/rows'
 import { teamRoutes } from './teams'
 
@@ -104,19 +106,16 @@ describe('GET /games/:gameId/box-score stats', function () {
       [pitcher, 'Pitcher Pit'],
       [viewer, 'Viewer View']
     ] as const) {
-      await db
-        .insertInto('users')
-        .values({
-          id,
-          legacyId: legacies.get(id)!,
-          display_name: name,
-          first_name: name.split(' ')[0],
-          last_name: name.split(' ')[1],
-          is_admin: id === viewer,
-          created_at: now,
-          updated_at: now
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id,
+        legacyId: legacies.get(id)!,
+        display_name: name,
+        first_name: name.split(' ')[0],
+        last_name: name.split(' ')[1],
+        is_admin: id === viewer,
+        created_at: now,
+        updated_at: now
+      })
     }
     await db
       .insertInto('games')
@@ -135,7 +134,7 @@ describe('GET /games/:gameId/box-score stats', function () {
         {
           id: makeId('gamePlayerStats'),
           game_id: gameId,
-          user_id: batter,
+          gumbo_id: batter,
           team_id: away,
           pa: 3,
           ab: 2,
@@ -147,7 +146,7 @@ describe('GET /games/:gameId/box-score stats', function () {
         {
           id: makeId('gamePlayerStats'),
           game_id: gameId,
-          user_id: pitcher,
+          gumbo_id: pitcher,
           team_id: home,
           pitch_bf: 4,
           pitch_outs: 3,
@@ -162,7 +161,7 @@ describe('GET /games/:gameId/box-score stats', function () {
       const id = req.header('x-test-actor')
       if (id != null) {
         req.actor = {
-          userId: asUserId(id),
+          userId: userIdOfGumbo(asUserId(id)),
           isAdmin: asUserId(id) === viewer,
           scopes: []
         }
@@ -268,7 +267,37 @@ describe('GET /games/:gameId/box-score stats', function () {
     expect(box.pitching.map(line => line.userId)).deep.equals(
       pitching.map(line => line.userId)
     )
-    expect(box.batting[0]).includes({ userId: batter, h: 1, ab: 2, pa: 3 })
-    expect(box.pitching[0]).includes({ userId: pitcher, outs: 3 })
+    expect(box.batting[0]).includes({
+      userId: userIdOfGumbo(batter),
+      h: 1,
+      ab: 2,
+      pa: 3
+    })
+    expect(box.pitching[0]).includes({
+      userId: userIdOfGumbo(pitcher),
+      outs: 3
+    })
+  })
+
+  it('keeps numeric identity order across Base58 letter case when first appearances tie', async function () {
+    const [row] = await statRows(db!, { gameId })
+    const lines = battingLines(
+      [33, 32, 10].map(id => ({
+        ...row,
+        userId: userIdOfGumbo(id),
+        pa: 1,
+        extra: null
+      }))
+    )
+    expect(
+      (await boxScoreOrder(db!, gameId, lines)).map(line => line.userId)
+    ).deep.equals([10, 32, 33].map(userIdOfGumbo))
+    const first = lines.map(line => ({
+      ...line,
+      firstPa: line.userId === userIdOfGumbo(33) ? 0 : 1
+    }))
+    expect(
+      (await boxScoreOrder(db!, gameId, first)).map(line => line.userId)
+    ).deep.equals([33, 10, 32].map(userIdOfGumbo))
   })
 })

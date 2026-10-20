@@ -7,10 +7,12 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -90,27 +92,25 @@ describe('GET /seasons', function () {
     await pool.end()
     db = makeDatabase(scratchUrl)
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values(
-        (
-          [
-            [people.admin, 'Ty Cobb', true],
-            [people.member, 'Mel Ott', false],
-            [people.seasonAdmin, 'Cy Young', false],
-            [people.teamAdmin, 'Al Kaline', false],
-            [people.outsider, 'Rod Carew', false]
-          ] as const
-        ).map(([made, name, isAdmin]) => ({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: name,
-          is_admin: isAdmin,
-          created_at: now,
-          updated_at: now
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      (
+        [
+          [people.admin, 'Ty Cobb', true],
+          [people.member, 'Mel Ott', false],
+          [people.seasonAdmin, 'Cy Young', false],
+          [people.teamAdmin, 'Al Kaline', false],
+          [people.outsider, 'Rod Carew', false]
+        ] as const
+      ).map(([made, name, isAdmin]) => ({
+        id: made.userId,
+        legacyId: made.legacyId,
+        display_name: name,
+        is_admin: isAdmin,
+        created_at: now,
+        updated_at: now
+      }))
+    )
     await db
       .insertInto('auth_sessions')
       .values(
@@ -124,7 +124,7 @@ describe('GET /seasons', function () {
           ] as const
         ).map(([token, made]) => ({
           id: makeId('authSession'),
-          user_id: made.userId,
+          user_id: userIdOfGumbo(made.userId),
           token_hash: hashToken(token),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
@@ -198,7 +198,7 @@ describe('GET /seasons', function () {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: people.member.userId,
+        user_id: userIdOfGumbo(people.member.userId),
         team_id: herons
       })
       .execute()
@@ -207,7 +207,7 @@ describe('GET /seasons', function () {
       .values({
         id: makeId('seasonMember'),
         season_id: harbor,
-        user_id: people.member.userId
+        user_id: userIdOfGumbo(people.member.userId)
       })
       .execute()
     // An administrator of Bayside, and one of Inland Coyotes, neither of
@@ -217,7 +217,7 @@ describe('GET /seasons', function () {
       .values([
         {
           id: makeId('scopeRole'),
-          user_id: people.seasonAdmin.userId,
+          user_id: userIdOfGumbo(people.seasonAdmin.userId),
           scope_type: 'season',
           scope_id: bayside,
           role: 'admin',
@@ -225,7 +225,7 @@ describe('GET /seasons', function () {
         },
         {
           id: makeId('scopeRole'),
-          user_id: people.teamAdmin.userId,
+          user_id: userIdOfGumbo(people.teamAdmin.userId),
           scope_type: 'team',
           scope_id: coyotes,
           role: 'admin',

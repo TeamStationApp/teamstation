@@ -176,20 +176,20 @@ export async function requirePeopleManager(
 export async function adminRecipients(
   db: Kysely<Database>,
   refs: GroupRef[]
-): Promise<number[]> {
+): Promise<string[]> {
   return await groupRecipients(db, refs, false)
 }
 export async function schedulingRecipients(
   db: Kysely<Database>,
   refs: GroupRef[]
-): Promise<number[]> {
+): Promise<string[]> {
   return await groupRecipients(db, refs, true)
 }
 async function groupRecipients(
   db: Kysely<Database>,
   refs: GroupRef[],
   scheduling: boolean
-): Promise<number[]> {
+): Promise<string[]> {
   const roles = await db
     .selectFrom('scope_roles')
     .select('user_id')
@@ -218,7 +218,7 @@ async function groupRecipients(
     .where('disabled_at', 'is', null)
     .where('merged_into', 'is', null)
     .execute()
-  const recipients: number[] = []
+  const recipients: string[] = []
   for (const user of users) {
     for (const ref of refs) {
       if (

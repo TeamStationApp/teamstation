@@ -5,10 +5,8 @@ import { after, game, TEAMS, walk } from '../../test/scoringGames'
 import { applyAction } from './apply'
 import {
   addPlayer,
-  allocatePlayer,
   applyOverride,
   applyRoster,
-  createIdentityMap,
   freshGame,
   newSetup,
   overrideOf,
@@ -18,71 +16,60 @@ import { applyRosterCommands, rosterSituation } from './rosterCommands'
 import { setupOf } from './state'
 
 describe('player identities', function () {
-  it('gives one server identity one session id, and a made-up player a new one', function () {
-    const map = createIdentityMap()
-    expect(allocatePlayer(map, 7)).equals(1)
-    expect(allocatePlayer(map, 7)).equals(1)
-    expect(allocatePlayer(map, '7')).equals(2)
-    expect(allocatePlayer(map, null)).equals(3)
-    expect(allocatePlayer(map, null)).equals(4)
-    map.sessionToSource[5] = 'taken'
-    expect(allocatePlayer(map, 9)).equals(6)
-  })
-
-  it('refuses to hand out an id past the safe range', function () {
-    const map = createIdentityMap()
-    map.nextId = Number.MAX_SAFE_INTEGER + 1
-    expect(() => allocatePlayer(map, null)).to.throw(
-      'Local player identifiers exhausted'
-    )
+  it('keeps sparse persistent identities and rejects invalid or duplicate guests', function () {
+    const state = game()
+    const id = Number.MAX_SAFE_INTEGER
+    expect(addPlayer(state, 'away', id, 'Babe Ruth')).equals(id)
+    expect(state.gameData.players[id].id).equals(id)
+    expect(state.meta.tagOrder.at(-1)).equals(id)
+    const before = structuredClone(state)
+    for (const invalid of [id, 0, -1, 1.5, Infinity, id + 1])
+      expect(() => addPlayer(state, 'home', invalid, 'Willie Mays')).throws()
+    expect(state).deep.equals(before)
   })
 })
 
 describe('a new game from two rosters', function () {
-  it('takes the rostered players, tops each side up to nine, and fills the field', function () {
+  it('keeps only persisted players and fills their available positions', function () {
     const setup = newSetup(TEAMS, {
       away: [
         {
-          userId: 501,
-          shortName: 'Ace P',
+          gumboId: 501,
+          shortName: 'Albert P',
           positions: ['SS', 'P'],
           bats: 'left',
           throws: 'left',
           jersey: '7'
         },
-        { userId: 502, shortName: 'Cat C', positions: ['C'] }
+        { gumboId: 502, shortName: 'Cat C', positions: ['C'] }
       ],
       home: []
     })
     const away = setup.sides.away
-    expect(away.players).length(9)
-    expect(setup.players[1]).includes({
-      userId: 501,
-      fullName: 'Ace P',
+    expect(away.players).deep.equals([501, 502])
+    expect(setup.players[501]).includes({
+      id: 501,
+      fullName: 'Albert P',
       bats: 'left',
       local: false
     })
-    expect(setup.players[3]).includes({
-      userId: null,
-      fullName: 'Player 3',
-      local: true
-    })
-    expect(away.defense.P).equals(1)
-    expect(away.defense.C).equals(2)
-    expect(away.defense['1B']).equals(3)
-    expect(away.defense.SS).equals(5)
+    expect(setup.players[3]).equals(undefined)
+    expect(away.defense.P).equals(501)
+    expect(away.defense.C).equals(502)
+    expect(away.defense['1B']).equals(null)
+    expect(away.defense.SS).equals(null)
     const state = freshGame('g2', TEAMS, setup)
-    expect(state.liveData.linescore.offense.batter!.id).equals(1)
-    expect(state.liveData.plays.currentPlay!.matchup.batSide.code).equals('L')
-    expect(state.liveData.linescore.defense.P!.id).equals(10)
+    expect(state.liveData.linescore.offense.batter!.id).equals(501)
+    expect(state.liveData.plays.currentPlay).equals(null)
+    expect(state.liveData.linescore.defense.P).equals(null)
   })
 
   it('refuses a player listed twice', function () {
     expect(() =>
       newSetup(TEAMS, {
         away: [
-          { userId: 1, shortName: 'A' },
-          { userId: 1, shortName: 'A' }
+          { gumboId: 1, shortName: 'A' },
+          { gumboId: 1, shortName: 'A' }
         ],
         home: []
       })
@@ -91,6 +78,46 @@ describe('a new game from two rosters', function () {
 })
 
 describe('roster checks', function () {
+  it('retains merged historical turns and positions without permitting new duplicates', function () {
+    const state = after(game(), { type: 'pitch', call: 'B' })
+    const away = state.liveData.boxscore.teams.away
+    away.battingOrder[1] = 1
+    away.defense.C = away.defense.P
+    away.battingIndex = 1
+    const setup = setupOf(state)
+    const applied = applyRoster(state, setup)
+    expect(applied.error).equals(undefined)
+    expect(applied.state!.liveData.boxscore.teams.away.battingIndex).equals(1)
+    expect(
+      applied.state!.liveData.boxscore.teams.away.battingOrder
+    ).deep.equals(away.battingOrder)
+    expect(applied.state!.liveData.boxscore.teams.away.defense).deep.equals(
+      away.defense
+    )
+    // The exception is bounded by existing occurrences on this same side.
+    const extraTurn = structuredClone(setup)
+    extraTurn.sides.away.battingOrder[2] = 1
+    expect(applyRoster(state, extraTurn).error).includes('duplicate lineup')
+    const extraPosition = structuredClone(setup)
+    extraPosition.sides.away.defense['1B'] = away.defense.P
+    expect(applyRoster(state, extraPosition).error).includes(
+      'duplicate defender'
+    )
+    const opposite = structuredClone(setup)
+    opposite.sides.home.battingOrder[1] = opposite.sides.home.battingOrder[0]
+    expect(applyRoster(state, opposite).error).includes('duplicate lineup')
+    // Starting a new game still requires a unique order and defense.
+    expect(validateRoster(state)).includes('duplicate lineup')
+    const corrected = structuredClone(setup)
+    corrected.sides.away.battingOrder = [...new Set(away.battingOrder)]
+    corrected.sides.away.defense.C = null
+    const correction = applyRoster(state, corrected)
+    expect(correction.error).equals(undefined)
+    expect(correction.state!.liveData.boxscore.teams.away.battingIndex).equals(
+      0
+    )
+  })
+
   it('updates a current batter’s edited hand before the first pitch without rewriting pitched appearances or manual choices', function () {
     const state = game()
     const setup = setupOf(state)
@@ -196,7 +223,7 @@ describe('roster checks', function () {
   it('bats whoever leads off once the old leadoff is replaced before the game', function () {
     const state = game()
     const draft = structuredClone(state)
-    const bench = addPlayer(draft, 'away', 'Lindor')
+    const bench = addPlayer(draft, 'away', 19, 'Lindor')
     const order = draft.liveData.boxscore.teams.away.battingOrder
     order[0] = bench
     const due = (): number =>

@@ -57,7 +57,7 @@ async function main(): Promise<void> {
       .select(['id', 'merged_into', 'first_name', 'last_name', 'display_name'])
       .execute()
 
-    const groups = new Map<number, number[]>()
+    const groups = new Map<string, string[]>()
     for (const row of everybody) {
       const person = await onePerson(db, row.id)
       groups.set(person.userId, person.userIds)
@@ -68,9 +68,10 @@ async function main(): Promise<void> {
       everybody.map(row => row.id)
     )
 
-    const plays = new Map<number, number>()
+    const plays = new Map<string, number>()
     for (const row of await db
       .selectFrom('event_players')
+      .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'event_players.gumbo_id')
       .select(['user_id'])
       .select(eb => eb.fn.countAll<number>().as('plays'))
       .groupBy('user_id')
@@ -79,7 +80,7 @@ async function main(): Promise<void> {
     }
 
     let opened = 0
-    const split = new Set<number>()
+    const split = new Set<string>()
     for (const [survivor, ids] of groups) {
       if (ids.length < 2) continue
       const people = splitByClash(
@@ -96,7 +97,7 @@ async function main(): Promise<void> {
         .select(['id', 'display_name'])
         .where('id', 'in', ids)
         .execute()
-      const shown = (group: number[]): string =>
+      const shown = (group: string[]): string =>
         group
           .map(
             id => names.find(row => row.id === id)?.display_name ?? String(id)
@@ -162,7 +163,7 @@ async function main(): Promise<void> {
     // A row with no stat line behind it stays. Without a roster, nothing here
     // can tell a merge's leftover from a parent, a coach or a player who has
     // not played yet, so those rows are only reported.
-    const byPerson = new Map<number, number>()
+    const byPerson = new Map<string, string>()
     for (const row of await db.selectFrom('users').select(['id']).execute()) {
       byPerson.set(row.id, (await onePerson(db, row.id)).userId)
     }
@@ -170,6 +171,11 @@ async function main(): Promise<void> {
     const playedFor = new Set<string>()
     for (const row of await db
       .selectFrom('game_player_stats')
+      .innerJoin(
+        'gumbo_ids',
+        'gumbo_ids.gumbo_id',
+        'game_player_stats.gumbo_id'
+      )
       .select(['user_id', 'team_id'])
       .where('team_id', 'is not', null)
       .execute()) {

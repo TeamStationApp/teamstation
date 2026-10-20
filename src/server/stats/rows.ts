@@ -18,9 +18,9 @@ export interface StatRowFilter {
   gameId?: string
   /** Bound historical aggregates to the caller’s currently visible games. */
   visibleGames?: VisibleScopes
-  userId?: number
+  userId?: string
   /** Every id one person has had — see `admin/people.ts`. */
-  userIds?: number[]
+  userIds?: string[]
   teamId?: string
   seasonId?: string
   /** The calendar year the game was played in. */
@@ -75,14 +75,15 @@ export async function statRows(
   let query = db
     .selectFrom('game_player_stats')
     .innerJoin('games', 'games.id', 'game_player_stats.game_id')
-    .innerJoin('users', 'users.id', 'game_player_stats.user_id')
+    .innerJoin('gumbo_ids', 'gumbo_ids.gumbo_id', 'game_player_stats.gumbo_id')
+    .innerJoin('users', 'users.id', 'gumbo_ids.user_id')
     .leftJoin('seasons', 'seasons.id', 'games.season_id')
     .leftJoin('leagues', 'leagues.id', 'seasons.league_id')
     .leftJoin('teams', 'teams.id', 'game_player_stats.team_id')
     .select([
       'game_player_stats.extra as extra',
       'game_player_stats.game_id as gameId',
-      'game_player_stats.user_id as userId',
+      'gumbo_ids.user_id as userId',
       'game_player_stats.team_id as teamId',
       'game_player_stats.pa as pa',
       'game_player_stats.ab as ab',
@@ -131,12 +132,12 @@ export async function statRows(
     query = query.where('game_player_stats.game_id', '=', filter.gameId)
   }
   if (filter.userId != null) {
-    query = query.where('game_player_stats.user_id', '=', filter.userId)
+    query = query.where('gumbo_ids.user_id', '=', filter.userId)
   }
   if (filter.userIds != null) {
     // An empty list is nobody, and `in ()` is not valid SQL.
     if (filter.userIds.length === 0) return []
-    query = query.where('game_player_stats.user_id', 'in', filter.userIds)
+    query = query.where('gumbo_ids.user_id', 'in', filter.userIds)
   }
   if (filter.teamId != null) {
     query = query.where('game_player_stats.team_id', '=', filter.teamId)

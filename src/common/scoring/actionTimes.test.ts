@@ -339,7 +339,7 @@ describe('the time each scoring action was taken', function () {
 
   it('reads a record whose times do not match its actions as one without times (U3)', function () {
     const record = {
-      version: 1,
+      version: 2,
       setupBefore: setupOf(game()),
       actions: [ball, strike]
     }

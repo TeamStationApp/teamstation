@@ -4,6 +4,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import type { GameIntent } from '../../common/gameApprovals'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   type GroupFixture,
@@ -68,7 +69,7 @@ describe('active season participant scheduling consent', function () {
       .insertInto('scope_roles')
       .values({
         id: `consent_${role}_${user}`,
-        user_id: user,
+        user_id: userIdOfGumbo(user),
         scope_type: 'season',
         scope_id: f.seasonA,
         role
@@ -114,7 +115,7 @@ describe('active season participant scheduling consent', function () {
       } else
         await f.h.db
           .deleteFrom('scope_roles')
-          .where('user_id', '=', user)
+          .where('user_id', '=', userIdOfGumbo(user))
           .where('scope_type', '=', 'season')
           .where('scope_id', '=', f.seasonA)
           .execute()
@@ -265,7 +266,7 @@ describe('active season participant scheduling consent', function () {
       await grant('admin')
       await f.h.db
         .updateTable('group_request_sides')
-        .set({ approved_by: 106, approved_at: new Date() })
+        .set({ approved_by: userIdOfGumbo(106), approved_at: new Date() })
         .where('request_id', '=', pending.id)
         .execute()
       if (lost === 'participation') {

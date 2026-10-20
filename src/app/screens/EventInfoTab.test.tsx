@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { TeamStationClient } from '../../common/api'
 import { asEventInfo, type EventInfo } from '../../common/eventInfo'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { EventInfoTab } from './EventInfoTab'
 import type { RsvpEvent } from './EventRsvpModal'
@@ -31,10 +32,11 @@ const initial = (): EventInfo =>
     longitude: null,
     status: 'scheduled',
     canManage: false,
-    replyUserIds: [101, 103, 104],
+    replyUserIds: [userIdOfGumbo(101), userIdOfGumbo(103), userIdOfGumbo(104)],
     attendees: [
       {
-        userId: 101,
+        userId: userIdOfGumbo(101),
+        gumboId: 101,
         name: 'Babe R',
         avatarUrl: null,
         response: null,
@@ -43,7 +45,8 @@ const initial = (): EventInfo =>
         isPlayer: true
       },
       {
-        userId: 103,
+        userId: userIdOfGumbo(103),
+        gumboId: 103,
         name: 'Mike T',
         avatarUrl: null,
         response: null,
@@ -52,7 +55,8 @@ const initial = (): EventInfo =>
         isPlayer: true
       },
       {
-        userId: 104,
+        userId: userIdOfGumbo(104),
+        gumboId: 104,
         name: 'Ichiro',
         avatarUrl: null,
         response: null,
@@ -61,7 +65,8 @@ const initial = (): EventInfo =>
         isPlayer: true
       },
       {
-        userId: 102,
+        userId: userIdOfGumbo(102),
+        gumboId: 102,
         name: 'Lou G',
         avatarUrl: null,
         response: 'no',
@@ -103,7 +108,9 @@ async function openReplies(): Promise<void> {
   )
 }
 const status = (userId: number): HTMLElement =>
-  document.querySelector(`[data-testid="event-reply-status-${userId}"]`)!
+  document.querySelector(
+    `[data-testid="event-reply-status-${userIdOfGumbo(userId)}"]`
+  )!
 async function click(selector: string): Promise<void> {
   const button = selector.startsWith('[')
     ? document.querySelector<HTMLElement>(selector)
@@ -207,13 +214,15 @@ describe('event Info location and family controls', () => {
     expect(locations).equals(0)
     await openReplies()
     expect(document.querySelectorAll('[role="radiogroup"]')).length(3)
-    await click('[data-testid="event-rsvp-101-0"]')
-    await click('[data-testid="event-rsvp-103-2"]')
-    await click('[data-testid="event-rsvp-104-0"]')
-    await click('[data-testid="event-rsvp-101-1"]')
+    await click('[data-testid="event-rsvp-usr_111111111111111111112k-0"]')
+    await click('[data-testid="event-rsvp-usr_111111111111111111112n-2"]')
+    await click('[data-testid="event-rsvp-usr_111111111111111111112o-0"]')
+    await click('[data-testid="event-rsvp-usr_111111111111111111112k-1"]')
     expect(
       document
-        .querySelector('[data-testid="event-rsvp-101-1"]')
+        .querySelector(
+          '[data-testid="event-rsvp-usr_111111111111111111112k-1"]'
+        )
         ?.getAttribute('aria-checked')
     ).equals('true')
     await click('Done')
@@ -259,34 +268,40 @@ describe('event Info location and family controls', () => {
     const client = clientFor()
     let rejectRow: (error: Error) => void = () => undefined
     client.saveRsvp = async (_id, userId, response) =>
-      userId === 101
+      userId === userIdOfGumbo(101)
         ? await new Promise((_resolve, reject) => {
             rejectRow = reject
           })
         : { userId, response }
     await render(client)
     await openReplies()
-    await click('[data-testid="event-rsvp-101-0"]')
+    await click('[data-testid="event-rsvp-usr_111111111111111111112k-0"]')
     expect(
       document
-        .querySelector('[data-testid="event-rsvp-101-0"]')
+        .querySelector(
+          '[data-testid="event-rsvp-usr_111111111111111111112k-0"]'
+        )
         ?.getAttribute('aria-disabled')
     ).equals('true')
-    await click('[data-testid="event-rsvp-104-2"]')
+    await click('[data-testid="event-rsvp-usr_111111111111111111112o-2"]')
     await act(async () => {
       rejectRow(new Error('Your guardian access changed. Reload.'))
     })
     expect(document.body.textContent).includes('Your guardian access changed')
     expect(
-      document.querySelector('[data-testid="event-rsvp-101-1"]')?.textContent
+      document.querySelector(
+        '[data-testid="event-rsvp-usr_111111111111111111112k-1"]'
+      )?.textContent
     ).equals('No reply')
     expect(
       document
-        .querySelector('[data-testid="event-rsvp-104-2"]')
+        .querySelector(
+          '[data-testid="event-rsvp-usr_111111111111111111112o-2"]'
+        )
         ?.getAttribute('aria-checked')
     ).equals('true')
     client.saveRsvp = async (_id, userId, response) => ({ userId, response })
-    await click('[data-testid="event-rsvp-101-0"]')
+    await click('[data-testid="event-rsvp-usr_111111111111111111112k-0"]')
     expect(document.body.textContent).not.includes(
       'Your guardian access changed'
     )
@@ -332,7 +347,9 @@ describe('event Info location and family controls', () => {
     })
     await render(client)
     expect(document.body.textContent).not.includes('Edit event details')
-    const reply = document.querySelector('[data-testid="event-reply-row-104"]')!
+    const reply = document.querySelector(
+      '[data-testid="event-reply-row-usr_111111111111111111112o"]'
+    )!
     const map = document.querySelector('[data-testid="event-location"]')!
     expect(
       reply.compareDocumentPosition(map) &

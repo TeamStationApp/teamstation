@@ -10,7 +10,6 @@ import {
   type CurrentPlay,
   type GumboPlay
 } from '../../common/gumboPlay'
-import { mintUserId } from '../../common/mintUserId'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/apply'
 import { freshGame, newSetup } from '../../common/scoring/lineup'
@@ -21,6 +20,9 @@ import {
   ScoringSession,
   type SessionContext
 } from '../../common/scoring/session'
+import { userIdOfGumbo } from '../../common/userId'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import {
   addGame,
   addPerson,
@@ -141,30 +143,31 @@ describe('the game as a scoreboard source', function () {
         .returning('id')
         .executeTakeFirstOrThrow()
     ).id
-    await db
-      .insertInto('users')
-      .values(
-        minted.map((made, i) => ({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: `Player ${i}`,
-          created_at: now,
-          updated_at: now
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      minted.map((made, i) => ({
+        id: made.userId,
+        legacyId: made.legacyId,
+        display_name: `Player ${i}`,
+        created_at: now,
+        updated_at: now
+      }))
+    )
     teams = {
       away: { id: away, name: 'Gulls', logoUrl: null },
       home: { id: home, name: 'Hawks', logoUrl: null }
     }
     setup = newSetup(teams, {
       away: minted.slice(0, 9).map((made, i) => ({
-        userId: made.userId,
+        userId: userIdOfGumbo(made.userId),
+        gumboId: made.userId,
         shortName: `Away ${i + 1}`
       })),
-      home: minted
-        .slice(9)
-        .map((made, i) => ({ userId: made.userId, shortName: `Home ${i + 1}` }))
+      home: minted.slice(9).map((made, i) => ({
+        userId: userIdOfGumbo(made.userId),
+        gumboId: made.userId,
+        shortName: `Home ${i + 1}`
+      }))
     })
     runner = await addPerson(db, 'runner', { owns: home })
     stranger = await addPerson(db, 'stranger')
@@ -203,7 +206,7 @@ describe('the game as a scoreboard source', function () {
       awayTeamId: away,
       startAt: new Date()
     })
-    const actions = situationActions()
+    const actions = situationActions(setup)
     await score(gameId, actions)
 
     let memory = freshGame(gameId, teams, setup)
@@ -253,7 +256,7 @@ describe('the game as a scoreboard source', function () {
       awayTeamId: away,
       startAt: new Date()
     })
-    await score(broken, situationActions().slice(0, 5))
+    await score(broken, situationActions(setup).slice(0, 5))
     const stored = await load(broken)
     const record = (
       stored.plays[0] as unknown as {
@@ -266,7 +269,7 @@ describe('the game as a scoreboard source', function () {
         currentPlay: JSON.stringify({
           ...(stored.currentPlay ?? { about: { atBatIndex: 2 } }),
           teamStation: {
-            version: 1,
+            version: 2,
             setupBefore: record.setupBefore,
             actions: [{ type: 'result', eventType: 'strikeout' }]
           }
@@ -286,7 +289,7 @@ describe('the game as a scoreboard source', function () {
       awayTeamId: away,
       startAt: new Date()
     })
-    await score(gameId, situationActions().slice(0, 3))
+    await score(gameId, situationActions(setup).slice(0, 3))
     const result = await writeGameScoreboard({ db, store, log }, gameId)
     expect(result?.kind).equals('written')
     const hash = await store.readScoreboard(gameId)

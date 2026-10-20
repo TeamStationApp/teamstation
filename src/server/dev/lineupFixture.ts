@@ -6,6 +6,7 @@ import type { DefaultLineup, Lineup } from '../../common/scoring/lineupHistory'
 import { POSITIONS } from '../../common/scoring/state'
 import { type Database, makeDatabase } from '../db/database'
 import { serverConfig } from '../serverConfig'
+import { ensureGumboId } from '../users/insertUser'
 import {
   createScoringGame,
   loginUser,
@@ -106,10 +107,10 @@ export interface LineupFixture {
   gameId: string
   seasonId: string
   teams: Record<'home' | 'away', string>
-  users: Record<Person, { email: string; userId: number }>
+  users: Record<Person, { email: string; userId: string }>
   players: Record<
     'home' | 'away',
-    Array<{ userId: number; name: string; jersey: string }>
+    Array<{ userId: string; gumboId: number; name: string; jersey: string }>
   >
 }
 
@@ -127,13 +128,13 @@ export async function createLineupFixture(
   })
   const teams = { home: game.homeTeamId, away: game.awayTeamId }
   for (const side of ['away', 'home'] as const) {
-    const people = game.roster[side]
-      .slice(0, POSITIONS.length)
-      .map((userId, i) => ({
-        userId,
+    const people = await Promise.all(
+      game.roster[side].slice(0, POSITIONS.length).map(async (userId, i) => ({
+        gumboId: await ensureGumboId(trx, userId),
         name: LINEUP_NAMES[side][i],
         jersey: String(i + 1)
       }))
+    )
     const value: DefaultLineup = {
       lineup: {
         batters: people,
@@ -152,7 +153,7 @@ export async function createLineupFixture(
   }
   const person = async (
     who: (typeof PEOPLE)[Person]
-  ): Promise<{ email: string; userId: number }> => {
+  ): Promise<{ email: string; userId: string }> => {
     const userId = await loginUser(trx, minter, who.email, password, who.name)
     for (const side of who.teams) {
       await trx
@@ -185,17 +186,20 @@ export async function createLineupFixture(
     awayCoach: await person(PEOPLE.awayCoach),
     member: await person(PEOPLE.member)
   }
-  const sidePlayers = (
+  const sidePlayers = async (
     side: 'home' | 'away'
-  ): LineupFixture['players']['home'] =>
-    game.roster[side].map((userId, i) => ({
-      userId,
-      name: LINEUP_NAMES[side][i],
-      jersey: String(i + 1)
-    }))
+  ): Promise<LineupFixture['players']['home']> =>
+    await Promise.all(
+      game.roster[side].map(async (userId, i) => ({
+        userId,
+        gumboId: await ensureGumboId(trx, userId),
+        name: LINEUP_NAMES[side][i],
+        jersey: String(i + 1)
+      }))
+    )
   const players: LineupFixture['players'] = {
-    away: sidePlayers('away'),
-    home: sidePlayers('home')
+    away: await sidePlayers('away'),
+    home: await sidePlayers('home')
   }
   return {
     gameId: game.games[0],

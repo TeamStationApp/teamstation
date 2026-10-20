@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { userIdOfGumbo } from '../common/userId'
 import { scheduleDate } from './screens/format'
 
 /**
@@ -26,7 +27,7 @@ const SIZES: Size[] = [
 
 const USER = {
   id: 7,
-  displayName: 'Pat',
+  displayName: 'Pat Neshek',
   email: 'pat@example.com',
   isAdmin: false
 }
@@ -60,8 +61,8 @@ const RTMP_URL = 'rtmp://ingest.example/live/lst_own-key'
 const OWN_CAMERA = {
   id: 'lst_own',
   gameId: 'gam_rtmp',
-  userId: 7,
-  ownerName: 'Pat',
+  userId: userIdOfGumbo(7),
+  ownerName: 'Pat Neshek',
   slot: 1,
   label: 'Dugout',
   keyPrefix: 'lst_own',
@@ -73,8 +74,8 @@ const OWN_CAMERA = {
 const OTHER_CAMERA = {
   id: 'lst_other',
   gameId: 'gam_rtmp',
-  userId: 8,
-  ownerName: 'Sam',
+  userId: userIdOfGumbo(8),
+  ownerName: 'Sam Fuld',
   slot: 1,
   label: 'Third base',
   keyPrefix: 'lst_other',
@@ -214,8 +215,9 @@ async function open(path: string, size: Size): Promise<Page> {
           cors(200, {
             batting: [
               {
-                userId: 1,
-                shortName: 'Alex',
+                userId: userIdOfGumbo(1),
+                gumboId: 1,
+                shortName: 'Alex L',
                 teamId: 'away',
                 pa: 2,
                 ab: 2,
@@ -791,7 +793,7 @@ describe('list screens', function () {
       const text = await until('the box score', async () => {
         const body = await page.evaluate(() => document.body.textContent)
         if (body == null) return undefined
-        if (!body.includes('Alex')) return undefined
+        if (!body.includes('Alex L')) return undefined
         return body
       })
       expect(text).includes('Batting')
@@ -823,7 +825,7 @@ describe('list screens', function () {
           if (text == null) return undefined
           if (!text.includes(address)) return undefined
           if (!text.includes('Tap to copy')) return undefined
-          if (!text.includes('Sam')) return undefined
+          if (!text.includes('Sam Fuld')) return undefined
           if (!text.includes('Third base')) return undefined
           return { count: text.split('rtmp://').length - 1 }
         }, RTMP_URL)

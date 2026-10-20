@@ -56,7 +56,7 @@ export function sampleGame(): GameState {
     for (const id of ids)
       players[id] = {
         id,
-        userId: id * 1000,
+
         teamId,
         fullName: `Player ${id}`,
         jersey: String(id),
@@ -118,7 +118,7 @@ export function sampleGame(): GameState {
     final: false,
     meta: {
       sequence: 0,
-      identities: { sourceToSession: {}, sessionToSource: {}, nextId: 19 }
+      tagOrder: Array.from({ length: 18 }, (_, i) => i + 1)
     }
   }
 }
@@ -383,15 +383,15 @@ describe('scoring actions', function () {
     expect(text).includes('Visitors batting, Hosts in the field.')
     // Every player by his tag, and no id.
     expect(text).includes(
-      `Batter: Player 4. #4 (tag ${tagOf(4)}). Pitcher: Player 1. #10 (tag ${tagOf(10)}).`
+      `Batter: Player 4. #4 (tag ${tagOf(3)}). Pitcher: Player 1. #10 (tag ${tagOf(9)}).`
     )
     expect(text).includes(
-      `On first: nobody. On second: Player 3. #3 (tag ${tagOf(3)}).`
+      `On first: nobody. On second: Player 3. #3 (tag ${tagOf(2)}).`
     )
-    expect(text).includes(`Next batter: Player 5. #5 (tag ${tagOf(5)}).`)
-    expect(text).includes(`SS Player 1. #14 (tag ${tagOf(14)})`)
+    expect(text).includes(`Next batter: Player 5. #5 (tag ${tagOf(4)}).`)
+    expect(text).includes(`SS Player 1. #14 (tag ${tagOf(13)})`)
     expect([...taggedIds(text)].sort((a, b) => a - b)).deep.equals([
-      3, 4, 5, 10, 11, 12, 13, 14, 15, 16, 17, 18
+      2, 3, 4, 9, 10, 11, 12, 13, 14, 15, 16, 17
     ])
     expect(text).not.match(/\bid\b/)
     expect(text).not.match(/runs?\b|score|atBatIndex|at-bat/i)
@@ -402,6 +402,7 @@ describe('scoring actions', function () {
     line.currentInning = 12
     line.outs = 2
     line.offense.batter = { id: 99, fullName: 'Unlisted' }
+    bottom.meta.tagOrder.push(99)
     expect(promptContext(bottom)).includes(
       'Bottom of the 12th, 2 outs, count 1-2.'
     )
@@ -409,11 +410,11 @@ describe('scoring actions', function () {
       'Hosts batting, Visitors in the field.'
     )
     expect(promptContext(bottom)).includes(
-      `Batter: Unlisted (tag ${tagOf(99)}).`
+      `Batter: Unlisted (tag ${tagOf(18)}).`
     )
     // A player with no number on the roster is named without one.
     bottom.gameData.players[14].jersey = '  '
-    expect(promptContext(bottom)).includes(`SS Player 1. (tag ${tagOf(14)})`)
+    expect(promptContext(bottom)).includes(`SS Player 1. (tag ${tagOf(13)})`)
   })
 
   it('reads a dictated action’s players back from their tags, and tags them again for the model', function () {
@@ -484,6 +485,33 @@ describe('scoring actions', function () {
     })
   })
 
+  it('round-trips fielding-route tags and accepts fielding positions without changing points', function () {
+    const action: ScoringAction = {
+      type: 'runnerMovement',
+      runner: 3,
+      to: '2B',
+      fieldingRoute: [{ id: 14, point: { x: 1, z: 2 } }]
+    }
+    const tagged = taggedAction(action) as Record<string, unknown> & {
+      type: string
+    }
+    expect(tagged.fieldingRoute).deep.equals([
+      { id: tagOf(14), point: { x: 1, z: 2 } }
+    ])
+    const players = new Set([3, 14])
+    expect(untaggedAction(tagged, players)).deep.equals({ raw: action })
+    expect(
+      untaggedAction(
+        {
+          ...tagged,
+          fieldingRoute: [{ id: 'SS', point: { x: 1, z: 2 } }]
+        },
+        players,
+        new Map([['SS', 14]])
+      )
+    ).deep.equals({ raw: action })
+  })
+
   it('refuses a dictated player the game gives no tag: a number, a base, a stranger', function () {
     const game = new Set([3, 14])
     const refused = (raw: Record<string, unknown>): string | undefined => {
@@ -535,7 +563,7 @@ describe('scoring actions', function () {
     const fielding = fieldingIds(context)
     const ids = taggedIds(context)
     for (const position of POSITIONS) {
-      const id = defense[position]?.id
+      const id = game.meta.tagOrder.indexOf(defense[position]!.id)
       expect(fielding.get(position), position).equals(id)
       expect(
         untaggedAction(
@@ -549,7 +577,8 @@ describe('scoring actions', function () {
       })
     }
     // In the words a scorer uses, in every field that names a fielder.
-    const at = (position: Position): number | undefined => defense[position]?.id
+    const at = (position: Position): number | undefined =>
+      game.meta.tagOrder.indexOf(defense[position]!.id)
     expect(
       untaggedAction(
         {
@@ -804,7 +833,7 @@ describe('scoring actions', function () {
     expect(
       shortName({ fullName: 'Noah Dean', firstName: 'Noah', lastName: 'Dean' })
     ).equals('Noah D.')
-    expect(shortName({ fullName: 'Marcus Kaczmarek' })).equals('Marcus K.')
+    expect(shortName({ fullName: 'Marcus Semien' })).equals('Marcus S.')
     expect(shortName({ fullName: 'Mary Ann Smith' })).equals('Mary Ann S.')
     expect(shortName({ fullName: "Liam O'Brien" })).equals('Liam O.')
     expect(shortName({ fullName: 'Sam P.' })).equals('Sam P.')
@@ -815,13 +844,13 @@ describe('scoring actions', function () {
     const game = sampleGame()
     for (const player of Object.values(game.gameData.players)) {
       player.firstName = 'Chase'
-      player.lastName = `Kaczmarek${player.id}`
-      player.fullName = `Chase Kaczmarek${player.id}`
+      player.lastName = `Utley${player.id}`
+      player.fullName = `Chase Utley${player.id}`
     }
     const text = promptContext(game)
-    expect(text).includes(`Batter: Chase K. #4 (tag ${tagOf(4)}).`)
-    expect(text).not.match(/Kaczmarek/)
-    expect(keyterms(game).join(' ')).not.match(/Kaczmarek/)
+    expect(text).includes(`Batter: Chase U. #4 (tag ${tagOf(3)}).`)
+    expect(text).not.match(/Utley/)
+    expect(keyterms(game).join(' ')).not.match(/Utley/)
   })
 
   it('biases the recogniser toward who is in the play first', function () {
@@ -945,7 +974,7 @@ describe('game state and setup', function () {
     const setup = setupOf(game)
     expect(asGameSetup(copyState(setup))).deep.equals(setup)
     expect(setup.sides.home.defense.SS).equals(14)
-    expect(setup.players[4].userId).equals(4000)
+    expect(setup.players[4].id).equals(4)
   })
 
   it('keeps a setup apart from the game it came from', function () {

@@ -10,6 +10,7 @@ import {
   TeamStationClient
 } from '../common/api'
 import { asGroupDetail } from '../common/publicGroups'
+import { userIdOfGumbo } from '../common/userId'
 import { App, stackFor } from './App'
 
 describe('team route frames', () => {
@@ -117,7 +118,11 @@ describe('team settings browser history', () => {
       canManage: true
     })
     proto.whoAmI = async () =>
-      asSessionUser({ id: 1, displayName: 'Demo Admin', isAdmin: false })
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo Admin',
+        isAdmin: false
+      })
     proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
     proto.hasNotifications = async () => false
     proto.group = async () => detail
@@ -231,7 +236,11 @@ describe('a person’s profile, through the app', () => {
     })
     const asked: unknown[] = []
     proto.whoAmI = async () =>
-      asSessionUser({ id: 1, displayName: 'Demo Coach', isAdmin: false })
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo Coach',
+        isAdmin: false
+      })
     proto.myRoles = async () => ({
       teams: { canonical: ['coach'] },
       guardianOf: []
@@ -244,8 +253,9 @@ describe('a person’s profile, through the app', () => {
     proto.teamPitchingStats = async () => []
     proto.roster = async () => [
       asRosterEntry({
-        userId: 203,
-        shortName: 'Pat Y',
+        userId: userIdOfGumbo(203),
+        gumboId: 203,
+        shortName: 'Pat N',
         jersey: null,
         positions: [],
         isPlayer: false,
@@ -260,9 +270,10 @@ describe('a person’s profile, through the app', () => {
       return asPersonProfile({
         context: { kind: 'team', id: 'canonical', name: 'Demo Hawks' },
         person: {
-          userId: 203,
-          shortName: 'Pat Y',
-          fullName: 'Pat Young',
+          userId: userIdOfGumbo(203),
+          gumboId: 203,
+          shortName: 'Pat N',
+          fullName: 'Pat Neshek',
           avatarUrl: null,
           canHoldRoles: true
         },
@@ -287,15 +298,17 @@ describe('a person’s profile, through the app', () => {
       await settle()
       const row = [
         ...document.querySelectorAll<HTMLElement>('[role="button"]')
-      ].find(node => node.textContent?.includes('Pat Y') === true)
+      ].find(node => node.textContent?.includes('Pat N') === true)
       expect(row).not.equals(undefined)
       await act(async () => {
         row!.click()
       })
       await settle()
-      expect(asked).deep.equals([['team', 'canonical', 203]])
-      expect(window.location.pathname).equals('/teams/canonical/people/203')
-      expect(document.body.textContent).includes('Pat Young')
+      expect(asked).deep.equals([['team', 'canonical', userIdOfGumbo(203)]])
+      expect(window.location.pathname).equals(
+        '/teams/canonical/people/usr_111111111111111111114W'
+      )
+      expect(document.body.textContent).includes('Pat Neshek')
       expect(document.body.textContent).includes('Team · Demo Hawks')
       await act(async () => {
         root.unmount()
@@ -325,7 +338,11 @@ describe('roles given by somebody else, through the app', () => {
     const originals = Object.getOwnPropertyDescriptors(proto)
     let reads = 0
     proto.whoAmI = async () =>
-      asSessionUser({ id: 1, displayName: 'Demo Member', isAdmin: false })
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo Member',
+        isAdmin: false
+      })
     proto.myRoles = async () => {
       reads++
       return { teams: {}, guardianOf: [] }
@@ -376,8 +393,9 @@ describe('roles given by somebody else, through the app', () => {
 describe('a season’s and a league’s People tab, however the page is opened', () => {
   const people = [
     asRosterEntry({
-      userId: 203,
-      shortName: 'Pat Y',
+      userId: userIdOfGumbo(203),
+      gumboId: 203,
+      shortName: 'Pat N',
       jersey: null,
       positions: [],
       isPlayer: false,
@@ -421,7 +439,11 @@ describe('a season’s and a league’s People tab, however the page is opened',
     const originals = Object.getOwnPropertyDescriptors(proto)
     const asked: unknown[] = []
     proto.whoAmI = async () =>
-      asSessionUser({ id: 1, displayName: 'Demo Member', isAdmin: false })
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo Member',
+        isAdmin: false
+      })
     proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
     proto.hasNotifications = async () => false
     proto.seasons = async () => [
@@ -489,7 +511,7 @@ describe('a season’s and a league’s People tab, however the page is opened',
       expect(seen.asked).deep.include(['group', 'season', 'sea_spring'])
       // The address asked for People, and People is what opened.
       expect(seen.asked).deep.include(['people', 'season', 'sea_spring'])
-      expect(document.body.textContent).includes('Pat Y')
+      expect(document.body.textContent).includes('Pat N')
       expect(window.location.search).includes('tab=people')
     } finally {
       await seen.done()

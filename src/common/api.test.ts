@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { mintedRosterEntry } from '../test/mintedRosterEntry'
 import { testPasswordParameters } from '../test/passwordFixtures'
 import {
   asSaveLineupsBody,
@@ -11,6 +12,7 @@ import {
 import { HttpError } from './errors'
 import { asGumboPlay } from './gumboPlay'
 import { halfOutcomes, lineScore } from './scoring/linescore'
+import { userIdOfGumbo } from './userId'
 
 interface Call {
   url: string
@@ -44,10 +46,93 @@ function stubFetch(
 }
 
 describe('api client', function () {
+  it('carries canonical identities in account, player and role mutations', async () => {
+    const userId = userIdOfGumbo(42)
+    const held = { userId, roles: ['coach'], member: true }
+    const stub = stubFetch(200, held)
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: stub.fetch
+    })
+    await client.changeNodeAccount(userId, { isNodeAdmin: true })
+    expect(
+      await client.addRole('team', 'team/id', userId, 'coach')
+    ).deep.equals(held)
+    expect(
+      await client.removeRole('team', 'team/id', userId, 'coach')
+    ).deep.equals(held)
+    expect(stub.calls.map(call => [call.method, call.url])).deep.equals([
+      ['PATCH', `/api/v1/users/${userId}/administration`],
+      ['PUT', `/api/v1/manage/team/team%2Fid/people/${userId}/roles/coach`],
+      ['DELETE', `/api/v1/manage/team/team%2Fid/people/${userId}/roles/coach`]
+    ])
+    const role = stubFetch(200, { userId, role: 'member' })
+    await new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: role.fetch
+    }).setRole('team', 'team/id', userId, 'member')
+    expect(role.calls[0].url).equals(
+      `/api/v1/manage/team/team%2Fid/people/${userId}/role`
+    )
+    const settings = { userId, bats: 'right', throws: 'left' }
+    const player = stubFetch(200, settings)
+    expect(
+      await new TeamStationClient({
+        baseUrl: '/api/v1',
+        fetch: player.fetch
+      }).setPlayerBatsThrows(userId, { bats: 'right', throws: 'left' })
+    ).deep.equals(settings)
+    expect(player.calls[0].url).equals(`/api/v1/players/${userId}/settings`)
+  })
+  it('writes a game availability switch and reads the two exclusion lists', async () => {
+    const set = stubFetch(200, { away: [123], home: [] })
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: set.fetch
+    })
+    const body = {
+      side: 'away' as const,
+      userId: userIdOfGumbo(123),
+      rostered: false
+    }
+    expect(await client.setRostered('game/id', body)).deep.equals({
+      away: [123],
+      home: []
+    })
+    expect(set.calls[0].url).equals('/api/v1/games/game%2Fid/unroster')
+    expect(set.calls[0].method).equals('PUT')
+    expect(JSON.parse(set.calls[0].body!)).deep.equals(body)
+  })
+  it('posts a game guest to its side and returns the minted identity', async () => {
+    const player = {
+      firstName: 'Mike',
+      lastName: 'Trout',
+      jersey: '27',
+      positions: ['CF' as const],
+      bats: 'right' as const,
+      throws: 'right' as const
+    }
+    const set = stubFetch(201, mintedRosterEntry(player, 700001))
+    const client = new TeamStationClient({
+      baseUrl: 'https://example.test/api/v1',
+      fetch: set.fetch
+    })
+    const entry = await client.createGuestPlayer('game 1', 'away', player)
+    expect(entry.userId).equals(userIdOfGumbo(700001))
+    expect(set.calls[0].url).equals(
+      'https://example.test/api/v1/games/game%201/guest-players'
+    )
+    expect(set.calls[0].method).equals('POST')
+    expect(JSON.parse(set.calls[0].body!)).deep.equals({
+      side: 'away',
+      ...player
+    })
+  })
+
   it('keeps node access filters on the existing users collection and escapes name/email searches', async () => {
     const response = stubFetch(200, [
       {
-        userId: 101,
+        userId: userIdOfGumbo(101),
         displayName: 'Babe Ruth',
         email: 'babe@example.com',
         isNodeAdmin: true,
@@ -130,8 +215,8 @@ describe('api client', function () {
       baseUrl: 'http://example.com/api/v1',
       fetch
     })
-    await client.playerHighlights('7')
-    await client.playerHighlights('7', {
+    await client.playerHighlights(userIdOfGumbo(7))
+    await client.playerHighlights(userIdOfGumbo(7), {
       before: '2026-05-02T18:00:00.000Z',
       limit: 5,
       seasonId: 'season/one',
@@ -139,8 +224,8 @@ describe('api client', function () {
       year: 2026
     })
     expect(calls.map(call => call.url)).deep.equals([
-      'http://example.com/api/v1/players/7/highlights',
-      'http://example.com/api/v1/players/7/highlights?before=2026-05-02T18%3A00%3A00.000Z&limit=5&seasonId=season%2Fone&teamId=team%2Fone&year=2026'
+      `http://example.com/api/v1/players/${userIdOfGumbo(7)}/highlights`,
+      `http://example.com/api/v1/players/${userIdOfGumbo(7)}/highlights?before=2026-05-02T18%3A00%3A00.000Z&limit=5&seasonId=season%2Fone&teamId=team%2Fone&year=2026`
     ])
   })
 
@@ -161,19 +246,22 @@ describe('api client', function () {
   })
 
   it('sets somebody\u2019s roles on one level, and reads the caller\u2019s own', async function () {
-    const set = stubFetch(200, { userId: 42, roles: ['admin', 'coach'] })
+    const set = stubFetch(200, {
+      userId: userIdOfGumbo(42),
+      roles: ['admin', 'coach']
+    })
     const client = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: set.fetch
     })
-    const roles = await client.setRoles('season', 'sea 1', 42, {
+    const roles = await client.setRoles('season', 'sea 1', userIdOfGumbo(42), {
       admin: true,
       flags: ['coach']
     })
     expect(roles).deep.equals(['admin', 'coach'])
     expect(set.calls[0].method).equals('PUT')
     expect(set.calls[0].url).equals(
-      'http://x/api/v1/manage/season/sea%201/people/42/roles'
+      `http://x/api/v1/manage/season/sea%201/people/${userIdOfGumbo(42)}/roles`
     )
     expect(JSON.parse(set.calls[0].body ?? '')).deep.equals({
       admin: true,
@@ -205,7 +293,8 @@ describe('api client', function () {
 
   it('sets a player\u2019s settings on a team, and reads back the roster entry', async function () {
     const set = stubFetch(200, {
-      userId: 7,
+      userId: userIdOfGumbo(7),
+      gumboId: 7,
       shortName: 'Jordan P',
       jersey: '12',
       positions: ['SS', '2B'],
@@ -221,7 +310,7 @@ describe('api client', function () {
       baseUrl: 'http://x/api/v1',
       fetch: set.fetch
     })
-    const entry = await client.setPlayerSettings('tem 1', 7, {
+    const entry = await client.setPlayerSettings('tem 1', userIdOfGumbo(7), {
       jersey: '12',
       bats: 'left'
     })
@@ -229,7 +318,7 @@ describe('api client', function () {
     expect(entry.positions).deep.equals(['SS', '2B'])
     expect(set.calls[0].method).equals('PUT')
     expect(set.calls[0].url).equals(
-      'http://x/api/v1/teams/tem%201/players/7/settings'
+      `http://x/api/v1/teams/tem%201/players/${userIdOfGumbo(7)}/settings`
     )
     expect(JSON.parse(set.calls[0].body ?? '')).deep.equals({
       jersey: '12',
@@ -239,7 +328,8 @@ describe('api client', function () {
 
   it('creates a roster player and reads back the roster entry', async function () {
     const set = stubFetch(201, {
-      userId: 7,
+      userId: userIdOfGumbo(7),
+      gumboId: 7,
       shortName: 'Cliff L',
       nameDetails: {
         firstName: 'Cliff',
@@ -270,7 +360,7 @@ describe('api client', function () {
       bats: 'right',
       throws: 'right'
     })
-    expect(entry.userId).equals(7)
+    expect(entry.userId).equals(userIdOfGumbo(7))
     expect(entry.shortName).equals('Cliff L')
     expect(entry.nameDetails?.displayName).equals('Cliff Lee')
     expect(set.calls[0].method).equals('POST')
@@ -305,10 +395,12 @@ describe('api client', function () {
       baseUrl: 'http://x/api/v1',
       fetch: set.fetch
     })
-    expect(await client.setWalkUpSong('tem 1', 7, song)).deep.equals(song)
+    expect(
+      await client.setWalkUpSong('tem 1', userIdOfGumbo(7), song)
+    ).deep.equals(song)
     expect(set.calls[0].method).equals('PUT')
     expect(set.calls[0].url).equals(
-      'http://x/api/v1/teams/tem%201/players/7/walk-up-song'
+      `http://x/api/v1/teams/tem%201/players/${userIdOfGumbo(7)}/walk-up-song`
     )
     expect(JSON.parse(set.calls[0].body ?? '')).deep.equals(song)
 
@@ -324,10 +416,10 @@ describe('api client', function () {
         })
         return new Response(null, { status: 204 })
       }
-    }).clearWalkUpSong('tem 1', '7')
+    }).clearWalkUpSong('tem 1', userIdOfGumbo(7))
     expect(cleared).deep.equals([
       {
-        url: 'http://x/api/v1/teams/tem%201/players/7/walk-up-song',
+        url: `http://x/api/v1/teams/tem%201/players/${userIdOfGumbo(7)}/walk-up-song`,
         method: 'DELETE',
         body: undefined
       }
@@ -339,14 +431,15 @@ describe('api client', function () {
       await new TeamStationClient({
         baseUrl: 'http://x/api/v1',
         fetch: stubFetch(200, { ...song, endMs: 5000 }).fetch
-      }).setWalkUpSong('tem_1', 7, song)
+      }).setWalkUpSong('tem_1', userIdOfGumbo(7), song)
     } catch {
       refused = true
     }
     expect(refused).equals(true)
 
     const entry = {
-      userId: 7,
+      userId: userIdOfGumbo(7),
+      gumboId: 7,
       shortName: 'Jordan P',
       jersey: '12',
       positions: [],
@@ -358,9 +451,9 @@ describe('api client', function () {
     }
     const roster = stubFetch(200, [
       { ...entry, walkUpSong: song },
-      { ...entry, userId: 8, walkUpSong: null },
+      { ...entry, userId: userIdOfGumbo(8), walkUpSong: null },
       // An older server sends no song at all.
-      { ...entry, userId: 9 }
+      { ...entry, userId: userIdOfGumbo(9) }
     ])
     const read = await new TeamStationClient({
       baseUrl: 'http://x/api/v1',
@@ -370,7 +463,7 @@ describe('api client', function () {
   })
 
   it("reads a team's default lineup and a game's lineups", async function () {
-    const person = { userId: 7, name: 'Jordan P', jersey: '12' }
+    const person = { gumboId: 7, name: 'Jorge P', jersey: '12' }
     const defense = {
       P: person,
       C: null,
@@ -413,7 +506,7 @@ describe('api client', function () {
           position: 'P',
           battingOrder: null,
           replaced: null,
-          description: 'Pitching Change: Jordan P replaces Ott O.'
+          description: 'Pitching Change: Jorge P replaces Mel O.'
         }
       ],
       current: { batters: [person], defense }
@@ -439,8 +532,8 @@ describe('api client', function () {
       side: 'home',
       base: 'd1',
       players: [
-        { userId: 7, fullName: 'Jordan P', jersey: '12' },
-        { userId: null, fullName: 'Guest', jersey: '' }
+        { gumboId: 7, fullName: 'Jorge P', jersey: '12' },
+        { gumboId: null, fullName: 'Guest', jersey: '' }
       ],
       battingOrder: [1, 0],
       defense: { P: 0, CF: 1 }
@@ -471,8 +564,8 @@ describe('api client', function () {
 
   it('cleans a lineup save, refusing an index past its players', function () {
     const players = [
-      { userId: 7, fullName: 'Judge', jersey: '99' },
-      { userId: null, fullName: 'Soto', jersey: '22' }
+      { gumboId: 7, fullName: 'Judge', jersey: '99' },
+      { gumboId: null, fullName: 'Soto', jersey: '22' }
     ]
     expect(
       asSaveLineupsBody({
@@ -541,7 +634,7 @@ describe('api client', function () {
       source,
       canEditWalkUp: true,
       batters: [
-        { userId: 7, name: 'Tom A', walkUpSong: song },
+        { userId: userIdOfGumbo(7), name: 'Tom A', walkUpSong: song },
         { userId: null, name: 'Guest', walkUpSong: null }
       ]
     })
@@ -573,8 +666,8 @@ describe('api client', function () {
     const renamed = stubFetch(200, {
       id: 'liv_1',
       gameId: 'gam 1',
-      userId: 42,
-      ownerName: 'Pat',
+      userId: userIdOfGumbo(42),
+      ownerName: 'Pat Neshek',
       slot: 1,
       label: 'Dugout',
       keyPrefix: 'ts_abc',
@@ -603,8 +696,8 @@ describe('api client', function () {
     const device = {
       id: 'liv_1',
       gameId: 'gam 1',
-      userId: 42,
-      ownerName: 'Pat',
+      userId: userIdOfGumbo(42),
+      ownerName: 'Pat Neshek',
       slot: 1,
       label: 'Home Plate',
       keyPrefix: 'ts_abc',
@@ -777,7 +870,12 @@ describe('api client', function () {
     const session = {
       token: 'tok_abc',
       expiresAt: '2026-10-01T00:00:00.000Z',
-      user: { id: 1, displayName: 'Robin', isAdmin: false }
+      user: {
+        id: userIdOfGumbo(1),
+        gumboId: null,
+        displayName: 'Robin Yount',
+        isAdmin: false
+      }
     }
     const { fetch, calls } = stubFetch(200, session)
     const client = new TeamStationClient({
@@ -818,7 +916,7 @@ describe('api client', function () {
 
   it('asks for people by each external id, escaped', async function () {
     const { fetch, calls } = stubFetch(200, [
-      { userId: 7, externalIds: ['a&b', 'c'] }
+      { userId: userIdOfGumbo(7), externalIds: ['a&b', 'c'] }
     ])
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     const users = await client.users({ externalIds: ['a&b', 'c'] })
@@ -828,7 +926,8 @@ describe('api client', function () {
     // An answer without the name and picture still reads.
     expect(users).deep.equals([
       {
-        userId: 7,
+        userId: userIdOfGumbo(7),
+        gumboId: null,
         externalIds: ['a&b', 'c'],
         shortName: undefined,
         avatarUrl: null
@@ -838,11 +937,23 @@ describe('api client', function () {
 
   it('asks for the players the signed-in person is a guardian of', async function () {
     const { fetch, calls } = stubFetch(200, [
-      { userId: 7, externalIds: [], shortName: 'Avery S', avatarUrl: null }
+      {
+        userId: userIdOfGumbo(7),
+        gumboId: null,
+        externalIds: [],
+        shortName: 'Alfonso S',
+        avatarUrl: null
+      }
     ])
     const client = new TeamStationClient({ baseUrl: 'http://x/api/v1', fetch })
     expect(await client.guardedPlayers()).deep.equals([
-      { userId: 7, externalIds: [], shortName: 'Avery S', avatarUrl: null }
+      {
+        userId: userIdOfGumbo(7),
+        gumboId: null,
+        externalIds: [],
+        shortName: 'Alfonso S',
+        avatarUrl: null
+      }
     ])
     expect(calls[0].url).equals('http://x/api/v1/users?guardedBy=me')
   })
@@ -944,7 +1055,8 @@ describe('api client', function () {
 
   it('reads sacrifice bunts on a batting line, and none from an older server', async function () {
     const batting = {
-      userId: '7',
+      userId: userIdOfGumbo(7),
+      gumboId: 7,
       teamId: 'tem_1',
       pa: 3,
       ab: 1,
@@ -1121,7 +1233,12 @@ describe('api client', function () {
     const session = {
       token: 'tok_code',
       expiresAt: '2026-10-01T00:00:00.000Z',
-      user: { id: 1, displayName: 'Robin', isAdmin: false }
+      user: {
+        id: userIdOfGumbo(1),
+        gumboId: null,
+        displayName: 'Robin Yount',
+        isAdmin: false
+      }
     }
     const answers: Array<[number, unknown]> = [
       [202, { sent: true, requestId: 'req_1', clientSecret: 'secret' }],
@@ -1340,7 +1457,12 @@ describe('api client', function () {
     const session = {
       token: 'tok_abc',
       expiresAt: '2026-10-01T00:00:00.000Z',
-      user: { id: 1, displayName: 'Robin', isAdmin: false }
+      user: {
+        id: userIdOfGumbo(1),
+        gumboId: null,
+        displayName: 'Robin Yount',
+        isAdmin: false
+      }
     }
     const { fetch, calls } = stubFetch(200, session)
     const client = new TeamStationClient({
@@ -1362,18 +1484,33 @@ describe('api client', function () {
       {
         token: 'tok',
         expiresAt: '2026-11-01T00:00:00.000Z',
-        user: { id: 1, displayName: 'Robin', isAdmin: false }
+        user: {
+          id: userIdOfGumbo(1),
+          gumboId: null,
+          displayName: 'Robin Yount',
+          isAdmin: false
+        }
       },
       { requestId: 'emc_asked', clientSecret: 's', sent: true },
       {
         token: 'tok',
         expiresAt: '2026-11-01T00:00:00.000Z',
-        user: { id: 1, displayName: 'Robin', isAdmin: false }
+        user: {
+          id: userIdOfGumbo(1),
+          gumboId: null,
+          displayName: 'Robin Yount',
+          isAdmin: false
+        }
       },
       {
         token: 'tok',
         expiresAt: '2026-11-01T00:00:00.000Z',
-        user: { id: 1, displayName: 'Robin', isAdmin: false }
+        user: {
+          id: userIdOfGumbo(1),
+          gumboId: null,
+          displayName: 'Robin Yount',
+          isAdmin: false
+        }
       }
     ]
     const bodies: unknown[] = []

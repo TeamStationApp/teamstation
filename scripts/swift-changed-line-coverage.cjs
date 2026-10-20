@@ -1,7 +1,20 @@
 const { execFileSync } = require('node:child_process')
-const { mkdtempSync, realpathSync, writeFileSync } = require('node:fs')
+const {
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} = require('node:fs')
 const { tmpdir } = require('node:os')
-const { basename, dirname, join, relative, resolve } = require('node:path')
+const {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve
+} = require('node:path')
 
 const check = require('./changed-line-check.cjs')
 const {
@@ -30,7 +43,7 @@ const {
 
 const USAGE =
   'usage: swift-changed-line-coverage.cjs (--spm <dir> | --xcresult <path> ' +
-  '[--derived-data <dir>]) [--exclude <path>] <pathspec>…'
+  '[--derived-data <dir>]) [--export-counts <file>] [--exclude <path>] <pathspec>…'
 
 const ALWAYS = [
   '--ext',
@@ -48,7 +61,11 @@ function parseArgs(argv) {
     if (arg === '--spm') args.spm = argv[++i]
     else if (arg === '--xcresult') args.xcresult = argv[++i]
     else if (arg === '--derived-data') args.derivedData = argv[++i]
-    else args.rest.push(arg)
+    else if (arg === '--export-counts') {
+      args.exportCounts = argv[++i]
+      if (args.exportCounts == null || args.exportCounts.startsWith('--'))
+        throw new Error('--export-counts needs a file')
+    } else args.rest.push(arg)
   }
   if ((args.spm == null) === (args.xcresult == null))
     throw new Error('give one of --spm or --xcresult')
@@ -95,10 +112,35 @@ function keyed(tops, counts) {
 }
 
 // `swift test --enable-code-coverage`, then its profile exported as lcov.
-function spmCounts(dir, run) {
+function spmCounts(dir, run, { mergeRawProfiles = false } = {}) {
   const at = ['--package-path', dir]
+  let codecov
+  if (mergeRawProfiles) {
+    codecov = run('swift', ['test', '--show-codecov-path', ...at]).trim()
+    if (!isAbsolute(codecov) || basename(dirname(codecov)) !== 'codecov')
+      throw new Error('Unexpected Swift coverage directory')
+    // A failed Swift Testing suite leaves raw profiles but skips SwiftPM's
+    // merge. Clear the generated directory first so old runs cannot count.
+    rmSync(dirname(codecov), { recursive: true, force: true })
+  }
   run('swift', ['test', '--enable-code-coverage', ...at])
-  const codecov = run('swift', ['test', '--show-codecov-path', ...at]).trim()
+  codecov ??= run('swift', ['test', '--show-codecov-path', ...at]).trim()
+  if (mergeRawProfiles) {
+    const profiles = readdirSync(dirname(codecov))
+      .filter(file => file.endsWith('.profraw'))
+      .sort()
+      .map(file => join(dirname(codecov), file))
+    if (profiles.length === 0)
+      throw new Error('No fresh Swift coverage profiles')
+    run('xcrun', [
+      'llvm-profdata',
+      'merge',
+      '-sparse',
+      ...profiles,
+      '-o',
+      join(dirname(codecov), 'default.profdata')
+    ])
+  }
   const bin = run('swift', ['build', '--show-bin-path', ...at]).trim()
   const name = JSON.parse(
     run('swift', ['package', ...at, 'describe', '--type', 'json'])
@@ -300,6 +342,11 @@ function main(argv, { run, log, cwd = process.cwd() }) {
   const dir = mkdtempSync(join(tmpdir(), 'swift-changed-line-'))
   const file = join(dir, 'counts.json')
   writeFileSync(file, JSON.stringify(keyed(tops, counts)))
+  if (args.exportCounts != null)
+    writeFileSync(
+      resolve(cwd, args.exportCounts),
+      JSON.stringify(keyed(tops, counts))
+    )
   return check.main(['--counts', file, ...ALWAYS, ...args.rest], {
     run,
     log,
@@ -307,7 +354,7 @@ function main(argv, { run, log, cwd = process.cwd() }) {
   })
 }
 
-module.exports = { main }
+module.exports = { main, spmCounts }
 
 if (require.main === module) {
   process.exitCode = main(process.argv.slice(2), {

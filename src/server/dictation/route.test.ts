@@ -15,12 +15,14 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import { toolSchema } from '../../common/scoring/actions'
 import { rosterToolSchema } from '../../common/scoring/rosterCommands'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { Actor } from '../auth/sessions'
 import { hashToken, SESSION_COOKIE } from '../auth/tokens'
 import type { Database } from '../db/database'
@@ -168,57 +170,54 @@ describe('dictation route', function () {
     await pool.end()
     db = makeDatabase(scratchUrl)
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values([
-        {
-          id: member.userId,
-          legacyId: member.legacyId,
-          display_name: 'Cam',
-          created_at: now,
-          updated_at: now
-        },
-        {
-          id: stranger.userId,
-          legacyId: stranger.legacyId,
-          display_name: 'Bea',
-          created_at: now,
-          updated_at: now
-        },
-        ...[
-          [coach, 'Judge'],
-          [assistant, 'Soto'],
-          [scorekeeper, 'Betts']
-        ].map(([user, name]) => ({
-          id: (user as typeof coach).userId,
-          legacyId: (user as typeof coach).legacyId,
-          display_name: name as string,
-          created_at: now,
-          updated_at: now
-        }))
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(member.userId),
+        legacyId: member.legacyId,
+        display_name: 'Cam Bedrosian',
+        created_at: now,
+        updated_at: now
+      },
+      {
+        id: userIdOfGumbo(stranger.userId),
+        legacyId: stranger.legacyId,
+        display_name: 'Babe Ruth',
+        created_at: now,
+        updated_at: now
+      },
+      ...[
+        [coach, 'Judge'],
+        [assistant, 'Soto'],
+        [scorekeeper, 'Betts']
+      ].map(([user, name]) => ({
+        id: (user as typeof coach).userId,
+        legacyId: (user as typeof coach).legacyId,
+        display_name: name as string,
+        created_at: now,
+        updated_at: now
+      }))
+    ])
     const expires = new Date(now.getTime() + 3_600_000)
     await db
       .insertInto('auth_sessions')
       .values([
         {
           id: 'ses_dictation_member',
-          user_id: member.userId,
+          user_id: userIdOfGumbo(member.userId),
           token_hash: hashToken(MEMBER),
           created_at: now,
           expires_at: expires
         },
         {
           id: 'ses_dictation_stranger',
-          user_id: stranger.userId,
+          user_id: userIdOfGumbo(stranger.userId),
           token_hash: hashToken(STRANGER),
           created_at: now,
           expires_at: expires
         },
         {
           id: 'ses_dictation_coach',
-          user_id: coach.userId,
+          user_id: userIdOfGumbo(coach.userId),
           token_hash: hashToken(COACH),
           created_at: now,
           expires_at: expires
@@ -250,19 +249,19 @@ describe('dictation route', function () {
       .values([
         {
           id: makeId('membership'),
-          user_id: member.userId,
+          user_id: userIdOfGumbo(member.userId),
           team_id: home,
           role: 'member'
         },
         ...[coach, assistant].map(user => ({
           id: makeId('membership'),
-          user_id: user.userId,
+          user_id: userIdOfGumbo(user.userId),
           team_id: home,
           role: 'member' as const
         })),
         {
           id: makeId('membership'),
-          user_id: scorekeeper.userId,
+          user_id: userIdOfGumbo(scorekeeper.userId),
           team_id: away,
           role: 'member'
         }
@@ -279,7 +278,7 @@ describe('dictation route', function () {
           ] as const
         ).map(([user, teamId, role]) => ({
           id: makeId('scopeRole'),
-          user_id: user.userId,
+          user_id: userIdOfGumbo(user.userId),
           scope_type: 'team' as const,
           scope_id: teamId,
           role
@@ -639,6 +638,38 @@ describe('dictation route', function () {
       handle.close()
       broken.close()
     })
+  })
+
+  it('resolves model tag slots to persistent players and refuses missing slots', async function () {
+    const client = await connect()
+    const recogniser = recognisers[recognisers.length - 1]
+    for (const [index, tagOrder] of [[700001], []].entries()) {
+      const id = `tags-${index}`
+      client.send(start(id, { tagOrder }))
+      await settled(recogniser, 'begin', index + 1)
+      client.audio(4)
+      client.send({ kind: 'release', id })
+      await settled(recogniser, 'end', index + 1)
+      script.push({
+        kind: 'actions',
+        actions: [{ type: 'ballInPlay', contact: 'swing', fielder: 0 }],
+        dropped: []
+      })
+      recogniser.handlers.onFinal('Hit to the pitcher.')
+      expect((await client.next()).kind).equals('transcript')
+      const reply = await client.next()
+      if (index === 0) {
+        expect(reply.kind).equals('actions')
+        if (reply.kind !== 'actions') throw new Error('Expected actions')
+        expect(reply.actions).deep.equals([
+          { type: 'ballInPlay', contact: 'swing', fielder: 700001 }
+        ])
+      } else {
+        expect(reply.kind).equals('error')
+      }
+    }
+    client.ws.close()
+    await pause()
   })
 
   it('turns a hold into actions, and never reads audio outside one', async function () {
@@ -1157,7 +1188,7 @@ describe('dictation route', function () {
     try {
       await scoring?.authorise(
         db!,
-        { userId: stranger.userId, isAdmin: false, scopes: [] },
+        { userId: userIdOfGumbo(stranger.userId), isAdmin: false, scopes: [] },
         { gameId: ownGame }
       )
     } catch (error) {
@@ -1170,7 +1201,7 @@ describe('dictation route', function () {
   describe('the roster scope', function () {
     const roster = SCOPES.get('roster')!
     const actor = (user: { userId: number }): Actor => ({
-      userId: user.userId,
+      userId: userIdOfGumbo(user.userId),
       isAdmin: false,
       scopes: []
     })

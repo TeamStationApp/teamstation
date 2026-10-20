@@ -4,6 +4,7 @@ import { afterEach, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { TeamStationClient } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateDown, migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -25,17 +26,26 @@ describe('upgraded ownership reads and current competition projections', functio
 
   for (const ambiguous of [false, true])
     it(`preserves authenticated legacy access until an atomic ${ambiguous ? 'explicitly resolved' : 'ready'} ownership cutover`, async () => {
-      h = await accountHarness()
+      h = await accountHarness(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        migrations.filter(migration => migration.name < '066')
+      )
       await h.db
         .insertInto('users')
         .values({
-          id: 103,
+          id: '103',
           legacyId: 'usr_demo_upgrade_staff',
           display_name: 'Mike Trout',
           login_enabled: true
         })
         .execute()
-      h.tokens.set(103, (await createSession(h.db, 103, 'demo-upgrade')).token)
+      h.tokens.set(
+        103,
+        (await createSession(h.db, '103', 'demo-upgrade')).token
+      )
       const result = await sql<{
         name: string
       }>`select current_database() as name`.execute(h.db)
@@ -87,7 +97,7 @@ describe('upgraded ownership reads and current competition projections', functio
               id: 'role_demo_upgrade_a',
               scope_type: 'season',
               scope_id: 'sea_demo_upgrade_a',
-              user_id: 102,
+              user_id: '102',
               role: 'admin'
             },
             ...(ambiguous
@@ -96,7 +106,7 @@ describe('upgraded ownership reads and current competition projections', functio
                     id: 'role_demo_upgrade_b',
                     scope_type: 'season' as const,
                     scope_id: 'sea_demo_upgrade_b',
-                    user_id: 103,
+                    user_id: '103',
                     role: 'admin' as const
                   }
                 ]
@@ -166,7 +176,7 @@ describe('upgraded ownership reads and current competition projections', functio
       .values({
         id: 'membership_demo_host_spectator',
         season_id: f.seasonB,
-        user_id: 104
+        user_id: userIdOfGumbo(104)
       })
       .execute()
     const ownRoster = async (): Promise<unknown[]> =>
