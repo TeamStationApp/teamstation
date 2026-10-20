@@ -295,9 +295,14 @@ export function normalizeIdentity(
               ),
               {
                 ...entry,
-                itemIds: path.endsWith('/roster')
-                  ? entry.itemIds.map(id => identityKey(userMap.get(id) ?? id))
-                  : entry.itemIds
+                itemIds:
+                  /^\/teams\/[^/]+\/(roster|stats)(\?kind=pitching)?$/.test(
+                    path
+                  )
+                    ? entry.itemIds.map(id =>
+                        identityKey(userMap.get(id) ?? id)
+                      )
+                    : entry.itemIds
               }
             ])
           )

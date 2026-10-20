@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 
 import type { Pool, PoolClient } from 'pg'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { type ApiInventory, captureEndpoint } from './userIdApiCapture'
 
 export type Json = null | boolean | number | string | Json[] | JsonObject
@@ -258,7 +259,20 @@ export async function snapshotSql(
     )
     preserved[name] = hash(
       result.rows
-        .map(item => item.row)
+        // Keep the row association, normalizing only declared account FKs.
+        // Embedded history identities remain byte-for-byte JSON values.
+        .map(item =>
+          Object.fromEntries(
+            Object.entries(item.row).map(([column, value]) => [
+              column,
+              userIdType === 'bigint' &&
+              (userColumns[name] ?? []).includes(column) &&
+              value != null
+                ? userIdOfGumbo(value as number)
+                : value
+            ])
+          )
+        )
         .sort((a, b) => canonical(a).localeCompare(canonical(b)))
     )
     preservedCounts[name] = result.rows.length

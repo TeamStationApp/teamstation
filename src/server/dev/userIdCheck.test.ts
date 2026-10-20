@@ -217,7 +217,7 @@ describe('user identity comparison', function () {
     expect(compareUserIds(sample(), migrated()).equal).equals(true)
   })
 
-  it('preserves request inventories while mapping only player paths and roster identity columns', function () {
+  it('preserves request inventories while mapping player paths and roster/stat identities', function () {
     const before = sample()
     const after = migrated()
     before.apiInventory = {
@@ -237,6 +237,23 @@ describe('user identity comparison', function () {
         itemIds: []
       },
       '/teams/tem_one/roster': {
+        status: 200,
+        pages: 1,
+        total: 1,
+        itemIds: [userIdOfGumbo(1)]
+      }
+    }
+    for (const path of [
+      '/teams/tem_one/stats',
+      '/teams/tem_one/stats?kind=pitching'
+    ]) {
+      before.apiInventory[path] = {
+        status: 200,
+        pages: 1,
+        total: 1,
+        itemIds: ['1']
+      }
+      after.apiInventory[path] = {
         status: 200,
         pages: 1,
         total: 1,
@@ -423,6 +440,10 @@ describe('user identity snapshot across real database schemas', function () {
       values ('gps_one', 'gam_one', 'tem_one', 1, 2, 2, 1)`)
     await pool.query(`insert into events (id, "gameId", gumbo) values
       ('evt_one', 'gam_one', '{"about":{"atBatIndex":0},"result":{"eventType":"game_advisory"}}')`)
+    await pool.query(`insert into audit_log (id, actor_user_id, method, path, before)
+      values ('aud_history', 1, 'POST', '/example', '{"userId":1}')`)
+    await pool.query(`insert into creation_idempotency (user_id, key, body_hash, response)
+      values (1, 'fixture-key', 'fixture-hash', '{"userId":1}')`)
     // Capture each schema with the final adapter. The HTTP server runs the
     // current application schema; older application APIs are proved by the
     // pinned A/B/C deployment comparison.
@@ -442,7 +463,7 @@ describe('user identity snapshot across real database schemas', function () {
         'gumbo_ids'
       ])
       expect(original.tables.users.types!.id).equals('bigint')
-      expect(original.preservedCounts!.audit_log).equals(0)
+      expect(original.preservedCounts!.audit_log).equals(1)
       await migrateUp(
         pool,
         migrations.filter(m => m.name > '065radarReadings' && m.name < '068')
@@ -470,6 +491,20 @@ describe('user identity snapshot across real database schemas', function () {
       expect(compareUserIds(separated, canonical).differences).deep.equals([])
       expect(canonical.absentTables).deep.equals([])
       expect(canonical.tables.users.types!.id).equals('text')
+      await pool.query(
+        `update audit_log set before = '{"userId":2}' where id = 'aud_history'`
+      )
+      expect(compareUserIds(canonical, await capture()).equal).equals(false)
+      await pool.query(
+        `update audit_log set before = '{"userId":1}' where id = 'aud_history'`
+      )
+      await pool.query(
+        `update creation_idempotency set response = '{"userId":2}' where key = 'fixture-key'`
+      )
+      expect(compareUserIds(canonical, await capture()).equal).equals(false)
+      await pool.query(
+        `update creation_idempotency set response = '{"userId":1}' where key = 'fixture-key'`
+      )
       const missing = structuredClone(canonical)
       missing.absentTables!.push('unexpected_table')
       expect(compareUserIds(separated, missing).equal).equals(false)

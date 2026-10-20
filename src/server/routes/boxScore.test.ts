@@ -17,6 +17,7 @@ import { attachInt8Parser } from '../db/int8'
 import type { MediaContext } from '../media/mediaContext'
 import { errorHandler } from '../middleware/withErrors'
 import { battingLines, pitchingLines } from '../stats'
+import { boxScoreOrder } from '../stats/boxScoreOrder'
 import { statRows } from '../stats/rows'
 import { teamRoutes } from './teams'
 
@@ -276,5 +277,27 @@ describe('GET /games/:gameId/box-score stats', function () {
       userId: userIdOfGumbo(pitcher),
       outs: 3
     })
+  })
+
+  it('keeps numeric identity order across Base58 letter case when first appearances tie', async function () {
+    const [row] = await statRows(db!, { gameId })
+    const lines = battingLines(
+      [33, 32, 10].map(id => ({
+        ...row,
+        userId: userIdOfGumbo(id),
+        pa: 1,
+        extra: null
+      }))
+    )
+    expect(
+      (await boxScoreOrder(db!, gameId, lines)).map(line => line.userId)
+    ).deep.equals([10, 32, 33].map(userIdOfGumbo))
+    const first = lines.map(line => ({
+      ...line,
+      firstPa: line.userId === userIdOfGumbo(33) ? 0 : 1
+    }))
+    expect(
+      (await boxScoreOrder(db!, gameId, first)).map(line => line.userId)
+    ).deep.equals([33, 10, 32].map(userIdOfGumbo))
   })
 })

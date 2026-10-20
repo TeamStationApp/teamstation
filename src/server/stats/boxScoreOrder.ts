@@ -45,7 +45,13 @@ export async function boxScoreOrder(
     const delta =
       (first.get(a.userId) ?? Infinity) - (first.get(b.userId) ?? Infinity)
     return Number.isNaN(delta) || delta === 0
-      ? a.userId.localeCompare(b.userId)
+      ? // Fixed-width Base58 uses code-point order. Locale collation reorders
+        // upper/lowercase digits and changes the historical numeric tiebreak.
+        a.userId < b.userId
+        ? -1
+        : a.userId > b.userId
+          ? 1
+          : 0
       : delta
   })
 }
