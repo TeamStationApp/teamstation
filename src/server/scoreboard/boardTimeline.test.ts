@@ -760,11 +760,11 @@ describe('the board timeline', function () {
       const gameId = await newGame()
       const at = (seconds: number): string =>
         new Date(clock + seconds * 1000).toISOString()
-      const avery = await addPerson(db, 'Avery Batter')
-      const blake = await addPerson(db, 'Blake Batter')
-      const drew = await addPerson(db, 'Drew Batter')
-      const pat = await addPerson(db, 'Pat Pitcher')
-      const quinn = await addPerson(db, 'Quinn Pitcher')
+      const avery = await addPerson(db, 'Alfonso Soriano')
+      const blake = await addPerson(db, 'Blake Snell')
+      const drew = await addPerson(db, 'Drew Ellis')
+      const pat = await addPerson(db, 'Pat Neshek')
+      const quinn = await addPerson(db, 'Quinn Priester')
       const ref = (person: Person | null): { id: number | null } => ({
         id: person?.gumboId ?? null
       })
@@ -881,16 +881,16 @@ describe('the board timeline', function () {
           state.numPitches
         ])
       ).deep.equals([
-        [1, 'top', '1-0', 0, '000', '0-0', 'Avery B', 'Pat P', 1],
-        [2, 'top', '1-1', 0, '000', '0-0', 'Avery B', 'Pat P', 2],
+        [1, 'top', '1-0', 0, '000', '0-0', 'Alfonso S', 'Pat N', 1],
+        [2, 'top', '1-1', 0, '000', '0-0', 'Alfonso S', 'Pat N', 2],
         // The at-bat is over: the next batter is up.
-        [3, 'top', '0-0', 0, '100', '0-0', 'Blake B', 'Pat P', 3],
-        [4, 'top', '0-0', 0, '010', '0-0', 'Blake B', 'Pat P', 3],
-        [5, 'top', '0-1', 0, '010', '0-0', 'Blake B', 'Pat P', 4],
+        [3, 'top', '0-0', 0, '100', '0-0', 'Blake S', 'Pat N', 3],
+        [4, 'top', '0-0', 0, '010', '0-0', 'Blake S', 'Pat N', 3],
+        [5, 'top', '0-1', 0, '010', '0-0', 'Blake S', 'Pat N', 4],
         // The next play names no batter, only its pitcher.
-        [6, 'top', '0-0', 1, '010', '0-0', '', 'Pat P', 5],
+        [6, 'top', '0-0', 1, '010', '0-0', '', 'Pat N', 5],
         // The third out: the next half's first batter and pitcher.
-        [7, 'bottom', '0-0', 0, '000', '0-0', 'Drew B', 'Quinn P', 0],
+        [7, 'bottom', '0-0', 0, '000', '0-0', 'Drew E', 'Quinn P', 0],
         [8, 'bottom', '0-0', 0, '000', '0-1', '', 'Quinn P', 1]
       ])
       expect(steps.every(step => step.state.inGame)).equals(true)
@@ -901,11 +901,11 @@ describe('the board timeline', function () {
         new Date(Date.UTC(2026, 4, 2, 18) + seconds * 1000).toISOString()
       const ms = (seconds: number): number => Date.parse(at(seconds))
       const names = new Map([
-        [1, 'Ann A'],
+        [1, 'Aaron A'],
         [2, 'Ben B'],
-        [7, 'Pat P'],
-        [8, 'Rex R'],
-        [9, 'Quinn Q']
+        [7, 'Pat N'],
+        [8, 'Rex H'],
+        [9, 'Quinn P']
       ])
       const pitch = (
         seconds: number | null,
@@ -980,11 +980,11 @@ describe('the board timeline', function () {
           undefined
         )
         expect(seen(boards)).deep.equals([
-          [1, 'top1', '1-0', 0, 'Ann A', 'Pat P', 1, '0-0'],
-          [2, 'top1', '1-0', 0, 'Ann A', 'Rex R', 0, '0-0'],
-          [3, 'top1', '1-1', 0, 'Ann A', 'Rex R', 1, '0-0'],
-          [4, 'top1', '0-0', 1, 'Ben B', 'Rex R', 2, '0-0'],
-          [6, 'top1', '0-0', 0, 'Ben B', 'Rex R', 2, '0-0']
+          [1, 'top1', '1-0', 0, 'Aaron A', 'Pat N', 1, '0-0'],
+          [2, 'top1', '1-0', 0, 'Aaron A', 'Rex H', 0, '0-0'],
+          [3, 'top1', '1-1', 0, 'Aaron A', 'Rex H', 1, '0-0'],
+          [4, 'top1', '0-0', 1, 'Ben B', 'Rex H', 2, '0-0'],
+          [6, 'top1', '0-0', 0, 'Ben B', 'Rex H', 2, '0-0']
         ])
       })
 
@@ -1004,10 +1004,10 @@ describe('the board timeline', function () {
           undefined
         )
         expect(seen(boards)).deep.equals([
-          [1, 'top1', '1-0', 0, 'Ann A', 'Pat P', 1, '0-0'],
-          [5, 'top1', '1-2', 0, 'Ann A', 'Pat P', 3, '0-0'],
+          [1, 'top1', '1-0', 0, 'Aaron A', 'Pat N', 1, '0-0'],
+          [5, 'top1', '1-2', 0, 'Aaron A', 'Pat N', 3, '0-0'],
           // The game's last play keeps its own half and batter.
-          [9, 'top1', '0-0', 1, 'Ann A', 'Pat P', 4, '0-0']
+          [9, 'top1', '0-0', 1, 'Aaron A', 'Pat N', 4, '0-0']
         ])
       })
 
@@ -1029,8 +1029,8 @@ describe('the board timeline', function () {
           undefined
         )
         expect(seen(boards)).deep.equals([
-          [1, 'bottom6', '0-0', 3, 'Ann A', 'Quinn Q', 0, '0-0'],
-          [3, 'bottom6', '0-0', 3, 'Ann A', 'Quinn Q', 0, '4-5']
+          [1, 'bottom6', '0-0', 3, 'Aaron A', 'Quinn P', 0, '0-0'],
+          [3, 'bottom6', '0-0', 3, 'Aaron A', 'Quinn P', 0, '4-5']
         ])
       })
 
@@ -1057,7 +1057,7 @@ describe('the board timeline', function () {
         // its batter and pitcher. Plays from the first TeamStation scored on
         // are the replay's, so the play after it adds nothing here.
         expect(seen(boards)).deep.equals([
-          [1, 'bottom1', '0-0', 0, 'Ben B', 'Quinn Q', 0, '0-0']
+          [1, 'bottom1', '0-0', 0, 'Ben B', 'Quinn P', 0, '0-0']
         ])
       })
     })

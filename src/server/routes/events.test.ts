@@ -187,7 +187,7 @@ describe('posting and reading plays', function () {
       {
         id: userIdOfGumbo(admin.userId),
         legacyId: admin.legacyId,
-        display_name: 'Ada',
+        display_name: 'Adam Dunn',
         is_admin: true,
         created_at: now,
         updated_at: now
@@ -195,21 +195,21 @@ describe('posting and reading plays', function () {
       {
         id: userIdOfGumbo(stranger.userId),
         legacyId: stranger.legacyId,
-        display_name: 'Bea',
+        display_name: 'Babe Ruth',
         created_at: now,
         updated_at: now
       },
       {
         id: userIdOfGumbo(member.userId),
         legacyId: member.legacyId,
-        display_name: 'Cam',
+        display_name: 'Cam Bedrosian',
         created_at: now,
         updated_at: now
       },
       {
         id: userIdOfGumbo(manager.userId),
         legacyId: manager.legacyId,
-        display_name: 'Dee',
+        display_name: 'Dee Gordon',
         created_at: now,
         updated_at: now
       },
@@ -468,7 +468,7 @@ describe('posting and reading plays', function () {
           atBatIndex: 0,
           awayScore: 2,
           homeScore: 0,
-          credits: [{ teamId: 'away', name: 'Ada' }],
+          credits: [{ teamId: 'away', name: 'Adam Dunn' }],
           startTime: '2026-05-01T18:00:00.000Z'
         })
       ],
@@ -631,14 +631,16 @@ describe('posting and reading plays', function () {
 
     // A credit names its person by user id, never by another service's id.
     for (const credit of [
-      { name: 'Ada', externalPlayerId: 'p-ada' },
-      { name: 'Ada', acmePlayerId: 'p-ada' }
+      { name: 'Adam Dunn', externalPlayerId: 'p-ada' },
+      { name: 'Adam Dunn', acmePlayerId: 'p-ada' }
     ]) {
       const external = await ask(`/games/${refusedId}/events`, 'POST', {
         plays: [
           {
             ...play({ atBatIndex: 4, awayScore: 1, homeScore: 0 }),
-            credits: [{ creditUserId: null, label: 'Single: Ada', credit }]
+            credits: [
+              { creditUserId: null, label: 'Single: Adam Dunn', credit }
+            ]
           }
         ],
         source: { system: 'manual' }
@@ -879,7 +881,7 @@ describe('posting and reading plays', function () {
             homeScore: 0,
             outs: 1,
             playEvents: [{ type: 'inning_ended', outs: 3 }],
-            credits: [{ teamId: 'away', name: 'Ada' }],
+            credits: [{ teamId: 'away', name: 'Adam Dunn' }],
             startTime: '2026-05-01T18:00:00.000Z'
           }),
           play({
@@ -1415,7 +1417,7 @@ describe('posting and reading plays', function () {
     pitches = 1
   ): Record<string, unknown> => ({
     about: { atBatIndex, inning: 1, halfInning: 'top', isComplete: false },
-    matchup: { batter: { id: member.userId, fullName: 'Cam' } },
+    matchup: { batter: { id: member.userId, fullName: 'Cam Bedrosian' } },
     playEvents: Array.from({ length: pitches }, (_, index) => ({
       index,
       pitchNumber: index + 1,
