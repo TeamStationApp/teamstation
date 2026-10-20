@@ -97,7 +97,7 @@ describe('canonical account IDs in Maestro D Chromium', function () {
         if (cookie == null)
           throw new Error('Sign-in did not establish a session')
         const token = decodeURIComponent(cookie.value)
-        const suffix = '?tab=stats&identityProof=1#stats'
+        const suffix = before ? '' : '?tab=stats&identityProof=1#stats'
         await page.goto(
           `${origin}/players/${fixture.playerLegacyId}${suffix}`,
           { waitUntil: 'domcontentloaded' }
@@ -110,8 +110,12 @@ describe('canonical account IDs in Maestro D Chromium', function () {
           {},
           '/players/' + playerId
         )
-        expect(new URL(page.url()).search).equals('?tab=stats&identityProof=1')
-        expect(new URL(page.url()).hash).equals('#stats')
+        if (!before) {
+          expect(new URL(page.url()).search).equals(
+            '?tab=stats&identityProof=1'
+          )
+          expect(new URL(page.url()).hash).equals('#stats')
+        }
         await m.assertVisible({ text: 'Stats', timeout: 60000 })
         await capture(
           m,
@@ -123,11 +127,12 @@ describe('canonical account IDs in Maestro D Chromium', function () {
         })
         expect(playerResponse.status).equals(200)
         const player = await playerResponse.json()
-        await writeFile(
-          join(artifacts, `player-page-${before ? 'before' : 'after'}.json`),
-          JSON.stringify(player),
-          { mode: 0o600 }
-        )
+        if (!hosted)
+          await writeFile(
+            join(artifacts, `player-page-${before ? 'before' : 'after'}.json`),
+            JSON.stringify(player),
+            { mode: 0o600 }
+          )
         if (!before) {
           expect(
             (

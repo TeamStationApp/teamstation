@@ -49,6 +49,8 @@ function table(rows: JsonObject[], keys = ['id']): TableSnapshot {
 function sample(): UserIdSnapshot {
   return {
     version: 1,
+    captureStartedAt: '2026-01-01T00:00:00.000Z',
+    captureFinishedAt: '2026-01-01T00:00:00.000Z',
     migrations: ['065radarReadings'],
     userIdType: 'bigint',
     userColumns: {
@@ -107,6 +109,8 @@ function migrated(): UserIdSnapshot {
   const snapshot = sample()
   const id = userIdOfGumbo(1)
   snapshot.userIdType = 'text'
+  snapshot.captureStartedAt = '2026-01-02T00:00:00.000Z'
+  snapshot.captureFinishedAt = snapshot.captureStartedAt
   snapshot.migrations.push('068gumboIds', '069userIds', '070playerGumboIds')
   snapshot.userColumns = {
     users: ['merged_into'],
@@ -134,7 +138,7 @@ function migrated(): UserIdSnapshot {
     amount: 1
   }
   snapshot.tables.gumbo_ids = table(
-    [{ gumbo_id: 1, user_id: id }],
+    [{ gumbo_id: 1, user_id: id, created_at: '2026-01-01T12:00:00.000Z' }],
     ['gumbo_id']
   )
   snapshot.api = {
@@ -211,6 +215,42 @@ describe('user identity comparison', function () {
     expect(() => identityKey({})).throws('scalar identity')
     expect(compareUserIds(sample(), sample()).equal).equals(true)
     expect(compareUserIds(sample(), migrated()).equal).equals(true)
+  })
+
+  it('preserves request inventories while mapping only player paths and roster identity columns', function () {
+    const before = sample()
+    const after = migrated()
+    before.apiInventory = {
+      '/players/1/stats': { status: 200, pages: 1, total: null, itemIds: [] },
+      '/teams/tem_one/roster': {
+        status: 200,
+        pages: 1,
+        total: 1,
+        itemIds: ['1']
+      }
+    }
+    after.apiInventory = {
+      [`/players/${userIdOfGumbo(1)}/stats`]: {
+        status: 200,
+        pages: 1,
+        total: null,
+        itemIds: []
+      },
+      '/teams/tem_one/roster': {
+        status: 200,
+        pages: 1,
+        total: 1,
+        itemIds: [userIdOfGumbo(1)]
+      }
+    }
+    expect(compareUserIds(before, after).equal).equals(true)
+    after.apiInventory['/teams/tem_one/roster'].itemIds = []
+    expect(compareUserIds(before, after).equal).equals(false)
+    const decimal = sample()
+    decimal.tables.users.rows[0].id = '1'
+    expect((normalizeIdentity(decimal).tables as any).users[0].id).equals(
+      userIdOfGumbo(1)
+    )
   })
 
   it('does not hide changed stats, missing fields, metadata or incorrect gumbo mappings', function () {
@@ -306,9 +346,9 @@ describe('user identity comparison', function () {
         ['/one'],
         'https://example.test/',
         'synthetic',
-        request([1])
+        request([{ id: 'one' }])
       )
-    ).deep.equals({ '/one': [1] })
+    ).deep.equals({ '/one': [{ id: 'one' }] })
     for (const run of [
       async () =>
         await snapshotApi(
@@ -388,18 +428,30 @@ describe('user identity snapshot across real database schemas', function () {
     // pinned A/B/C deployment comparison.
     const client = await pool.connect()
     try {
-      const original = { ...(await snapshotSql(client)), api: {} }
+      const capture = async (): Promise<UserIdSnapshot> => ({
+        ...(await snapshotSql(client)),
+        api: {},
+        captureStartedAt: new Date().toISOString(),
+        captureFinishedAt: new Date().toISOString()
+      })
+      const original = await capture()
       expect(original.migrations.at(-1)).equals('065radarReadings')
       await migrateUp(
         pool,
         migrations.filter(m => m.name > '065radarReadings' && m.name < '068')
       )
-      const rostered = { ...(await snapshotSql(client)), api: {} }
+      const rostered = await capture()
+      expect(
+        compareUserIds(original, rostered, {
+          allowPlaceholders: true,
+          allowMerged: true
+        }).differences
+      ).deep.equals([])
       await migrateUp(
         pool,
         migrations.filter(m => m.name.startsWith('068'))
       )
-      const separated = { ...(await snapshotSql(client)), api: {} }
+      const separated = await capture()
       expect(compareUserIds(rostered, separated).differences).deep.equals([])
       expect(separated.userColumns.gumbo_ids).deep.equals(['user_id'])
       expect(separated.tables.game_guest_details).not.equals(undefined)
@@ -407,7 +459,7 @@ describe('user identity snapshot across real database schemas', function () {
         pool,
         migrations.filter(m => m.name >= '069')
       )
-      const canonical = { ...(await snapshotSql(client)), api: {} }
+      const canonical = await capture()
       expect(compareUserIds(separated, canonical).differences).deep.equals([])
     } finally {
       client.release()

@@ -48,14 +48,24 @@ export async function runUserIdCheck(
     if (args[1] == null || args[2] == null)
       throw new Error('Expected two snapshot paths')
     const out = option(args, '--out')
-    if (args.some(arg => arg.startsWith('--allow-')))
-      throw new Error('Requested transformation adapter is not installed')
+    if (
+      args.some(
+        arg =>
+          arg.startsWith('--allow-') &&
+          !['--allow-merged', '--allow-placeholders'].includes(arg)
+      )
+    )
+      throw new Error('Unknown identity transformation')
     const before = JSON.parse(await readFile(args[1], 'utf8')) as UserIdSnapshot
     const after = JSON.parse(await readFile(args[2], 'utf8')) as UserIdSnapshot
-    const result = compareUserIds(before, after)
+    const result = compareUserIds(before, after, {
+      allowMerged: args.includes('--allow-merged'),
+      allowPlaceholders: args.includes('--allow-placeholders')
+    })
     const lines = ['$ userIdCheck compare [before] [after] --out [report]']
     for (const [key, count] of Object.entries(result.counts))
       lines.push(`${key}: ${count.before} -> ${count.after}`)
+    for (const rule of result.transformations) lines.push(`accepted: ${rule}`)
     lines.push(`${result.differenceCount} differences`, ...result.differences)
     await writeFile(out, lines.join('\n') + '\n', { mode: 0o600 })
     for (const line of lines) print(line)

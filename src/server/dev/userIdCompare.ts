@@ -6,12 +6,21 @@ import {
   type JsonObject,
   type UserIdSnapshot
 } from './userIdSnapshot'
+import {
+  expectedMergedApi,
+  expectedPlaceholders,
+  normalizeTransport,
+  orderSnapshotTables,
+  placeholderDocumentHashes,
+  validateNewGumboMappings
+} from './userIdTransforms'
 
 export interface Comparison {
   equal: boolean
   differences: string[]
   differenceCount: number
   counts: Record<string, { before: number; after: number }>
+  transformations: string[]
 }
 
 function object(value: Json): value is JsonObject {
@@ -82,7 +91,10 @@ function apiIds(value: Json, map: Map<string, Json>): Json {
 }
 
 /** Normalize only the declared 068/069 identity changes; unexpected fields survive to diff. */
-export function normalizeIdentity(snapshot: UserIdSnapshot): JsonObject {
+export function normalizeIdentity(
+  snapshot: UserIdSnapshot,
+  ignoreNewMappingTime = false
+): JsonObject {
   const copy = structuredClone(snapshot)
   const userMap = new Map<string, Json>()
   const legacyMap = new Map<string, Json>()
@@ -95,14 +107,24 @@ export function normalizeIdentity(snapshot: UserIdSnapshot): JsonObject {
     copy.tables.gumbo_ids?.rows ??
     copy.tables.users.rows.map(row => ({ gumbo_id: row.id, user_id: row.id }))
   const mapped = mapping.map(row => ({
+    ...row,
     gumbo_id: row.gumbo_id,
     user_id: userMap.get(identityKey(row.user_id)) ?? row.user_id
   }))
+  if (ignoreNewMappingTime)
+    for (const row of mapped) Reflect.deleteProperty(row, 'created_at')
   const gumboByUser = new Map(
     mapped.map(row => [identityKey(row.user_id), row.gumbo_id])
   )
   const tables: JsonObject = {}
   const schema: JsonObject = {}
+  schema.gumbo_ids =
+    copy.tables.gumbo_ids == null
+      ? { columns: ['created_at', 'gumbo_id', 'user_id'], keys: ['gumbo_id'] }
+      : {
+          columns: [...copy.tables.gumbo_ids.columns].sort(),
+          keys: copy.tables.gumbo_ids.keys
+        }
   const foreignKeys: JsonObject = { gumbo_ids: ['user_id'] }
   for (const [name, table] of Object.entries(copy.tables)) {
     if (name === 'gumbo_ids') continue
@@ -213,6 +235,25 @@ export function normalizeIdentity(snapshot: UserIdSnapshot): JsonObject {
     schema,
     foreignKeys,
     preserved: copy.preserved,
+    ...(copy.apiInventory == null
+      ? {}
+      : {
+          apiInventory: Object.fromEntries(
+            Object.entries(copy.apiInventory).map(([path, entry]) => [
+              path.replace(
+                /^\/players\/([^/]+)\//,
+                (_match, id: string) =>
+                  `/players/${identityKey(userMap.get(decodeURIComponent(id)) ?? id)}/`
+              ),
+              {
+                ...entry,
+                itemIds: path.endsWith('/roster')
+                  ? entry.itemIds.map(id => identityKey(userMap.get(id) ?? id))
+                  : entry.itemIds
+              }
+            ])
+          )
+        }),
     migrations: copy.migrations.filter(
       name => !['068gumboIds', '069userIds', '070playerGumboIds'].includes(name)
     )
@@ -221,8 +262,33 @@ export function normalizeIdentity(snapshot: UserIdSnapshot): JsonObject {
 
 export function compareUserIds(
   before: UserIdSnapshot,
-  after: UserIdSnapshot
+  after: UserIdSnapshot,
+  options: { allowPlaceholders?: boolean; allowMerged?: boolean } = {}
 ): Comparison {
+  const transformations: string[] = []
+  validateNewGumboMappings(before, after)
+  const ignoreNewMappingTime =
+    before.tables.gumbo_ids == null && after.tables.gumbo_ids != null
+  before = structuredClone(before)
+  after = structuredClone(after)
+  if (options.allowPlaceholders === true) {
+    before = expectedPlaceholders(before, after, transformations)
+    placeholderDocumentHashes(before)
+    placeholderDocumentHashes(after)
+  }
+  if (options.allowMerged === true) {
+    if (before.userIdType !== 'bigint' || after.userIdType !== 'bigint')
+      throw new Error('Merge transformation is restricted to A to B')
+    expectedMergedApi(before, transformations)
+  }
+  normalizeTransport(before, transformations)
+  normalizeTransport(after, transformations)
+  orderSnapshotTables(before)
+  orderSnapshotTables(after)
+  delete before.captureStartedAt
+  delete before.captureFinishedAt
+  delete after.captureStartedAt
+  delete after.captureFinishedAt
   const differences: string[] = []
   let differenceCount = 0
   const counts: Comparison['counts'] = {}
@@ -265,7 +331,17 @@ export function compareUserIds(
   ) {
     compare(before as unknown as Json, after as unknown as Json, '$')
   } else {
-    compare(normalizeIdentity(before), normalizeIdentity(after), '$')
+    compare(
+      normalizeIdentity(before, ignoreNewMappingTime),
+      normalizeIdentity(after, ignoreNewMappingTime),
+      '$'
+    )
   }
-  return { equal: differenceCount === 0, differences, differenceCount, counts }
+  return {
+    equal: differenceCount === 0,
+    differences,
+    differenceCount,
+    counts,
+    transformations: [...new Set(transformations)]
+  }
 }

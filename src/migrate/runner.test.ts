@@ -119,7 +119,7 @@ describe('migrations', function () {
     } catch (error) {
       failure = error
     }
-    expect(String(failure)).includes('Restore the pre-cutover')
+    expect(String(failure)).matches(/Restore the (?:verified )?pre-cutover/)
     expect(
       (await pool.query('select name from schema_migrations order by name'))
         .rows

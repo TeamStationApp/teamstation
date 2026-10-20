@@ -2,6 +2,8 @@ import { createHash, randomBytes } from 'node:crypto'
 
 import type { Pool, PoolClient } from 'pg'
 
+import { type ApiInventory, captureEndpoint } from './userIdApiCapture'
+
 export type Json = null | boolean | number | string | Json[] | JsonObject
 export interface JsonObject {
   [key: string]: Json
@@ -15,6 +17,9 @@ export interface TableSnapshot {
 
 export interface UserIdSnapshot {
   version: 1
+  captureStartedAt?: string
+  captureFinishedAt?: string
+  apiInventory?: Record<string, ApiInventory>
   migrations: string[]
   userIdType: 'bigint' | 'text'
   userColumns: Record<string, string[]>
@@ -179,13 +184,18 @@ export async function snapshotSql(
         ].filter(column => available.includes(column))
     const where =
       name === 'auth_sessions' && sessionId != null ? 'where id <> $1' : ''
-    const result = await client.query<{ row: JsonObject }>(
-      `select row_to_json(held) as row from
+    const documentField =
+      name === 'events' ? 'gumbo' : name === 'games' ? 'currentPlay' : undefined
+    const result = await client.query<{
+      row: JsonObject
+      raw_document: string | null
+    }>(
+      `select row_to_json(held) as row, ${documentField == null ? 'null' : `held.${identifier(documentField)}::text`} as raw_document from
         (select ${selected.map(identifier).join(', ')} from ${identifier(name)} ${where}
          order by ${keys.map(identifier).join(', ')}) held`,
       where === '' ? [] : [sessionId]
     )
-    const rows = result.rows.map(({ row }) => {
+    const rows = result.rows.map(({ row, raw_document: rawDocument }) => {
       for (const field of name === 'events'
         ? ['gumbo']
         : name === 'games'
@@ -199,6 +209,9 @@ export async function snapshotSql(
         const { teamStation = null, ...gumbo } = document
         row[field] = {
           documentHash: hash(document),
+          storedTextHash: createHash('sha256')
+            .update(rawDocument!)
+            .digest('hex'),
           gumboHash: hash(gumbo),
           teamStation
         }
@@ -339,33 +352,20 @@ export function verifyCollections(snapshot: UserIdSnapshot): void {
   }
 }
 
-/** Current endpoints return complete arrays/objects; paginated responses are refused until adapted. */
+/** Capture complete responses and validate the explicitly supported pagination envelope. */
 export async function snapshotApi(
   paths: string[],
   origin: string,
   token: string,
-  request: typeof fetch = fetch
+  request: typeof fetch = fetch,
+  inventory?: Record<string, ApiInventory>
 ): Promise<Record<string, Json>> {
   const api: Record<string, Json> = {}
   for (const path of paths) {
     if (Object.hasOwn(api, path)) throw new Error('Duplicate snapshot endpoint')
-    const response = await request(origin.replace(/\/$/, '') + path, {
-      headers: { authorization: `Bearer ${token}` },
-      redirect: 'error',
-      signal: AbortSignal.timeout(30000)
-    })
-    if (!response.ok)
-      throw new Error(`Snapshot endpoint failed: ${path} (${response.status})`)
-    const body = (await response.json()) as Json
-    if (
-      body != null &&
-      !Array.isArray(body) &&
-      typeof body === 'object' &&
-      ('nextCursor' in body || 'nextPage' in body || 'hasMore' in body)
-    ) {
-      throw new Error(`Pagination needs an explicit adapter: ${path}`)
-    }
-    api[path] = body
+    const result = await captureEndpoint(path, origin, token, request)
+    api[path] = result.body
+    if (inventory != null) inventory[path] = result.inventory
   }
   return api
 }
@@ -375,6 +375,7 @@ export async function captureUserIds(
   apiOrigin: string,
   request: typeof fetch = fetch
 ): Promise<UserIdSnapshot> {
+  const captureStartedAt = new Date().toISOString()
   const client = await pool.connect()
   const token = randomBytes(32).toString('hex')
   const sessionId = 'ses_' + randomBytes(12).toString('hex')
@@ -399,11 +400,13 @@ export async function captureUserIds(
     await client.query('begin isolation level repeatable read read only')
     const before = await snapshotSql(client, sessionId)
     await client.query('commit')
+    const apiInventory: Record<string, ApiInventory> = {}
     const api = await snapshotApi(
       snapshotPaths(before),
       apiOrigin,
       token,
-      request
+      request,
+      apiInventory
     )
     await client.query('begin isolation level repeatable read read only')
     const after = await snapshotSql(client, sessionId)
@@ -416,7 +419,13 @@ export async function captureUserIds(
         'Database changed during snapshot; stop writers and retry'
       )
     }
-    const snapshot = { ...before, api }
+    const snapshot = {
+      ...before,
+      api,
+      apiInventory,
+      captureStartedAt,
+      captureFinishedAt: new Date().toISOString()
+    }
     verifyCollections(snapshot)
     return snapshot
   } finally {
