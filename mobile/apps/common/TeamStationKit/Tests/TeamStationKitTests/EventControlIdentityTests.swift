@@ -38,11 +38,11 @@ private final class IdentityServer: URLProtocol, @unchecked Sendable {
 }
 
 private let keyReply = """
-{"version":1,"issuer":"https://app.example.test","userId":"1001",
+{"version":2,"issuer":"https://app.example.test","userId":"usr_11111111111111111111JG",
  "accountTag":"3ce9e2793f1ced4924b58f9598f81da9","keyId":"5cbbb6482042eb0a",
  "key":"d47b3e64272b9c78fdd34c7439697d44dad28301356c5ba1f0c559dbed3eec04"}
 """
-private let me = #"{"id":1001,"displayName":"Mookie Betts","email":null,"isAdmin":false}"#
+private let me = #"{"id":"usr_11111111111111111111JG","displayName":"Mookie Betts","email":null,"isAdmin":false}"#
 
 @MainActor
 private func account(
@@ -78,7 +78,7 @@ struct EventControlIdentityTests {
     #expect(!signedIn.hasToken)
     #expect(!signedIn.isEventControlEligible)
     try await signedIn.completeSignIn(email: "one@example.test", code: "123456")
-    #expect(signedIn.scope == TeamStationAccountScope(server: "https://app.example.test", userId: "1001"))
+    #expect(signedIn.scope == TeamStationAccountScope(server: "https://app.example.test", userId: "usr_11111111111111111111JG"))
     #expect(keychain.accountScope() == signedIn.scope)
     #expect(signedIn.isEventControlEligible)
     // Pointed at another server, the identity proved on this one does not count.
@@ -89,17 +89,17 @@ struct EventControlIdentityTests {
   @Test func anOfflineRelaunchStaysEligibleAndAnExplicit401Clears() async {
     let keychain = KeychainStore.inMemory()
     keychain.setToken("tok_one")
-    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "1001"))
+    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "usr_11111111111111111111JG"))
     // No network: whoAmI fails, user stays nil, the identity stays.
     let offline = account(keychain)
     await offline.restore()
     #expect(offline.user == nil)
-    #expect(offline.scope?.userId == "1001")
+    #expect(offline.scope?.userId == "usr_11111111111111111111JG")
     #expect(offline.isEventControlEligible)
     // Back online: the server confirms it.
     IdentityServer.answers["/api/v1/auth/me"] = (200, me)
     await offline.restore()
-    #expect(offline.user?.id == "1001")
+    #expect(offline.user?.id == "usr_11111111111111111111JG")
     #expect(offline.isEventControlEligible)
     // The server rejects the token: everything goes.
     IdentityServer.answers["/api/v1/auth/me"] = (401, #"{"code":"unauthorized","message":"Sign in to continue"}"#)
@@ -112,14 +112,14 @@ struct EventControlIdentityTests {
 
   @Test func aRelaunchWithoutATokenHasNoIdentity() {
     let keychain = KeychainStore.inMemory()
-    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "1001"))
+    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "usr_11111111111111111111JG"))
     #expect(account(keychain).scope == nil)
   }
 
   @Test func signingOutForgetsTheIdentity() {
     let keychain = KeychainStore.inMemory()
     keychain.setToken("tok_one")
-    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "1001"))
+    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "usr_11111111111111111111JG"))
     let signedIn = account(keychain)
     #expect(signedIn.isEventControlEligible)
     signedIn.signOut()
@@ -135,21 +135,21 @@ struct EventControlIdentityTests {
     IdentityServer.answers["/api/v1/device-event-control/key"] = (200, keyReply)
     let key = try await signedIn.deviceEventControlKey()
     #expect(IdentityServer.asked == [ "GET /api/v1/device-event-control/key Bearer tok_one" ])
-    #expect(key.userId == "1001")
+    #expect(key.userId == "usr_11111111111111111111JG")
     #expect(key.issuer == "https://app.example.test")
     #expect(key.keyId == "5cbbb6482042eb0a")
-    #expect(signedIn.scope?.userId == "1001")
+    #expect(signedIn.scope?.userId == "usr_11111111111111111111JG")
     #expect(!key.description.contains(key.key))
     #expect(!key.debugDescription.contains(key.key))
     // The same key again leaves the identity as it was.
     _ = try await signedIn.deviceEventControlKey()
-    #expect(keychain.accountScope()?.userId == "1001")
+    #expect(keychain.accountScope()?.userId == "usr_11111111111111111111JG")
   }
 
   @Test func aServerWithoutTheFeatureSaysSoAndChangesNothing() async {
     let keychain = KeychainStore.inMemory()
     keychain.setToken("tok_one")
-    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "1001"))
+    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "usr_11111111111111111111JG"))
     let signedIn = account(keychain)
     IdentityServer.answers["/api/v1/device-event-control/key"] = (
       503,
@@ -177,7 +177,7 @@ struct EventControlIdentityTests {
   @Test func aRejectedTokenWhileFetchingTheKeySignsOut() async {
     let keychain = KeychainStore.inMemory()
     keychain.setToken("tok_machine")
-    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "1001"))
+    keychain.setAccountScope(TeamStationAccountScope(server: "https://app.example.test", userId: "usr_11111111111111111111JG"))
     let signedIn = account(keychain)
     IdentityServer.answers["/api/v1/device-event-control/key"] = (401, #"{"code":"unauthorized","message":"Sign in to continue"}"#)
     await #expect(throws: TeamStationError.notSignedIn) { try await signedIn.deviceEventControlKey() }
@@ -204,15 +204,17 @@ struct EventControlIdentityTests {
     #expect(TeamStationError.accountChanged.errorDescription?.isEmpty == false)
   }
 
-  @Test func readsAKeyWhoseUserIdIsANumber() throws {
-    let numeric = keyReply.replacingOccurrences(of: #""userId":"1001""#, with: #""userId":1001"#)
-    let key = try TeamStationClient.decoder.decode(TeamStationEventControlKey.self, from: Data(numeric.utf8))
-    #expect(key.userId == "1001")
-    #expect(key.version == 1)
-    let made = TeamStationEventControlKey(issuer: "i", userId: "1", accountTag: "a", keyId: "k", key: "s")
-    #expect(made.version == 1)
-    let unversioned = #"{"issuer":"i","userId":"1","accountTag":"a","keyId":"k","key":"s"}"#
-    #expect(try TeamStationClient.decoder.decode(TeamStationEventControlKey.self, from: Data(unversioned.utf8)) == made)
+  @Test func rejectsLegacyGrantsAndNumericIdentities() throws {
+    let numeric = keyReply.replacingOccurrences(of: #""userId":"usr_11111111111111111111JG""#, with: #""userId":1001"#)
+    let oldVersion = keyReply.replacingOccurrences(of: #""version":2"#, with: #""version":1"#)
+    let unversioned = keyReply.replacingOccurrences(of: #""version":2,"#, with: "")
+    for invalid in [numeric, oldVersion, unversioned] {
+      #expect(throws: (any Error).self) {
+        try TeamStationClient.decoder.decode(TeamStationEventControlKey.self, from: Data(invalid.utf8))
+      }
+    }
+    let made = TeamStationEventControlKey(issuer: "i", userId: "usr_1111111111111111111112", accountTag: "a", keyId: "k", key: "s")
+    #expect(made.version == 2)
   }
 
   @Test func originsAreCanonical() {

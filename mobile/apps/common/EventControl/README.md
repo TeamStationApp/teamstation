@@ -6,7 +6,7 @@ assignments is a **receiver**; the device that sends them is the **Director**. E
 speaks exactly the same protocol: nothing on the wire, and nothing a Director keeps, says what
 app a receiver is.
 
-This file is the specification of version 1. The Swift package implements both ends; the Node
+This file is the specification of version 2. The Swift package implements both ends; the Node
 reference in `tools/eventControl` implements both ends again; other implementations port from
 this file and must pass the shared fixtures in `Tests/Fixtures` byte for byte.
 
@@ -26,7 +26,7 @@ this file and must pass the shared fixtures in `Tests/Fixtures` byte for byte.
 
 | Name | Value |
 | --- | --- |
-| Protocol version | `1` |
+| Protocol version | `2` |
 | Ports (TCP) | `47614`, then `47615` |
 | Largest payload | 4096 bytes |
 | Renew interval (Director) | 5 s |
@@ -61,22 +61,22 @@ answer (never cached):
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "issuer": "https://app.example.test",
-  "userId": "1001",
-  "accountTag": "3ce9e2793f1ced4924b58f9598f81da9",
-  "keyId": "5cbbb6482042eb0a",
-  "key": "d47b3e64272b9c78fdd34c7439697d44dad28301356c5ba1f0c559dbed3eec04"
+  "userId": "usr_11111111111111111111JG",
+  "accountTag": "6fbcd05d19982b0685bbfde803c81d19",
+  "keyId": "cb3d05d0c4635e2d",
+  "key": "d9d964bb0bf3bdaf44e363aacaba715e692ea3f71917e92e4cb4337bf5ad57ff"
 }
 ```
 
-`issuer` is the server's canonical public origin and `userId` the caller's ID in decimal. A
-client reads `userId` as a string or, defensively, a JSON number. The server derives, from its
+`issuer` is the server's canonical public origin and `userId` the caller's canonical account ID. A
+client accepts only the validated `usr_` string and version 2 grants. The server derives, from its
 secret `S` (`deviceEventControlSecret`, used as its UTF-8 bytes):
 
-    key        = HMAC-SHA256(S, lp("device-event-control:v1") || lp(issuer) || lp(userId))
-    keyId      = hex(SHA-256(lp("device-event-control:v1:keyid") || lp(S)))[0, 16)
-    accountTag = hex(HMAC-SHA256(key, lp("device-event-control:v1:account-tag")))[0, 32)
+    key        = HMAC-SHA256(S, lp("device-event-control:v2") || lp(issuer) || lp(userId))
+    keyId      = hex(SHA-256(lp("device-event-control:v2:keyid") || lp(S)))[0, 16)
+    accountTag = hex(HMAC-SHA256(key, lp("device-event-control:v2:account-tag")))[0, 32)
 
 So two devices of the same account on the same server hold the same key and tag; another
 account, or the same account on another server, holds different ones; rotating the server
@@ -139,7 +139,7 @@ untouched.
     frame   = u32be(payloadLength) || payload            1 <= payloadLength <= 4096
     payload = version (u8) || type (u8) || field* || mac (32 bytes)
     field   = lp(bytes)
-    mac     = HMAC-SHA256(key, lp("device-event-control:v1:frame") || version || type || field*)
+    mac     = HMAC-SHA256(key, lp("device-event-control:v2:frame") || version || type || field*)
 
 A reader takes the four-byte length first. **A length of 0, or over 4096, closes the connection
 before anything is allocated for the payload.** The MAC covers everything in the payload before
@@ -176,7 +176,7 @@ Each failure has a name; `rejections.json` names the one every implementation mu
 
 1. More than 4096 bytes: `tooLarge`.
 2. Fewer than 2 bytes: `tooShort`.
-3. Version not 1: `unsupportedVersion` (with the version byte).
+3. Version not 2: `unsupportedVersion` (with the version byte).
 4. Type not 1–6: `unknownType` (with the type byte).
 5. Fewer than 34 bytes: `tooShort`.
 6. For each field of the type, in order, within the bytes before the last 32:
