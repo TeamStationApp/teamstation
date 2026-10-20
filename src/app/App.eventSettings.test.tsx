@@ -7,6 +7,7 @@ import { asGameDetail, asSessionUser, TeamStationClient } from '../common/api'
 import { asEventInfo } from '../common/eventInfo'
 import { asGameScheduling } from '../common/gameApprovals'
 import { asGroupDetail } from '../common/publicGroups'
+import { userIdOfGumbo } from '../common/userId'
 import { pressSchedule } from '../test/eventScheduleDom'
 import { App } from './App'
 
@@ -54,7 +55,11 @@ describe('actual app event Settings navigation', () => {
         replyUserIds: []
       })
       proto.whoAmI = async () =>
-        asSessionUser({ id: 101, displayName: 'Babe Ruth', isAdmin: false })
+        asSessionUser({
+          id: userIdOfGumbo(101),
+          displayName: 'Babe Ruth',
+          isAdmin: false
+        })
       proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
       proto.hasNotifications = async () => false
       proto.game = async id => ({ ...game, id })

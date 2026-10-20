@@ -10,7 +10,6 @@ import {
   type CurrentPlay,
   type GumboPlay
 } from '../../common/gumboPlay'
-import { mintUserId } from '../../common/mintUserId'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { applyAction } from '../../common/scoring/apply'
 import { freshGame, newSetup } from '../../common/scoring/lineup'
@@ -21,6 +20,9 @@ import {
   ScoringSession,
   type SessionContext
 } from '../../common/scoring/session'
+import { userIdOfGumbo } from '../../common/userId'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import {
   addGame,
   addPerson,
@@ -141,30 +143,28 @@ describe('the game as a scoreboard source', function () {
         .returning('id')
         .executeTakeFirstOrThrow()
     ).id
-    await db
-      .insertInto('users')
-      .values(
-        minted.map((made, i) => ({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: `Player ${i}`,
-          created_at: now,
-          updated_at: now
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      minted.map((made, i) => ({
+        id: made.userId,
+        legacyId: made.legacyId,
+        display_name: `Player ${i}`,
+        created_at: now,
+        updated_at: now
+      }))
+    )
     teams = {
       away: { id: away, name: 'Gulls', logoUrl: null },
       home: { id: home, name: 'Hawks', logoUrl: null }
     }
     setup = newSetup(teams, {
       away: minted.slice(0, 9).map((made, i) => ({
-        userId: made.userId,
+        userId: userIdOfGumbo(made.userId),
         gumboId: made.userId,
         shortName: `Away ${i + 1}`
       })),
       home: minted.slice(9).map((made, i) => ({
-        userId: made.userId,
+        userId: userIdOfGumbo(made.userId),
         gumboId: made.userId,
         shortName: `Home ${i + 1}`
       }))

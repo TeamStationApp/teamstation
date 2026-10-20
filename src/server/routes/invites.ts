@@ -105,7 +105,7 @@ export function inviteRoutes(
 
   /** Refuses anybody who does not administer the scope, without saying so. */
   const mustAdminister = async (
-    userId: number,
+    userId: string,
     isAdmin: boolean,
     scopeType: InviteScopeType,
     scopeId: string

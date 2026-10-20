@@ -9,6 +9,7 @@ import {
   type LiveStream,
   TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { StreamPanel } from './StreamPanel'
 
@@ -102,7 +103,7 @@ function camera(
   return {
     id,
     gameId: 'gam_1',
-    userId: 7,
+    userId: userIdOfGumbo(7),
     ownerName: 'Me Myself',
     slot: 1,
     label,
@@ -530,7 +531,7 @@ describe('the stream panel', function () {
       [
         // Somebody else's, whose window shut without anybody ending it.
         camera('lst_other', 'Scoreboard', {
-          userId: 8,
+          userId: userIdOfGumbo(8),
           ownerName: 'Pat Parent',
           closesAt: new Date(now - 60_000).toISOString()
         })
@@ -738,12 +739,12 @@ describe('the stream panel', function () {
       [],
       [
         camera('lst_8', 'Bleachers', {
-          userId: 8,
+          userId: userIdOfGumbo(8),
           ownerName: 'Pat Parent',
           state: 'publishing'
         }),
         camera('lst_9', 'Left field', {
-          userId: 9,
+          userId: userIdOfGumbo(9),
           ownerName: 'Sam Sibling',
           state: 'ended'
         })

@@ -3,6 +3,7 @@ import { after, before, beforeEach, describe, it } from 'mocha'
 
 import { TeamStationClient } from '../../common/api'
 import { asArgonParameters } from '../../common/passwordProtocol'
+import { userIdOfGumbo } from '../../common/userId'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import {
   signInTestAccount,
@@ -41,7 +42,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
     await h.db
       .updateTable('users')
       .set({ password_hash: legacy, login_enabled: true, merged_into: null })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
   })
   const reset = async (): Promise<{
@@ -61,7 +62,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
       await h.db
         .selectFrom('users')
         .select('password_hash')
-        .where('id', '=', 101)
+        .where('id', '=', userIdOfGumbo(101))
         .executeTakeFirstOrThrow()
     ).password_hash
   const update = async (reset?: {
@@ -75,7 +76,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
         .selectFrom('rate_events')
         .select('at')
         .where('scope', '=', 'account.password')
-        .where('key', '=', '101')
+        .where('key', '=', userIdOfGumbo(101))
         .executeTakeFirst()
       if (charged != null) return
       await new Promise(resolve => setTimeout(resolve, 10))
@@ -86,7 +87,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
     await h.db
       .updateTable('users')
       .set({ password_hash: null })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     let finished = false
     const pending = h
@@ -116,7 +117,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
       await h.db
         .updateTable('users')
         .set({ password_hash: legacy })
-        .where('id', '=', 101)
+        .where('id', '=', userIdOfGumbo(101))
         .execute()
       expect((await pending).status).equals(400)
       expect(await stored()).equals(legacy)
@@ -169,7 +170,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
     await h.db
       .updateTable('users')
       .set({ password_hash: storedOld })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     const client = new TeamStationClient({
       baseUrl: h.origin + '/api/v1',
@@ -179,7 +180,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
     })
     expect(
       (await client.signInWithPassword('alex@example.com', oldSecret)).user.id
-    ).equals(101)
+    ).equals(userIdOfGumbo(101))
     for (const patch of [
       { memoryKiB: 19456 },
       { iterations: 5 },
@@ -210,7 +211,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
           'new lowercase passphrase'
         )
       ).user.id
-    ).equals(101)
+    ).equals(userIdOfGumbo(101))
   })
   it('requires a fresh email code for legacy upgrade, stores parameters and refuses plaintext', async () => {
     expect((await update()).status).equals(400)
@@ -296,20 +297,20 @@ describe('password hashing and email-reset HTTP protocol', function () {
     await h.db
       .updateTable('users')
       .set({ password_hash: legacy + 'changed' })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     expect((await update(pending)).status).equals(400)
     pending = await reset()
     await h.db
       .updateTable('user_emails')
       .set({ email: 'changed@example.com' })
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .execute()
     expect((await update(pending)).status).equals(400)
     await h.db
       .updateTable('user_emails')
       .set({ email: 'alex@example.com' })
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .execute()
     for (const context of ['invalid JSON', 'null', '{}']) {
       pending = await reset()
@@ -344,7 +345,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
     await h.db
       .updateTable('users')
       .set({ password_hash: null })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     const client = new TeamStationClient({
       baseUrl: h.origin + '/api/v1',
@@ -377,13 +378,13 @@ describe('password hashing and email-reset HTTP protocol', function () {
           'reset invented password'
         )
       ).user.id
-    ).equals(101)
+    ).equals(userIdOfGumbo(101))
   })
   it('accepts reset codes sent to a mixed-case stored address', async () => {
     await h.db
       .updateTable('user_emails')
       .set({ email: 'Alex@Example.com' })
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .execute()
     try {
       const response = await h.request('POST', '/me/account/password/reset', {})
@@ -401,7 +402,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
       await h.db
         .updateTable('user_emails')
         .set({ email: 'alex@example.com' })
-        .where('user_id', '=', 101)
+        .where('user_id', '=', userIdOfGumbo(101))
         .execute()
     }
   })
@@ -409,7 +410,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
     await h.db
       .updateTable('users')
       .set({ password_hash: '' })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     const account = (await (await h.request('GET', '/me/account')).json()) as {
       hasPassword: boolean
@@ -417,7 +418,10 @@ describe('password hashing and email-reset HTTP protocol', function () {
     }
     expect(account.hasPassword).equals(false)
     expect(account.passwordNeedsUpgrade).equals(false)
-    await h.db.deleteFrom('user_emails').where('user_id', '=', 101).execute()
+    await h.db
+      .deleteFrom('user_emails')
+      .where('user_id', '=', userIdOfGumbo(101))
+      .execute()
     try {
       const response = await h.request('POST', '/me/account/password/reset', {})
       expect(response.status).equals(400)
@@ -429,7 +433,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
         .insertInto('user_emails')
         .values({
           id: 'restored-email',
-          user_id: 101,
+          user_id: userIdOfGumbo(101),
           email: 'alex@example.com',
           is_primary: true
         })
@@ -452,7 +456,7 @@ describe('password hashing and email-reset HTTP protocol', function () {
     await h.db
       .updateTable('users')
       .set({ password_hash: invalid, login_enabled: false })
-      .where('id', '=', 101)
+      .where('id', '=', userIdOfGumbo(101))
       .execute()
     expect(
       (

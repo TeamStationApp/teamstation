@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import {
   demoLocality,
   type GroupFixture,
@@ -47,7 +48,7 @@ describe('large real photos through the production JSON boundary', function () {
     await f.h.db
       .updateTable('users')
       .set({ onboarding_step: 'photo', onboarding_completed_at: null })
-      .where('id', '=', 106)
+      .where('id', '=', userIdOfGumbo(106))
       .execute()
     const onboarding = await f.h.request(
       'PUT',
@@ -59,7 +60,7 @@ describe('large real photos through the production JSON boundary', function () {
     const user = await f.h.db
       .selectFrom('users')
       .select(['onboarding_step', 'avatar_path'])
-      .where('id', '=', 106)
+      .where('id', '=', userIdOfGumbo(106))
       .executeTakeFirstOrThrow()
     expect(user.onboarding_step).equals('complete')
     expect(user.avatar_path).not.equals(null)

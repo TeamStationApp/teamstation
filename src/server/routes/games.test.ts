@@ -8,11 +8,13 @@ import { Pool } from 'pg'
 
 import { asGameDetail } from '../../common/api'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import type { RoleFlag } from '../../common/roles'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database, ScopeRolesTable } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -82,24 +84,22 @@ describe('every game somebody can see', function () {
     await pool.end()
     db = makeDatabase(scratchUrl)
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values(
-        [
-          { made: admin, name: 'Ada', isAdmin: true },
-          { made: member, name: 'Cam', isAdmin: false },
-          { made: loner, name: 'Lou', isAdmin: false },
-          { made: teammate, name: 'Tam', isAdmin: false }
-        ].map(person => ({
-          id: person.made.userId,
-          legacyId: person.made.legacyId,
-          display_name: person.name,
-          is_admin: person.isAdmin,
-          created_at: now,
-          updated_at: now
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      [
+        { made: admin, name: 'Adam Dunn', isAdmin: true },
+        { made: member, name: 'Cam Bedrosian', isAdmin: false },
+        { made: loner, name: 'Lou Gehrig', isAdmin: false },
+        { made: teammate, name: 'Tom Seaver', isAdmin: false }
+      ].map(person => ({
+        id: person.made.userId,
+        legacyId: person.made.legacyId,
+        display_name: person.name,
+        is_admin: person.isAdmin,
+        created_at: now,
+        updated_at: now
+      }))
+    )
     await db
       .insertInto('auth_sessions')
       .values(
@@ -112,7 +112,7 @@ describe('every game somebody can see', function () {
           ] as Array<[string, number]>
         ).map(([token, userId]) => ({
           id: makeId('authSession'),
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           token_hash: hashToken(token),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
@@ -158,12 +158,12 @@ describe('every game somebody can see', function () {
       .values([
         {
           id: makeId('membership'),
-          user_id: member.userId,
+          user_id: userIdOfGumbo(member.userId),
           team_id: hawks
         },
         {
           id: makeId('membership'),
-          user_id: teammate.userId,
+          user_id: userIdOfGumbo(teammate.userId),
           team_id: owls
         }
       ])
@@ -544,15 +544,12 @@ describe('whether a viewer may score a game', function () {
       const made = mintUserId(id => taken.has(id))
       taken.add(made.userId)
       viewers.set(name, made.userId)
-      await db
-        .insertInto('users')
-        .values({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: name,
-          is_admin: name === 'siteAdmin'
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(made.userId),
+        legacyId: made.legacyId,
+        display_name: name,
+        is_admin: name === 'siteAdmin'
+      })
     }
     await db.insertInto('leagues').values({ id: league, name: 'L' }).execute()
     await db
@@ -603,7 +600,7 @@ describe('whether a viewer may score a game', function () {
         NAMES.filter(name => name !== 'siteAdmin' && name !== 'outsider').map(
           name => ({
             id: makeId('membership'),
-            user_id: idOf(name),
+            user_id: userIdOfGumbo(idOf(name)),
             team_id: name.startsWith('away') ? away : home,
             role:
               name === 'awayManager'
@@ -620,7 +617,7 @@ describe('whether a viewer may score a game', function () {
       flag: RoleFlag
     ): Insertable<ScopeRolesTable> => ({
       id: makeId('scopeRole'),
-      user_id: idOf(name),
+      user_id: userIdOfGumbo(idOf(name)),
       scope_type: scopeType,
       scope_id: scopeId,
       role: flag
@@ -659,7 +656,11 @@ describe('whether a viewer may score a game', function () {
     app.use(jsonBody)
     app.use((req, _res, next) => {
       const id = Number(req.header('x-test-user'))
-      req.actor = { userId: id, isAdmin: id === idOf('siteAdmin'), scopes: [] }
+      req.actor = {
+        userId: userIdOfGumbo(id),
+        isAdmin: id === idOf('siteAdmin'),
+        scopes: []
+      }
       next()
     })
     app.use('/api/v1', teamRoutes(db, media))

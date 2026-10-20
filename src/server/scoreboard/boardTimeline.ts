@@ -132,9 +132,15 @@ export async function computeBoardTimeline(
         named.length === 0
           ? []
           : await trx
-              .selectFrom('users')
-              .select(['id', 'display_name', 'first_name', 'last_name'])
-              .where('id', 'in', named)
+              .selectFrom('gumbo_ids')
+              .innerJoin('users', 'users.id', 'gumbo_ids.user_id')
+              .select([
+                'gumbo_id as id',
+                'display_name',
+                'first_name',
+                'last_name'
+              ])
+              .where('gumbo_id', 'in', named)
               .execute()
       // Short names with collisions broken over the game's people, as a box
       // score has them. A rename moves no timeline version, so a board built

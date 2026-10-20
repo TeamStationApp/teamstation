@@ -294,7 +294,7 @@ export function teamRoutes(
   /** Refuses, as not there, a season the caller can neither see nor schedule. */
   async function mustSeeSeasons(
     seasonIds: string[],
-    userId: number,
+    userId: string,
     isAdmin: boolean,
     scopes: { seasonIds: Set<string> }
   ): Promise<void> {
@@ -1014,7 +1014,7 @@ async function averagesToDate(
   gameId: string,
   seasonId: string | null,
   scopes: VisibleScopes
-): Promise<Map<number, number>> {
+): Promise<Map<string, number>> {
   const game = await db
     .selectFrom('games')
     .select(['start_at', 'home_team_id', 'away_team_id'])
@@ -1034,7 +1034,7 @@ async function averagesToDate(
     playedBy: game.start_at == null ? undefined : new Date(game.start_at)
   })
 
-  const out = new Map<number, number>()
+  const out = new Map<string, number>()
   for (const line of battingLines(rows)) {
     if (line.ab > 0) out.set(line.userId, line.h / line.ab)
   }

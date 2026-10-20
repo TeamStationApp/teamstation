@@ -8,6 +8,7 @@ import { Pool } from 'pg'
 import WebSocket from 'ws'
 
 import type { GameSocketReply } from '../../common/gameSocket'
+import { userIdOfGumbo } from '../../common/userId'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import {
   actor,
@@ -166,7 +167,7 @@ describe('private socket access follows approved game revisions', function () {
             .values({
               id: 'membership_socket_old_season',
               season_id: f.seasonA,
-              user_id: 106
+              user_id: userIdOfGumbo(106)
             })
             .execute()
         else
@@ -175,7 +176,7 @@ describe('private socket access follows approved game revisions', function () {
             .values({
               id: 'membership_socket_old_team',
               team_id: f.teamA,
-              user_id: 106,
+              user_id: userIdOfGumbo(106),
               role: 'member'
             })
             .execute()
@@ -371,7 +372,7 @@ describe('private socket access follows approved game revisions', function () {
       .values({
         id: 'membership_socket_reactivate',
         team_id: f.teamA,
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         role: 'member'
       })
       .execute()
@@ -404,8 +405,12 @@ describe('private socket access follows approved game revisions', function () {
     clients[0].once('close', () => {
       closed = true
     })
-    await changeNodeAccount(f.h.db, actor(105), 106, { suspended: true })
-    await changeNodeAccount(f.h.db, actor(105), 106, { suspended: false })
+    await changeNodeAccount(f.h.db, actor(105), userIdOfGumbo(106), {
+      suspended: true
+    })
+    await changeNodeAccount(f.h.db, actor(105), userIdOfGumbo(106), {
+      suspended: false
+    })
     expect(
       (await f.h.request('GET', `/games/${accepted.gameId}`, undefined, 106))
         .status

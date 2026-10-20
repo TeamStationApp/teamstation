@@ -10,6 +10,7 @@ import { currentDocumentOf, finalDocumentOf } from '../scoring/document'
 import { foldPlay } from '../scoring/gumbo'
 import { freshGame, newSetup } from '../scoring/lineup'
 import { type GameState, setupOf } from '../scoring/state'
+import { userIdOfGumbo } from '../userId'
 import { gumboViolations } from './validate'
 
 /**
@@ -42,12 +43,12 @@ function start(): GameState {
     TEAMS,
     newSetup(TEAMS, {
       away: AWAY.map((userId, i) => ({
-        userId,
+        userId: userIdOfGumbo(userId),
         gumboId: userId,
         shortName: `Away ${i + 1}`
       })),
       home: HOME.map((userId, i) => ({
-        userId,
+        userId: userIdOfGumbo(userId),
         gumboId: userId,
         shortName: `Home ${i + 1}`
       }))

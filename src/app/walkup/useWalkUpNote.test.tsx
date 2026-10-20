@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import type { RosterEntry } from '../../common/api'
 import type { GameState } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
@@ -101,7 +102,7 @@ const phSong = song('Pinch Anthem', 'lf:000000000000000c')
 
 const entry = (userId: number, walkUpSong: WalkUpSong | null): RosterEntry =>
   ({
-    userId,
+    userId: userIdOfGumbo(userId),
     gumboId: userId - 100,
     shortName: `Player ${userId}`,
     walkUpSong
@@ -214,7 +215,7 @@ describe('useWalkUpNote', () => {
       }
     }
     await show({ session: game(0, 2), music, options })
-    expect(asked).deep.equals([{ teamId: 'tem_t', userId: '102' }])
+    expect(asked).deep.equals([{ teamId: 'tem_t', userId: userIdOfGumbo(102) }])
     expect(note?.shown).equals(false)
     await act(async () => {
       answer?.('content://tom')
@@ -286,7 +287,7 @@ describe('useWalkUpNote', () => {
       'content://lf:000000000000000b'
     ])
     await show({ session: game(3, 3, [pinchHit(3, 2)]), music, options })
-    expect(asked).deep.equals(['102', '103'])
+    expect(asked).deep.equals([userIdOfGumbo(102), userIdOfGumbo(103)])
     expect(note?.shown).equals(true)
     expect(note?.batterName).equals('Pete Coscarart')
     expect(note?.playing).equals(false)

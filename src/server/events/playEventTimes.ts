@@ -159,11 +159,11 @@ export async function addPlayEvents(
       const users = new Set(
         (
           await trx
-            .selectFrom('users')
-            .select('id')
-            .where('id', 'in', [...named.keys()])
+            .selectFrom('gumbo_ids')
+            .select('gumbo_id')
+            .where('gumbo_id', 'in', [...named.keys()])
             .execute()
-        ).map(row => row.id)
+        ).map(row => row.gumbo_id)
       )
       const unknown = [...named].find(([id]) => !users.has(id))
       if (unknown != null)
