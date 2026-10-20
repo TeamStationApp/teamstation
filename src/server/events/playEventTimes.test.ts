@@ -394,7 +394,7 @@ describe('adding events to stored plays', function () {
         {
           atBatIndex: 0,
           playEvents: [
-            { ...pitch(1), player: { id: scorer.userId } },
+            { ...pitch(1), player: { id: scorer.gumboId } },
             { ...pitch(2), pitcher: { id: null } },
             // An umpire is nobody the game's statistics name.
             { ...pitch(3), umpire: { id: 515151 } }

@@ -10,7 +10,7 @@ import {
 } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import { asRole, type Role, ROLE_FLAGS } from '../../common/roles'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import { seesPeopleOf } from '../access'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
@@ -308,7 +308,7 @@ function without(
   }
 }
 
-async function exists(db: Kysely<Database>, userId: number): Promise<boolean> {
+async function exists(db: Kysely<Database>, userId: string): Promise<boolean> {
   const row = await db
     .selectFrom('users')
     .select('id')
@@ -341,11 +341,11 @@ function pathParam(value: string | string[] | undefined): string {
   return value
 }
 
-function userIdParam(value: string | string[] | undefined): number {
+function userIdParam(value: string | string[] | undefined): string {
   try {
     return asUserId(pathParam(value))
   } catch {
-    throw notFound()
+    throw badRequest('Expected a canonical user id')
   }
 }
 

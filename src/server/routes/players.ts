@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import { notFound, unauthorized } from '../../common/errors'
+import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { shortName } from '../../common/names'
 import { outcomeName } from '../../common/outcomes'
 import {
@@ -9,7 +9,7 @@ import {
   asPersonSettings,
   asPlayerSettings
 } from '../../common/playerSettings'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import {
   canManageRoster,
   canSeePerson,
@@ -45,6 +45,7 @@ import { highlightSettings } from '../settings'
 import { playerFilterOf } from '../stats/rows'
 import { createRosterPlayer } from '../teams/addPlayers'
 import { teamRoster } from '../teams/teamRoster'
+import { gumboIdOf } from '../users/insertUser'
 
 /**
  * One person: their picture, their name, how they bat and throw, and the teams
@@ -129,6 +130,7 @@ export function playerRoutes(
 
       res.json({
         userId,
+        gumboId: await gumboIdOf(db, userId),
         name: shortName({ ...user, id: userId }),
         /** Whether to offer this person the name field at all. */
         canEditName: mayEdit,
@@ -763,7 +765,7 @@ export interface PlayerTeam {
  */
 export async function teamsOf(
   db: Kysely<Database>,
-  userIds: number[]
+  userIds: string[]
 ): Promise<PlayerTeam[]> {
   // Every row that is this person: a child on five teams was five imports,
   // and the teams of the four that were closed are still theirs.
@@ -876,10 +878,10 @@ function pathParam(value: string | string[] | undefined): string {
   return value
 }
 
-function userIdParam(value: string | string[] | undefined): number {
+function userIdParam(value: string | string[] | undefined): string {
   try {
     return asUserId(pathParam(value))
   } catch {
-    throw notFound()
+    throw badRequest('Expected a canonical user id')
   }
 }

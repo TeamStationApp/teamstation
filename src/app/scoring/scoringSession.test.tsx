@@ -13,6 +13,7 @@ import {
   applyAction,
   ScoringSession as GameSession
 } from '../../common/scoring/session'
+import { userIdOfGumbo } from '../../common/userId'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { startingSetup, teamsOf } from './developmentSession'
@@ -93,7 +94,7 @@ function clientForSwitchHitter(
     team === 'away'
       ? [
           asRosterEntry({
-            userId: 1,
+            userId: userIdOfGumbo(1),
             gumboId: 1,
             shortName: 'Jason K.',
             jersey: '00',

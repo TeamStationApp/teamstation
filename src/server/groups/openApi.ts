@@ -1,3 +1,4 @@
+import { userIdSchema } from '../userIdSchema'
 const ref = {
   type: 'object',
   required: ['kind', 'id'],
@@ -47,7 +48,7 @@ const relationship = {
     actions: { type: 'array', items: action },
     teamId: { type: 'string' },
     seasonId: { type: 'string' },
-    recipientUserId: { type: 'integer' },
+    recipientUserId: userIdSchema,
     recipientEmail: {
       type: 'string',
       format: 'email',
@@ -84,7 +85,7 @@ const guardian = {
   required: ['kind', 'playerUserId', 'guardian', 'idempotencyKey'],
   properties: {
     kind: { type: 'string', enum: ['guardian'] },
-    playerUserId: { type: 'integer' },
+    playerUserId: userIdSchema,
     guardian: {
       oneOf: [
         {
@@ -92,7 +93,7 @@ const guardian = {
           required: ['userId'],
           properties: {
             userId: {
-              type: 'integer',
+              ...userIdSchema,
               description:
                 'The account; for a request, the sender; for a guardian’s invitation, anybody else'
             }
@@ -362,7 +363,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
               items: {
                 type: 'object',
                 required: ['group', 'userId'],
-                properties: { group: ref, userId: { type: 'integer' } }
+                properties: { group: ref, userId: userIdSchema }
               }
             },
             custodians: {

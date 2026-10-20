@@ -13,12 +13,12 @@ export interface LevelPeopleTabProps {
   id: string
   /** A player, opened on their page, narrowed to the season it was. */
   onOpenPlayer?: (
-    userId: number,
+    userId: string,
     name: string,
     from?: { seasonId?: string }
   ) => void
   /** Anybody else, as a profile, for whoever manages the level's people. */
-  onOpenPerson?: (userId: number, name: string) => void
+  onOpenPerson?: (userId: string, name: string) => void
 }
 
 /**

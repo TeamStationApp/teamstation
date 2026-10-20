@@ -11,6 +11,7 @@ import {
 import { asLiteral } from './asLiteral'
 import { asCalendarDate, isRecord } from './groupCreation'
 import { asRoles, type Role } from './roles'
+import { asUserId } from './userId'
 
 export type Rsvp = 'yes' | 'maybe' | 'no'
 export type RsvpChoice = Rsvp | null
@@ -288,7 +289,7 @@ export function asTeamEventInput(raw: unknown): TeamEventInput {
 }
 
 const asAttendee = asObject({
-  userId: asNumber,
+  userId: asUserId,
   name: asString,
   avatarUrl: nullableText,
   response: (raw: unknown): RsvpChoice => (raw == null ? null : asRsvp(raw)),
@@ -341,7 +342,7 @@ const asInfo = asObject({
   canManage: asBoolean,
   canViewAttendance: asOptional(asBoolean, true),
   attendees: asArray(asEventAttendee),
-  replyUserIds: asArray(asNumber)
+  replyUserIds: asArray(asUserId)
 })
 export interface EventInfo extends ReturnType<typeof asInfo> {
   notes?: string | null
@@ -389,6 +390,6 @@ export function sortedAttendees(rows: EventAttendee[]): EventAttendee[] {
       RSVP_ORDER.indexOf(a.response) - RSVP_ORDER.indexOf(b.response)
     if (response !== 0) return response
     const name = a.name.localeCompare(b.name)
-    return name !== 0 ? name : a.userId - b.userId
+    return name !== 0 ? name : a.userId.localeCompare(b.userId)
   })
 }

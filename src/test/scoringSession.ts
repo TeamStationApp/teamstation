@@ -1,12 +1,13 @@
 import { createDevelopmentSession } from '../app/scoring/developmentSession'
 import { asRosterEntry, type GameDetail, type RosterEntry } from '../common/api'
 import type { GameState } from '../common/scoring/state'
+import { userIdOfGumbo } from '../common/userId'
 
 /** Explicit persisted identities for a complete synthetic game. */
 export function scoringRoster(firstId: number): RosterEntry[] {
   return Array.from({ length: 9 }, (_, index) =>
     asRosterEntry({
-      userId: firstId + index,
+      userId: userIdOfGumbo(firstId + index),
       gumboId: firstId + index,
       shortName: `Player ${index + 1}`,
       jersey: String(index + 1),

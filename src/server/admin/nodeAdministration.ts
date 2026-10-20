@@ -25,7 +25,7 @@ export async function requireNodeAdmin(
   if (!fresh.isAdmin) throw forbidden(message)
   return fresh
 }
-async function activeNodeIds(db: Kysely<Database>): Promise<number[]> {
+async function activeNodeIds(db: Kysely<Database>): Promise<string[]> {
   return (
     await db
       .selectFrom('users')
@@ -114,7 +114,7 @@ export async function nodeAccounts(
 export async function changeNodeAccount(
   db: Kysely<Database>,
   actor: Actor,
-  userId: number,
+  userId: string,
   body: NodeAccountChange
 ): Promise<void> {
   await atomic(db, async trx => {
