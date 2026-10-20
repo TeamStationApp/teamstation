@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { userIdOfGumbo } from '../common/userId'
 import { scheduleDate } from './screens/format'
 
 /**
@@ -60,7 +61,7 @@ const RTMP_URL = 'rtmp://ingest.example/live/lst_own-key'
 const OWN_CAMERA = {
   id: 'lst_own',
   gameId: 'gam_rtmp',
-  userId: 7,
+  userId: userIdOfGumbo(7),
   ownerName: 'Pat Neshek',
   slot: 1,
   label: 'Dugout',
@@ -73,7 +74,7 @@ const OWN_CAMERA = {
 const OTHER_CAMERA = {
   id: 'lst_other',
   gameId: 'gam_rtmp',
-  userId: 8,
+  userId: userIdOfGumbo(8),
   ownerName: 'Sam Fuld',
   slot: 1,
   label: 'Third base',
@@ -214,7 +215,7 @@ async function open(path: string, size: Size): Promise<Page> {
           cors(200, {
             batting: [
               {
-                userId: 1,
+                userId: userIdOfGumbo(1),
                 gumboId: 1,
                 shortName: 'Alex L',
                 teamId: 'away',

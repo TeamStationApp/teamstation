@@ -5,6 +5,7 @@ import { expect } from 'chai'
 import { after, before, beforeEach, describe, it } from 'mocha'
 
 import { TeamStationClient } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import { googlePlacesStub } from '../../test/googlePlacesStub'
 import { eventGeocoder } from '../location/eventGeocoder'
@@ -54,7 +55,7 @@ describe('Google primary event location HTTP contract', function () {
     await h.db
       .updateTable('memberships')
       .set({ role: 'manager' })
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .execute()
     const created = await h.request('POST', '/events', {
       teamId: 'tem_account',

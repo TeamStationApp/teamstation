@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { after, ball, TEAMS, walk } from '../../test/scoringGames'
+import { userIdOfGumbo } from '../userId'
 import type { JsonSchema } from './actions'
 import { freshGame, newSetup, type RosterPlayer } from './lineup'
 import {
@@ -60,7 +61,7 @@ const id = (name: string): number =>
 function pregame(): GameState {
   const roster = (names: string[], first: number): RosterPlayer[] =>
     names.map((shortName, i) => ({
-      userId: first + i,
+      userId: userIdOfGumbo(first + i),
       gumboId: first + i,
       shortName,
       jersey: String(i + 2)

@@ -4,6 +4,7 @@ import React, { act } from 'react'
 
 import type { TeamStationClient } from '../../common/api'
 import type { NodeAccount } from '../../common/nodeAdministration'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   fill,
   find,
@@ -16,7 +17,7 @@ import {
 import { NodeAdministrationScreen } from './NodeAdministrationScreen'
 
 const admin: NodeAccount = {
-  userId: 101,
+  userId: userIdOfGumbo(101),
   displayName: 'Babe Ruth',
   email: 'babe@example.com',
   isNodeAdmin: true,
@@ -26,7 +27,7 @@ const admin: NodeAccount = {
 }
 const account: NodeAccount = {
   ...admin,
-  userId: 106,
+  userId: userIdOfGumbo(106),
   displayName: 'Hank Aaron',
   email: 'hank@example.com',
   isNodeAdmin: false,
@@ -36,11 +37,11 @@ function fixture(): {
   client: TeamStationClient
   users: NodeAccount[]
   writes: unknown[]
-  changed: number[]
+  changed: string[]
 } {
   const users = [{ ...admin }, { ...account }]
   const writes: unknown[] = []
-  const changed: number[] = []
+  const changed: string[] = []
   const client = {
     nodeAccounts: async (query = '', only = false) =>
       users
@@ -54,7 +55,7 @@ function fixture(): {
         .map(user => ({ ...user })),
     accountMail: async () => ({ accountMessages: false }),
     setAccountMail: async () => {},
-    changeNodeAccount: async (id: number, change: { isNodeAdmin: boolean }) => {
+    changeNodeAccount: async (id: string, change: { isNodeAdmin: boolean }) => {
       writes.push({ id, ...change })
       users.find(user => user.userId === id)!.isNodeAdmin = change.isNodeAdmin
     }
@@ -102,8 +103,10 @@ describe('compact node access', () => {
       getComputedStyle(find('Add Hank Aaron')!.firstElementChild!).color
     ).equals('rgb(56, 94, 38)')
     await press('Add Hank Aaron')
-    expect(f.writes).deep.equals([{ id: 106, isNodeAdmin: true }])
-    expect(f.changed).deep.equals([106])
+    expect(f.writes).deep.equals([
+      { id: userIdOfGumbo(106), isNodeAdmin: true }
+    ])
+    expect(f.changed).deep.equals([userIdOfGumbo(106)])
     expect(find('Revoke Hank Aaron')?.textContent).equals('Revoke')
     expect(
       getComputedStyle(find('Revoke Hank Aaron')!.firstElementChild!).color
@@ -116,8 +119,8 @@ describe('compact node access', () => {
     await press('Revoke Hank Aaron')
     await press('Confirm revoke')
     expect(f.writes).deep.equals([
-      { id: 106, isNodeAdmin: true },
-      { id: 106, isNodeAdmin: false }
+      { id: userIdOfGumbo(106), isNodeAdmin: true },
+      { id: userIdOfGumbo(106), isNodeAdmin: false }
     ])
     expect(find('Add Hank Aaron')).not.equals(undefined)
     await fill('Find an account', '')

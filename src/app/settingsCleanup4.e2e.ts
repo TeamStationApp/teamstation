@@ -6,8 +6,10 @@ import { join, resolve } from 'node:path'
 import type { Page } from 'puppeteer'
 
 import { TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { groupFixture } from '../test/groupFixtures'
+import { insertFixtureUsers } from '../test/insertFixtureUsers'
 import {
   browserSession,
   contains,
@@ -52,33 +54,30 @@ async function main(): Promise<void> {
       .insertInto('memberships')
       .values({
         id: 'mem_rows_player',
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         team_id: f.teamA,
         is_player: true
       })
       .execute()
-    await f.h.db
-      .insertInto('users')
-      .values({
-        id: 107,
-        legacyId: 'usr_rows_107',
-        display_name: 'Mookie Betts',
-        first_name: 'Mookie',
-        last_name: 'Betts',
-        login_enabled: false,
-        is_admin: false
-      })
-      .execute()
+    await insertFixtureUsers(f.h.db, {
+      id: 107,
+      legacyId: 'usr_rows_107',
+      display_name: 'Mookie Betts',
+      first_name: 'Mookie',
+      last_name: 'Betts',
+      login_enabled: false,
+      is_admin: false
+    })
     await f.h.db
       .insertInto('memberships')
       .values({
         id: 'mem_rows_no_email',
-        user_id: 107,
+        user_id: userIdOfGumbo(107),
         team_id: f.teamA,
         is_player: true
       })
       .execute()
-    await api.addRole('team', f.teamA, 106, 'coach')
+    await api.addRole('team', f.teamA, userIdOfGumbo(106), 'coach')
     const firstLink = await api.createInvite({
       scopeType: 'team',
       scopeId: f.teamA,
@@ -271,24 +270,32 @@ async function main(): Promise<void> {
     await shot('player-removal-confirm')
     await tap('Cancel')
     if (!before) {
-      assert((await api.roster(f.teamA)).some(row => row.userId === 104))
+      assert(
+        (await api.roster(f.teamA)).some(
+          row => row.userId === userIdOfGumbo(104)
+        )
+      )
       await tap('Remove Ichiro')
       await m.tapOn({
         css: '[role="dialog"] [data-testid="settings-pill-button"]',
         timeout: 10000
       })
       await page.waitForNetworkIdle({ idleTime: 150, timeout: 10000 })
-      assert(!(await api.roster(f.teamA)).some(row => row.userId === 104))
+      assert(
+        !(await api.roster(f.teamA)).some(
+          row => row.userId === userIdOfGumbo(104)
+        )
+      )
       await f.h.db
         .deleteFrom('memberships')
         .where('team_id', '=', f.teamA)
-        .where('user_id', '=', 104)
+        .where('user_id', '=', userIdOfGumbo(104))
         .execute()
       await f.h.db
         .insertInto('memberships')
         .values({
           id: 'mem_settings3_player',
-          user_id: 104,
+          user_id: userIdOfGumbo(104),
           team_id: f.teamA,
           is_player: true
         })
@@ -463,37 +470,34 @@ async function main(): Promise<void> {
     if (!before) {
       await tap('Cancel')
       assert(
-        (await api.personProfile('team', f.teamA, 106)).sections
+        (await api.personProfile('team', f.teamA, userIdOfGumbo(106))).sections
           .find(row => row.level === 'team')!
           .roles.includes('coach')
       )
       await m.tapOn({ text: 'Coach', role: 'switch' })
       await tap('Confirm removal')
       assert(
-        !(await api.personProfile('team', f.teamA, 106)).sections
+        !(await api.personProfile('team', f.teamA, userIdOfGumbo(106))).sections
           .find(row => row.level === 'team')!
           .roles.includes('coach')
       )
       lines.push(
         'E8 PASS: actual selected role consent, Cancel no mutation, confirmed remove'
       )
-      await f.h.db
-        .insertInto('users')
-        .values({
-          id: 108,
-          legacyId: 'usr_rows_108',
-          display_name: 'Willie Mays',
-          first_name: 'Willie',
-          last_name: 'Mays',
-          login_enabled: true,
-          is_admin: false
-        })
-        .execute()
+      await insertFixtureUsers(f.h.db, {
+        id: 108,
+        legacyId: 'usr_rows_108',
+        display_name: 'Willie Mays',
+        first_name: 'Willie',
+        last_name: 'Mays',
+        login_enabled: true,
+        is_admin: false
+      })
       await f.h.db
         .insertInto('memberships')
         .values({
           id: 'mem_rows_final',
-          user_id: 108,
+          user_id: userIdOfGumbo(108),
           team_id: f.teamA,
           role: 'member',
           is_player: false
@@ -509,9 +513,12 @@ async function main(): Promise<void> {
       )
       assert.equal(await page.$('[aria-label="Confirm removal"]'), null)
       assert.equal(await page.$('[role="switch"]'), null)
-      await assert.rejects(api.personProfile('team', f.teamA, 108), {
-        code: 'notFound'
-      })
+      await assert.rejects(
+        api.personProfile('team', f.teamA, userIdOfGumbo(108)),
+        {
+          code: 'notFound'
+        }
+      )
       await shot('final-membership-removed')
       lines.push(
         'E8 final membership PASS: successful removal followed by expected404 closes confirmation and clears stale controls'

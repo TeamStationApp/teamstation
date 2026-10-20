@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   type GuardianFixture,
   guardianFixture
@@ -13,8 +14,8 @@ import {
  * and each game's score, line score and highlights, and is answered
  * `membersOnly` for the figures, the box score and the video itself.
  *
- * On `guardianFixture`: Grace Hill (207) follows Demo Hawks and belongs to
- * nothing. Hank Moss (208) runs Demo Rookies and follows nothing here; the
+ * On `guardianFixture`: Grant Hartwig (207) follows Demo Hawks and belongs to
+ * nothing. Hank Majeski (208) runs Demo Rookies and follows nothing here; the
  * team's coach (104) is a member. `guardian-game-1` is the Hawks at home and
  * is given a line score; `guardian-game-2` is the Hawks away.
  */
@@ -75,7 +76,7 @@ describe('the non-member view', function () {
     await f.h.db
       .updateTable('users')
       .set({ avatar_path: 'avatars/avery' })
-      .where('id', '=', f.players[0].id)
+      .where('id', '=', userIdOfGumbo(f.players[0].id))
       .execute()
   })
 
@@ -123,14 +124,15 @@ describe('the non-member view', function () {
             row => row.avatarUrl === null
           )
         ).equals(true)
-        // Avery's guardian is listed as family, without whom he guards.
+        // Alfonso's guardian is listed as family, without whom he guards.
         const rows = body as Array<{
-          userId: number
+          userId: string
           section: string
           guardianOf?: string[]
         }>
         expect(
-          rows.find(row => row.userId === f.people.guardian)?.section
+          rows.find(row => row.userId === userIdOfGumbo(f.people.guardian))
+            ?.section
         ).equals('family')
         expect(rows.every(row => !('guardianOf' in row))).equals(true)
       })
@@ -364,7 +366,11 @@ describe('the non-member view', function () {
     before(async function () {
       await f.h.db
         .insertInto('follows')
-        .values({ user_id: member, group_type: 'team', group_id: f.teamA })
+        .values({
+          user_id: userIdOfGumbo(member),
+          group_type: 'team',
+          group_id: f.teamA
+        })
         .execute()
     })
 
@@ -379,14 +385,14 @@ describe('the non-member view', function () {
 
       const roster = await call(`/teams/${f.teamA}/roster`, member)
       const avery = (
-        roster.body as Array<{ userId: number; avatarUrl: string | null }>
-      ).find(row => row.userId === f.players[0].id)
+        roster.body as Array<{ userId: string; avatarUrl: string | null }>
+      ).find(row => row.userId === userIdOfGumbo(f.players[0].id))
       expect(avery?.avatarUrl).to.be.a('string')
       // A member reads whom a family member is a guardian of.
       const guardian = (
-        roster.body as Array<{ userId: number; guardianOf?: string[] }>
-      ).find(row => row.userId === f.people.guardian)
-      expect(guardian?.guardianOf).deep.equals(['Avery S'])
+        roster.body as Array<{ userId: string; guardianOf?: string[] }>
+      ).find(row => row.userId === userIdOfGumbo(f.people.guardian))
+      expect(guardian?.guardianOf).deep.equals(['Alfonso S'])
 
       for (const path of [
         `/teams/${f.teamA}/stats`,
@@ -408,7 +414,11 @@ describe('the non-member view', function () {
       if (level === 'season') {
         await f.h.db
           .insertInto('season_members')
-          .values({ id: 'smb_watcher', user_id: watcher, season_id: id })
+          .values({
+            id: 'smb_watcher',
+            user_id: userIdOfGumbo(watcher),
+            season_id: id
+          })
           .execute()
         return async () => {
           await f.h.db
@@ -419,7 +429,11 @@ describe('the non-member view', function () {
       }
       await f.h.db
         .insertInto('league_members')
-        .values({ id: 'lmb_watcher', user_id: watcher, league_id: id })
+        .values({
+          id: 'lmb_watcher',
+          user_id: userIdOfGumbo(watcher),
+          league_id: id
+        })
         .execute()
       return async () => {
         await f.h.db
@@ -443,8 +457,8 @@ describe('the non-member view', function () {
           expect(detail.body.nonMemberView, level).equals(false)
           const roster = await call(`/teams/${f.teamA}/roster`, watcher)
           const avery = (
-            roster.body as Array<{ userId: number; avatarUrl: string | null }>
-          ).find(row => row.userId === f.players[0].id)
+            roster.body as Array<{ userId: string; avatarUrl: string | null }>
+          ).find(row => row.userId === userIdOfGumbo(f.players[0].id))
           expect(avery?.avatarUrl, level).to.be.a('string')
           for (const path of [
             `/teams/${f.teamA}/stats`,

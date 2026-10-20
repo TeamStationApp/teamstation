@@ -2,12 +2,13 @@ import { Kysely, PostgresDialect } from 'kysely'
 import { after, before } from 'mocha'
 import { Pool } from 'pg'
 
-import { mintUserId } from '../common/mintUserId'
 import { migrations } from '../migrate/migrations'
 import { migrateUp } from '../migrate/runner'
 import { testDatabaseUrl } from '../migrate/testDatabase'
 import type { Database } from '../server/db/database'
 import { attachInt8Parser } from '../server/db/int8'
+import { mintUserId } from './historicalUserIds'
+import { insertFixtureUsers } from './insertFixtureUsers'
 
 /** Isolated synthetic data for database readers of expanded stat rows. */
 export function statsDatabase(label: string): {
@@ -31,16 +32,14 @@ export function statsDatabase(label: string): {
     })
     await migrateUp(pool, migrations)
     db = new Kysely({ dialect: new PostgresDialect({ pool }) })
-    await db
-      .insertInto('users')
-      .values(
-        users.map((user, i) => ({
-          id: user.userId,
-          legacyId: user.legacyId,
-          display_name: `Demo Player ${i}`
-        }))
-      )
-      .execute()
+    await insertFixtureUsers(
+      db,
+      users.map((user, i) => ({
+        id: user.userId,
+        legacyId: user.legacyId,
+        display_name: `Demo Player ${i}`
+      }))
+    )
     await db
       .insertInto('teams')
       .values([

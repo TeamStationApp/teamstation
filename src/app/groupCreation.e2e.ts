@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { userIdOfGumbo } from '../common/userId'
 import { googlePlaces } from '../server/location/googlePlaces'
 import { googlePlacesStub } from '../test/googlePlacesStub'
 import { type GroupFixture, groupFixture } from '../test/groupFixtures'
@@ -318,7 +319,7 @@ async function main(): Promise<void> {
       .selectFrom('group_requests')
       .selectAll()
       .where('kind', '=', 'participation')
-      .where('sender_id', '=', 102)
+      .where('sender_id', '=', userIdOfGumbo(102))
       .orderBy('sent_at', 'desc')
       .executeTakeFirstOrThrow()
     await shot(host, 'request-resend-after.png')
