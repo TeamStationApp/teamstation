@@ -1,5 +1,6 @@
 package app.teamstation.cameraman.radar
 
+import app.teamstation.cameraman.eventcontrol.TeamStationUserId
 import app.teamstation.streamcore.core.SettingsStore
 import java.net.URLEncoder
 import java.time.DayOfWeek
@@ -178,6 +179,12 @@ internal object ScoreboardTarget {
 
     fun load(store: SettingsStore): ScoreboardSaved {
         val token = store.string(KEY_TOKEN).orEmpty()
+        val storedId = store.string(KEY_USER_ID).orEmpty()
+        val userId = if (token.isEmpty()) "" else TeamStationUserId.upgradingStored(storedId).orEmpty()
+        if (userId.isNotEmpty() && userId != storedId) {
+            // An unavailable preferences store must leave the old value available for retry.
+            runCatching { store.setString(userId, KEY_USER_ID) }
+        }
         val route = if (store.string(KEY_ROUTE) == "event" && token.isNotEmpty()) {
             ScoreboardRoute.Event
         } else {
@@ -195,7 +202,7 @@ internal object ScoreboardTarget {
             gameTitle = store.string(KEY_GAME_TITLE).orEmpty(),
             gameStartAt = store.string(KEY_GAME_START).orEmpty(),
             // Absent before device event control, and kept only beside a token.
-            userId = if (token.isEmpty()) "" else store.string(KEY_USER_ID).orEmpty()
+            userId = userId
         )
     }
 
