@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { TeamStationClient } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   demoLocality,
   type GroupFixture,
@@ -22,7 +23,7 @@ describe('proved imported email invitation eligibility', function () {
     await f.h.db
       .updateTable('user_emails')
       .set({ email: 'Fixture106@Example.com' })
-      .where('user_id', '=', 106)
+      .where('user_id', '=', userIdOfGumbo(106))
       .execute()
     const created = await f.h.request(
       'POST',
@@ -62,7 +63,9 @@ describe('proved imported email invitation eligibility', function () {
         )
       ).status
     ).equals(200)
-    expect(await rolesAt(f.h.db, 'team', team.id, 106)).deep.equals(['admin'])
+    expect(
+      await rolesAt(f.h.db, 'team', team.id, userIdOfGumbo(106))
+    ).deep.equals(['admin'])
   })
   for (const method of ['code', 'link', 'invitation'] as const)
     it(`retains an imported identity and verifies its address through ${method}, which applies the invitation waiting for it`, async () => {
@@ -70,7 +73,7 @@ describe('proved imported email invitation eligibility', function () {
       await f.h.db
         .updateTable('users')
         .set({ login_enabled: false })
-        .where('id', '=', 106)
+        .where('id', '=', userIdOfGumbo(106))
         .execute()
       await f.h.db
         .updateTable('user_emails')
@@ -79,13 +82,13 @@ describe('proved imported email invitation eligibility', function () {
           verified_at: null,
           source: 'import'
         })
-        .where('user_id', '=', 106)
+        .where('user_id', '=', userIdOfGumbo(106))
         .execute()
       await f.h.db
         .insertInto('user_emails')
         .values({
           id: 'email_other_import',
-          user_id: 106,
+          user_id: userIdOfGumbo(106),
           email: 'other-import@example.com',
           verified_at: null,
           source: 'import'
@@ -124,7 +127,7 @@ describe('proved imported email invitation eligibility', function () {
                 .at(-1)!
             )
           : await client.signInWithCode(email, f.h.mail.get(email)!)
-      expect(session.user.id).equals(106)
+      expect(session.user.id).equals(userIdOfGumbo(106))
       f.h.tokens.set(106, session.token)
       expect(
         (
@@ -146,7 +149,9 @@ describe('proved imported email invitation eligibility', function () {
       ).equals(null)
       // Proving the address applies what was waiting for it, however it
       // was proved: nothing is left to accept.
-      expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals(['coach'])
+      expect(
+        await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
+      ).deep.equals(['coach'])
       const inbox = (await (
         await f.h.request('GET', '/me/notifications?history=1', undefined, 106)
       ).json()) as { items: Array<{ requestId: string }> }
@@ -163,6 +168,8 @@ describe('proved imported email invitation eligibility', function () {
           )
         ).json()
       ).property('status', 'accepted')
-      expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals(['coach'])
+      expect(
+        await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
+      ).deep.equals(['coach'])
     })
 })

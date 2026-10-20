@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { asRsvp, asTeamEventInput } from '../../common/eventInfo'
 import { isRecord } from '../../common/groupCreation'
+import { asUserId } from '../../common/userId'
 import type { Database } from '../db/database'
 import {
   createTeamEvent,
@@ -161,10 +162,7 @@ export function eventInfoRoutes(
     withAsync(async (req, res) => {
       if (req.actor == null) throw unauthorized()
       const id = param(req.params.id)
-      const text = param(req.params.userId)
-      const userId = Number(text)
-      if (!/^\d+$/.test(text) || !Number.isSafeInteger(userId) || userId <= 0)
-        throw badRequest('Choose a valid person')
+      const userId = cleanBody(asUserId, req.params.userId)
       if (!isRecord(req.body)) throw badRequest('Choose Yes, Maybe or No')
       const response = cleanBody(asRsvp, req.body.response)
       await saveEventRsvp(db, req.actor, id, userId, response)

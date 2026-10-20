@@ -1,8 +1,8 @@
-import { mintUserId } from '../../common/mintUserId'
 import { addEmail, findUserByEmail } from '../auth/emails'
 import { hashPassword } from '../auth/passwords'
 import { makeDatabase } from '../db/database'
 import { serverConfig } from '../serverConfig'
+import { insertUser } from '../users/insertUser'
 
 /**
  * Creates one administrator to sign in with while developing. It refuses to
@@ -42,26 +42,17 @@ async function main(): Promise<void> {
       return
     }
 
-    const held = new Set(
-      (await db.selectFrom('users').select('id').execute()).map(row => row.id)
-    )
-    const minted = mintUserId(id => held.has(id))
-    await db
-      .insertInto('users')
-      .values({
-        id: minted.userId,
-        legacyId: minted.legacyId,
-        display_name: normalised.split('@')[0],
-        password_hash: passwordHash,
-        login_enabled: true,
-        is_admin: true
-      })
-      .execute()
-    await addEmail(db, minted.userId, normalised, {
+    const userId = await insertUser(db, {
+      display_name: normalised.split('@')[0],
+      password_hash: passwordHash,
+      login_enabled: true,
+      is_admin: true
+    })
+    await addEmail(db, userId, normalised, {
       isPrimary: true,
       source: 'manual'
     })
-    console.log(`created ${normalised} (${minted.userId})`)
+    console.log(`created ${normalised} (${userId})`)
   } finally {
     await db.destroy()
   }

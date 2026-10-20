@@ -1,50 +1,50 @@
 {
-  "description": "Synthetic device event-control keys. key = HMAC-SHA256(utf8(secret), lp(\"device-event-control:v1\") || lp(issuer) || lp(userId)); keyId = hex(SHA-256(lp(\"device-event-control:v1:keyid\") || lp(secret)))[0,16); accountTag = hex(HMAC-SHA256(key, lp(\"device-event-control:v1:account-tag\")))[0,32); lp(x) = u16be(byteLength(x)) || utf8(x). The frames fixtures sign with these keys by name.",
+  "description": "Synthetic device event-control keys. key = HMAC-SHA256(utf8(secret), lp(\"device-event-control:v2\") || lp(issuer) || lp(userId)); keyId = hex(SHA-256(lp(\"device-event-control:v2:keyid\") || lp(secret)))[0,16); accountTag = hex(HMAC-SHA256(key, lp(\"device-event-control:v2:account-tag\")))[0,32); lp(x) = u16be(byteLength(x)) || utf8(x). The frames fixtures sign with these keys by name.",
   "vectors": [
     {
       "name": "one",
       "secret": "00000000000000000000000000000000000000000000000000000000000000a1",
       "issuer": "https://app.example.test",
-      "userId": "1001",
-      "accountTag": "3ce9e2793f1ced4924b58f9598f81da9",
-      "keyId": "5cbbb6482042eb0a",
-      "key": "d47b3e64272b9c78fdd34c7439697d44dad28301356c5ba1f0c559dbed3eec04"
+      "userId": "usr_11111111111111111111JG",
+      "accountTag": "6fbcd05d19982b0685bbfde803c81d19",
+      "keyId": "cb3d05d0c4635e2d",
+      "key": "d9d964bb0bf3bdaf44e363aacaba715e692ea3f71917e92e4cb4337bf5ad57ff"
     },
     {
       "name": "two",
       "secret": "00000000000000000000000000000000000000000000000000000000000000a1",
       "issuer": "https://app.example.test",
-      "userId": "1002",
-      "accountTag": "a64a1771b862c93822bca4b3f17f1a0a",
-      "keyId": "5cbbb6482042eb0a",
-      "key": "8e94910e983787f2c54d1d4cd3c33938150dff776e02c083333eb31fb5ca92c7"
+      "userId": "usr_11111111111111111111JH",
+      "accountTag": "8d35552203b81b313860c320ca5cd51b",
+      "keyId": "cb3d05d0c4635e2d",
+      "key": "2da302d2fcbe686ce1da8e6fec6cacac842f506c2869508e33c003e5fd17caf5"
     },
     {
       "name": "oneOtherServer",
       "secret": "00000000000000000000000000000000000000000000000000000000000000a1",
       "issuer": "https://develop9.example.test",
-      "userId": "1001",
-      "accountTag": "7d30c0ce2f76955f892becd7240efda7",
-      "keyId": "5cbbb6482042eb0a",
-      "key": "4a8c6ae36f2cafe06d6744a6d6775079a0e845a1f38a86bc6e9fc507786519c1"
+      "userId": "usr_11111111111111111111JG",
+      "accountTag": "f7cc9c7441beed13b170b9360bb89030",
+      "keyId": "cb3d05d0c4635e2d",
+      "key": "5e09b422a00c8330781f368924521c12f4e5f10378938caf04c89ec3d4568fa4"
     },
     {
       "name": "oneRotated",
       "secret": "00000000000000000000000000000000000000000000000000000000000000b2",
       "issuer": "https://app.example.test",
-      "userId": "1001",
-      "accountTag": "2044958a33a0ae13e4c18814be059440",
-      "keyId": "db120a71e5f6d52a",
-      "key": "9588624261acb64de091ebf66222159f7eea9179349a3a1032dc7824f20f8047"
+      "userId": "usr_11111111111111111111JG",
+      "accountTag": "4624fdd62f0a9850672a341771f95f51",
+      "keyId": "f4d4491024fdf919",
+      "key": "27270edc3f17dc0f45dcb7a7c03c0422cac474a70955e2a662952531f15c9e64"
     },
     {
       "name": "oneLocal",
       "secret": "00000000000000000000000000000000000000000000000000000000000000a1",
       "issuer": "http://127.0.0.1:9100",
-      "userId": "1001",
-      "accountTag": "1e3a9316e465d104526c45de98632cee",
-      "keyId": "5cbbb6482042eb0a",
-      "key": "53a9f85a6a2f55361c2bae1093f7975dbfdde6d6920c9bc1620a3a6d7d88e3bb"
+      "userId": "usr_11111111111111111111JG",
+      "accountTag": "87efae1243b1e672f532b45bb54106ca",
+      "keyId": "cb3d05d0c4635e2d",
+      "key": "1b5c33aa163ad07b9331f88b4e94d073020ba7e4ca67092bb87abf3e3438f335"
     }
   ]
 }

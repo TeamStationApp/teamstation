@@ -9,6 +9,7 @@ import {
   ScoringSession
 } from '../../common/scoring/session'
 import { copyState, setupOf } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { guestCreator } from '../../test/guestPlayers'
 import { completeMotions } from '../../test/scoringHelpers'
 import { scoringSession } from '../../test/scoringSession'
@@ -337,7 +338,7 @@ describe('current scoring setup', function () {
         jersey: ''
       }
       return asRosterEntry({
-        userId: 200 + index,
+        userId: userIdOfGumbo(200 + index),
         gumboId: id,
         shortName: index === 0 ? 'Luis Ga' : 'Luis Go',
         jersey: null,
@@ -365,7 +366,7 @@ describe('current scoring setup', function () {
     player.jersey = ''
     const before = JSON.stringify(original)
     const entry = asRosterEntry({
-      userId: 101,
+      userId: userIdOfGumbo(101),
       gumboId: 1,
       shortName: 'Mookie B',
       jersey: '00',

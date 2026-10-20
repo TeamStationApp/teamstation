@@ -8,6 +8,7 @@ import {
   type LineupPerson,
   type RosterEntry
 } from '../api'
+import { userIdOfGumbo } from '../userId'
 import type { ScoringAction } from './actions'
 import { freshGame } from './lineup'
 import { reconcileRoster } from './rosterAvailability'
@@ -49,7 +50,7 @@ const game = asGameDetail({
 function roster(userIds: number[]): RosterEntry[] {
   return userIds.map(userId =>
     asRosterEntry({
-      userId,
+      userId: userIdOfGumbo(userId),
       gumboId: userId,
       shortName: `Player ${userId}`,
       jersey: String(userId % 100),
@@ -265,7 +266,7 @@ describe('the lineups a game starts from (U4b)', function () {
     ).equals(true)
     // Staff and anyone else who does not play is left off.
     const staff = asRosterEntry({
-      userId: 300,
+      userId: userIdOfGumbo(300),
       gumboId: 300,
       shortName: 'Coach',
       jersey: '',

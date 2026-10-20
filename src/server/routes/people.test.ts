@@ -5,7 +5,9 @@ import { after, before, describe, it } from 'mocha'
 import type { LevelPeople, PersonProfile, RosterEntry } from '../../common/api'
 import { makeId } from '../../common/ids'
 import type { GroupDetail } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { canKeepSongs, roleScopes } from '../access'
 import { createSession } from '../auth/sessions'
 import { rolesAt } from '../invites/people'
@@ -44,37 +46,37 @@ describe('people at a team, a season and a league', function () {
       last: string,
       login = true
     ): Promise<void> => {
-      await db
-        .insertInto('users')
-        .values({
-          id,
-          legacyId: `usr_people_${id}`,
-          display_name: `${first} ${last}`,
-          first_name: first,
-          last_name: last,
-          login_enabled: login
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id,
+        legacyId: `usr_people_${id}`,
+        display_name: `${first} ${last}`,
+        first_name: first,
+        last_name: last,
+        login_enabled: login
+      })
       if (!login) return
       await db
         .insertInto('user_emails')
         .values({
           id: makeId('userEmail'),
-          user_id: id,
+          user_id: userIdOfGumbo(id),
           email: `people${id}@example.com`,
           is_primary: true,
           verified_at: new Date()
         })
         .execute()
-      f.h.tokens.set(id, (await createSession(db, id, 'people')).token)
+      f.h.tokens.set(
+        id,
+        (await createSession(db, userIdOfGumbo(id), 'people')).token
+      )
     }
-    await person(SCOREKEEPER, 'Sky', 'Keeper')
-    await person(PLAYER, 'Avery', 'Young')
-    await person(GUARDIAN, 'Pat', 'Young')
-    await person(NO_LOGIN, 'Nolan', 'Quiet', false)
-    await person(FOLLOWER, 'Fran', 'Follows')
-    await person(SEASON_MEMBER, 'Sam', 'Season')
-    await person(LEAGUE_MEMBER, 'Lee', 'League')
+    await person(SCOREKEEPER, 'Sandy', 'Koufax')
+    await person(PLAYER, 'Alex', 'Young')
+    await person(GUARDIAN, 'Pat', 'Neshek')
+    await person(NO_LOGIN, 'Nolan', 'Ryan', false)
+    await person(FOLLOWER, 'Frank', 'Francisco')
+    await person(SEASON_MEMBER, 'Sam', 'Fuld')
+    await person(LEAGUE_MEMBER, 'Lee', 'Smith')
     const role = async (
       userId: number,
       kind: 'team' | 'season' | 'league',
@@ -85,7 +87,7 @@ describe('people at a team, a season and a league', function () {
         .insertInto('scope_roles')
         .values({
           id: makeId('scopeRole'),
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           scope_type: kind,
           scope_id: id,
           role: given
@@ -97,7 +99,7 @@ describe('people at a team, a season and a league', function () {
         .insertInto('memberships')
         .values({
           id: makeId('membership'),
-          user_id: userId,
+          user_id: userIdOfGumbo(userId),
           team_id: f.teamA,
           role: 'member',
           is_player: player
@@ -117,25 +119,33 @@ describe('people at a team, a season and a league', function () {
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: GUARDIAN,
-        related_user_id: PLAYER,
+        user_id: userIdOfGumbo(GUARDIAN),
+        related_user_id: userIdOfGumbo(PLAYER),
         kind: 'guardian',
         created_at: new Date()
       })
       .execute()
     await db
       .insertInto('follows')
-      .values({ user_id: FOLLOWER, group_type: 'team', group_id: f.teamA })
+      .values({
+        user_id: userIdOfGumbo(FOLLOWER),
+        group_type: 'team',
+        group_id: f.teamA
+      })
       .execute()
     await db
       .insertInto('follows')
-      .values({ user_id: FOLLOWER, group_type: 'season', group_id: f.seasonA })
+      .values({
+        user_id: userIdOfGumbo(FOLLOWER),
+        group_type: 'season',
+        group_id: f.seasonA
+      })
       .execute()
     await db
       .insertInto('season_members')
       .values({
         id: makeId('seasonMember'),
-        user_id: SEASON_MEMBER,
+        user_id: userIdOfGumbo(SEASON_MEMBER),
         season_id: f.seasonA
       })
       .execute()
@@ -143,7 +153,7 @@ describe('people at a team, a season and a league', function () {
       .insertInto('league_members')
       .values({
         id: makeId('leagueMember'),
-        user_id: LEAGUE_MEMBER,
+        user_id: userIdOfGumbo(LEAGUE_MEMBER),
         league_id: f.leagueA
       })
       .execute()
@@ -180,7 +190,7 @@ describe('people at a team, a season and a league', function () {
   ): Promise<{ status: number; body: any }> =>
     await call(
       method,
-      `/manage/${kind}/${id}/people/${userId}/roles/${given}`,
+      `/manage/${kind}/${id}/people/${userIdOfGumbo(userId)}/roles/${given}`,
       actor,
       method === 'PUT' ? {} : undefined
     )
@@ -197,7 +207,11 @@ describe('people at a team, a season and a league', function () {
         const added = await role('PUT', 101, flag, 101)
         expect(added.status, flag).equals(200)
         expect(added.body.roles, flag).deep.equals(['admin', flag])
-        const read = await call('GET', `/teams/${f.teamA}/people/101`, 101)
+        const read = await call(
+          'GET',
+          `/teams/${f.teamA}/people/${userIdOfGumbo(101)}`,
+          101
+        )
         expect(read.body.sections[0].roles, flag).deep.equals(['admin', flag])
         const removed = await role('DELETE', 101, flag, 101)
         expect(removed.status, flag).equals(200)
@@ -210,7 +224,7 @@ describe('people at a team, a season and a league', function () {
       const added = await role('PUT', MEMBER, 'videographer', COACH)
       expect(added.status).equals(200)
       expect(added.body).deep.equals({
-        userId: MEMBER,
+        userId: userIdOfGumbo(MEMBER),
         roles: ['videographer'],
         member: true
       })
@@ -222,7 +236,9 @@ describe('people at a team, a season and a league', function () {
       expect(
         (await role('DELETE', ASSISTANT, 'assistant', COACH)).status
       ).equals(200)
-      expect(await rolesAt(f.h.db, 'team', f.teamA, ASSISTANT)).deep.equals([])
+      expect(
+        await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(ASSISTANT))
+      ).deep.equals([])
       expect((await role('PUT', ASSISTANT, 'assistant', COACH)).status).equals(
         200
       )
@@ -233,7 +249,13 @@ describe('people at a team, a season and a league', function () {
         .selectFrom('notification_events')
         .select(['metadata', 'recorded_recipients'])
         .where('source_type', '=', 'grant')
-        .where(eb => eb(eb.val(MEMBER), '=', eb.fn.any('recorded_recipients')))
+        .where(eb =>
+          eb(
+            eb.val(userIdOfGumbo(MEMBER)),
+            '=',
+            eb.fn.any('recorded_recipients')
+          )
+        )
         .orderBy('created_at')
         .execute()
       expect(
@@ -247,7 +269,7 @@ describe('people at a team, a season and a league', function () {
       // A follower made a member of the team hears of it by mail as well.
       const joined = await role('PUT', FOLLOWER, 'member', COACH)
       expect(joined.body).deep.equals({
-        userId: FOLLOWER,
+        userId: userIdOfGumbo(FOLLOWER),
         roles: [],
         member: true
       })
@@ -277,14 +299,14 @@ describe('people at a team, a season and a league', function () {
       // And the whole-set route says the same.
       const set = await call(
         'PUT',
-        `/manage/team/${f.teamA}/people/${MEMBER}/roles`,
+        `/manage/team/${f.teamA}/people/${userIdOfGumbo(MEMBER)}/roles`,
         COACH,
         { admin: true, flags: [] }
       )
       expect(set.status).equals(403)
       const flags = await call(
         'PUT',
-        `/manage/team/${f.teamA}/people/${MEMBER}/roles`,
+        `/manage/team/${f.teamA}/people/${userIdOfGumbo(MEMBER)}/roles`,
         COACH,
         { admin: false, flags: ['coach'] }
       )
@@ -293,7 +315,7 @@ describe('people at a team, a season and a league', function () {
         (
           await call(
             'PUT',
-            `/manage/team/${f.teamA}/people/${MEMBER}/roles`,
+            `/manage/team/${f.teamA}/people/${userIdOfGumbo(MEMBER)}/roles`,
             COACH,
             { admin: false, flags: [] }
           )
@@ -345,22 +367,19 @@ describe('people at a team, a season and a league', function () {
     it('refuses a player made so while the removal waits, and takes a member who does not play off the team', async () => {
       const LATE = 209
       const db = f.h.db
-      await db
-        .insertInto('users')
-        .values({
-          id: LATE,
-          legacyId: `usr_people_${LATE}`,
-          display_name: 'Riley Late',
-          first_name: 'Riley',
-          last_name: 'Late',
-          login_enabled: false
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(LATE),
+        legacyId: `usr_people_${LATE}`,
+        display_name: 'Riley Greene',
+        first_name: 'Riley',
+        last_name: 'Greene',
+        login_enabled: false
+      })
       await db
         .insertInto('memberships')
         .values({
           id: makeId('membership'),
-          user_id: LATE,
+          user_id: userIdOfGumbo(LATE),
           team_id: f.teamA,
           role: 'member',
           is_player: false
@@ -370,7 +389,7 @@ describe('people at a team, a season and a league', function () {
         .insertInto('scope_roles')
         .values({
           id: makeId('scopeRole'),
-          user_id: LATE,
+          user_id: userIdOfGumbo(LATE),
           scope_type: 'team',
           scope_id: f.teamA,
           role: 'videographer'
@@ -384,7 +403,7 @@ describe('people at a team, a season and a league', function () {
           .updateTable('memberships')
           .set({ is_player: true })
           .where('team_id', '=', f.teamA)
-          .where('user_id', '=', LATE)
+          .where('user_id', '=', userIdOfGumbo(LATE))
           .execute()
         removal = role('DELETE', LATE, 'member', COACH)
         const deadline = Date.now() + 5000
@@ -403,17 +422,17 @@ describe('people at a team, a season and a league', function () {
       const refused = await removal
       expect(refused?.status).equals(409)
       expect(refused?.body.message).equals(
-        'Riley Late plays for Demo Hawks, so stays a member while on its roster.'
+        'Riley Greene plays for Demo Hawks, so stays a member while on its roster.'
       )
       // Nothing changed: the membership and the role stay.
-      expect(await rolesAt(db, 'team', f.teamA, LATE)).deep.equals([
-        'videographer'
-      ])
+      expect(
+        await rolesAt(db, 'team', f.teamA, userIdOfGumbo(LATE))
+      ).deep.equals(['videographer'])
       const membership = db
         .selectFrom('memberships')
         .select('is_player')
         .where('team_id', '=', f.teamA)
-        .where('user_id', '=', LATE)
+        .where('user_id', '=', userIdOfGumbo(LATE))
       expect((await membership.executeTakeFirst())?.is_player).equals(true)
 
       // Off the roster again, they are an ordinary member, and leave.
@@ -421,17 +440,19 @@ describe('people at a team, a season and a league', function () {
         .updateTable('memberships')
         .set({ is_player: false })
         .where('team_id', '=', f.teamA)
-        .where('user_id', '=', LATE)
+        .where('user_id', '=', userIdOfGumbo(LATE))
         .execute()
       const removed = await role('DELETE', LATE, 'member', COACH)
       expect(removed.status).equals(200)
       expect(removed.body).deep.equals({
-        userId: LATE,
+        userId: userIdOfGumbo(LATE),
         roles: [],
         member: false
       })
       expect(await membership.executeTakeFirst()).equals(undefined)
-      expect(await rolesAt(db, 'team', f.teamA, LATE)).deep.equals([])
+      expect(
+        await rolesAt(db, 'team', f.teamA, userIdOfGumbo(LATE))
+      ).deep.equals([])
     })
 
     it('takes a player off the team only through its roster, never by their membership', async () => {
@@ -439,14 +460,14 @@ describe('people at a team, a season and a league', function () {
         const refused = await role('DELETE', PLAYER, 'member', actor)
         expect(refused.status).equals(409)
         expect(refused.body.message).equals(
-          'Avery Young plays for Demo Hawks, so stays a member while on its roster.'
+          'Alex Young plays for Demo Hawks, so stays a member while on its roster.'
         )
       }
       const still = await f.h.db
         .selectFrom('memberships')
         .select('is_player')
         .where('team_id', '=', f.teamA)
-        .where('user_id', '=', PLAYER)
+        .where('user_id', '=', userIdOfGumbo(PLAYER))
         .executeTakeFirst()
       expect(still?.is_player).equals(true)
       // Somebody without a say hears nothing of who plays.
@@ -458,22 +479,19 @@ describe('people at a team, a season and a league', function () {
     it('takes Songkeeper away with Scorekeeper unless it was given as well', async () => {
       const KEEPER = 208
       const db = f.h.db
-      await db
-        .insertInto('users')
-        .values({
-          id: KEEPER,
-          legacyId: `usr_people_${KEEPER}`,
-          display_name: 'Kim Keeper',
-          first_name: 'Kim',
-          last_name: 'Keeper',
-          login_enabled: true
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(KEEPER),
+        legacyId: `usr_people_${KEEPER}`,
+        display_name: 'Kevin Kiermaier',
+        first_name: 'Kevin',
+        last_name: 'Kiermaier',
+        login_enabled: true
+      })
       await db
         .insertInto('user_emails')
         .values({
           id: makeId('userEmail'),
-          user_id: KEEPER,
+          user_id: userIdOfGumbo(KEEPER),
           email: `people${KEEPER}@example.com`,
           is_primary: true,
           verified_at: new Date()
@@ -483,14 +501,17 @@ describe('people at a team, a season and a league', function () {
         .insertInto('memberships')
         .values({
           id: makeId('membership'),
-          user_id: KEEPER,
+          user_id: userIdOfGumbo(KEEPER),
           team_id: f.teamA,
           role: 'member',
           is_player: false
         })
         .execute()
       const keepsSongs = async (): Promise<boolean> =>
-        canKeepSongs(await roleScopes(db, KEEPER, false), f.teamA)
+        canKeepSongs(
+          await roleScopes(db, userIdOfGumbo(KEEPER), false),
+          f.teamA
+        )
       expect(
         (await role('PUT', KEEPER, 'scorekeeper', COACH)).body.roles
       ).deep.equals(['scorekeeper'])
@@ -519,7 +540,7 @@ describe('people at a team, a season and a league', function () {
         SCOREKEEPER
       )
       expect(down.body).deep.equals({
-        userId: SCOREKEEPER,
+        userId: userIdOfGumbo(SCOREKEEPER),
         roles: ['videographer'],
         member: true
       })
@@ -553,14 +574,14 @@ describe('people at a team, a season and a league', function () {
         SEASON_MEMBER
       )
       expect(gone.body).deep.equals({ removed: true })
-      expect(await rolesAt(f.h.db, 'team', f.teamA, SEASON_MEMBER)).deep.equals(
-        []
-      )
+      expect(
+        await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(SEASON_MEMBER))
+      ).deep.equals([])
       // The season's membership is the season's, left where it was given.
       const season = await f.h.db
         .selectFrom('season_members')
         .select('id')
-        .where('user_id', '=', SEASON_MEMBER)
+        .where('user_id', '=', userIdOfGumbo(SEASON_MEMBER))
         .where('season_id', '=', f.seasonA)
         .execute()
       expect(season).length(1)
@@ -588,7 +609,7 @@ describe('people at a team, a season and a league', function () {
       people: RosterEntry[],
       userId: number
     ): string | undefined =>
-      people.find(person => person.userId === userId)?.section
+      people.find(person => person.userId === userIdOfGumbo(userId))?.section
 
     it('lists a season’s people in the roster’s sections, the league’s with their pill', async () => {
       const answer = await call('GET', `/seasons/${f.seasonA}/people`, 101)
@@ -598,12 +619,13 @@ describe('people at a team, a season and a league', function () {
       expect(sectionOf(people, 101)).equals('admin')
       expect(sectionOf(people, PLAYER)).equals('player')
       expect(
-        people.find(person => person.userId === PLAYER)?.teamNames
+        people.find(person => person.userId === userIdOfGumbo(PLAYER))
+          ?.teamNames
       ).deep.equals(['Demo Hawks'])
       expect(sectionOf(people, GUARDIAN)).equals('family')
       expect(sectionOf(people, SEASON_MEMBER)).equals('spectator')
       const leagueMember = people.find(
-        person => person.userId === LEAGUE_MEMBER
+        person => person.userId === userIdOfGumbo(LEAGUE_MEMBER)
       )
       expect(leagueMember?.section).equals('spectator')
       expect(leagueMember?.inheritedFrom).deep.equals({
@@ -627,7 +649,8 @@ describe('people at a team, a season and a league', function () {
       expect(sectionOf(people, 101)).equals('admin')
       expect(sectionOf(people, LEAGUE_MEMBER)).equals('spectator')
       expect(
-        people.find(person => person.userId === LEAGUE_MEMBER)?.inheritedFrom
+        people.find(person => person.userId === userIdOfGumbo(LEAGUE_MEMBER))
+          ?.inheritedFrom
       ).equals(null)
       expect(sectionOf(people, PLAYER)).equals('player')
       expect(sectionOf(people, SEASON_MEMBER)).equals(undefined)
@@ -692,7 +715,11 @@ describe('people at a team, a season and a league', function () {
       userId: number,
       viewer: number
     ): Promise<{ status: number; body: PersonProfile }> =>
-      await call('GET', `/${kind}s/${id}/people/${userId}`, viewer)
+      await call(
+        'GET',
+        `/${kind}s/${id}/people/${userIdOfGumbo(userId)}`,
+        viewer
+      )
 
     it('shows a team’s profile: the guardian’s child there, and Team, one Season and League sections', async () => {
       const { status, body } = await profile('team', f.teamA, GUARDIAN, COACH)
@@ -703,15 +730,15 @@ describe('people at a team, a season and a league', function () {
         name: 'Demo Hawks'
       })
       expect(body.person).includes({
-        userId: GUARDIAN,
-        shortName: 'Pat Y',
-        fullName: 'Pat Young',
+        userId: userIdOfGumbo(GUARDIAN),
+        shortName: 'Pat N',
+        fullName: 'Pat Neshek',
         canHoldRoles: true
       })
       expect(body.guardianOf).deep.equals([
         {
-          userId: PLAYER,
-          shortName: 'Avery Y',
+          userId: userIdOfGumbo(PLAYER),
+          shortName: 'Alex Y',
           avatarUrl: null,
           teamId: f.teamA
         }
@@ -763,9 +790,9 @@ describe('people at a team, a season and a league', function () {
 
     it('finds a guardian’s child on any team of the season or the league', async () => {
       const season = await profile('season', f.seasonA, GUARDIAN, 101)
-      expect(season.body.guardianOf.map(child => child.userId)).deep.equals([
-        PLAYER
-      ])
+      expect(season.body.guardianOf.map(child => child.userId)).deep.equals(
+        [PLAYER].map(userIdOfGumbo)
+      )
       const league = await profile('league', f.leagueA, GUARDIAN, 101)
       expect(league.body.sections.map(section => section.level)).deep.equals([
         'league'
@@ -778,7 +805,7 @@ describe('people at a team, a season and a league', function () {
         .insertInto('league_members')
         .values({
           id: makeId('leagueMember'),
-          user_id: GUARDIAN,
+          user_id: userIdOfGumbo(GUARDIAN),
           league_id: f.leagueB
         })
         .execute()
@@ -816,7 +843,7 @@ describe('people at a team, a season and a league', function () {
         await f.h.db
           .selectFrom('scope_roles')
           .select('role')
-          .where('user_id', '=', userId)
+          .where('user_id', '=', userIdOfGumbo(userId))
           .where('scope_type', '=', 'team')
           .where('scope_id', '=', f.teamA)
           .execute()
@@ -828,10 +855,10 @@ describe('people at a team, a season and a league', function () {
         .selectFrom('memberships')
         .select('id')
         .where('team_id', '=', f.teamA)
-        .where('user_id', '=', userId)
+        .where('user_id', '=', userIdOfGumbo(userId))
         .executeTakeFirst()) != null
 
-    // Last in the suite: Avery leaves the Hawks.
+    // Last in the suite: Alex leaves the Hawks.
     it('lets only the team’s administrators take off a player who can sign in, with every role they hold there', async () => {
       expect((await role('PUT', PLAYER, 'scorekeeper', 101)).status).equals(200)
       expect((await role('PUT', PLAYER, 'videographer', COACH)).status).equals(
@@ -844,7 +871,11 @@ describe('people at a team, a season and a league', function () {
       const remove = async (
         actor: number
       ): Promise<{ status: number; body: any }> =>
-        await call('DELETE', `/manage/team/${f.teamA}/people/${PLAYER}`, actor)
+        await call(
+          'DELETE',
+          `/manage/team/${f.teamA}/people/${userIdOfGumbo(PLAYER)}`,
+          actor
+        )
       // Not the team's coach or assistant, nor anybody else on it.
       for (const actor of [COACH, ASSISTANT, SCOREKEEPER, MEMBER, GUARDIAN])
         expect((await remove(actor)).status, String(actor)).equals(404)
@@ -854,7 +885,7 @@ describe('people at a team, a season and a league', function () {
         .updateTable('memberships')
         .set({ role: 'manager' })
         .where('team_id', '=', f.teamA)
-        .where('user_id', '=', MEMBER)
+        .where('user_id', '=', userIdOfGumbo(MEMBER))
         .execute()
       const gone = await remove(MEMBER)
       expect(gone.status).equals(200)
@@ -865,14 +896,16 @@ describe('people at a team, a season and a league', function () {
       const roster = await call('GET', `/teams/${f.teamA}/roster`, 101)
       expect(
         (roster.body as RosterEntry[]).map(entry => entry.userId)
-      ).not.includes(PLAYER)
+      ).not.includes(userIdOfGumbo(PLAYER))
       // Their guardian still guards them; that is not the team's.
       const links = await f.h.db
         .selectFrom('user_links')
         .select('user_id')
-        .where('related_user_id', '=', PLAYER)
+        .where('related_user_id', '=', userIdOfGumbo(PLAYER))
         .execute()
-      expect(links.map(link => link.user_id)).deep.equals([GUARDIAN])
+      expect(links.map(link => link.user_id)).deep.equals(
+        [GUARDIAN].map(userIdOfGumbo)
+      )
       expect((await remove(101)).body).deep.equals({ removed: false })
     })
   })

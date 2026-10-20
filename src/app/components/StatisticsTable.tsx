@@ -6,7 +6,7 @@ import { useTheme } from '../theme/ThemeContext'
 import { FrozenNameTable } from './FrozenNameTable'
 
 export function StatisticsTable<
-  T extends { userId: number; shortName?: string }
+  T extends { userId: string; shortName?: string }
 >({
   rows,
   columns,

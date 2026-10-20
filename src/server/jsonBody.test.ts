@@ -5,6 +5,7 @@ import { expect } from 'chai'
 import express from 'express'
 import { after, before, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../common/userId'
 import { jsonBody } from './jsonBody'
 
 describe('the JSON body limit', function () {
@@ -17,7 +18,7 @@ describe('the JSON body limit', function () {
     // Signed in when the request says so, as `withActor` would have it.
     app.use((req, res, next) => {
       if (req.header('x-signed-in') != null) {
-        req.actor = { userId: 1, isAdmin: false, scopes: [] }
+        req.actor = { userId: userIdOfGumbo(1), isAdmin: false, scopes: [] }
       }
       next()
     })
@@ -76,7 +77,7 @@ describe('the JSON body limit', function () {
     const tenMiB = 4 * Math.ceil((10 * 1024 * 1024) / 3)
     for (const path of [
       '/api/v1/teams/tem_one/logo',
-      '/api/v1/teams/tem_one/players/123/avatar'
+      '/api/v1/teams/tem_one/players/usr_1111111111111111111138/avatar'
     ]) {
       expect(await put(path, tenMiB), path).equals(200)
       expect(await put(path, 15_000_000), path).equals(413)
