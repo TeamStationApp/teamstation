@@ -3,7 +3,10 @@ import { describe, it } from 'mocha'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { compareUserIds } from './userIdCompare'
-import { expectedStableApiOrder } from './userIdOrdering'
+import {
+  expectedStableApiOrder,
+  normalizeLegacyApiTies
+} from './userIdOrdering'
 import {
   identityKey,
   type Json,
@@ -11,6 +14,7 @@ import {
   type TableSnapshot,
   type UserIdSnapshot
 } from './userIdSnapshot'
+import { expectedPlaceholders } from './userIdTransforms'
 
 const teamStats = '/teams/tem_one/stats'
 const roster = '/teams/tem_one/roster'
@@ -74,7 +78,11 @@ function fixture(after: boolean): UserIdSnapshot {
     [roster]: people,
     [plays(after)]: played,
     '/unknown': [2, 1],
-    '/games/gam_one/box-score': { batting: [], pitching: [], sequence: [2, 1] }
+    '/games/gam_one/box-score': {
+      batting: [{ userId: user(2) }, { userId: user(1) }],
+      pitching: stats('outs'),
+      sequence: [2, 1]
+    }
   }
   return {
     version: 1,
@@ -139,7 +147,7 @@ describe('approved migration API ordering', function () {
     expect(result.equal, result.differences.join('\n')).equals(true)
     expect(
       result.transformations.filter(rule => rule.startsWith('ordering '))
-    ).has.length(7)
+    ).has.length(8)
     expect(before).deep.equals(original)
     // Inventory is optional in old synthetic fixtures, not inferred from C.
     delete before.apiInventory
@@ -195,6 +203,16 @@ describe('approved migration API ordering', function () {
         ;(s.api['/games/gam_one/box-score'] as JsonObject).sequence = [1, 2]
       },
       s => {
+        ;(
+          (s.api['/games/gam_one/box-score'] as JsonObject).batting as Json[]
+        ).reverse()
+      },
+      s => {
+        ;(
+          (s.api['/games/gam_one/box-score'] as JsonObject).pitching as Json[]
+        ).reverse()
+      },
+      s => {
         s.apiInventory![teamStats].itemIds.reverse()
       }
     ]
@@ -226,6 +244,95 @@ describe('approved migration API ordering', function () {
     const list = rows(chronological, plays(true))
     list.unshift(list.pop()!)
     expect(compareUserIds(fixture(false), chronological).equal).equals(false)
+  })
+
+  it('compares legacy tied rows exactly only across the explicit A to B transition', function () {
+    const before = fixture(false)
+    before.migrations = ['065radarReadings']
+    before.tables.games.rows.forEach(row => {
+      row.currentPlay = null
+    })
+    before.tables.games.columns.push('currentPlay')
+    const candidate = structuredClone(before)
+    candidate.tables.game_placeholder_guests = table([])
+    const after = expectedPlaceholders(before, candidate, [])
+    const swap = (list: Json[]): void => {
+      ;[list[1], list[2]] = [list[2], list[1]]
+    }
+    for (const path of [teamStats, teamStats + '?kind=pitching', roster]) {
+      swap(rows(after, path))
+      swap(after.apiInventory![path].itemIds)
+    }
+    for (const path of [seasonStats, seasonStats + '?kind=pitching']) {
+      const body = after.api[path] as JsonObject
+      if ((body.batting as Json[]).length > 0) swap(body.batting as Json[])
+      swap(body.pitching as Json[])
+    }
+    swap(
+      (after.api['/games/gam_one/box-score'] as JsonObject).pitching as Json[]
+    )
+    const result = compareUserIds(before, after, { allowPlaceholders: true })
+    expect(result.equal, result.differences.join('\n')).equals(true)
+    expect(
+      result.transformations.some(line => line.startsWith('legacy-ties '))
+    ).equals(true)
+    const changes: Array<(s: UserIdSnapshot) => void> = [
+      s => {
+        rows(s, teamStats)[1].h = 99
+      },
+      s => {
+        rows(s, teamStats)[1].pa = 99
+      },
+      s => {
+        rows(s, teamStats).reverse()
+        s.apiInventory![teamStats].itemIds.reverse()
+      },
+      s => {
+        rows(s, roster)[1].section = 'admin'
+      },
+      s => {
+        rows(s, roster)[1].shortName = 'Different label'
+      },
+      s => {
+        rows(s, roster)[1].inheritedFrom = 'league'
+      },
+      s => {
+        rows(s, teamStats)[1].nested = { sequence: [1, 2] }
+      },
+      s => {
+        rows(s, roster).pop()
+        s.apiInventory![roster].itemIds.pop()
+      },
+      s => {
+        rows(s, roster).push(rows(s, roster)[1])
+        s.apiInventory![roster].itemIds.push('1')
+      },
+      s => {
+        rows(s, plays(false)).reverse()
+      },
+      s => {
+        ;(
+          (s.api['/games/gam_one/box-score'] as JsonObject).batting as Json[]
+        ).reverse()
+      },
+      s => {
+        s.api['/unknown'] = [1, 2]
+      }
+    ]
+    for (const change of changes) {
+      const changed = structuredClone(after)
+      change(changed)
+      expect(
+        compareUserIds(before, changed, { allowPlaceholders: true }).equal
+      ).equals(false)
+    }
+    const restored = structuredClone(before)
+    swap(rows(restored, teamStats))
+    swap(restored.apiInventory![teamStats].itemIds)
+    expect(compareUserIds(before, restored).equal).equals(false)
+    expect(() => {
+      normalizeLegacyApiTies(fixture(true), [])
+    }).throws('numeric')
   })
 
   it('fails closed on incomplete ordering evidence and malformed rows', function () {

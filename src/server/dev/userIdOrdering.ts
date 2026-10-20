@@ -29,11 +29,33 @@ const compareText = (a: string, b: string): number =>
 
 /**
  * The approved B→C ordering change, calculated solely from B. Never sort C,
- * same-schema comparisons, box scores, or any undeclared nested collection.
+ * same-schema comparisons, box-score batting, or undeclared nested collections.
  */
 export function expectedStableApiOrder(
   before: UserIdSnapshot,
   manifest: string[]
+): void {
+  orderApiTies(before, manifest, true)
+}
+
+/**
+ * Old numeric-schema aggregate and roster queries did not define tie order.
+ * Compare exact tied-row multisets only for the explicit A→B transition.
+ * Final-schema responses and restore comparisons must never use this adapter.
+ */
+export function normalizeLegacyApiTies(
+  snapshot: UserIdSnapshot,
+  manifest: string[]
+): void {
+  if (snapshot.userIdType !== 'bigint')
+    throw new Error('Legacy tie comparison requires numeric user ids')
+  orderApiTies(snapshot, manifest, false)
+}
+
+function orderApiTies(
+  before: UserIdSnapshot,
+  manifest: string[],
+  includePlays: boolean
 ): void {
   const games = new Map(
     (before.tables.games?.rows ?? []).map(row => [identityKey(row.id), row])
@@ -79,7 +101,7 @@ export function expectedStableApiOrder(
       value.splice(0, value.length, ...rows)
       if (inventory != null) inventory.itemIds = orderedIds
       manifest.push(
-        `ordering api:${path}${suffix}: ${ids.join(',')} -> ${orderedIds.join(',')}`
+        `${includePlays ? 'ordering' : 'legacy-ties'} api:${path}${suffix}: ${ids.join(',')} -> ${orderedIds.join(',')}`
       )
     }
   }
@@ -105,6 +127,9 @@ export function expectedStableApiOrder(
       const held = object(body)
       stats(path, '.batting', held.batting, 'pa')
       stats(path, '.pitching', held.pitching, 'outs')
+    } else if (/^\/games\/[^/]+\/box-score$/.test(path)) {
+      // Pitchers use ranked workloads; batting has meaningful appearance order.
+      stats(path, '.pitching', object(body).pitching, 'outs')
     } else if (/^\/teams\/[^/]+\/roster$/.test(path)) {
       reorder(
         path,
@@ -116,7 +141,7 @@ export function expectedStableApiOrder(
           text(a.shortName).localeCompare(text(b.shortName)) === 0,
         byUser
       )
-    } else if (/^\/players\/[^/]+\/plays$/.test(path)) {
+    } else if (includePlays && /^\/players\/[^/]+\/plays$/.test(path)) {
       reorder(
         path,
         '',

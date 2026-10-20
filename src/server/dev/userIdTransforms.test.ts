@@ -475,6 +475,9 @@ describe('transport volatility allowlist', () => {
 describe('strict comparison acceptance boundaries', () => {
   it('rejects changed counts, rates, denominators and grouping even when merge transformations are allowed', () => {
     const before = mergedFixture()
+    // The combined batting/pitching envelope is a season response.
+    before.api['/seasons/sea_one/stats'] = before.api['/teams/tem_one/stats']
+    delete before.api['/teams/tem_one/stats']
     before.tables.games = {
       columns: ['id', 'currentPlay'],
       keys: ['id'],
@@ -516,7 +519,7 @@ describe('strict comparison acceptance boundaries', () => {
       }
     ]) {
       const broken = structuredClone(after)
-      change(broken.api['/teams/tem_one/stats'])
+      change(broken.api['/seasons/sea_one/stats'])
       expect(compareUserIds(before, broken, options).equal).equals(false)
     }
   })

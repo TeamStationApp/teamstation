@@ -1,5 +1,8 @@
 import { userIdOfGumbo } from '../../common/userId'
-import { expectedStableApiOrder } from './userIdOrdering'
+import {
+  expectedStableApiOrder,
+  normalizeLegacyApiTies
+} from './userIdOrdering'
 import {
   canonical,
   identityKey,
@@ -371,6 +374,12 @@ export function compareUserIds(
   } = {}
 ): Comparison {
   const transformations: string[] = []
+  const legacyTransition =
+    options.allowPlaceholders === true &&
+    before.userIdType === 'bigint' &&
+    after.userIdType === 'bigint' &&
+    !before.migrations.includes('067gameUnroster') &&
+    after.migrations.includes('067gameUnroster')
   validateNewGumboMappings(before, after)
   const ignoreNewMappingTime =
     before.tables.gumbo_ids == null && after.tables.gumbo_ids != null
@@ -395,6 +404,10 @@ export function compareUserIds(
   }
   if (before.userIdType === 'bigint' && after.userIdType === 'text')
     expectedStableApiOrder(before, transformations)
+  if (legacyTransition) {
+    normalizeLegacyApiTies(before, transformations)
+    normalizeLegacyApiTies(after, transformations)
+  }
   normalizeTransport(before, transformations)
   normalizeTransport(after, transformations)
   orderSnapshotTables(before)
