@@ -1033,3 +1033,149 @@ describe('a live game whose playlist was closed under the player', function () {
     detach()
   })
 })
+
+describe('the player’s dates, handed out as a mapping (U21)', function () {
+  const url = 'https://example.com/media/vid_example/master.m3u8'
+  const T0 = Date.parse('2026-10-19T18:00:00Z')
+  type Stubbed = Record<string, unknown>
+  let saved: Stubbed = {}
+  /** What `attachHls` asked hls.js to call, by event. */
+  let handlers: Array<[string, (event: unknown, data: unknown) => void]> = []
+
+  afterEach(function () {
+    if (saved.isSupported == null) return
+    const proto = Hls.prototype as unknown as Stubbed
+    Hls.isSupported = saved.isSupported as typeof Hls.isSupported
+    proto.loadSource = saved.loadSource
+    proto.attachMedia = saved.attachMedia
+    proto.destroy = saved.destroy
+    proto.on = saved.on
+    saved = {}
+    handlers = []
+  })
+
+  /** hls.js as if Media Source were here, keeping the instance. */
+  function withMediaSource(): void {
+    const proto = Hls.prototype as unknown as Stubbed
+    saved = {
+      isSupported: (Hls as unknown as Stubbed).isSupported,
+      loadSource: proto.loadSource,
+      attachMedia: proto.attachMedia,
+      destroy: proto.destroy,
+      on: proto.on
+    }
+    Hls.isSupported = () => true
+    proto.loadSource = () => undefined
+    proto.attachMedia = () => undefined
+    proto.destroy = () => undefined
+    const on = saved.on as (...args: unknown[]) => unknown
+    proto.on = function (
+      this: Hls,
+      event: string,
+      listener: never,
+      context: unknown
+    ) {
+      // hls.js's own controllers register with themselves as the context;
+      // `attachHls` registers with none.
+      if (context === undefined) handlers.push([event, listener])
+      return on.call(this, event, listener, context)
+    }
+  }
+  /** Calls what `attachHls` registered for `event`, as hls.js would. */
+  const fire = (event: string, data: unknown): void => {
+    for (const [name, listener] of handlers)
+      if (name === event) listener(event, data)
+  }
+  const level = (
+    fragments: Array<{
+      start: number
+      duration: number
+      programDateTime: number | null
+    }>
+  ): unknown => ({ details: { live: true, fragments } })
+
+  it('maps hls.js’s dated fragments on every load and update, and says so when there are none', function () {
+    withMediaSource()
+    const video = new FakeVideo()
+    const handed: Array<ReturnType<typeof Object> | null> = []
+    asBrowser('Google Inc.', () => {
+      const detach = attachHls(
+        video as unknown as VideoHandle,
+        url,
+        undefined,
+        {
+          wantsToPlay: () => true,
+          onWallMapping: mapping => handed.push(mapping)
+        }
+      )
+      fire(
+        Hls.Events.LEVEL_LOADED,
+        level([
+          { start: 0, duration: 4, programDateTime: T0 },
+          { start: 4, duration: 4, programDateTime: T0 + 38_000 }
+        ])
+      )
+      fire(
+        Hls.Events.LEVEL_UPDATED,
+        level([
+          { start: 0, duration: 4, programDateTime: T0 },
+          { start: 4, duration: 4, programDateTime: T0 + 38_000 },
+          { start: 8, duration: 4, programDateTime: T0 + 42_000 }
+        ])
+      )
+      fire(
+        Hls.Events.LEVEL_LOADED,
+        level([{ start: 0, duration: 4, programDateTime: null }])
+      )
+      detach()
+    })
+    expect(handed).length(3)
+    const [first, second, none] = handed as Array<{
+      wallAt: (sec: number) => number | null
+      newestWall: () => number | null
+    } | null>
+    expect(first?.wallAt(5)).equals(T0 + 39_000)
+    expect(second?.newestWall()).equals(T0 + 46_000)
+    expect(none).equals(null)
+  })
+
+  it('maps Safari’s start date, again as its seekable end grows, and says so without one', function () {
+    const video = new FakeVideo() as FakeVideo & { getStartDate?: () => Date }
+    let date = Number.NaN
+    video.getStartDate = () => new Date(date)
+    const handed: Array<{
+      wallAt: (sec: number) => number | null
+      newestWall: () => number | null
+    } | null> = []
+    asBrowser(APPLE_VENDOR, () => {
+      const detach = attachHls(
+        video as unknown as VideoHandle,
+        url,
+        undefined,
+        {
+          wantsToPlay: () => true,
+          onWallMapping: mapping => handed.push(mapping)
+        }
+      )
+      // No date yet and no metadata: nothing to say.
+      video.emit('progress')
+      expect(handed).deep.equals([])
+      video.readyState = 1
+      video.emit('loadedmetadata')
+      expect(handed).deep.equals([null])
+      date = T0
+      video.seekable = { length: 1, start: () => 0, end: () => 30 }
+      video.emit('durationchange')
+      // The same end again is no news.
+      video.emit('progress')
+      video.seekable = { length: 1, start: () => 0, end: () => 34 }
+      video.emit('progress')
+      detach()
+    })
+    expect(handed).length(3)
+    expect(handed[1]?.wallAt(10)).equals(T0 + 10_000)
+    expect(handed[2]?.newestWall()).equals(T0 + 34_000)
+    // Detached, it listens to nothing more.
+    expect(video.attached()).equals(0)
+  })
+})

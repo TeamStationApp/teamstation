@@ -34,6 +34,7 @@ import {
 } from './scoreboardOverlay/GridScoreboard'
 import type { Size } from './scoreboardOverlay/overlayLayout'
 import { useScreenInsets } from './useScreenInsets'
+import type { WallMapping } from './wallMapping'
 
 export type MultiCamViewProps = MultiCamProps
 
@@ -133,7 +134,8 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     width,
     height,
     debug,
-    rects: layout.tiles
+    rects: layout.tiles,
+    fallbackMapping: board.mappingOf
   })
   board.follow(mc)
   const {
@@ -331,6 +333,10 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           waiting={tileWaiting(video.id)}
           unplaceable={video.startAt == null}
           takeRef={takeElement(video.id)}
+          onWallMapping={mc.takeMapping(video.id)}
+          onSoundHeld={() => {
+            mc.soundHeld(video.id)
+          }}
           touchAction={touchAction}
           heard={video.id === mc.heardId}
           nameTop={board.nameTop(index, mc.rects[index], mc.zoomed)}
@@ -462,6 +468,10 @@ function Tile(props: {
   /** Its media is not there — the server answered, and there is nothing to play. */
   unavailable: boolean
   takeRef: (node: TileHandle | null) => void
+  /** Where its player hands its own wall-clock mapping. */
+  onWallMapping: (mapping: WallMapping | null) => void
+  /** Its player was left playing silent: its sound waits for a tap. */
+  onSoundHeld: () => void
   /** `pan-y` while a swipe should reach the page and hide Safari's bars. */
   touchAction: 'none' | 'pan-y'
   /** True while this is the one being heard. */
@@ -541,7 +551,9 @@ function Tile(props: {
       onGiveUp,
       wantsToPlay,
       buffer,
-      isLive
+      isLive,
+      onWallMapping,
+      onSoundHeld
     } = props
     if (node == null || url == null) return
     const toSec = onAttaching(videoId)
@@ -551,7 +563,14 @@ function Tile(props: {
       () => {
         onGiveUp(videoId)
       },
-      { wantsToPlay, buffer, isLive }
+      {
+        wantsToPlay,
+        buffer,
+        isLive,
+        onWallMapping,
+        onSoundHeld,
+        muted: () => mutedNow.current
+      }
     )
     const start = (): void => {
       onAttached(videoId, asTile(node), toSec)

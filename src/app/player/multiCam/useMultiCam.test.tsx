@@ -11,6 +11,11 @@ import {
 import { ThemeProvider } from '../../theme/ThemeContext'
 import { SLOW_RATE } from '../slowMotion'
 import type { VideoEventName } from '../videoHandle'
+import {
+  fromFragments,
+  MAPPING_WAIT_MS,
+  type WallMapping
+} from '../wallMapping'
 import { JOIN_LEAD_SEC } from './align'
 import { tileRects } from './layout'
 import {
@@ -909,6 +914,39 @@ describe('useMultiCam on live angles', function () {
     expect(asked.filter(one => one === 'B').length).equals(1)
   })
 
+  it('asks once for each address, and waits once for a timeline that never comes', async function () {
+    this.timeout(8000)
+    const asked: string[] = []
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.playback = async (id: string) => {
+      asked.push(id)
+      return {
+        videoId: id,
+        storage: 'spaces',
+        url: `https://media/${id}.m3u8`,
+        expiresAt: null,
+        durationSec: null,
+        unavailable: false
+      }
+    }
+    const opened = Date.now()
+    // A's timeline is in; B's and C's are never fetched.
+    const { mc } = await grid(
+      {
+        client,
+        videos: [video('A', 0), video('B', 0), video('C', 0)],
+        order: ['A', 'B', 'C']
+      },
+      { fallbackMapping: id => (id === 'A' ? null : undefined) }
+    )
+    await until(() => mc().urls.A != null, 1000)
+    expect(mc().urls.B).equals(undefined)
+    await until(() => mc().urls.B != null && mc().urls.C != null, 4000)
+    // Both after the one wait, not one wait after the other.
+    expect(Date.now() - opened).lessThan(MAPPING_WAIT_MS + 1000)
+    expect(asked.sort()).deep.equals(['A', 'B', 'C'])
+  })
+
   it('waits a moment for a tile with no picture yet, and then opens without it', async function () {
     this.timeout(8000)
     const { mc } = await grid(live, {}, tiles => {
@@ -1213,5 +1251,59 @@ describe('useMultiCam buffering', function () {
     tiles.B.currentTime = 62
     await ticks(1)
     expect(tiles.B.currentTime).equals(62)
+  })
+})
+
+describe('useMultiCam on each tile’s own dates (U22)', function () {
+  it('lines two angles up by their program date-times, not by their starts', async function () {
+    // Both rows say the same start, but their playlists begin a minute
+    // apart on the wall: A's first fragment was captured at T0 + 60 s.
+    const { mc, tiles } = await grid({
+      videos: [video('A', 0), video('B', 0)],
+      order: ['A', 'B']
+    })
+    const dated = (wall0: number): WallMapping =>
+      fromFragments(
+        Array.from({ length: 150 }, (unused, index) => ({
+          start: index * 4,
+          duration: 4,
+          programDateTime: wall0 + index * 4000
+        }))
+      )
+    await act(async () => {
+      mc().takeMapping('A')(dated(T0 + 60_000))
+      mc().takeMapping('B')(dated(T0))
+    })
+    await act(async () => {
+      mc().goTo(T0 + 180_000)
+    })
+    expect(tiles.A.currentTime).closeTo(120, 0.01)
+    expect(tiles.B.currentTime).closeTo(180, 0.01)
+    // Without dates a tile falls back to its start, as before.
+    await act(async () => {
+      mc().takeMapping('A')(null)
+      mc().goTo(T0 + 200_000)
+    })
+    expect(tiles.A.currentTime).closeTo(200, 0.01)
+    expect(tiles.B.currentTime).closeTo(200, 0.01)
+  })
+
+  it('falls back to the server’s wall timeline for a tile with no dates', async function () {
+    const { mc, tiles } = await grid(
+      { videos: [video('A', 0), video('B', 0)], order: ['A', 'B'] },
+      {
+        fallbackMapping: id =>
+          id === 'B'
+            ? fromFragments([
+                { start: 0, duration: 600, programDateTime: T0 + 30_000 }
+              ])
+            : null
+      }
+    )
+    await act(async () => {
+      mc().goTo(T0 + 100_000)
+    })
+    expect(tiles.A.currentTime).closeTo(100, 0.01)
+    expect(tiles.B.currentTime).closeTo(70, 0.01)
   })
 })

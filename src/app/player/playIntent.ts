@@ -1,3 +1,5 @@
+import type { WallMapping } from './wallMapping'
+
 /**
  * What a caller tells `attachHls` about the player it hands over — shared by
  * the browser's `attachHls.ts` and the phone's `attachHls.native.ts`, which
@@ -53,6 +55,14 @@ export interface PlayIntent {
   isLive?: () => boolean | Promise<boolean>
   /** False for a highlight link or an explicitly restored playback position. */
   startAtLiveEdge?: boolean
+  /**
+   * The player's own mapping onto the wall clock, each time it changes: from
+   * the playlist's program date-times on hls.js, from Safari's start date on
+   * its own player. Null once it is clear no dates are coming — a recording
+   * without them, or a phone, whose players read none — so the owner falls
+   * back to the server's wall timeline or the start time (`wallMapping.ts`).
+   */
+  onWallMapping?: (mapping: WallMapping | null) => void
   /**
    * This player was left playing silent because its sound needs a tap here:
    * WebKit's own player, started silently to its first frame and wanted

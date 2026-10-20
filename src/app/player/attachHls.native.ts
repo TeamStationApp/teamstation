@@ -56,6 +56,10 @@ export function attachHls(
     return () => undefined
   }
 
+  // A phone's player reads no dates from the stream: the owner places it by
+  // the server's wall timeline, or its start (`wallMapping.ts`).
+  intent?.onWallMapping?.(null)
+
   const patience = 5 * 60_000
   /** After this many, the address is the suspect whatever the error said. */
   const MAX_RELOADS = 3

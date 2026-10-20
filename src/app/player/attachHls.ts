@@ -9,6 +9,12 @@ import { BEHIND_SEC } from './multiCam/buffering'
 import type { BufferControl, PlayIntent } from './playIntent'
 import { shouldResumeAfterRecovery } from './resumeAfterRecovery'
 import type { VideoHandle } from './videoHandle'
+import {
+  type DatedFragment,
+  fromFragments,
+  fromStartDate,
+  type WallMapping
+} from './wallMapping'
 
 /**
  * Points a `<video>` at an HLS playlist, whichever way this browser needs.
@@ -143,14 +149,93 @@ export interface NativeHlsVideo {
   pause: () => void
   removeAttribute: (name: 'src') => void
   addEventListener: (
-    type: 'error' | 'canplay' | 'loadedmetadata' | 'play' | 'pause',
+    type: NativeHlsEvent,
     listener: () => void,
     options?: { once?: boolean }
   ) => void
-  removeEventListener: (
-    type: 'error' | 'canplay' | 'loadedmetadata' | 'play' | 'pause',
-    listener: () => void
-  ) => void
+  removeEventListener: (type: NativeHlsEvent, listener: () => void) => void
+  /**
+   * Safari's wall time for the start of the media: the first fragment's
+   * program date-time, or NaN for a playlist without one.
+   */
+  getStartDate?: () => Date
+}
+
+type NativeHlsEvent =
+  | 'error'
+  | 'canplay'
+  | 'loadedmetadata'
+  | 'play'
+  | 'pause'
+  | 'durationchange'
+  | 'progress'
+
+/**
+ * A playlist's fragments as a wall-clock mapping, when every one of them is
+ * dated; null otherwise.
+ */
+export function mappingOfFragments(
+  fragments: ReadonlyArray<{
+    start: number
+    duration: number
+    programDateTime?: number | null
+  }>
+): WallMapping | null {
+  const dated: DatedFragment[] = []
+  for (const frag of fragments) {
+    const date = frag.programDateTime
+    if (date == null || !Number.isFinite(date)) return null
+    dated.push({
+      start: frag.start,
+      duration: frag.duration,
+      programDateTime: date
+    })
+  }
+  return dated.length === 0 ? null : fromFragments(dated)
+}
+
+/** The end of what a native player can seek to, or null for nothing yet. */
+function seekableEndOf(video: NativeHlsVideo): number | null {
+  const { seekable } = video
+  return seekable.length > 0 ? seekable.end(seekable.length - 1) : null
+}
+
+/**
+ * Hands Safari's mapping out as it grows: once it has metadata, and again
+ * whenever the seekable end moves on, which is what a live join waits for.
+ * Null once, when the playlist turns out to carry no dates.
+ */
+function reportStartDate(
+  video: NativeHlsVideo,
+  report: (mapping: WallMapping | null) => void
+): () => void {
+  let start: number | null = null
+  let end: number | null = null
+  let saidNone = false
+  const look = (): void => {
+    const date = video.getStartDate?.().getTime()
+    if (date == null || !Number.isFinite(date)) {
+      if (!saidNone && video.readyState >= 1) {
+        saidNone = true
+        report(null)
+      }
+      return
+    }
+    const now = seekableEndOf(video)
+    if (date === start && (now ?? 0) <= (end ?? 0)) return
+    start = date
+    end = now
+    report(fromStartDate(date, () => seekableEndOf(video)))
+  }
+  const events: NativeHlsEvent[] = [
+    'loadedmetadata',
+    'durationchange',
+    'progress'
+  ]
+  for (const name of events) video.addEventListener(name, look)
+  return () => {
+    for (const name of events) video.removeEventListener(name, look)
+  }
 }
 
 /** The clock the native path waits on, replaceable in a test. */
@@ -278,6 +363,9 @@ export function attachNativeHls(
   video.addEventListener('pause', onPause)
   video.addEventListener('canplay', recovered)
   video.addEventListener('error', onError)
+  const onWallMapping = intent?.onWallMapping
+  const stopDates =
+    onWallMapping == null ? undefined : reportStartDate(video, onWallMapping)
   video.src = url
   const stopPriming =
     intent?.buffer == null
@@ -305,6 +393,7 @@ export function attachNativeHls(
 
   return () => {
     stopPriming?.()
+    stopDates?.()
     stopWatching?.()
     if (timer != null) clock.clearTimeout(timer)
     timer = undefined
@@ -563,6 +652,18 @@ function attachHlsJs(
             hls.loadSource(url)
           }
         })
+  // The playlist's dates, each time it is read: a live one grows.
+  const onWallMapping = intent?.onWallMapping
+  if (onWallMapping != null) {
+    const dates = (
+      _event: unknown,
+      data: { details: { fragments: Parameters<typeof mappingOfFragments>[0] } }
+    ): void => {
+      onWallMapping(mappingOfFragments(data.details.fragments))
+    }
+    hls.on(Hls.Events.LEVEL_LOADED, dates)
+    hls.on(Hls.Events.LEVEL_UPDATED, dates)
+  }
   hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
     const { details } = data
     if (details.live) return

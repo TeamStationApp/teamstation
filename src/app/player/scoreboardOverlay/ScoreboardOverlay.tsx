@@ -1,8 +1,9 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { type LayoutChangeEvent, StyleSheet, View } from 'react-native'
 
 import type { BoardStep, TeamStationClient } from '../../../common/api'
 import { SCOREBOARD_BOARD_SIZE } from '../../../common/scoreboard'
+import type { WallTimeline } from '../../../common/wallTimeline'
 import { ScoreboardBoard } from '../../scoreboard/ScoreboardBoard'
 import type { Rect } from '../controlGeometry'
 import type { VideoHandle } from '../videoHandle'
@@ -115,6 +116,8 @@ export interface PictureScoreboardProps {
   /** The picture inside the player view, less any black bars. */
   picture: Rect
   videoRef: React.RefObject<VideoHandle | null>
+  /** Told the video's wall timeline each time it changes, for the player. */
+  onTimeline?: (timeline: WallTimeline | null) => void
 }
 
 /**
@@ -137,6 +140,10 @@ export function PictureScoreboard(
     props
   const overlay = useScoreboardOverlay(client, gameId, videoId)
   const timeline = useWallTimeline(client, videoId, live)
+  const { onTimeline } = props
+  useEffect(() => {
+    onTimeline?.(timeline)
+  }, [onTimeline, timeline])
   const wallNow = (): number | null => {
     const video = videoRef.current
     if (video == null || timeline == null) return null

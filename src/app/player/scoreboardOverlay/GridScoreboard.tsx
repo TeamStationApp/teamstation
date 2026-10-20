@@ -7,6 +7,7 @@ import { SCOREBOARD_BOARD_SIZE } from '../../../common/scoreboard'
 import { aspectOf, MAX_TILES, type Rect } from '../multiCam/layout'
 import type { PlayerLayout } from '../multiCam/playerLayout'
 import type { MultiCam, MultiCamProps } from '../multiCam/useMultiCam'
+import { fromAnchors, type WallMapping } from '../wallMapping'
 import { stepsInFrame, zeroedStep } from './boardAt'
 import { keptBoard } from './keptBoard'
 import { LineScoreBox } from './LineScoreBox'
@@ -58,6 +59,11 @@ export interface GridBoard {
    * at the wall time of its master tile's frame.
    */
   follow: (grid: GridClock) => void
+  /**
+   * An angle's mapping onto the wall clock from the server's wall timeline;
+   * null without anchors, undefined until the timeline has been fetched.
+   */
+  mappingOf: (videoId: string) => WallMapping | null | undefined
   /**
    * Where a tile's name goes, in its own coordinates, while the board is
    * drawn over that tile (sideways), so it sits just below the full board;
@@ -115,6 +121,8 @@ export function useGridBoard(
   )
   const shows = settings?.show === true
   const timelines = useWallTimelines(props.client, angles)
+  const timelinesRef = useRef(timelines)
+  timelinesRef.current = timelines
   const starts = angles
     .map(angle => windowStart(timelines[angle.id] ?? null))
     .filter(start => start != null)
@@ -220,6 +228,13 @@ export function useGridBoard(
     handleNaturalSize: measured,
     follow: mc => {
       grid.current = mc
+    },
+    mappingOf: id => {
+      const timeline = timelinesRef.current[id]
+      if (timeline == null) return undefined
+      return timeline.anchors.length === 0
+        ? null
+        : fromAnchors(timeline.anchors)
     },
     nameTop: (index, rect, zoomed, safe) => {
       if (!landscape || !hasBoard || settings == null || rect == null)

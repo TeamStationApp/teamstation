@@ -401,3 +401,21 @@ describe('a phone watching a live game whose camera is away', function () {
     )
   })
 })
+
+describe('a phone’s player and the wall clock (U23)', function () {
+  it('says at once that it reads no dates, so its owner places it otherwise', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    const said: unknown[] = []
+    const detach = attachHls(
+      handle,
+      'https://media.example.test/v1/index.m3u8',
+      undefined,
+      {
+        wantsToPlay: () => true,
+        onWallMapping: mapping => said.push(mapping)
+      }
+    )
+    expect(said).deep.equals([null])
+    detach()
+  })
+})

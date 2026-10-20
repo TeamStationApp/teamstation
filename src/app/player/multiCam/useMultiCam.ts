@@ -14,14 +14,16 @@ import { livePlaybackRetryDelay } from '../liveRejoin'
 import type { BufferControl, PlayIntent } from '../playIntent'
 import { SLOW_RATE } from '../slowMotion'
 import { useKeyboardShortcuts } from '../useKeyboardShortcuts'
-import { HAVE_CURRENT_DATA } from '../videoHandle'
+import { HAVE_CURRENT_DATA, seekableEndOf } from '../videoHandle'
 import {
+  type AngleVideo,
   placedAlone,
   secondsAt,
   wallAt,
   type Window,
   windowOf
 } from '../wallClock'
+import { MAPPING_WAIT_MS, type WallMapping } from '../wallMapping'
 import {
   type AngleZone,
   angleZoneFor,
@@ -140,6 +142,13 @@ export interface MultiCamOptions {
    * address yet, after so many asks; undefined to stop. Tests shorten it.
    */
   liveRetryDelay?: (asks: number) => number | undefined
+  /**
+   * A tile's mapping onto the wall clock when its player has none of its own:
+   * the server's wall timeline for the video (`GridScoreboard`). Without
+   * either, its start time places it. Undefined while the timeline is still
+   * being fetched.
+   */
+  fallbackMapping?: (videoId: string) => WallMapping | null | undefined
 }
 
 /**
@@ -284,6 +293,8 @@ export interface MultiCam {
   /** What the view wants each tile to be doing, for the source's recovery. */
   intents: { current: Map<string, boolean> }
   takeElement: (id: string) => (node: TileHandle | null) => void
+  /** Where a tile's player hands its own wall-clock mapping (`PlayIntent`). */
+  takeMapping: (id: string) => (mapping: WallMapping | null) => void
   attaching: (id: string) => number | null
   attached: (id: string, element: TileHandle, toSec: number | null) => void
   askAgain: (videoId: string) => void
@@ -354,20 +365,67 @@ export function useMultiCam(
     height,
     debug = false,
     beforeShuffle,
-    liveRetryDelay = livePlaybackRetryDelay
+    liveRetryDelay = livePlaybackRetryDelay,
+    fallbackMapping
   } = options
+  /** Each tile's own mapping, from its player; null when it has none. */
+  const tileMappings = useRef(new Map<string, WallMapping | null>())
+  const fallbackRef = useRef(fallbackMapping)
+  fallbackRef.current = fallbackMapping
+  /** How far a tile's player can reach, for its newest footage. */
+  const seekableEndRef = useRef<(id: string) => number | null>(() => null)
+  /**
+   * The best mapping a tile has now: the server's wall timeline, then its
+   * player's own.
+   *
+   * The timeline is placed by the frames' own wall clocks, across a reconnect
+   * too. A playlist's program dates are when its segments were written: 4–5 s
+   * after their pictures on a live ingest, and later still after a camera
+   * stalled. A grid placed by them drew every board step that far ahead of its
+   * picture, and two angles out of step by the stall. Its newest footage is
+   * the timeline's wall time at what the player can reach.
+   */
+  const mappingOf = (id: string): WallMapping | null => {
+    const served = fallbackRef.current?.(id) ?? null
+    if (served == null) return tileMappings.current.get(id) ?? null
+    return {
+      ...served,
+      newestWall: () => {
+        const end = seekableEndRef.current(id)
+        return (end == null ? null : served.wallAt(end)) ?? served.newestWall()
+      }
+    }
+  }
+  const mappingOfRef = useRef(mappingOf)
+  mappingOfRef.current = mappingOf
+  const takeMapping = useMemo(() => {
+    const handed = new Map<string, (mapping: WallMapping | null) => void>()
+    return (id: string) => {
+      let take = handed.get(id)
+      if (take == null) {
+        take = mapping => {
+          tileMappings.current.set(id, mapping)
+        }
+        handed.set(id, take)
+      }
+      return take
+    }
+  }, [])
 
-  const chosen = useMemo(
-    () =>
-      // A lone angle with no start of its own plays on its own media time.
-      placedAlone(
-        order
-          .map(id => videos.find(video => video.id === id))
-          .filter((video): video is VideoSummary => video != null)
-          .slice(0, MAX_TILES)
-      ),
-    [order, videos]
-  )
+  const chosen = useMemo(() => {
+    const listed = order
+      .map(id => videos.find(video => video.id === id))
+      .filter((video): video is VideoSummary => video != null)
+      .slice(0, MAX_TILES)
+    // Each placed by its best mapping onto the wall clock, read afresh at
+    // every conversion (`wallClock.ts`). A recording with no start has none:
+    // alone it plays on its own media time, beside others it stays unplaced.
+    return placedAlone(listed).map((video, index): VideoSummary & AngleVideo =>
+      listed[index].startAt == null
+        ? video
+        : { ...video, clock: () => mappingOfRef.current(video.id) }
+    )
+  }, [order, videos])
   const names = useMemo(() => {
     const labels = angleLabels(
       videos.map(video => ({
@@ -431,6 +489,10 @@ export function useMultiCam(
   const frames = useRef(new Map<string, number>())
   /** When this view last moved each tile, so its own silence is forgiven. */
   const seekedAt = useRef(new Map<string, number>())
+  seekableEndRef.current = id => {
+    const element = elements.current.get(id)
+    return element == null ? null : seekableEndOf(element)
+  }
   /** Tiles that have had pictures at some point, for telling a stall apart. */
   const everStarted = useRef(new Set<string>())
   /**
@@ -587,26 +649,73 @@ export function useMultiCam(
     setAtWallMs(window.fromMs)
   }, [chosen])
 
+  /** Those waiting for an angle's wall timeline, by id. */
+  const timelineWaiters = useRef(new Map<string, Set<() => void>>())
+  /** Settles once the angle's wall timeline has answered, or after a wait. */
+  const timelineAnswered = useCallback(async (id: string): Promise<void> => {
+    if (fallbackRef.current == null || fallbackRef.current(id) !== undefined)
+      return
+    await new Promise<void>(resolve => {
+      const waiters = timelineWaiters.current.get(id) ?? new Set()
+      timelineWaiters.current.set(id, waiters)
+      const done = (): void => {
+        clearTimeout(timer)
+        waiters.delete(done)
+        resolve()
+      }
+      const timer = setTimeout(done, MAPPING_WAIT_MS)
+      waiters.add(done)
+    })
+  }, [])
+  // A timeline that arrives renders the grid again.
+  useEffect(() => {
+    for (const [id, waiters] of timelineWaiters.current)
+      if (fallbackRef.current?.(id) !== undefined)
+        for (const done of [...waiters]) done()
+  })
+
   // Where to play each angle from. One request each, which is the same
   // membership check the single player makes, and the token it hands back
   // lasts six hours — longer than any game.
+  //
+  // A tile is handed its address only once the server's wall timeline has
+  // answered, or `MAPPING_WAIT_MS` has passed, as the videos page's own
+  // landing waits. It is placed the moment its source attaches, and placed
+  // by its start instead — seconds off on a live ingest — it stayed there:
+  // alone it is the master, and nothing moves it later.
+  //
+  // Each is asked for once, whatever else renders meanwhile: an angle given
+  // its address used to ask again for every one still waiting, and start
+  // each one's wait for its timeline over.
+  const asking = useRef(new Map<string, TeamStationClient>())
   useEffect(() => {
-    let live = true
+    const held = asking.current
+    return () => {
+      held.clear()
+    }
+  }, [])
+  useEffect(() => {
     for (const video of chosen) {
-      if (urls[video.id] !== undefined) continue
+      const id = video.id
+      if (urls[id] !== undefined || asking.current.get(id) === client) continue
+      asking.current.set(id, client)
+      // Only the newest ask's answer, and none once the grid has gone.
+      const answer = (url: string | null): void => {
+        if (asking.current.get(id) !== client) return
+        asking.current.delete(id)
+        setUrls(current => ({ ...current, [id]: url }))
+      }
       client
-        .playback(video.id)
-        .then(found => {
-          if (live) setUrls(current => ({ ...current, [video.id]: found.url }))
+        .playback(id)
+        .then(async found => {
+          await timelineAnswered(id)
+          answer(found.url)
         })
         .catch(() => {
-          if (live) setUrls(current => ({ ...current, [video.id]: null }))
+          answer(null)
         })
     }
-    return () => {
-      live = false
-    }
-  }, [chosen, client, urls])
+  }, [chosen, client, timelineAnswered, urls])
 
   // A live angle is listed the moment its stream starts publishing, a few
   // seconds before its first segment is written, and until then `playback`
@@ -2059,6 +2168,7 @@ export function useMultiCam(
     beginSlow,
     endSlow,
     runZone,
+    takeMapping,
     pressStart,
     pressMove,
     pressEnd,

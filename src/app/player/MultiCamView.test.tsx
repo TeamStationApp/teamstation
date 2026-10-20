@@ -96,8 +96,12 @@ async function grid(options: {
   single?: { x: number; y: number; height: number }
   /** The game's line score; none, as for a game with no events, by default. */
   lines?: LineScoreStep[]
+  /** The angle heard; b by default. */
+  audioId?: string
   /** Told the moment the grid had reached as it goes. */
   onGone?: (atWallMs: number | null) => void
+  /** The moment the grid opens on. */
+  atMs?: number
 }): Promise<ReturnType<typeof overlayServer>> {
   await windowSize(options.width, options.height)
   const server = overlayServer()
@@ -158,8 +162,9 @@ async function grid(options: {
         gameId={options.gameId}
         videos={videos}
         order={order}
-        audioId="b"
+        audioId={options.audioId ?? 'b'}
         zoomedId={options.zoomedId ?? null}
+        atMs={options.atMs}
         onChange={() => undefined}
         onClose={() => undefined}
         onGone={atWallMs => options.onGone?.(atWallMs)}
@@ -222,7 +227,7 @@ function playingIs(playing: boolean): void {
     })
 }
 
-describe('the grid going', function () {
+describe('the grid coming and going', function () {
   afterEach(unmount)
 
   it("says the picture's own moment as it goes, not the clock's", async function () {
@@ -237,8 +242,68 @@ describe('the grid going', function () {
     playAt(20)
     playingIs(true)
     await unmount()
-    // The heard angle, b, 20 s in.
-    expect(gone).deep.equals([OVERLAY_T0 + 20_000])
+    // The heard angle, b, 20 s in, by its own timeline.
+    expect(gone).deep.equals([OVERLAY_T0 + 110_000])
+  })
+
+  it('opens a tile on the moment by its timeline, though its address came first', async function () {
+    // Every position a player is sent to, by element.
+    const sent = new Map<HTMLMediaElement, number[]>()
+    const time = Object.getOwnPropertyDescriptor(
+      window.HTMLMediaElement.prototype,
+      'currentTime'
+    )!
+    Object.defineProperty(window.HTMLMediaElement.prototype, 'currentTime', {
+      configurable: true,
+      get(this: HTMLMediaElement) {
+        return sent.get(this)?.at(-1) ?? 0
+      },
+      set(this: HTMLMediaElement, value: number) {
+        sent.set(this, [...(sent.get(this) ?? []), value])
+      }
+    })
+    try {
+      let answer = (): void => undefined
+      await grid({
+        width: 1280,
+        height: 720,
+        gameId: 'g1',
+        playable: true,
+        ids: ['b'],
+        audioId: 'b',
+        atMs: OVERLAY_T0 + 120_000,
+        hold: {
+          id: 'b',
+          until: new Promise(resolve => {
+            answer = resolve
+          })
+        }
+      })
+      // The address is in; the timeline is not.
+      expect(document.querySelectorAll('video')).length(1)
+      await act(async () => {
+        answer()
+      })
+      await settle(60)
+      const [video] = document.querySelectorAll('video')
+      await act(async () => {
+        Object.defineProperty(video, 'readyState', {
+          configurable: true,
+          value: 1
+        })
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      })
+      // b's frames are a minute and a half later than its start says: two
+      // minutes in on the wall is 30 s into it, not 120 s.
+      expect(sent.get(video)?.at(-1)).closeTo(30, 0.01)
+      expect(sent.get(video) ?? []).not.include(120)
+    } finally {
+      Object.defineProperty(
+        window.HTMLMediaElement.prototype,
+        'currentTime',
+        time
+      )
+    }
   })
 })
 
@@ -350,12 +415,15 @@ describe('the board over the grid (C3)', function () {
       }
     })
     try {
+      // Heard on a, which is recording from the take's start: b's own
+      // timeline puts its first picture a minute and a half in.
       await grid({
         width: 402,
         height: 874,
         gameId: 'g1',
         steps: STEPS,
-        playable: true
+        playable: true,
+        audioId: 'a'
       })
       playAt(20)
       await act(async () => {

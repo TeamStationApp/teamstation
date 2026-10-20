@@ -48,6 +48,7 @@ import type { Size } from './scoreboardOverlay/overlayLayout'
 import { useScreenInsets } from './useScreenInsets'
 import type { VideoHandle } from './videoHandle'
 import { VideoView } from './VideoView'
+import type { WallMapping } from './wallMapping'
 
 export type MultiCamViewProps = MultiCamProps
 
@@ -186,7 +187,10 @@ function MultiCamGrid(
     rects: layout.tiles,
     // The others slide aside rather than jump when a dragged tile changes
     // the place it would land in.
-    beforeShuffle: shuffle
+    beforeShuffle: shuffle,
+    // A phone's players read no dates: each tile is placed by its video's
+    // wall timeline, where the server has one.
+    fallbackMapping: board.mappingOf
   })
   board.follow(mc)
   wallNowRef.current = mc.wallNow
@@ -297,6 +301,7 @@ function MultiCamGrid(
             waiting={tileWaiting(video.id)}
             unplaceable={video.startAt == null}
             takeRef={takeElement(video.id)}
+            onWallMapping={mc.takeMapping(video.id)}
             heard={video.id === mc.heardId}
             nameTop={board.nameTop(index, mc.rects[index], mc.zoomed, safe)}
             nameClear={clearOf(mc.shownRects[index], safe)}
@@ -401,6 +406,8 @@ function Tile(props: {
   waiting: boolean
   unplaceable: boolean
   takeRef: (node: TileHandle | null) => void
+  /** Where its player says it has no dates of its own (`PlayIntent`). */
+  onWallMapping: (mapping: WallMapping | null) => void
   heard: boolean
   /** Where its name goes, below the grid's board; at the top otherwise. */
   nameTop?: number
@@ -456,7 +463,8 @@ function Tile(props: {
   // This tile's own source, attached when it has one and detached with it.
   // The play intent is the grid's, which pauses tiles itself.
   useEffect(() => {
-    const { onAttaching, onAttached, onGiveUp, wantsToPlay } = props
+    const { onAttaching, onAttached, onGiveUp, wantsToPlay, onWallMapping } =
+      props
     if (handle == null || url == null) return
     const toSec = onAttaching(videoId)
     const detach = attachHls(
@@ -465,7 +473,7 @@ function Tile(props: {
       () => {
         onGiveUp(videoId)
       },
-      { wantsToPlay }
+      { wantsToPlay, onWallMapping }
     )
     const start = (): void => {
       onAttached(videoId, handle, toSec)
