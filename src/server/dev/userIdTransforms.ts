@@ -334,7 +334,9 @@ export function expectedPlaceholders(
           role: 'player',
           section: 'player',
           staffRoles: [],
-          inheritedFrom: null
+          inheritedFrom: null,
+          avatarUrl: null,
+          walkUpSong: null
         })
       }
     }
@@ -445,6 +447,10 @@ export function expectedMergedApi(
   }
   const round = (v: number, n = 3): number => Math.round(v * 10 ** n) / 10 ** n
   const regroup = (values: Json[], kind: string): Json[] => {
+    // Baselines may already resolve merges. Preserve their exact labels and
+    // endpoint-specific ordering when no identity actually needs regrouping.
+    if (values.every(raw => resolve(record(raw).userId) === record(raw).userId))
+      return values
     const grouped = new Map<string, JsonObject[]>()
     for (const raw of values) {
       const row = record(raw)
@@ -560,12 +566,20 @@ export function expectedMergedApi(
       else visit(child)
     }
   }
-  for (const [path, body] of Object.entries(snapshot.api))
+  for (const [path, body] of Object.entries(snapshot.api)) {
+    if (/^\/teams\/[^/]+\/stats(?:\?|$)/.test(path) && Array.isArray(body)) {
+      snapshot.api[path] = regroup(
+        body,
+        path.includes('kind=pitching') ? 'pitching' : 'batting'
+      )
+      continue
+    }
     if (
       /^\/(?:teams|seasons)\/[^/]+\/stats(?:\?|$)/.test(path) ||
       /^\/games\/[^/]+\/box-score$/.test(path)
     )
       visit(body)
+  }
 }
 
 /** Only signing timestamps/signatures on the enumerated media response fields vary. */
@@ -677,5 +691,68 @@ export function validateNewGumboMappings(
       canonical(['created_at', 'gumbo_id', 'user_id'])
     )
       throw new Error('Unexpected initial gumbo fields')
+  }
+}
+
+/** A rebuild replaces storage rows, never scoring identities or business values. */
+export function expectedRebuiltStats(
+  before: UserIdSnapshot,
+  after: UserIdSnapshot,
+  manifest: string[]
+): void {
+  if (
+    before.userIdType !== 'text' ||
+    after.userIdType !== 'text' ||
+    canonical(before.migrations) !== canonical(after.migrations)
+  )
+    throw new Error('Stats rebuild comparison requires the same final schema')
+  const start = Date.parse(before.captureFinishedAt ?? '')
+  const end = Date.parse(after.captureStartedAt ?? '')
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end)
+    throw new Error('Missing or invalid rebuild time window')
+  const indexed = (snapshot: UserIdSnapshot): Map<string, JsonObject> => {
+    const rows = snapshot.tables.game_player_stats?.rows
+    if (rows == null) throw new Error('Missing rebuilt statistics table')
+    const map = new Map<string, JsonObject>()
+    const ids = new Set<string>()
+    for (const row of rows) {
+      if (
+        typeof row.id !== 'string' ||
+        !/^gps_[A-Za-z0-9_-]{16}$/.test(row.id) ||
+        ids.has(row.id)
+      )
+        throw new Error('Invalid or duplicate statistics storage identity')
+      ids.add(row.id)
+      if (
+        typeof row.game_id !== 'string' ||
+        typeof row.gumbo_id !== 'number' ||
+        !Number.isSafeInteger(row.gumbo_id) ||
+        row.gumbo_id < 1 ||
+        (row.team_id !== null && typeof row.team_id !== 'string')
+      )
+        throw new Error('Invalid statistics business identity')
+      const key = canonical([row.game_id, row.gumbo_id, row.team_id])
+      if (map.has(key))
+        throw new Error('Duplicate statistics business identity')
+      map.set(key, row)
+    }
+    return map
+  }
+  const old = indexed(before)
+  const rebuilt = indexed(after)
+  if (old.size !== rebuilt.size)
+    throw new Error('Rebuild changed statistics row count')
+  for (const [key, row] of old) {
+    const next = rebuilt.get(key)
+    if (next == null)
+      throw new Error('Rebuild changed statistics business identity')
+    if (row.id === next.id && row.computed_at === next.computed_at) continue
+    const computed =
+      typeof next.computed_at === 'string' ? Date.parse(next.computed_at) : NaN
+    if (!Number.isFinite(computed) || computed < start || computed > end)
+      throw new Error('Statistics computation timestamp outside rebuild window')
+    row.id = next.id
+    row.computed_at = next.computed_at
+    manifest.push(`stats-rebuild ${key}: id,computed_at`)
   }
 }

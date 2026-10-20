@@ -9,6 +9,7 @@ import {
 import {
   expectedMergedApi,
   expectedPlaceholders,
+  expectedRebuiltStats,
   normalizeTransport,
   orderSnapshotTables,
   placeholderDocumentHashes,
@@ -310,7 +311,11 @@ export function normalizeIdentity(
 export function compareUserIds(
   before: UserIdSnapshot,
   after: UserIdSnapshot,
-  options: { allowPlaceholders?: boolean; allowMerged?: boolean } = {}
+  options: {
+    allowPlaceholders?: boolean
+    allowMerged?: boolean
+    allowRebuiltStats?: boolean
+  } = {}
 ): Comparison {
   const transformations: string[] = []
   validateNewGumboMappings(before, after)
@@ -318,6 +323,13 @@ export function compareUserIds(
     before.tables.gumbo_ids == null && after.tables.gumbo_ids != null
   before = structuredClone(before)
   after = structuredClone(after)
+  if (options.allowRebuiltStats === true) {
+    if (options.allowPlaceholders === true || options.allowMerged === true)
+      throw new Error(
+        'Stats rebuild cannot combine with identity transformations'
+      )
+    expectedRebuiltStats(before, after, transformations)
+  }
   if (options.allowPlaceholders === true) {
     before = expectedPlaceholders(before, after, transformations)
     placeholderDocumentHashes(before)

@@ -202,12 +202,22 @@ describe('strict historical identity transformations', function () {
     expect(game.unrostered).deep.equals({ away: [], home: [] })
     expect(game.guestPlayers.away[0]).includes({
       jersey: '3',
-      shortName: 'Babe Ruth'
+      shortName: 'Babe Ruth',
+      avatarUrl: null,
+      walkUpSong: null
     })
     expect(game.guestPlayers.away[1]).includes({
       jersey: null,
       shortName: 'Willie Mays'
     })
+    for (const field of ['avatarUrl', 'walkUpSong']) {
+      const changed = structuredClone(expected)
+      ;(changed.api['/games/gam_one'] as any).guestPlayers.away[0][field] =
+        'unexpected'
+      expect(
+        compareUserIds(a, changed, { allowPlaceholders: true }).equal
+      ).equals(false)
+    }
     for (const id of game.guests.away) {
       expect(expected.api[`/players/${id}/plays`]).deep.equals([])
       expect(expected.api[`/players/${id}/stats`]).includes({
@@ -330,6 +340,24 @@ function mergedFixture(): UserIdSnapshot {
   }
 }
 describe('independent merged aggregate expectations', () => {
+  it('preserves already-resolved endpoint ordering and labels and handles array stats endpoints', () => {
+    const snapshot = mergedFixture()
+    expectedMergedApi(snapshot, [])
+    const before = structuredClone(snapshot)
+    expectedMergedApi(snapshot, [])
+    expect(snapshot).deep.equals(before)
+    const arrays = mergedFixture()
+    const body = arrays.api['/teams/tem_one/stats'] as JsonObject
+    arrays.api['/teams/tem_one/stats'] = body.batting
+    arrays.api['/teams/tem_one/stats?kind=pitching'] = body.pitching
+    expectedMergedApi(arrays, [])
+    expect(arrays.api['/teams/tem_one/stats']).deep.equals(
+      (before.api['/teams/tem_one/stats'] as JsonObject).batting
+    )
+    expect(arrays.api['/teams/tem_one/stats?kind=pitching']).deep.equals(
+      (before.api['/teams/tem_one/stats'] as JsonObject).pitching
+    )
+  })
   it('sums counts and recomputes batting, innings, weighted ERA and survivor labels', () => {
     const fixture = mergedFixture()
     const log: string[] = []
@@ -539,6 +567,161 @@ describe('strict comparison acceptance boundaries', () => {
       expect(() => {
         validateNewGumboMappings(before, broken)
       }).throws()
+    }
+  })
+})
+
+describe('rebuilt statistics storage metadata', () => {
+  function fixture(): UserIdSnapshot {
+    const snapshot = mergedFixture()
+    snapshot.userIdType = 'text'
+    snapshot.migrations = ['070playerGumboIds']
+    snapshot.captureFinishedAt = '2026-01-01T00:00:00Z'
+    snapshot.tables.game_player_stats = {
+      columns: [
+        'id',
+        'game_id',
+        'gumbo_id',
+        'team_id',
+        'computed_at',
+        'h',
+        'extra'
+      ],
+      keys: ['id'],
+      rows: [
+        {
+          id: 'gps_AAAAAAAAAAAAAAAA',
+          game_id: 'gam_one',
+          gumbo_id: 1,
+          team_id: 'tem_one',
+          computed_at: '2025-01-01T00:00:00Z',
+          h: 2,
+          extra: { rbi: 3 }
+        }
+      ]
+    }
+    return snapshot
+  }
+  function rebuilt(before: UserIdSnapshot): UserIdSnapshot {
+    const after = structuredClone(before)
+    after.captureStartedAt = '2026-01-01T01:00:00Z'
+    Object.assign(after.tables.game_player_stats.rows[0], {
+      id: 'gps_BBBBBBBBBBBBBBBB',
+      computed_at: '2026-01-01T00:30:00Z'
+    })
+    return after
+  }
+  it('retains full raw snapshots and requires an explicit same-schema rebuild mode', () => {
+    const before = fixture()
+    const after = rebuilt(before)
+    const raw = JSON.stringify(before)
+    expect(compareUserIds(before, after).equal).equals(false)
+    const result = compareUserIds(before, after, { allowRebuiltStats: true })
+    expect(result.equal).equals(true)
+    expect(result.transformations).deep.equals([
+      'stats-rebuild ["gam_one",1,"tem_one"]: id,computed_at'
+    ])
+    expect(JSON.stringify(before)).equals(raw)
+    const unchanged = structuredClone(before)
+    unchanged.captureStartedAt = after.captureStartedAt
+    expect(
+      compareUserIds(before, unchanged, { allowRebuiltStats: true }).equal
+    ).equals(true)
+    expect(() =>
+      compareUserIds(before, after, {
+        allowRebuiltStats: true,
+        allowMerged: true
+      })
+    ).throws('cannot combine')
+  })
+  it('refuses row loss, duplicated or altered identities, malformed metadata and outside-window timestamps', () => {
+    const before = fixture()
+    for (const change of [
+      (s: UserIdSnapshot) => {
+        s.userIdType = 'bigint'
+      },
+      (s: UserIdSnapshot) => {
+        s.migrations.push('999unexpected')
+      },
+      (s: UserIdSnapshot) => {
+        delete s.captureStartedAt
+      },
+      (s: UserIdSnapshot) => {
+        s.captureStartedAt = '2025-01-01T00:00:00Z'
+      },
+      (s: UserIdSnapshot) => {
+        delete s.tables.game_player_stats
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows = []
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows[0].id = 'invalid'
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows[0].gumbo_id = 2
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows[0].gumbo_id = '1'
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows[0].gumbo_id = 0
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows[0].team_id = 1
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows[0].computed_at = null
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows[0].computed_at = '2025-01-01T00:00:00Z'
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows[0].computed_at = '2026-01-02T00:00:00Z'
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows.push({
+          ...s.tables.game_player_stats.rows[0]
+        })
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows.push({
+          ...s.tables.game_player_stats.rows[0],
+          id: 'gps_CCCCCCCCCCCCCCCC'
+        })
+      }
+    ]) {
+      const after = rebuilt(before)
+      change(after)
+      expect(() =>
+        compareUserIds(before, after, { allowRebuiltStats: true })
+      ).throws()
+    }
+  })
+  it('keeps every statistic, extra field, API response and gumbo mapping in the comparison', () => {
+    const before = fixture()
+    for (const change of [
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows[0].h = 3
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows[0].extra = { rbi: 4 }
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.game_player_stats.rows[0].newField = 1
+      },
+      (s: UserIdSnapshot) => {
+        delete s.api['/teams/tem_one/stats']
+      },
+      (s: UserIdSnapshot) => {
+        s.tables.users.rows[0].merged_into = 99
+      }
+    ]) {
+      const after = rebuilt(before)
+      change(after)
+      expect(
+        compareUserIds(before, after, { allowRebuiltStats: true }).equal
+      ).equals(false)
     }
   })
 })

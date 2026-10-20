@@ -52,7 +52,11 @@ export async function runUserIdCheck(
       args.some(
         arg =>
           arg.startsWith('--allow-') &&
-          !['--allow-merged', '--allow-placeholders'].includes(arg)
+          ![
+            '--allow-merged',
+            '--allow-placeholders',
+            '--allow-rebuilt-stats'
+          ].includes(arg)
       )
     )
       throw new Error('Unknown identity transformation')
@@ -60,7 +64,8 @@ export async function runUserIdCheck(
     const after = JSON.parse(await readFile(args[2], 'utf8')) as UserIdSnapshot
     const result = compareUserIds(before, after, {
       allowMerged: args.includes('--allow-merged'),
-      allowPlaceholders: args.includes('--allow-placeholders')
+      allowPlaceholders: args.includes('--allow-placeholders'),
+      allowRebuiltStats: args.includes('--allow-rebuilt-stats')
     })
     const lines = ['$ userIdCheck compare [before] [after] --out [report]']
     for (const [key, count] of Object.entries(result.counts))
