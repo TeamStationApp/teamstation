@@ -47,9 +47,9 @@ struct ModelTests {
     #expect(throws: Never.self) { try make() }
   }
 
-  @Test func credentialsDecodeANumericUserIdAndRefuseAnotherVersion() throws {
+  @Test func credentialsDecodeCanonicalUserIdAndRefuseLegacyVersion() throws {
     let json = """
-    {"version":1,"issuer":"https://app.example.test","userId":1001,
+    {"version":2,"issuer":"https://app.example.test","userId":"\(Fixtures.one.scope.userId)",
      "accountTag":"\(Fixtures.one.scope.accountTag)","keyId":"\(Fixtures.one.keyId)",
      "key":"\(EventControlBytes.hex(Fixtures.one.keyBytes))"}
     """
@@ -57,7 +57,7 @@ struct ModelTests {
     #expect(decoded == Fixtures.one)
     #expect(throws: EventControlCredentials.Problem.unsupportedVersion) {
       try EventControlCredentials.decode(
-        serverReply: Data(json.replacingOccurrences(of: "\"version\":1", with: "\"version\":2").utf8)
+        serverReply: Data(json.replacingOccurrences(of: "\"version\":2", with: "\"version\":1").utf8)
       )
     }
     // Encoding writes the server's shape back, and reads it again.
