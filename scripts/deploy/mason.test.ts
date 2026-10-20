@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
@@ -71,8 +71,18 @@ describe('Deployment runner with actual Mason', () => {
           input: `import {Store} from './lib/store.js'; import {loadConfig} from './lib/config.js'; import {ApiKeys} from './lib/upload/keys.js'; const store = new Store(loadConfig(process.argv[2])); const id = store.addApp({slug:'${app}',name:'Example',position:0}); store.addChannel({appId:id,platform:'ios',key:'fixture',allowedFormats:['ipa']}); process.stdout.write(JSON.stringify(new ApiKeys(store).create('Fixture',[id]))); store.close();`
         }
       )
-      const tokenFile = path.join(root, 'token.json')
-      writeFileSync(tokenFile, credential, { mode: 0o600 })
+      const storedCredential = execFileSync(
+        process.execPath,
+        ['--input-type=module', '-', root],
+        {
+          cwd: mason,
+          encoding: 'utf8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+          input: `import {BuilderStore} from './lib/builder/store.js'; import {asBuilderConfig} from './lib/builder/config.js'; import {publicDefinition} from './lib/builder/admin.js'; import assert from 'node:assert/strict'; import path from 'node:path'; const config=asBuilderConfig({workspace:path.join(process.argv[2],'builder')}); let store=new BuilderStore(config); store.importApp({slug:'${app}',name:'Example',repository:'https://github.com/example/app.git',platforms:['ios'],env:[{name:'DEPLOY_UPLOAD_CREDENTIAL',value:${JSON.stringify(credential)},secret:true}]}); store.close(); store=new BuilderStore(config); const app=store.apps()[0]; assert(!JSON.stringify(publicDefinition(app)).includes(JSON.parse(app.env[0].value).token)); process.stdout.write(app.env[0].value); store.close();`
+        }
+      )
+      assert.equal(storedCredential, credential)
+      process.env.DEPLOY_UPLOAD_CREDENTIAL = storedCredential
       const child = spawn(
         process.execPath,
         ['lib/cli.js', 'serve', '--config', configFile],
@@ -120,7 +130,7 @@ describe('Deployment runner with actual Mason', () => {
           kind: 'mason',
           origin: service.origin,
           channelKey: 'fixture',
-          tokenFile
+          credentialEnv: 'DEPLOY_UPLOAD_CREDENTIAL'
         }
         const config = path.join(root, 'deployConfig.json')
         writeFileSync(
@@ -224,12 +234,10 @@ describe('Deployment runner with actual Mason', () => {
           0
         )
         assert(
-          !logs.includes(
-            (JSON.parse(readFileSync(tokenFile, 'utf8')) as { token: string })
-              .token
-          )
+          !logs.includes((JSON.parse(credential) as { token: string }).token)
         )
       } finally {
+        delete process.env.DEPLOY_UPLOAD_CREDENTIAL
         const stopped = once(child, 'exit')
         child.kill('SIGTERM')
         await stopped

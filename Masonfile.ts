@@ -24,10 +24,16 @@ export async function masonBootstrap(
   }
   process.on('SIGTERM', stop)
   process.on('SIGINT', stop)
-  const run = async (file: string, args: string[]): Promise<number> => {
+  const dependencyEnv = { ...env }
+  delete dependencyEnv.DEPLOY_UPLOAD_CREDENTIAL
+  const run = async (
+    file: string,
+    args: string[],
+    childEnv: NodeJS.ProcessEnv = env
+  ): Promise<number> => {
     if (stopping) return 1
     return await new Promise(resolve => {
-      child = spawn(file, args, { cwd, env, stdio: 'inherit' })
+      child = spawn(file, args, { cwd, env: childEnv, stdio: 'inherit' })
       child.once('error', () => {
         resolve(1)
       })
@@ -37,7 +43,7 @@ export async function masonBootstrap(
     })
   }
   try {
-    if ((await run('socket', ['npm', 'ci'])) !== 0) return 1
+    if ((await run('socket', ['npm', 'ci'], dependencyEnv)) !== 0) return 1
     writeFileSync(
       path.join(cwd, '.deploy-dependencies'),
       dependencyInputs(cwd),

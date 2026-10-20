@@ -32,7 +32,7 @@ function environment(): NodeJS.ProcessEnv {
     MASON_RESULT_FILE: path.join(root, 'result.json')
   }
 }
-function saveConfig(iosOnly = false): void {
+function saveConfig(iosOnly = false, credentialEnv?: string): void {
   const settings = fixtureSettings(root) as {
     apps: Record<
       string,
@@ -43,7 +43,9 @@ function saveConfig(iosOnly = false): void {
     kind: 'mason',
     origin: service.origin,
     channelKey: 'fixture',
-    tokenFile: path.join(root, 'token.json')
+    ...(credentialEnv == null
+      ? { tokenFile: path.join(root, 'token.json') }
+      : { credentialEnv })
   }
   settings.apps[app].ios.upload = upload
   if (iosOnly) delete settings.apps[app].android
@@ -57,13 +59,18 @@ function saveConfig(iosOnly = false): void {
 async function bootstrap(
   script: string,
   socketExit = 0,
-  cancel = false
+  cancel = false,
+  uploadCredential?: string
 ): Promise<number | null> {
   const bin = path.join(root, 'bin')
   mkdirSync(bin, { recursive: true })
-  writeFileSync(path.join(bin, 'socket'), `#!/bin/sh\nexit ${socketExit}\n`, {
-    mode: 0o700
-  })
+  writeFileSync(
+    path.join(bin, 'socket'),
+    `#!/bin/sh\n[ -z "\u0024DEPLOY_UPLOAD_CREDENTIAL" ] || exit 91\nexit ${socketExit}\n`,
+    {
+      mode: 0o700
+    }
+  )
   mkdirSync(path.join(source, 'node_modules/sucrase'), { recursive: true })
   writeFileSync(path.join(source, 'node_modules/sucrase/register.js'), '')
   mkdirSync(path.join(source, 'scripts/deploy'), { recursive: true })
@@ -74,6 +81,7 @@ async function bootstrap(
       env: {
         ...process.env,
         ...environment(),
+        DEPLOY_UPLOAD_CREDENTIAL: uploadCredential,
         PATH: bin + ':' + process.env.PATH
       },
       stdio: ['ignore', 'pipe', 'pipe']
@@ -103,8 +111,47 @@ describe('TeamStation Mason entrypoint', () => {
     )
   })
   afterEach(async () => {
+    delete process.env.FIXTURE_UPLOAD_CREDENTIAL
     await service.close()
     rmSync(root, { recursive: true, force: true })
+  })
+  it('passes the stored upload secret only to the deployment entrypoint', async () => {
+    assert.equal(
+      await bootstrap(
+        'if (process.env.DEPLOY_UPLOAD_CREDENTIAL !== "synthetic-upload-credential") process.exit(92)',
+        0,
+        false,
+        'synthetic-upload-credential'
+      ),
+      0
+    )
+  })
+  it('builds and publishes both platforms using only the Mason environment secret', async () => {
+    process.env.FIXTURE_UPLOAD_CREDENTIAL = readFileSync(
+      path.join(root, 'token.json'),
+      'utf8'
+    )
+    rmSync(path.join(root, 'token.json'))
+    saveConfig(false, 'FIXTURE_UPLOAD_CREDENTIAL')
+    assert.equal(
+      await masonDeploy(
+        environment(),
+        source,
+        { ios: builder, android: builder },
+        false
+      ),
+      0
+    )
+    const result = JSON.parse(
+      readFileSync(environment().MASON_RESULT_FILE!, 'utf8')
+    )
+    assert.equal(result.status, 'succeeded')
+    assert.equal(service.requests.length, 2)
+    assert(
+      service.requests.every(request =>
+        request.body.includes('synthetic-token')
+      )
+    )
   })
   it('builds the supplied checkout with one counter allocation and reports success', async () => {
     assert.equal(

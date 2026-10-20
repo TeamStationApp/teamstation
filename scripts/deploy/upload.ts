@@ -13,6 +13,7 @@ import { pipeline } from 'node:stream/promises'
 import { asObject, asOptional, asString } from 'cleaners'
 
 import { privateJson, type Upload } from './config'
+import { rememberSecret, rememberSecrets } from './redact'
 import { noSymlinks } from './state'
 import { httpsOrigin, integer, object, text } from './validation'
 
@@ -158,7 +159,31 @@ export async function upload(
     })
   }
 ): Promise<number> {
-  const credential = privateJson(config.tokenFile, asTokenFile)
+  // Existing Mason configurations may still name the former credential file.
+  // A database-backed Mason secret takes precedence without recreating that file.
+  const credentialEnv =
+    config.credentialEnv ??
+    (config.kind === 'mason' && process.env.DEPLOY_UPLOAD_CREDENTIAL != null
+      ? 'DEPLOY_UPLOAD_CREDENTIAL'
+      : undefined)
+  const credential = (() => {
+    if (credentialEnv == null) {
+      if (config.tokenFile == null)
+        throw new Error('Missing upload credential source')
+      return privateJson(config.tokenFile, asTokenFile)
+    }
+    const encoded = process.env[credentialEnv]
+    if (encoded == null || encoded === '')
+      throw new Error('Missing upload credential secret')
+    rememberSecret(encoded)
+    try {
+      const out = asTokenFile(JSON.parse(encoded))
+      rememberSecrets(out)
+      return out
+    } catch {
+      throw new Error('Invalid upload credential secret')
+    }
+  })()
   if (
     credential.origin !== config.origin ||
     (credential.expiresAt != null && credential.expiresAt <= Date.now())
