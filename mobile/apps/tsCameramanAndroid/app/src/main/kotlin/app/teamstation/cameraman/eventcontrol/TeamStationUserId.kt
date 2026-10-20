@@ -2,7 +2,7 @@ package app.teamstation.cameraman.eventcontrol
 
 import java.math.BigInteger
 
-/** Exact account IDs; decimal conversion is restricted to saved pre-migration state. */
+/** Exact canonical account IDs for API replies and saved accounts. */
 internal object TeamStationUserId {
     private const val ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
     private val radix = BigInteger.valueOf(58)
@@ -18,15 +18,6 @@ internal object TeamStationUserId {
         }
         return text.takeIf { value.signum() > 0 && value <= maximum && encode(value) == text }
     }
-
-    fun fromLegacyDecimal(text: String): String? {
-        if (text.isEmpty() || text[0] !in '1'..'9' || !text.all { it in '0'..'9' }) return null
-        val value = text.toLongOrNull() ?: return null
-        if (value > 9_007_199_254_740_991L) return null
-        return encode(BigInteger.valueOf(value))
-    }
-
-    fun upgradingStored(text: String): String? = canonical(text) ?: fromLegacyDecimal(text)
 
     private fun encode(input: BigInteger): String {
         var value = input

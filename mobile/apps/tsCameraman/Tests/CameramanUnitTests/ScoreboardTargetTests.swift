@@ -101,7 +101,8 @@ struct ScoreboardTargetTests {
     #expect(fresh.accountServer == ScoreboardTarget.defaultAccountServer)
     #expect(fresh.token == "")
 
-    let chosen = sample(route: .event, token: "tok", gameId: "g1")
+    var chosen = sample(route: .event, token: "tok", gameId: "g1")
+    chosen.userId = "usr_1111111111111111111112"
     ScoreboardTarget.save(chosen, to: store)
     #expect(ScoreboardTarget.load(store) == chosen)
 
@@ -114,7 +115,7 @@ struct ScoreboardTargetTests {
   }
 
   @Test
-  func aLoginSavedBeforeUserIdsReadsBackWithNoneAndConsentOff() {
+  func aLoginSavedBeforeUserIdsIsSignedOutWithConsentOff() {
     // Exactly the keys an earlier build wrote, one at a time.
     let store = InMemorySettingsStore(values: [
       "app.teamstation.cameraman.scoreboard.route": "event",
@@ -124,7 +125,8 @@ struct ScoreboardTargetTests {
       "app.teamstation.cameraman.scoreboard.gameStartAt": "2026-09-28T22:05:00Z"
     ])
     let loaded = ScoreboardTarget.load(store)
-    #expect(loaded.route == .event)
+    #expect(loaded.route == .v1)
+    #expect(loaded.token == "")
     #expect(loaded.gameId == "g1")
     #expect(loaded.gameTitle == "Away at Home")
     #expect(loaded.userId == "")
