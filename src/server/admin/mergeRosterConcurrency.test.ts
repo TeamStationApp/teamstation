@@ -10,6 +10,7 @@ import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import { lockKeys } from '../db/advisoryLocks'
 import { addAdults } from '../teams/addAdults'
 import { addPlayers } from '../teams/addPlayers'
+import { mergeTeams } from './mergeTeams'
 import { closeInto } from './people'
 
 describe('roster writes concurrent with an account merge', function () {
@@ -35,6 +36,232 @@ describe('roster writes concurrent with an account merge', function () {
   })
   afterEach(async () => {
     await fixture?.close()
+  })
+
+  it('serializes opposite-order imports through distinct aliases of the same accounts', async () => {
+    const { db } = fixture
+    const teams = ['tem_import_one', 'tem_import_two']
+    await db
+      .insertInto('teams')
+      .values(
+        teams.map(id => ({ id, name: 'Import', kind: 'external' as const }))
+      )
+      .execute()
+    await db
+      .insertInto('external_ids')
+      .values(
+        teams.flatMap((team, batch) =>
+          [closing, keeping].map((userId, index) => ({
+            id: `ext_import_${batch}_${index}`,
+            entity_type: 'user',
+            entity_id: userId,
+            system: 'example',
+            kind: 'person',
+            external_id: `${team}_${index}`
+          }))
+        )
+      )
+      .execute()
+    let release = (): void => {}
+    let reached = (): void => {}
+    const barrier = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const paused = new Promise<void>(resolve => {
+      reached = resolve
+    })
+    const inserts = new Set<unknown>()
+    let first = true
+    const importer = db.withPlugin({
+      transformQuery(args) {
+        if (
+          args.node.kind === 'InsertQueryNode' &&
+          JSON.stringify(args.node.into).includes('"memberships"')
+        )
+          inserts.add(args.queryId)
+        return args.node
+      },
+      async transformResult(args) {
+        if (first && inserts.has(args.queryId)) {
+          first = false
+          reached()
+          await barrier
+        }
+        return args.result
+      }
+    })
+    const rows = (
+      batch: number
+    ): ReturnType<typeof asTeamPlayersBody>['players'] =>
+      asTeamPlayersBody({
+        players: (batch === 0 ? [0, 1] : [1, 0]).map(index => ({
+          externalId: {
+            system: 'example',
+            kind: 'person',
+            id: `${teams[batch]}_${index}`
+          },
+          jersey: String(index + 1)
+        }))
+      }).players
+    const one = addPlayers(importer, teams[0], rows(0))
+    one.catch(() => undefined)
+    let two: ReturnType<typeof addPlayers> | undefined
+    try {
+      await Promise.race([
+        paused,
+        setTimeout(5000).then(() => {
+          throw new Error('Import did not pause')
+        })
+      ])
+      two = addPlayers(db, teams[1], rows(1))
+      two.catch(() => undefined)
+      const deadline = Date.now() + 5000
+      let waiting = false
+      while (Date.now() < deadline) {
+        const locks = await sql<{ waiting: boolean }>`
+          select exists(select 1 from pg_locks
+            where locktype = 'transactionid' and not granted
+            and pid in (select pid from pg_stat_activity where datname = current_database())
+          ) as waiting`.execute(db)
+        if (locks.rows[0].waiting) {
+          waiting = true
+          break
+        }
+        await setTimeout(10)
+      }
+      expect(
+        waiting,
+        'second import waits on the ordered account locks'
+      ).equals(true)
+      release()
+      expect((await one).counts).includes({ joined: 2, error: 0 })
+      expect((await two).counts).includes({ joined: 2, error: 0 })
+      const members = await db
+        .selectFrom('memberships')
+        .select(['team_id', 'user_id', 'jersey'])
+        .where('team_id', 'in', teams)
+        .orderBy('team_id')
+        .orderBy('user_id')
+        .execute()
+      expect(members).deep.equals(
+        teams.flatMap(teamId =>
+          [
+            { team_id: teamId, user_id: closing, jersey: '1' },
+            { team_id: teamId, user_id: keeping, jersey: '2' }
+          ].sort((a, b) => a.user_id.localeCompare(b.user_id))
+        )
+      )
+    } finally {
+      release()
+      await Promise.allSettled([one, two])
+    }
+  })
+
+  it('finishes a player import before a team merge locks the same membership', async () => {
+    const { db } = fixture
+    await db.updateTable('teams').set({ kind: 'external' }).execute()
+    await db
+      .insertInto('teams')
+      .values({ id: 'tem_duplicate', name: 'Duplicate', kind: 'external' })
+      .execute()
+    await db
+      .insertInto('memberships')
+      .values({
+        id: 'mem_duplicate',
+        team_id: 'tem_duplicate',
+        user_id: closing,
+        is_player: true
+      })
+      .execute()
+    let release = (): void => {}
+    let reached = (): void => {}
+    const barrier = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const paused = new Promise<void>(resolve => {
+      reached = resolve
+    })
+    const updates = new Set<unknown>()
+    const importer = db.withPlugin({
+      transformQuery(args) {
+        if (
+          args.node.kind === 'UpdateQueryNode' &&
+          JSON.stringify(args.node.table).includes('"users"')
+        )
+          updates.add(args.queryId)
+        return args.node
+      },
+      async transformResult(args) {
+        if (updates.has(args.queryId)) {
+          reached()
+          await barrier
+        }
+        return args.result
+      }
+    })
+    const imported = addPlayers(
+      importer,
+      'tem_account',
+      asTeamPlayersBody({
+        players: [{ externalId, bats: 'left', jersey: '12' }]
+      }).players
+    )
+    imported.catch(() => undefined)
+    let merged: ReturnType<typeof mergeTeams> | undefined
+    try {
+      await Promise.race([
+        paused,
+        setTimeout(5000).then(() => {
+          throw new Error('Import did not reach its user update')
+        })
+      ])
+      merged = mergeTeams(db, {
+        fromTeamId: 'tem_duplicate',
+        intoTeamId: 'tem_account',
+        apply: true
+      })
+      merged.catch(() => undefined)
+      const deadline = Date.now() + 5000
+      let waiting = false
+      while (Date.now() < deadline) {
+        const locks = await sql<{ waiting: boolean }>`
+          select exists(select 1 from pg_locks
+            where locktype = 'advisory' and not granted
+            and database = (select oid from pg_database where datname = current_database())
+          ) as waiting`.execute(db)
+        if (locks.rows[0].waiting) {
+          waiting = true
+          break
+        }
+        await setTimeout(10)
+      }
+      expect(waiting, 'team merge waits before taking membership locks').equals(
+        true
+      )
+      release()
+      expect((await imported).counts.error).equals(0)
+      expect((await merged).applied).equals(true)
+      const memberships = await db
+        .selectFrom('memberships')
+        .select(['team_id', 'jersey', 'is_player'])
+        .where('user_id', '=', closing)
+        .execute()
+      expect(memberships).deep.equals([
+        { team_id: 'tem_account', jersey: '12', is_player: true }
+      ])
+      expect(
+        (
+          await db
+            .selectFrom('users')
+            .select('bats')
+            .where('id', '=', closing)
+            .executeTakeFirstOrThrow()
+        ).bats
+      ).equals('left')
+    } finally {
+      release()
+      await Promise.allSettled([imported, merged])
+    }
   })
 
   for (const operation of ['player', 'promotion', 'adult', 'settings'] as const)

@@ -166,6 +166,21 @@ export async function addPlayers(
       trx,
       rows.map(row => externalIdLockKey(row.externalId))
     )
+    // Different aliases can name the same accounts in opposite roster order.
+    // Lock every existing account before a membership trigger locks any one.
+    const accounts = new Set<string>()
+    for (const row of rows) {
+      const holder = await externalIdHolder(trx, row.externalId)
+      if (holder.held && 'userId' in holder) accounts.add(holder.userId)
+    }
+    if (accounts.size > 0)
+      await trx
+        .selectFrom('users')
+        .select('id')
+        .where('id', 'in', [...accounts])
+        .orderBy('id')
+        .forUpdate()
+        .execute()
     const results: TeamPlayerResult[] = []
     const counts: TeamPlayersCounts = {
       created: 0,
