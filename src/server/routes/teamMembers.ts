@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 
 import { forbidden, notFound, unauthorized } from '../../common/errors'
 import { asTeamAdultsBody, asTeamPlayersBody } from '../../common/teamMembers'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import {
   adminScopes,
   canManageTeam,
@@ -142,7 +142,7 @@ export function teamMemberRoutes(
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
       await mustManage(actor, teamId)
-      let userId: number
+      let userId: string
       try {
         userId = asUserId(pathParam(req.params.userId))
       } catch {

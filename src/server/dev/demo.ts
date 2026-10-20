@@ -1,11 +1,11 @@
 import type { GumboEventType } from '../../common/gumboEventTypes'
 import { asGumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import { createSession } from '../auth/sessions'
 import { makeDatabase } from '../db/database'
 import { type PlayWrite, replaceGameEvents } from '../events/eventWrite'
 import { serverConfig } from '../serverConfig'
+import { ensureGumboId, insertUser } from '../users/insertUser'
 import { sampleBatter } from './demoStats'
 
 // Builds a league, two seasons, two teams, a roster, a finished game in each
@@ -72,13 +72,6 @@ async function main(): Promise<void> {
     const awayTeamId = makeId('team')
     const gameId = makeId('game')
     const videoId = makeId('video')
-    const heldIds = new Set(
-      (await db.selectFrom('users').select('id').execute()).map(row => row.id)
-    )
-    const viewer = mintUserId(id => heldIds.has(id))
-    heldIds.add(viewer.userId)
-    const viewerId = viewer.userId
-
     await db
       .insertInto('leagues')
       .values({ id: leagueId, name: 'Demo League', short_name: 'DEMO' })
@@ -125,14 +118,7 @@ async function main(): Promise<void> {
 
     // A viewer who belongs to the home team, so the access rules have work to
     // do rather than waving everything through.
-    await db
-      .insertInto('users')
-      .values({
-        id: viewerId,
-        legacyId: viewer.legacyId,
-        display_name: 'Demo Viewer'
-      })
-      .execute()
+    const viewerId = await insertUser(db, { display_name: 'Demo Viewer' })
     await db
       .insertInto('memberships')
       .values({
@@ -147,19 +133,8 @@ async function main(): Promise<void> {
     // them and the box score has somebody to name.
     const players: number[] = []
     for (const displayName of ROSTER) {
-      const minted = mintUserId(id => heldIds.has(id))
-      heldIds.add(minted.userId)
-      const userId = minted.userId
-      players.push(userId)
-      await db
-        .insertInto('users')
-        .values({
-          id: userId,
-          legacyId: minted.legacyId,
-          display_name: displayName
-        })
-        .execute()
-
+      const userId = await insertUser(db, { display_name: displayName })
+      players.push(await ensureGumboId(db, userId))
       await db
         .insertInto('memberships')
         .values({
@@ -236,17 +211,7 @@ async function main(): Promise<void> {
     // Somebody who belongs to nothing, so the access rules can be shown to
     // actually withhold rather than merely be present. Not an administrator:
     // an administrator sees everything, which proves nothing.
-    const stranger = mintUserId(id => heldIds.has(id))
-    heldIds.add(stranger.userId)
-    const strangerId = stranger.userId
-    await db
-      .insertInto('users')
-      .values({
-        id: strangerId,
-        legacyId: stranger.legacyId,
-        display_name: 'Demo Stranger'
-      })
-      .execute()
+    const strangerId = await insertUser(db, { display_name: 'Demo Stranger' })
     const strangerSession = await createSession(db, strangerId, 'demo script')
 
     console.log(

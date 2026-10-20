@@ -11,6 +11,7 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { NO_OVERRIDES, SAMPLE_SCOREBOARD } from '../../common/scoreboard'
+import { userIdOfGumbo } from '../../common/userId'
 import { fakeSockets } from '../../test/fakeScoreboardSocket'
 import { testPasswordParameters } from '../../test/passwordFixtures'
 import { App } from '../App'
@@ -164,7 +165,11 @@ function fixtureFetch(signedIn: { value: boolean }): void {
           ? input.href
           : input.url
     ).split('?')[0]
-    const user = { id: 100, displayName: 'Runner', isAdmin: false }
+    const user = {
+      id: userIdOfGumbo(100),
+      displayName: 'Runner',
+      isAdmin: false
+    }
     if (path.endsWith('/auth/password/parameters'))
       return Response.json(testPasswordParameters)
     if (path.endsWith('/auth/password') && init?.method === 'POST') {

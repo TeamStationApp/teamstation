@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 
 import { badRequest, conflict } from '../../common/errors'
 import { makeId } from '../../common/ids'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import { createEmailCode } from '../auth/emailCodes'
 import { hashEmailCode, tokensMatch } from '../auth/tokens'
 import type { Database } from '../db/database'
@@ -16,7 +16,7 @@ const asContext = asObject({
 /** Called with the account row locked, so primary and replacement writes serialize. */
 export async function checkEmailChange(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   email: string,
   replaceEmailId?: string
 ): Promise<void> {
@@ -46,7 +46,7 @@ export async function checkEmailChange(
 
 export async function requestAccountEmail(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   email: string,
   replaceEmailId?: string
 ): Promise<{ id: string; code: string }> {
@@ -63,7 +63,7 @@ export async function requestAccountEmail(
  */
 export async function confirmAccountEmail(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   requestId: string,
   code: string
 ): Promise<boolean> {
@@ -143,7 +143,7 @@ export async function confirmAccountEmail(
 
 export async function selectPrimaryEmail(
   db: Kysely<Database>,
-  userId: number,
+  userId: string,
   emailId: string
 ): Promise<void> {
   const row = await db

@@ -173,7 +173,7 @@ export interface GameScreenProps {
   onOpenTeam?: (team: TeamSummary) => void
   /** Opens one player, from their line in the box score. */
   onOpenPlayer?: (
-    userId: number,
+    userId: string,
     name: string,
     from?: { seasonId?: string; teamId?: string; onTeam?: string }
   ) => void

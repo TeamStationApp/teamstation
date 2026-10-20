@@ -11,6 +11,7 @@ import {
   asVideoSummary,
   TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -117,7 +118,7 @@ const game = asGameSummary({
 
 const roster = [
   asRosterEntry({
-    userId: 104,
+    userId: userIdOfGumbo(104),
     gumboId: 104,
     shortName: 'Ichiro',
     jersey: null,
@@ -130,7 +131,7 @@ const roster = [
     avatarUrl: null
   }),
   asRosterEntry({
-    userId: 201,
+    userId: userIdOfGumbo(201),
     gumboId: 201,
     shortName: 'Alfonso S',
     jersey: '7',
@@ -144,7 +145,7 @@ const roster = [
   }),
   // A family member as a non-member is answered: no `guardianOf`.
   asRosterEntry({
-    userId: 106,
+    userId: userIdOfGumbo(106),
     gumboId: 106,
     shortName: 'Tim R',
     jersey: null,
@@ -202,11 +203,11 @@ describe('a non-member’s team page', function () {
   ): Promise<{
     asked: string[]
     opened: Array<{ gameId: string; options: unknown }>
-    players: number[]
+    players: string[]
   }> {
     const { client, asked } = nonMemberClient(follows)
     const opened: Array<{ gameId: string; options: unknown }> = []
-    const players: number[] = []
+    const players: string[] = []
     await render(
       <TeamScreen
         client={client}

@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
 import { App } from './App'
 import { currentRoute, showRoute } from './navigation/useAddressBar'
 import { rosterEditFixture } from './scoring/scoringRosterEdit.e2e.fixture'
@@ -193,7 +194,9 @@ describe('actual App scoring player Settings return', function () {
         baseUrl: fixture.backendUrl + '/api/v1'
       })
       expect(
-        (await server.roster('away')).find(row => row.userId === 100)?.jersey
+        (await server.roster('away')).find(
+          row => row.userId === userIdOfGumbo(100)
+        )?.jersey
       ).equals('14')
       expect(
         document.querySelector('[aria-label^="Mookie Betts, jersey 15"]')
@@ -265,7 +268,10 @@ describe('actual App scoring player Settings return', function () {
       expect(document.querySelector('[aria-label="Discard and Exit"]')).equals(
         null
       )
-      expect(currentRoute()).includes({ name: 'player', userId: '100' })
+      expect(currentRoute()).includes({
+        name: 'player',
+        userId: userIdOfGumbo(100)
+      })
       expect(document.body.textContent).includes('JERSEY NUMBER')
       await press('Back')
       await press('Lineup')
@@ -296,7 +302,10 @@ describe('actual App scoring player Settings return', function () {
         () => document.querySelector('[aria-label="Discard and Exit"]') != null
       )
       await press('Cancel')
-      expect(currentRoute()).includes({ name: 'player', userId: '100' })
+      expect(currentRoute()).includes({
+        name: 'player',
+        userId: userIdOfGumbo(100)
+      })
       expect(document.body.textContent).includes('JERSEY NUMBER')
       await press('Notifications')
       await waitFor(
@@ -387,7 +396,7 @@ describe('actual App scoring player Settings return', function () {
         await press('Mookie Betts,')
         expect(currentRoute()).includes({
           name: 'player',
-          userId: '200',
+          userId: userIdOfGumbo(200),
           onTeam: 'home',
           tab: 'settings'
         })
@@ -454,7 +463,7 @@ describe('actual App scoring player Settings return', function () {
       })
       await waitFor(() => currentRoute().name === 'player')
       expect(currentRoute()).includes({
-        userId: '100',
+        userId: userIdOfGumbo(100),
         onTeam: 'away',
         tab: 'stats'
       })
@@ -559,7 +568,9 @@ describe('actual App scoring player Settings return', function () {
           await waitFor(() =>
             fixture.trace.some(
               line =>
-                line.includes('PUT /api/v1/teams/away/players/100/settings') &&
+                line.includes(
+                  'PUT /api/v1/teams/away/players/usr_111111111111111111112j/settings'
+                ) &&
                 line.includes('"jersey":"15"') &&
                 line.includes('-> 200')
             )
@@ -822,7 +833,7 @@ describe('actual App scoring player Settings return', function () {
       await press('Mookie Betts,')
       expect(currentRoute()).includes({
         name: 'player',
-        userId: '100',
+        userId: userIdOfGumbo(100),
         onTeam: 'away',
         tab: 'settings'
       })
@@ -870,7 +881,10 @@ describe('actual App scoring player Settings return', function () {
         await new Promise(resolve => setTimeout(resolve, 100))
       })
       await settle()
-      expect(currentRoute()).includes({ name: 'player', userId: '100' })
+      expect(currentRoute()).includes({
+        name: 'player',
+        userId: userIdOfGumbo(100)
+      })
       expect(document.body.textContent).includes('JERSEY NUMBER')
       await press('Stats')
       await press('Back')

@@ -328,7 +328,7 @@ export async function teamRowExtras(
     )
   return groups.map(group => {
     if (group.kind !== 'team') return group
-    const staff = [...(roles.get(group.id) ?? new Map<number, string[]>())]
+    const staff = [...(roles.get(group.id) ?? new Map<string, string[]>())]
       .map(([userId, held]) => ({ user: users.get(userId), held }))
       .filter(
         (

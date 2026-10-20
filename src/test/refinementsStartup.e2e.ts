@@ -10,11 +10,13 @@ import path from 'node:path'
 import { Pool } from 'pg'
 
 import { asSeasonStats, asStandingsRow } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
 import { migrations } from '../migrate/migrations'
 import { migrateUp } from '../migrate/runner'
 import { testDatabaseUrl } from '../migrate/testDatabase'
 import { createSession } from '../server/auth/sessions'
 import { makeDatabase } from '../server/db/database'
+import { insertFixtureUsers } from './insertFixtureUsers'
 
 /** Real entry-point smoke: isolated configuration, database, Redis and object endpoint. */
 async function availablePort(): Promise<number> {
@@ -98,23 +100,20 @@ async function startupSmoke(): Promise<void> {
       await migrationPool.end()
     }
     db = makeDatabase(database.toString())
-    await db
-      .insertInto('users')
-      .values([
-        {
-          id: 101,
-          legacyId: 'usr_startup_viewer',
-          display_name: 'Demo Viewer',
-          login_enabled: true
-        },
-        {
-          id: 102,
-          legacyId: 'usr_startup_outsider',
-          display_name: 'Demo Outsider',
-          login_enabled: true
-        }
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(101),
+        legacyId: 'usr_startup_viewer',
+        display_name: 'Demo Viewer',
+        login_enabled: true
+      },
+      {
+        id: userIdOfGumbo(102),
+        legacyId: 'usr_startup_outsider',
+        display_name: 'Demo Outsider',
+        login_enabled: true
+      }
+    ])
     await db
       .insertInto('seasons')
       .values({ id: 'sea_startup', name: 'Demo Startup Season', year: 2027 })
@@ -124,7 +123,7 @@ async function startupSmoke(): Promise<void> {
       .values({
         id: 'smb_startup',
         season_id: 'sea_startup',
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         role: 'member',
         source: 'manual'
       })
@@ -183,8 +182,11 @@ async function startupSmoke(): Promise<void> {
         pitch_er: 1
       })
       .execute()
-    const token = (await createSession(db, 101, 'startup-smoke')).token
-    const outsiderToken = (await createSession(db, 102, 'startup-smoke')).token
+    const token = (await createSession(db, userIdOfGumbo(101), 'startup-smoke'))
+      .token
+    const outsiderToken = (
+      await createSession(db, userIdOfGumbo(102), 'startup-smoke')
+    ).token
     const port = await availablePort()
     const redisPort = await availablePort()
     objectServer = createServer((_req, res) => {

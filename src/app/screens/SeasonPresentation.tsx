@@ -70,12 +70,12 @@ export interface SeasonPresentationProps {
   ) => void
   onOpenTeam: (team: TeamSummary) => void
   onOpenPlayer?: (
-    userId: number,
+    userId: string,
     name: string,
     from?: { seasonId?: string }
   ) => void
   /** Somebody on the People tab who is not a player, as their profile. */
-  onOpenPerson?: (userId: number, name: string) => void
+  onOpenPerson?: (userId: string, name: string) => void
   onSettings?: () => void
   initialTab?: string
   onTab?: (tab: string, correcting?: boolean) => void
@@ -351,7 +351,7 @@ export function SeasonPresentation(
   const openPlayer =
     props.onOpenPlayer == null
       ? undefined
-      : (row: { userId: number; shortName?: string }): void => {
+      : (row: { userId: string; shortName?: string }): void => {
           props.onOpenPlayer?.(row.userId, row.shortName ?? 'Unknown', {
             seasonId: season.id
           })
