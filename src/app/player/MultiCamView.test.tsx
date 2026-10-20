@@ -96,6 +96,8 @@ async function grid(options: {
   single?: { x: number; y: number; height: number }
   /** The game's line score; none, as for a game with no events, by default. */
   lines?: LineScoreStep[]
+  /** Told the moment the grid had reached as it goes. */
+  onGone?: (atWallMs: number | null) => void
 }): Promise<ReturnType<typeof overlayServer>> {
   await windowSize(options.width, options.height)
   const server = overlayServer()
@@ -160,6 +162,7 @@ async function grid(options: {
         zoomedId={options.zoomedId ?? null}
         onChange={() => undefined}
         onClose={() => undefined}
+        onGone={atWallMs => options.onGone?.(atWallMs)}
       />
     </ThemeProvider>
   )
@@ -209,6 +212,35 @@ function playAt(seconds: number): void {
       value: seconds
     })
 }
+
+/** Sets every tile's player playing, or not. */
+function playingIs(playing: boolean): void {
+  for (const video of document.querySelectorAll('video'))
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      value: !playing
+    })
+}
+
+describe('the grid going', function () {
+  afterEach(unmount)
+
+  it("says the picture's own moment as it goes, not the clock's", async function () {
+    const gone: Array<number | null> = []
+    await grid({
+      width: 1280,
+      height: 720,
+      gameId: 'g1',
+      playable: true,
+      onGone: atWallMs => gone.push(atWallMs)
+    })
+    playAt(20)
+    playingIs(true)
+    await unmount()
+    // The heard angle, b, 20 s in.
+    expect(gone).deep.equals([OVERLAY_T0 + 20_000])
+  })
+})
 
 const STEPS = [
   boardStep(OVERLAY_T0 + 10_000, 1),

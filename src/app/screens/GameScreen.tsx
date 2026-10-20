@@ -921,6 +921,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const resumeAtRef = useRef(resumeAt)
   resumeAtRef.current = resumeAt
+  /** The grid's ✕ closed it, so its going leaves the resume alone. */
+  const closedByX = useRef(false)
   const startAtSecRef = useRef(startAtSec)
   startAtSecRef.current = startAtSec
   const autoPlayRef = useRef(props.autoPlay)
@@ -1752,11 +1754,28 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           zoom: next.zoomedId
         })
       }}
+      onGone={atWallMs => {
+        // However it went — the browser's Back takes the angles off the
+        // address without a close — the picture goes back to the moment the
+        // player had reached, paused, as it does from the ✕.
+        // The ✕ has already written its own, exact, resume for this close.
+        const closed = closedByX.current
+        closedByX.current = false
+        if (closed || atWallMs == null || video == null) return
+        viewerWants.current = false
+        const back = { videoId: video.id, wallMs: atWallMs, playing: false }
+        // Into the ref as well: the grid goes in the same commit as the
+        // picture's source is attached again, which reads it before the
+        // state has rendered.
+        resumeAtRef.current = back
+        setResumeAt(back)
+      }}
       onClose={atWallMs => {
         // The videos page's picture goes back to the moment the player had
         // reached, paused, and nothing that recovers a stalled player is to
         // start it again.
         viewerWants.current = false
+        closedByX.current = true
         if (video != null)
           setResumeAt(current =>
             atWallMs != null

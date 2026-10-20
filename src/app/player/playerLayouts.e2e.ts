@@ -452,6 +452,18 @@ describe('player layouts in a browser', function () {
           `(() => document.querySelectorAll('[role="slider"], [aria-valuenow]').length)()`
         )) as number
         expect(bar, 'U has a bar').greaterThan(0)
+        // On its own media time, a drag scrubs it as it does any other.
+        const [from] = await tiles()
+        await page.mouse.move(402 * 0.5, 874 * 0.12)
+        await page.mouse.down()
+        await page.mouse.move(402 * 0.75, 874 * 0.12, { steps: 8 })
+        await page.mouse.up()
+        await page.waitForFunction(
+          `(() => { const v = ${GRID_VIDEOS}[0]; return !v.seeking && v.readyState >= 2 })()`,
+          { timeout: 30_000 }
+        )
+        const [to] = await tiles()
+        expect(to.t - from.t, 'U scrubs').greaterThan(3)
       }
       await shot(
         session,
@@ -508,5 +520,157 @@ describe('player layouts in a browser', function () {
     await page.waitForFunction(`(() => ${GRID_VIDEOS}.length === 1)()`, {
       timeout: 30_000
     })
+  })
+
+  it('scrubs on a drag, crawls on a hold, picks a tile up, and keys Right as a tap or a hold (E4)', async function () {
+    const { S } = fixture().games
+    for (const [width, height, touch] of [
+      [1280, 720, false],
+      [402, 874, true]
+    ] as const) {
+      const what = touch ? 'touch' : 'mouse'
+      const session = await webSession(`e4-${what}`, width, height, { touch })
+      const { page } = session
+      await open(session, grid(S, 2, 60))
+      await gridReady(session, 2, { board: true, box: true })
+      const times = async (): Promise<Array<{ t: number; paused: boolean }>> =>
+        (await page.evaluate(
+          `(() => ${GRID_VIDEOS}.map(v => ({ t: v.currentTime, paused: v.paused })))()`
+        )) as Array<{ t: number; paused: boolean }>
+      const slowShown = async (): Promise<boolean> =>
+        (await page.evaluate(
+          `document.body.innerText.includes(${JSON.stringify(lstrings.player_slow_mo)})`
+        )) as boolean
+      const pause = async (ms: number): Promise<void> => {
+        await new Promise(resolve => setTimeout(resolve, ms))
+      }
+      const down = async (x: number, y: number): Promise<void> => {
+        if (touch) await page.touchscreen.touchStart(x, y)
+        else {
+          await page.mouse.move(x, y)
+          await page.mouse.down()
+        }
+      }
+      const move = async (x: number, y: number): Promise<void> => {
+        if (touch) await page.touchscreen.touchMove(x, y)
+        else await page.mouse.move(x, y, { steps: 8 })
+      }
+      const up = async (): Promise<void> => {
+        if (touch) await page.touchscreen.touchEnd()
+        else await page.mouse.up()
+      }
+      const settle = async (): Promise<
+        Array<{ t: number; paused: boolean }>
+      > => {
+        await page.waitForFunction(
+          `(() => ${GRID_VIDEOS}.every(v => !v.seeking && v.readyState >= 2))()`,
+          { timeout: 30_000 }
+        )
+        return await times()
+      }
+
+      // No transport buttons on the bar.
+      for (const label of [
+        lstrings.angles_back_ten,
+        lstrings.angles_forward_ten,
+        lstrings.angles_pause,
+        lstrings.angles_play
+      ])
+        expect(
+          await page.$(`[aria-label="${label}"]`),
+          `${what}: no ${label}`
+        ).equals(null)
+
+      // A sideways drag from the middle, a quarter of the width.
+      const span = Number(
+        await page.evaluate(
+          `document.querySelector('[aria-label="Position in the game"]').getAttribute('aria-valuemax')`
+        )
+      )
+      const track = Number(
+        await page.evaluate(
+          `document.querySelector('[aria-label="Position in the game"]').getBoundingClientRect().width`
+        )
+      )
+      // Past the grid's opening hold, which on a loaded bench can still be
+      // holding the tiles here: the drag is to leave them playing.
+      await page.waitForFunction(
+        `(() => ${GRID_VIDEOS}.every(v => !v.paused))()`,
+        { timeout: 30_000 }
+      )
+      const before = await settle()
+      const y = height * (touch ? 0.12 : 0.3)
+      const dx = width * 0.25
+      await down(width * 0.5, y)
+      await move(width * 0.5 + dx, y)
+      const barUp = (await page.evaluate(
+        `getComputedStyle(document.querySelector('[aria-label="Position in the game"]').closest('div[aria-hidden]')).opacity`
+      )) as string
+      await up()
+      const after = await settle()
+      const expected = (span * dx * 0.25) / track
+      expect(Number(barUp), `${what}: the bar shows`).greaterThan(0)
+      after.forEach((tile, index) => {
+        expect(
+          tile.t - before[index].t,
+          `${what}: tile ${index} sought`
+        ).closeTo(expected, Math.max(1, expected * 0.02))
+        expect(tile.paused, `${what}: play state kept`).equals(
+          before[index].paused
+        )
+      })
+
+      // From the edge, nothing.
+      await down(width * 0.05, y)
+      await move(width * 0.05 + dx, y)
+      await up()
+      const edge = await settle()
+      expect(edge[0].t, `${what}: an edge drag does nothing`).closeTo(
+        after[0].t,
+        0.3
+      )
+
+      // Held still on the middle right: a crawl, shown until it is let go.
+      await down(width * 0.9, height * 0.5)
+      await pause(600)
+      expect(await slowShown(), `${what}: slow motion shows`).equals(true)
+      await up()
+      await pause(200)
+      expect(await slowShown(), `${what}: and goes`).equals(false)
+
+      // Held still on a tile's left, it is picked up; dropped on the other,
+      // the two swap.
+      const rects = (await gridState(session)).tiles
+      const [first, second] = rects
+      const from = [first.x + first.w * 0.15, first.y + first.h * 0.4] as const
+      const to = [second.x + second.w * 0.5, second.y + second.h * 0.5] as const
+      await down(...from)
+      await pause(600)
+      await move(...to)
+      await up()
+      await page.waitForFunction(
+        `new URLSearchParams(location.search).get('angles') === ${JSON.stringify([S.videos[1], S.videos[0]].join(','))}`,
+        { timeout: 10_000 }
+      )
+
+      if (!touch) {
+        // Right, tapped: ten seconds on.
+        const tapFrom = await settle()
+        await page.keyboard.down('ArrowRight')
+        await pause(100)
+        await page.keyboard.up('ArrowRight')
+        const tapped = await settle()
+        expect(tapped[0].t - tapFrom[0].t, 'Right tapped').closeTo(10, 0.5)
+        // Right, held: a crawl and no skip.
+        await page.keyboard.down('ArrowRight')
+        await pause(700)
+        expect(await slowShown(), 'Right held crawls').equals(true)
+        await page.keyboard.up('ArrowRight')
+        const held = await settle()
+        expect(held[0].t - tapped[0].t, 'Right held skips nothing').lessThan(2)
+        expect(await slowShown()).equals(false)
+      }
+      await shot(session, `web-gestures-${what}-after.png`)
+    }
   })
 })

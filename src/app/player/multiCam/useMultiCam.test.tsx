@@ -333,18 +333,98 @@ describe('useMultiCam', function () {
   it('reads a quick tap on the middle right as ten seconds on', async function () {
     const { mc, tiles } = await grid()
     await act(async () => {
-      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5)
-      mc().pressEnd(1, true, WIDTH * 0.9, HEIGHT * 0.5)
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
+      mc().pressEnd(1, WIDTH * 0.9, HEIGHT * 0.5)
     })
     expect(tiles.A.currentTime).equals(130)
+  })
+
+  it('stops the clock where the pictures stop when paused', async function () {
+    const { mc, tiles } = await grid()
+    tiles.A.currentTime = 120.8
+    tiles.B.currentTime = 60.8
+    await act(async () => {
+      mc().toggle()
+    })
+    expect(mc().playing).equals(false)
+    expect(mc().atWallMs).closeTo(T0 + 120_800, 1e-3)
+    // And a skip from there is ten seconds from the picture.
+    await act(async () => {
+      mc().skip(-10)
+    })
+    expect(tiles.A.currentTime).closeTo(110.8, 1e-6)
+  })
+
+  it('holds the heard tile’s sound for a tap when its player was left playing silent, and no other’s', async function () {
+    const { mc } = await grid()
+    expect(mc().heardId).equals('A')
+    await act(async () => {
+      mc().soundHeld('B')
+    })
+    expect(mc().soundBlocked).equals(false)
+    await act(async () => {
+      mc().soundHeld('A')
+    })
+    expect(mc().soundBlocked).equals(true)
+  })
+
+  it('holds the sound of the angle heard now, for a prime begun while another was', async function () {
+    // B is heard, and its tile's prime takes this render's callback.
+    const { mc, rerender } = await grid({ audioId: 'B' })
+    expect(mc().heardId).equals('B')
+    const { soundHeld } = mc()
+    // The viewer moves the sound to A before the prime is done.
+    await rerender({ audioId: 'A' })
+    expect(mc().heardId).equals('A')
+    await act(async () => {
+      soundHeld('A')
+    })
+    expect(mc().soundBlocked).equals(true)
+  })
+
+  it('says where the pictures are now, for a close, not the clock’s last reading', async function () {
+    const { mc, tiles } = await grid()
+    expect(mc().wallNow()).equals(T0 + 120_000)
+    tiles.A.currentTime = 120.8
+    expect(mc().wallNow()).closeTo(T0 + 120_800, 1e-3)
+    // Nothing playing: the clock.
+    await act(async () => {
+      tiles.A.pause()
+      tiles.B.pause()
+    })
+    expect(mc().wallNow()).equals(mc().atWallMs)
+  })
+
+  it('skips ten seconds from where the pictures are, not from the clock’s last reading', async function () {
+    const { mc, tiles } = await grid()
+    expect(tiles.A.paused).equals(false)
+    // Played on 0.8 s past the clock's last reading.
+    tiles.A.currentTime = 120.8
+    tiles.B.currentTime = 60.8
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
+      mc().pressEnd(1, WIDTH * 0.9, HEIGHT * 0.5)
+    })
+    expect(tiles.A.currentTime).closeTo(130.8, 1e-6)
+    expect(tiles.B.currentTime).closeTo(70.8, 1e-6)
   })
 
   it('crawls every tile while the middle right is held, and lets go on the lift', async function () {
     this.timeout(5000)
     const { mc, tiles } = await grid()
+    // The pictures have played on past the clock's last reading.
+    expect(mc().atWallMs).equals(T0 + 120_000)
+    expect(tiles.A.paused).equals(false)
+    tiles.A.currentTime = 120.8
+    tiles.B.currentTime = 60.8
     await act(async () => {
-      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5)
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
     })
+    // Not yet at a quarter of a second: the hold is half of one.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    })
+    expect(mc().slow).equals(0)
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 300))
     })
@@ -352,26 +432,92 @@ describe('useMultiCam', function () {
     expect(tiles.A.playbackRate).equals(SLOW_RATE)
     expect(tiles.B.playbackRate).equals(SLOW_RATE)
     expect(tiles.A.muted).equals(true)
+    // It crawls on from there, not from the clock's reading: no tile is put
+    // back.
+    expect(mc().atWallMs).greaterThanOrEqual(T0 + 120_800)
+    expect(tiles.A.currentTime).equals(120.8)
+    expect(tiles.B.currentTime).equals(60.8)
     await act(async () => {
-      expect(mc().pressEnd(1, true, WIDTH * 0.9, HEIGHT * 0.5)).equals(true)
+      expect(mc().pressEnd(1, WIDTH * 0.9, HEIGHT * 0.5)).equals('held')
     })
     expect(mc().slow).equals(0)
     expect(tiles.A.playbackRate).equals(1)
   })
 
-  it('does not crawl on a hold anywhere else', async function () {
+  it('picks a tile up on a hold anywhere else, at half a second and not before (U14)', async function () {
     this.timeout(5000)
     const { mc } = await grid()
     await act(async () => {
-      mc().pressStart(1, WIDTH * 0.1, HEIGHT * 0.5)
+      mc().pressStart(1, WIDTH * 0.1, HEIGHT * 0.5, 1)
     })
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 300))
     })
-    expect(mc().slow).equals(0)
+    expect(mc().armedTile).equals(null)
     await act(async () => {
-      mc().pressCancel(1)
+      await new Promise(resolve => setTimeout(resolve, 300))
     })
+    expect(mc().slow).equals(0)
+    expect(mc().armedTile).equals(1)
+    await act(async () => {
+      expect(mc().pressEnd(1, WIDTH * 0.1, HEIGHT * 0.5)).equals('reorder')
+    })
+    expect(mc().armedTile).equals(null)
+  })
+
+  it('picks nothing up with one angle, nor on the black around the tiles, and still reads the lift as a tap', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({ videos: [video('A', 0)], order: ['A'] })
+    for (const tile of [0, null]) {
+      await act(async () => {
+        mc().pressStart(1, WIDTH * 0.1, HEIGHT * 0.5, tile)
+      })
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 600))
+      })
+      expect(mc().armedTile).equals(null)
+      // Rested and let go where it came down, it is a tap: ten seconds back.
+      await act(async () => {
+        expect(mc().pressEnd(1, WIDTH * 0.1, HEIGHT * 0.5)).equals('pending')
+      })
+    }
+    expect(tiles.A.currentTime).equals(100)
+  })
+
+  it('pauses a one-angle grid for a press that rests on its centre before it lifts', async function () {
+    this.timeout(5000)
+    const { mc } = await grid({ videos: [video('A', 0)], order: ['A'] })
+    expect(mc().playing).equals(true)
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.5, HEIGHT * 0.5, 0)
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600))
+    })
+    await act(async () => {
+      mc().pressEnd(1, WIDTH * 0.5, HEIGHT * 0.5)
+    })
+    expect(mc().playing).equals(false)
+  })
+
+  it('scrubs no more once a press has rested past the hold', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({ videos: [video('A', 0)], order: ['A'] })
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.3, HEIGHT * 0.3, 0)
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600))
+    })
+    await act(async () => {
+      mc().pressMove(1, WIDTH * 0.7, HEIGHT * 0.3)
+      // A frame, for a scrub's move to land if it were one.
+      await new Promise(resolve => setTimeout(resolve, 50))
+    })
+    await act(async () => {
+      expect(mc().pressEnd(1, WIDTH * 0.7, HEIGHT * 0.3)).equals('dead')
+    })
+    expect(tiles.A.currentTime).equals(120)
   })
 
   it('follows the clock of the tile that is showing, once a second', async function () {
@@ -464,22 +610,171 @@ describe('useMultiCam', function () {
     expect(mc().controlsShown).equals(false)
   })
 
-  it('reads a slip of the finger as a drag, which is never a tap', async function () {
+  it('reads a slip of the finger as no tap, and a cancelled press as nothing', async function () {
     const { mc, tiles } = await grid()
+    // Past the tap's slop, short of a drag.
     await act(async () => {
-      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5)
-      mc().pressMoved(1)
-      mc().pressEnd(1, true, WIDTH * 0.9, HEIGHT * 0.5)
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
+      mc().pressMove(1, WIDTH * 0.9 - 12, HEIGHT * 0.5)
+      expect(mc().pressEnd(1, WIDTH * 0.9 - 12, HEIGHT * 0.5)).equals('pending')
     })
     expect(tiles.A.currentTime).equals(120)
-    // A second finger is ignored while the first holds a crawl, and a
-    // cancelled press does nothing.
-    expect(mc().mayReorder(1)).equals(false)
     await act(async () => {
-      mc().pressStart(2, WIDTH * 0.5, HEIGHT * 0.5)
+      mc().pressStart(2, WIDTH * 0.5, HEIGHT * 0.5, 0)
       mc().pressCancel(2)
     })
     expect(tiles.A.currentTime).equals(120)
+    // Neither answers for a finger it is not following.
+    expect(mc().pressEnd(3, 0, 0)).equals(null)
+  })
+
+  it('ignores a second finger while the first holds a crawl', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid()
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600))
+    })
+    expect(mc().pressStart(2, WIDTH * 0.5, HEIGHT * 0.5, 0)).equals(false)
+    await act(async () => {
+      expect(mc().pressEnd(1, WIDTH * 0.9, HEIGHT * 0.5)).equals('held')
+    })
+    expect(mc().slow).equals(0)
+    // A press only waiting is handed to the newer finger.
+    await act(async () => {
+      mc().pressStart(3, WIDTH * 0.5, HEIGHT * 0.5, 0)
+      expect(mc().pressStart(4, WIDTH * 0.9, HEIGHT * 0.5, 0)).equals(true)
+      mc().pressEnd(4, WIDTH * 0.9, HEIGHT * 0.5)
+    })
+    expect(tiles.A.currentTime).closeTo(130, 1)
+  })
+})
+
+describe('useMultiCam scrubbing by a drag across the pictures (U14)', function () {
+  /** Lets an animation frame or two go by. */
+  const frame = async (): Promise<void> => {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50))
+    })
+  }
+
+  it('moves every tile by a quarter of the track for a sideways drag from the middle', async function () {
+    const { mc, tiles } = await grid()
+    // The take is A's start to B's end: eleven minutes.
+    const span = 660_000
+    mc().setTrackWidth(300)
+    const start = mc().atWallMs!
+    const dx = WIDTH * 0.25
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.5, HEIGHT * 0.3, 0)
+      mc().pressMove(1, WIDTH * 0.5 + dx / 2, HEIGHT * 0.3 + 4)
+      mc().pressMove(1, WIDTH * 0.5 + dx, HEIGHT * 0.3 + 4)
+    })
+    await frame()
+    const expected = start + ((dx * span) / 300) * 0.25
+    expect(mc().atWallMs).closeTo(expected, 1)
+    expect(mc().barShown).equals(true)
+    expect(tiles.A.currentTime).closeTo((expected - T0) / 1000, 0.01)
+    expect(tiles.B.currentTime).closeTo((expected - T0) / 1000 - 60, 0.01)
+    await act(async () => {
+      expect(mc().pressEnd(1, WIDTH * 0.5 + dx, HEIGHT * 0.3)).equals('scrub')
+    })
+    // And back the other way, kept inside the take.
+    await act(async () => {
+      mc().pressStart(2, WIDTH * 0.8, HEIGHT * 0.3, 0)
+      mc().pressMove(2, 0, HEIGHT * 0.3)
+      mc().pressEnd(2, 0, HEIGHT * 0.3)
+    })
+    expect(mc().atWallMs).equals(T0)
+  })
+
+  it('scrubs from where the pictures are, not from the clock’s last reading', async function () {
+    const { mc, tiles } = await grid()
+    mc().setTrackWidth(300)
+    // The pictures have played on 0.8 s past the clock's last reading.
+    tiles.A.currentTime = 120.8
+    tiles.B.currentTime = 60.8
+    const dx = WIDTH * 0.25
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.5, HEIGHT * 0.3, 0)
+      mc().pressMove(1, WIDTH * 0.5 + dx, HEIGHT * 0.3)
+    })
+    await frame()
+    const expected = T0 + 120_800 + ((dx * 660_000) / 300) * 0.25
+    expect(mc().atWallMs).closeTo(expected, 1)
+    expect(tiles.A.currentTime).closeTo((expected - T0) / 1000, 0.01)
+    await act(async () => {
+      mc().pressEnd(1, WIDTH * 0.5 + dx, HEIGHT * 0.3)
+    })
+  })
+
+  it('measures against the window until the bar has said how wide its track is', async function () {
+    const { mc } = await grid()
+    const start = mc().atWallMs!
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.5, HEIGHT * 0.3, null)
+      mc().pressMove(1, WIDTH * 0.75, HEIGHT * 0.3)
+      mc().pressEnd(1, WIDTH * 0.75, HEIGHT * 0.3)
+    })
+    expect(mc().atWallMs).closeTo(start + 0.25 * 660_000 * 0.25, 1)
+  })
+
+  for (const playing of [false, true])
+    it(`leaves the tiles ${playing ? 'playing' : 'paused'}`, async function () {
+      const { mc, tiles } = await grid()
+      if (mc().playing !== playing)
+        await act(async () => {
+          mc().toggle()
+        })
+      const before = [mc().playing, tiles.A.paused, tiles.B.paused]
+      await act(async () => {
+        mc().pressStart(1, WIDTH * 0.5, HEIGHT * 0.3, 0)
+        mc().pressMove(1, WIDTH * 0.7, HEIGHT * 0.3)
+        mc().pressEnd(1, WIDTH * 0.7, HEIGHT * 0.3)
+      })
+      expect([mc().playing, tiles.A.paused, tiles.B.paused]).deep.equals(before)
+    })
+
+  it('does not scrub from the edges, nor for an up-and-down drag', async function () {
+    const { mc, tiles } = await grid()
+    for (const [x0, x1, y1] of [
+      [WIDTH * 0.05, WIDTH * 0.4, HEIGHT * 0.3],
+      [WIDTH * 0.95, WIDTH * 0.6, HEIGHT * 0.3],
+      [WIDTH * 0.5, WIDTH * 0.52, HEIGHT * 0.5]
+    ]) {
+      await act(async () => {
+        mc().pressStart(1, x0, HEIGHT * 0.3, 0)
+        mc().pressMove(1, x1, y1)
+      })
+      await frame()
+      await act(async () => {
+        expect(mc().pressEnd(1, x1, y1)).equals('dead')
+      })
+    }
+    expect(tiles.A.currentTime).equals(120)
+  })
+
+  it('never turns a crawl into a scrub', async function () {
+    this.timeout(5000)
+    const { mc } = await grid()
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600))
+    })
+    const crawling = mc().atWallMs!
+    await act(async () => {
+      mc().pressMove(1, WIDTH * 0.5, HEIGHT * 0.5)
+    })
+    await frame()
+    // A quarter-speed crawl moves the clock a little, never a drag's worth.
+    expect(mc().atWallMs! - crawling).lessThan(1000)
+    await act(async () => {
+      expect(mc().pressEnd(1, WIDTH * 0.5, HEIGHT * 0.5)).equals('held')
+    })
   })
 })
 
@@ -815,8 +1110,8 @@ describe('useMultiCam buffering', function () {
     expect(mc().soundBlocked).equals(true)
 
     await act(async () => {
-      mc().pressStart(1, 10, 10)
-      mc().pressEnd(1, true, 10, 10)
+      mc().pressStart(1, 10, 10, null)
+      mc().pressEnd(1, 10, 10)
     })
     expect(tiles.A.muted).equals(false)
     expect(mc().soundBlocked).equals(false)

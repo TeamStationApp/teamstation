@@ -252,6 +252,62 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     expect(played()).equals(0)
   })
 
+  it('keeps the ✕’s own moment, not one the grid reaches as it goes', async function () {
+    const from = { videoId: 'v1', sec: 40 }
+    const view = await page([videoOf('v1', START)], {
+      angles: ['v1'],
+      audioId: 'v1',
+      from
+    })
+    const video = inline()
+    drive(video, 40)
+    const pictures = [...document.querySelectorAll('video')]
+    expect(pictures).length(2)
+    const tile = pictures[1]
+    drive(tile, 40)
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(`[aria-label="${lstrings.angles_close}"]`)!
+        .click()
+    })
+    // The tile plays on between the tap and the grid going.
+    drive(tile, 55)
+    Object.defineProperty(tile, 'paused', { configurable: true, value: false })
+    video.currentTime = 0
+    await view.rerender({
+      angles: undefined,
+      audioId: undefined,
+      from: undefined
+    })
+    await act(async () => {
+      video.dispatchEvent(new window.Event('loadedmetadata'))
+    })
+    expect(video.currentTime).closeTo(40, 0.001)
+  })
+
+  it('puts the picture back at the player’s moment, paused, when Back takes the player away', async function () {
+    const from = { videoId: 'v1', sec: 40 }
+    const view = await page([videoOf('v1', START)], {
+      angles: ['v1'],
+      audioId: 'v1',
+      from
+    })
+    const video = inline()
+    const { played } = drive(video, 0)
+    // The address loses its angles, with no close: the browser's Back.
+    await view.rerender({
+      angles: undefined,
+      audioId: undefined,
+      from: undefined
+    })
+    await act(async () => {
+      video.dispatchEvent(new window.Event('loadedmetadata'))
+    })
+    expect(video.currentTime).closeTo(40, 0.001)
+    expect(video.paused).equals(true)
+    expect(played()).equals(0)
+  })
+
   it('opens a lone recording with no start on its own media time, and back', async function () {
     const view = await page([videoOf('u1', null)])
     drive(inline(), 25)

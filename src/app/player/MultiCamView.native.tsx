@@ -34,9 +34,7 @@ import {
   topOfAngles
 } from './multiCam/playerLayout'
 import {
-  beyondSlop,
   type MultiCamProps,
-  REORDER_HOLD_MS,
   type TileDrag,
   type TileHandle,
   useMultiCam
@@ -64,8 +62,8 @@ interface Touch {
   pageY: number
   /** The tile it came down on, which a held finger can pick up. */
   tile: number | null
-  timer: ReturnType<typeof setTimeout> | null
-  armed: boolean
+  /** It has moved its tile while carrying it. */
+  carried: boolean
 }
 
 /** Android's `TSOrientation`, which iOS has no need of. */
@@ -112,9 +110,9 @@ function tileAt(rects: Rect[], x: number, y: number): number | null {
  */
 export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
   const { onClose } = props
-  // Where the grid had got to, for Android's Back, which the modal hears
+  // Where the grid has got to, for Android's Back, which the modal hears
   // rather than the grid inside it.
-  const atRef = useRef<number | null>(null)
+  const wallNowRef = useRef<() => number | null>(() => null)
   return (
     <Modal
       visible
@@ -123,7 +121,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={() => {
-        onClose(atRef.current)
+        onClose(wallNowRef.current())
       }}
     >
       <StatusBar hidden />
@@ -132,7 +130,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
           sideways it still gave the upright insets: room kept for a Dynamic
           Island at the top that was at the side. */}
       <SafeAreaProvider>
-        <MultiCamGrid {...props} atRef={atRef} />
+        <MultiCamGrid {...props} wallNowRef={wallNowRef} />
       </SafeAreaProvider>
     </Modal>
   )
@@ -141,10 +139,10 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
 /** The grid itself, inside the modal and its safe area. */
 function MultiCamGrid(
   props: MultiCamViewProps & {
-    atRef: React.RefObject<number | null>
+    wallNowRef: React.RefObject<() => number | null>
   }
 ): React.ReactElement {
-  const { onClose, atRef } = props
+  const { onClose, wallNowRef } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   // Sideways the pictures have the whole screen; upright, all of it below the
@@ -191,24 +189,22 @@ function MultiCamGrid(
     beforeShuffle: shuffle
   })
   board.follow(mc)
-  atRef.current = mc.atWallMs
+  wallNowRef.current = mc.wallNow
   const {
     askAgain,
     attaching,
     attached,
     dropTile,
     goTo,
-    mayReorder,
     moveTile,
     pressCancel,
     pressEnd,
-    pressMoved,
+    pressMove,
     pressStart,
+    setTrackWidth,
     showBar,
-    skip,
     takeElement,
-    tileWaiting,
-    toggle
+    tileWaiting
   } = mc
 
   // Turning with the phone while it is up, and upright again after.
@@ -218,45 +214,25 @@ function MultiCamGrid(
   }, [])
 
   const touch = useRef<Touch | null>(null)
-  const [armed, setArmed] = useState<number | null>(null)
 
-  const disarm = (): void => {
-    const held = touch.current
-    if (held?.timer != null) clearTimeout(held.timer)
-    setArmed(null)
-  }
-  useEffect(
-    () => () => {
-      if (touch.current?.timer != null) clearTimeout(touch.current.timer)
-    },
-    []
-  )
+  const armed = mc.armedTile
 
+  // The grid's own press does the rest — a tap's square, a scrub, a crawl,
+  // a tile picked up — from the same points the browser hands it.
   const onGrant = (event: GestureResponderEvent): void => {
     const { identifier, locationX, locationY, pageX, pageY } = event.nativeEvent
     const id = Number(identifier)
-    if (!pressStart(id, locationX, locationY)) return
-    const held: Touch = {
+    const tile = tileAt(mc.rects, locationX, locationY)
+    if (!pressStart(id, locationX, locationY, tile)) return
+    touch.current = {
       id,
       x: locationX,
       y: locationY,
       pageX,
       pageY,
-      tile: tileAt(mc.rects, locationX, locationY),
-      timer: null,
-      armed: false
+      tile,
+      carried: false
     }
-    // A second's rest on a tile picks it up, unless the press has become a
-    // crawl in the meantime — the same rule, and the same second, as the web.
-    if (held.tile != null) {
-      held.timer = setTimeout(() => {
-        held.timer = null
-        if (held.tile == null || !mayReorder(id)) return
-        held.armed = true
-        setArmed(held.tile)
-      }, REORDER_HOLD_MS)
-    }
-    touch.current = held
   }
 
   const onMove = (event: GestureResponderEvent): void => {
@@ -264,17 +240,10 @@ function MultiCamGrid(
     if (held == null) return
     const x = event.nativeEvent.pageX - held.pageX
     const y = event.nativeEvent.pageY - held.pageY
-    if (held.armed) {
-      if (held.tile != null && mayReorder(held.id)) moveTile(held.tile, x, y)
-      return
-    }
-    // A finger that travels before the second is up is a slip, not a drag:
-    // it neither moves the picture nor becomes one later.
-    if (beyondSlop(x, y)) {
-      if (held.timer != null) clearTimeout(held.timer)
-      held.timer = null
-      pressMoved(held.id)
-    }
+    pressMove(held.id, held.x + x, held.y + y)
+    if (held.tile == null || armed !== held.tile) return
+    held.carried = true
+    moveTile(held.tile, x, y)
   }
 
   const onRelease = (event: GestureResponderEvent): void => {
@@ -283,15 +252,11 @@ function MultiCamGrid(
     touch.current = null
     const x = event.nativeEvent.pageX - held.pageX
     const y = event.nativeEvent.pageY - held.pageY
-    // Armed, and still the press: a finger that lost it to another is done,
-    // and drops nothing.
-    const wasArmed = held.armed && mayReorder(held.id)
-    disarm()
-    // A press that became a move is never also a tap.
-    pressEnd(held.id, !beyondSlop(x, y) && !wasArmed, held.x + x, held.y + y)
+    const mode = pressEnd(held.id, held.x + x, held.y + y)
     // Always: the picture goes back when the press meant nothing.
     if (held.tile != null) {
-      dropTile(held.tile, wasArmed ? x : 0, wasArmed ? y : 0)
+      const carried = mode === 'reorder'
+      dropTile(held.tile, carried ? x : 0, carried ? y : 0)
     }
   }
 
@@ -299,7 +264,6 @@ function MultiCamGrid(
     const held = touch.current
     if (held == null) return
     touch.current = null
-    disarm()
     pressCancel(held.id)
     if (held.tile != null) dropTile(held.tile, 0, 0)
   }
@@ -343,6 +307,7 @@ function MultiCamGrid(
 
         {/* Every touch on the grid, over the tiles and under the bar. */}
         <View
+          testID="grid-touches"
           style={styles.touches}
           onStartShouldSetResponder={() => true}
           onResponderTerminationRequest={() => false}
@@ -374,7 +339,7 @@ function MultiCamGrid(
           <ExitButton
             visible={mc.controlsShown}
             onPress={() => {
-              onClose(mc.atWallMs)
+              onClose(mc.wallNow())
             }}
             // In the safe area's coordinates, as the controls are.
             top={exitTop - safe.y - theme.rem(theme.spaceSmRem)}
@@ -405,11 +370,9 @@ function MultiCamGrid(
             <MultiCamBar
               window={mc.take}
               atMs={mc.atWallMs}
-              playing={mc.playing}
               angles={mc.barAngles(mc.take)}
-              onTogglePlay={toggle}
-              onSkip={skip}
               onScrub={goTo}
+              onTrackWidth={setTrackWidth}
               onInteract={showBar}
               visible={mc.barShown}
             />

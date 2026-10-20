@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 
 import type { TeamStationClient, VideoSummary } from '../../../common/api'
 import { lstrings } from '../../locales/strings'
@@ -20,7 +27,10 @@ import {
   angleZoneFor,
   gestureAction,
   HOLD_MS,
-  STEP_SECONDS
+  SCRUB_EDGE_FRACTION,
+  SCRUB_RATE,
+  STEP_SECONDS,
+  STILL_FRACTION
 } from '../zones'
 import {
   correctionFor,
@@ -90,6 +100,12 @@ export interface MultiCamProps {
   /** Where the viewer now is, so the address can say so. */
   onMoment?: (wallMs: number) => void
   /**
+   * The grid went, however it went — its ✕, or the browser's Back taking the
+   * angles off the address — with where its pictures were then, or the
+   * clock's reading where none was playing.
+   */
+  onGone?: (atWallMs: number | null) => void
+  /**
    * The viewer left, with the wall time the grid had got to, for the videos
    * page's player to pick up at; null before any tile has placed it.
    */
@@ -142,14 +158,6 @@ const JOIN_POLL_MS = 30
 const BAR_HIDE_MS = 3000
 
 /**
- * How long a finger has to rest on a tile before the tile can be moved.
- *
- * The tiles are the same surface the taps land on, so a drag that started at
- * once moved a picture whenever a tap to pause or skip slipped a little.
- */
-export const REORDER_HOLD_MS = 1000
-
-/**
  * How far a finger may slip, in pixels, and still have made a tap.
  *
  * Every touch tap carries a pixel or two, so a press that moved less than
@@ -176,14 +184,35 @@ const freshTile = (): TileState => ({
 })
 
 /** One finger on the view, followed from down to up. */
+/**
+ * What a press has become.
+ *
+ * - `pending`: down, and not yet anything; lifted under the tap slop it is a
+ *   tap.
+ * - `scrub`: it went sideways from the middle before `HOLD_MS`, and moves the
+ *   playhead.
+ * - `held`: it rested on the middle-right square, and crawls until lifted.
+ * - `reorder`: it rested on a tile of several, and carries the tile.
+ * - `dead`: anything else; its lift does nothing.
+ */
+export type PressMode = 'pending' | 'held' | 'scrub' | 'reorder' | 'dead'
+
 interface Press {
   pointerId: number
-  /** Running while the press may still become a crawl. */
+  x0: number
+  y0: number
+  /** The tile it came down on, or null on the black around them. */
+  tile: number | null
+  /** The take's clock when it came down, which a scrub moves from. */
+  startWall: number | null
+  mode: PressMode
+  /** Running while it may still become a hold. */
   timer: ReturnType<typeof setTimeout> | null
-  /** It became one, and its lift ends the crawl. */
-  held: boolean
-  /** It has moved far enough to be a drag, so its lift is not a tap. */
+  /** It has moved beyond the tap slop, so its lift is not a tap. */
   travelled: boolean
+  /** The scrub's next playhead, and the frame that will move there. */
+  scrubTo: number | null
+  frame: number
 }
 
 /** A tile being moved, by how far it has come from where it was picked up. */
@@ -205,6 +234,13 @@ export interface MultiCam {
   tiles: Record<string, TileState>
   playing: boolean
   atWallMs: number | null
+  /**
+   * Where the pictures are now, on the wall clock: the heard tile's frame, or
+   * the clock where nothing plays. `atWallMs` is the watchdog's last reading,
+   * up to a second behind a playing tile — a close that reported it came back
+   * that much short.
+   */
+  wallNow: () => number | null
   /**
    * The tile the clock is read from (`masterOf`), as the watchdog last chose
    * it; null until it has.
@@ -245,7 +281,6 @@ export interface MultiCam {
    */
   controlsShown: boolean
   drag: TileDrag | null
-  pressPointer: number | null
   /** What the view wants each tile to be doing, for the source's recovery. */
   intents: { current: Map<string, boolean> }
   takeElement: (id: string) => (node: TileHandle | null) => void
@@ -259,11 +294,26 @@ export interface MultiCam {
   beginSlow: () => boolean
   endSlow: () => void
   runZone: (zone: AngleZone) => void
-  pressStart: (pointerId: number, x: number, y: number) => boolean
-  pressMoved: (pointerId: number) => void
-  pressEnd: (pointerId: number, still: boolean, x: number, y: number) => boolean
+  /**
+   * A finger, or the mouse, has come down at a point of the window, on a
+   * tile or (null) the black around them. False when it is to be ignored,
+   * because another finger is holding a crawl.
+   */
+  pressStart: (
+    pointerId: number,
+    x: number,
+    y: number,
+    tile: number | null
+  ) => boolean
+  /** It has moved to a point of the window. */
+  pressMove: (pointerId: number, x: number, y: number) => void
+  /** It has come up there; answers what it had become, or null if ignored. */
+  pressEnd: (pointerId: number, x: number, y: number) => PressMode | null
   pressCancel: (pointerId: number) => void
-  mayReorder: (pointerId: number) => boolean
+  /** The tile a press has picked up, to be carried; null for none. */
+  armedTile: number | null
+  /** The bar's track width, which a scrub is measured against. */
+  setTrackWidth: (px: number) => void
   moveTile: (index: number, x: number, y: number) => void
   dropTile: (index: number, x: number, y: number) => void
   /** The angles as the bar draws them: a name and a stretch of the take. */
@@ -723,6 +773,18 @@ export function useMultiCam(
     }
     return null
   }
+  /** `gameNow`, for callbacks made once and kept. */
+  const gameNowRef = useRef(gameNow)
+  gameNowRef.current = gameNow
+  const onGoneRef = useRef(props.onGone)
+  onGoneRef.current = props.onGone
+  // A layout effect's cleanup runs before the tiles' refs are detached, so
+  // it still reads the picture's own moment rather than the clock's.
+  useLayoutEffect(() => {
+    return () => {
+      onGoneRef.current?.(gameNowRef.current('') ?? atWallRef.current)
+    }
+  }, [])
 
   /**
    * Sends a tile just ahead of the game and starts it on the moment the game
@@ -1470,6 +1532,16 @@ export function useMultiCam(
   )
 
   const toggle = useCallback((): void => {
+    // Stopped where the pictures stop: the clock's last reading is up to a
+    // second behind a playing tile, and a skip from it after the pause landed
+    // short by that much.
+    if (playingRef.current) {
+      const there = gameNowRef.current('')
+      if (there != null) {
+        atWallRef.current = there
+        setAtWallMs(there)
+      }
+    }
     setPlaying(current => {
       const next = !current
       for (const video of chosen) {
@@ -1524,6 +1596,10 @@ export function useMultiCam(
   /** False when a crawl was already running, or there is no clock to move. */
   const beginSlow = useCallback((): boolean => {
     if (slowFrame.current !== 0 || atWallRef.current == null) return false
+    // From where the pictures are. The watchdog last set the clock up to a
+    // second ago, and a crawl begun from there put every tile back by however
+    // far it had played since: a visible step back as the hold took.
+    atWallRef.current = gameNowRef.current('') ?? atWallRef.current
     crawlRate.current = SLOW_RATE
     setRateAll(SLOW_RATE, () => true)
     setSlow(SLOW_RATE)
@@ -1572,7 +1648,10 @@ export function useMultiCam(
   const skip = useCallback(
     (deltaSec: number): void => {
       if (atWallRef.current == null) return
-      goTo(atWallRef.current + deltaSec * 1000)
+      // From where the pictures are, as a crawl begins: the clock was last
+      // set up to a second ago, and a skip from it landed short by that much.
+      const from = gameNowRef.current('') ?? atWallRef.current
+      goTo(from + deltaSec * 1000)
     },
     [goTo]
   )
@@ -1657,11 +1736,22 @@ export function useMultiCam(
    * against whichever tile the finger happens to be on.
    */
   const press = useRef<Press | null>(null)
-  /**
-   * The finger the press belongs to, for the tiles: one that has picked its
-   * picture up puts it down again the moment another finger takes over.
-   */
-  const [pressPointer, setPressPointer] = useState<number | null>(null)
+
+  /** The tile a press is carrying, for the views to draw it picked up. */
+  const [armedTile, setArmedTile] = useState<number | null>(null)
+  /** The bar's track, in px; the window's width until it has said. */
+  const trackWidth = useRef<number | null>(null)
+  const setTrackWidth = useCallback((px: number): void => {
+    trackWidth.current = px > 0 ? px : null
+  }, [])
+
+  /** Stops a press's timer and any scrub frame it has waiting. */
+  const settlePress = (state: Press): void => {
+    if (state.timer != null) clearTimeout(state.timer)
+    state.timer = null
+    if (state.frame !== 0) cancelAnimationFrame(state.frame)
+    state.frame = 0
+  }
 
   /**
    * A finger has come down. False when it is to be ignored, because another
@@ -1670,35 +1760,63 @@ export function useMultiCam(
    * Every finger reaches this one press, so it is kept by pointer. A second
    * finger used to replace the first outright: the crawl the first was holding
    * then never saw its finger lift and ran on for good, and the second
-   * finger's lift was taken for a tap. A press that is only waiting to become
-   * a hold is given up to the newer finger, which is the one the viewer is
-   * thinking about.
+   * finger's lift was taken for a tap. Any other press is given up to the
+   * newer finger, which is the one the viewer is thinking about.
    */
-  const pressStart = (pointerId: number, x: number, y: number): boolean => {
+  const pressStart = (
+    pointerId: number,
+    x: number,
+    y: number,
+    tile: number | null
+  ): boolean => {
     const current = press.current
-    if (current?.held === true && current.pointerId !== pointerId) return false
-    if (current?.timer != null) clearTimeout(current.timer)
-    // Only the +10 s square crawls when held (`gestureAction`).
-    const zone = angleZoneFor(x, y, width, height)
-    const slowZone =
-      zone !== 'controls' && gestureAction(zone, 'hold') === 'slowForward'
+    if (current?.mode === 'held' && current.pointerId !== pointerId) {
+      return false
+    }
+    if (current != null) {
+      // A scrub given up where it had got to.
+      if (current.scrubTo != null) goTo(current.scrubTo)
+      settlePress(current)
+    }
+    setArmedTile(null)
     const state: Press = {
       pointerId,
+      x0: x,
+      y0: y,
+      tile,
+      // From where the pictures are, as a skip or a crawl begins: the clock's
+      // last reading is up to a second behind, and a scrub from it stepped
+      // every tile back before it moved them.
+      startWall: gameNowRef.current('') ?? atWallRef.current,
+      mode: 'pending',
       timer: null,
-      held: false,
-      travelled: false
+      travelled: false,
+      scrubTo: null,
+      frame: 0
     }
-    if (slowZone) {
-      state.timer = setTimeout(() => {
-        state.timer = null
+    // Still for `HOLD_MS`: a crawl on the +10 s square (`gestureAction`), a
+    // tile picked up anywhere else when there are others to swap it with.
+    // Otherwise it stays a press whose lift, still under the slop, is a tap.
+    state.timer = setTimeout(() => {
+      state.timer = null
+      if (press.current !== state || state.mode !== 'pending') return
+      const zone = angleZoneFor(state.x0, state.y0, width, height)
+      if (
+        zone !== 'controls' &&
+        gestureAction(zone, 'hold') === 'slowForward'
+      ) {
         // Held only if this press started the crawl. One already running —
         // an arrow key held down — belongs to its key, and lifting this
         // finger must not end it.
-        state.held = beginSlow()
-      }, HOLD_MS)
-    }
+        state.mode = beginSlow() ? 'held' : 'dead'
+        return
+      }
+      if (state.tile != null && chosen.length > 1) {
+        state.mode = 'reorder'
+        setArmedTile(state.tile)
+      }
+    }, HOLD_MS)
     press.current = state
-    setPressPointer(pointerId)
     return true
   }
 
@@ -1706,41 +1824,65 @@ export function useMultiCam(
   const pressOf = (pointerId: number): Press | null =>
     press.current?.pointerId === pointerId ? press.current : null
 
-  /** The finger has travelled: it is a drag, and will not become a hold. */
-  const pressMoved = (pointerId: number): void => {
+  /**
+   * The finger has moved. Before `HOLD_MS`, a move of `STILL_FRACTION` of the
+   * width is a drag: sideways from the middle it scrubs, otherwise it is
+   * nothing. A scrub moves the playhead at `SCRUB_RATE` of the bar's own rate,
+   * once a frame, and leaves playing or paused as it was.
+   */
+  const pressMove = (pointerId: number, x: number, y: number): void => {
     const state = pressOf(pointerId)
     if (state == null) return
-    state.travelled = true
-    if (state.timer == null) return
-    clearTimeout(state.timer)
-    state.timer = null
+    const dx = x - state.x0
+    const dy = y - state.y0
+    if (beyondSlop(dx, dy)) state.travelled = true
+    if (state.mode === 'pending') {
+      if (Math.hypot(dx, dy) < STILL_FRACTION * width) return
+      // Its timer runs until `HOLD_MS`; a press still past that scrubs no more.
+      const early = state.timer != null
+      settlePress(state)
+      const fromMiddle =
+        state.x0 >= SCRUB_EDGE_FRACTION * width &&
+        state.x0 <= (1 - SCRUB_EDGE_FRACTION) * width
+      state.mode =
+        early &&
+        fromMiddle &&
+        Math.abs(dx) > Math.abs(dy) &&
+        state.startWall != null
+          ? 'scrub'
+          : 'dead'
+    }
+    if (state.mode !== 'scrub' || state.startWall == null) return
+    const take = takeRef.current
+    const span = take == null ? 0 : take.toMs - take.fromMs
+    const track = trackWidth.current ?? width
+    if (take == null || track <= 0) return
+    state.scrubTo = Math.min(
+      take.toMs,
+      Math.max(
+        take.fromMs,
+        state.startWall + ((dx * span) / track) * SCRUB_RATE
+      )
+    )
+    showBar()
+    if (state.frame !== 0) return
+    state.frame = requestAnimationFrame(() => {
+      state.frame = 0
+      if (state.scrubTo != null) goTo(state.scrubTo)
+    })
   }
 
   /**
-   * Whether this pointer may still pick a tile up: it is the press being
-   * followed, and that press is not holding a crawl. A finger that has lost
-   * the press to another is done.
-   */
-  const mayReorder = (pointerId: number): boolean => {
-    const state = pressOf(pointerId)
-    return state != null && !state.held
-  }
-
-  /**
-   * The finger has come up. True when it was a hold, which the tile must not
-   * then read as a drop.
-   *
-   * A finger that travelled on the way is not a tap, even if it came back to
-   * where it started.
+   * The finger has come up: a crawl ends, a scrub lands, and a press that
+   * never became anything and stayed under the slop is a tap.
    */
   const pressEnd = (
     pointerId: number,
-    still: boolean,
     x: number,
     y: number
-  ): boolean => {
+  ): PressMode | null => {
     const state = pressOf(pointerId)
-    if (state == null) return false
+    if (state == null) return null
     // Inside the touch, which is the one moment iOS lets the sound back on:
     // unmuted any other time, a playing video is paused instead.
     if (soundBlockedRef.current) {
@@ -1750,28 +1892,28 @@ export function useMultiCam(
       setSoundBlocked(false)
     }
     press.current = null
-    if (state.timer != null) clearTimeout(state.timer)
-    if (state.held) {
-      endSlow()
-      return true
-    }
-    if (still && !state.travelled) {
+    settlePress(state)
+    setArmedTile(null)
+    if (state.mode === 'held') endSlow()
+    if (state.mode === 'scrub' && state.scrubTo != null) goTo(state.scrubTo)
+    if (state.mode === 'pending' && !state.travelled) {
       runZoneRef.current(angleZoneFor(x, y, width, height))
     }
-    return false
+    return state.mode
   }
 
   const pressCancel = (pointerId: number): void => {
     const state = pressOf(pointerId)
     if (state == null) return
     press.current = null
-    if (state.timer != null) clearTimeout(state.timer)
-    if (state.held) endSlow()
+    settlePress(state)
+    setArmedTile(null)
+    if (state.mode === 'held') endSlow()
   }
 
   useEffect(() => {
     return () => {
-      if (press.current?.timer != null) clearTimeout(press.current.timer)
+      if (press.current != null) settlePress(press.current)
     }
   }, [])
 
@@ -1905,7 +2047,6 @@ export function useMultiCam(
     barShown,
     controlsShown: barShown || flashing,
     drag,
-    pressPointer,
     intents,
     takeElement,
     attaching,
@@ -1919,10 +2060,11 @@ export function useMultiCam(
     endSlow,
     runZone,
     pressStart,
-    pressMoved,
+    pressMove,
     pressEnd,
     pressCancel,
-    mayReorder,
+    armedTile,
+    setTrackWidth,
     moveTile,
     dropTile,
     barAngles: (window: Window) =>
@@ -1934,6 +2076,7 @@ export function useMultiCam(
           startOf(video, window.fromMs) +
           (video.durationSec ?? (window.toMs - window.fromMs) / 1000) * 1000
       })),
+    wallNow: (): number | null => gameNowRef.current('') ?? atWallRef.current,
     tileWaiting: (id: string): boolean =>
       outIds.has(id) ||
       (tiles[id]?.stalledSince != null &&

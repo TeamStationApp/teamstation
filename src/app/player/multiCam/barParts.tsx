@@ -40,11 +40,13 @@ export interface BarAngle {
 export interface MultiCamBarProps {
   window: Window
   atMs: number
-  playing: boolean
   angles: BarAngle[]
-  onTogglePlay: () => void
-  onSkip: (deltaSec: number) => void
   onScrub: (wallMs: number) => void
+  /**
+   * The track's width in px, whenever it is laid out: a drag across the
+   * pictures moves the playhead by a share of it.
+   */
+  onTrackWidth?: (px: number) => void
   /** Any press or drag on the bar, which keeps it from hiding under a finger. */
   onInteract: () => void
   /** Faded in when true, faded out and untouchable when false. */
@@ -55,38 +57,6 @@ export interface MultiCamBarProps {
 export function fractionOf(take: Window, ms: number): number {
   const span = Math.max(1, take.toMs - take.fromMs)
   return Math.min(1, Math.max(0, (ms - take.fromMs) / span))
-}
-
-/** −10 s, play or pause, +10 s: the buttons before the track. */
-export function TransportButtons(props: {
-  playing: boolean
-  onTogglePlay: () => void
-  onSkip: (deltaSec: number) => void
-}): React.ReactElement {
-  const { playing, onTogglePlay, onSkip } = props
-  return (
-    <>
-      <BarButton
-        icon="replay_10"
-        hint={lstrings.angles_back_ten}
-        onPress={() => {
-          onSkip(-10)
-        }}
-      />
-      <BarButton
-        label={playing ? '❚❚' : '▶'}
-        hint={playing ? lstrings.angles_pause : lstrings.angles_play}
-        onPress={onTogglePlay}
-      />
-      <BarButton
-        icon="forward_10"
-        hint={lstrings.angles_forward_ten}
-        onPress={() => {
-          onSkip(10)
-        }}
-      />
-    </>
-  )
 }
 
 /**

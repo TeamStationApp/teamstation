@@ -426,3 +426,142 @@ describe('leaving either grid says where it had got to (U12)', function () {
     })
   }
 })
+
+describe('a press on either grid: a tap, a scrub, a hold that picks a tile up (U14)', function () {
+  afterEach(unmount)
+
+  /** Where the bar says the take is, in seconds. */
+  const playhead = (): number =>
+    Number(
+      document
+        .querySelector('[aria-label="Position in the game"]')!
+        .getAttribute('aria-valuenow')
+    )
+  const wait = async (ms: number): Promise<void> => {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, ms))
+    })
+  }
+
+  /** The browser's pointers on one element, or the phone's touches. */
+  type Press = (
+    target: Element,
+    type: 'down' | 'move' | 'up',
+    x: number,
+    y: number
+  ) => Promise<void>
+  const pointer: Press = async (target, type, x, y) => {
+    const event = new window.MouseEvent(`pointer${type}`, {
+      bubbles: true,
+      clientX: x,
+      clientY: y,
+      button: 0,
+      buttons: type === 'up' ? 0 : 1
+    })
+    Object.defineProperty(event, 'pointerId', { value: 7 })
+    Object.defineProperty(event, 'pointerType', { value: 'touch' })
+    await act(async () => {
+      target.dispatchEvent(event)
+    })
+  }
+  const touch: Press = async (target, type, x, y) => {
+    await act(async () => {
+      target.dispatchEvent(
+        new window.MouseEvent(type === 'move' ? 'mousemove' : `mouse${type}`, {
+          bubbles: true,
+          clientX: x,
+          clientY: y,
+          button: 0,
+          buttons: type === 'up' ? 0 : 1
+        })
+      )
+    })
+  }
+
+  for (const [name, Grid, press] of [
+    ['browser', BrowserGrid, pointer],
+    ['phone', PhoneGrid, touch]
+  ] as const) {
+    it(`in the ${name}'s`, async function () {
+      this.timeout(10_000)
+      const [width, height] = [402, 874]
+      await windowSize(width, height)
+      const server = overlayServer()
+      const client = new TeamStationClient({
+        baseUrl: '/api/v1',
+        fetch: server.fetch
+      })
+      client.playback = async () => await new Promise(() => undefined)
+      const orders: string[][] = []
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <Grid
+              client={client}
+              gameId="g1"
+              videos={IDS.map(angle)}
+              order={['a', 'b']}
+              audioId="a"
+              zoomedId={null}
+              atMs={OVERLAY_T0 + 120_000}
+              onChange={next => {
+                if (next.order != null) orders.push(next.order)
+              }}
+              onClose={() => undefined}
+            />
+          </ThemeProvider>
+        )
+      })
+      await settle()
+      const tileLayer = (index: number): Element =>
+        name === 'browser'
+          ? document.querySelectorAll('div[style*="cursor: grab"]')[index]
+          : document.querySelector('[data-testid="grid-touches"]')!
+      const margin =
+        name === 'browser'
+          ? document.querySelector('div[style*="z-index: 0"]')!
+          : document.querySelector('[data-testid="grid-touches"]')!
+      // Upright, the tiles stack: the first is the top one.
+      const tiles = [...document.querySelectorAll('video')].map(video => {
+        const style = video.parentElement!.style
+        return {
+          x: Number.parseFloat(style.left),
+          y: Number.parseFloat(style.top),
+          width: Number.parseFloat(style.width),
+          height: Number.parseFloat(style.height)
+        }
+      })
+      expect(playhead()).equals(120)
+
+      // A tap on the middle right of the black around the tiles skips on.
+      const right = [width * 0.9, height * 0.5] as const
+      await press(margin, 'down', ...right)
+      await press(margin, 'up', ...right)
+      expect(playhead()).equals(130)
+
+      // A sideways drag from the middle scrubs, at a quarter of the track,
+      // which is the window's width until the bar has said otherwise.
+      const y = height * 0.3
+      await press(margin, 'down', width * 0.5, y)
+      await press(margin, 'move', width * 0.5 + width * 0.25, y)
+      await wait(50)
+      await press(margin, 'up', width * 0.5 + width * 0.25, y)
+      // A ten-minute take: a quarter of a quarter of it.
+      expect(playhead()).closeTo(130 + 600 * 0.25 * 0.25, 1)
+
+      // Held still on the first tile for half a second, it is picked up, and
+      // dropped on the second it swaps with it.
+      const first = tiles[0]
+      const from = [first.x + first.width * 0.1, first.y + first.height * 0.5]
+      const jump = tiles[1].y - first.y
+      await press(tileLayer(0), 'down', from[0], from[1])
+      await wait(600)
+      await press(tileLayer(0), 'move', from[0], from[1] + jump)
+      await press(tileLayer(0), 'up', from[0], from[1] + jump)
+      expect(orders).deep.equals([['b', 'a']])
+    })
+  }
+})

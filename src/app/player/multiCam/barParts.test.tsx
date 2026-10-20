@@ -11,8 +11,7 @@ import {
   exitClearance,
   exitTopClear,
   fractionOf,
-  TrackStrips,
-  TransportButtons
+  TrackStrips
 } from './barParts'
 
 let root: Root | undefined
@@ -28,46 +27,6 @@ afterEach(async function () {
 })
 
 describe('the multi-camera bar’s parts', function () {
-  it('draws the ten-second buttons as icons, and each one does what it says', async function () {
-    const skips: number[] = []
-    let toggled = 0
-    host = document.createElement('div')
-    document.body.appendChild(host)
-    root = createRoot(host)
-    await act(async () => {
-      root?.render(
-        <ThemeProvider>
-          <TransportButtons
-            playing
-            onTogglePlay={() => {
-              toggled++
-            }}
-            onSkip={delta => {
-              skips.push(delta)
-            }}
-          />
-        </ThemeProvider>
-      )
-    })
-    // Material Symbols draws a ligature from the icon's name; the arrow
-    // characters it replaces are missing from Android's fonts.
-    expect(host.textContent).includes('replay_10')
-    expect(host.textContent).includes('forward_10')
-    expect(host.textContent).not.includes('⏴')
-    const press = async (label: string): Promise<void> => {
-      const node = host?.querySelector<HTMLElement>(`[aria-label="${label}"]`)
-      if (node == null) throw new Error(`no ${label}`)
-      await act(async () => {
-        node.click()
-      })
-    }
-    await press('Back ten seconds')
-    await press('Forward ten seconds')
-    await press('Pause')
-    expect(skips).deep.equals([-10, 10])
-    expect(toggled).equals(1)
-  })
-
   it('reads the take’s clock and where an instant falls in it', function () {
     expect(clock(65_000)).equals('1:05')
     expect(clock(3_725_000)).equals('1:02:05')
@@ -141,30 +100,72 @@ describe('the multi-camera bar’s parts', function () {
     expect(getComputedStyle(hidden).pointerEvents).equals('none')
   })
 
-  it('keeps no way out on the bar itself', async function () {
+  it('is the time, the track and the total: no buttons, and no way out (U15)', async function () {
+    const widths: number[] = []
     host = document.createElement('div')
     document.body.appendChild(host)
     root = createRoot(host)
-    await act(async () => {
-      root?.render(
-        <ThemeProvider>
-          <MultiCamBar
-            window={{ fromMs: 0, toMs: 60_000 }}
-            atMs={30_000}
-            playing
-            angles={[]}
-            onTogglePlay={() => undefined}
-            onSkip={() => undefined}
-            onScrub={() => undefined}
-            onInteract={() => undefined}
-            visible
-          />
-        </ThemeProvider>
-      )
+    const slider = (): HTMLElement =>
+      host!.querySelector<HTMLElement>('[role="slider"]')!
+    // jsdom lays nothing out: the track says it is 320 px across. On the
+    // div's own prototype, ahead of anything another suite has put on the
+    // ones above it.
+    const prototype = window.HTMLDivElement.prototype
+    const above = Object.getPrototypeOf(prototype) as HTMLElement
+    const own = Object.getOwnPropertyDescriptor(
+      prototype,
+      'getBoundingClientRect'
+    )
+    Object.defineProperty(prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function (this: HTMLDivElement): DOMRect {
+        return this.getAttribute('role') === 'slider'
+          ? new window.DOMRect(0, 0, 320, 24)
+          : Reflect.apply(Reflect.get(above, 'getBoundingClientRect'), this, [])
+      }
     })
-    expect(host.querySelector('[aria-label="Pause"]')).not.equals(null)
-    expect(host.querySelector('[aria-label="Close"]')).equals(null)
-    expect(host.textContent).not.includes('✕')
+    try {
+      await act(async () => {
+        root?.render(
+          <ThemeProvider>
+            <MultiCamBar
+              window={{ fromMs: 0, toMs: 60_000 }}
+              atMs={30_000}
+              angles={[]}
+              onScrub={() => undefined}
+              onTrackWidth={px => widths.push(px)}
+              onInteract={() => undefined}
+              visible
+            />
+          </ThemeProvider>
+        )
+      })
+      expect(slider()).not.equals(null)
+      for (const label of [
+        'Pause',
+        'Play',
+        'Back ten seconds',
+        'Forward ten seconds',
+        'Close'
+      ])
+        expect(host.querySelector(`[aria-label="${label}"]`), label).equals(
+          null
+        )
+      expect(host.textContent).not.includes('replay_10')
+      expect(host.textContent).not.includes('✕')
+      expect(host.textContent).includes('0:30')
+      expect(host.textContent).includes('1:00')
+      // Its width, on mount and when the window changes.
+      expect(widths).deep.equals([320])
+      await act(async () => {
+        window.dispatchEvent(new window.Event('resize'))
+      })
+      expect(widths).deep.equals([320, 320])
+    } finally {
+      if (own != null)
+        Object.defineProperty(prototype, 'getBoundingClientRect', own)
+      else Reflect.deleteProperty(prototype, 'getBoundingClientRect')
+    }
   })
 
   it('says how much of the corner the way out takes', async function () {
@@ -203,10 +204,7 @@ describe('the multi-camera bar’s parts', function () {
             <MultiCamBar
               window={{ fromMs: 0, toMs: 100_000 }}
               atMs={0}
-              playing
               angles={[]}
-              onTogglePlay={() => undefined}
-              onSkip={() => undefined}
               onScrub={ms => scrubs.push(ms)}
               onInteract={() => undefined}
               visible

@@ -1,4 +1,4 @@
-import React, { useRef } from 'react'
+import React, { useEffect, useRef } from 'react'
 import { Text, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
@@ -9,8 +9,7 @@ import {
   getBarStyles,
   type MultiCamBarProps as SharedBarProps,
   TRACK_HIT_PX,
-  TrackStrips,
-  TransportButtons
+  TrackStrips
 } from './multiCam/barParts'
 import { TAP_SLOP_PX } from './multiCam/useMultiCam'
 
@@ -49,19 +48,19 @@ export interface MultiCamBarProps extends SharedBarProps {
  * with it goes the accessibility the native controls brought — hence the roles
  * and labels on everything here.
  *
- * **One row.** The buttons sit either side of the track rather than under it,
- * because every line the bar takes is a line of picture the four angles lose.
- * Which angle is heard is chosen in the picker, before the view opens.
+ * **One row**: the time, the track and the total, because every line the bar
+ * takes is a line of picture the four angles lose. Playing, pausing and
+ * skipping are the pictures' own taps and the keys; a drag across the
+ * pictures scrubs too. Which angle is heard is chosen in the picker, before
+ * the view opens.
  */
 export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
   const {
     window: take,
     atMs,
-    playing,
     angles,
-    onTogglePlay,
-    onSkip,
     onScrub,
+    onTrackWidth,
     onInteract,
     visible,
     rootRef,
@@ -94,6 +93,21 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
     onScrub(take.fromMs + at * span)
   }
 
+  // The track's width, for a drag across the pictures to be measured in: on
+  // mount, and again whenever the window changes size.
+  useEffect(() => {
+    if (onTrackWidth == null) return
+    const report = (): void => {
+      const width = trackRef.current?.getBoundingClientRect().width ?? 0
+      if (width > 0) onTrackWidth(width)
+    }
+    report()
+    window.addEventListener('resize', report)
+    return () => {
+      window.removeEventListener('resize', report)
+    }
+  }, [onTrackWidth])
+
   return (
     // A raw div for the capture phase: the bar stays up for as long as
     // somebody is using it, whichever part of it they are using, focus moving
@@ -122,11 +136,6 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
       onFocusCapture={onInteract}
     >
       <View style={styles.bar}>
-        <TransportButtons
-          playing={playing}
-          onTogglePlay={onTogglePlay}
-          onSkip={onSkip}
-        />
         <Text style={styles.time}>{clock(atMs - take.fromMs)}</Text>
         {/* A raw div, for the same reason the tiles use one: this needs the
             pointer's position against the element's own box, and it has to
