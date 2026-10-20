@@ -9,9 +9,11 @@ import type {
   ScheduleGameResult,
   ScheduleGamesResponse
 } from '../../common/scheduleGames'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import type { Database, GamesTable } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { postGamePlays } from '../events/postPlays'
@@ -61,13 +63,16 @@ describe('scheduling a team’s games', function () {
       .where('custodian_id', 'is', null)
       .execute()
     if (options.rights != null && !options.rights.siteAdmin) {
-      await db!.deleteFrom('scope_roles').where('user_id', '=', 902).execute()
+      await db!
+        .deleteFrom('scope_roles')
+        .where('user_id', '=', userIdOfGumbo(902))
+        .execute()
       for (const id of options.rights.seasonIds)
         await db!
           .insertInto('scope_roles')
           .values({
             id: makeId('scopeRole'),
-            user_id: 902,
+            user_id: userIdOfGumbo(902),
             scope_type: 'season',
             scope_id: id,
             role: 'admin'
@@ -78,7 +83,7 @@ describe('scheduling a team’s games', function () {
           .insertInto('scope_roles')
           .values({
             id: makeId('scopeRole'),
-            user_id: 902,
+            user_id: userIdOfGumbo(902),
             scope_type: 'team',
             scope_id: id,
             role: 'admin'
@@ -89,7 +94,9 @@ describe('scheduling a team’s games', function () {
       teamId: options.teamId ?? harbor,
       rows,
       actor: {
-        userId: options.rights != null && !options.rights.siteAdmin ? 902 : 901,
+        userId: userIdOfGumbo(
+          options.rights != null && !options.rights.siteAdmin ? 902 : 901
+        ),
         isAdmin: false,
         scopes: []
       }
@@ -137,24 +144,21 @@ describe('scheduling a team’s games', function () {
       .insertInto('system_settings')
       .values({ key: 'creation.hierarchyReady', value: true })
       .execute()
-    await db
-      .insertInto('users')
-      .values([
-        {
-          id: 901,
-          legacyId: 'usr_schedule_node',
-          display_name: 'Babe Ruth',
-          login_enabled: true,
-          is_admin: true
-        },
-        {
-          id: 902,
-          legacyId: 'usr_schedule_season',
-          display_name: 'Lou Gehrig',
-          login_enabled: true
-        }
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(901),
+        legacyId: 'usr_schedule_node',
+        display_name: 'Babe Ruth',
+        login_enabled: true,
+        is_admin: true
+      },
+      {
+        id: userIdOfGumbo(902),
+        legacyId: 'usr_schedule_season',
+        display_name: 'Lou Gehrig',
+        login_enabled: true
+      }
+    ])
     await db
       .insertInto('seasons')
       .values([

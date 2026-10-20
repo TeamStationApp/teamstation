@@ -17,12 +17,14 @@ import {
 } from '../../common/api'
 import { makeId } from '../../common/ids'
 import type { Role } from '../../common/roles'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import {
   type GuardianFixture,
   guardianFixture
 } from '../../test/guardianFixture'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { guardiansOf } from '../access'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
@@ -79,41 +81,42 @@ describe('scoring roster HTTP contract', function () {
       .insertInto('season_team_parents')
       .values({ team_id: team, season_id: season })
       .execute()
-    await db
-      .insertInto('users')
-      .values([
-        {
-          id: child,
-          legacyId: 'usr_child',
-          display_name: 'Jordan Pacheco',
-          first_name: 'Jordan',
-          last_name: 'Pacheco',
-          bats: 'switch',
-          throws: 'left'
-        },
-        {
-          id: coach,
-          legacyId: 'usr_coach',
-          display_name: 'Alex Cora',
-          bats: null,
-          throws: null
-        },
-        {
-          id: seasonMember,
-          legacyId: 'usr_season_member',
-          display_name: 'Frank Francisco',
-          bats: 'left',
-          throws: 'right'
-        },
-        { id: outsider, legacyId: 'usr_outsider', display_name: 'Outsider' }
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(child),
+        legacyId: 'usr_child',
+        display_name: 'Jordan Pacheco',
+        first_name: 'Jordan',
+        last_name: 'Pacheco',
+        bats: 'switch',
+        throws: 'left'
+      },
+      {
+        id: userIdOfGumbo(coach),
+        legacyId: 'usr_coach',
+        display_name: 'Alex Cora',
+        bats: null,
+        throws: null
+      },
+      {
+        id: userIdOfGumbo(seasonMember),
+        legacyId: 'usr_season_member',
+        display_name: 'Frank Francisco',
+        bats: 'left',
+        throws: 'right'
+      },
+      {
+        id: userIdOfGumbo(outsider),
+        legacyId: 'usr_outsider',
+        display_name: 'Outsider'
+      }
+    ])
     await db
       .insertInto('memberships')
       .values([
         {
           id: makeId('membership'),
-          user_id: child,
+          user_id: userIdOfGumbo(child),
           team_id: team,
           is_player: true,
           jersey: '00',
@@ -121,7 +124,7 @@ describe('scoring roster HTTP contract', function () {
         },
         {
           id: makeId('membership'),
-          user_id: coach,
+          user_id: userIdOfGumbo(coach),
           team_id: team,
           role: 'manager'
         }
@@ -133,12 +136,12 @@ describe('scoring roster HTTP contract', function () {
         {
           id: 'membership-season-member',
           season_id: season,
-          user_id: seasonMember
+          user_id: userIdOfGumbo(seasonMember)
         },
         {
           id: 'membership-child',
           season_id: season,
-          user_id: child
+          user_id: userIdOfGumbo(child)
         }
       ])
       .execute()
@@ -200,7 +203,11 @@ describe('scoring roster HTTP contract', function () {
     app.use((req, _res, next) => {
       const id = req.header('x-test-user')
       if (id != null)
-        req.actor = { userId: Number(id), isAdmin: false, scopes: [] }
+        req.actor = {
+          userId: userIdOfGumbo(Number(id)),
+          isAdmin: false,
+          scopes: []
+        }
       next()
     })
     app.use(
@@ -260,7 +267,7 @@ describe('scoring roster HTTP contract', function () {
     // A player who is a member of the season too is a player.
     expect(roster[1].inheritedFrom).equals(null)
     expect(roster[1]).includes({
-      userId: child,
+      userId: userIdOfGumbo(child),
       shortName: 'Jordan P',
       jersey: '00',
       bats: 'switch',
@@ -270,7 +277,7 @@ describe('scoring roster HTTP contract', function () {
     expect(roster[1].positions).deep.equals(['P', 'SS'])
     // A member of the season is a member of its teams, with no place on them.
     expect(roster[2]).includes({
-      userId: seasonMember,
+      userId: userIdOfGumbo(seasonMember),
       gumboId: seasonMember,
       shortName: 'Frank F',
       bats: 'left',
@@ -312,9 +319,9 @@ describe('scoring roster HTTP contract', function () {
     })
     expect(response.status).equals(200)
     const rows = ((await response.json()) as unknown[]).map(asRosterEntry)
-    expect(rows.find(row => row.userId === child)?.nameDetails).not.equals(
-      undefined
-    )
+    expect(
+      rows.find(row => row.userId === userIdOfGumbo(child))?.nameDetails
+    ).not.equals(undefined)
     expect(
       rows
         .filter(row => !row.isPlayer)
@@ -349,13 +356,16 @@ describe('scoring roster HTTP contract', function () {
     expect(detail.videos[0]).includes({ id: video, status: 'unavailable' })
     const box = asBoxScore(await get(`/games/${game}/box-score`))
     expect(box.batting[0]).includes({
-      userId: child,
+      userId: userIdOfGumbo(child),
       shortName: 'Jordan P',
       h: 1,
       ab: 2,
       seasonAvg: 0.5
     })
-    expect(box.pitching[0]).includes({ userId: child, ip: '1.0' })
+    expect(box.pitching[0]).includes({
+      userId: userIdOfGumbo(child),
+      ip: '1.0'
+    })
     const stats = await get(`/teams/${team}/stats?seasonId=${season}`)
     expect(stats).is.an('array')
     const highlights = asHighlightsResponse(
@@ -394,13 +404,13 @@ describe('scoring roster HTTP contract', function () {
       duration_ms: 230000,
       start_ms: 10000,
       end_ms: 25000,
-      set_by: coach
+      set_by: userIdOfGumbo(coach)
     }
     await db!
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: child,
+        user_id: userIdOfGumbo(child),
         team_id: opponent,
         is_player: true
       })
@@ -408,11 +418,11 @@ describe('scoring roster HTTP contract', function () {
     await db!
       .insertInto('walk_up_songs')
       .values([
-        { ...song, team_id: team, user_id: child },
+        { ...song, team_id: team, user_id: userIdOfGumbo(child) },
         {
           ...song,
           team_id: opponent,
-          user_id: child,
+          user_id: userIdOfGumbo(child),
           provider: 'localFile',
           provider_id: 'lf:0123456789abcdef',
           title: 'Walkup Fixture',
@@ -432,7 +442,7 @@ describe('scoring roster HTTP contract', function () {
     if (!Array.isArray(here)) throw new Error('Expected roster array')
     const roster = here.map(asRosterEntry)
     const byUser = new Map(roster.map(row => [row.userId, row.walkUpSong]))
-    expect(byUser.get(child)).deep.equals({
+    expect(byUser.get(userIdOfGumbo(child))).deep.equals({
       provider: 'appleMusic',
       providerId: '1440857781',
       isrc: null,
@@ -444,12 +454,14 @@ describe('scoring roster HTTP contract', function () {
       startMs: 10000,
       endMs: 25000
     })
-    expect(byUser.get(coach)).equals(null)
-    expect(byUser.get(seasonMember)).equals(null)
+    expect(byUser.get(userIdOfGumbo(coach))).equals(null)
+    expect(byUser.get(userIdOfGumbo(seasonMember))).equals(null)
     const there = await read(`/teams/${opponent}/roster`)
     if (!Array.isArray(there)) throw new Error('Expected roster array')
     const theirs = there.map(asRosterEntry)
-    expect(theirs.find(row => row.userId === child)?.walkUpSong).to.include({
+    expect(
+      theirs.find(row => row.userId === userIdOfGumbo(child))?.walkUpSong
+    ).to.include({
       provider: 'localFile',
       providerId: 'lf:0123456789abcdef',
       title: 'Walkup Fixture'
@@ -503,7 +515,7 @@ describe('roster sections', function () {
   /** Each entry as `[userId, section, inheritedFrom]`, in roster order. */
   const placed = (
     roster: RosterEntry[]
-  ): Array<[number, string, RosterEntry['inheritedFrom']]> =>
+  ): Array<[string, string, RosterEntry['inheritedFrom']]> =>
     roster.map(row => [row.userId, row.section, row.inheritedFrom])
   const user = async (
     id: number,
@@ -511,25 +523,22 @@ describe('roster sections', function () {
     mergedInto: number | null = null
   ): Promise<void> => {
     const [first, last] = name.split(' ')
-    await f.h.db
-      .insertInto('users')
-      .values({
-        id,
-        legacyId: `usr_roster_${id}`,
-        display_name: name,
-        first_name: first,
-        last_name: last,
-        merged_into: mergedInto
-      })
-      .execute()
+    await insertFixtureUsers(f.h.db, {
+      id,
+      legacyId: `usr_roster_${id}`,
+      display_name: name,
+      first_name: first,
+      last_name: last,
+      merged_into: mergedInto == null ? null : userIdOfGumbo(mergedInto)
+    })
   }
   const link = async (guardian: number, player: number): Promise<void> => {
     await f.h.db
       .insertInto('user_links')
       .values({
         id: makeId('userLink'),
-        user_id: guardian,
-        related_user_id: player,
+        user_id: userIdOfGumbo(guardian),
+        related_user_id: userIdOfGumbo(player),
         kind: 'guardian',
         can_manage: true,
         created_at: new Date()
@@ -546,15 +555,43 @@ describe('roster sections', function () {
       .insertInto('scope_roles')
       .values({
         id: makeId('scopeRole'),
-        user_id: userId,
+        user_id: userIdOfGumbo(userId),
         scope_type: scopeType,
         scope_id: scopeId,
         role,
-        granted_by: f.people.admin,
+        granted_by: userIdOfGumbo(f.people.admin),
         granted_at: new Date()
       })
       .execute()
   }
+
+  it('orders identical roster labels by canonical id while retaining section priority', async function () {
+    const ids = [35, 34, 33]
+    for (const id of ids) {
+      await user(id, 'Mookie Betts')
+      await f.h.db
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: userIdOfGumbo(id),
+          team_id: f.teamA,
+          is_player: true
+        })
+        .execute()
+    }
+    const { roster } = await read()
+    const added = roster.filter(row =>
+      ids.map(userIdOfGumbo).includes(row.userId)
+    )
+    expect(added.map(row => row.userId)).deep.equals(
+      [33, 34, 35].map(userIdOfGumbo)
+    )
+    expect(new Set(added.map(row => row.shortName)).size).equals(1)
+    expect(added.every(row => row.section === 'player')).equals(true)
+    expect(roster.findIndex(row => row.section === 'admin')).lessThan(
+      roster.findIndex(row => row.userId === userIdOfGumbo(33))
+    )
+  })
 
   it('lists admins, staff, players, family, spectators and followers, each once', async function () {
     // A member who neither plays nor holds a role.
@@ -563,7 +600,7 @@ describe('roster sections', function () {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: 230,
+        user_id: userIdOfGumbo(230),
         team_id: f.teamA,
         role: 'member',
         is_player: false
@@ -572,53 +609,65 @@ describe('roster sections', function () {
     await f.h.db
       .updateTable('users')
       .set({ bats: 'left', throws: 'right' })
-      .where('id', '=', f.people.guardian)
+      .where('id', '=', userIdOfGumbo(f.people.guardian))
       .execute()
 
     const { raw, roster } = await read()
     const { admin, seasonCoach, teamCoach, assistant, scorekeeper } = f.people
-    expect(placed(roster)).deep.equals([
-      [admin, 'admin', { level: 'league', role: 'admin' }],
-      // The team's own staff by name, then the season's.
-      [teamCoach, 'staff', null],
-      [scorekeeper, 'staff', null],
-      [assistant, 'staff', null],
-      [seasonCoach, 'staff', { level: 'season', role: 'coach' }],
-      [201, 'player', null],
-      [202, 'player', null],
-      [203, 'player', null],
-      [204, 'player', null],
-      [205, 'player', null],
-      [f.people.guardian, 'family', null],
-      [230, 'spectator', null],
-      [f.people.follower, 'follower', null]
-    ])
+    expect(placed(roster)).deep.equals(
+      [
+        [admin, 'admin', { level: 'league', role: 'admin' }],
+        // The team's own staff by name, then the season's.
+        [teamCoach, 'staff', null],
+        [scorekeeper, 'staff', null],
+        [assistant, 'staff', null],
+        [seasonCoach, 'staff', { level: 'season', role: 'coach' }],
+        [201, 'player', null],
+        [202, 'player', null],
+        [203, 'player', null],
+        [204, 'player', null],
+        [205, 'player', null],
+        [f.people.guardian, 'family', null],
+        [230, 'spectator', null],
+        [f.people.follower, 'follower', null]
+      ].map(([id, ...rest]) => [userIdOfGumbo(id as number), ...rest])
+    )
     const byUser = new Map(roster.map(row => [row.userId, row]))
-    expect(byUser.get(teamCoach)?.staffRoles).deep.equals(['coach'])
-    expect(byUser.get(assistant)?.staffRoles).deep.equals(['assistant'])
-    expect(byUser.get(scorekeeper)?.staffRoles).deep.equals(['scorekeeper'])
-    expect(byUser.get(seasonCoach)?.staffRoles).deep.equals(['coach'])
-    expect(byUser.get(admin)?.staffRoles).deep.equals([])
-    expect(byUser.get(201)).to.include({
+    expect(byUser.get(userIdOfGumbo(teamCoach))?.staffRoles).deep.equals([
+      'coach'
+    ])
+    expect(byUser.get(userIdOfGumbo(assistant))?.staffRoles).deep.equals([
+      'assistant'
+    ])
+    expect(byUser.get(userIdOfGumbo(scorekeeper))?.staffRoles).deep.equals([
+      'scorekeeper'
+    ])
+    expect(byUser.get(userIdOfGumbo(seasonCoach))?.staffRoles).deep.equals([
+      'coach'
+    ])
+    expect(byUser.get(userIdOfGumbo(admin))?.staffRoles).deep.equals([])
+    expect(byUser.get(userIdOfGumbo(201))).to.include({
       shortName: 'Alfonso S',
       jersey: '7',
       isPlayer: true
     })
     // A guardian, a season coach and a follower have no place on the team.
     for (const id of [f.people.guardian, seasonCoach, f.people.follower])
-      expect(byUser.get(id)).to.include({
+      expect(byUser.get(userIdOfGumbo(id))).to.include({
         role: 'member',
         isPlayer: false,
         jersey: null,
         walkUpSong: null
       })
-    expect(byUser.get(f.people.guardian)).to.include({
+    expect(byUser.get(userIdOfGumbo(f.people.guardian))).to.include({
       shortName: 'Tim R',
       bats: 'left',
       throws: 'right'
     })
-    expect(byUser.get(f.people.guardian)?.positions).deep.equals([])
-    expect(byUser.get(230)?.staffRoles).deep.equals([])
+    expect(byUser.get(userIdOfGumbo(f.people.guardian))?.positions).deep.equals(
+      []
+    )
+    expect(byUser.get(userIdOfGumbo(230))?.staffRoles).deep.equals([])
     for (const entry of raw) expect(entry).not.to.have.property('group')
   })
 
@@ -632,7 +681,7 @@ describe('roster sections', function () {
           .insertInto('season_members')
           .values({
             id: makeId('seasonMember'),
-            user_id: userId,
+            user_id: userIdOfGumbo(userId),
             season_id: f.seasonA
           })
           .execute()
@@ -641,7 +690,7 @@ describe('roster sections', function () {
           .insertInto('league_members')
           .values({
             id: makeId('leagueMember'),
-            user_id: userId,
+            user_id: userIdOfGumbo(userId),
             league_id: f.leagueA
           })
           .execute()
@@ -652,7 +701,7 @@ describe('roster sections', function () {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: 230,
+        user_id: userIdOfGumbo(230),
         team_id: f.teamA,
         role: 'member'
       })
@@ -675,7 +724,7 @@ describe('roster sections', function () {
     await f.h.db
       .updateTable('users')
       .set({ disabled_at: new Date() })
-      .where('id', '=', 255)
+      .where('id', '=', userIdOfGumbo(255))
       .execute()
     // A player, a guardian and a coach keep the place they had.
     for (const id of [201, f.people.guardian, f.people.teamCoach])
@@ -684,34 +733,38 @@ describe('roster sections', function () {
     const { roster } = await read()
     expect(
       placed(roster.filter(row => row.section === 'spectator'))
-    ).deep.equals([
-      [230, 'spectator', null],
-      // Then by name: Brett B, Cy Y, Lou L, Sid F.
-      [252, 'spectator', { level: 'league', role: 'member' }],
-      [254, 'spectator', { level: 'season', role: 'member' }],
-      [251, 'spectator', { level: 'league', role: 'member' }],
-      [250, 'spectator', { level: 'season', role: 'member' }]
-    ])
+    ).deep.equals(
+      [
+        [230, 'spectator', null],
+        // Then by name: Brett B, Cy Y, Lou L, Sid F.
+        [252, 'spectator', { level: 'league', role: 'member' }],
+        [254, 'spectator', { level: 'season', role: 'member' }],
+        [251, 'spectator', { level: 'league', role: 'member' }],
+        [250, 'spectator', { level: 'season', role: 'member' }]
+      ].map(([id, ...rest]) => [userIdOfGumbo(id as number), ...rest])
+    )
     const byUser = new Map(roster.map(row => [row.userId, row]))
-    expect(byUser.get(201)).to.include({
+    expect(byUser.get(userIdOfGumbo(201))).to.include({
       section: 'player',
       inheritedFrom: null
     })
-    expect(byUser.get(f.people.guardian)).to.include({
+    expect(byUser.get(userIdOfGumbo(f.people.guardian))).to.include({
       section: 'family',
       inheritedFrom: null
     })
     // Under a family member, the players here they guard, by short name;
     // nobody else carries the field.
-    expect(byUser.get(f.people.guardian)?.guardianOf).deep.equals(['Alfonso S'])
-    expect(byUser.get(201)?.guardianOf).equals(undefined)
-    expect(byUser.get(f.people.teamCoach)).to.include({
+    expect(
+      byUser.get(userIdOfGumbo(f.people.guardian))?.guardianOf
+    ).deep.equals(['Alfonso S'])
+    expect(byUser.get(userIdOfGumbo(201))?.guardianOf).equals(undefined)
+    expect(byUser.get(userIdOfGumbo(f.people.teamCoach))).to.include({
       section: 'staff',
       inheritedFrom: null
     })
     for (const id of [253, 255])
-      expect(byUser.has(id), String(id)).equals(false)
-    expect(byUser.get(250)).to.include({
+      expect(byUser.has(userIdOfGumbo(id)), String(id)).equals(false)
+    expect(byUser.get(userIdOfGumbo(250))).to.include({
       role: 'member',
       isPlayer: false,
       jersey: null,
@@ -727,7 +780,11 @@ describe('roster sections', function () {
     ): Promise<void> => {
       await f.h.db
         .insertInto('follows')
-        .values({ user_id: userId, group_type: groupType, group_id: groupId })
+        .values({
+          user_id: userIdOfGumbo(userId),
+          group_type: groupType,
+          group_id: groupId
+        })
         .execute()
     }
     await user(260, 'Freddie Freeman')
@@ -745,7 +802,7 @@ describe('roster sections', function () {
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: 230,
+        user_id: userIdOfGumbo(230),
         team_id: f.teamA,
         role: 'member'
       })
@@ -758,7 +815,7 @@ describe('roster sections', function () {
     await f.h.db
       .updateTable('users')
       .set({ disabled_at: new Date() })
-      .where('id', '=', 262)
+      .where('id', '=', userIdOfGumbo(262))
       .execute()
     await user(264, 'Gus Triandos')
     await user(263, 'Gus Triandos', 264)
@@ -768,19 +825,29 @@ describe('roster sections', function () {
 
     const { roster } = await read()
     // By name: Freddie F, Grant H, Mo V; and last.
-    expect(placed(roster.slice(-3))).deep.equals([
-      [260, 'follower', null],
-      [f.people.follower, 'follower', null],
-      [261, 'follower', null]
-    ])
+    expect(placed(roster.slice(-3))).deep.equals(
+      [
+        [260, 'follower', null],
+        [f.people.follower, 'follower', null],
+        [261, 'follower', null]
+      ].map(([id, ...rest]) => [userIdOfGumbo(id as number), ...rest])
+    )
     expect(roster.filter(row => row.section === 'follower')).to.have.length(3)
-    expect(roster.filter(row => row.userId === 230)).to.have.length(1)
-    expect(roster.find(row => row.userId === 230)?.section).equals('spectator')
-    expect(roster.filter(row => row.userId === 201)).to.have.length(1)
-    expect(roster.find(row => row.userId === 201)?.section).equals('player')
+    expect(
+      roster.filter(row => row.userId === userIdOfGumbo(230))
+    ).to.have.length(1)
+    expect(
+      roster.find(row => row.userId === userIdOfGumbo(230))?.section
+    ).equals('spectator')
+    expect(
+      roster.filter(row => row.userId === userIdOfGumbo(201))
+    ).to.have.length(1)
+    expect(
+      roster.find(row => row.userId === userIdOfGumbo(201))?.section
+    ).equals('player')
     for (const id of [262, 263, 264, 265])
       expect(
-        roster.some(row => row.userId === id),
+        roster.some(row => row.userId === userIdOfGumbo(id)),
         String(id)
       ).equals(false)
 
@@ -802,12 +869,14 @@ describe('roster sections', function () {
   it('lists a coach who is also a guardian once, under Staff', async function () {
     await link(f.people.teamCoach, 202)
     const { roster } = await read()
-    const coach = roster.filter(row => row.userId === f.people.teamCoach)
+    const coach = roster.filter(
+      row => row.userId === userIdOfGumbo(f.people.teamCoach)
+    )
     expect(coach).to.have.length(1)
     expect(coach[0]).to.include({ section: 'staff', inheritedFrom: null })
     expect(
       roster.filter(row => row.section === 'family').map(row => row.userId)
-    ).deep.equals([f.people.guardian])
+    ).deep.equals([f.people.guardian].map(userIdOfGumbo))
   })
 
   it('pills the highest level holding the placing role, and only that role', async function () {
@@ -818,18 +887,22 @@ describe('roster sections', function () {
     // assistant flag places them, and that is the team's.
     await give(assistant, 'league', f.leagueA, 'scorekeeper')
     const { roster } = await read()
-    expect(placed(roster.filter(row => row.section === 'staff'))).deep.equals([
-      [scorekeeper, 'staff', null],
-      [assistant, 'staff', null],
-      [teamCoach, 'staff', { level: 'league', role: 'coach' }],
-      [seasonCoach, 'staff', { level: 'season', role: 'coach' }]
-    ])
+    expect(placed(roster.filter(row => row.section === 'staff'))).deep.equals(
+      [
+        [scorekeeper, 'staff', null],
+        [assistant, 'staff', null],
+        [teamCoach, 'staff', { level: 'league', role: 'coach' }],
+        [seasonCoach, 'staff', { level: 'season', role: 'coach' }]
+      ].map(([id, ...rest]) => [userIdOfGumbo(id as number), ...rest])
+    )
     const byUser = new Map(roster.map(row => [row.userId, row]))
-    expect(byUser.get(assistant)?.staffRoles).deep.equals([
+    expect(byUser.get(userIdOfGumbo(assistant))?.staffRoles).deep.equals([
       'assistant',
       'scorekeeper'
     ])
-    expect(byUser.get(teamCoach)?.staffRoles).deep.equals(['coach'])
+    expect(byUser.get(userIdOfGumbo(teamCoach))?.staffRoles).deep.equals([
+      'coach'
+    ])
   })
 
   it('lists a player\u2019s guardians across merged rows, by the row each signs in as', async function () {
@@ -849,12 +922,17 @@ describe('roster sections', function () {
     // By name: Randy M, Sam F, Tim R.
     expect(
       roster.filter(row => row.section === 'family').map(row => row.userId)
-    ).deep.equals([241, 243, f.people.guardian])
+    ).deep.equals([241, 243, f.people.guardian].map(userIdOfGumbo))
     for (const id of [240, 242, 244])
-      expect(roster.some(row => row.userId === id)).equals(false)
-    expect(await guardiansOf(f.h.db, [205, 204, 203, 204])).deep.equals([
-      241, 243
-    ])
+      expect(roster.some(row => row.userId === userIdOfGumbo(id))).equals(false)
+    expect(
+      await guardiansOf(f.h.db, [
+        userIdOfGumbo(205),
+        userIdOfGumbo(204),
+        userIdOfGumbo(203),
+        userIdOfGumbo(204)
+      ])
+    ).deep.equals([241, 243].map(userIdOfGumbo))
   })
 
   it('leaves out a disabled guardian or inherited staff member, and keeps a disabled member', async function () {
@@ -863,23 +941,29 @@ describe('roster sections', function () {
       await f.h.db
         .updateTable('users')
         .set({ disabled_at: new Date() })
-        .where('id', '=', id)
+        .where('id', '=', userIdOfGumbo(id))
         .execute()
     }
     const before = (await read()).roster.map(row => row.userId)
     for (const id of [guardian, seasonCoach, scorekeeper])
-      expect(before, String(id)).includes(id)
+      expect(before, String(id)).includes(userIdOfGumbo(id))
     await disable(guardian)
     await disable(seasonCoach)
     await disable(scorekeeper)
 
     const { roster } = await read()
     // Neither is on the team: their account was all that listed them.
-    expect(roster.some(row => row.userId === guardian)).equals(false)
-    expect(roster.some(row => row.userId === seasonCoach)).equals(false)
+    expect(roster.some(row => row.userId === userIdOfGumbo(guardian))).equals(
+      false
+    )
+    expect(
+      roster.some(row => row.userId === userIdOfGumbo(seasonCoach))
+    ).equals(false)
     expect(roster.filter(row => row.section === 'family')).deep.equals([])
     // A member stays, as before, though the role no longer counts.
-    expect(roster.some(row => row.userId === scorekeeper)).equals(true)
-    expect(await guardiansOf(f.h.db, [201])).deep.equals([])
+    expect(
+      roster.some(row => row.userId === userIdOfGumbo(scorekeeper))
+    ).equals(true)
+    expect(await guardiansOf(f.h.db, [userIdOfGumbo(201)])).deep.equals([])
   })
 })

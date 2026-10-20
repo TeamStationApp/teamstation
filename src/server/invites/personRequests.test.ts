@@ -2,11 +2,13 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { makeId } from '../../common/ids'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   type GroupFixture,
   groupFixture
 } from '../../test/groupFixtures'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { createSession } from '../auth/sessions'
 import { hashToken } from '../auth/tokens'
 import { rolesAt } from './people'
@@ -68,7 +70,7 @@ describe('personal group invitations and accepted role grants', function () {
       .insertInto('user_emails')
       .values({
         id: makeId('userEmail'),
-        user_id: userId,
+        user_id: userIdOfGumbo(userId),
         email,
         verified_at: new Date(),
         is_primary: false
@@ -103,21 +105,20 @@ describe('personal group invitations and accepted role grants', function () {
     expect(await response.json()).deep.equals({
       added: true,
       person: {
-        userId: 106,
+        userId: userIdOfGumbo(106),
         displayName: 'Tim Raines',
         email: 'fixture106@example.com'
       }
     })
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals([
-      'admin',
-      'scorekeeper'
-    ])
+    expect(
+      await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
+    ).deep.equals(['admin', 'scorekeeper'])
     expect(
       await f.h.db
         .selectFrom('memberships')
         .select('role')
         .where('team_id', '=', f.teamA)
-        .where('user_id', '=', 106)
+        .where('user_id', '=', userIdOfGumbo(106))
         .execute()
     ).deep.equals([{ role: 'member' }])
     expect(
@@ -172,7 +173,9 @@ describe('personal group invitations and accepted role grants', function () {
         )
       ).json()
     ).deep.equals({ removed: true })
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals([])
+    expect(
+      await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
+    ).deep.equals([])
     const detail = (await (
       await f.h.request('GET', `/me/notifications/${notice.id}`, undefined, 106)
     ).json()) as Inbox['items'][number]
@@ -189,7 +192,9 @@ describe('personal group invitations and accepted role grants', function () {
     expect(
       (await add('fixture106@example.com', 'personal-fail-1')).status
     ).equals(500)
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals([])
+    expect(
+      await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
+    ).deep.equals([])
     expect(
       await f.h.db
         .selectFrom('notification_events')
@@ -200,10 +205,9 @@ describe('personal group invitations and accepted role grants', function () {
     f.h.controls.failMail = false
     const retried = await add('fixture106@example.com', 'personal-fail-1')
     expect(((await retried.json()) as { added: boolean }).added).equals(true)
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals([
-      'admin',
-      'scorekeeper'
-    ])
+    expect(
+      await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
+    ).deep.equals(['admin', 'scorekeeper'])
   })
 
   it('does not create an account for an unknown address and binds its verified recipient identity on acceptance', async () => {
@@ -215,26 +219,26 @@ describe('personal group invitations and accepted role grants', function () {
         .where('email', '=', 'new-person@example.com')
         .execute()
     ).length(0)
-    await f.h.db
-      .insertInto('users')
-      .values({
-        id: 201,
-        legacyId: 'usr_new_recipient',
-        display_name: 'Hank Aaron',
-        login_enabled: true
-      })
-      .execute()
+    await insertFixtureUsers(f.h.db, {
+      id: userIdOfGumbo(201),
+      legacyId: 'usr_new_recipient',
+      display_name: 'Hank Aaron',
+      login_enabled: true
+    })
     await f.h.db
       .insertInto('user_emails')
       .values({
         id: makeId('userEmail'),
-        user_id: 201,
+        user_id: userIdOfGumbo(201),
         email: 'new-person@example.com',
         verified_at: new Date(),
         is_primary: true
       })
       .execute()
-    f.h.tokens.set(201, (await createSession(f.h.db, 201, 'fixture')).token)
+    f.h.tokens.set(
+      201,
+      (await createSession(f.h.db, userIdOfGumbo(201), 'fixture')).token
+    )
     expect((await inbox(201)).hasPending).equals(true)
     expect(await accept(invitation.requestId, 201)).equals('accepted')
     const request = await f.h.db
@@ -242,11 +246,10 @@ describe('personal group invitations and accepted role grants', function () {
       .select('terms')
       .where('id', '=', invitation.requestId)
       .executeTakeFirstOrThrow()
-    expect(request.terms).property('recipientUserId', 201)
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 201)).deep.equals([
-      'admin',
-      'scorekeeper'
-    ])
+    expect(request.terms).property('recipientUserId', userIdOfGumbo(201))
+    expect(
+      await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(201))
+    ).deep.equals(['admin', 'scorekeeper'])
     // Accepting is told like any other grant, in the sender's name.
     expect(
       (await inbox(201)).items.find(item => item.type === 'grant')?.title
@@ -323,10 +326,9 @@ describe('personal group invitations and accepted role grants', function () {
       104
     )
     expect(confirmed.status, await confirmed.clone().text()).equals(200)
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 104)).deep.equals([
-      'admin',
-      'scorekeeper'
-    ])
+    expect(
+      await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(104))
+    ).deep.equals(['admin', 'scorekeeper'])
     expect(
       (
         await f.h.db
@@ -335,7 +337,7 @@ describe('personal group invitations and accepted role grants', function () {
           .where('id', '=', second.requestId)
           .executeTakeFirstOrThrow()
       ).terms
-    ).property('recipientUserId', 104)
+    ).property('recipientUserId', userIdOfGumbo(104))
     expect(
       (await inbox(104)).items.find(item => item.type === 'grant')?.title
     ).equals('Babe Ruth added you as Admin and Scorekeeper of Demo Hawks')
@@ -351,7 +353,9 @@ describe('personal group invitations and accepted role grants', function () {
       105
     )
     expect([403, 400]).includes(wrong.status)
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals([])
+    expect(
+      await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
+    ).deep.equals([])
     await verify(106, 'forward@example.com')
     expect(await accept(invitation.requestId)).equals('accepted')
   })
@@ -404,21 +408,23 @@ describe('personal group invitations and accepted role grants', function () {
           .executeTakeFirstOrThrow()
       ).revoked_at
     ).not.equals(null)
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 106)).deep.equals([])
+    expect(
+      await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
+    ).deep.equals([])
   })
 
   it('does not count a pending replacement administrator, and gives nobody off the list a role by id', async () => {
     await invite('replacement@example.com')
     const bypass = await f.h.request(
       'PUT',
-      `/manage/team/${f.teamA}/people/106/roles`,
+      `/manage/team/${f.teamA}/people/${userIdOfGumbo(106)}/roles`,
       { admin: true, flags: [] },
       101
     )
     expect(bypass.status).equals(404)
     const remove = await f.h.request(
       'DELETE',
-      `/manage/team/${f.teamA}/people/101`,
+      `/manage/team/${f.teamA}/people/${userIdOfGumbo(101)}`,
       undefined,
       101
     )
@@ -480,7 +486,7 @@ describe('personal group invitations and accepted role grants', function () {
       .values({
         id: makeId('membership'),
         team_id: f.teamA,
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         role: 'member'
       })
       .execute()
@@ -496,7 +502,7 @@ describe('personal group invitations and accepted role grants', function () {
       .insertInto('api_tokens')
       .values({
         id: makeId('apiToken'),
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         label: 'fixture',
         token_hash: hashToken(machine),
         scopes: []
@@ -547,14 +553,14 @@ describe('personal group invitations and accepted role grants', function () {
       .insertInto('user_emails')
       .values({
         id: makeId('userEmail'),
-        user_id: 106,
+        user_id: userIdOfGumbo(106),
         email: 'current-recipient@example.com',
         verified_at: new Date()
       })
       .execute()
     await f.h.db
       .updateTable('user_emails')
-      .set({ user_id: 104, is_primary: false })
+      .set({ user_id: userIdOfGumbo(104), is_primary: false })
       .where('email', '=', 'fixture106@example.com')
       .execute()
     expect(
@@ -604,7 +610,9 @@ describe('personal group invitations and accepted role grants', function () {
     )
     expect(sent.status, await sent.clone().text()).equals(201)
     expect(await sent.json()).property('status', 'accepted')
-    expect(await rolesAt(f.h.db, 'team', f.teamA, 104)).deep.equals(['coach'])
+    expect(
+      await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(104))
+    ).deep.equals(['coach'])
     const again = await f.h.request(
       'POST',
       '/relationship-requests',

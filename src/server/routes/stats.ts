@@ -4,7 +4,7 @@ import { type Kysely, sql } from 'kysely'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { shortNames } from '../../common/names'
 import { seasonStandings } from '../../common/seasonStandings'
-import { asUserId } from '../../common/userIdNumber'
+import { asUserId } from '../../common/userId'
 import { guardsPerson, visibleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
@@ -369,11 +369,11 @@ function pathParam(value: string | string[] | undefined): string {
   return value
 }
 
-function userIdParam(value: string | string[] | undefined): number {
+function userIdParam(value: string | string[] | undefined): string {
   try {
     return asUserId(pathParam(value))
   } catch {
-    throw notFound()
+    throw badRequest('Expected a canonical user id')
   }
 }
 

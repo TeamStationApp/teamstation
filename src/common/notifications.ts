@@ -15,7 +15,7 @@ import type { ParentAction, ParentPreview } from './groupLinks'
 import type { RoleFlag } from './roles'
 
 /** Who is asked to be a guardian: an account, or an address. */
-export type GuardianInput = { userId: number } | { email: string }
+export type GuardianInput = { userId: string } | { email: string }
 
 /**
  * The body of `POST /relationship-requests`. A guardian invitation comes from
@@ -27,7 +27,7 @@ export type RelationshipRequestInput =
   | { kind: 'membership'; teamId: string; idempotencyKey: string }
   | {
       kind: 'guardian'
-      playerUserId: number
+      playerUserId: string
       guardian: GuardianInput
       sender?: { kind: 'team'; id: string }
       idempotencyKey: string
@@ -51,14 +51,14 @@ type GroupRequestInput = {
       flags: RoleFlag[]
     }
   | ({ kind: 'promotion'; teamId: string } & (
-      | { recipientUserId: number; recipientEmail?: never }
+      | { recipientUserId: string; recipientEmail?: never }
       | { recipientEmail: string; recipientUserId?: never }
     ))
 )
 
 export type RequestTerms =
   | GameRequestTerms
-  | { kind: 'membership'; teamId: string; userId: number }
+  | { kind: 'membership'; teamId: string; userId: string }
   | { kind: 'parent'; preview: ParentPreview }
   | {
       kind: 'participation'
@@ -70,12 +70,12 @@ export type RequestTerms =
         timezone: string
       }
     }
-  | { kind: 'promotion'; teamId: string; recipientUserId: number }
+  | { kind: 'promotion'; teamId: string; recipientUserId: string }
   | {
       kind: 'person'
       scope: GroupRef
       recipientEmail: string
-      recipientUserId: number | null
+      recipientUserId: string | null
       admin: boolean
       flags: RoleFlag[]
     }
@@ -88,8 +88,8 @@ export type RequestTerms =
  */
 export interface GuardianTerms {
   kind: 'guardian'
-  playerUserId: number
-  guardian: { userId: number; email?: string } | { email: string }
+  playerUserId: string
+  guardian: { userId: string; email?: string } | { email: string }
 }
 
 export interface RelationshipInvitation {

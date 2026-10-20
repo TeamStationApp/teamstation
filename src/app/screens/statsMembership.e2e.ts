@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { guardianFixture } from '../../test/guardianFixture'
 import { capture, maestro } from '../../test/refinementsMaestro.e2e'
 import { parseRoute, routePath } from '../navigation/routes'
@@ -43,7 +44,7 @@ async function main(): Promise<void> {
         onboarding_step: 'complete',
         onboarding_completed_at: new Date()
       })
-      .where('id', '=', user)
+      .where('id', '=', userIdOfGumbo(user))
       .execute()
     const game = f.games[0]
     await f.h.db
@@ -103,7 +104,7 @@ async function main(): Promise<void> {
     const pending = await f.h.db
       .selectFrom('group_requests')
       .select('status')
-      .where('sender_id', '=', user)
+      .where('sender_id', '=', userIdOfGumbo(user))
       .where('kind', '=', 'membership')
       .executeTakeFirstOrThrow()
     expect(pending.status).equals('pending')

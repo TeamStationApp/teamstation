@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   type GroupFixture,
@@ -77,9 +78,9 @@ describe('revoked streams retain and finalize actual recordings', function () {
       f.h.db,
       'team',
       f.teamA,
-      106,
+      userIdOfGumbo(106),
       { admin: false, flags: ['videographer'] },
-      101
+      userIdOfGumbo(101)
     )
   })
   afterEach(async () => {
@@ -97,7 +98,7 @@ describe('revoked streams retain and finalize actual recordings', function () {
       const stream = await createLiveStream(f.h.db, {
         gameId: 'gam_demo_recorded_revocation',
         teamId: f.teamA,
-        userId: 106,
+        userId: userIdOfGumbo(106),
         slot: 1,
         startAt: new Date(),
         videoTitle: 'Demo retained recording',
@@ -156,15 +157,17 @@ describe('revoked streams retain and finalize actual recordings', function () {
         )
       ).equals(false)
       if (mode === 'suspended')
-        await changeNodeAccount(f.h.db, actor(105), 106, { suspended: true })
+        await changeNodeAccount(f.h.db, actor(105), userIdOfGumbo(106), {
+          suspended: true
+        })
       else {
         await setScopeRoles(
           f.h.db,
           'team',
           f.teamA,
-          106,
+          userIdOfGumbo(106),
           { admin: false, flags: [] },
-          101
+          userIdOfGumbo(101)
         )
         if (mode === 'cold-role-loss')
           expect(typeof (await resolveKey(stream.key, options))).equals(

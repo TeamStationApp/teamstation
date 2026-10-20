@@ -4,6 +4,7 @@ import { describe, it } from 'mocha'
 import { rosterEditFixture } from '../../app/scoring/scoringRosterEdit.e2e.fixture'
 import { asRosterEntry } from '../../common/api'
 import { managesRoster } from '../../common/roles'
+import { userIdOfGumbo } from '../../common/userId'
 
 describe('scorekeeper roster-management exception', function () {
   this.timeout(60000)
@@ -13,7 +14,8 @@ describe('scorekeeper roster-management exception', function () {
       await fetch(fixture.backendUrl + '/api/v1/teams/away/roster' + query)
     const put = async (team: string, userId = 100): Promise<Response> =>
       await fetch(
-        fixture.backendUrl + `/api/v1/teams/${team}/players/${userId}/settings`,
+        fixture.backendUrl +
+          `/api/v1/teams/${team}/players/${userIdOfGumbo(userId)}/settings`,
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -38,7 +40,8 @@ describe('scorekeeper roster-management exception', function () {
         expect(result.status).equals(200)
         const entries = ((await result.json()) as unknown[]).map(asRosterEntry)
         expect(
-          entries.find(row => row.userId === 100)?.nameDetails?.displayName
+          entries.find(row => row.userId === userIdOfGumbo(100))?.nameDetails
+            ?.displayName
         ).equals('Mookie Betts')
         expect((await put('away')).status).equals(200)
         expect((await put('other')).status).equals(404)
@@ -54,9 +57,9 @@ describe('scorekeeper roster-management exception', function () {
         const entries = (await (await get(query)).json()) as Array<
           Record<string, unknown>
         >
-        expect(entries.find(row => row.userId === 100)?.shortName).equals(
-          'Mookie B'
-        )
+        expect(
+          entries.find(row => row.userId === userIdOfGumbo(100))?.shortName
+        ).equals('Mookie B')
         expect(entries.every(row => row.nameDetails == null)).equals(true)
       }
       for (const query of [

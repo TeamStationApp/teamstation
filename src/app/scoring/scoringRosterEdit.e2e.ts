@@ -564,7 +564,12 @@ async function main(): Promise<void> {
         player => player.fullName === 'Jose Ramirez'
       )!
       assert(original.local)
-      assert.equal(original.id, original.id)
+      assert.equal(before.players[original.id], original)
+      assert(
+        before.sides.away.players.includes(original.id) ||
+          before.sides.home.players.includes(original.id),
+        'The saved guest must belong to a game roster under its scoring identity'
+      )
       const reopen = async (): Promise<void> => {
         await shown('Open scoring menu')
         await tap('Open scoring menu')

@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { removeFromScope, setScopeRoles } from '../invites/people'
 import { directAdminIds } from './adminGuard'
@@ -29,55 +30,61 @@ describe('active direct administrator replacement', function () {
         f.h.db,
         'team',
         f.teamA,
-        101,
+        userIdOfGumbo(101),
         { admin: false, flags: [] },
-        101
+        userIdOfGumbo(101)
       ),
       'conflict'
     )
     expect(
       await directAdminIds(f.h.db, { kind: 'team', id: f.teamA })
-    ).deep.equals([101])
+    ).deep.equals([101].map(userIdOfGumbo))
     await fails(
-      removeFromScope(f.h.db, 'league', f.leagueA, 101, 101),
+      removeFromScope(
+        f.h.db,
+        'league',
+        f.leagueA,
+        userIdOfGumbo(101),
+        userIdOfGumbo(101)
+      ),
       'conflict'
     )
     await f.h.db
       .updateTable('users')
       .set({ login_enabled: false })
-      .where('id', '=', 104)
+      .where('id', '=', userIdOfGumbo(104))
       .execute()
     await fails(
       setScopeRoles(
         f.h.db,
         'team',
         f.teamA,
-        104,
+        userIdOfGumbo(104),
         { admin: true, flags: [] },
-        101
+        userIdOfGumbo(101)
       ),
       'conflict'
     )
     await f.h.db
       .updateTable('users')
       .set({ login_enabled: true, disabled_at: new Date() })
-      .where('id', '=', 104)
+      .where('id', '=', userIdOfGumbo(104))
       .execute()
     await fails(
       setScopeRoles(
         f.h.db,
         'team',
         f.teamA,
-        104,
+        userIdOfGumbo(104),
         { admin: true, flags: [] },
-        101
+        userIdOfGumbo(101)
       ),
       'conflict'
     )
     await f.h.db
       .updateTable('users')
       .set({ disabled_at: null })
-      .where('id', '=', 104)
+      .where('id', '=', userIdOfGumbo(104))
       .execute()
   })
   it('allows accepted replacement, serializes competing removals and preserves at least one direct admin', async () => {
@@ -85,13 +92,25 @@ describe('active direct administrator replacement', function () {
       f.h.db,
       'team',
       f.teamA,
-      103,
+      userIdOfGumbo(103),
       { admin: true, flags: ['scorekeeper'] },
-      101
+      userIdOfGumbo(101)
     )
     const removals = await Promise.allSettled([
-      removeFromScope(f.h.db, 'team', f.teamA, 101, 105),
-      removeFromScope(f.h.db, 'team', f.teamA, 103, 105)
+      removeFromScope(
+        f.h.db,
+        'team',
+        f.teamA,
+        userIdOfGumbo(101),
+        userIdOfGumbo(105)
+      ),
+      removeFromScope(
+        f.h.db,
+        'team',
+        f.teamA,
+        userIdOfGumbo(103),
+        userIdOfGumbo(105)
+      )
     ])
     expect(removals.filter(row => row.status === 'fulfilled')).length(1)
     expect(removals.filter(row => row.status === 'rejected')).length(1)
@@ -102,9 +121,15 @@ describe('active direct administrator replacement', function () {
   it('counts active owner/manager memberships and protects node accounts from lower administrators', async () => {
     expect(
       await directAdminIds(f.h.db, { kind: 'team', id: 'tem_account' })
-    ).deep.equals([101])
+    ).deep.equals([101].map(userIdOfGumbo))
     await fails(
-      removeFromScope(f.h.db, 'team', 'tem_account', 101, 101),
+      removeFromScope(
+        f.h.db,
+        'team',
+        'tem_account',
+        userIdOfGumbo(101),
+        userIdOfGumbo(101)
+      ),
       'conflict'
     )
     await fails(
@@ -112,9 +137,9 @@ describe('active direct administrator replacement', function () {
         f.h.db,
         'season',
         f.seasonA,
-        105,
+        userIdOfGumbo(105),
         { admin: false, flags: [] },
-        101
+        userIdOfGumbo(101)
       ),
       'forbidden'
     )
@@ -123,9 +148,9 @@ describe('active direct administrator replacement', function () {
         f.h.db,
         'season',
         f.seasonA,
-        103,
+        userIdOfGumbo(103),
         { admin: true, flags: [] },
-        106
+        userIdOfGumbo(106)
       ),
       'forbidden'
     )
@@ -134,9 +159,9 @@ describe('active direct administrator replacement', function () {
         f.h.db,
         'season',
         f.seasonA,
-        9999,
+        userIdOfGumbo(9999),
         { admin: true, flags: [] },
-        101
+        userIdOfGumbo(101)
       ),
       'notFound'
     )

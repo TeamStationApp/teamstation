@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { defaultNodeSettings, type NodeSettings } from '../common/nodeSettings'
+import { userIdOfGumbo } from '../common/userId'
 import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 import {
   forgetScoreboardSettings,
@@ -98,8 +99,8 @@ describe('node settings', function () {
       ])
       .execute()
     expect(rows).has.length(11)
-    expect(new Set(rows.map(row => Number(row.updated_by)))).deep.equals(
-      new Set([105])
+    expect(new Set(rows.map(row => row.updated_by))).deep.equals(
+      new Set([userIdOfGumbo(105)])
     )
   })
 

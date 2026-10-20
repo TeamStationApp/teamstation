@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { TeamStationClient } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { scoringRoster } from '../../test/scoringSession'
 import { App, stackFor } from '../App'
 import { BaseballScreen } from '../field/BaseballScreen'
@@ -61,14 +62,16 @@ function fixtureFetch(signedIn = true): void {
           : input.url
     ).split('?')[0]
     const data = path.endsWith('/auth/me')
-      ? { id: 100, displayName: 'Scorer', isAdmin: false }
+      ? { id: userIdOfGumbo(100), displayName: 'Scorer', isAdmin: false }
       : path.endsWith('/games/g1/events')
         ? { plays: [], currentPlay: null }
         : path.endsWith('/games/g1')
           ? { ...gameFixture, canScore: true }
           : path.endsWith('/roster')
             ? Array.from({ length: 9 }, (_, i) => ({
-                userId: (path.includes('/away/') ? 101 : 201) + i,
+                userId: userIdOfGumbo(
+                  (path.includes('/away/') ? 101 : 201) + i
+                ),
                 gumboId: (path.includes('/away/') ? 101 : 201) + i,
                 shortName: `Player ${i + 1}`,
                 jersey: String(i + 1),
@@ -145,7 +148,7 @@ describe('scoring shell and exit', function () {
     '/schedule',
     '/account',
     '/players/p1',
-    '/teams/t1/people/7'
+    '/teams/t1/people/usr_1111111111111111111118'
   ]) {
     it(`keeps existing navigation reachable at ${path}`, async function () {
       fixtureFetch()
@@ -382,7 +385,12 @@ describe('scoring shell and exit', function () {
     for (const route of [
       { name: 'account' } as const,
       { name: 'player', userId: 'p1' } as const,
-      { name: 'person', kind: 'team', id: 't1', userId: '7' } as const
+      {
+        name: 'person',
+        kind: 'team',
+        id: 't1',
+        userId: userIdOfGumbo(7)
+      } as const
     ])
       expect(stackFor(route).home).has.length(1)
     let exits = 0
@@ -487,7 +495,7 @@ describe('scoring shell and exit', function () {
     }
     const roster = (base: number): unknown[] =>
       Array.from({ length: 9 }, (_, index) => ({
-        userId: base + index,
+        userId: userIdOfGumbo(base + index),
         gumboId: base + index,
         shortName: `P${base + index}`,
         fullName: null,
@@ -561,7 +569,9 @@ describe('scoring shell and exit', function () {
       '[data-testid="walk-up-note"]'
     )
     expect(note, 'note').not.equals(null)
-    expect(owners[0]).matches(/^away:10\d$/)
+    expect(
+      Array.from({ length: 10 }, (_, i) => `away:${userIdOfGumbo(100 + i)}`)
+    ).includes(owners[0])
     await act(async () => {
       note?.click()
     })
@@ -622,7 +632,7 @@ describe('scoring shell and exit', function () {
     })
     const roster = (base: number, ids: string[]): unknown[] =>
       Array.from({ length: 9 }, (_, index) => ({
-        userId: base + index,
+        userId: userIdOfGumbo(base + index),
         gumboId: base + index,
         shortName: `P${base + index}`,
         fullName: null,

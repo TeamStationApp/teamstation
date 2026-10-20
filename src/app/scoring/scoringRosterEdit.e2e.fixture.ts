@@ -10,6 +10,7 @@ import { Pool } from 'pg'
 import { makeId } from '../../common/ids'
 import type { Role } from '../../common/roles'
 import type { StoredGame } from '../../common/scoring/session'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import type { Database } from '../../server/db/database'
@@ -21,10 +22,12 @@ import { groupRoutes } from '../../server/routes/groups'
 import { meRoutes } from '../../server/routes/me'
 import { playerRoutes } from '../../server/routes/players'
 import { teamRoutes } from '../../server/routes/teams'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { POSITIONS } from './scoringTypes'
 
 export interface RosterFixturePlayer {
-  userId: number
+  userId: string
+  gumboId: number
   firstName: string
   lastName: string
   jersey: string | null
@@ -131,7 +134,8 @@ export async function rosterEditFixture(
     }
     const rows = (side: 'away' | 'home'): RosterFixturePlayer[] =>
       people.map(([firstName, lastName, jersey], index) => ({
-        userId: (side === 'away' ? 100 : 200) + index,
+        userId: userIdOfGumbo((side === 'away' ? 100 : 200) + index),
+        gumboId: (side === 'away' ? 100 : 200) + index,
         firstName,
         lastName,
         jersey
@@ -174,26 +178,23 @@ export async function rosterEditFixture(
         }))
       )
       .execute()
-    await db
-      .insertInto('users')
-      .values([
-        {
-          id: ACTOR,
-          login_enabled: true,
-          legacyId: 'usr_fixture_scorer',
-          display_name: 'Roster Scorer'
-        },
-        ...[...rows('away'), ...rows('home')].map(player => ({
-          id: player.userId,
-          legacyId: `usr_fixture_${player.userId}`,
-          display_name: `${player.firstName} ${player.lastName}`,
-          first_name: player.firstName,
-          last_name: player.lastName,
-          bats: 'right' as const,
-          throws: 'right' as const
-        }))
-      ])
-      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(ACTOR),
+        login_enabled: true,
+        legacyId: 'usr_fixture_scorer',
+        display_name: 'Roster Scorer'
+      },
+      ...[...rows('away'), ...rows('home')].map(player => ({
+        id: player.userId,
+        legacyId: `usr_fixture_${player.userId}`,
+        display_name: `${player.firstName} ${player.lastName}`,
+        first_name: player.firstName,
+        last_name: player.lastName,
+        bats: 'right' as const,
+        throws: 'right' as const
+      }))
+    ])
     for (const side of ['away', 'home'] as const) {
       await db
         .insertInto('memberships')
@@ -214,7 +215,10 @@ export async function rosterEditFixture(
       scope: 'team' | 'season' | 'league' = 'team',
       teams: readonly string[] = ['away', 'home']
     ): Promise<void> => {
-      await db.deleteFrom('scope_roles').where('user_id', '=', ACTOR).execute()
+      await db
+        .deleteFrom('scope_roles')
+        .where('user_id', '=', userIdOfGumbo(ACTOR))
+        .execute()
       if (values.length > 0)
         await db
           .insertInto('scope_roles')
@@ -225,7 +229,7 @@ export async function rosterEditFixture(
             ).flatMap(side =>
               values.map(role => ({
                 id: makeId('scopeRole'),
-                user_id: ACTOR,
+                user_id: userIdOfGumbo(ACTOR),
                 scope_type: scope,
                 scope_id: side,
                 role,
@@ -254,7 +258,7 @@ export async function rosterEditFixture(
     app.use(express.json())
     app.use((req, _res, next) => {
       // Authentication is synthetic; operation permissions use the real database.
-      req.actor = { userId: ACTOR, isAdmin: false, scopes: [] }
+      req.actor = { userId: userIdOfGumbo(ACTOR), isAdmin: false, scopes: [] }
       next()
     })
     app.use(withAudit(db))
@@ -329,7 +333,12 @@ export async function rosterEditFixture(
         res.setHeader('Content-Type', 'application/json')
         let body: unknown
         if (u.pathname === '/api/v1/auth/me')
-          body = { id: ACTOR, displayName: 'Roster Scorer', isAdmin: false }
+          body = {
+            id: userIdOfGumbo(ACTOR),
+            gumboId: ACTOR,
+            displayName: 'Roster Scorer',
+            isAdmin: false
+          }
         else if (u.pathname === '/api/v1/me/notifications/summary')
           body = { hasPending: false }
         else if (u.pathname === '/api/v1/health')

@@ -30,7 +30,7 @@ import { followMerges } from './followMerges'
 
 /** Who is making the team. */
 export interface TeamCreator {
-  userId: number
+  userId: string
   isAdmin: boolean
 }
 
@@ -176,7 +176,7 @@ export async function createTeam(
 /** The creator, as administrator of what this call made. */
 async function makeAdmin(
   trx: Transaction<Database>,
-  userId: number,
+  userId: string,
   scopeType: 'season' | 'team',
   scopeId: string
 ): Promise<void> {

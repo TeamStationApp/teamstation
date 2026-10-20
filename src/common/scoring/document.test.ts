@@ -24,6 +24,7 @@ import {
 } from '../gumbo/reference'
 import { gumboViolations } from '../gumbo/validate'
 import type { GumboPlay } from '../gumboPlay'
+import { userIdOfGumbo } from '../userId'
 import { type ScoringAction, TRAJECTORIES } from './actions'
 import { applyAction } from './apply'
 import {
@@ -120,12 +121,12 @@ function rostered(): GameState {
     },
     {
       away: Array.from({ length: 9 }, (_, i) => ({
-        userId: 1 + i,
+        userId: userIdOfGumbo(1 + i),
         gumboId: 1 + i,
         shortName: `Away ${i + 1}`
       })),
       home: Array.from({ length: 9 }, (_, i) => ({
-        userId: 10 + i,
+        userId: userIdOfGumbo(10 + i),
         gumboId: 10 + i,
         shortName: `Home ${i + 1}`
       }))

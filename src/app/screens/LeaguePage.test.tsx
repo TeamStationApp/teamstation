@@ -11,6 +11,7 @@ import {
   asPublicGroup,
   type PublicGroup
 } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { GroupLinkChoice } from './GroupScreen'
 import { GroupScreen } from './GroupScreen'
@@ -302,7 +303,7 @@ describe('a league’s People tab', () => {
       return {
         people: [
           asRosterEntry({
-            userId: 201,
+            userId: userIdOfGumbo(201),
             gumboId: 201,
             shortName: 'Alfonso S',
             jersey: null,
@@ -314,7 +315,7 @@ describe('a league’s People tab', () => {
             inheritedFrom: null
           }),
           asRosterEntry({
-            userId: 271,
+            userId: userIdOfGumbo(271),
             gumboId: 271,
             shortName: 'Leo G',
             jersey: null,
@@ -360,7 +361,9 @@ describe('a league’s People tab', () => {
         await new Promise(resolve => setTimeout(resolve, 20))
       })
     }
-    expect(players).deep.equals([[201, 'Alfonso S']])
-    expect(persons).deep.equals([[{ kind: 'league', id: league.id }, 271]])
+    expect(players).deep.equals([[userIdOfGumbo(201), 'Alfonso S']])
+    expect(persons).deep.equals([
+      [{ kind: 'league', id: league.id }, userIdOfGumbo(271)]
+    ])
   })
 })
