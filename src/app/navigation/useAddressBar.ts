@@ -33,7 +33,10 @@ function indexOfHistory(): number | undefined {
 function initializeHistory(): void {
   position = indexOfHistory() ?? 0
   if (indexOfHistory() == null)
-    window.history.replaceState({ tsRouteIndex: position }, '')
+    window.history.replaceState(
+      { ...window.history.state, tsRouteIndex: position },
+      ''
+    )
 }
 
 /**
@@ -65,7 +68,21 @@ export function seedRoute(_url: string | null | undefined): void {
 /** Where the address bar currently points. */
 export function currentRoute(): Route {
   if (typeof window === 'undefined') return { name: 'home' }
-  return parseRoute(window.location.pathname, window.location.search)
+  const route = parseRoute(window.location.pathname, window.location.search)
+  if (route.name === 'player' || route.name === 'person') {
+    const path = window.location.pathname.replace(
+      /(?<=\/)([1-9][0-9]*)(?=\/?$)/,
+      route.userId
+    )
+    if (path !== window.location.pathname) {
+      window.history.replaceState(
+        window.history.state,
+        '',
+        path + window.location.search + window.location.hash
+      )
+    }
+  }
+  return route
 }
 
 /**
@@ -79,6 +96,14 @@ export function showRoute(route: Route, replace = false): void {
   if (typeof window === 'undefined') return
   initializeHistory()
   const path = routePath(route)
+  // Mounting the upgraded person screen must not discard URL metadata that
+  // currentRoute preserved while replacing the legacy identity.
+  if (
+    (route.name === 'player' || route.name === 'person') &&
+    path ===
+      routePath(parseRoute(window.location.pathname, window.location.search))
+  )
+    return
   if (path === window.location.pathname + window.location.search) return
   if (replace) window.history.replaceState({ tsRouteIndex: position }, '', path)
   else window.history.pushState({ tsRouteIndex: ++position }, '', path)

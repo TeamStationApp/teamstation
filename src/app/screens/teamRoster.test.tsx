@@ -8,6 +8,7 @@ import {
   type RosterEntry,
   type TeamStationClient
 } from '../../common/api'
+import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { LevelPeopleTab } from './LevelPeopleTab'
 import { inheritedPill, TeamScreen } from './TeamScreen'
@@ -33,7 +34,7 @@ function entry(
   fields: Partial<RosterEntry>
 ): RosterEntry {
   return asRosterEntry({
-    userId,
+    userId: userIdOfGumbo(userId),
     gumboId: userId,
     shortName,
     jersey: null,
@@ -82,9 +83,9 @@ const everybody: RosterEntry[] = [
 
 async function render(
   roster: RosterEntry[],
-  manager?: { people: number[] }
-): Promise<number[]> {
-  const opened: number[] = []
+  manager?: { people: string[] }
+): Promise<string[]> {
+  const opened: string[] = []
   const client = {
     teamGames: async () => [],
     roster: async () => roster,
@@ -221,7 +222,7 @@ describe('a team’s roster in sections', function () {
       rowNode('Alfonso S').click()
       await delay(10)
     })
-    expect(opened).deep.equals([201])
+    expect(opened).deep.equals([userIdOfGumbo(201)])
   })
 
   it('opens only a player’s row, which alone has a page', async function () {
@@ -288,7 +289,7 @@ describe('a team’s roster in sections', function () {
   })
 
   it('opens every row for the team’s administrators, coaches and assistants: a player’s page, anybody else’s profile', async function () {
-    const people: number[] = []
+    const people: string[] = []
     const opened = await render(everybody, { people })
     const pressable = everybody.filter(
       person => rowNode(person.shortName).getAttribute('role') === 'button'
@@ -299,8 +300,13 @@ describe('a team’s roster in sections', function () {
         rowNode(name).click()
         await delay(10)
       })
-    expect(opened).deep.equals([201])
-    expect(people).deep.equals([106, 101, 250, 207])
+    expect(opened).deep.equals([userIdOfGumbo(201)])
+    expect(people).deep.equals([
+      userIdOfGumbo(106),
+      userIdOfGumbo(101),
+      userIdOfGumbo(250),
+      userIdOfGumbo(207)
+    ])
   })
 })
 
@@ -316,9 +322,9 @@ describe('a season’s and a league’s People tab', function () {
     kind: 'season' | 'league',
     manages: boolean,
     answer?: RosterEntry[]
-  ): Promise<{ players: unknown[]; people: number[] }> {
+  ): Promise<{ players: unknown[]; people: string[] }> {
     const players: unknown[] = []
-    const people: number[] = []
+    const people: string[] = []
     const client = {
       levelPeople: async (asked: string, id: string) => {
         if (answer == null) throw new Error('People could not load here')
@@ -374,8 +380,10 @@ describe('a season’s and a league’s People tab', function () {
         rowNode(name).click()
         await delay(10)
       })
-    expect(players).deep.equals([[201, 'Alfonso S', { seasonId: 'lvl_one' }]])
-    expect(people).deep.equals([106, 101])
+    expect(players).deep.equals([
+      [userIdOfGumbo(201), 'Alfonso S', { seasonId: 'lvl_one' }]
+    ])
+    expect(people).deep.equals([userIdOfGumbo(106), userIdOfGumbo(101)])
   })
 
   it('opens only players for anybody else, and says so when nobody or nothing is there', async function () {
@@ -385,7 +393,7 @@ describe('a season’s and a league’s People tab', function () {
       rowNode('Alfonso S').click()
       await delay(10)
     })
-    expect(players).deep.equals([[201, 'Alfonso S', undefined]])
+    expect(players).deep.equals([[userIdOfGumbo(201), 'Alfonso S', undefined]])
     expect(people).deep.equals([])
     await act(async () => {
       root?.unmount()

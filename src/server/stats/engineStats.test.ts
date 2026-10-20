@@ -29,6 +29,7 @@ import { EVENT_CLASS } from '../../common/scoring/hitsAndErrors'
 import { freshGame, newSetup } from '../../common/scoring/lineup'
 import { nextDecision } from '../../common/scoring/rules'
 import { type GameState, setupOf } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { after, TEAMS } from '../../test/scoringGames'
 import {
   eventTypeCounts,
@@ -64,12 +65,12 @@ function start(): GameState {
     TEAMS,
     newSetup(TEAMS, {
       away: AWAY.map((userId, i) => ({
-        userId,
+        userId: userIdOfGumbo(userId),
         gumboId: userId,
         shortName: `Away ${i + 1}`
       })),
       home: HOME.map((userId, i) => ({
-        userId,
+        userId: userIdOfGumbo(userId),
         gumboId: userId,
         shortName: `Home ${i + 1}`
       }))
@@ -266,12 +267,12 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
     // the batter is out (an injury, rule 5.10(g)).
     const setup = newSetup(TEAMS, {
       away: AWAY.map((userId, i) => ({
-        userId,
+        userId: userIdOfGumbo(userId),
         gumboId: userId,
         shortName: `Away ${i + 1}`
       })),
       home: [...HOME, 210, 211].map((userId, i) => ({
-        userId,
+        userId: userIdOfGumbo(userId),
         gumboId: userId,
         shortName: `Home ${i + 1}`
       }))
@@ -322,12 +323,12 @@ describe('a game scored in TeamStation builds stats (U10)', function () {
     // mound), then brings 210 in for Home 5 while Home 2 bats.
     const setup = newSetup(TEAMS, {
       away: AWAY.map((userId, i) => ({
-        userId,
+        userId: userIdOfGumbo(userId),
         gumboId: userId,
         shortName: `Away ${i + 1}`
       })),
       home: [...HOME, 210].map((userId, i) => ({
-        userId,
+        userId: userIdOfGumbo(userId),
         gumboId: userId,
         shortName: `Home ${i + 1}`
       }))
@@ -400,7 +401,7 @@ describe('persisted guest pitchers who share a name', function () {
     first: number,
     missing: string
   ): Array<{
-    userId: number
+    userId: string
     gumboId: number
     shortName: string
     positions: string[]
@@ -408,7 +409,7 @@ describe('persisted guest pitchers who share a name', function () {
     ['P', 'C', '1B', '2B', 'SS', '3B', 'LF', 'CF', 'RF']
       .filter(position => position !== missing)
       .map((position, i) => ({
-        userId: first + i,
+        userId: userIdOfGumbo(first + i),
         gumboId: first + i,
         shortName: `${first} ${position}`,
         positions: [position]
@@ -514,12 +515,12 @@ describe('when each lineup change is announced', function () {
   const begin = (): GameState => {
     const setup = newSetup(TEAMS, {
       away: PLAYERS.away.map(userId => ({
-        userId,
+        userId: userIdOfGumbo(userId),
         gumboId: userId,
         shortName: `${userId}`
       })),
       home: PLAYERS.home.map(userId => ({
-        userId,
+        userId: userIdOfGumbo(userId),
         gumboId: userId,
         shortName: `${userId}`
       }))
