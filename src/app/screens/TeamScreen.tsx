@@ -102,7 +102,7 @@ export interface TeamScreenProps {
    * tab edits the player on it.
    */
   onOpenPlayer?: (
-    userId: number,
+    userId: string,
     name: string,
     from?: { seasonId?: string; teamId?: string; onTeam?: string }
   ) => void
@@ -111,7 +111,7 @@ export interface TeamScreenProps {
    * profile from this team (its canonical id): offered only with
    * `managesPeople`.
    */
-  onOpenPerson?: (userId: number, name: string, teamId: string) => void
+  onOpenPerson?: (userId: string, name: string, teamId: string) => void
   /**
    * The viewer administers, coaches or assists this team: every row of the
    * roster opens, a player's page or anybody else's profile.
@@ -780,7 +780,7 @@ function ScheduleCard(props: {
 }
 
 /** Header and body share compact widths, including any unusually large value. */
-function StatsTable<T extends { userId: number; shortName?: string }>(props: {
+function StatsTable<T extends { userId: string; shortName?: string }>(props: {
   rows: T[]
   columns: Array<StatColumn<T>>
 }): React.ReactElement {

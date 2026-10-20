@@ -1,7 +1,8 @@
+import { asUserId } from '../../src/common/userId'
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
 /**
- * The device event-control wire format, version 1, in Node: the reference
+ * The device event-control wire format, version 2, in Node: the reference
  * the Swift package, the Android app and any other receiver are checked
  * against, through the shared fixtures in
  * `mobile/apps/common/EventControl/Tests/Fixtures`. README.md beside the
@@ -13,12 +14,12 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
  *   mac     = HMAC-SHA256(key, lp(FRAME_DOMAIN) || version || type || field*)
  */
 
-export const VERSION = 1
+export const VERSION = 2
 export const PORTS = [47614, 47615]
 export const MAX_PAYLOAD = 4096
 export const RENEW_MS = 5000
 export const LEASE_MS = 15000
-export const FRAME_DOMAIN = 'device-event-control:v1:frame'
+export const FRAME_DOMAIN = 'device-event-control:v2:frame'
 export const MAX_GAME_ID_BYTES = 128
 export const MAX_TITLE_BYTES = 256
 
@@ -496,20 +497,19 @@ export function asCredentials(raw: unknown): Credentials {
   const value = raw as Record<string, unknown>
   if (value == null || typeof value !== 'object')
     throw new Error('not a key reply')
-  if (value.version != null && value.version !== 1)
+  if (value.version !== 2)
     throw new Error('unsupported key version')
-  const userId =
-    typeof value.userId === 'number' ? String(value.userId) : value.userId
+  const userId = value.userId
   if (typeof value.issuer !== 'string' || value.issuer === '')
     throw new Error('bad issuer')
-  if (typeof userId !== 'string' || !/^\d{1,32}$/.test(userId))
-    throw new Error('bad userId')
+  let canonical: string
+  try { canonical = asUserId(userId) } catch { throw new Error('bad userId') }
   if (!lowerHex(value.accountTag, 16)) throw new Error('bad accountTag')
   if (!lowerHex(value.keyId, 8)) throw new Error('bad keyId')
   if (!lowerHex(value.key, 32)) throw new Error('bad key')
   return {
     issuer: value.issuer,
-    userId,
+    userId: canonical,
     accountTag: value.accountTag as string,
     keyId: value.keyId as string,
     key: value.key as string

@@ -5,13 +5,13 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { type TagChoices, tagTargets } from '../../common/eventTags'
-import { reconcileRoster } from '../../common/scoring/rosterAvailability'
 import {
   type EventStore,
   type SaveChange,
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
+import { reconcileRoster } from '../../common/scoring/startingSetup'
 import { deviceStorage } from '../platform/deviceStorage'
 import {
   type DefaultLineups,

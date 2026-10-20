@@ -1,9 +1,11 @@
 import type { Kysely } from 'kysely'
 
 import { makeId } from '../common/ids'
-import { mintUserId } from '../common/mintUserId'
+import { userIdOfGumbo } from '../common/userId'
 import { addEmail, findUserByEmail } from '../server/auth/emails'
 import { type Database, makeDatabase } from '../server/db/database'
+import { mintUserId } from './historicalUserIds'
+import { insertFixtureUsers } from './insertFixtureUsers'
 
 /**
  * The games one group of scoreboard end-to-end scenarios runs against.
@@ -48,7 +50,7 @@ async function ensureUser(
   trx: Trx,
   email: string,
   mint: () => { userId: number; legacyId: string }
-): Promise<number> {
+): Promise<string> {
   const existing = await findUserByEmail(trx, email)
   if (existing != null) {
     await trx
@@ -59,21 +61,18 @@ async function ensureUser(
     return existing.id
   }
   const minted = mint()
-  await trx
-    .insertInto('users')
-    .values({
-      id: minted.userId,
-      legacyId: minted.legacyId,
-      display_name: email.split('@')[0],
-      login_enabled: true,
-      is_admin: false
-    })
-    .execute()
-  await addEmail(trx, minted.userId, email, {
+  await insertFixtureUsers(trx, {
+    id: userIdOfGumbo(minted.userId),
+    legacyId: minted.legacyId,
+    display_name: email.split('@')[0],
+    login_enabled: true,
+    is_admin: false
+  })
+  await addEmail(trx, userIdOfGumbo(minted.userId), email, {
     isPrimary: true,
     source: 'manual'
   })
-  return minted.userId
+  return userIdOfGumbo(minted.userId)
 }
 
 /** The team by name, made with twelve rostered players when it is new. */
@@ -95,23 +94,20 @@ async function ensureTeam(
     const minted = mint()
     // Padded so the roster, which lists players by name, keeps this order.
     const number = String(i + 1).padStart(2, '0')
-    await trx
-      .insertInto('users')
-      .values({
-        id: minted.userId,
-        legacyId: minted.legacyId,
-        display_name: `${label} ${number}`,
-        first_name: label,
-        last_name: number,
-        bats: 'right',
-        throws: 'right'
-      })
-      .execute()
+    await insertFixtureUsers(trx, {
+      id: userIdOfGumbo(minted.userId),
+      legacyId: minted.legacyId,
+      display_name: `${label} ${number}`,
+      first_name: label,
+      last_name: number,
+      bats: 'right',
+      throws: 'right'
+    })
     await trx
       .insertInto('memberships')
       .values({
         id: makeId('membership'),
-        user_id: minted.userId,
+        user_id: userIdOfGumbo(minted.userId),
         team_id: teamId,
         role: 'member',
         is_player: true,
@@ -126,7 +122,7 @@ async function ensureTeam(
 /** The user's one membership of the team, made or changed to `role`. */
 async function ensureRole(
   trx: Trx,
-  userId: number,
+  userId: string,
   teamId: string,
   role: 'owner' | 'member'
 ): Promise<void> {
@@ -164,8 +160,8 @@ export async function seedScoreboardGames(
       (await trx.selectFrom('users').select('id').execute()).map(row => row.id)
     )
     const mint = (): { userId: number; legacyId: string } => {
-      const minted = mintUserId(id => held.has(id))
-      held.add(minted.userId)
+      const minted = mintUserId(id => held.has(userIdOfGumbo(id)))
+      held.add(userIdOfGumbo(minted.userId))
       return minted
     }
     const runner = await ensureUser(trx, RUNNER_EMAIL, mint)

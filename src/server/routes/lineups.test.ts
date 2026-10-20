@@ -17,7 +17,6 @@ import {
   type GumboPlay
 } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { newSetup } from '../../common/scoring/lineup'
 import {
@@ -38,9 +37,12 @@ import {
   setupOf,
   type Side
 } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import { type Database, makeDatabase } from '../db/database'
 import { postGamePlays, readPlays } from '../events/postPlays'
@@ -115,33 +117,29 @@ describe('the lineup routes (U11)', function () {
     await pool.end()
     db = makeDatabase(scratchUrl)
     const now = new Date()
-    await db
-      .insertInto('users')
-      .values(
-        [member, stranger, admin, songkeeper, scorekeeper, ...players].map(
-          user => ({
-            id: user.userId,
-            legacyId: user.legacyId,
-            display_name: `User ${user.userId}`,
-            is_admin: user === admin,
-            created_at: now,
-            updated_at: now
-          })
-        )
-      )
-      .execute()
-    await db
-      .insertInto('users')
-      .values(
-        Object.entries(bench).map(([name, user]) => ({
+    await insertFixtureUsers(
+      db,
+      [member, stranger, admin, songkeeper, scorekeeper, ...players].map(
+        user => ({
           id: user.userId,
           legacyId: user.legacyId,
-          display_name: name,
+          display_name: `User ${user.userId}`,
+          is_admin: user === admin,
           created_at: now,
           updated_at: now
-        }))
+        })
       )
-      .execute()
+    )
+    await insertFixtureUsers(
+      db,
+      Object.entries(bench).map(([name, user]) => ({
+        id: user.userId,
+        legacyId: user.legacyId,
+        display_name: name,
+        created_at: now,
+        updated_at: now
+      }))
+    )
     await db
       .insertInto('auth_sessions')
       .values(
@@ -155,7 +153,7 @@ describe('the lineup routes (U11)', function () {
           ] as const
         ).map(([user, token]) => ({
           id: `ses_${token}`,
-          user_id: user.userId,
+          user_id: userIdOfGumbo(user.userId),
           token_hash: hashToken(token),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
@@ -186,26 +184,26 @@ describe('the lineup routes (U11)', function () {
       .values([
         {
           id: makeId('membership'),
-          user_id: member.userId,
+          user_id: userIdOfGumbo(member.userId),
           team_id: home,
           role: 'member'
         },
         {
           id: makeId('membership'),
-          user_id: songkeeper.userId,
+          user_id: userIdOfGumbo(songkeeper.userId),
           team_id: away,
           role: 'member'
         },
         {
           id: makeId('membership'),
-          user_id: scorekeeper.userId,
+          user_id: userIdOfGumbo(scorekeeper.userId),
           team_id: away,
           role: 'member'
         },
         // The bench team's players, and one member who is not a player.
         ...Object.entries(bench).map(([name, user]) => ({
           id: makeId('membership'),
-          user_id: user.userId,
+          user_id: userIdOfGumbo(user.userId),
           team_id: bare,
           role: 'member' as const,
           is_player: true,
@@ -213,7 +211,7 @@ describe('the lineup routes (U11)', function () {
         })),
         {
           id: makeId('membership'),
-          user_id: member.userId,
+          user_id: userIdOfGumbo(member.userId),
           team_id: bare,
           role: 'member'
         }
@@ -224,14 +222,14 @@ describe('the lineup routes (U11)', function () {
       .values([
         {
           id: makeId('scopeRole'),
-          user_id: songkeeper.userId,
+          user_id: userIdOfGumbo(songkeeper.userId),
           scope_type: 'team',
           scope_id: away,
           role: 'songkeeper'
         },
         {
           id: makeId('scopeRole'),
-          user_id: scorekeeper.userId,
+          user_id: userIdOfGumbo(scorekeeper.userId),
           scope_type: 'team',
           scope_id: away,
           role: 'scorekeeper'
@@ -246,7 +244,7 @@ describe('the lineup routes (U11)', function () {
       title: string
     ): Insertable<Database['walk_up_songs']> => ({
       team_id: teamId,
-      user_id: userId,
+      user_id: userIdOfGumbo(userId),
       provider: 'localFile',
       provider_id: 'lf:0123456789abcdef',
       title,
@@ -254,7 +252,7 @@ describe('the lineup routes (U11)', function () {
       duration_ms: 180000,
       start_ms: 10000,
       end_ms: 25000,
-      set_by: admin.userId
+      set_by: userIdOfGumbo(admin.userId)
     })
     await db
       .insertInto('walk_up_songs')
@@ -268,13 +266,13 @@ describe('the lineup routes (U11)', function () {
     // The scored game: a pinch hitter for the second batter, after a pitch.
     const setup = newSetup(TEAMS, {
       away: players.slice(0, 9).map((user, i) => ({
-        userId: user.userId,
+        userId: userIdOfGumbo(user.userId),
         gumboId: user.userId,
         shortName: `A${i + 1}`,
         jersey: String(i + 1)
       })),
       home: players.slice(9).map((user, i) => ({
-        userId: user.userId,
+        userId: userIdOfGumbo(user.userId),
         gumboId: user.userId,
         shortName: `H${i + 1}`,
         jersey: String(i + 1)
@@ -308,7 +306,7 @@ describe('the lineup routes (U11)', function () {
     guestId = (
       await createGuestPlayer(
         db,
-        { userId: admin.userId, isAdmin: true, scopes: [] },
+        { userId: userIdOfGumbo(admin.userId), isAdmin: true, scopes: [] },
         scored,
         'away',
         {
@@ -320,7 +318,7 @@ describe('the lineup routes (U11)', function () {
           throws: null
         }
       )
-    ).userId
+    ).gumboId!
     for (const action of [
       { type: 'pitch', call: 'C' },
       { type: 'pitch', call: 'C' },
@@ -426,13 +424,13 @@ describe('the lineup routes (U11)', function () {
     expect((await post(ADMIN, 'other')).status).equals(400)
     const created = await post(ADMIN, 'away')
     expect(created.status).equals(201)
-    const body = (await created.json()) as { userId: number }
+    const body = (await created.json()) as { userId: string; gumboId: number }
     const game = await db!
       .selectFrom('games')
       .select('guests')
       .where('id', '=', fresh)
       .executeTakeFirstOrThrow()
-    expect(game.guests).deep.equals({ away: [body.userId], home: [] })
+    expect(game.guests).deep.equals({ away: [body.gumboId], home: [] })
   })
 
   it("reads a team's default lineup, or nulls for none", async function () {
@@ -544,7 +542,13 @@ describe('the lineup routes (U11)', function () {
         'A9'
       ])
       expect(dj.away.batters[1]).deep.equals({
-        userId: guestId,
+        userId: (
+          await db!
+            .selectFrom('gumbo_ids')
+            .select('user_id')
+            .where('gumbo_id', '=', guestId)
+            .executeTakeFirstOrThrow()
+        ).user_id,
         name: 'Guest',
         walkUpSong: null
       })
@@ -699,13 +703,13 @@ describe("saving a side's lineup (U8)", function () {
     users: Array<{ userId: number }>,
     prefix: string
   ): Array<{
-    userId: number
+    userId: string
     gumboId: number
     shortName: string
     jersey: string
   }> =>
     users.map((user, i) => ({
-      userId: user.userId,
+      userId: userIdOfGumbo(user.userId),
       gumboId: user.userId,
       shortName: `${prefix}${SURNAMES[i]}`,
       jersey: String(i + 1)
@@ -741,20 +745,18 @@ describe("saving a side's lineup (U8)", function () {
     db = makeDatabase(url)
     const now = new Date()
     const players = [...homePlayers, ...awayPlayers]
-    await db
-      .insertInto('users')
-      .values(
-        [coach, assistant, awayCoach, teamAdmin, scorer, fan, ...players].map(
-          user => ({
-            id: user.userId,
-            legacyId: user.legacyId,
-            display_name: `User ${user.userId}`,
-            created_at: now,
-            updated_at: now
-          })
-        )
+    await insertFixtureUsers(
+      db,
+      [coach, assistant, awayCoach, teamAdmin, scorer, fan, ...players].map(
+        user => ({
+          id: user.userId,
+          legacyId: user.legacyId,
+          display_name: `User ${user.userId}`,
+          created_at: now,
+          updated_at: now
+        })
       )
-      .execute()
+    )
     await db
       .insertInto('auth_sessions')
       .values(
@@ -769,7 +771,7 @@ describe("saving a side's lineup (U8)", function () {
           ] as const
         ).map(([user, token]) => ({
           id: `ses_${token}`,
-          user_id: user.userId,
+          user_id: userIdOfGumbo(user.userId),
           token_hash: hashToken(token),
           created_at: now,
           expires_at: new Date(now.getTime() + 3_600_000)
@@ -801,7 +803,7 @@ describe("saving a side's lineup (U8)", function () {
       jersey: string | null = null
     ): Insertable<Database['memberships']> => ({
       id: makeId('membership'),
-      user_id: user.userId,
+      user_id: userIdOfGumbo(user.userId),
       team_id: teamId,
       role,
       is_player: jersey != null,
@@ -830,7 +832,7 @@ describe("saving a side's lineup (U8)", function () {
       role: 'coach' | 'assistant' | 'scorekeeper'
     ): Insertable<Database['scope_roles']> => ({
       id: makeId('scopeRole'),
-      user_id: user.userId,
+      user_id: userIdOfGumbo(user.userId),
       scope_type: 'team',
       scope_id: teamId,
       role
@@ -860,7 +862,7 @@ describe("saving a side's lineup (U8)", function () {
       await score(gameId, [{ type: 'pitch', call: 'B' }])
     const guest = await createGuestPlayer(
       db,
-      { userId: coach.userId, isAdmin: false, scopes: [] },
+      { userId: userIdOfGumbo(coach.userId), isAdmin: false, scopes: [] },
       games.locals,
       'home',
       {
@@ -876,7 +878,7 @@ describe("saving a side's lineup (U8)", function () {
       {
         type: 'lineup',
         kind: 'addPlayer',
-        player: guest.userId,
+        player: guest.gumboId!,
         side: 'home',
         name: 'Guest',
         jersey: '77'
@@ -1950,7 +1952,7 @@ describe("saving a side's lineup (U8)", function () {
     const body = bodyOf(session.state, 'home')
     const guest = await createGuestPlayer(
       db!,
-      { userId: coach.userId, isAdmin: false, scopes: [] },
+      { userId: userIdOfGumbo(coach.userId), isAdmin: false, scopes: [] },
       games.locals,
       'home',
       {
@@ -1963,7 +1965,7 @@ describe("saving a side's lineup (U8)", function () {
       }
     )
     body.players.push({
-      gumboId: guest.userId,
+      gumboId: guest.gumboId!,
       fullName: 'Newcomer',
       jersey: '88'
     })
@@ -1972,7 +1974,7 @@ describe("saving a side's lineup (U8)", function () {
     expect(answer.status, JSON.stringify(answer.body)).equals(200)
     const read = asGameLineupsResponse(answer.body)
     expect(read.home.current?.defense.LF).deep.include({
-      gumboId: guest.userId,
+      gumboId: guest.gumboId!,
       name: 'Newcomer'
     })
     const after = await scoring(games.locals)
@@ -1984,13 +1986,85 @@ describe("saving a side's lineup (U8)", function () {
     expect(named('Newcomer')).equals(1)
   })
 
+  it('saves and reloads guest name and jersey edits without changing identity or roster profiles', async function () {
+    const initial = await scoring(games.locals)
+    const guest = Object.values(initial.state.gameData.players).find(
+      player => player.local && player.fullName === 'Guest'
+    )!
+    const seeded = setupOf(initial.state)
+    seeded.players[guest.id].firstName = 'Guest'
+    seeded.players[guest.id].lastName = ''
+    await score(games.locals, [
+      { type: 'lineup', kind: 'roster', setup: seeded }
+    ])
+    const session = await scoring(games.locals)
+    const body = bodyOf(session.state, 'home')
+    body.base = asGameLineupsResponse(
+      (await ask('GET', `/games/${games.locals}/lineups`, COACH)).body
+    ).digest
+    const edited = body.players.find(player => player.gumboId === guest.id)!
+    edited.fullName = 'Babe Ruth'
+    edited.jersey = '03'
+    const rostered = body.players.find(
+      player => player.gumboId === homePlayers[0].userId
+    )!
+    const originalRostered = structuredClone(
+      session.state.gameData.players[homePlayers[0].userId]
+    )
+    rostered.fullName = 'Willie Mays'
+    rostered.jersey = '99'
+    const users = await db!
+      .selectFrom('users')
+      .selectAll()
+      .orderBy('id')
+      .execute()
+    const members = await db!
+      .selectFrom('memberships')
+      .selectAll()
+      .orderBy('id')
+      .execute()
+    const answer = await save(games.locals, COACH, body)
+    expect(answer.status, JSON.stringify(answer.body)).equals(200)
+    const reopened = await scoring(games.locals)
+    expect(reopened.state.gameData.players[guest.id]).includes({
+      id: guest.id,
+      fullName: 'Babe Ruth',
+      jersey: '03',
+      local: true
+    })
+    expect(reopened.state.gameData.players[guest.id].firstName).equals(
+      undefined
+    )
+    expect(reopened.state.gameData.players[guest.id].lastName).equals(undefined)
+    expect(reopened.state.gameData.players[homePlayers[0].userId]).deep.equals(
+      originalRostered
+    )
+    expect(
+      await db!.selectFrom('users').selectAll().orderBy('id').execute()
+    ).deep.equals(users)
+    expect(
+      await db!.selectFrom('memberships').selectAll().orderBy('id').execute()
+    ).deep.equals(members)
+    expect(
+      reopened.state.liveData.boxscore.teams.home.players.filter(
+        id => id === guest.id
+      )
+    ).length(1)
+    expect(asGameLineupsResponse(answer.body).digest).not.equals(body.base)
+    const same = bodyOf(reopened.state, 'home')
+    same.base = asGameLineupsResponse(answer.body).digest
+    const unchanged = await save(games.locals, COACH, same)
+    expect(unchanged.status).equals(200)
+    expect(asGameLineupsResponse(unchanged.body).digest).equals(same.base)
+  })
+
   it('lets a scorekeeper save either side, with a pinch runner who keeps the order', async function () {
     const session = await scoring(games.runner)
     expect(session.state.liveData.linescore.offense.first).not.equals(null)
     const body = bodyOf(session.state, 'away')
     const guest = await createGuestPlayer(
       db!,
-      { userId: scorer.userId, isAdmin: false, scopes: [] },
+      { userId: userIdOfGumbo(scorer.userId), isAdmin: false, scopes: [] },
       games.runner,
       'away',
       {
@@ -2003,7 +2077,7 @@ describe("saving a side's lineup (U8)", function () {
       }
     )
     body.players.push({
-      gumboId: guest.userId,
+      gumboId: guest.gumboId!,
       fullName: 'Freeman',
       jersey: '5'
     })
@@ -2214,7 +2288,7 @@ describe("saving a side's lineup (U8)", function () {
     ): ReturnType<typeof ask> =>
       await ask('PUT', `/games/${id}/unroster`, token, {
         side: 'home',
-        userId,
+        userId: userIdOfGumbo(userId),
         rostered
       })
     expect((await toggle(false, SCORER)).status).equals(403)
@@ -2241,7 +2315,7 @@ describe("saving a side's lineup (U8)", function () {
     expect(body.players.map(player => player.gumboId)).not.includes(userId)
     const guest = await createGuestPlayer(
       db!,
-      { userId: coach.userId, isAdmin: false, scopes: [] },
+      { userId: userIdOfGumbo(coach.userId), isAdmin: false, scopes: [] },
       id,
       'home',
       {
@@ -2255,7 +2329,7 @@ describe("saving a side's lineup (U8)", function () {
     )
     expect((await save(id, COACH, body)).status).equals(400)
     body.players.push({
-      gumboId: guest.userId,
+      gumboId: guest.gumboId!,
       fullName: guest.shortName,
       jersey: guest.jersey ?? ''
     })
@@ -2277,7 +2351,7 @@ describe("saving a side's lineup (U8)", function () {
       (
         await ask('PUT', `/games/${id}/unroster`, COACH, {
           side: 'bad',
-          userId,
+          userId: userIdOfGumbo(userId),
           rostered: false
         })
       ).status

@@ -6,6 +6,7 @@ import type {
   ScheduleGamesResponse,
   ScheduleOpponent
 } from '../../common/scheduleGames'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   actor,
   type GroupFixture,
@@ -43,7 +44,7 @@ describe('legacy batch scheduling approval boundary', function () {
       .insertInto('scope_roles')
       .values({
         id: makeId('scopeRole'),
-        user_id: userId,
+        user_id: userIdOfGumbo(userId),
         scope_type: kind,
         scope_id: id,
         role: 'admin'
@@ -70,7 +71,9 @@ describe('legacy batch scheduling approval boundary', function () {
         .onConflict(oc => oc.columns(['season_id', 'team_id']).doNothing())
         .execute()
       expect(
-        (await roleScopes(f.h.db, 101, false)).admin.teamIds.has(f.teamB)
+        (await roleScopes(f.h.db, userIdOfGumbo(101), false)).admin.teamIds.has(
+          f.teamB
+        )
       ).equals(true)
       const beforeTeams = await f.h.db.selectFrom('teams').selectAll().execute()
       const body = {
@@ -119,7 +122,9 @@ describe('legacy batch scheduling approval boundary', function () {
         .onConflict(oc => oc.column('key').doUpdateSet({ value: true }))
         .execute()
       expect(
-        (await roleScopes(f.h.db, 101, false)).admin.teamIds.has(f.teamB)
+        (await roleScopes(f.h.db, userIdOfGumbo(101), false)).admin.teamIds.has(
+          f.teamB
+        )
       ).equals(false)
       const admitted = await scheduleGames(f.h.db, {
         teamId: f.teamA,
@@ -294,10 +299,10 @@ describe('legacy batch scheduling approval boundary', function () {
       .where('method', '=', 'BATCH')
       .execute()
     expect(audit).length(1)
-    expect(audit[0].actor_user_id).equals(101)
+    expect(audit[0].actor_user_id).equals(userIdOfGumbo(101))
     await f.h.db
       .deleteFrom('scope_roles')
-      .where('user_id', '=', 101)
+      .where('user_id', '=', userIdOfGumbo(101))
       .where('scope_id', '=', f.teamB)
       .execute()
     const retry = await scheduleGames(f.h.db, {

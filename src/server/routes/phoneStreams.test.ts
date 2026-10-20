@@ -10,10 +10,12 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
-import { mintUserId } from '../../common/mintUserId'
+import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { mintUserId } from '../../test/historicalUserIds'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -184,19 +186,16 @@ describe('phones and Directors asking for their streams by device', function () 
       [other, 'Freddie Freeman'],
       [parent, 'Max Muncy']
     ] as const) {
-      await db
-        .insertInto('users')
-        .values({
-          id: made.userId,
-          legacyId: made.legacyId,
-          display_name: name,
-          first_name: null,
-          last_name: null,
-          login_enabled: true,
-          created_at: now,
-          updated_at: now
-        })
-        .execute()
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(made.userId),
+        legacyId: made.legacyId,
+        display_name: name,
+        first_name: null,
+        last_name: null,
+        login_enabled: true,
+        created_at: now,
+        updated_at: now
+      })
     }
     for (const [id, user, token] of [
       ['ses_owner', owner.userId, OWNER],
@@ -208,7 +207,7 @@ describe('phones and Directors asking for their streams by device', function () 
         .insertInto('auth_sessions')
         .values({
           id,
-          user_id: user,
+          user_id: userIdOfGumbo(user),
           token_hash: hashToken(token),
           expires_at: new Date(now.getTime() + 3_600_000),
           created_at: now
@@ -231,7 +230,7 @@ describe('phones and Directors asking for their streams by device', function () 
     ] as const) {
       await db
         .insertInto('memberships')
-        .values({ id, user_id: user, team_id: 'tem_home', role })
+        .values({ id, user_id: userIdOfGumbo(user), team_id: 'tem_home', role })
         .execute()
     }
   }
@@ -362,7 +361,7 @@ describe('phones and Directors asking for their streams by device', function () 
         .selectFrom('live_streams')
         .select('id')
         .where('game_id', '=', gameId)
-        .where('user_id', '=', owner.userId)
+        .where('user_id', '=', userIdOfGumbo(owner.userId))
         .where('device_id', 'is', null)
         .where('state', '<>', 'revoked')
         .orderBy('slot')
@@ -1350,7 +1349,7 @@ describe('phones and Directors asking for their streams by device', function () 
           .selectFrom('live_streams')
           .select('id')
           .where('game_id', '=', gameId)
-          .where('user_id', '=', other.userId)
+          .where('user_id', '=', userIdOfGumbo(other.userId))
           .executeTakeFirstOrThrow()
       ).id
       const homeVideo = await aired(home.body.id, 0, 2 * HOUR)
@@ -1439,7 +1438,7 @@ describe('phones and Directors asking for their streams by device', function () 
           .selectFrom('live_streams')
           .select('id')
           .where('game_id', '=', gameId)
-          .where('user_id', '=', other.userId)
+          .where('user_id', '=', userIdOfGumbo(other.userId))
           .executeTakeFirstOrThrow()
       ).id
       const webVideo = await aired(web.body.id, 0, 2 * HOUR)
@@ -1774,9 +1773,9 @@ describe('phones and Directors asking for their streams by device', function () 
           source_type: 'grant',
           source_id: grantId,
           revision: 1,
-          actor_id: owner.userId,
+          actor_id: userIdOfGumbo(owner.userId),
           metadata: { title: 'Mookie Betts added you to Harbor Demo' },
-          recorded_recipients: [other.userId],
+          recorded_recipients: [userIdOfGumbo(other.userId)],
           created_at: new Date(Date.now() - 3_600_000)
         })
         .execute()
@@ -1968,7 +1967,7 @@ describe('phones and Directors asking for their streams by device', function () 
         teamId: 'tem_home',
         startAt: new Date(),
         videoTitle: 'Ridge Demo at Harbor Demo',
-        userId: owner.userId,
+        userId: userIdOfGumbo(owner.userId),
         deviceId: IPHONE,
         deviceModel: 'iPhone 13 Pro',
         label: 'Home Plate',

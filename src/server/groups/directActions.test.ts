@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { TeamStationClient } from '../../common/api'
 import type { RequestTerms } from '../../common/notifications'
+import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { completionNotice } from '../notifications/completionNotice'
 
@@ -42,12 +43,16 @@ describe('direct action relationship consent', function () {
         seasonId: f.seasonA,
         range: { startsOn: null, endsOn: null, timezone: 'UTC' }
       },
-      { kind: 'promotion', teamId: f.teamA, recipientUserId: 101 },
+      {
+        kind: 'promotion',
+        teamId: f.teamA,
+        recipientUserId: userIdOfGumbo(101)
+      },
       {
         kind: 'person',
         scope: team,
         recipientEmail: 'member@example.test',
-        recipientUserId: 101,
+        recipientUserId: userIdOfGumbo(101),
         admin: true,
         flags: []
       },
@@ -84,7 +89,7 @@ describe('direct action relationship consent', function () {
       .insertInto('user_emails')
       .values({
         id: 'email_imported',
-        user_id: 101,
+        user_id: userIdOfGumbo(101),
         email: 'imported@example.test',
         is_primary: false,
         verified_at: null
@@ -118,7 +123,7 @@ describe('direct action relationship consent', function () {
           .insertInto('scope_roles')
           .values({
             id: 'role_resend_other',
-            user_id: 101,
+            user_id: userIdOfGumbo(101),
             scope_type: 'team',
             scope_id: f.standaloneTeam,
             role: 'admin'
@@ -161,7 +166,7 @@ describe('direct action relationship consent', function () {
         .insertInto('user_emails')
         .values({
           id: 'email_new_access',
-          user_id: own ? 101 : 102,
+          user_id: userIdOfGumbo(own ? 101 : 102),
           email: 'new-access@example.test',
           is_primary: false,
           verified_at: new Date()

@@ -18,7 +18,7 @@ export function rosterStaffSide(
 export interface EditRosterRow {
   key: string
   id: number
-  userId?: number
+  userId?: string
   name: string
   /** Public name for the normal app's navigation frame. */
   navigationTitle: string
