@@ -11,6 +11,7 @@ import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { addPerson } from '../../test/scoreboardKit'
+import { listenScreenScopes } from '../../test/screenScopeNotices'
 import { hashToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
@@ -368,10 +369,14 @@ describe('what the ingest is told', function () {
         .where('id', '=', 'liv_2')
         .executeTakeFirstOrThrow()
 
+    // Home and the game's event hear of each start and stop.
+    const notices = await listenScreenScopes(db)
+    let mark = notices.mark()
     await handleLiveEventForTest(
       { type: 'publishStarted', key: THIRD_KEY, liveStreamId: 'liv_2' },
       options
     )
+    await notices.named(mark, { gameId: 'gam_1' })
     const first = await video()
     expect(first.status).equals('live')
     expect(first.startAt).not.equals(null)
@@ -392,6 +397,7 @@ describe('what the ingest is told', function () {
         .sort()
     const videosBefore = await gameVideos()
 
+    mark = notices.mark()
     // What the ingest says when a new publish replaces the quiet one: the old
     // connection's publish ended, and the new one's started.
     await handleLiveEventForTest(
@@ -403,10 +409,14 @@ describe('what the ingest is told', function () {
       },
       options
     )
+    await notices.named(mark, { gameId: 'gam_1' })
+    mark = notices.mark()
     await handleLiveEventForTest(
       { type: 'publishStarted', key: THIRD_KEY, liveStreamId: 'liv_2' },
       options
     )
+    await notices.named(mark, { gameId: 'gam_1' })
+    await notices.close()
 
     expect(await stream()).deep.equals({
       state: 'publishing',

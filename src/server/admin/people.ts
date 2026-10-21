@@ -4,9 +4,11 @@ import { conflict } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import { signOutEverywhere } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { directAdminIds, requireDirectAdmin } from '../groups/adminGuard'
 import { assertMergeScoringSafe } from '../scoring/mergeConflicts'
+import { noteScopeChange } from '../socket/syncRevision'
 import { ensureGumboId } from '../users/insertUser'
 
 /**
@@ -284,9 +286,16 @@ export async function closeInto(
       throw conflict(
         'Add another active node administrator before merging the last one'
       )
+    // Their teams are the kept person's now: both homes read them again.
+    if (moved > 0) {
+      noteScopeChange(trx, { userId: keeping })
+      noteScopeChange(trx, { userId: closing })
+    }
     return { closed: true, moved }
   }
-  if (!db.isTransaction) return await db.transaction().execute(merge)
+  // Opened here, the merge's last statements bump the clock; inside a
+  // caller's transaction, the caller's opener does.
+  if (!db.isTransaction) return await atomic(db, merge)
 
   const level = await sql<{
     level: string

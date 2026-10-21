@@ -10,6 +10,7 @@ import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { mintUserId } from '../../test/historicalUserIds'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import { listenScreenScopes } from '../../test/screenScopeNotices'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
 import { replaceGameEvents } from '../events/eventWrite'
@@ -152,12 +153,25 @@ describe('merging two rows that are one team', function () {
 
   it('keeps the scored game and moves the video onto it', async function () {
     if (db == null) this.skip()
+    const notices = await listenScreenScopes(db)
+    const mark = notices.mark()
     const report = await mergeTeams(db, {
       fromTeamId: houser,
       intoTeamId: hawks,
       apply: true
     })
     expect(report.applied).equals(true)
+    // Both teams' screens are told, and the game that moved.
+    try {
+      for (const ids of [
+        { teamId: houser },
+        { teamId: hawks },
+        { gameId: scoredGame }
+      ])
+        await notices.named(mark, ids)
+    } finally {
+      await notices.close()
+    }
     expect(report.fixtures[0].keptGameId).equals(scoredGame)
     expect(report.fixtures[0].videosMoved).equals(1)
 

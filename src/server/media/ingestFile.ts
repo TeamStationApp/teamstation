@@ -8,7 +8,9 @@ import { captureException } from '@sentry/node'
 import type { Kysely } from 'kysely'
 
 import { makeId } from '../../common/ids'
+import { atomic } from '../db/atomic'
 import type { Database, VideosTable } from '../db/database'
+import { noteGameFigures } from '../socket/syncRevision'
 import {
   AAC_PRIMING_SAMPLES,
   MASTER_PLAYLIST,
@@ -415,7 +417,8 @@ export async function ingestVideoFile(
     // are paid for for ever with nothing able to find them. Copies nobody can
     // see are the failure this whole path was written to avoid.
     try {
-      await db.transaction().execute(async trx => {
+      // The game's event, and home, hear of it as its last statements.
+      await atomic(db, async trx => {
         await trx
           .insertInto('videos')
           .values({
@@ -449,6 +452,8 @@ export async function ingestVideoFile(
           videoId,
           wallPoints.map(point => ({ ...point, source: 'sei' }))
         )
+        // A video counts on its season's row: Home's lists are told.
+        await noteGameFigures(trx, gameId)
       })
     } catch (error) {
       await forgetTheCopy(space, videoId)

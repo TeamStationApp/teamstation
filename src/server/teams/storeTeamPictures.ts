@@ -6,6 +6,7 @@ import {
   unavailable,
   unsupportedMedia
 } from '../../common/errors'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
   type ImageKind,
@@ -16,6 +17,7 @@ import {
 } from '../media/images'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
 import { spaceConfigured, type SpaceSettings } from '../media/spacesHls'
+import { noteScopeChange } from '../socket/syncRevision'
 
 /**
  * A team's logo and a player's headshot, sent as base64 inside JSON and
@@ -243,29 +245,32 @@ export async function storeTeamLogo(
     },
     picture,
     mayReplaceUpload: true,
-    write: async (stored, guarded) => {
-      let update = db
-        .updateTable('teams')
-        .set({
-          ...(stored == null
-            ? {}
-            : { logo_path: stored.pathPrefix, logo_sha256: stored.sha256 }),
-          logo_source: picture.source,
-          picture_catalog_id: null,
-          logo_updated_at: new Date()
-        })
-        .where('id', '=', teamId)
-      if (guarded) {
-        update = update.where(eb =>
-          eb.or([
-            eb('logo_source', 'is distinct from', 'upload'),
-            eb('logo_path', 'is', null)
-          ])
-        )
-      }
-      const written = await update.executeTakeFirst()
-      return Number(written.numUpdatedRows) > 0
-    }
+    write: async (stored, guarded) =>
+      await atomic(db, async trx => {
+        let update = trx
+          .updateTable('teams')
+          .set({
+            ...(stored == null
+              ? {}
+              : { logo_path: stored.pathPrefix, logo_sha256: stored.sha256 }),
+            logo_source: picture.source,
+            picture_catalog_id: null,
+            logo_updated_at: new Date()
+          })
+          .where('id', '=', teamId)
+        if (guarded) {
+          update = update.where(eb =>
+            eb.or([
+              eb('logo_source', 'is distinct from', 'upload'),
+              eb('logo_path', 'is', null)
+            ])
+          )
+        }
+        const written = await update.executeTakeFirst()
+        if (Number(written.numUpdatedRows) === 0) return false
+        noteScopeChange(trx, { teamId })
+        return true
+      })
   })
 }
 

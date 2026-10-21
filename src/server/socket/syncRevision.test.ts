@@ -10,10 +10,13 @@ import { notFound } from '../../common/errors'
 import { migrations } from '../../migrate/migrations'
 import { migrateDown, migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
+import { atomic } from '../db/atomic'
 import { type Database, makeDatabase } from '../db/database'
 import { errorHandler } from '../middleware/withErrors'
 import {
+  bumpNotedScopes,
   bumpSyncClock,
+  noteScopeChange,
   readSyncClock,
   REVISION_HEADER,
   SCREEN_SCOPES_CHANNEL,
@@ -172,6 +175,68 @@ describe('the sync clock', function () {
       failure = error
     }
     expect(String(failure)).includes('inside the writing transaction')
+  })
+
+  it('bumps once, as the opener’s last statements, for every change noted in its transaction', async function () {
+    const before = await readSyncClock(db)
+    const count = heard.length
+    const revision = await atomic(db, async outer => {
+      // A function given the transaction notes; it does not bump.
+      await atomic(outer, async inner => {
+        noteScopeChange(inner, { teamId: 'tem_clock_a', userId: '3' })
+        noteScopeChange(inner, {})
+      })
+      expect(await readSyncClock(outer)).equals(before)
+      noteScopeChange(outer, { teamId: 'tem_clock_a', userId: '3' })
+      noteScopeChange(outer, { gameId: 'gam_noted' })
+      return BigInt(before) + 1n
+    })
+    expect(await readSyncClock(db)).equals(String(revision))
+    await heardRevision(String(revision))
+    await wait(50)
+    expect(heard.slice(count)).deep.equals([
+      { revision: String(revision), teamId: 'tem_clock_a', userId: '3' },
+      { revision: String(revision), gameId: 'gam_noted' }
+    ])
+  })
+
+  it('takes no revision for a transaction that noted nothing, and refuses a note outside one', async function () {
+    const before = await readSyncClock(db)
+    expect(
+      await db.transaction().execute(async trx => await bumpNotedScopes(trx))
+    ).equals(undefined)
+    await atomic(db, async trx => {
+      noteScopeChange(trx, { gameId: undefined })
+    })
+    expect(await readSyncClock(db)).equals(before)
+    expect(() => {
+      noteScopeChange(db, { userId: '1' })
+    }).throws('inside its transaction')
+  })
+
+  it('refuses a note in a transaction atomic did not open, which nothing would announce', async function () {
+    const before = await readSyncClock(db)
+    let refused: unknown
+    await db.transaction().execute(async trx => {
+      try {
+        noteScopeChange(trx, { userId: '1' })
+      } catch (error) {
+        refused = error
+      }
+    })
+    expect(refused)
+      .instanceOf(Error)
+      .property('message')
+      .equals(
+        'A screen scope change is noted inside a transaction atomic opened'
+      )
+    // Joined from inside one atomic opened, a note is kept for its opener.
+    await atomic(db, async trx => {
+      await atomic(trx, async joined => {
+        noteScopeChange(joined, { userId: '1' })
+      })
+    })
+    expect(BigInt(await readSyncClock(db))).equals(BigInt(before) + 1n)
   })
 
   it('announces nothing when the write rolls back (Rollback)', async function () {

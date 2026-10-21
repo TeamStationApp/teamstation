@@ -1,9 +1,11 @@
 import { type Kysely, sql } from 'kysely'
 
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { requireDirectAdmin } from '../groups/adminGuard'
 import { mergeParents } from '../groups/teamMerge'
+import { noteScopeChange } from '../socket/syncRevision'
 import { requestGameStats } from '../statsBuilder/request'
 
 /**
@@ -147,7 +149,9 @@ export async function mergeTeams(
 
   if (!apply) return report
 
-  await db.transaction().execute(async trx => {
+  // `atomic`: its last statements tell the screens of both teams and of
+  // every game moved, from the clock this transaction bumps.
+  await atomic(db, async trx => {
     await lockKeys(trx, [
       'creation:parent-graph',
       `group:team:${fromTeamId}`,
@@ -330,6 +334,9 @@ export async function mergeTeams(
       if (still == null) continue
       await requestGameStats(trx, game.id)
     }
+    noteScopeChange(trx, { teamId: fromTeamId })
+    noteScopeChange(trx, { teamId: intoTeamId })
+    for (const game of movedGames) noteScopeChange(trx, { gameId: game.id })
   })
 
   return report

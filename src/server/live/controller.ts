@@ -5,6 +5,7 @@ import { join } from 'path'
 
 import { canFilm, roleScopes } from '../access'
 import { hashToken } from '../auth/tokens'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { freeBytes, roomToRecord } from '../media/diskSpace'
 import { ffprobeFor, probeDuration, VIDEO_FILE } from '../media/ffmpeg'
@@ -23,6 +24,7 @@ import {
 } from '../media/trackStarts'
 import { storeWallPoints } from '../media/wallTimeline'
 import type { LiveSettings } from '../serverConfig'
+import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
 import {
   isRecordingShape,
   replaceAnchorsFromRecording,
@@ -501,39 +503,45 @@ export async function beganPublishing(
     return
   }
 
-  const updated = await db
-    .updateTable('live_streams')
-    .set({
-      state: 'publishing',
-      first_published_at: row.firstPublishedAt ?? now,
-      last_published_at: now,
-      last_error: null,
-      updated_at: now
-    })
-    .where('id', '=', liveStreamId)
-    .where('state', 'in', ['idle', 'publishing'])
-    .executeTakeFirst()
+  // The stream and its video go live together, and home and the game's
+  // event hear of it from this transaction's last statements.
+  await atomic(db, async trx => {
+    const updated = await trx
+      .updateTable('live_streams')
+      .set({
+        state: 'publishing',
+        first_published_at: row.firstPublishedAt ?? now,
+        last_published_at: now,
+        last_error: null,
+        updated_at: now
+      })
+      .where('id', '=', liveStreamId)
+      .where('state', 'in', ['idle', 'publishing'])
+      .executeTakeFirst()
 
-  if (updated.numUpdatedRows === 0n) return
-  if (row.videoId == null) return
-  await db
-    .updateTable('videos')
-    .set(eb => ({
-      status: 'live',
-      hidden: false,
-      // A reconnect keeps the first start: the video is one recording of one
-      // game, and its clock began when the first frame did. So does a start
-      // its publisher has already given (`placeByPublisher`), which can land
-      // before this does.
-      start_at: eb.fn.coalesce('start_at', eb.val(now)),
-      start_at_source: eb.fn.coalesce(
-        'start_at_source',
-        eb.val<'liveSession'>('liveSession')
-      ),
-      updated_at: now
-    }))
-    .where('id', '=', row.videoId)
-    .execute()
+    if (updated.numUpdatedRows === 0n) return
+    // Its video is live, and counts on its season's row from now.
+    await noteGameFigures(trx, row.gameId)
+    if (row.videoId == null) return
+    await trx
+      .updateTable('videos')
+      .set(eb => ({
+        status: 'live',
+        hidden: false,
+        // A reconnect keeps the first start: the video is one recording of
+        // one game, and its clock began when the first frame did. So does a
+        // start its publisher has already given (`placeByPublisher`), which
+        // can land before this does.
+        start_at: eb.fn.coalesce('start_at', eb.val(now)),
+        start_at_source: eb.fn.coalesce(
+          'start_at_source',
+          eb.val<'liveSession'>('liveSession')
+        ),
+        updated_at: now
+      }))
+      .where('id', '=', row.videoId)
+      .execute()
+  })
 }
 
 /**
@@ -553,34 +561,42 @@ async function stoppedPublishing(
   const now = new Date()
   const row = await db
     .selectFrom('live_streams')
-    .select(['video_id as videoId'])
+    .select(['video_id as videoId', 'game_id as gameId'])
     .where('id', '=', liveStreamId)
     .executeTakeFirst()
+  // Looked at before the transaction, so it holds no row across the disk.
+  const empty =
+    row?.videoId != null && !(await hasMedia(mediaRoot, row.videoId))
 
-  await db
-    .updateTable('live_streams')
-    .set({
-      state: 'idle',
-      last_published_at: now,
-      last_error: reason,
-      updated_at: now
-    })
-    .where('id', '=', liveStreamId)
-    .where('state', '=', 'publishing')
-    .execute()
+  await atomic(db, async trx => {
+    const stopped = await trx
+      .updateTable('live_streams')
+      .set({
+        state: 'idle',
+        last_published_at: now,
+        last_error: reason,
+        updated_at: now
+      })
+      .where('id', '=', liveStreamId)
+      .where('state', '=', 'publishing')
+      .executeTakeFirst()
+    if (row == null) return
+    if (stopped.numUpdatedRows > 0n)
+      noteScopeChange(trx, { gameId: row.gameId })
 
-  // A publish that was turned away — the wrong codec, usually — leaves a
-  // video row that was made visible the moment it connected and holds no
-  // video at all. It goes back to being a placeholder, rather than sitting on
-  // the home screen as a live game nobody can watch.
-  if (row?.videoId == null) return
-  if (await hasMedia(mediaRoot, row.videoId)) return
-  await db
-    .updateTable('videos')
-    .set({ status: 'processing', hidden: true, updated_at: now })
-    .where('id', '=', row.videoId)
-    .where('status', '=', 'live')
-    .execute()
+    // A publish that was turned away — the wrong codec, usually — leaves a
+    // video row that was made visible the moment it connected and holds no
+    // video at all. It goes back to being a placeholder, rather than sitting
+    // on the home screen as a live game nobody can watch.
+    if (row.videoId == null || !empty) return
+    const hidden = await trx
+      .updateTable('videos')
+      .set({ status: 'processing', hidden: true, updated_at: now })
+      .where('id', '=', row.videoId)
+      .where('status', '=', 'live')
+      .executeTakeFirst()
+    if (hidden.numUpdatedRows > 0n) await noteGameFigures(trx, row.gameId)
+  })
 }
 
 /** Whether anything was ever written for this video. */
@@ -1042,24 +1058,41 @@ export async function finishStream(
   const now = new Date()
   // Claim finalization once. A revoked key remains revoked while its recording
   // follows the same retained-media lifecycle as an ordinarily ended stream.
-  const row = await db
-    .updateTable('live_streams')
-    .set({
-      state: sql`case when state = 'revoked' then 'revoked' else 'ended' end`,
-      ended_at: now,
-      last_error: reason,
-      updated_at: now
-    })
-    .where('id', '=', liveStreamId)
-    .where('state', 'in', ['idle', 'publishing', 'revoked'])
-    .where('ended_at', 'is', null)
-    .returning([
-      'video_id as videoId',
-      'first_published_at as firstPublishedAt'
-    ])
-    .executeTakeFirst()
+  const row = await atomic(db, async trx => {
+    const claimed = await trx
+      .updateTable('live_streams')
+      .set({
+        state: sql`case when state = 'revoked' then 'revoked' else 'ended' end`,
+        ended_at: now,
+        last_error: reason,
+        updated_at: now
+      })
+      .where('id', '=', liveStreamId)
+      .where('state', 'in', ['idle', 'publishing', 'revoked'])
+      .where('ended_at', 'is', null)
+      .returning([
+        'video_id as videoId',
+        'first_published_at as firstPublishedAt',
+        'game_id as gameId'
+      ])
+      .executeTakeFirst()
+    if (claimed != null) await noteGameFigures(trx, claimed.gameId)
+    return claimed
+  })
 
   if (row?.videoId == null) return
+  const { gameId } = row
+  // Each way the video ends is one write and the clock, in one transaction.
+  // The disk is read between them, outside any.
+  const settle = async (
+    write: (trx: Kysely<Database>) => Promise<unknown>
+  ): Promise<void> => {
+    await atomic(db, async trx => {
+      await write(trx)
+      // A finished video counts on its season's row.
+      await noteGameFigures(trx, gameId)
+    })
+  }
   anchorCursors.delete(row.videoId)
 
   // A key nobody ever used, or used only by something that was turned away —
@@ -1071,7 +1104,11 @@ export async function finishStream(
     row.firstPublishedAt == null ||
     !(await hasMedia(mediaRoot, row.videoId))
   ) {
-    await db.deleteFrom('videos').where('id', '=', row.videoId).execute()
+    const videoId = row.videoId
+    await settle(
+      async trx =>
+        await trx.deleteFrom('videos').where('id', '=', videoId).execute()
+    )
     return
   }
 
@@ -1083,16 +1120,20 @@ export async function finishStream(
   ).catch(() => null)
 
   if (durationSec == null) {
-    await db
-      .updateTable('videos')
-      .set({
-        status: 'error',
-        status_message: 'The finished stream could not be read',
-        published_at: now,
-        updated_at: now
-      })
-      .where('id', '=', row.videoId)
-      .execute()
+    const videoId = row.videoId
+    await settle(
+      async trx =>
+        await trx
+          .updateTable('videos')
+          .set({
+            status: 'error',
+            status_message: 'The finished stream could not be read',
+            published_at: now,
+            updated_at: now
+          })
+          .where('id', '=', videoId)
+          .execute()
+    )
     return
   }
 
@@ -1107,17 +1148,21 @@ export async function finishStream(
   }
 
   // Watchable at once, from this machine, while the rest happens.
-  await db
-    .updateTable('videos')
-    .set({
-      status: 'ready',
-      status_message: soundProblem ?? null,
-      duration_sec: durationSec,
-      published_at: now,
-      updated_at: now
-    })
-    .where('id', '=', row.videoId)
-    .execute()
+  const finished = row.videoId
+  await settle(
+    async trx =>
+      await trx
+        .updateTable('videos')
+        .set({
+          status: 'ready',
+          status_message: soundProblem ?? null,
+          duration_sec: durationSec,
+          published_at: now,
+          updated_at: now
+        })
+        .where('id', '=', finished)
+        .execute()
+  )
 
   // A recording uploaded from the phone replaced this one while it was
   // between publishes. It is kept here, whole and watchable, for the month

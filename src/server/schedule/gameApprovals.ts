@@ -44,6 +44,11 @@ import {
 } from '../groups/rights'
 import { snapshotRequestInformation } from '../notifications/requestInformation'
 import { notifyGameChange } from '../socket/gameChanges'
+import {
+  type GameFigureIds,
+  noteGameFigures,
+  noteScopeChange
+} from '../socket/syncRevision'
 import { followMerges } from '../teams/followMerges'
 import { seasonGameConsent } from './seasonGameConsent'
 
@@ -171,7 +176,30 @@ async function notifyProposalChange(
   terms: GameRequestTerms
 ): Promise<void> {
   const id = terms.gameId ?? terms.proposedGameId
-  if (id != null) await notifyGameChange(db, { game: id, kind: 'game' })
+  if (id == null) return
+  await notifyGameChange(db, { game: id, kind: 'game' })
+  noteScopeChange(db, { gameId: id })
+  noteProposedGame(db, terms)
+}
+
+/**
+ * A proposed new game has no `games` row, so a notice naming its id reaches
+ * nobody's Home or Schedule, which list it all the same: its teams and
+ * seasons are told instead.
+ */
+function noteProposedGame(db: Kysely<Database>, terms: GameRequestTerms): void {
+  if (terms.gameId != null) return
+  const teams = new Set([
+    terms.game.homeTeamId,
+    terms.game.awayTeamId,
+    ...terms.affectedTeamIds
+  ])
+  for (const teamId of teams) noteScopeChange(db, { teamId })
+  const seasons = new Set([
+    ...(terms.game.seasonId == null ? [] : [terms.game.seasonId]),
+    ...terms.hostSeasonIds
+  ])
+  for (const seasonId of seasons) noteScopeChange(db, { seasonId })
 }
 async function validateGame(
   db: Kysely<Database>,
@@ -355,6 +383,8 @@ export async function finishGameRequest(
     return false
   const terms = request.terms as GameRequestTerms
   await validateGame(trx, terms.game)
+  // The game's teams and season before a change moved it, to tell both.
+  let before: GameFigureIds | undefined
   let gameId = terms.gameId
   if (gameId == null) {
     if (terms.replacesGameId != null) {
@@ -398,6 +428,7 @@ export async function finishGameRequest(
       .forUpdate()
       .executeTakeFirst()
     if (current == null) throw notFound()
+    before = current
     if (current.season_id !== terms.game.seasonId)
       throw conflict('Game settings keep the hosting season unchanged')
     if (
@@ -492,6 +523,8 @@ export async function finishGameRequest(
       .where('id', '!=', id)
       .execute()
   await notifyGameChange(trx, { game: gameId, kind: 'game' })
+  // Published or changed: its season's row and its teams' lists.
+  await noteGameFigures(trx, gameId, before)
   return true
 }
 
@@ -775,6 +808,8 @@ export async function proposeGame(
         })
         .execute()
       await notifyGameChange(trx, { game: old.id, kind: 'game' })
+      // Cancelled, it leaves its teams' records.
+      await noteGameFigures(trx, old.id)
     }
     await trx
       .insertInto('group_requests')
@@ -845,6 +880,8 @@ export async function proposeGame(
       .execute()
     await finishGameRequest(trx, id, clock)
     await notifyGameChange(trx, { game: terms.proposedGameId!, kind: 'game' })
+    noteScopeChange(trx, { gameId: terms.proposedGameId! })
+    noteProposedGame(trx, terms)
     return await requestById(trx, id)
   })
 }
@@ -985,6 +1022,8 @@ export async function withdrawFromGame(
       )
       .execute()
     await notifyGameChange(trx, { game: gameId, kind: 'game' })
+    // Cancelled by a withdrawal, it leaves its teams' records.
+    await noteGameFigures(trx, gameId)
     return withdrawn
   })
 }

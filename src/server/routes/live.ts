@@ -40,6 +40,7 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { recordRecordingReminder } from '../notifications/recordingReminders'
 import type { LiveSettings } from '../serverConfig'
+import { withRevision } from '../socket/syncRevision'
 
 /**
  * The cameras pointed at a game: the URLs they publish to, and what each one
@@ -552,7 +553,9 @@ export function liveRoutes(
   router.get(
     '/live',
     requireActor,
-    withAsync(async (req, res) => {
+    // Home's look at what is on is one of the reads its scope gates, so it
+    // carries the revision its rows were read at, as the others do.
+    withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)

@@ -36,6 +36,7 @@ import { asUserId } from '../../common/userId'
 import { adminScopes, roleScopes, visibleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import type { GuardianInvitation } from '../email/sendMail'
 import { createGroup } from '../groups/createGroup'
@@ -81,7 +82,11 @@ import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { completionNotice } from '../notifications/completionNotice'
-import { withRevision } from '../socket/syncRevision'
+import {
+  groupScopeIds,
+  noteScopeChange,
+  withRevision
+} from '../socket/syncRevision'
 import { followMerges } from '../teams/followMerges'
 import { inviteUrl } from './invites'
 
@@ -452,7 +457,8 @@ export function groupRoutes(
           })
         }
       }
-      const report = await db.transaction().execute(async trx => {
+      // The replaced administrators are announced as its last statements.
+      const report = await atomic(db, async trx => {
         await lockKeys(trx, [
           'creation:ownership-cutover',
           'creation:parent-graph'
@@ -684,15 +690,23 @@ export function groupRoutes(
         id: String(req.params.id)
       }
       const group = await publicGroup(db, ref, media.space)
-      await db
-        .insertInto('follows')
-        .values({
-          user_id: actor.userId,
-          group_type: ref.kind,
-          group_id: group.id
-        })
-        .onConflict(oc => oc.doNothing())
-        .execute()
+      await atomic(db, async trx => {
+        const made = await trx
+          .insertInto('follows')
+          .values({
+            user_id: actor.userId,
+            group_type: ref.kind,
+            group_id: group.id
+          })
+          .onConflict(oc => oc.doNothing())
+          .returning('user_id')
+          .executeTakeFirst()
+        if (made != null)
+          noteScopeChange(trx, {
+            userId: actor.userId,
+            ...groupScopeIds(ref.kind, group.id)
+          })
+      })
       res.json(group)
     })
   )
@@ -702,12 +716,21 @@ export function groupRoutes(
     withAsync(async (req, res) => {
       const actor = await currentActor(db, actorOf(req))
       const kind = clean(asGroupKind, req.params.kind)
-      await db
-        .deleteFrom('follows')
-        .where('user_id', '=', actor.userId)
-        .where('group_type', '=', kind)
-        .where('group_id', '=', String(req.params.id))
-        .execute()
+      const id = String(req.params.id)
+      await atomic(db, async trx => {
+        const gone = await trx
+          .deleteFrom('follows')
+          .where('user_id', '=', actor.userId)
+          .where('group_type', '=', kind)
+          .where('group_id', '=', id)
+          .returning('user_id')
+          .executeTakeFirst()
+        if (gone != null)
+          noteScopeChange(trx, {
+            userId: actor.userId,
+            ...groupScopeIds(kind, id)
+          })
+      })
       res.json({ ok: true })
     })
   )
@@ -819,7 +842,7 @@ export function groupRoutes(
         !isDeepStrictEqual(req.body.expected, preview.expected)
       )
         throw badRequest('Confirm the current parent preview')
-      await db.transaction().execute(async trx => {
+      await atomic(db, async trx => {
         await lockKeys(trx, ['creation:parent-graph'])
         const recipients = await adminRecipients(
           trx,
@@ -949,7 +972,7 @@ export function groupRoutes(
     withAsync(async (req, res) => {
       const actor = actorOf(req)
       const id = typeof req.params.id === 'string' ? req.params.id : ''
-      const sent = await db.transaction().execute(async trx => {
+      const sent = await atomic(db, async trx => {
         if (
           typeof req.body?.idempotencyKey !== 'string' ||
           req.body.idempotencyKey.length < 8 ||
@@ -1075,7 +1098,7 @@ export function groupRoutes(
     withAsync(async (req, res) => {
       const seasonId = String(req.params.seasonId)
       const teamId = String(req.params.teamId)
-      await db.transaction().execute(async trx => {
+      await atomic(db, async trx => {
         await lockKeys(trx, [
           'creation:parent-graph',
           `group:season:${seasonId}`,
@@ -1099,6 +1122,7 @@ export function groupRoutes(
           .where('season_id', '=', seasonId)
           .where('team_id', '=', teamId)
           .execute()
+        noteScopeChange(trx, { seasonId, teamId })
       })
       res.json({ ok: true })
     })
@@ -1112,12 +1136,14 @@ export function groupRoutes(
         id: String(req.params.id)
       }
       const actor = actorOf(req)
-      await db.transaction().execute(async trx => {
+      await atomic(db, async trx => {
         await lockKeys(trx, [
           'creation:parent-graph',
           `group:${ref.kind}:${ref.id}`
         ])
         await requireGroupAdmin(trx, actor, ref)
+        // Its name, place, dates or picture, wherever it is shown.
+        noteScopeChange(trx, groupScopeIds(ref.kind, ref.id))
         const table =
           ref.kind === 'league'
             ? 'leagues'

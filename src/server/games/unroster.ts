@@ -30,6 +30,7 @@ import { storedLineupsDigest } from '../events/teamLineups'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { notifyGameChange } from '../socket/gameChanges'
+import { noteScopeChange } from '../socket/syncRevision'
 import { gameAvailability } from './rosterAvailability'
 
 /** A switch and its lineup change commit together, serialized with scoring writes. */
@@ -178,6 +179,7 @@ export async function setRostered(
       if (session.problem != null) throw conflict(session.problem)
     }
     await notifyGameChange(trx, { game: gameId, kind: 'game' })
+    noteScopeChange(trx, { gameId })
     return unrostered
   })
 }

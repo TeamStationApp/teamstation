@@ -20,12 +20,14 @@ import {
   visibleScopes
 } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
   type ExternalIdKey,
   externalIdLockKey,
   recordExternalId
 } from '../db/externalIds'
+import { noteScopeChange } from '../socket/syncRevision'
 import { followMerges } from './followMerges'
 
 /** Who is making the team. */
@@ -94,7 +96,7 @@ export async function createTeam(
   body: CreateTeamBody,
   creator: TeamCreator
 ): Promise<CreateTeamResponse> {
-  return await db.transaction().execute(async trx => {
+  return await atomic(db, async trx => {
     // Use the same authority lock as suspension, person merge and role changes,
     // before external-ID locks so every writer keeps one lock order.
     await lockKeys(trx, ['creation:parent-graph'])
@@ -169,6 +171,11 @@ export async function createTeam(
     if (season?.created === true) {
       await makeAdmin(trx, creator.userId, 'season', season.id)
     }
+    noteScopeChange(trx, {
+      userId: creator.userId,
+      teamId,
+      ...(season == null ? {} : { seasonId: season.id })
+    })
     return { id: teamId, name: body.name, created: true, season }
   })
 }

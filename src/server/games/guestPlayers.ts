@@ -11,10 +11,12 @@ import type { Side } from '../../common/scoring/state'
 import { canManageRoster, canScore, roleScopes } from '../access'
 import { lockPlayerEdits } from '../admin/people'
 import type { Actor } from '../auth/sessions'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
+import { noteScopeChange } from '../socket/syncRevision'
 import { ensureGumboId, insertUser } from '../users/insertUser'
 
 /** The game row serializes guest creation against lineup and play writes. */
@@ -25,7 +27,7 @@ export async function createGuestPlayer(
   side: Side,
   player: NewRosterPlayer
 ): Promise<RosterEntry> {
-  return await db.transaction().execute(async trx => {
+  return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
     const game = await trx
       .selectFrom('games')
@@ -88,6 +90,7 @@ export async function createGuestPlayer(
       .set({ guests })
       .where('id', '=', gameId)
       .execute()
+    noteScopeChange(trx, { gameId })
     return {
       userId,
       gumboId,

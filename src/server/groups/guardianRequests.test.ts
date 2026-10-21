@@ -9,6 +9,7 @@ import {
   guardianFixture
 } from '../../test/guardianFixture'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import { listenScreenScopes } from '../../test/screenScopeNotices'
 import { createSession } from '../auth/sessions'
 import { createRelationshipRequest } from './requests'
 
@@ -466,6 +467,24 @@ describe('guardian invitations and requests', function () {
       expect(await guardians(203)).deep.equals(
         [f.people.scorekeeper].map(userIdOfGumbo)
       )
+    })
+
+    it('tells the guardian’s home and the player’s of the link it makes', async () => {
+      const notices = await listenScreenScopes(f.h.db)
+      try {
+        await signsIn(203, 'cody@example.com')
+        const sent = await ask(203, f.people.scorekeeper)
+        const mark = notices.mark()
+        expect((await decide(sent.body.id, 'accept', 203)).body.status).equals(
+          'accepted'
+        )
+        await notices.named(mark, {
+          userId: userIdOfGumbo(f.people.scorekeeper)
+        })
+        await notices.named(mark, { userId: userIdOfGumbo(203) })
+      } finally {
+        await notices.close()
+      }
     })
 
     it('is approved by a coach, an assistant, and an assistant inherited from the season', async () => {

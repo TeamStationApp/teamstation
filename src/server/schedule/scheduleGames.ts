@@ -14,6 +14,7 @@ import {
 import { adminScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
   type ExternalIdKey,
@@ -24,6 +25,7 @@ import { gameHasPlays } from '../games/fenceDistance'
 import { scoredInTeamStation } from '../games/opponentFixed'
 import { currentActor, requireGroupAdmin } from '../groups/rights'
 import { notifyGameChange } from '../socket/gameChanges'
+import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
 import { requestGameStats } from '../statsBuilder/request'
 import { followMerges } from '../teams/followMerges'
 import { resolveOpponent } from '../teams/resolveOpponent'
@@ -179,7 +181,9 @@ export async function scheduleGames(
 
     const rowKnown = new Map(known)
     try {
-      const applied = await db.transaction().execute(async trx => {
+      // The row's game, and a renamed opponent, are announced as this
+      // transaction's last statements.
+      const applied = await atomic(db, async trx => {
         // This is also the service boundary for importers. Precomputed rights
         // cannot authorize publication or outlive an unlink or role revocation.
         await lockKeys(trx, ['creation:parent-graph'])
@@ -539,6 +543,8 @@ async function applyRow(
     .execute()
   if (externalId != null)
     await recordExternalId(trx, 'game', gameId, externalId)
+  // A new game on its season's row and its teams' lists.
+  await noteGameFigures(trx, gameId)
   return { result: 'created', gameId, status }
 }
 
@@ -679,6 +685,8 @@ async function updateHeld(
     // A screen holding the game open, a scorer's among them, learns of it
     // when this commits: above all of a swap, or it credits the wrong side.
     await notifyGameChange(trx, { game: held.id, kind: 'game' })
+    // A score, a status or a side changed moves its teams' records.
+    await noteGameFigures(trx, held.id)
   }
   const written = alreadyWritten || Object.keys(changes).length > 0
   return {
@@ -983,8 +991,10 @@ async function renameExternal(
     )
     .orderBy('id')
     .execute()
+  noteScopeChange(trx, { teamId: externalTeamId })
   for (const { id } of games) {
     await notifyGameChange(trx, { game: id, kind: 'game' })
+    noteScopeChange(trx, { gameId: id })
   }
 }
 
@@ -1106,6 +1116,9 @@ async function repointOpponent(
   for (const kind of ['game', 'lineups', 'plays'] as const) {
     await notifyGameChange(trx, { game: game.id, kind })
   }
+  // The game leaves one team for another: both teams' records move.
+  noteScopeChange(trx, { teamId: oldTeamId })
+  await noteGameFigures(trx, game.id)
 }
 
 /**

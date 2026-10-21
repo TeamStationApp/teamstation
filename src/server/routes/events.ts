@@ -15,6 +15,7 @@ import {
 import { halfOutcomes } from '../../common/scoring/linescore'
 import { canScore, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
   reconcileEventTags,
@@ -35,7 +36,11 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { resolveScoringGame } from '../scoring/openRow'
 import { notifyGameChange } from '../socket/gameChanges'
-import { readSyncClock, REVISION_HEADER } from '../socket/syncRevision'
+import {
+  noteScopeChange,
+  readSyncClock,
+  REVISION_HEADER
+} from '../socket/syncRevision'
 
 export interface EventRouteOptions {
   onGameWritten?: (gameId: string) => void
@@ -133,7 +138,7 @@ export function eventRoutes(
         const gameId = pathParam(req.params.gameId)
         const targetId = pathParam(req.params.targetId)
         await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
-        const result = await db.transaction().execute(async trx => {
+        const result = await atomic(db, async trx => {
           const game = await trx
             .selectFrom('games')
             .select(['home_team_id', 'away_team_id'])
@@ -158,6 +163,7 @@ export function eventRoutes(
             tag
           )
           await notifyGameChange(trx, { game: gameId, kind: 'plays' })
+          noteScopeChange(trx, { gameId })
           return result
         })
         res.json(result)

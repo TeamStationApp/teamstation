@@ -10,6 +10,7 @@ import {
 } from '../../test/groupFixtures'
 import { changeNodeAccount } from '../admin/nodeAdministration'
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import { setScopeRoles } from '../invites/people'
 import { applyParents, previewParents } from './relationships'
 
@@ -64,7 +65,8 @@ describe('competition removal uses current authority under the shared lock', fun
         await rowWait
       })
       await rowHeld
-      const revocation = f.h.db.transaction().execute(async trx => {
+      // `atomic`, as each of these writers' callers opens it.
+      const revocation = atomic(f.h.db, async trx => {
         await lockKeys(trx, ['creation:parent-graph'])
         authorityReady()
         await authorityWait

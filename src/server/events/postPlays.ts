@@ -27,6 +27,7 @@ import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { assertAuthoredRosters } from '../scoring/rosterWrites'
 import { notifyGameChange } from '../socket/gameChanges'
+import { noteGameFigures, noteScopeChange } from '../socket/syncRevision'
 import { reconcileEventTags } from './eventTags'
 import {
   type PlaySource,
@@ -394,6 +395,21 @@ export async function postGamePlays(
       lineups.lineups_digest !== game.lineups_digest
     )
       await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
+    // And to the screens of that game: its event, and home and schedule,
+    // from the clock this transaction bumps last. A post that makes the
+    // game final, unmakes it, or changes a final score moves its teams'
+    // records too, so Home's lists are told; a play otherwise is not.
+    const nowStatus =
+      game.cancellation_reason === 'withdrawal' ? 'cancelled' : status
+    const finalBefore = game.status === 'final'
+    const finalNow = nowStatus === 'final'
+    if (
+      finalBefore !== finalNow ||
+      (finalNow &&
+        (posted.away !== game.away_score || posted.home !== game.home_score))
+    )
+      await noteGameFigures(trx, gameId)
+    else noteScopeChange(trx, { gameId })
     const resolved = await resolveScoringGame(trx, {
       plays: taggedStored.map(row => row.gumbo as GumboPlay),
       currentPlay: taggedGame.currentPlay as CurrentPlay | null
