@@ -2,6 +2,7 @@ import { type Request, Router } from 'express'
 import type { Kysely, Transaction } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
+import { now } from '../clock'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { requireGroupAdmin } from '../groups/rights'
@@ -9,6 +10,11 @@ import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import * as admin from '../umpires/admin'
+import {
+  parseUmpireFilters,
+  schedule,
+  umpireLeagues
+} from '../umpires/schedule'
 
 export function umpireRoutes(
   db: Kysely<Database>,
@@ -127,14 +133,14 @@ export function umpireRoutes(
     'get',
     '/leagues/:leagueId/umpire-requirements',
     async (trx, league) => ({
-      seasons: await admin.requirements(trx, league, Date.now(), media)
+      seasons: await admin.requirements(trx, league, now(), media)
     })
   )
   manage(
     'put',
     '/leagues/:leagueId/umpire-requirements',
     async (trx, league, req) => {
-      await admin.applyRequirements(trx, league, req.body, Date.now())
+      await admin.applyRequirements(trx, league, req.body, now())
     }
   )
   manage(
@@ -174,6 +180,34 @@ export function umpireRoutes(
     async (trx, league, req) => {
       await admin.certify(trx, league, String(req.params.userId), req.body)
     }
+  )
+
+  router.get(
+    '/me/umpire-leagues',
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      res.json({ leagues: await umpireLeagues(db, req.actor, media) })
+    })
+  )
+  router.get(
+    '/leagues/:leagueId/umpire-schedule',
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      const view = req.query.view ?? 'umpire'
+      if (view !== 'umpire' && view !== 'league')
+        throw badRequest('Choose umpire or league view')
+      res.json(
+        await schedule(
+          db,
+          req.actor,
+          String(req.params.leagueId),
+          view,
+          parseUmpireFilters(req.query)
+        )
+      )
+    })
   )
   return router
 }

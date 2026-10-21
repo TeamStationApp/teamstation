@@ -115,5 +115,56 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
       ])
     )
   }
+
+  paths['/me/umpire-leagues'] = {
+    get: {
+      summary: 'Managed leagues where the caller holds an explicit umpire role',
+      security: [{ bearer: [] }],
+      responses: {
+        ...responses,
+        200: { description: 'Accessible umpire leagues' }
+      }
+    }
+  }
+  paths['/leagues/{leagueId}/umpire-schedule'] = {
+    get: {
+      summary: 'Umpire schedule with availability and conflicts',
+      security: [{ bearer: [] }],
+      parameters: [
+        ...parameters,
+        {
+          name: 'view',
+          in: 'query',
+          schema: {
+            type: 'string',
+            enum: ['umpire', 'league'],
+            default: 'umpire'
+          },
+          description: 'Umpire involvement window or administrator league view'
+        },
+        ...['levels', 'days', 'from', 'to'].map(name => ({
+          name,
+          in: 'query',
+          ...(name === 'days' || name === 'levels'
+            ? {
+                style: 'form',
+                explode: true,
+                schema: { type: 'array', items: { type: 'string' } }
+              }
+            : { schema: { type: 'string', default: '' } }),
+          description:
+            name === 'days'
+              ? 'Repeated weekdays, Monday 0 to Sunday 6; empty means all'
+              : name === 'levels'
+                ? 'Repeated level IDs needing an umpire; empty means all'
+                : 'Game-local HH:mm; filtering requires both endpoints, with to after from'
+        }))
+      ],
+      responses: {
+        ...responses,
+        200: { description: 'Visible games, slot choices and credit teams' }
+      }
+    }
+  }
   return paths
 }
