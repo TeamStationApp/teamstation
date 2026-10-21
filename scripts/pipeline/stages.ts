@@ -332,7 +332,11 @@ export const UNIT_TESTS = [
 /** Lint and unit tests; failures mark the run unstable, so the apps still build. */
 export async function test(ctx: Stage): Promise<Json> {
   await ctx.exec('npm', ['ci'])
-  const lint = await ctx.exec('npm', ['run', 'lint'], { allowFailure: true })
+  // ESLint over the whole repository needs more than Node's default heap.
+  const lint = await ctx.exec('npm', ['run', 'lint'], {
+    allowFailure: true,
+    env: { NODE_OPTIONS: '--max-old-space-size=8192' }
+  })
   if (lint.code !== 0) ctx.unstable('Lint failed')
   mkdirSync(path.join(ctx.workspace, OUTPUT), { recursive: true })
   await ctx.exec(

@@ -50,7 +50,7 @@ export function buildStage(row: Row): StageOptions {
         java: '17',
         android: [
           'platform-tools',
-          'platforms;android-37',
+          'platforms;android-37.0',
           'build-tools;37.0.0',
           'ndk;27.1.12297006'
         ]
