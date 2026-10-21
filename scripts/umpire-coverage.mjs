@@ -29,8 +29,17 @@ function run(cmd, args, env = {}) {
 if (!reportOnly) {
   await build({
     ...webSettings,
+    alias: {
+      ...webSettings.alias,
+      'react-native-svg': './src/test/umpireSvgStub.tsx'
+    },
     stdin: {
-      contents: globSync('src/app/umpires/*.test.tsx')
+      contents: [
+        ...globSync('src/app/umpires/*.test.tsx'),
+        'src/app/screens/GameScreen.eventInfo.test.tsx',
+        'src/app/screens/EventInfoTab.test.tsx',
+        'src/app/scoring/UndoTicker.test.tsx'
+      ]
         .map(p => `import './${p}'`)
         .join('\n'),
       resolveDir: process.cwd(),
@@ -52,7 +61,7 @@ if (!reportOnly) {
   })
   run(
     'node_modules/.bin/mocha',
-    ['-r', './src/test/scoringDomSetup.cjs', 'lib/umpire-tests.cjs'],
+    ['-r', './src/test/scoringDomSetup.cjs', '--exit', 'lib/umpire-tests.cjs'],
     { NODE_V8_COVERAGE: temp }
   )
 }
@@ -77,19 +86,11 @@ run('node_modules/.bin/c8', [
   report,
   '--exclude-after-remap',
   '--include',
-  'src/app/umpires/**',
+  'src/app/**',
+  '--include',
+  'src/common/**',
   '--exclude',
   '**/*.test.*'
 ])
-run('node_modules/.bin/c8', [
-  'check-coverage',
-  '--temp-directory',
-  temp,
-  '--include',
-  'src/app/umpires/**',
-  '--exclude',
-  '**/*.test.*',
-  '--lines',
-  '90',
-  '--per-file'
-])
+
+run(process.execPath, ['scripts/umpire-combined-coverage.mjs', '--ui-only'])

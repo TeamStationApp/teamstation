@@ -14,6 +14,7 @@ import { asTeamSummary } from '../common/api'
 import { GameSocket } from '../common/gameSocket'
 import type { GroupRef } from '../common/groupCreation'
 import { managesRoster } from '../common/roles'
+import type { UmpireLeague } from '../common/umpireSchedule'
 import type { WalkUpSong } from '../common/walkUpSong'
 import { tsLogoSource } from './assets'
 import {
@@ -115,7 +116,9 @@ import {
 } from './theme/ThemeContext'
 import { LeagueUmpiresScreen } from './umpires/LeagueUmpiresScreen'
 import { UmpireLevelsScreen } from './umpires/UmpireLevelsScreen'
+import { UmpireMask } from './umpires/UmpireMask'
 import { UmpireRequirementsScreen } from './umpires/UmpireRequirementsScreen'
+import { UmpireScheduleScreen } from './umpires/UmpireScheduleScreen'
 import { DjGameScreen } from './walkup/DjGameScreen'
 import { resolveSong } from './walkup/resolveSong'
 import walkUpMusic from './walkup/walkUpMusic'
@@ -493,6 +496,21 @@ function Shell(props: AppProps): React.ReactElement {
       scoringVisit.current = undefined
     }
   }, [signedInAs])
+  const [umpireLeagues, setUmpireLeagues] = useState<UmpireLeague[]>([])
+  useEffect(() => {
+    let live = true
+    setUmpireLeagues([])
+    if (signedInAs != null)
+      client
+        .umpireLeagues()
+        .then(leagues => {
+          if (live) setUmpireLeagues(leagues)
+        })
+        .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [client, signedInAs, roleRevision])
   const isAdmin = session?.user.isAdmin === true
   useSentryUser(signedInAs)
   useResumePendingUploads(client, signedInAs)
@@ -1555,6 +1573,22 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'notification', id })
         }}
       />
+    ) : top.name === 'umpireSchedule' ? (
+      <UmpireScheduleScreen
+        key={top.id}
+        client={client}
+        route={{
+          ...top,
+          id: top.id === '' ? (umpireLeagues[0]?.id ?? '') : top.id
+        }}
+        leagues={umpireLeagues}
+        onRoute={route => {
+          setStacks(current => ({
+            ...current,
+            [tab]: [...current[tab].slice(0, -1), route]
+          }))
+        }}
+      />
     ) : top.name === 'leagueUmpires' ? (
       <LeagueUmpiresScreen
         key={top.id}
@@ -2179,6 +2213,15 @@ function Shell(props: AppProps): React.ReactElement {
         ) : undefined
       }
       onBack={backOverride ?? (stack.length > 0 ? pop : undefined)}
+      umpire={
+        umpireLeagues.length === 0 ? undefined : (
+          <UmpireMask
+            onPress={() => {
+              push({ name: 'umpireSchedule', id: umpireLeagues[0].id })
+            }}
+          />
+        )
+      }
       notifications={
         session == null
           ? undefined

@@ -31,6 +31,7 @@ export interface AppHeaderProps {
   handoff?: React.ReactNode
   /** The three destinations, on a wide window. */
   nav?: React.ReactNode
+  umpire?: React.ReactNode
   /** The signed-in person, drawn at the right and opening their account. */
   account?: {
     name: string
@@ -156,6 +157,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
 
         <View style={[styles.side, styles.sideEnd]}>
           {nav}
+          {props.umpire}
           {props.notifications != null && (
             <Pressable
               accessibilityRole="button"

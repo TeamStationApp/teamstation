@@ -102,7 +102,9 @@
     "coverage.userIds": "node scripts/user-id-coverage.mjs",
     "coverage.playerLayouts": "node scripts/player-layouts-coverage.mjs",
     "test.playerNative": "node scripts/build-player-native-tests.mjs",
-    "coverage.umpires": "node scripts/umpire-coverage.mjs"
+    "coverage.umpires": "node scripts/umpire-coverage.mjs",
+    "coverage.umpires.server": "node scripts/umpire-server-coverage.mjs",
+    "coverage.umpires.combined": "node scripts/umpire-combined-coverage.mjs"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",
