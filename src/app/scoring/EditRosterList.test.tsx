@@ -62,6 +62,15 @@ describe('Roster tab cards and selector', function () {
         'input[type="checkbox"]'
       )
       expect(switches).length(1)
+      const player = host.querySelector<HTMLElement>(
+        '[aria-label*="Mookie Betts,"]'
+      )!
+      const card = player.parentElement!
+      expect(card.contains(switches[0])).equals(true)
+      expect(player.contains(switches[0])).equals(false)
+      expect(window.getComputedStyle(card).borderTopWidth).equals('1px')
+      expect(window.getComputedStyle(card).alignItems).equals('center')
+      expect(window.getComputedStyle(player).borderTopWidth).equals('0px')
       expect(switches[0].checked).equals(true)
       expect(switches[0].getAttribute('aria-label')).equals(
         'Rostered for this game'
@@ -394,7 +403,18 @@ describe('Roster tab cards and selector', function () {
       for (const mode of ['Roster', 'Defense', 'Lineup']) await click(mode)
       await click('Home Team')
       await click('Roster')
-      expect(host.textContent).includes('Tap a player to edit settings.')
+      expect(host.textContent).includes('Tap player to edit.')
+      await click('Game roster information')
+      expect(document.body.textContent)
+        .includes(
+          "Toggle a player off to remove them from this current game's roster."
+        )
+        .and.includes('batting lineup and defensive positions.')
+        .and.includes('where all players are rostered by default.')
+      await act(async () => {
+        document.querySelector<HTMLElement>('[aria-label="Done"]')!.click()
+      })
+      expect(document.body.textContent).not.includes('Toggle a player off')
       // Nothing changed on the way, so Save Rosters stays dim and saves nothing.
       expect(
         host

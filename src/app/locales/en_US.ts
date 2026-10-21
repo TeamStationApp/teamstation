@@ -566,7 +566,7 @@ export const enUs = {
   scoring_undo_hint: 'Undo last action',
   scoring_place_runner: 'Place a Runner',
   scoring_roster_tab: 'Roster',
-  scoring_edit_roster_instruction: 'Tap a player to edit settings.',
+  scoring_edit_roster_instruction: 'Tap player to edit.',
   scoring_roster_empty: 'No players on this team.',
   scoring_roster_conflict:
     'Another user has edited the roster. Your pending changes may overwrite theirs. Hit Cancel to revert to their changes.',

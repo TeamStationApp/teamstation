@@ -54,8 +54,17 @@ export function ScoringPlayerCard({
       onPress={onPress}
       style={({ pressed }) => ({
         ...scoringPlayerCardStyle(theme, pressed || selected),
-        width,
-        ...(trailing == null ? {} : { flex: 1 }),
+        ...(trailing == null
+          ? { width }
+          : {
+              flex: 1,
+              minWidth: 0,
+              borderWidth: 0,
+              backgroundColor:
+                pressed || selected
+                  ? theme.scoringSurface.active
+                  : 'transparent'
+            }),
         opacity: disabled ? 0.4 : 1
       })}
     >
@@ -77,9 +86,29 @@ export function ScoringPlayerCard({
   return trailing == null ? (
     card
   ) : (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+    <View
+      testID={`Player card ${label}`}
+      style={{
+        ...scoringPlayerCardStyle(theme, selected),
+        width,
+        paddingHorizontal: 0,
+        paddingVertical: 0,
+        gap: 0,
+        overflow: 'hidden'
+      }}
+    >
       {card}
-      {trailing}
+      <View
+        style={{
+          minHeight: 48,
+          paddingHorizontal: 8,
+          justifyContent: 'center',
+          alignItems: 'center',
+          flexShrink: 0
+        }}
+      >
+        {trailing}
+      </View>
     </View>
   )
 }

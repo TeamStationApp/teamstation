@@ -378,7 +378,7 @@ async function main(): Promise<void> {
     await tap('Cancel')
     await shown('JERSEY NUMBER')
     await tap('Back')
-    await shown('Tap a player to edit settings.')
+    await shown('Tap player to edit.')
     fixture.pauseWrites(false)
     const until = Date.now() + 15000
     while (fixture.stored().currentPlay == null && Date.now() < until)
@@ -677,7 +677,7 @@ async function main(): Promise<void> {
           )
         )
         await tap('Back')
-        await shown('Tap a player to edit settings.')
+        await shown('Tap player to edit.')
         await shown('Mookie Betts, jersey 12, bats right, throws right')
         assert.equal(
           JSON.stringify(fixture.stored()),
@@ -691,7 +691,7 @@ async function main(): Promise<void> {
           await shown('JERSEY NUMBER')
           await tap('Stats')
           await tap('Back')
-          await shown('Tap a player to edit settings.')
+          await shown('Tap player to edit.')
         }
         if (section === 'all') {
           // Forward can reopen the child; its own tabs remain part of the visit.
@@ -699,12 +699,12 @@ async function main(): Promise<void> {
             await browserStep('Forward')
             await shown('JERSEY NUMBER')
             await browserStep('Back')
-            await shown('Tap a player to edit settings.')
+            await shown('Tap player to edit.')
             await browserStep('Forward')
             await shown('JERSEY NUMBER')
             await tap('Stats')
             await tap('Back')
-            await shown('Tap a player to edit settings.')
+            await shown('Tap player to edit.')
           }
           await tap('Home Team')
           await shown('Mookie Betts, jersey 1, bats right, throws right')
@@ -755,7 +755,7 @@ async function main(): Promise<void> {
           fixture.trace.some(line => line.startsWith('Pending settings PUT'))
         )
         await tap('Back')
-        await shown('Tap a player to edit settings.')
+        await shown('Tap player to edit.')
         fixture.pauseSettings(false)
         await shown('Mookie Betts, jersey 14')
         await reach('Mookie Betts')
