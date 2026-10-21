@@ -152,7 +152,105 @@ describe('the phone document cache', function () {
       pending: false
     })
     expect(await web.read('home.teams')).equals(undefined)
+    let refused: unknown
+    try {
+      await web.atomically(async () => undefined)
+    } catch (error) {
+      refused = error
+    }
+    expect(refused).property('message').equals('The web keeps no outbox')
     await web.close()
     await web.destroy()
+  })
+
+  it('queues, updates and removes writes, and records players made on the phone', async function () {
+    const store = await openCacheStore(
+      nodeSqliteExecutor(join(dir, 'queue.sqlite'))
+    )
+    const row = {
+      id: 'r1',
+      idempotencyKey: 'k1',
+      chain: 'game:g1',
+      method: 'POST',
+      path: '/games/g1/lineups',
+      body: '{}',
+      dependsOn: ['player-5'],
+      gameId: 'g1'
+    }
+    const queued = await store.atomically(async tx => {
+      await tx.write('lineups.g1', {
+        body: '{"digest":"local-1"}',
+        revision: '3',
+        serverDigest: 'd0',
+        pending: true
+      })
+      const first = await tx.enqueue(row)
+      const second = await tx.enqueue({
+        ...row,
+        id: 'r2',
+        idempotencyKey: 'k2',
+        dependsOn: []
+      })
+      return [first, second]
+    })
+    expect(queued.map(item => item.seq)).deep.equals([1, 2])
+    expect(queued[0]).deep.include({
+      state: 'pending',
+      attempts: 0,
+      leaseUntil: null,
+      message: null,
+      dependsOn: ['player-5']
+    })
+    expect(await store.read('lineups.g1')).deep.include({ pending: true })
+    await store.atomically(async tx => {
+      await tx.update('r1', {})
+      await tx.update('r1', { state: 'dead', message: 'No', attempts: 2 })
+      await tx.removeKey('k2')
+      await tx.addLocalPlayer({
+        localId: 5,
+        serverId: null,
+        teamId: 't1',
+        body: '{}'
+      })
+      await tx.landPlayer(5, 905, '{"gumboId":905}')
+    })
+    const [left, ...rest] = await store.atomically(
+      async tx => await tx.outbox()
+    )
+    expect(rest).deep.equals([])
+    expect(left).deep.include({ state: 'dead', message: 'No', attempts: 2 })
+    expect(
+      await store.atomically(async tx => await tx.localPlayers())
+    ).deep.equals([
+      { localId: 5, serverId: 905, teamId: 't1', body: '{"gumboId":905}' }
+    ])
+    await store.atomically(async tx => {
+      await tx.remove('r1')
+    })
+    expect(await store.atomically(async tx => await tx.outbox())).deep.equals(
+      []
+    )
+    await store.close()
+  })
+
+  it('adds the outbox message column to a file made before it, and reads a bad dependency list as none', async function () {
+    const executor = nodeSqliteExecutor(join(dir, 'older.sqlite'))
+    executor.db.exec(`CREATE TABLE outbox (
+      id text PRIMARY KEY, idempotency_key text NOT NULL UNIQUE,
+      seq integer NOT NULL, chain text NOT NULL, method text NOT NULL,
+      path text NOT NULL, body text NOT NULL, depends_on text NOT NULL,
+      state text NOT NULL, attempts integer NOT NULL, lease_until integer,
+      game_id text)`)
+    executor.db.exec(`INSERT INTO outbox VALUES ('r1', 'k1', 1, 'team:t1',
+      'POST', '/teams/t1/roster-players', '{}', '{}', 'pending', 0, NULL, NULL)`)
+    const store = await openCacheStore(executor)
+    const [row] = await store.atomically(async tx => await tx.outbox())
+    expect(row).deep.include({ message: null, dependsOn: [], gameId: null })
+    await store.close()
+    // Opened again, the column is there already.
+    const again = await openCacheStore(
+      nodeSqliteExecutor(join(dir, 'older.sqlite'))
+    )
+    await again.close()
   })
 })

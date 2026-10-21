@@ -78,6 +78,7 @@ const SPECS = [
   'src/server/socket/protocolAck.test.ts',
   'src/server/socket/writerNotices.test.ts',
   'src/server/socket/notifyRollback.test.ts',
+  'src/server/routes/syncIdempotency.test.ts',
   'src/app/sync/**/*.test.ts'
 ].filter(spec => spec.includes('*') || existsSync(spec))
 

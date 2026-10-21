@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { type Kysely, type Selectable, sql } from 'kysely'
+import { type Kysely, type Selectable, sql, type Transaction } from 'kysely'
 
 import { badRequest, conflict, notFound } from '../../common/errors'
 import { withPreviousTagIdentities } from '../../common/eventTags'
@@ -79,13 +79,16 @@ export interface PostedPlays {
  * and the status, as `POST /games/:gameId/events` describes. `authorize`
  * sees the locked game row first and throws to refuse the post; the route
  * asks there whether its sender may score the game. The refold script, which
- * rewrites TeamStation's own plays, passes none.
+ * rewrites TeamStation's own plays, passes none. `written` is told the
+ * answer last, in the post's transaction, before the clock: where a queued
+ * post's `Idempotency-Key` keeps it.
  */
 export async function postGamePlays(
   db: Kysely<Database>,
   gameId: string,
   body: PostEventsBody,
-  authorize?: (trx: Trx, game: PostedGame) => Promise<void>
+  authorize?: (trx: Trx, game: PostedGame) => Promise<void>,
+  written?: (trx: Transaction<Database>, posted: PostedPlays) => Promise<void>
 ): Promise<PostedPlays> {
   // TeamStation and a person typing name themselves. Every other sender, and
   // a post that names none, is an outside scorer: the least trusted one.
@@ -414,7 +417,7 @@ export async function postGamePlays(
       plays: taggedStored.map(row => row.gumbo as GumboPlay),
       currentPlay: taggedGame.currentPlay as CurrentPlay | null
     })
-    return {
+    const answer: PostedPlays = {
       plays: taggedStored.map((row, index) => ({
         ...playJson(row),
         gumbo: resolved.plays[index]
@@ -424,6 +427,8 @@ export async function postGamePlays(
       playsDigest: playsDigest(taggedStored, taggedGame.currentPlay),
       priorPlaysDigest: prior
     }
+    await written?.(trx, answer)
+    return answer
   })
     .then(result => {
       if (refreshDelay != null && !db.isTransaction)

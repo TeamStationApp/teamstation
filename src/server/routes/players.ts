@@ -24,6 +24,11 @@ import {
 import { lockPlayerEdits, onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
+import {
+  type Answer,
+  answerOnce,
+  idempotentCallOf
+} from '../db/syncIdempotency'
 import { teamNames, teamStandings } from '../db/teamLookups'
 import { creditsForPlayer } from '../events/credits'
 import { guardianInviteAs } from '../groups/requests'
@@ -508,17 +513,37 @@ export function playerRoutes(
       if (team == null) throw notFound()
 
       const player = cleanBody(asNewRosterPlayer, req.body)
-      const userId = await createRosterPlayer(db, teamId, player)
-      setAudit(res.locals, {
-        entityType: 'rosterPlayer',
-        entityId: userId,
-        after: { teamId, userId, ...player }
+      const call = idempotentCallOf(req, actor.userId)
+      // The entry as a roster manager reads it, after the player committed.
+      const entryOf = async (userId: string): Promise<Answer> => {
+        const roster = await teamRoster(db, media.space, teamId, true)
+        const entry = roster.find(row => row.userId === userId)
+        if (entry == null) throw notFound()
+        return { status: 201, body: entry }
+      }
+      const answer = await answerOnce(db, call, {
+        write: async claim => {
+          const userId = await createRosterPlayer(
+            db,
+            teamId,
+            player,
+            claim == null
+              ? undefined
+              : async (trx, made) => {
+                  await claim(trx, { resultId: made })
+                }
+          )
+          setAudit(res.locals, {
+            entityType: 'rosterPlayer',
+            entityId: userId,
+            after: { teamId, userId, ...player }
+          })
+          return await entryOf(userId)
+        },
+        // The player was made and its answer never stored: read it again.
+        rebuild: async held => await entryOf(held.resultId!)
       })
-
-      const roster = await teamRoster(db, media.space, teamId, true)
-      const entry = roster.find(row => row.userId === userId)
-      if (entry == null) throw notFound()
-      res.status(201).json(entry)
+      res.status(answer.status).json(answer.body)
     })
   )
 

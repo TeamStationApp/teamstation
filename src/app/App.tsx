@@ -116,6 +116,7 @@ import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
 import { useResumePendingUploads } from './stream/useResumePendingUploads'
 import { CachingClient, type OpenDocumentCache } from './sync/cachingClient'
+import { watchReachability } from './sync/reachability'
 import {
   cacheStyles,
   type Theme,
@@ -669,7 +670,14 @@ function Shell(props: AppProps): React.ReactElement {
   useEffect(() => {
     if (caching == null || signedInAs == null) return
     const subscription = AppState.addEventListener('change', state => {
+      // The queue sends nothing from the background, and coming back to the
+      // front sends it before the reads.
+      caching.setActive(state === 'active')
       if (state === 'active' && !caching.offline) prefetchDocuments()
+    })
+    // The network back only wakes the queue; its next send finds out.
+    const unwatch = watchReachability(() => {
+      caching.wakeOutbox(true)
     })
     // A request that leaves the device again, after none could.
     const reconnected = caching.subscribeOffline(offline => {
@@ -677,6 +685,7 @@ function Shell(props: AppProps): React.ReactElement {
     })
     return () => {
       subscription.remove()
+      unwatch()
       reconnected()
     }
   }, [caching, signedInAs, prefetchDocuments])

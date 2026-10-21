@@ -63,6 +63,12 @@ import {
   visibleScopes
 } from '../access'
 import type { Database } from '../db/database'
+import {
+  type Answer,
+  answerOnce,
+  type ClaimKey,
+  idempotentCallOf
+} from '../db/syncIdempotency'
 import { postGamePlays, readPlays } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
 import {
@@ -281,39 +287,64 @@ export function lineupRoutes(
       // A team's default lineup is only for somebody who may see the team.
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       const sees = (teamId: string): boolean => canSeeTeam(scopes, teamId)
-      let saved: SideSaved | undefined
-      for (let attempt = 0; ; attempt++) {
-        if (attempt === SAVE_ATTEMPTS)
-          throw conflict('The game changed while saving; try again')
-        const outcome = await saveSide(db, gameId, body, mayPost, sees, options)
-        if (outcome.outcome === 'moved') continue
-        saved = outcome
-        break
-      }
-      if (saved.outcome === 'saved') {
-        await options.afterSave?.(gameId)
-        try {
-          options.onGameWritten?.(gameId)
-        } catch (error) {
-          console.error(`onGameWritten ${gameId}`, error)
+      // Both sides as they stand, with the digest the save left.
+      const answerFor = async (digest: string): Promise<Answer> => {
+        const game = await db
+          .selectFrom('games')
+          .select([
+            'home_team_id',
+            'away_team_id',
+            'currentPlay',
+            'lineups_digest',
+            'guests',
+            'unrostered'
+          ])
+          .where('id', '=', gameId)
+          .executeTakeFirstOrThrow()
+        return {
+          status: 200,
+          body: {
+            ...(await lineupsAnswer(db, { id: gameId, ...game })),
+            digest
+          }
         }
       }
-      const game = await db
-        .selectFrom('games')
-        .select([
-          'home_team_id',
-          'away_team_id',
-          'currentPlay',
-          'lineups_digest',
-          'guests',
-          'unrostered'
-        ])
-        .where('id', '=', gameId)
-        .executeTakeFirstOrThrow()
-      res.json({
-        ...(await lineupsAnswer(db, { id: gameId, ...game })),
-        digest: saved.digest
+      const answer = await answerOnce(db, idempotentCallOf(req, actor.userId), {
+        write: async claim => {
+          let saved: SideSaved | undefined
+          for (let attempt = 0; ; attempt++) {
+            if (attempt === SAVE_ATTEMPTS)
+              // Nothing is wrong with the save: sent again, it goes.
+              throw conflict('The game changed while saving; try again', {
+                retry: true
+              })
+            const outcome = await saveSide(
+              db,
+              gameId,
+              body,
+              mayPost,
+              sees,
+              options,
+              claim
+            )
+            if (outcome.outcome === 'moved') continue
+            saved = outcome
+            break
+          }
+          if (saved.outcome === 'saved') {
+            await options.afterSave?.(gameId)
+            try {
+              options.onGameWritten?.(gameId)
+            } catch (error) {
+              console.error(`onGameWritten ${gameId}`, error)
+            }
+          }
+          return await answerFor(saved.digest)
+        },
+        // The side was saved and its answer never stored: read it again.
+        rebuild: async held => await answerFor(held.resultId!)
       })
+      res.status(answer.status).json(answer.body)
     })
   )
 
@@ -425,7 +456,9 @@ async function saveSide(
     game: { home_team_id: string; away_team_id: string }
   ) => Promise<void>,
   sees: (teamId: string) => boolean,
-  options: LineupRouteOptions
+  options: LineupRouteOptions,
+  /** Keeps the digest on the request's key, in the transaction that saves. */
+  claim?: ClaimKey
 ): Promise<SideSaved> {
   // The plays and the game row as one moment.
   const read = await db
@@ -502,7 +535,14 @@ async function saveSide(
               .executeTakeFirstOrThrow()
             if (snapshotOf(now, await readPlays(trx, gameId)) !== read.snapshot)
               throw new GameMoved()
-          }
+          },
+          claim == null
+            ? undefined
+            : async (trx, posted) => {
+                await claim(trx, {
+                  resultId: posted.lineupsDigest ?? read.digest
+                })
+              }
         )
         // A live post always keeps one.
         wrote = posted.lineupsDigest ?? read.digest

@@ -17,6 +17,7 @@ import { canScore, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { answerOnce, idempotentCallOf } from '../db/syncIdempotency'
 import {
   reconcileEventTags,
   tagChoices,
@@ -206,32 +207,69 @@ export function eventRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asPostEventsBody, req.body)
+      // Only a live post, a play at a time, is sent again from a queue.
+      const call =
+        body.mode === 'live' ? idempotentCallOf(req, actor.userId) : undefined
       // Only whether the game can be seen is settled here. Everything the
       // write depends on is read from the locked row.
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
-      const response = await postGamePlays(
-        db,
-        gameId,
-        body,
-        async (trx, game) => {
-          // A scorekeeper of either team, which an administrator of it is.
-          const scorers = await roleScopes(trx, actor.userId, actor.isAdmin)
-          if (
-            !canScore(scorers, game.home_team_id) &&
-            !canScore(scorers, game.away_team_id)
-          ) {
-            throw forbidden(
-              'Only someone who can score this game may change its plays'
-            )
-          }
+      let wrote = false
+      const answer = await answerOnce(db, call, {
+        write: async claim => {
+          const response = await postGamePlays(
+            db,
+            gameId,
+            body,
+            async (trx, game) => {
+              // A scorekeeper of either team, which an administrator of it is.
+              const scorers = await roleScopes(trx, actor.userId, actor.isAdmin)
+              if (
+                !canScore(scorers, game.home_team_id) &&
+                !canScore(scorers, game.away_team_id)
+              ) {
+                throw forbidden(
+                  'Only someone who can score this game may change its plays'
+                )
+              }
+            },
+            // Every play of the game is too much to keep per post: the key
+            // keeps the two digests that are this post's own, as it commits.
+            claim == null
+              ? undefined
+              : async (trx, posted) => {
+                  const kept: LivePostDigests = {
+                    priorPlaysDigest: posted.priorPlaysDigest,
+                    lineupsDigest: posted.lineupsDigest
+                  }
+                  await claim(trx, {
+                    status: 200,
+                    resultId: JSON.stringify(kept)
+                  })
+                }
+          )
+          wrote = true
+          return { status: 200, body: response }
+        },
+        keepsAnswer: false,
+        // The game's plays as they stand, which hold this post's, with the
+        // digests it was answered: a later lineups change by somebody else
+        // still shows as stale to the queue's next post.
+        rebuild: async held => {
+          const kept = JSON.parse(held.resultId!) as LivePostDigests
+          const current = await db
+            .transaction()
+            .setIsolationLevel('repeatable read')
+            .execute(async trx => await storedGameAnswer(trx, gameId))
+          return { status: 200, body: { ...current, ...kept } }
         }
-      )
-      try {
-        options.onGameWritten?.(gameId)
-      } catch (error) {
-        console.error(`onGameWritten ${gameId}`, error)
-      }
-      res.json(response)
+      })
+      if (wrote)
+        try {
+          options.onGameWritten?.(gameId)
+        } catch (error) {
+          console.error(`onGameWritten ${gameId}`, error)
+        }
+      res.status(answer.status).json(answer.body)
     })
   )
 
@@ -255,33 +293,7 @@ export function eventRoutes(
         // this holds the game waits, and takes a revision newer than this.
         res.setHeader(REVISION_HEADER, await readSyncClock(trx))
         await reconcileEventTags(trx, gameId)
-        const stored = await readPlays(trx, gameId)
-        const game = await trx
-          .selectFrom('games')
-          .select([
-            'home_team_id',
-            'away_team_id',
-            'currentPlay',
-            'lineups_digest'
-          ])
-          .where('id', '=', gameId)
-          .executeTakeFirstOrThrow()
-        const resolved = await resolveScoringGame(trx, {
-          plays: stored.map(row => row.gumbo as GumboPlay),
-          currentPlay: game.currentPlay as CurrentPlay | null
-        })
-        return {
-          plays: stored.map((row, index) => ({
-            ...playJson(row),
-            gumbo: resolved.plays[index]
-          })),
-          currentPlay: resolved.currentPlay,
-          playsDigest: playsDigest(stored, game.currentPlay),
-          lineupsDigest: await storedLineupsDigest(trx, {
-            id: gameId,
-            ...game
-          })
-        }
+        return await storedGameAnswer(trx, gameId)
       })
       res.json(result)
     })
@@ -301,6 +313,49 @@ export function eventRoutes(
   )
 
   return router
+}
+
+/** What a live post's key keeps of its answer: the rest is read again. */
+interface LivePostDigests {
+  priorPlaysDigest: string | null
+  lineupsDigest: string | null
+}
+
+/**
+ * A game's plays as `GET /games/:gameId/events` answers them, read through
+ * `db`: each stored play, the at-bat in progress, and both digests.
+ */
+async function storedGameAnswer(
+  db: Kysely<Database>,
+  gameId: string
+): Promise<{
+  plays: unknown[]
+  currentPlay: unknown
+  playsDigest: string
+  lineupsDigest: string | null
+}> {
+  const stored = await readPlays(db, gameId)
+  const game = await db
+    .selectFrom('games')
+    .select(['home_team_id', 'away_team_id', 'currentPlay', 'lineups_digest'])
+    .where('id', '=', gameId)
+    .executeTakeFirstOrThrow()
+  const resolved = await resolveScoringGame(db, {
+    plays: stored.map(row => row.gumbo as GumboPlay),
+    currentPlay: game.currentPlay as CurrentPlay | null
+  })
+  return {
+    plays: stored.map((row, index) => ({
+      ...playJson(row),
+      gumbo: resolved.plays[index]
+    })),
+    currentPlay: resolved.currentPlay,
+    playsDigest: playsDigest(stored, game.currentPlay),
+    lineupsDigest: await storedLineupsDigest(db, {
+      id: gameId,
+      ...game
+    })
+  }
 }
 
 function cleanBody<T>(cleaner: (raw: unknown) => T, raw: unknown): T {

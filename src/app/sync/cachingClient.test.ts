@@ -259,6 +259,49 @@ describe('CachingClient', function () {
     ).deep.equals({ mine: true })
   })
 
+  it('drops a stored document the server says is gone or not this person’s, and keeps a pending one', async function () {
+    const routes: Record<string, Answer | undefined> = {
+      '/teams': { body: [team('tem_hawks', 'Hawks')], revision: '3' },
+      '/games/g1/lineups': {
+        body: { away: 'server', home: 'server', digest: 'd9' }
+      }
+    }
+    const net = server(routes)
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.teams()
+    expect(await client.cached('home.teams', raw => raw)).not.equals(undefined)
+    const db = stores.get('usr_1')!.db
+    db.prepare(
+      "INSERT INTO documents (key, body, revision, server_digest, pending) VALUES ('lineups.g1', ?, '4', 'd4', 1)"
+    ).run(JSON.stringify({ mine: true }))
+    for (const [status, code] of [
+      [404, 'notFound'],
+      [403, 'forbidden']
+    ] as const) {
+      routes['/teams'] = { status, body: { code, message: 'Gone' } }
+      routes['/games/g1/lineups'] = { status, body: { code, message: 'Gone' } }
+      let thrown: unknown
+      await client.teams().catch((error: unknown) => {
+        thrown = error
+      })
+      expect(thrown, String(status)).property('code', code)
+      expect(await client.cached('home.teams', raw => raw)).equals(undefined)
+      // A queued write still holds its document, and it answers.
+      expect(
+        await client.cached('lineups.g1', raw => raw),
+        String(status)
+      ).deep.equals({ mine: true })
+      await client.teams().catch(() => undefined)
+    }
+    // A server error is not the record gone: it stays.
+    routes['/teams'] = { body: [team('tem_hawks', 'Hawks')], revision: '4' }
+    await client.teams()
+    routes['/teams'] = { status: 500, body: { code: 'internal', message: 'x' } }
+    await client.teams().catch(() => undefined)
+    expect(await client.cached('home.teams', raw => raw)).not.equals(undefined)
+  })
+
   it('stores the server digest of lineups and plays', async function () {
     const net = server({
       '/games/g1/lineups': {
@@ -442,6 +485,9 @@ describe('CachingClient', function () {
 
     const failing: DocumentStore = {
       read: async () => {
+        throw new Error('locked')
+      },
+      atomically: async () => {
         throw new Error('locked')
       },
       store: async () => {

@@ -500,6 +500,22 @@ const gameIdParam = {
   schema: { type: 'string' }
 }
 
+/**
+ * A queued write's key: the same request sent again with it is answered as
+ * the first was and writes nothing; the same key on another request is 409.
+ */
+const idempotencyKeyParam = {
+  name: 'Idempotency-Key',
+  in: 'header',
+  required: false,
+  description:
+    'Optional. A key the sender makes for this one request, 1 to 200 ' +
+    'visible ASCII characters. Sent again with the same method, path and ' +
+    'body, the stored answer is returned and nothing is written again; ' +
+    'with any other request, 409. Without it the write behaves as always.',
+  schema: { type: 'string', minLength: 1, maxLength: 200 }
+}
+
 const streamIdParam = {
   name: 'streamId',
   in: 'path',
@@ -4255,7 +4271,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'and writes nothing: the sender reads the game again and posts ' +
             'its changes on top of it.',
           security: [{ bearer: [] }],
-          parameters: [gameIdParam],
+          parameters: [gameIdParam, idempotencyKeyParam],
           requestBody: {
             required: true,
             content: {
@@ -4662,9 +4678,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'finish first, a game over) is 409 with its reason, and one it ' +
             'cannot take at all, or an index past `players`, 400. A game ' +
             'that keeps changing while the save replays it answers 409 ' +
-            'after three tries.',
+            'after three tries, with `details: { retry: true }`: the same ' +
+            'save sent again can go.',
           security: [{ bearer: [] }],
-          parameters: [gameIdParam],
+          parameters: [gameIdParam, idempotencyKeyParam],
           requestBody: {
             required: true,
             content: {
@@ -5641,7 +5658,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'the whole name, as GET /teams/{teamId}/roster lists it for a ' +
             'roster manager.',
           security: [{ bearer: [] }],
-          parameters: [teamIdParam],
+          parameters: [teamIdParam, idempotencyKeyParam],
           requestBody: {
             required: true,
             content: {

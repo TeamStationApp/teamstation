@@ -11,6 +11,10 @@ export async function openDocumentCache(
   return {
     read: async () => undefined,
     store: async (_key, document) => ({ ...document, pending: false }),
+    // The browser queues nothing: a write it cannot send fails as before.
+    atomically: async () => {
+      throw new Error('The web keeps no outbox')
+    },
     close: async () => undefined,
     destroy: async () => undefined
   }

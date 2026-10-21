@@ -43,6 +43,9 @@ function memoryCaches(): {
       files.set(userId, file)
       return {
         read: async key => file.get(key),
+        atomically: async () => {
+          throw new Error('This file keeps no outbox')
+        },
         store: async (key, document) => {
           const held = file.get(key)
           if (held?.pending === true) return held

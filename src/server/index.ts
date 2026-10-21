@@ -12,6 +12,7 @@ import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
 import { versionOf } from './buildVersion'
 import { makeDatabase } from './db/database'
+import { purgeExpiredKeys } from './db/syncIdempotency'
 import { modelsOf } from './dictation/models'
 import { attachDictation } from './dictation/route'
 import { purgeReplacedRecordings } from './director/purge'
@@ -323,6 +324,28 @@ function startPurge(db: ReturnType<typeof makeDatabase>): void {
   timer.unref?.()
 }
 
+/** How often expired `Idempotency-Key`s are swept. */
+const KEY_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+/**
+ * Deletes expired `Idempotency-Key`s, on the way up and then every six
+ * hours: the only place they go, so a keyed request deletes nothing.
+ */
+function startKeySweep(db: ReturnType<typeof makeDatabase>): void {
+  const sweep = (): void => {
+    purgeExpiredKeys(db)
+      .then(gone => {
+        if (gone > 0) console.log(`swept ${gone} expired idempotency key(s)`)
+      })
+      .catch((error: unknown) => {
+        console.error(`sweeping idempotency keys: ${String(error)}`)
+      })
+  }
+  sweep()
+  const timer = setInterval(sweep, KEY_SWEEP_INTERVAL_MS)
+  timer.unref?.()
+}
+
 function runPrimary(workerCount: number): void {
   // Before forking, so every worker inherits the same one.
   resolveMediaSecret()
@@ -330,6 +353,7 @@ function runPrimary(workerCount: number): void {
   startLive(liveDb)
   reopenInterrupted(liveDb)
   startPurge(liveDb)
+  startKeySweep(liveDb)
   const builder = startStatsBuilder({
     enabled: serverConfig.statsBuilder,
     supervise: () =>

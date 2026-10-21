@@ -611,6 +611,24 @@ export interface SyncClockTable {
   value: ColumnType<number | string, number | string, number | string>
 }
 
+/**
+ * A queued write's answer, by the key its sender gave it: one per person and
+ * key. `request_hash` is of the method, path and body, so the key cannot be
+ * spent on another request. `result_id` is set in the write's transaction;
+ * `status` and `body` once the answer is read, and empty until then.
+ */
+export interface SyncIdempotencyTable {
+  user_id: string
+  key: string
+  method: string
+  path: string
+  request_hash: string
+  status: number | null
+  body: Json | null
+  result_id: string | null
+  created_at: Timestamp
+}
+
 export interface SystemSettingsTable {
   key: string
   value: Json
@@ -917,6 +935,7 @@ export interface Database {
   season_teams: SeasonTeamsTable
   seasons: SeasonsTable
   sync_clock: SyncClockTable
+  sync_idempotency: SyncIdempotencyTable
   system_settings: SystemSettingsTable
   teams: TeamsTable
   user_links: UserLinksTable

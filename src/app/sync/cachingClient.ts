@@ -5,6 +5,7 @@ import {
   asSeasonGame,
   asTeamSummary,
   type ClientOptions,
+  IDEMPOTENCY_HEADER,
   type MyRoles,
   type RequestOptions,
   type SeasonGame,
@@ -20,6 +21,13 @@ import {
   GAMES_UPCOMING,
   HOME_TEAMS
 } from './documentKeys'
+import {
+  Outbox,
+  type OutboxListener,
+  type OutboxOptions,
+  type OutboxSummary,
+  queuedCallOf
+} from './outbox'
 
 /** One person's file, open or opening. */
 interface Opened {
@@ -32,7 +40,15 @@ export type OpenDocumentCache = (userId: string) => Promise<DocumentStore>
 
 export interface CachingClientOptions extends ClientOptions {
   openCache: OpenDocumentCache
+  /** The outbox's clock, chance and timers, swapped out in tests. */
+  outbox?: Pick<OutboxOptions, 'now' | 'random' | 'setTimer' | 'clearTimer'>
 }
+
+/**
+ * What a new team, season or game says while the last request could not
+ * leave the device: they are made on the server, and never queued.
+ */
+export const OFFLINE_CREATE_MESSAGE = "Available when you're back online."
 
 /** How many prefetch reads are out at once. */
 export const PREFETCH_CONCURRENCY = 4
@@ -41,6 +57,14 @@ const asRaw: Cleaner<unknown> = raw => raw
 
 function isOffline(error: unknown): boolean {
   return error instanceof HttpError && error.code === 'offline'
+}
+
+/** The server's word that a record is gone, or not this person's to read. */
+function isGone(error: unknown): boolean {
+  return (
+    error instanceof HttpError &&
+    (error.code === 'notFound' || error.code === 'forbidden')
+  )
 }
 
 /** The digest a stored answer carries, for a queued write to build on. */
@@ -72,10 +96,116 @@ export class CachingClient extends TeamStationClient {
   private opened: Opened | undefined
 
   private prefetching: Promise<void> | undefined
+  private readonly outbox: Outbox
 
   constructor(options: CachingClientOptions) {
     super(options)
     this.openCache = options.openCache
+    this.outbox = new Outbox({
+      store: async () => await this.owned?.store,
+      // Checked again just before each send: a sign-in that set another
+      // person's token while the queue read its file sends nothing of it.
+      owns: () => this.owned != null,
+      send: async (path, body, key) =>
+        await super.request('POST', path, asRaw, body, {
+          collect: false,
+          ...(key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } })
+        }),
+      token: () => this.token,
+      read: async path => {
+        await this.request('GET', path, asRaw, undefined, { collect: false })
+      },
+      ...options.outbox
+    })
+  }
+
+  /** The queue as it stands: how many writes, and which games are held. */
+  async outboxSummary(): Promise<OutboxSummary> {
+    return await this.outbox.summary()
+  }
+
+  /** Tells `listener` the queue each time it changes, until unsubscribed. */
+  subscribeOutbox(listener: OutboxListener): () => void {
+    return this.outbox.subscribe(listener)
+  }
+
+  /**
+   * Sends what is queued, as far as it goes: the app came to the front, or
+   * the network came back. Never called from the background.
+   */
+  async drainOutbox(): Promise<void> {
+    await this.outbox.drain()
+  }
+
+  /**
+   * Starts a drain without waiting for it. `reachable`, from the network
+   * coming back, ends a wait that no signal began.
+   */
+  wakeOutbox(reachable = false): void {
+    this.outbox.wake(reachable)
+  }
+
+  /**
+   * Gives up the edits the phone still holds for a game the server stopped
+   * (a stale lineup, a refusal) and reads the server's copy of what they
+   * held: its plays, its lineups, and a refused player's roster. Answers
+   * whether that copy came back; until it does, the phone has none.
+   */
+  async discardGame(gameId: string): Promise<boolean> {
+    return await this.outbox.discard(`game:${gameId}`)
+  }
+
+  /** Sends a game's held edits again, as they are, from the one refused. */
+  async retryGame(gameId: string): Promise<void> {
+    await this.outbox.retry(`game:${gameId}`)
+  }
+
+  /**
+   * Gives up the players the phone added to a team and the server refused,
+   * and reads the team's roster from the server. A game naming one of them
+   * waits, parked, to be given up too.
+   */
+  async discardTeam(teamId: string): Promise<boolean> {
+    return await this.outbox.discard(`team:${teamId}`)
+  }
+
+  /** Sends a team's refused players again. */
+  async retryTeam(teamId: string): Promise<void> {
+    await this.outbox.retry(`team:${teamId}`)
+  }
+
+  /** Whether the app is in front; the queue sends nothing behind it. */
+  setActive(active: boolean): void {
+    this.outbox.setActive(active)
+  }
+
+  override async createGroup(
+    body: Parameters<TeamStationClient['createGroup']>[0]
+  ): ReturnType<TeamStationClient['createGroup']> {
+    this.refuseOffline()
+    return await super.createGroup(body)
+  }
+
+  override async createTeamEvent(
+    body: Parameters<TeamStationClient['createTeamEvent']>[0]
+  ): ReturnType<TeamStationClient['createTeamEvent']> {
+    this.refuseOffline()
+    return await super.createTeamEvent(body)
+  }
+
+  override async proposeGame(
+    body: Parameters<TeamStationClient['proposeGame']>[0]
+  ): ReturnType<TeamStationClient['proposeGame']> {
+    this.refuseOffline()
+    return await super.proposeGame(body)
+  }
+
+  /**
+   * A team, a season, an event and a game are made on the server, and only
+   * there: with no signal they are refused before anything is sent or kept.
+   */
+  private refuseOffline(): void {
+    if (this.offline) throw new HttpError('offline', OFFLINE_CREATE_MESSAGE)
   }
 
   /** Whose file is open, if any. */
@@ -102,8 +232,14 @@ export class CachingClient extends TeamStationClient {
    * not open is a cache that misses.
    */
   openFor(userId: string): void {
+    const token = this.ownerToken
     this.ownerToken = this.token
-    if (this.opened?.userId === userId) return
+    if (this.opened?.userId === userId) {
+      // The same person, signed in again: what waited sends now.
+      if (token !== this.token) this.outbox.wake()
+      return
+    }
+    this.outbox.reset()
     const previous = this.opened
     this.opened = {
       userId,
@@ -116,6 +252,8 @@ export class CachingClient extends TeamStationClient {
         }
       })()
     }
+    // What the last launch left queued goes as soon as it can.
+    this.outbox.wake()
   }
 
   /** Sign-out: closes and deletes the open file, and leaves none open. */
@@ -123,6 +261,7 @@ export class CachingClient extends TeamStationClient {
     const opened = this.opened
     this.opened = undefined
     this.ownerToken = undefined
+    this.outbox.reset()
     const store = await opened?.store
     await store?.destroy().catch(() => undefined)
   }
@@ -136,6 +275,7 @@ export class CachingClient extends TeamStationClient {
     const opened = this.opened
     this.opened = undefined
     this.ownerToken = undefined
+    this.outbox.reset()
     await this.closeQuietly(opened?.store)
   }
 
@@ -192,9 +332,15 @@ export class CachingClient extends TeamStationClient {
     options?: RequestOptions
   ): Promise<T> {
     const opened = this.owned
+    // A roster player, a lineup and a live play go through the queue.
+    const queued = opened == null ? undefined : queuedCallOf(method, path, body)
+    if (queued != null) return cleaner(await this.outbox.submit(queued))
     const key = method === 'GET' ? documentKeyOf(path) : undefined
-    if (key == null || opened == null)
-      return await super.request(method, path, cleaner, body, options)
+    if (key == null || opened == null) {
+      const value = await super.request(method, path, cleaner, body, options)
+      this.outbox.wake(true)
+      return value
+    }
 
     let answered: { raw: unknown; revision: string } | undefined
     let value: T
@@ -211,6 +357,9 @@ export class CachingClient extends TeamStationClient {
         options
       )
     } catch (error: unknown) {
+      // The server says the record is gone, or no longer this person's: so
+      // is the phone's copy, unless a queued write still holds it.
+      if (isGone(error)) await this.forgetIn(opened.store, key)
       const held = await this.readFrom(opened.store, key)
       const stored =
         held?.pending === true
@@ -227,6 +376,7 @@ export class CachingClient extends TeamStationClient {
         throw error
       }
     }
+    this.outbox.wake(true)
     if (answered?.raw === undefined) return value
     const kept = await this.storeTo(opened.store, key, {
       body: JSON.stringify(answered.raw),
@@ -242,6 +392,10 @@ export class CachingClient extends TeamStationClient {
   }
 
   private async prefetchOnce(): Promise<void> {
+    // Push before pull: what is queued goes first, so the reads find it.
+    // The server answers, so a wait that no signal began is over.
+    this.outbox.wake(true)
+    await this.outbox.drain()
     const read = async <T>(
       path: string,
       cleaner: Cleaner<T>
@@ -320,6 +474,22 @@ export class CachingClient extends TeamStationClient {
       return await (await store)?.read(key)
     } catch {
       return undefined
+    }
+  }
+
+  /** A cache that cannot be written keeps what it held. */
+  private async forgetIn(
+    store: Promise<DocumentStore | undefined>,
+    key: string
+  ): Promise<void> {
+    try {
+      await (
+        await store
+      )?.atomically(async tx => {
+        await tx.forget(key)
+      })
+    } catch {
+      // Kept, then: the next answer from the server replaces it.
     }
   }
 

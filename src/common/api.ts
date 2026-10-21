@@ -1470,6 +1470,12 @@ export type Health = Omit<ReturnType<typeof asHealth>, 'narration'> & {
 /** The response header a screen's read carries its revision in. */
 export const REVISION_HEADER = 'x-teamstation-revision'
 
+/**
+ * The request header a queued write is sent with: the same request with
+ * the same key is answered once and written once.
+ */
+export const IDEMPOTENCY_HEADER = 'idempotency-key'
+
 /** One response's revision, as a screen's load collects them. */
 export interface RevisionRead {
   path: string
@@ -1481,6 +1487,7 @@ export interface RevisionRead {
 export interface RequestOptions {
   /** Whether a screen's load collects the answer's revision. */
   collect?: boolean
+  headers?: Record<string, string>
 }
 
 export interface ClientOptions {
@@ -3657,7 +3664,8 @@ export class TeamStationClient {
 
   /**
    * Every call to the API. `collect: false` keeps the answer's revision out
-   * of the screen loads now collecting, as a prefetch's is.
+   * of the screen loads now collecting, as a prefetch's is. `headers` are
+   * sent beside the usual ones: a queued write's `Idempotency-Key`.
    */
   protected async request<T>(
     method: string,
@@ -3666,7 +3674,10 @@ export class TeamStationClient {
     body?: unknown,
     options: RequestOptions = {}
   ): Promise<T> {
-    const headers: Record<string, string> = { accept: 'application/json' }
+    const headers: Record<string, string> = {
+      ...options.headers,
+      accept: 'application/json'
+    }
     if (body !== undefined) headers['content-type'] = 'application/json'
     if (this.token != null) headers.authorization = `Bearer ${this.token}`
 

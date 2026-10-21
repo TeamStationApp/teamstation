@@ -2273,9 +2273,12 @@ describe("saving a side's lineup (U8)", function () {
     }
     const answer = await save(games.busy, COACH, body)
     expect(answer.status).equals(409)
-    expect(answer.body.message).equals(
-      'The game changed while saving; try again'
-    )
+    expect(answer.body).deep.equals({
+      code: 'conflict',
+      message: 'The game changed while saving; try again',
+      // Marked as one to send again, apart from a refusal of the save.
+      details: { retry: true }
+    })
     expect(tries).equals(3)
     expect(written).not.include(games.busy)
   })

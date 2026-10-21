@@ -10,6 +10,7 @@ import {
   type GameDetail,
   TeamStationClient
 } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import { asEventInfo } from '../../common/eventInfo'
 import { eventArrivalTime, eventHeroLines } from '../../common/eventTime'
 import type { GameSocketEvent } from '../../common/gameSocket'
@@ -863,5 +864,30 @@ describe('the event page’s screen scope', () => {
       socket.changed('8')
     })
     expect(reads).equals(4)
+  })
+
+  it('says a stored game the server no longer has is not found, and keeps it through no signal', async () => {
+    const socket = new FakeScopeSocket()
+    const { client, game } = fixture()
+    client.cached = (async () => ({ ...game })) as TeamStationClient['cached']
+    let failure: Error = new HttpError('offline', 'Cannot reach TeamStation.')
+    client.game = async () => {
+      throw failure
+    }
+    await renderScoped({ client, gameId: 'g1' }, socket)
+    await act(async () => {
+      socket.ack('1')
+    })
+    expect(document.body.textContent).not.includes(lstrings.common_not_found)
+    expect(selected()).equals('Info')
+    for (const code of ['notFound', 'forbidden'] as const) {
+      failure = new HttpError(code, 'Gone')
+      await act(async () => {
+        socket.changed(code === 'notFound' ? '2' : '3')
+      })
+      expect(document.body.textContent, code).includes(
+        lstrings.common_not_found
+      )
+    }
   })
 })

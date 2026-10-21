@@ -19,6 +19,7 @@ import {
   type TeamSummary,
   type VideoSummary
 } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import { eventName } from '../../common/eventInfo'
 import { eventHeroLines, viewerTimezone } from '../../common/eventTime'
 import type { GameSocket } from '../../common/gameSocket'
@@ -449,15 +450,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   /**
    * `refreshGame` once the event's scope allows: after its acknowledgement
    * when there is a socket, at once for a visitor with none. Failing before
-   * the game was ever shown, the game is not found; failing after, the screen
-   * keeps what it shows.
+   * the game was ever shown, the game is not found. Failing after, the
+   * screen keeps what it shows through no signal or a server error, but not
+   * the server saying the game is gone (404) or no longer this person's
+   * (403): the phone's stored copy goes with it (`CachingClient`).
    */
   const loadGame = useCallback(async (): Promise<void> => {
     try {
       await refreshGame()
-    } catch {
-      if (live.current && currentGameId.current === gameId && !shown.current)
-        setError(lstrings.common_not_found)
+    } catch (error: unknown) {
+      if (!live.current || currentGameId.current !== gameId) return
+      const gone =
+        error instanceof HttpError &&
+        (error.code === 'notFound' || error.code === 'forbidden')
+      if (!shown.current || gone) setError(lstrings.common_not_found)
     }
   }, [refreshGame, gameId])
   const readGame = useScreenScope(loadGame, client, paintGame)
