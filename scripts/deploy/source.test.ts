@@ -12,10 +12,9 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { resolveSettings, type Settings } from './config'
-import { app, fixtureSettings, testRoot } from './config.test'
+import { fixtureSettings, testRoot } from './config.test'
 import { Processes } from './process'
-import { currentSource, prepareSource, remoteCommit } from './source'
-import { target } from './targets'
+import { prepareRepository } from './source'
 let root: string, settings: Settings, source: string
 export function gitFixture(root: string): string {
   const source = path.join(root, 'source')
@@ -56,75 +55,27 @@ describe('Exact source branch preparation', () => {
   afterEach(() => {
     rmSync(root, { recursive: true, force: true })
   })
-  it('builds the current root without remote access, cleaning or replacing local files', async () => {
-    execFileSync('git', ['remote', 'remove', 'origin'], { cwd: source })
-    writeFileSync(path.join(source, 'package.json'), '{"version":"9.8.7"}')
-    writeFileSync(path.join(source, 'untracked.txt'), 'keep')
-    const processes = new Processes(new AbortController().signal)
-    const original = processes.run.bind(processes)
-    const commands: string[][] = []
-    processes.run = async command => {
-      commands.push(command.args)
-      return await original(command)
-    }
-    try {
-      const current = await currentSource(
-        settings,
-        target(app, 'ios'),
-        processes,
-        source
-      )
-      assert.equal(current.directory, source)
-      assert.equal(
-        current.commit,
-        execFileSync('git', ['rev-parse', 'HEAD'], {
-          cwd: source,
-          encoding: 'utf8'
-        }).trim()
-      )
-      assert(commands.every(args => args[0] === 'rev-parse'))
-      assert.equal(
-        readFileSync(path.join(source, 'untracked.txt'), 'utf8'),
-        'keep'
-      )
-      assert.equal(
-        readFileSync(path.join(source, 'package.json'), 'utf8'),
-        '{"version":"9.8.7"}'
-      )
-      await assert.rejects(
-        currentSource(
-          settings,
-          target('app.teamstation.director', 'ios'),
-          processes,
-          source
-        ),
-        /requested target/
-      )
-      mkdirSync(path.join(source, 'nested'))
-      await assert.rejects(
-        currentSource(
-          settings,
-          target(app, 'ios'),
-          processes,
-          path.join(source, 'nested')
-        ),
-        /repository root/
-      )
-    } finally {
-      processes.run = original
-    }
-  })
   it('pins one fetched commit, preserves dirty source, owns dependencies and safely removes only its checkout', async () => {
     const processes = new Processes(new AbortController().signal)
-    const expected = await remoteCommit(settings, app, 'master', processes)
+    const expected = execFileSync('git', ['rev-parse', 'origin/master'], {
+      cwd: source,
+      encoding: 'utf8'
+    }).trim()
     writeFileSync(path.join(source, 'package.json'), 'dirty')
-    const prepared = await prepareSource(
-      settings,
-      target(app, 'ios'),
-      'master',
-      'a'.repeat(32),
-      processes
-    )
+    const prepare = async (
+      id: string,
+      required = 'package.json',
+      repository = settings.repository
+    ): ReturnType<typeof prepareRepository> =>
+      await prepareRepository(
+        settings,
+        repository,
+        required,
+        'master',
+        id,
+        processes
+      )
+    const prepared = await prepare('a'.repeat(32))
     assert.equal(prepared.commit, expected)
     assert.equal(
       JSON.parse(
@@ -144,15 +95,7 @@ describe('Exact source branch preparation', () => {
       }),
       ''
     )
-    await assert.rejects(
-      prepareSource(
-        settings,
-        target(app, 'ios'),
-        'master',
-        'a'.repeat(32),
-        processes
-      )
-    )
+    await assert.rejects(prepare('a'.repeat(32)))
     const marker = path.join(prepared.directory, '.teamstation-deploy-run')
     const saved = readFileSync(marker)
     writeFileSync(
@@ -165,30 +108,26 @@ describe('Exact source branch preparation', () => {
     assert(!existsSync(prepared.directory))
     assert(existsSync(source))
   })
-  it('rejects missing targets/branches and non-root repositories', async () => {
+  it('rejects missing files and branches and non-root repositories', async () => {
     const processes = new Processes(new AbortController().signal)
-    await assert.rejects(remoteCommit(settings, app, 'absent', processes))
-    await assert.rejects(
-      prepareSource(
+    const prepare = async (
+      id: string,
+      required: string,
+      options: { branch?: string; repository?: string } = {}
+    ): ReturnType<typeof prepareRepository> =>
+      await prepareRepository(
         settings,
-        target('app.teamstation.director', 'ios'),
-        'master',
-        'b'.repeat(32),
+        options.repository ?? settings.repository,
+        required,
+        options.branch ?? 'master',
+        id,
         processes
       )
-    )
-    const directorSettings = {
-      ...settings,
-      apps: { ...settings.apps, 'app.teamstation.director': settings.apps[app] }
-    }
     await assert.rejects(
-      prepareSource(
-        directorSettings,
-        target('app.teamstation.director', 'ios'),
-        'master',
-        'c'.repeat(32),
-        processes
-      ),
+      prepare('b'.repeat(32), 'package.json', { branch: 'absent' })
+    )
+    await assert.rejects(
+      prepare('c'.repeat(32), 'mobile/apps/tsDirector/project.yml'),
       /does not contain/
     )
     assert.equal(
@@ -200,13 +139,9 @@ describe('Exact source branch preparation', () => {
     )
     mkdirSync(path.join(source, 'nested'))
     await assert.rejects(
-      prepareSource(
-        { ...settings, repository: path.join(source, 'nested') },
-        target(app, 'ios'),
-        'master',
-        'd'.repeat(32),
-        processes
-      ),
+      prepare('d'.repeat(32), 'package.json', {
+        repository: path.join(source, 'nested')
+      }),
       /repository root/
     )
   })

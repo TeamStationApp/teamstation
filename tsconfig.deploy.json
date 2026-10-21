@@ -7,5 +7,5 @@
     "allowJs": false,
     "noEmit": true
   },
-  "include": ["scripts/deploy.ts", "scripts/deploy/**/*.ts"]
+  "include": ["scripts/deploy/**/*.ts"]
 }
