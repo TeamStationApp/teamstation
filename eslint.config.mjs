@@ -29,7 +29,7 @@ export default [
   },
 
   {
-    files: ['scripts/deploy.ts', 'scripts/deploy/**/*.ts'],
+    files: ['scripts/deploy/**/*.ts'],
     languageOptions: {
       parserOptions: {
         projectService: false,
@@ -61,7 +61,7 @@ export default [
   },
 
   {
-    files: ['Masonfile.ts'],
+    files: ['Masonfile.ts', 'scripts/pipeline/**/*.ts'],
     languageOptions: {
       parserOptions: { projectService: false, project: './tsconfig.mason.json' }
     }
@@ -70,6 +70,8 @@ export default [
   // Global ignores need to be in their own block:
   {
     ignores: [
+      // Vendored from Mason, in Mason's own style, until @mason/types is published.
+      'types/mason/**',
       '**/lib/**',
       '**/dist/**',
       '.cursor/**',
