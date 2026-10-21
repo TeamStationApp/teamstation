@@ -113,6 +113,9 @@ import {
   ThemeProvider,
   useTheme
 } from './theme/ThemeContext'
+import { LeagueUmpiresScreen } from './umpires/LeagueUmpiresScreen'
+import { UmpireLevelsScreen } from './umpires/UmpireLevelsScreen'
+import { UmpireRequirementsScreen } from './umpires/UmpireRequirementsScreen'
 import { DjGameScreen } from './walkup/DjGameScreen'
 import { resolveSong } from './walkup/resolveSong'
 import walkUpMusic from './walkup/walkUpMusic'
@@ -1552,11 +1555,41 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'notification', id })
         }}
       />
+    ) : top.name === 'leagueUmpires' ? (
+      <LeagueUmpiresScreen
+        key={top.id}
+        client={client}
+        league={top.id}
+        onChanged={refreshRoles}
+      />
+    ) : top.name === 'umpireLevels' ? (
+      <UmpireLevelsScreen key={top.id} client={client} league={top.id} />
+    ) : top.name === 'umpireRequirements' ||
+      top.name === 'umpireRequirementEdit' ? (
+      <UmpireRequirementsScreen
+        key={`${top.name}:${top.id}`}
+        client={client}
+        league={top.id}
+        seasonIds={
+          top.name === 'umpireRequirementEdit' ? top.seasonIds : undefined
+        }
+        onNext={seasonIds => {
+          push({ name: 'umpireRequirementEdit', id: top.id, seasonIds })
+        }}
+        onApplied={pop}
+      />
     ) : top.name === 'groupSettings' ? (
       <GroupSettingsScreen
         key={`${top.kind}:${top.id}:${settingsVisit}`}
         client={client}
         groupRef={{ kind: top.kind, id: top.id }}
+        onUmpires={name => {
+          push(
+            name === 'umpireSchedule'
+              ? { name, id: top.id, view: 'league' }
+              : { name, id: top.id }
+          )
+        }}
 
         onAddPeople={group => {
           push({ name: 'groupAddPeople', ...group, teamReturn: top.teamReturn })

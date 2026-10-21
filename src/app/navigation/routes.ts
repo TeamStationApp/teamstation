@@ -23,7 +23,23 @@ interface GroupRef {
 interface SettingsContext {
   teamReturn?: { id: string; address: 'team' | 'group'; tab?: string }
 }
+export interface UmpireScheduleRoute {
+  name: 'umpireSchedule'
+  id: string
+  pill?: 'schedule' | 'leaderboard'
+  view?: 'umpire' | 'league'
+  levels?: string
+  days?: string
+  from?: string
+  to?: string
+}
 export type CreationRoute =
+  | {
+      name: 'leagueUmpires' | 'umpireLevels' | 'umpireRequirements'
+      id: string
+    }
+  | { name: 'umpireRequirementEdit'; id: string; seasonIds: string[] }
+  | UmpireScheduleRoute
   | ({ name: 'groupAddPeople'; kind: GroupKind; id: string } & SettingsContext)
   | ({ name: 'groupInvites'; kind: GroupKind; id: string } & SettingsContext)
   | ({
@@ -65,6 +81,11 @@ export function isCreationRoute(route: {
   name: string
 }): route is CreationRoute {
   return [
+    'leagueUmpires',
+    'umpireLevels',
+    'umpireRequirements',
+    'umpireRequirementEdit',
+    'umpireSchedule',
     'nodeAdministration',
     'discover',
     'group',
@@ -264,6 +285,33 @@ export function parseRoute(path: string, search = ''): Route {
   const query = new URLSearchParams(search)
   const parts = path.split('/').filter(part => part !== '')
   if (parts.length === 0) return { name: 'home' }
+  if (parts[0] === 'groups' && parts[1] === 'league' && parts[2] != null) {
+    const id = decodeURIComponent(parts[2])
+    if (parts[3] === 'umpires') return { name: 'leagueUmpires', id }
+    if (parts[3] === 'umpire-levels') return { name: 'umpireLevels', id }
+    if (parts[3] === 'umpire-requirements')
+      return parts[4] === 'edit'
+        ? {
+            name: 'umpireRequirementEdit',
+            id,
+            seasonIds: (query.get('seasons') ?? '').split(',').filter(Boolean)
+          }
+        : { name: 'umpireRequirements', id }
+  }
+  if (parts[0] === 'umpires') {
+    const id = decodeURIComponent(parts[1] ?? '')
+    return {
+      name: 'umpireSchedule',
+      id,
+      pill: query.get('pill') === 'leaderboard' ? 'leaderboard' : 'schedule',
+      view: query.get('view') === 'league' ? 'league' : 'umpire',
+      ...Object.fromEntries(
+        ['levels', 'days', 'from', 'to'].flatMap(key =>
+          query.has(key) ? [[key, query.get(key)!]] : []
+        )
+      )
+    }
+  }
 
   const head = parts[0]
   const id = parts[1]
@@ -525,6 +573,28 @@ function settingsChildPath(
 
 export function routePath(route: Route): string {
   switch (route.name) {
+    case 'leagueUmpires':
+      return `/groups/league/${encodeURIComponent(route.id)}/umpires`
+    case 'umpireLevels':
+      return `/groups/league/${encodeURIComponent(route.id)}/umpire-levels`
+    case 'umpireRequirements':
+      return `/groups/league/${encodeURIComponent(route.id)}/umpire-requirements`
+    case 'umpireRequirementEdit':
+      return `/groups/league/${encodeURIComponent(route.id)}/umpire-requirements/edit?seasons=${encodeURIComponent(route.seasonIds.join(','))}`
+    case 'umpireSchedule': {
+      const query = new URLSearchParams()
+      for (const key of [
+        'pill',
+        'view',
+        'levels',
+        'days',
+        'from',
+        'to'
+      ] as const)
+        if (route[key] != null) query.set(key, route[key])
+      return `/umpires/${encodeURIComponent(route.id)}${query.size === 0 ? '' : '?' + query.toString()}`
+    }
+
     case 'oauthApprove':
       return `/oauth/approve/${route.uid}`
     case 'oauthNative':

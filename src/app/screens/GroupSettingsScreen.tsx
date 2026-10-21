@@ -20,6 +20,10 @@ import { LocationRow } from '../components/LocationRow'
 import { useTitleHandoff } from '../components/useTitleHandoff'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import {
+  UmpireSettingsCard,
+  type UmpireSettingsDestination
+} from '../umpires/UmpireSettingsCard'
 import { GroupGameSchedule } from './GroupGameSchedule'
 import { InvitationsWaiting } from './InvitationsWaiting'
 import { ManagementCard, type ManagementCardProps } from './ManagementCard'
@@ -35,7 +39,8 @@ export function GroupSettingsScreen({
   onLocation,
   onAddPeople,
   onInvites,
-  onPromote
+  onPromote,
+  onUmpires
 }: {
   client: TeamStationClient
   groupRef: GroupRef
@@ -44,6 +49,7 @@ export function GroupSettingsScreen({
   onLocation?: (ref: GroupRef) => void
   onAddPeople?: (ref: GroupRef) => void
   onInvites?: (ref: GroupRef) => void
+  onUmpires?: (screen: UmpireSettingsDestination) => void
   onPromote?: ManagementCardProps['onPromote']
 }): React.ReactElement {
   const styles = getStyles(useTheme())
@@ -173,6 +179,14 @@ export function GroupSettingsScreen({
                 setPhoto(true)
               }}
             />
+            {kind === 'league' && onUmpires != null && (
+              <UmpireSettingsCard
+                client={client}
+                league={id}
+                onOpen={onUmpires}
+                onChanged={onChanged}
+              />
+            )}
             {photo && (
               <PictureSheet
                 fitInitials
