@@ -370,6 +370,12 @@ function Shell(props: AppProps): React.ReactElement {
     const opened = stackFor(currentRoute())
     return { home: [], videos: [], schedule: [], search: [], ...opened }
   })
+  /** Forgets the session and starts every tab over, for sign-out and deletion alike. */
+  const leaveSession = (): void => {
+    rememberSession(undefined)
+    setStacks({ home: [], videos: [], schedule: [], search: [] })
+    setTab('home')
+  }
   const settingsVisitId = useRef(0)
   const [settingsVisit, setSettingsVisit] = useState(0)
   const scoringVisit = useRef<
@@ -1713,10 +1719,9 @@ function Shell(props: AppProps): React.ReactElement {
         session={session}
         onSignOut={() => {
           client.signOut().catch(() => undefined)
-          rememberSession(undefined)
-          setStacks({ home: [], videos: [], schedule: [], search: [] })
-          setTab('home')
+          leaveSession()
         }}
+        onAccountDeleted={leaveSession}
       />
     ) : top.name === 'player' ? (
       <PlayerScreen

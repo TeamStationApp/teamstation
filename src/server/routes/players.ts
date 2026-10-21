@@ -45,6 +45,7 @@ import { highlightSettings } from '../settings'
 import { playerFilterOf } from '../stats/rows'
 import { createRosterPlayer } from '../teams/addPlayers'
 import { teamRoster } from '../teams/teamRoster'
+import { refuseDeleted } from '../users/deleted'
 import { gumboIdOf } from '../users/insertUser'
 
 /**
@@ -573,6 +574,13 @@ export function playerRoutes(
         if (place == null) throw notFound()
 
         const body = cleanBody(asPlayerSettings, req.body)
+        // The jersey and positions are the team's; the rest is the person's.
+        if (
+          body.name !== undefined ||
+          body.bats !== undefined ||
+          body.throws !== undefined
+        )
+          await refuseDeleted(trx, userId)
         if (
           body.name !== undefined &&
           !(await mayEditName(trx, actor.userId, userId, {
@@ -684,6 +692,7 @@ export function playerRoutes(
       if (actor == null) throw unauthorized()
       const userId = userIdParam(req.params.userId)
       if (!(await mayManagePlayer(db, actor, userId, null))) throw notFound()
+      await refuseDeleted(db, userId)
 
       const user = await db
         .selectFrom('users')

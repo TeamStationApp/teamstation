@@ -35,6 +35,8 @@ export interface UsersTable {
   onboarding_step: Generated<'name' | 'photo' | 'complete'>
   onboarding_completed_at: Timestamp | null
   disabled_at: Timestamp | null
+  /** Set when the person deleted their account; it stays disabled for good. */
+  deleted_at: Timestamp | null
   picture_catalog_id: Generated<string | null>
   avatar_path: string | null
   avatar_sha256: string | null

@@ -245,8 +245,15 @@ export async function deleteVideoFromSpace(options: {
   space: SpaceSettings
   videoId: string
 }): Promise<{ deleted: number }> {
-  const { space, videoId } = options
-  const keys = await listSpaceObjects(space, `videos/${videoId}/`)
+  return await deleteSpacePrefix(options.space, `videos/${options.videoId}/`)
+}
+
+/** Removes every object under a prefix, one key at a time, as above. */
+export async function deleteSpacePrefix(
+  space: SpaceSettings,
+  prefix: string
+): Promise<{ deleted: number }> {
+  const keys = await listSpaceObjects(space, prefix)
   let deleted = 0
   for (const key of keys) {
     const response = await fetch(signed(space, { method: 'DELETE', key }), {

@@ -16,6 +16,7 @@ import { addEmail } from '../auth/emails'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { externalIdLockKey } from '../db/externalIds'
+import { isDeleted } from '../users/deleted'
 import {
   claimExternalId,
   displayNameOf,
@@ -191,10 +192,16 @@ async function addAdult(
 
   const joined = await joinTeam(trx, teamId, userId)
   if (joined) gained = true
-  const links = await linkGuardian(trx, teamId, userId, row.guardianOf, linking)
-  const rolesAdded = row.staff
-    ? await addStaffRoles(trx, teamId, userId, caller.userId)
-    : []
+  // A deleted account keeps its place in the history, and gets no new
+  // family links or roles: it cannot sign in to use them.
+  const deleted = !created && (await isDeleted(trx, userId))
+  const links = deleted
+    ? { made: 0, missing: 0, refused: 0 }
+    : await linkGuardian(trx, teamId, userId, row.guardianOf, linking)
+  const rolesAdded =
+    row.staff && !deleted
+      ? await addStaffRoles(trx, teamId, userId, caller.userId)
+      : []
 
   const result = created
     ? 'created'
@@ -237,8 +244,9 @@ async function addressHolder(
 /**
  * The row's address, attached as primary only to an account this call made,
  * or, when a site administrator calls, to one already here with no address
- * at all. An import by anybody else cannot add a way to sign in to an
- * account it did not make. An address somebody else holds stays theirs.
+ * at all, and never to one that was deleted. An import by
+ * anybody else cannot add a way to sign in to an account it did not make.
+ * An address somebody else holds stays theirs.
  *
  * `add` is `addEmail`, and a test's stand-in for it.
  */
@@ -254,6 +262,8 @@ export async function attachEmail(
     return holder === userId ? 'theirs' : 'heldElsewhere'
   }
   if (!about.created) {
+    // A deleted account is given no new way in.
+    if (await isDeleted(trx, userId)) return 'notAttached'
     const any = await trx
       .selectFrom('user_emails')
       .select(['id'])
@@ -347,7 +357,9 @@ async function linkGuardian(
             .where('team_id', '=', teamId)
             .where('is_player', '=', true)
             .executeTakeFirst()
-    if (playerId == null || plays == null) {
+    // A deleted player is nobody's to guard: their details are not to be
+    // managed back into being.
+    if (playerId == null || plays == null || (await isDeleted(trx, playerId))) {
       missing += 1
       continue
     }

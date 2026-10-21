@@ -1757,6 +1757,19 @@ export class TeamStationClient {
     return await this.request('DELETE', '/me/account/photo', asAccountSettings)
   }
 
+  /** Irrecoverable: this account and every one merged into it can never sign in again. */
+  async deleteAccount(): Promise<void> {
+    try {
+      await this.request('DELETE', '/me/account', asUnknownOk)
+    } catch (error) {
+      // Refused for want of a session: this token is no good either way.
+      if (error instanceof HttpError && error.code === 'unauthorized')
+        this.token = undefined
+      throw error
+    }
+    this.token = undefined
+  }
+
   private requirePasswordKdf(): PasswordKdf {
     if (this.passwordKdf == null)
       throw new Error(
