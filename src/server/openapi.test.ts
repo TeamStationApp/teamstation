@@ -47,6 +47,7 @@ import { statsRoutes } from './routes/stats'
 import { teamMemberRoutes } from './routes/teamMembers'
 import { teamRoutes } from './routes/teams'
 import { timeRoutes } from './routes/time'
+import { umpireRoutes } from './routes/umpires'
 import { userRoutes } from './routes/users'
 import { walkUpSongRoutes } from './routes/walkUpSongs'
 import type { ScoreboardStore } from './scoreboard/scoreboardStore'
@@ -177,6 +178,7 @@ describe('the API document', function () {
       ...routesOf(locationRoutes()),
       ...routesOf(groupRoutes(db, media)),
       ...routesOf(gameApprovalRoutes(db)),
+      ...routesOf(umpireRoutes(db)),
       ...routesOf(notificationRoutes(db)),
       ...routesOf(userRoutes(db)),
       ...routesOf(nodeAdministrationRoutes(db)),
@@ -231,6 +233,7 @@ describe('the API document', function () {
       ...routesOf(locationRoutes()),
       ...routesOf(groupRoutes(db, media)),
       ...routesOf(gameApprovalRoutes(db)),
+      ...routesOf(umpireRoutes(db)),
       ...routesOf(notificationRoutes(db)),
       ...routesOf(userRoutes(db)),
       ...routesOf(nodeAdministrationRoutes(db)),

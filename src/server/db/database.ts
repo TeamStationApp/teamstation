@@ -77,6 +77,8 @@ export interface UserLinksTable {
 }
 
 export interface LeaguesTable {
+  umpire_management: Generated<boolean>
+  umpire_credits: Generated<boolean>
   id: string
   locality: Json | null
   picture_catalog_id: Generated<string | null>
@@ -842,7 +844,45 @@ export interface VideoWallAnchorsTable {
   corrected: Generated<boolean>
 }
 
+export interface LeagueUmpiresTable {
+  league_id: string
+  user_id: string
+  granted_by: string
+  granted_at: Generated<Date>
+}
+export interface UmpireLevelsTable {
+  id: string
+  league_id: string
+  name: string
+  position: number
+}
+export interface SeasonUmpireRequirementsTable {
+  season_id: string
+  level_id: string
+  plate: boolean
+  field_count: number
+}
+export interface UmpireCertificationsTable {
+  user_id: string
+  level_id: string
+  plate: Generated<boolean>
+  field: Generated<boolean>
+}
+export interface UmpireAssignmentsTable {
+  game_id: string
+  slot: string
+  user_id: string
+  assigned_by: string
+  credit_team_id: string | null
+  created_at: Generated<Date>
+}
+
 export interface Database {
+  league_umpires: LeagueUmpiresTable
+  umpire_levels: UmpireLevelsTable
+  season_umpire_requirements: SeasonUmpireRequirementsTable
+  umpire_certifications: UmpireCertificationsTable
+  umpire_assignments: UmpireAssignmentsTable
   game_guest_details: {
     game_id: string
     user_id: string
