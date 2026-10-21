@@ -5,9 +5,14 @@ import type {
   RunnerMovementAction,
   ScoringAction
 } from '../../common/scoring/actions'
-import { allowedAngle, inPlay } from '../../common/scoring/rules'
+import { allowedAngle, closesFirst, inPlay } from '../../common/scoring/rules'
+import { upcoming } from '../../common/scoring/session'
 import { fieldingLocation } from '../field/fieldingLocation'
-import { BASES, type GroundPoint } from '../field/fieldModel'
+import {
+  BASES,
+  type GroundPoint,
+  OUT_APPROACH_SPEED
+} from '../field/fieldModel'
 import { homeRunLanding } from '../field/stadiumBoundary'
 import { foulFielder } from './dictatedGeometry'
 import { fieldPlayersFor } from './fieldAdapter'
@@ -15,9 +20,12 @@ import type { Outcome } from './scoringContract'
 import { basePath, homeQueuePoint, scoringFieldPlayers } from './scoringMotion'
 import {
   hitPresentation,
+  type HitSequence,
+  outBatterPoint,
   type PitchKind,
   pitchPresentation,
   type PresentationSequence,
+  tagMs,
   throwSequence
 } from './scoringPresentation'
 import type {
@@ -151,6 +159,14 @@ function standingPoint(state: ScoringState, runner: number): GroundPoint {
   return { x: side === 'L' ? 4 : -4, z: 0 }
 }
 
+interface BatterRun {
+  batter: number
+  hit: HitSequence
+  /** The hit's beat: nothing before it shows him anywhere but the plate. */
+  beat: Beat
+  point: GroundPoint
+}
+
 type Group = 'pitch' | 'hit' | 'throw' | 'tagUp' | 'steal' | 'battery' | 'other'
 
 /**
@@ -169,6 +185,13 @@ export class ReelBuilder {
   private hitResultSeen = false
   private landing: { fielder?: number; point: GroundPoint } | null = null
   private throwBeat: Beat | null = null
+  /**
+   * Where the hit's picture leaves a batter it runs out toward first. He
+   * waits there through any picture before his own, is thrown out from there
+   * and walks off from there, as after the same play tapped.
+   */
+  private batterRun: BatterRun | null = null
+  private readonly batterRuns: BatterRun[] = []
   /** Where each defender finished the preceding throw in this sentence. */
   private readonly defenderPoints = new Map<number, GroundPoint>()
   private choice = false
@@ -228,10 +251,15 @@ export class ReelBuilder {
   constructor(private readonly animate: boolean) {}
 
   before(
-    state: ScoringState,
+    given: ScoringState,
     action: ScoringAction,
     rest: readonly ScoringAction[]
   ): void {
+    // An action that closes a finished play first finds the closed game:
+    // the next at-bat's batter, count and runners.
+    const state = closesFirst(action)
+      ? { ...given, session: upcoming(given.session).state }
+      : given
     this.throwBeat = null
     this.choiceOut = undefined
     if (this.current == null) {
@@ -246,6 +274,7 @@ export class ReelBuilder {
         this.choice = false
         this.defenderPoints.clear()
         this.hitOpen = false
+        this.batterRun = null
         this.open('pitch', pitchPresentation(state, PITCH_KINDS[action.call]))
         return
       case 'ballInPlay': {
@@ -256,10 +285,7 @@ export class ReelBuilder {
         const { pending, angle } = hitGeometry(state, action, result)
         this.defenderPoints.clear()
         this.choice = pending.outcome === "Fielder's Choice"
-        const presentation = hitPresentation(
-          { ...state, pendingPlay: pending },
-          angle
-        )
+        const hit = hitPresentation({ ...state, pendingPlay: pending }, angle)
         // A second ball in play says more of the one already drawn, as the
         // engine takes it: the scoring screen saves the outcome's bare ball,
         // then the one with where it went. That hit is drawn once, there.
@@ -268,12 +294,25 @@ export class ReelBuilder {
           this.current != null &&
           this.current === this.hitBeat
         if (again && this.current != null) {
-          if (this.animate) this.current.presentation = presentation
+          if (this.animate) this.current.presentation = hit
         } else if (inPlay(state.session.liveData.plays.currentPlay))
           // An earlier sentence drew the ball, as a live view gets the bare
           // ball before the rest: the play goes on from there, unpitched.
           this.open('hit')
-        else this.open('hit', presentation)
+        else this.open('hit', hit)
+        // The batter it puts out runs with it; said again, it is the same run.
+        if (again && this.batterRun != null)
+          this.batterRuns.splice(this.batterRuns.indexOf(this.batterRun), 1)
+        this.batterRun =
+          this.animate && hit.out
+            ? {
+                batter: hit.batter,
+                hit,
+                beat: this.current!,
+                point: outBatterPoint(hit)
+              }
+            : null
+        if (this.batterRun != null) this.batterRuns.push(this.batterRun)
         this.hitOpen = true
         this.hitBeat = this.current
         this.hitResultSeen = false
@@ -433,9 +472,44 @@ export class ReelBuilder {
     }
   }
 
+  /**
+   * Puts each batter the hit ran out where it left him, from his hit on: in
+   * the throw pictures after it, and, through the hit beat's `runFrom`, in
+   * his motions once the hit starts.
+   */
+  private placeBatterRuns(): void {
+    for (const run of this.batterRuns) {
+      // Held where the hit left him only while this reel goes on with him:
+      // a ground out whose out comes in a later save leaves him there, done.
+      const later = this.beats.slice(this.beats.indexOf(run.beat) + 1)
+      const held = later.some(
+        beat =>
+          beat.motions.some(motion => motion.playerId === run.batter) ||
+          (beat.presentation?.kind === 'throw' &&
+            beat.presentation.runner === run.batter)
+      )
+      run.beat.runFrom = {
+        playerId: run.batter,
+        point: { ...run.point },
+        held
+      }
+      for (const beat of this.beats.slice(this.beats.indexOf(run.beat) + 1)) {
+        const picture = beat.presentation
+        if (picture?.kind === 'throw' && picture.runner !== run.batter)
+          for (const player of picture.players)
+            if (player.playerId === run.batter) {
+              player.position = { ...run.point }
+              player.target = { ...run.point }
+              player.batting = false
+            }
+      }
+    }
+  }
+
   /** The reel, with every picture flagged and named for its place in it. */
   finish(state: ScoringState): Beat[] {
     this.finishSafeRelay(state)
+    this.placeBatterRuns()
     const beats = this.beats.filter(
       beat => beat.presentation != null || beat.motions.length > 0
     )
@@ -468,8 +542,50 @@ export class ReelBuilder {
   }
 
   /**
+   * Stops the hit's run of a batter put out so that he keeps one pace
+   * through the hit and the picture that retires him, thrown or carried: it
+   * takes him the rest of the way to its base, arriving with the ball. The
+   * share assumes the picture lasts as long as the ball does, which holds
+   * while he runs no faster than the ball.
+   */
+  private shareBatterRun(
+    run: BatterRun,
+    out: {
+      thrower: number
+      receiver: number
+      from: GroundPoint
+      target: GroundPoint
+    }
+  ): void {
+    const { hit } = run
+    const start = hit.players.find(p => p.playerId === hit.batter)!.position
+    const { from, target } = out
+    const floorMs = out.thrower === out.receiver ? 650 : 900
+    const hitSeconds = (hit.durationMs - hit.contactMs) / 1000
+    const distance = Math.hypot(target.x - start.x, target.z - start.z)
+    // The tag lasts as long as the ball's way, so his share of the run is
+    // the hit's share of the time; unless that leaves him farther to run
+    // than the ball, when the tag lasts his run and he runs at its pace.
+    const ballSeconds = tagMs(from, target, target, floorMs) / 1000
+    let share = hitSeconds / (hitSeconds + ballSeconds)
+    if ((1 - share) * distance > ballSeconds * OUT_APPROACH_SPEED)
+      share = (hitSeconds * OUT_APPROACH_SPEED) / distance
+    share = Math.min(0.96, share)
+    hit.outRunEnd = {
+      x: start.x + (target.x - start.x) * share,
+      z: start.z + (target.z - start.z) * share
+    }
+    run.point = outBatterPoint(hit)
+  }
+
+  /**
    * One throw beat per throw of the chain: `[6, 4, 3]` is 6 to 4, then 4 to 3
    * at the base; a single fielder takes the ball to the base himself.
+   *
+   * The throw that retires the runner is a tag, whether or not the ball is
+   * thrown: he runs to the base while the ball is in the air, and they arrive
+   * together. A relay hop before that stays a transfer. A fielder who keeps
+   * the ball runs it in, and the ball is not drawn as a second throw.
    */
   private throws(
     state: ScoringState,
@@ -503,10 +619,6 @@ export class ReelBuilder {
     )
       return false
     const base = { ...BASES[BASE_INDEX[to ?? '1B']] }
-    const runnerPoint =
-      this.choiceOut != null
-        ? (locations?.at(-1) ?? base)
-        : standingPoint(state, runner)
     let from =
       this.defenderPoints.get(fielders[0]) ??
       (this.landing?.fielder === fielders[0]
@@ -514,44 +626,59 @@ export class ReelBuilder {
         : (locations?.[0] ?? standing(fielders[0])!))
     const chain =
       fielders.length === 1
-        ? [{ thrower: fielders[0], receiver: fielders[0], final: true }]
+        ? [{ thrower: fielders[0], receiver: fielders[0] }]
         : fielders.slice(1).map((receiver, index) => ({
             thrower: fielders[index],
-            receiver,
-            final: false
+            receiver
           }))
-    chain.forEach((step, index) => {
-      const last = index === chain.length - 1
+    const hops = chain.map((step, index) => {
       const target =
         (fielders.length === 1 ? locations?.[0] : locations?.[index + 1]) ??
-        (last ? base : standing(step.receiver)!)
-      this.open('throw', {
-        ...throwSequence(state, {
-          players: players.map(player => {
-            const point =
-              player.team === 'defense' && player.playerId != null
-                ? this.defenderPoints.get(player.playerId)
-                : undefined
-            return {
-              ...player,
-              position: { ...(point ?? player.position) },
-              target: { ...(point ?? player.target) }
-            }
-          }),
-          thrower: step.thrower,
-          receiver: step.receiver,
-          runner,
-          from,
-          to: target,
-          runnerPoint,
-          final: step.final,
-          safe
+        (index === chain.length - 1 ? base : standing(step.receiver)!)
+      const hop = { ...step, from, target }
+      from = target
+      return hop
+    })
+    if (this.batterRun?.batter === runner && !safe)
+      this.shareBatterRun(this.batterRun, hops.at(-1)!)
+    const runnerPoint =
+      this.choiceOut != null
+        ? (locations?.at(-1) ?? base)
+        : this.batterRun?.batter === runner
+          ? { ...this.batterRun.point }
+          : standingPoint(state, runner)
+    hops.forEach(({ from, target, ...step }, index) => {
+      const last = index === hops.length - 1
+      const carried = step.thrower === step.receiver
+      const sequence = throwSequence(state, {
+        players: players.map(player => {
+          const point =
+            player.team === 'defense' && player.playerId != null
+              ? this.defenderPoints.get(player.playerId)
+              : undefined
+          return {
+            ...player,
+            position: { ...(point ?? player.position) },
+            target: { ...(point ?? player.target) }
+          }
         }),
-        ...(this.choiceOut != null && last ? { stage: 'tag' as const } : {})
+        thrower: step.thrower,
+        receiver: step.receiver,
+        runner,
+        from,
+        to: target,
+        runnerPoint,
+        final: carried,
+        safe
       })
+      const playAtBase = last && !safe
+      if (playAtBase && !carried) {
+        sequence.stage = 'tag'
+        sequence.durationMs = tagMs(from, target, runnerPoint, 900)
+      }
+      this.open('throw', sequence)
       this.defenderPoints.set(step.thrower, { ...from })
       this.defenderPoints.set(step.receiver, { ...target })
-      from = target
     })
     this.throwBeat = this.current
     return true
@@ -561,9 +688,41 @@ export class ReelBuilder {
 /** Puts a beat on the field: its picture, and its motions in place of any. */
 function startBeat(state: ScoringSnapshot, beat: Beat): void {
   if (beat.presentation != null) state.presentation = beat.presentation
+  // The hit runs its batter out toward first: from now on he waits there,
+  // and whatever he does next leaves from there.
+  const run = beat.runFrom
+  if (run != null) {
+    state.motions = state.motions.filter(m => m.playerId !== run.playerId)
+    if (!beat.motions.some(m => m.playerId === run.playerId))
+      state.motions.push({
+        id: `${beat.presentation?.id ?? 'run'}:${run.playerId}:run`,
+        generation: state.generation,
+        playerId: run.playerId,
+        waypoints: [{ ...run.point }],
+        complete: !run.held,
+        held: run.held
+      })
+  }
+  const tag =
+    beat.presentation?.kind === 'throw' &&
+    beat.presentation.stage === 'tag' &&
+    beat.presentation.safe !== true
+      ? beat.presentation
+      : undefined
   for (const motion of beat.motions) {
     state.motions = state.motions.filter(m => m.playerId !== motion.playerId)
-    state.motions.push({ ...motion, waypoints: [...motion.waypoints] })
+    // The throw picture runs him to the base with the ball, so his walk off
+    // leaves from that base, not from where he started.
+    const [first, ...rest] = motion.waypoints
+    const waypoints =
+      motion.playerId === tag?.runner
+        ? [{ x: tag.to.x, z: tag.to.z }, { ...motion.waypoints.at(-1)! }]
+        : motion.playerId === run?.playerId &&
+            first != null &&
+            Math.hypot(first.x - BASES[0].x, first.z - BASES[0].z) < 5
+          ? [{ ...run.point }, ...rest]
+          : [...motion.waypoints]
+    state.motions.push({ ...motion, waypoints })
   }
 }
 

@@ -99,6 +99,13 @@ export interface HitSequence {
   batSide: 'R' | 'L'
   slowRunner: boolean
   out: boolean
+  /**
+   * Where a dictated play stops the batter's run to first, reached as the
+   * picture ends, so the throw that retires him can carry him the rest of the
+   * way with the ball. Without it he runs toward first until he is all but
+   * there.
+   */
+  outRunEnd?: GroundPoint
 }
 export interface ThrowSequence {
   dictated?: boolean
@@ -129,6 +136,20 @@ export function outBatterPoint(
   const start = sequence.players.find(
     p => p.playerId === sequence.batter
   )!.position
+  if (sequence.outRunEnd != null) {
+    const t = Math.max(
+      0,
+      Math.min(
+        1,
+        (elapsedMs - sequence.contactMs) /
+          (sequence.durationMs - sequence.contactMs)
+      )
+    )
+    return {
+      x: start.x + (sequence.outRunEnd.x - start.x) * t,
+      z: start.z + (sequence.outRunEnd.z - start.z) * t
+    }
+  }
   const end = BASES[1]
   const distance = Math.hypot(end.x - start.x, end.z - start.z)
   const t = Math.max(
@@ -145,6 +166,26 @@ export function outBatterPoint(
     x: start.x + (end.x - start.x) * t,
     z: start.z + (end.z - start.z) * t
   }
+}
+/**
+ * How long a tag takes: the ball's way or the runner's, whichever is longer,
+ * at the pace they share, and never under `floorMs`.
+ */
+export function tagMs(
+  from: GroundPoint,
+  to: GroundPoint,
+  runnerFrom: GroundPoint,
+  floorMs: number
+): number {
+  return Math.max(
+    floorMs,
+    (Math.max(
+      Math.hypot(to.x - from.x, to.z - from.z),
+      Math.hypot(to.x - runnerFrom.x, to.z - runnerFrom.z)
+    ) /
+      OUT_APPROACH_SPEED) *
+      1000
+  )
 }
 /** What a throw is made of, however it came about: a drag or a sentence. */
 export interface ThrowParts {
@@ -204,17 +245,7 @@ export function throwSequence(
       : pitchingHand(from, 150, 150, throwSide, heading),
     to: { ...to, y: 5.2 },
     unassisted,
-    durationMs: unassisted
-      ? Math.max(
-          650,
-          (Math.max(
-            Math.hypot(to.x - from.x, to.z - from.z),
-            Math.hypot(to.x - runnerPoint.x, to.z - runnerPoint.z)
-          ) /
-            OUT_APPROACH_SPEED) *
-            1000
-        )
-      : 900
+    durationMs: unassisted ? tagMs(from, to, runnerPoint, 650) : 900
   }
 }
 export function throwPresentation(

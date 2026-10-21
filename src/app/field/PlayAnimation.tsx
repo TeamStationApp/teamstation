@@ -170,10 +170,10 @@ export function PlayAnimation({
           player.position = {
             x:
               sequence.runnerFrom.x +
-              (sequence.to.x - sequence.runnerFrom.x) * sample.progress,
+              (sequence.to.x - sequence.runnerFrom.x) * sample.runnerProgress,
             z:
               sequence.runnerFrom.z +
-              (sequence.to.z - sequence.runnerFrom.z) * sample.progress
+              (sequence.to.z - sequence.runnerFrom.z) * sample.runnerProgress
           }
           player.target = { ...player.position }
           player.heading = Math.atan2(
@@ -181,7 +181,7 @@ export function PlayAnimation({
             sequence.to.z - sequence.runnerFrom.z
           )
           player.stride = runtime.current.elapsedMs * 0.012
-          player.pose.run = sample.progress < 1 ? 1 : 0
+          player.pose.run = sample.runnerProgress < 1 ? 1 : 0
         }
         if (player.playerId === sequence.receiver)
           player.pose.catch = sample.progress > 0.8 ? 1 : 0

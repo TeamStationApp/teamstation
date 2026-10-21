@@ -157,6 +157,11 @@ export function sampleThrow(
   visible: boolean
   progress: number
   defenderProgress: number
+  /**
+   * How far a tagged runner has run: over the whole picture, so he does not
+   * wait out the thrower's windup and arrives with the ball.
+   */
+  runnerProgress: number
   swing: number
 } {
   const t = clamp(
@@ -180,6 +185,7 @@ export function sampleThrow(
     visible: !sequence.unassisted && time < sequence.durationMs,
     progress: t,
     defenderProgress: defender,
+    runnerProgress: clamp(time / sequence.durationMs),
     swing: 0
   }
 }
