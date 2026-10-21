@@ -360,7 +360,8 @@ export async function test(ctx: Stage): Promise<Json> {
     ctx.unstable('The unit tests did not run')
     return { lint: lint.code === 0, ran: false }
   }
-  const summary = await ctx.tests('xunit', TEST_RESULTS, { failOn: 'unstable' })
+  // Mocha's `xunit` reporter writes JUnit's <testsuite> format.
+  const summary = await ctx.tests('junit', TEST_RESULTS, { failOn: 'unstable' })
   return { lint: lint.code === 0, ...summary }
 }
 

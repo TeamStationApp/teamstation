@@ -201,7 +201,10 @@ function fakeStage(
       },
       fetch: async () => []
     },
-    tests: async () => ({ passed: 3, failed: 1, skipped: 0, failures: [] }),
+    tests: async (format: string) => {
+      assert.equal(format, 'junit')
+      return { passed: 3, failed: 1, skipped: 0, failures: [] }
+    },
     publish: async (publish: PublishOptions) => {
       published.push(publish)
       return {
