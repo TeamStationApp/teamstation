@@ -37,6 +37,7 @@ import { useTheme } from '../theme/ThemeContext'
 import { withRosterDetails } from './currentSetup'
 import { DefensiveField } from './DefensiveField'
 import { EditRosterList } from './EditRosterList'
+import { GameRosterHeader } from './GameRosterHeader'
 import type { LineupQrResult } from './lineupQrImport'
 import { LineupShareSheet } from './LineupShareSheet'
 import { addPlaceholderPlayers } from './placeholderPlayers'
@@ -645,14 +646,16 @@ export function RosterEditor({
             />
           </View>
         </View>
-        {!boxScore && (
-          <Text numberOfLines={defense ? 1 : undefined} style={text}>
-            {mode === 'editRoster'
-              ? lstrings.scoring_edit_roster_instruction
-              : defense
+        {mode === 'editRoster' ? (
+          <GameRosterHeader />
+        ) : (
+          !boxScore && (
+            <Text numberOfLines={defense ? 1 : undefined} style={text}>
+              {defense
                 ? 'Drag player into position. On touch, hold briefly first.'
                 : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
-          </Text>
+            </Text>
+          )
         )}
         {state.phase === 'awaitingBatter' && !boxScore && (
           <View style={{ gap: 6 }}>
