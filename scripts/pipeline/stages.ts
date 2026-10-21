@@ -319,6 +319,16 @@ export async function simulatorBuild(ctx: Stage, build: Build): Promise<void> {
   )
 }
 
+/**
+ * The suites that run in Node: the shared and server code and this pipeline.
+ * The app's own tests import React Native and run on devices instead.
+ */
+export const UNIT_TESTS = [
+  'src/common/**/*.test.ts',
+  'src/server/**/*.test.ts',
+  'scripts/pipeline/**/*.test.ts'
+]
+
 /** Lint and unit tests; failures mark the run unstable, so the apps still build. */
 export async function test(ctx: Stage): Promise<Json> {
   await ctx.exec('npm', ['ci'])
@@ -335,10 +345,7 @@ export async function test(ctx: Stage): Promise<Json> {
       './src/test/scoringDomSetup.cjs',
       '--extension',
       'ts',
-      '--spec',
-      'src/**/*.test.ts',
-      '--spec',
-      'scripts/pipeline/**/*.test.ts',
+      ...UNIT_TESTS.flatMap(spec => ['--spec', spec]),
       '--ignore',
       '**/node_modules/**',
       '--exit',
@@ -349,6 +356,10 @@ export async function test(ctx: Stage): Promise<Json> {
     ],
     { allowFailure: true }
   )
+  if (!existsSync(path.join(ctx.workspace, TEST_RESULTS))) {
+    ctx.unstable('The unit tests did not run')
+    return { lint: lint.code === 0, ran: false }
+  }
   const summary = await ctx.tests('xunit', TEST_RESULTS, { failOn: 'unstable' })
   return { lint: lint.code === 0, ...summary }
 }

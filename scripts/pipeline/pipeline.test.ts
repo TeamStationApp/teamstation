@@ -499,6 +499,21 @@ describe('TeamStation pipeline', () => {
     assert.equal(result.failed, 1)
     assert.deepEqual(fake.unstable, ['Lint failed'])
     assert(commands(fake).some(line => line.includes('--reporter xunit')))
+    assert(
+      commands(fake).some(line =>
+        line.includes(
+          '--spec src/common/**/*.test.ts --spec src/server/**/*.test.ts'
+        )
+      )
+    )
+    rmSync(path.join(workspace, OUTPUT), { recursive: true })
+    const crashed = fakeStage(workspace, 'test')
+    crashed.ctx.exec = async (file, args = []) => {
+      crashed.calls.push({ file, args, options: {} })
+      return { code: file === 'npx' ? 1 : 0, stdout: '', stderr: '' }
+    }
+    assert.deepEqual(await test(crashed.ctx), { lint: true, ran: false })
+    assert.deepEqual(crashed.unstable, ['The unit tests did not run'])
     const clean = fakeStage(workspace, 'test')
     assert.equal(((await test(clean.ctx)) as Record<string, Json>).lint, true)
     assert.deepEqual(clean.unstable, [])
