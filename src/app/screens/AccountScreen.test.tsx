@@ -751,6 +751,13 @@ describe('Account settings screen', () => {
     ]
     expect(buttons.at(-1)?.textContent).equals('Delete account')
     expect(buttons.at(-2)?.textContent).equals('Node administration')
+    // Sign out and Delete account are both bold and centered.
+    for (const label of ['Sign out', 'Delete account']) {
+      const target = button(label)!
+      const words = target.querySelector<HTMLElement>('div[dir], span, div')!
+      expect(window.getComputedStyle(words).fontWeight, label).equals('700')
+      expect(window.getComputedStyle(target).alignSelf, label).equals('center')
+    }
     expect(text()).not.includes('irrecoverable')
 
     const deletes = (): string[] =>

@@ -665,7 +665,13 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           )}
         </View>
       )}
-      <DangerText label="Sign out" disabled={busy !== ''} onPress={onSignOut} />
+      <DangerText
+        label="Sign out"
+        bold
+        disabled={busy !== ''}
+        style={styles.centered}
+        onPress={onSignOut}
+      />
       {user.isAdmin && onNodeAdministration != null && (
         <Button
           label="Node administration"
@@ -676,8 +682,9 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       )}
       <DangerText
         label={lstrings.account_delete}
+        bold
         disabled={busy !== ''}
-        style={styles.deleteAccount}
+        style={styles.centered}
         onPress={() => {
           setDeleteOpen(true)
         }}
@@ -764,7 +771,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   paddedRow: {
     padding: theme.rem(theme.cardContentInsetRem)
   },
-  deleteAccount: {
+  centered: {
     alignSelf: 'center'
   },
   footnote: {
