@@ -1,5 +1,12 @@
 {
   "extends": "./tsconfig.deploy.json",
-  "compilerOptions": { "module": "esnext", "allowImportingTsExtensions": true },
-  "include": ["Masonfile.ts"]
+  "compilerOptions": {
+    "module": "esnext",
+    "allowImportingTsExtensions": true,
+    // Mason loads the Masonfile with Node's type stripping.
+    "erasableSyntaxOnly": true,
+    // The Masonfile declarations, vendored from Mason until they are published.
+    "paths": { "@mason/types": ["./types/mason/index.d.ts"] }
+  },
+  "include": ["Masonfile.ts", "scripts/pipeline/**/*.ts", "types/mason"]
 }

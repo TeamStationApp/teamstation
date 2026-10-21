@@ -14,8 +14,6 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
 import { loadSettings, merge, privateJson, resolveSettings } from './config'
-import { nativeNumber, options } from './runner'
-import { target } from './targets'
 import {
   appId,
   branchName,
@@ -317,31 +315,7 @@ describe('Deployment configuration', () => {
       assert.throws(() => resolveSettings(config(settings), 'master'))
     }
   })
-  it('validates CLI app/platform/branch and portable scalar inputs', () => {
-    const valid = [
-      '--app',
-      app,
-      '--branch',
-      'feature/日本',
-      '--platform',
-      'ios,android'
-    ]
-    assert.equal(options(valid).config, 'deployConfig.json')
-    assert.equal(options([...valid, '--dry-run']).dryRun, true)
-    assert.equal(
-      options([...valid, '--publish-only', 'a'.repeat(32)]).publishOnly,
-      'a'.repeat(32)
-    )
-    for (const args of [
-      [],
-      [...valid, '--unknown'],
-      [...valid, '--app', app],
-      [...valid, '--config'],
-      [...valid, '--dry-run', '--publish-only', 'a'.repeat(32)],
-      ['--app', app, '--branch', 'master', '--platform', 'ios,ios'],
-      ['--app', app, '--branch', 'master', '--platform', 'macos']
-    ])
-      assert.throws(() => options(args))
+  it('validates branch names and portable scalar inputs', () => {
     for (const branch of [
       '-master',
       '/master',
@@ -383,10 +357,5 @@ describe('Deployment configuration', () => {
         )
       )
     )
-    assert.equal(target('app.teamstation.gcscraper', 'ios').harvester, true)
-    assert.equal(nativeNumber('ios', 26093004), '26093004')
-    assert.equal(nativeNumber('macos', 26093004), '26093004')
-    assert.equal(nativeNumber('android', 42), '42')
-    assert.equal(nativeNumber('android', 26093004), '26093004')
   })
 })

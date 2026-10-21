@@ -4,35 +4,12 @@ import path from 'node:path'
 import type { Settings } from './config'
 import { Processes } from './process'
 import { noSymlinks, runId } from './state'
-import type { Target } from './targets'
-import { branchName, object, sha, text } from './validation'
+import { branchName, object, sha } from './validation'
 
 export interface Source {
   directory: string
   commit: string
   cleanup: () => Promise<void>
-}
-export async function prepareSource(
-  settings: Settings,
-  target: Target,
-  branch: string,
-  id: string,
-  processes: Processes
-): Promise<Source> {
-  const required =
-    target.kind === 'react-native'
-      ? 'package.json'
-      : target.kind === 'swift'
-        ? 'project.yml'
-        : 'build.gradle.kts'
-  return await prepareRepository(
-    settings,
-    settings.apps[target.app].repository ?? settings.repository,
-    path.join(target.path, required),
-    branch,
-    id,
-    processes
-  )
 }
 export async function prepareRepository(
   settings: Settings,
@@ -100,56 +77,4 @@ export async function prepareRepository(
     throw new Error('Selected branch does not contain the requested target')
   }
   return { directory, commit, cleanup }
-}
-export async function remoteCommit(
-  settings: Settings,
-  app: string,
-  branch: string,
-  processes: Processes
-): Promise<string> {
-  branchName(branch)
-  const output = await processes.run({
-    file: settings.tools.git,
-    args: ['ls-remote', '--exit-code', 'origin', `refs/heads/${branch}`],
-    cwd: settings.apps[app].repository ?? settings.repository
-  })
-  const lines = output.split('\n')
-  if (lines.length !== 1) throw new Error('Ambiguous remote source branch')
-  const [commit, ref] = lines[0].split(/\s+/)
-  if (text()(ref) !== `refs/heads/${branch}`)
-    throw new Error('Unexpected remote source branch')
-  return sha(commit)
-}
-
-/** Inspect the caller-owned checkout without fetching, resetting or removing it. */
-export async function currentSource(
-  settings: Settings,
-  selected: Target,
-  processes: Processes,
-  workingDirectory = process.cwd()
-): Promise<{ directory: string; commit: string }> {
-  const directory = realpathSync(workingDirectory)
-  const top = await processes.run({
-    file: settings.tools.git,
-    args: ['rev-parse', '--show-toplevel'],
-    cwd: directory
-  })
-  if (realpathSync(top) !== directory)
-    throw new Error('Run deploy from the repository root')
-  const required =
-    selected.kind === 'react-native'
-      ? 'package.json'
-      : selected.kind === 'swift'
-        ? 'project.yml'
-        : 'build.gradle.kts'
-  if (!existsSync(path.join(directory, selected.path, required)))
-    throw new Error('Current checkout does not contain the requested target')
-  const commit = sha(
-    await processes.run({
-      file: settings.tools.git,
-      args: ['rev-parse', 'HEAD^{commit}'],
-      cwd: directory
-    })
-  )
-  return { directory, commit }
 }
