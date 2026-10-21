@@ -161,6 +161,10 @@ warning only on a playback attempt, and never load restricted video sources.
 Signed-out viewers see Log in / Sign up; signed-in nonmembers can request
 membership in one participating team, subject to administrator approval.
 
+A scan that cannot be read uses the same sheet: Share Lineup's scan step
+raises it over the camera for a QR code that is not a GameChanger lineup or a
+camera the app may not use, with Scan Again as its action.
+
 Stats restrictions use the same message and blue login/membership action inline
 under the public stats (the inning box score or team season performance). Do not
 open a warning modal for stats. Keep team selection, request errors and pending

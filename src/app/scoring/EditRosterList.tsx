@@ -9,6 +9,7 @@ import {
 } from 'react-native'
 
 import { lstrings } from '../locales/strings'
+import { LineupQrGlyph } from './LineupQrGlyph'
 import { ScoringPlayerCard } from './ScoringPlayerCard'
 import type { EditRosterRow } from './scoringRosterEdit'
 import {
@@ -18,6 +19,7 @@ import {
 } from './scoringRosterEdit'
 import { ScoringButton, ScoringError } from './ScoringSheet'
 import { useScoringSheetTheme } from './scoringSheetTheme'
+import { ShimmerText } from './ShimmerText'
 
 export function EditRosterList({
   rows,
@@ -31,7 +33,8 @@ export function EditRosterList({
   onRosteredChange,
   visible = true,
   initialScrollOffset,
-  onScrollOffset
+  onScrollOffset,
+  onShareLineup
 }: {
   rows: readonly EditRosterRow[]
   loading?: boolean
@@ -45,6 +48,8 @@ export function EditRosterList({
   visible?: boolean
   initialScrollOffset?: number
   onScrollOffset?: (offset: number) => void
+  /** Opens Share Lineup; its row leads the list when given. */
+  onShareLineup?: () => void
 }): React.ReactElement {
   const theme = useScoringSheetTheme()
   const text = {
@@ -53,6 +58,18 @@ export function EditRosterList({
     fontSize: 14
   }
   const badge = theme.scoringSurface.badges.green
+  const badgeStyle = {
+    width: JERSEY_BADGE_SIZE,
+    height: JERSEY_BADGE_SIZE,
+    flexShrink: 0,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: badge.border,
+    backgroundColor: badge.background,
+    alignItems: 'center',
+    justifyContent: 'center'
+  } as const
+  const title = { ...text, fontFamily: theme.semiBoldTextFont }
   const initialOffset = useRef({ x: 0, y: initialScrollOffset ?? 0 })
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   const restorePending = useRef(true)
@@ -103,6 +120,46 @@ export function EditRosterList({
         contentContainerStyle={{ gap: 8, padding: 8 }}
         keyboardShouldPersistTaps="handled"
       >
+        {onShareLineup != null && (
+          <ScoringPlayerCard
+            label={lstrings.lineupQr_shareRow}
+            onPress={onShareLineup}
+          >
+            <View testID="Share lineup badge" style={badgeStyle}>
+              {/* The glyph's squares fill the middle two thirds of its box, so
+                  one as wide as the badge's inside leaves 9pt around them. */}
+              <LineupQrGlyph
+                kind="qr"
+                color={badge.text}
+                size={JERSEY_BADGE_SIZE - 2}
+              />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <ShimmerText
+                testID="Share lineup title"
+                text={lstrings.lineupQr_shareRow}
+                active={visible}
+                color={theme.scoringSurface.text}
+                highlight={badge.text}
+                style={{
+                  ...text,
+                  fontFamily: theme.boldTextFont,
+                  fontWeight: '700'
+                }}
+              />
+            </View>
+            <Text
+              style={{
+                ...text,
+                fontSize: 22,
+                paddingRight: 4,
+                color: theme.scoringSurface.chevronActive
+              }}
+            >
+              ›
+            </Text>
+          </ScoringPlayerCard>
+        )}
         {rows.length === 0 && loading !== true && (
           <Text style={text}>{lstrings.scoring_roster_empty}</Text>
         )}
@@ -129,20 +186,7 @@ export function EditRosterList({
               else onEditLocal?.(row.id)
             }}
           >
-            <View
-              testID={`Jersey badge ${row.key}`}
-              style={{
-                width: JERSEY_BADGE_SIZE,
-                height: JERSEY_BADGE_SIZE,
-                flexShrink: 0,
-                borderRadius: 10,
-                borderWidth: 1,
-                borderColor: badge.border,
-                backgroundColor: badge.background,
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
+            <View testID={`Jersey badge ${row.key}`} style={badgeStyle}>
               <Text
                 style={{
                   ...text,
@@ -155,9 +199,7 @@ export function EditRosterList({
               </Text>
             </View>
             <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-              <Text style={{ ...text, fontFamily: theme.semiBoldTextFont }}>
-                {row.name}
-              </Text>
+              <Text style={title}>{row.name}</Text>
               <Text
                 style={{ ...text, color: theme.scoringSurface.secondaryText }}
               >

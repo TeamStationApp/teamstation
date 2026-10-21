@@ -748,7 +748,36 @@ export const enUs = {
   common_not_found: 'That game is not here',
   common_not_found_detail:
     'It may have been removed, or the link may be for a game you cannot see.',
-  common_offline: 'You appear to be offline.'
+  common_offline: 'You appear to be offline.',
+
+  // Lineup QR codes, shared with and scanned from GameChanger on the
+  // scorekeeper's Set Team Rosters screen.
+  lineupQr_shareRow: 'Share or import team lineup',
+  lineupQr_chooserSubtitle: 'Share/Import Lineup',
+  lineupQr_generate: 'Generate QR to share lineup',
+  lineupQr_scan: 'Scan QR code to import lineup',
+  lineupQr_shareSubtitle: 'Share Lineup',
+  lineupQr_importSubtitle: 'Import Lineup',
+  lineupQr_qrLabel: 'Lineup QR code',
+  lineupQr_rosterLoading: 'Loading the team roster…',
+  lineupQr_unsupportedWeb:
+    'Unsupported on the web version of TeamStation. Please download the app.',
+  lineupQr_notLineup: 'That QR code is not a GameChanger lineup.',
+  lineupQr_wrongShape: 'That lineup QR code could not be read.',
+  lineupQr_empty: 'That lineup QR code has no players.',
+  lineupQr_cameraDenied:
+    'TeamStation needs the camera to scan a lineup. Allow it in Settings.',
+  lineupQr_scanAgain: 'Scan Again',
+  lineupQr_cameraUnavailable: 'The camera is not available.',
+  lineupQr_refused: 'That lineup cannot be loaded now: %s',
+  lineupQr_guestFailed:
+    'The scanned players could not be added. Check the connection and scan again.',
+  lineupQr_payload: 'QR payload',
+  lineupQr_inject: 'Inject',
+  lineupQr_camera: 'Camera %s',
+  lineupQr_imported_one: 'Imported 1 player',
+  lineupQr_imported_other: 'Imported %s players',
+  lineupQr_benched: '%s benched'
 }
 
 export type StringKey = keyof typeof enUs

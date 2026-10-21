@@ -5,6 +5,7 @@ import app.teamstation.app.browser.ExternalBrowserPackage
 import app.teamstation.app.feedback.HapticsPackage
 import app.teamstation.app.glass.GlassPackage
 import app.teamstation.app.orientation.OrientationPackage
+import app.teamstation.app.qrscanner.QrScannerPackage
 import app.teamstation.app.stream.PhoneStreamPackage
 import app.teamstation.app.video.LivePlaylistPatience
 import app.teamstation.app.walkup.DictationMicrophonePackage
@@ -37,6 +38,8 @@ class MainApplication : Application(), ReactApplication {
           add(HapticsPackage())
           // The phone's own streaming and recording, and its camera preview.
           add(PhoneStreamPackage())
+          // Share Lineup's QR code camera.
+          add(QrScannerPackage())
         },
     )
   }

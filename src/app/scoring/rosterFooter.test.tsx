@@ -7,14 +7,19 @@ import { Text } from 'react-native'
 import { scoringSession } from '../../test/scoringSession'
 import { getTheme, ThemeProvider } from '../theme/ThemeContext'
 import { gameFixture } from './isUnscoredGame.test'
+import { lineupQrFixture4 } from './lineupQr.fixtures'
+import { encodeLineupQr } from './lineupQrCodec'
+import { createGuest } from './lineupShareSheet.test'
+import type { QrScannerProps } from './qrScannerProps'
 import {
   ROSTER_MODE_LABELS,
   RosterEditor,
   rosterFooterSizes,
   rosterModes
 } from './RosterEditor'
-import { initialScoringState } from './scoringMachine'
+import { copyState, initialScoringState } from './scoringMachine'
 import { ScoringSheetHeight } from './ScoringSheet'
+import type { ScoringSessionState } from './scoringTypes'
 
 let root: Root | undefined
 let host: HTMLDivElement
@@ -301,5 +306,231 @@ describe('roster screen bottom bar and slider', function () {
     expect(node('Save Rosters')!.getAttribute('aria-disabled')).equals(null)
     await click('Save Rosters')
     expect(saved).equals(true)
+  })
+})
+
+/** A camera the test drives, as Share Lineup's scan step sees one. */
+const camera: { props?: QrScannerProps } = {}
+function FakeScanner(props: QrScannerProps): null {
+  camera.props = props
+  return null
+}
+const scanner = { component: FakeScanner, supported: true, devBuild: false }
+const SHARE = 'Share or import team lineup'
+/** The Roster tab's share row, which opens Share Lineup. */
+const openShare = async (): Promise<void> => {
+  await click('Roster')
+  await click(SHARE)
+}
+/** A control in an open sheet, which renders outside the editor's host. */
+const tap = async (label: string): Promise<void> => {
+  const found = [
+    ...document.querySelectorAll<HTMLElement>(`[aria-label="${label}"]`)
+  ].at(-1)
+  expect(found, label).not.equals(undefined)
+  await act(async () => {
+    found!.click()
+  })
+}
+
+describe('roster screen Share Lineup', function () {
+  afterEach(async () => {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    host?.remove()
+    camera.props = undefined
+    document.body.innerHTML = ''
+  })
+
+  it('leads the Roster tab with a share row styled as a player row', async function () {
+    await render(<RosterEditor state={fresh()} onSave={() => undefined} />)
+    await click('Roster')
+    const list = testId('Edit roster players')!
+    const cards = list.querySelectorAll<HTMLElement>('[role="button"]')
+    expect(cards[0].getAttribute('aria-label')).equals(SHARE)
+    // One bold title, then the chevron.
+    // A hidden copy measures the title, which the line shown follows.
+    expect(cards[0].textContent).equals(`${SHARE}${SHARE}›`)
+    const title = testId('Share lineup title')!
+    const line = [...title.querySelectorAll<HTMLElement>('[dir="auto"]')].at(
+      -1
+    )!
+    expect(line.textContent).equals(SHARE)
+    expect(getComputedStyle(line).fontWeight).equals('700')
+    // The same box as a jersey's, with the QR in the jersey number's mint.
+    const box = testId('Share lineup badge')!
+    const jersey = list.querySelector<HTMLElement>(
+      '[data-testid^="Jersey badge"]'
+    )!
+    for (const property of [
+      'width',
+      'height',
+      'backgroundColor',
+      'borderColor',
+      'borderRadius'
+    ] as const)
+      expect(getComputedStyle(box)[property], property).equals(
+        getComputedStyle(jersey)[property]
+      )
+    const mint = getComputedStyle(jersey.firstElementChild!).color
+    const glyph = box.querySelector<SVGElement>(
+      '[data-testid="lineupQrGlyph-qr"]'
+    )!
+    expect(rgb(glyph.querySelector('path')!.getAttribute('stroke')!)).equals(
+      mint
+    )
+    // As wide as the badge's inside, so its squares leave half the margin.
+    expect(glyph.getAttribute('width')).equals('54')
+    // Share Lineup has left the footer; Cancel is alone in the middle again.
+    const footer = testId('Roster footer')!
+    expect(footer.textContent).equals('Create PlayerSave RostersCancel')
+    expect(testId('Roster footer actions')).equals(null)
+  })
+
+  it('opens the chooser for the team on the slider', async function () {
+    await render(<RosterEditor state={fresh()} onSave={() => undefined} />)
+    await openShare()
+    expect(document.body.textContent).includes('Share/Import Lineup')
+    expect(document.body.textContent).includes('Owls')
+    await tap('Cancel')
+    expect(document.body.textContent).not.includes('Share/Import Lineup')
+    await click('Home Team')
+    await openShare()
+    const heading = document.querySelector('[role="heading"]')!
+    expect(heading.textContent).equals('Hawks')
+  })
+
+  it('loads a scanned lineup as unsaved changes that Save Rosters keeps', async function () {
+    const saves: ScoringSessionState[] = []
+    const batters: Array<number | undefined> = []
+    const state = fresh()
+    await render(
+      <RosterEditor
+        state={state}
+        // A next batter chosen before the scan, whom the import benches.
+        initialDraft={{
+          draft: state.session,
+          side: 'away',
+          mode: 'lineup',
+          nextBatter: state.session.liveData.boxscore.teams.away.battingOrder[0]
+        }}
+        lineupScanner={scanner}
+        onCreateGuest={createGuest}
+        onSave={(draft, nextBatter) => {
+          saves.push(draft)
+          batters.push(nextBatter)
+        }}
+      />
+    )
+    await openShare()
+    await tap('Scan QR code to import lineup')
+    await act(async () => {
+      camera.props!.onCode(lineupQrFixture4.text)
+    })
+    expect(document.body.textContent).not.includes('Import Lineup')
+    const note = 'Imported 12 players · 9 benched'
+    expect(host.textContent).includes(note)
+    expect(node('Save Rosters')!.getAttribute('aria-disabled')).equals(null)
+    // The next change clears the line.
+    await click('Remove Corey Seager')
+    expect(host.textContent).not.includes(note)
+    await click('Save Rosters')
+    expect(saves).has.length(1)
+    const team = saves[0].liveData.boxscore.teams.away
+    expect(team.battingOrder).has.length(10)
+    expect(batters).deep.equals([undefined])
+  })
+
+  it('drops the line when the team switches, and Cancel closes without saving', async function () {
+    const saves: ScoringSessionState[] = []
+    const cancels: number[] = []
+    await render(
+      <RosterEditor
+        state={fresh()}
+        lineupScanner={{ ...scanner, devBuild: undefined }}
+        onCreateGuest={createGuest}
+        onCancel={() => cancels.push(1)}
+        onSave={draft => {
+          saves.push(draft)
+        }}
+      />
+    )
+    await openShare()
+    await tap('Scan QR code to import lineup')
+    await act(async () => {
+      camera.props!.onCode(
+        encodeLineupQr({
+          ...lineupQrFixture4.lineup,
+          h: lineupQrFixture4.lineup.h.slice(0, 1),
+          n: []
+        })
+      )
+    })
+    expect(host.textContent).includes('Imported 1 player · 2 benched')
+    await click('Home Team')
+    expect(host.textContent).not.includes('Imported 1 player')
+    // Back on the team it was for, the line stays gone.
+    await click('Away Team')
+    expect(host.textContent).not.includes('Imported 1 player')
+    await click('Cancel')
+    expect(cancels).deep.equals([1])
+    expect(saves).deep.equals([])
+  })
+
+  it('keeps a dense Defense tab’s problem in the footer row, before a Cancel in the middle', async function () {
+    const state = fresh()
+    // An edit that puts the pitcher behind the plate as well.
+    const draft = copyState(state.session)
+    const defense = draft.liveData.boxscore.teams.away.defense
+    defense.C = defense.P
+    // A wide window: react-native-web reads the document's size.
+    const element = document.documentElement
+    const width = Object.getOwnPropertyDescriptor(element, 'clientWidth')
+    Object.defineProperty(element, 'clientWidth', {
+      configurable: true,
+      value: 900
+    })
+    window.dispatchEvent(new window.Event('resize'))
+    try {
+      await render(
+        <RosterEditor
+          state={state}
+          initialDraft={{ draft, side: 'away', mode: 'defense' }}
+          onSave={() => undefined}
+        />,
+        400
+      )
+      const cancel = node('Cancel')!
+      const row = cancel.parentElement!
+      expect(getComputedStyle(row).flexDirection).equals('row')
+      expect(row.children).has.length(3)
+      const problem = row.children[0].querySelector('[role="alert"]')!
+      expect(problem.textContent).includes('invalid or duplicate defender')
+      // The problem, then Cancel, then a spacer as wide as the problem's cell.
+      expect(row.children[1]).equals(cancel)
+      expect(cancel.style.minWidth).equals('80px')
+      expect(getComputedStyle(row.children[2]).flexGrow).equals('1')
+      expect(node('Share Lineup')).equals(null)
+    } finally {
+      if (width == null) Reflect.deleteProperty(element, 'clientWidth')
+      else Object.defineProperty(element, 'clientWidth', width)
+      window.dispatchEvent(new window.Event('resize'))
+    }
+  })
+
+  it('offers the coach no share row', async function () {
+    await render(
+      <RosterEditor
+        state={fresh()}
+        audience="coach"
+        fixedSide="away"
+        onSave={() => undefined}
+      />
+    )
+    await click('Roster')
+    expect(node(SHARE)).equals(null)
+    expect(node('Cancel')).not.equals(null)
   })
 })

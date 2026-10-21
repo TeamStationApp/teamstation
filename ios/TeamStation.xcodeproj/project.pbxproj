@@ -33,6 +33,7 @@
 		B5E0A1C10000000000000002 /* RCTPhoneStream.mm in Sources */ = {isa = PBXBuildFile; fileRef = B5E0A1C10000000000000001 /* RCTPhoneStream.mm */; };
 		B5E0A1C10000000000000004 /* PhoneStreamBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5E0A1C10000000000000003 /* PhoneStreamBridge.swift */; };
 		B5E0A1C10000000000000006 /* TSPhoneStreamPreviewComponentView.mm in Sources */ = {isa = PBXBuildFile; fileRef = B5E0A1C10000000000000005 /* TSPhoneStreamPreviewComponentView.mm */; };
+		C9B2E4F10000000000000002 /* TSQrScannerComponentView.mm in Sources */ = {isa = PBXBuildFile; fileRef = C9B2E4F10000000000000001 /* TSQrScannerComponentView.mm */; };
 		D4EEEC93B36A4D25AA681000 /* RCTHaptics.mm in Sources */ = {isa = PBXBuildFile; fileRef = E62A480C138F4F68BF682000 /* RCTHaptics.mm */; };
 		DAF2400A14A8239C28D2D9AF /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = D7998C265CE8CC50F1720804 /* Inter-Regular.ttf */; };
 		DB8130B58995142585D450C9 /* Quicksand-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 5A8D1C865B62BA762B9C3380 /* Quicksand-Medium.ttf */; };
@@ -74,6 +75,7 @@
 		B5E0A1C10000000000000001 /* RCTPhoneStream.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = RCTPhoneStream.mm; sourceTree = "<group>"; };
 		B5E0A1C10000000000000003 /* PhoneStreamBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PhoneStreamBridge.swift; sourceTree = "<group>"; };
 		B5E0A1C10000000000000005 /* TSPhoneStreamPreviewComponentView.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = TSPhoneStreamPreviewComponentView.mm; sourceTree = "<group>"; };
+		C9B2E4F10000000000000001 /* TSQrScannerComponentView.mm */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.cpp.objcpp; path = TSQrScannerComponentView.mm; sourceTree = "<group>"; };
 		BC23F00CA775A60ECBCD53A3 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-TeamStation/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		C9B14565B09802CB64B889F5 /* SpaceGrotesk-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "SpaceGrotesk-Medium.ttf"; path = "../src/app/assets/fonts/SpaceGrotesk-Medium.ttf"; sourceTree = SOURCE_ROOT; };
 		D7998C265CE8CC50F1720804 /* Inter-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file.ttf; name = "Inter-Regular.ttf"; path = "../src/app/assets/fonts/Inter-Regular.ttf"; sourceTree = SOURCE_ROOT; };
@@ -107,6 +109,7 @@
 				A1D1C7A70000000000000001 /* TSPointerEvents.m */,
 				A1D1C7A70000000000000007 /* DictationMicrophone */,
 				B5E0A1C10000000000000007 /* PhoneStream */,
+				C9B2E4F10000000000000003 /* QrScanner */,
 			);
 			name = TeamStation;
 			sourceTree = "<group>";
@@ -202,6 +205,15 @@
 			);
 			name = PhoneStream;
 			path = TeamStation/PhoneStream;
+			sourceTree = SOURCE_ROOT;
+		};
+		C9B2E4F10000000000000003 /* QrScanner */ = {
+			isa = PBXGroup;
+			children = (
+				C9B2E4F10000000000000001 /* TSQrScannerComponentView.mm */,
+			);
+			name = QrScanner;
+			path = TeamStation/QrScanner;
 			sourceTree = SOURCE_ROOT;
 		};
 		BBC657A1B801E2924A1F71F6 /* WalkUpMusic */ = {
@@ -431,6 +443,7 @@
 				B5E0A1C10000000000000002 /* RCTPhoneStream.mm in Sources */,
 				B5E0A1C10000000000000004 /* PhoneStreamBridge.swift in Sources */,
 				B5E0A1C10000000000000006 /* TSPhoneStreamPreviewComponentView.mm in Sources */,
+				C9B2E4F10000000000000002 /* TSQrScannerComponentView.mm in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
