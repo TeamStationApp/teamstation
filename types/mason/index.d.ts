@@ -265,6 +265,11 @@ export interface BuildNumberOptions {
   /** For date tokens. Default UTC. */
   timeZone?: string
   check?: 'apple' | 'android'
+  /**
+   * App IDs that take their numbers from this sequence, so every app of a
+   * run publishes with the same number.
+   */
+  apps?: string[]
 }
 
 /** Declares the stages of one workflow. */

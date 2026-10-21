@@ -365,7 +365,8 @@ describe('TeamStation pipeline', () => {
       scope: 'branch',
       format: 'YYMMDDCC',
       timeZone: 'America/Los_Angeles',
-      check: 'apple'
+      check: 'apple',
+      apps: publishedApps()
     })
     assert.deepEqual(Object.keys(workflows), ['build', 'release'])
     const group = recorded.find(([name]) => name === 'build:build')![1] as {

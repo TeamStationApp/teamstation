@@ -20,7 +20,7 @@
 import type { Setup, StageOptions } from '@mason/types'
 
 import type { Row } from './scripts/pipeline/apps.ts'
-import { rows } from './scripts/pipeline/apps.ts'
+import { publishedApps, rows } from './scripts/pipeline/apps.ts'
 import {
   android,
   appStore,
@@ -79,7 +79,9 @@ export function setup(m: Setup): void {
     scope: 'branch',
     format: 'YYMMDDCC',
     timeZone: 'America/Los_Angeles',
-    check: 'apple'
+    check: 'apple',
+    // Every app of a run publishes with the run's one number.
+    apps: publishedApps()
   })
   m.workflow(
     'build',
