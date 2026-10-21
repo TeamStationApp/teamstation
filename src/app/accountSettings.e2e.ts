@@ -57,6 +57,17 @@ async function fill(label: string, value: string): Promise<void> {
   await page.keyboard.press('Backspace')
   await page.type(selector, value)
 }
+/** Waits for an element to stop moving, as a sheet does once it has slid up. */
+async function settled(selector: string): Promise<void> {
+  let last = ''
+  for (let tries = 0; tries < 40; tries++) {
+    const box = await (await page.waitForSelector(selector))!.boundingBox()
+    const now = JSON.stringify(box)
+    if (box != null && now === last) return
+    last = now
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+}
 async function clearLimits(): Promise<void> {
   await h.resetLimits()
 }
@@ -361,6 +372,97 @@ describe('account settings in the finished desktop application', function () {
         'Replacement requested: existing email sign-in → 200; replacement confirmed: old email sign-in → 401',
         'POST /me/account/emails/request with another account address → 409; prior address retained',
         'All browser assertions passed. Mail captured locally; no real mail sent. S3 storage is a local HTTP test double using production upload/signing code.'
+      ].join('\n') + '\n'
+    )
+  })
+  // Last: it deletes the account every test above signed in as.
+  it('deletes the account behind a slide and leaves nothing to sign in with', async () => {
+    await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2 })
+    await page.goto(h.origin + '/account', { waitUntil: 'networkidle0' })
+    await waitText('Delete account')
+    const addresses = (
+      await h.db
+        .selectFrom('user_emails')
+        .select('email')
+        .where('user_id', '=', userIdOfGumbo(101))
+        .execute()
+    ).map(row => row.email)
+    expect(addresses.length).greaterThan(0)
+    // To the very bottom of whatever scrolls, where the entry lives.
+    await page.evaluate(() => {
+      for (const node of document.querySelectorAll<HTMLElement>('*'))
+        if (node.scrollHeight > node.clientHeight + 1)
+          node.scrollTop = node.scrollHeight
+    })
+    await new Promise(resolve => setTimeout(resolve, 300))
+    await page.screenshot({
+      path: path.join(artifacts, 'delete-account-entry.png')
+    })
+
+    await press('Delete account')
+    await waitText('Are you sure? Deleting an account is irrecoverable.')
+    await settled('[data-testid="delete-account-cancel"]')
+    await page.screenshot({
+      path: path.join(artifacts, 'delete-account-modal.png')
+    })
+    await page.click('[data-testid="delete-account-cancel"]')
+    await page.waitForFunction(() => {
+      // No optional chaining in the page: its transpiled helper is absent.
+      const content = document.body.textContent
+      if (content === null) return true
+      return !content.includes('irrecoverable')
+    })
+
+    await press('Delete account')
+    await waitText('Slide to delete')
+    await settled('[data-testid="delete-account-cancel"]')
+    const knob = await page.$('[data-testid="delete-account-slide-knob"]')
+    const track = await page.$('[data-testid="delete-account-slide-track"]')
+    const from = (await knob!.boundingBox())!
+    const to = (await track!.boundingBox())!
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(to.x + to.width - 4, from.y + from.height / 2, {
+      steps: 12
+    })
+    await page.mouse.up()
+    await page.waitForFunction(
+      () => document.querySelector('[aria-label^="Account, "]') == null
+    )
+    await waitText('Use a password instead')
+    await page.screenshot({
+      path: path.join(artifacts, 'delete-account-after.png')
+    })
+
+    const row = await h.db
+      .selectFrom('users')
+      .select(['display_name', 'password_hash', 'login_enabled'])
+      .where('id', '=', userIdOfGumbo(101))
+      .executeTakeFirstOrThrow()
+    expect(row).deep.equals({
+      display_name: 'Deleted user',
+      password_hash: null,
+      login_enabled: false
+    })
+    expect(
+      await h.db
+        .selectFrom('user_emails')
+        .select('email')
+        .where('user_id', '=', userIdOfGumbo(101))
+        .execute()
+    ).deep.equals([])
+    expect(
+      (await h.request('GET', '/auth/me', undefined, h.tokens.get(101))).status
+    ).equals(401)
+    await writeFile(
+      path.join(artifacts, 'delete-account-api.log'),
+      [
+        '$ accountSettings.e2e.ts: delete account in the desktop browser at phone width',
+        'Account screen: "Delete account" is the last control; Cancel closes the modal with no request',
+        'Slide to delete → DELETE /me/account → 204; app returns to sign-in',
+        `users.display_name → "${row.display_name}"; password_hash → null; login_enabled → false`,
+        `user_emails rows for the account: ${addresses.length} before, 0 after`,
+        'GET /auth/me with the old session → 401'
       ].join('\n') + '\n'
     )
   })

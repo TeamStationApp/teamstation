@@ -385,6 +385,14 @@ export const enUs = {
   account_walkup_fade: 'Fade Apple Music using the phone’s volume',
   account_walkup_fade_detail:
     'Some Bluetooth speakers beep when the volume changes. Turn this off for hard starts and stops.',
+  account_delete: 'Delete account',
+  account_delete_confirm: 'Are you sure? Deleting an account is irrecoverable.',
+  account_delete_slide: 'Slide to delete',
+  account_delete_cancel: 'Cancel',
+  account_delete_failed: 'Your account could not be deleted.',
+  account_delete_session_ended:
+    'Your session ended. Sign in again to finish deleting your account.',
+  account_delete_sign_in: 'Sign in',
 
   // Box score and stats
   stats_title: 'Stats',

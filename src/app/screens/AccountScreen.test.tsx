@@ -14,6 +14,7 @@ import {
 import { App } from '../App'
 import { parseRoute } from '../navigation/routes'
 import { showRoute } from '../navigation/useAddressBar'
+import { SLIDE_TRAVEL } from '../stream/overlay/SlideToStop'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
   NO_READINESS_FLAGS,
@@ -50,6 +51,38 @@ async function change(label: string, value: string): Promise<void> {
       'value'
     )!.set!.call(input, value)
     input!.dispatchEvent(new window.Event('input', { bubbles: true }))
+    await delay()
+  })
+}
+const address = (input: string | URL | Request): string =>
+  typeof input === 'string'
+    ? input
+    : input instanceof URL
+      ? input.href
+      : input.url
+const slider = (
+  part: string,
+  prefix = 'delete-account-slide'
+): HTMLElement | null =>
+  document.querySelector<HTMLElement>(`[data-testid="${prefix}-${part}"]`)
+/** A finger dragged across the delete slider, as the responder system hears a mouse. */
+async function drag(distance: number): Promise<void> {
+  const track = slider('track')
+  expect(track, 'the delete slider').not.equals(null)
+  const at = (type: string, x: number): MouseEvent =>
+    new window.MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: 10,
+      button: 0,
+      buttons: type === 'mouseup' ? 0 : 1
+    })
+  await act(async () => {
+    track!.dispatchEvent(at('mousedown', 100))
+    track!.dispatchEvent(at('mousemove', 100 + distance / 2))
+    track!.dispatchEvent(at('mousemove', 100 + distance))
+    track!.dispatchEvent(at('mouseup', 100 + distance))
     await delay()
   })
 }
@@ -678,5 +711,180 @@ describe('Account settings screen', () => {
     await press('Account, Alex Shell')
     await press('Sign out')
     expect(tokens).deep.equals([undefined])
+  })
+  it('puts Delete account last, behind a slide, with Cancel changing nothing', async () => {
+    const f = fixture(false, true)
+    const methods: string[] = []
+    // What the server answers the next delete with, when not success.
+    let refuse: Response | undefined
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: async (input, init) => {
+        methods.push(`${init?.method ?? 'GET'} ${address(input)}`)
+        if (init?.method === 'DELETE' && refuse != null) {
+          const answer = refuse
+          refuse = undefined
+          return answer
+        }
+        return await f.fetcher(input, init)
+      },
+      passwordKdf: async () => 'ab'.repeat(32)
+    })
+    let deleted = 0
+    let signedOut = 0
+    await render(
+      <AccountScreen
+        client={client}
+        session={f.session}
+        onSignOut={() => {
+          signedOut++
+        }}
+        onAccountDeleted={() => {
+          deleted++
+        }}
+        onNodeAdministration={() => undefined}
+      />
+    )
+    // The very last thing on the screen, after even Node administration.
+    const buttons = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ]
+    expect(buttons.at(-1)?.textContent).equals('Delete account')
+    expect(buttons.at(-2)?.textContent).equals('Node administration')
+    expect(text()).not.includes('irrecoverable')
+
+    const deletes = (): string[] =>
+      methods.filter(call => call === 'DELETE /api/v1/me/account')
+    await press('Delete account')
+    expect(text()).includes(
+      'Are you sure? Deleting an account is irrecoverable.'
+    )
+    expect(slider('label')?.textContent).equals('Slide to delete')
+    const cancel = slider('cancel', 'delete-account')!
+    expect(cancel.textContent).equals('Cancel')
+    await act(async () => {
+      cancel.click()
+      await delay()
+    })
+    expect(text()).not.includes('irrecoverable')
+    expect(deletes()).length(0)
+
+    // Short of the end, nothing happens.
+    await press('Delete account')
+    await drag(Math.floor(SLIDE_TRAVEL * 0.79))
+    expect(deletes()).length(0)
+    // A refusal says so, with the server's reason, and puts the knob back.
+    refuse = new Response(
+      JSON.stringify({
+        code: 'conflict',
+        message:
+          'Add another administrator to Demo Owls before deleting your account'
+      }),
+      { status: 409 }
+    )
+    await drag(SLIDE_TRAVEL)
+    expect(deletes()).length(1)
+    expect(text()).includes('Your account could not be deleted.')
+    expect(text()).includes(
+      'Add another administrator to Demo Owls before deleting your account'
+    )
+    expect(deleted).equals(0)
+    expect(slider('knob')?.style.transform).includes('translateX(3px)')
+
+    // Enter on the focused track is the keyboard's slide.
+    const track = slider('track')!
+    expect(track.getAttribute('role')).equals('button')
+    expect(track.getAttribute('aria-label')).equals('Slide to delete')
+    expect(track.tabIndex).equals(0)
+    await act(async () => {
+      track.dispatchEvent(
+        new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+      )
+      await delay()
+    })
+    expect(deletes()).length(2)
+    expect(deleted).equals(1)
+    expect(signedOut).equals(0)
+    // Signed out by deleting, not by asking the server to sign out too.
+    expect(methods.filter(call => call.includes('/auth/logout'))).length(0)
+  })
+  it('asks for sign-in again, claiming nothing, when the session has ended', async () => {
+    const f = fixture()
+    let left = 0
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: async (input, init) =>
+        init?.method === 'DELETE'
+          ? new Response(
+              JSON.stringify({ code: 'unauthorized', message: 'Sign in' }),
+              { status: 401 }
+            )
+          : await f.fetcher(input, init),
+      passwordKdf: async () => 'ab'.repeat(32)
+    })
+    await render(
+      <AccountScreen
+        client={client}
+        session={f.session}
+        onSignOut={() => undefined}
+        onAccountDeleted={() => {
+          left++
+        }}
+      />
+    )
+    await press('Delete account')
+    await drag(SLIDE_TRAVEL)
+    // Whether this delete went through or the session ended first, it says
+    // only that signing in again finishes it, and no longer offers the slide.
+    expect(text()).includes(
+      'Your session ended. Sign in again to finish deleting your account.'
+    )
+    expect(text()).not.includes('could not be deleted')
+    expect(slider('track')).equals(null)
+    expect(left).equals(0)
+    const signIn = slider('sign-in', 'delete-account')!
+    expect(signIn.textContent).equals('Sign in')
+    await act(async () => {
+      signIn.click()
+      await delay()
+    })
+    expect(left).equals(1)
+  })
+  it('falls back to signing out, and leaves the app for sign-in once deleted', async () => {
+    const f = fixture()
+    let signedOut = false
+    await render(
+      <AccountScreen
+        {...f}
+        onSignOut={() => {
+          signedOut = true
+        }}
+      />
+    )
+    await press('Delete account')
+    await drag(SLIDE_TRAVEL)
+    expect(signedOut).equals(true)
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+
+    const shell = fixture()
+    const calls: string[] = []
+    globalThis.fetch = async (input, init) => {
+      calls.push(`${init?.method ?? 'GET'} ${address(input)}`)
+      return await shell.fetcher(input, init)
+    }
+    const tokens: Array<string | undefined> = []
+    showRoute(parseRoute('/account'), true)
+    await render(
+      <App initialToken="test-session" onToken={token => tokens.push(token)} />
+    )
+    await press('Delete account')
+    await drag(SLIDE_TRAVEL)
+    expect(calls).includes('DELETE /api/v1/me/account')
+    expect(calls.filter(call => call.includes('/auth/logout'))).length(0)
+    expect(tokens).deep.equals([undefined])
+    expect(button('Account, Babe Ruth')).equals(undefined)
   })
 })

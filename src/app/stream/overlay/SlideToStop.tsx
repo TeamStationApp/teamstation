@@ -1,6 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  type AccessibilityActionEvent,
   type GestureResponderEvent,
+  Platform,
   StyleSheet,
   Text,
   View
@@ -15,6 +17,7 @@ import Animated, {
   withTiming
 } from 'react-native-reanimated'
 
+import { Icon } from '../../components/Icon'
 import { useMotionPreference } from '../../components/useMotionPreference'
 import { lstrings } from '../../locales/strings'
 import {
@@ -106,8 +109,28 @@ export function slideResponder(gesture: SlideGesture): {
   }
 }
 
+/** A button by its label, which Enter or Space confirms, as a keyboard's slide. */
+function webControl(label: string, onStop: () => void): object {
+  return {
+    accessibilityRole: 'button',
+    accessibilityLabel: label,
+    focusable: true,
+    onKeyDown: (event: { key: string; preventDefault: () => void }) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+      onStop()
+    }
+  }
+}
+
 export interface SlideToStopProps {
   onStop: () => void
+  /** What the track says; "Slide to Stop" unless it confirms something else. */
+  label?: string
+  /** Prefixes the track, label and knob test ids. */
+  testID?: string
+  /** The knob's mark: the recording's stop square, or a chevron to slide. */
+  glyph?: 'stop' | 'chevron'
 }
 
 /**
@@ -116,9 +139,23 @@ export interface SlideToStopProps {
  * the way across. Starting stays one tap.
  */
 export function SlideToStop(props: SlideToStopProps): React.ReactElement {
-  const { onStop } = props
+  const {
+    onStop,
+    label = lstrings.stream_slide_to_stop,
+    testID = 'slide-to-stop',
+    glyph = 'stop'
+  } = props
   const [offset, setOffset] = useState(0)
-  const gesture = useMemo(() => slideGesture(setOffset, onStop), [onStop])
+  // The newest onStop, so a re-render mid-drag keeps the gesture it is in.
+  const stop = useRef(onStop)
+  stop.current = onStop
+  const gesture = useMemo(
+    () =>
+      slideGesture(setOffset, () => {
+        stop.current()
+      }),
+    []
+  )
   const still = useMotionPreference()
   const pulse = useSharedValue(0)
   const knobColor = useAnimatedStyle(() => ({
@@ -146,7 +183,11 @@ export function SlideToStop(props: SlideToStopProps): React.ReactElement {
 
   return (
     <View
-      testID="slide-to-stop-track"
+      testID={`${testID}-track`}
+      // On the web the track is the control: a button by its label, and
+      // Enter or Space on it is the slide. On a phone the label is (below),
+      // so the track keeps its knob in the tree that device tests read.
+      {...(Platform.OS === 'web' ? webControl(label, onStop) : {})}
       accessibilityValue={{
         text: `${Math.round((offset / SLIDE_TRAVEL) * 100)} percent`
       }}
@@ -154,14 +195,24 @@ export function SlideToStop(props: SlideToStopProps): React.ReactElement {
       {...slideResponder(gesture)}
     >
       <Text
-        testID="slide-to-stop-label"
+        testID={`${testID}-label`}
         style={styles.slideLabel}
         numberOfLines={1}
+        // A screen reader cannot drag; a double tap on the label is its slide.
+        {...(Platform.OS === 'web'
+          ? {}
+          : {
+              accessibilityRole: 'button' as const,
+              accessibilityActions: [{ name: 'activate' }],
+              onAccessibilityAction: (event: AccessibilityActionEvent) => {
+                if (event.nativeEvent.actionName === 'activate') onStop()
+              }
+            })}
       >
-        {lstrings.stream_slide_to_stop}
+        {label}
       </Text>
       <Animated.View
-        testID="slide-to-stop-knob"
+        testID={`${testID}-knob`}
         pointerEvents="none"
         style={[
           styles.knob,
@@ -169,7 +220,11 @@ export function SlideToStop(props: SlideToStopProps): React.ReactElement {
           knobColor
         ]}
       >
-        <View style={styles.knobSquare} />
+        {glyph === 'stop' ? (
+          <View style={styles.knobSquare} />
+        ) : (
+          <Icon name="chevron_right" size={1.75} color={WHITE} />
+        )}
       </Animated.View>
     </View>
   )

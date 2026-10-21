@@ -31,12 +31,15 @@ import {
   type ReadinessStore,
   walkUpReadiness
 } from '../walkup/walkUpReadiness'
+import { DeleteAccountSheet } from './DeleteAccountSheet'
 
 export interface AccountScreenProps {
   session: Session
   client: TeamStationClient
   onAccountChanged?: (user: SessionUser) => void
   onSignOut: () => void
+  /** The account was deleted, or its session ended mid-delete; leave without asking the server. */
+  onAccountDeleted?: () => void
   onNodeAdministration?: () => void
   pickPhoto?: typeof pickAccountPhoto
   /** Where closing the Apple Music walkthrough is remembered. */
@@ -49,6 +52,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     session,
     client,
     onSignOut,
+    onAccountDeleted = onSignOut,
     onAccountChanged,
     pickPhoto = pickAccountPhoto,
     onNodeAdministration,
@@ -69,6 +73,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const [notice, setNotice] = useState<{ section: string; message: string }>()
   const [passwordOpen, setPasswordOpen] = useState(false)
   const [photoOpen, setPhotoOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const preparation = useRef<Promise<ClientPasswordCosts> | undefined>(
     undefined
   )
@@ -669,6 +674,26 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           onPress={onNodeAdministration}
         />
       )}
+      <DangerText
+        label={lstrings.account_delete}
+        disabled={busy !== ''}
+        style={styles.deleteAccount}
+        onPress={() => {
+          setDeleteOpen(true)
+        }}
+      />
+      {deleteOpen && (
+        <DeleteAccountSheet
+          client={client}
+          onCancel={() => {
+            setDeleteOpen(false)
+          }}
+          onLeave={() => {
+            setDeleteOpen(false)
+            onAccountDeleted()
+          }}
+        />
+      )}
     </Screen>
   )
 }
@@ -738,6 +763,9 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   paddedRow: {
     padding: theme.rem(theme.cardContentInsetRem)
+  },
+  deleteAccount: {
+    alignSelf: 'center'
   },
   footnote: {
     fontFamily: theme.regularTextFont,
