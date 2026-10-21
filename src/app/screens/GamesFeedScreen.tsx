@@ -32,6 +32,7 @@ import { useScreenScope } from '../hooks/useScreenScope'
 import { columnsForWidth } from '../layout/grid'
 import { gameCountLabel, videoCountLabel } from '../locales/strings'
 import { gamesKey } from '../sync/documentKeys'
+import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
@@ -113,6 +114,9 @@ export function GamesFeedScreen(
       [mode, progress, styles.headerPills, styles.headerTitle]
     )
   )
+  // The phone's copy of a stream that was live cannot be played offline:
+  // no playback address or video is kept.
+  const offline = usePhoneOffline(client)
   const [games, setGames] = useState<SeasonGame[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -227,7 +231,12 @@ export function GamesFeedScreen(
         <View style={styles.grid}>
           {sorted.map(game => {
             const lines = matchupLines(game)
-            const options = gameListOptions(game, mode)
+            const unplayable = offline && game.isLive
+            const listed = gameListOptions(game, mode)
+            const options =
+              listed == null || !unplayable
+                ? listed
+                : { ...listed, autoPlay: false }
             return (
               <View
                 key={game.id}
@@ -288,14 +297,16 @@ export function GamesFeedScreen(
                           ? 'Pending approval'
                           : game.status === 'cancelled'
                             ? 'Canceled'
-                            : game.isLive
-                              ? 'live'
-                              : game.awayScore == null
-                                ? undefined
-                                : `${game.awayScore}–${game.homeScore}`
+                            : unplayable
+                              ? OFFLINE_UNPLAYABLE
+                              : game.isLive
+                                ? 'live'
+                                : game.awayScore == null
+                                  ? undefined
+                                  : `${game.awayScore}–${game.homeScore}`
                       }
                       badgeTone={
-                        game.isLive && !game.pendingApproval
+                        game.isLive && !game.pendingApproval && !unplayable
                           ? 'live'
                           : 'neutral'
                       }

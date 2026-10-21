@@ -24,7 +24,9 @@ import {
   useBreakpoint,
   useHandoffSlot
 } from './components'
+import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
+import { OfflineBanner } from './components/OfflineBanner'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
 import { StandaloneField } from './field/StandaloneField'
 import { useForegroundRefresh } from './hooks/useForegroundRefresh'
@@ -115,8 +117,20 @@ import { TeamPage } from './screens/TeamPage'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
 import { useResumePendingUploads } from './stream/useResumePendingUploads'
-import { CachingClient, type OpenDocumentCache } from './sync/cachingClient'
+import {
+  CachingClient,
+  OFFLINE_CREATE_MESSAGE,
+  type OpenDocumentCache
+} from './sync/cachingClient'
+import type { HeldChain } from './sync/outbox'
 import { watchReachability } from './sync/reachability'
+import {
+  heldTeamText,
+  offlineBannerText,
+  unsentLossText,
+  useOutboxSummary,
+  usePhoneOffline
+} from './sync/useOffline'
 import {
   cacheStyles,
   type Theme,
@@ -441,6 +455,12 @@ function Shell(props: AppProps): React.ReactElement {
     setStacks({ home: [], videos: [], schedule: [], search: [] })
     setTab('home')
   }
+  /** Sign Out, pressed: the server's session and the phone's file go. */
+  const signOutNow = (): void => {
+    client.signOut().catch(() => undefined)
+    leaveSession()
+  }
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false)
   const settingsVisitId = useRef(0)
   const [settingsVisit, setSettingsVisit] = useState(0)
   const scoringVisit = useRef<
@@ -544,6 +564,29 @@ function Shell(props: AppProps): React.ReactElement {
   const isAdmin = session?.user.isAdmin === true
   useSentryUser(signedInAs)
   useResumePendingUploads(client, signedInAs)
+  // The phone's banner: the last request could not leave the device, and
+  // what its queue holds. The web's client is never offline here.
+  const phoneOffline = usePhoneOffline(client)
+  const outbox = useOutboxSummary(client, signedInAs)
+  const bannerText =
+    signedInAs == null ? undefined : offlineBannerText(phoneOffline, outbox)
+  const [createRefused, setCreateRefused] = useState(false)
+  // A team whose new players the server refused: no screen of its own says
+  // so, and the banner offers what can be done.
+  const [askingTeam, setAskingTeam] = useState<
+    { id: string; state: HeldChain['state'] } | undefined
+  >()
+  const heldTeams = Object.entries(outbox?.teams ?? {}).map(([id, held]) => ({
+    key: id,
+    text: heldTeamText(held),
+    onPress: () => {
+      setAskingTeam({ id, state: held.state })
+    }
+  }))
+  const [bannerHeight, setBannerHeight] = useState(0)
+  useEffect(() => {
+    if (!phoneOffline) setCreateRefused(false)
+  }, [phoneOffline])
 
   /**
    * The one socket every screen hears a game's changes on, for as long as
@@ -822,6 +865,10 @@ function Shell(props: AppProps): React.ReactElement {
   const top = stack[stack.length - 1]
   const navigationRef = useRef({ tab, top })
   navigationRef.current = { tab, top }
+  // Why a create did not open is said on the screen it was pressed on.
+  useEffect(() => {
+    setCreateRefused(false)
+  }, [tab, top])
 
   // Somebody else's grant reaches this person in the inbox with nothing to
   // accept, so what they may do is read again whenever the inbox, or one of
@@ -1030,6 +1077,12 @@ function Shell(props: AppProps): React.ReactElement {
   }
 
   const push = (next: Pushed): void => {
+    // A team, season, league or game is made on the server: with no signal
+    // its form does not open, and the banner says why.
+    if (caching?.offline === true && createsOnServer(next)) {
+      setCreateRefused(true)
+      return
+    }
     if (scoringVisit.current != null) {
       afterScoringLeave(() => {
         push(next)
@@ -1939,8 +1992,12 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         session={session}
         onSignOut={() => {
-          client.signOut().catch(() => undefined)
-          leaveSession()
+          // Unsent changes go with the phone's file: ask first.
+          if ((outbox?.count ?? 0) > 0) {
+            setConfirmingSignOut(true)
+            return
+          }
+          signOutNow()
         }}
         onAccountDeleted={leaveSession}
       />
@@ -2417,13 +2474,19 @@ function Shell(props: AppProps): React.ReactElement {
     top?.name === 'scoreGame' ||
     top?.name === 'coachGame' ||
     top?.name === 'gameReplay'
+  const bannerShown =
+    bannerText != null || createRefused || heldTeams.length > 0
 
   return (
     <GestureHandlerRootView style={styles.root}>
       <View style={styles.app}>
         <View key="pane" style={styles.pane}>
           <HeaderSlotProvider
-            headerHeight={immersiveField ? 0 : headerHeight}
+            headerHeight={
+              immersiveField
+                ? 0
+                : headerHeight + (bannerShown ? bannerHeight : 0)
+            }
             onHandoff={setHandoff}
             onBackOverride={setBack}
           >
@@ -2438,7 +2501,17 @@ function Shell(props: AppProps): React.ReactElement {
               </ScreenScopeProvider>
             </View>
           </HeaderSlotProvider>
-          {!immersiveField && <View style={styles.headerLayer}>{header}</View>}
+          {!immersiveField && (
+            <View style={styles.headerLayer}>
+              {header}
+              <OfflineBanner
+                text={bannerText}
+                refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
+                held={heldTeams}
+                onLayout={setBannerHeight}
+              />
+            </View>
+          )}
         </View>
         {!isWide && !immersiveField && (
           <AppNav
@@ -2449,6 +2522,51 @@ function Shell(props: AppProps): React.ReactElement {
           />
         )}
         <SuccessToast notice={successNotice} />
+        {confirmingSignOut && (
+          <ChoiceSheet
+            title="Sign Out?"
+            choices={[
+              {
+                label: 'Sign Out',
+                detail: unsentLossText(outbox?.count ?? 0),
+                destructive: true,
+                onPress: signOutNow
+              }
+            ]}
+            onClose={() => {
+              setConfirmingSignOut(false)
+            }}
+          />
+        )}
+        {askingTeam != null && caching != null && (
+          <ChoiceSheet
+            title="Player Not Saved"
+            choices={[
+              ...(askingTeam.state === 'dead'
+                ? [
+                    {
+                      label: 'Try Again',
+                      onPress: () => {
+                        caching.retryTeam(askingTeam.id).catch(() => undefined)
+                      }
+                    }
+                  ]
+                : []),
+              {
+                label: "Use Server's Copy",
+                detail:
+                  "Takes the player off this phone and shows the team's roster as the server has it.",
+                destructive: true,
+                onPress: () => {
+                  caching.discardTeam(askingTeam.id).catch(() => false)
+                }
+              }
+            ]}
+            onClose={() => {
+              setAskingTeam(undefined)
+            }}
+          />
+        )}
       </View>
     </GestureHandlerRootView>
   )
@@ -2456,6 +2574,18 @@ function Shell(props: AppProps): React.ReactElement {
 
 /** How often a session opened on the stored user is asked about again. */
 export const SESSION_CONFIRM_MS = 30_000
+
+/**
+ * Whether `next` is the form for something only the server makes: a team, a
+ * season, a league, or a new game or event. Editing a game that exists is
+ * not one.
+ */
+function createsOnServer(next: Pushed): boolean {
+  return (
+    next.name === 'createGroup' ||
+    (next.name === 'createGame' && next.gameId == null)
+  )
+}
 
 /**
  * The scope the visible route holds on the socket: Home and Schedule as tabs,

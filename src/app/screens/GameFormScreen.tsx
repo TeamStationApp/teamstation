@@ -13,6 +13,7 @@ import { EventVenueFields } from '../components/EventVenueFields'
 import { ListRow } from '../components/ListRow'
 import { useTitleHandoff } from '../components/useTitleHandoff'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { offlineCreateFailure } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { type EventCreationRetry, EventDetailsForm } from './EventDetailsForm'
 import {
@@ -319,11 +320,12 @@ export function GameFormScreen({
     } catch (caught) {
       if (mounted.current)
         setError(
-          caught instanceof Error
-            ? caught.message
-            : creating
-              ? 'The game proposal could not be sent. Retry.'
-              : 'Game changes could not be submitted. Retry.'
+          offlineCreateFailure(client, caught) ??
+            (caught instanceof Error
+              ? caught.message
+              : creating
+                ? 'The game proposal could not be sent. Retry.'
+                : 'Game changes could not be submitted. Retry.')
         )
     } finally {
       sending.current = false

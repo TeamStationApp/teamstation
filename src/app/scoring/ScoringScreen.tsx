@@ -8,6 +8,7 @@ import React, {
 } from 'react'
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -44,6 +45,13 @@ import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
 import { useFieldSurface } from '../field/useFieldSurface'
 import { lstrings } from '../locales/strings'
 import type { Route } from '../navigation/routes'
+import { useInsets } from '../platform/safeArea'
+import {
+  OFFLINE_BANNER,
+  SERVER_COPY_PENDING,
+  useHeldGameControl,
+  usePhoneOffline
+} from '../sync/useOffline'
 import { useTheme } from '../theme/ThemeContext'
 import {
   NO_WALK_UP_MUSIC,
@@ -81,6 +89,7 @@ import {
 import { useDictationControls } from './DictationButton'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { EventTagEditor } from './EventTagEditor'
+import { HeldGameNotice } from './HeldGameNotice'
 import { MoreMenu } from './MoreMenu'
 import { OutcomeControls } from './OutcomeControls'
 import { OverridesEditor } from './OverridesEditor'
@@ -137,6 +146,10 @@ import {
   DevelopmentScoringSource,
   type ScoringSource
 } from './scoringSource'
+import {
+  SCORING_STATUS_MAX_WIDTH,
+  scoringStatusFrame
+} from './scoringStatusPlacement'
 import {
   type HistoryEntry,
   type Position,
@@ -233,6 +246,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   >(undefined)
   const [failed, setFailed] = useState(false)
   const [retry, setRetry] = useState(0)
+  /** The phone gave up its edits, and the server's copy has not come. */
+  const [copyPending, setCopyPending] = useState(false)
   const surface = useFieldSurface()
   const fallback = useMemo(() => new DevelopmentScoringSource(), [])
   const source: ScoringSource = props.source ?? fallback
@@ -295,6 +310,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       }
       setRosters({ [game.awayTeamId]: away, [game.homeTeamId]: home })
       setVisibleDefaults(defaults)
+      setCopyPending(false)
       setOpened(value)
     }
     load().catch(() => {
@@ -469,7 +485,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
               fontFamily: theme.regularTextFont
             }}
           >
-            Unable to load scoring.
+            {copyPending ? SERVER_COPY_PENDING : 'Unable to load scoring.'}
           </Text>
         ) : (
           <ActivityIndicator accessibilityLabel="Loading game" />
@@ -502,7 +518,11 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   return (
     <>
       <ScoringPanel
-        key={`${String(props.userId ?? 'local-scorer')}:${props.gameId}`}
+        key={`${String(props.userId ?? 'local-scorer')}:${props.gameId}:${retry}`}
+        onReopen={arrived => {
+          setCopyPending(!arrived)
+          setRetry(value => value + 1)
+        }}
         game={opened}
         visibleDefaults={visibleDefaults}
         client={props.client}
@@ -657,6 +677,11 @@ function ScoringPanel(props: {
    */
   walkUpOpen?: boolean
   socket?: GameChanges
+  /**
+   * The game's stored copy changed under the session: open it again.
+   * `arrived` is whether the server's copy came back to the phone.
+   */
+  onReopen: (arrived: boolean) => void
 }): React.ReactElement {
   const theme = useTheme()
   // A ball in play saved without its result cannot be shown, because the
@@ -722,6 +747,38 @@ function ScoringPanel(props: {
   const openedLog = useRef(state.log)
   const refreshedLog = useRef<readonly ScoringAction[] | undefined>(undefined)
   const [status, setStatus] = useState(() => statusOf(props.game))
+  // On the phone a save offline is queued and answered at once, so the
+  // session never says it is offline: the client does. A queue the server
+  // stopped says why, over everything else.
+  const phoneOffline = usePhoneOffline(props.client)
+  const heldGame = useHeldGameControl(props.client, props.gameId)
+  const held = heldGame?.text
+  const statusLine =
+    held ?? saveStatusText(status) ?? (phoneOffline ? OFFLINE_BANNER : null)
+  const statusPill = (
+    <View
+      style={{
+        maxWidth: SCORING_STATUS_MAX_WIDTH,
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+        borderRadius: 12,
+        backgroundColor: theme.backgroundColor
+      }}
+    >
+      <Text
+        accessibilityRole="text"
+        accessibilityLabel="Save status"
+        testID={held == null ? 'scoringSaveStatus' : 'heldGameMessage'}
+        style={{
+          color: theme.primaryTextColor,
+          fontFamily: theme.regularTextFont,
+          textAlign: 'center'
+        }}
+      >
+        {statusLine}
+      </Text>
+    </View>
+  )
   // Another device's change heard on the game socket and not yet read in,
   // and a count that asks the screen to look again whether it can be.
   const stale = useRef(false)
@@ -867,6 +924,7 @@ function ScoringPanel(props: {
   } | null>(null)
   const [menu, setMenu] = useState(false)
   const [menuButton, setMenuButton] = useState(WEB_MENU_BUTTON)
+  const insets = useInsets()
   const [sheet, setSheet] = useState<
     'exit' | 'settings' | 'overrides' | 'half' | 'rosters' | 'game'
   >()
@@ -2830,29 +2888,21 @@ function ScoringPanel(props: {
           )}
         </ScoringSheet>
       )}
-      {saveStatusText(status) != null && (
+      {statusLine != null && (
+        // On the phone above the bottom deck, clear of the scoreboard and ☰:
+        // the offline line stays up for as long as the phone is offline. A
+        // held game's line is a button: what to do about it.
         <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            top: 8,
-            alignSelf: 'center',
-            paddingHorizontal: 12,
-            paddingVertical: 4,
-            borderRadius: 12,
-            backgroundColor: theme.backgroundColor
-          }}
+          pointerEvents={heldGame == null ? 'none' : 'box-none'}
+          style={scoringStatusFrame(Platform.OS !== 'web', insets)}
         >
-          <Text
-            accessibilityRole="text"
-            accessibilityLabel="Save status"
-            style={{
-              color: theme.primaryTextColor,
-              fontFamily: theme.regularTextFont
-            }}
-          >
-            {saveStatusText(status)}
-          </Text>
+          {heldGame == null ? (
+            statusPill
+          ) : (
+            <HeldGameNotice held={heldGame} onSettled={props.onReopen}>
+              {statusPill}
+            </HeldGameNotice>
+          )}
         </View>
       )}
       {state.session.final && (

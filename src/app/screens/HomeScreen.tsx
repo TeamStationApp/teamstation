@@ -43,6 +43,7 @@ import {
   HOME_SEASONS,
   HOME_TEAMS
 } from '../sync/documentKeys'
+import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 import type { GameListOpenOptions } from './gameListOptions'
@@ -80,6 +81,8 @@ export interface HomeScreenProps {
 export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const { client, onOpenTeam, onOpenSeason, onOpenGame } = props
   const styles = getStyles(useTheme())
+  // Offline, the phone has no stream to play: what was live is not offered.
+  const offline = usePhoneOffline(client)
 
   const [players, setPlayers] = useState<UserMatch[]>([])
   const [teams, setTeams] = useState<TeamSummary[]>([])
@@ -431,7 +434,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       {error != null && <Text style={styles.error}>{error}</Text>}
       {recentError != null && <Text style={styles.error}>{recentError}</Text>}
       {showEmptyHero && creationCards(missingKinds)}
-      {live.length > 0 && (
+      {live.length > 0 && !offline && (
         <View style={styles.section}>
           <SectionHeader title="Live now" />
           <Card style={styles.gameCard}>
@@ -530,8 +533,8 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               awayLogoUrl={recent.awayLogoUrl}
               homeLogoUrl={recent.homeLogoUrl}
               posterUrl={recent.posterUrl}
-              videoUrl={recentUrl}
-              videoLive={recentLive}
+              videoUrl={offline ? undefined : recentUrl}
+              videoLive={recentLive && !offline}
             />
             {/*
               Two buttons, not one. There was no way to reach a box score from
@@ -539,7 +542,10 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               nothing to press.
             */}
             <View style={styles.actions}>
-              {recent.videoCount > 0 && (
+              {recent.videoCount > 0 && offline && recent.isLive && (
+                <Text style={styles.muted}>{OFFLINE_UNPLAYABLE}</Text>
+              )}
+              {recent.videoCount > 0 && !(offline && recent.isLive) && (
                 <Button
                   label="Watch"
                   icon="play_arrow"

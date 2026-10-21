@@ -22,6 +22,7 @@ import {
   type EventVenueDraft,
   EventVenueFields
 } from '../components/EventVenueFields'
+import { offlineCreateFailure } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 export interface EventFormDraft extends EventVenueDraft {
@@ -151,9 +152,10 @@ export function EventDetailsForm({
       }
     } catch (error) {
       setError(
-        error instanceof Error
-          ? error.message
-          : 'The event could not be saved. Try again.'
+        (info == null ? offlineCreateFailure(client, error) : undefined) ??
+          (error instanceof Error
+            ? error.message
+            : 'The event could not be saved. Try again.')
       )
     } finally {
       writing.current = false

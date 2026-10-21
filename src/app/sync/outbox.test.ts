@@ -33,6 +33,7 @@ import {
   type OutboxSummary,
   queuedCallOf
 } from './outbox'
+import { heldGameText, PARKED_GAME_MESSAGE } from './useOffline'
 
 const play = (atBatIndex: number, batter = 7): GumboPlay =>
   ({
@@ -1010,6 +1011,7 @@ describe('the phone outbox', function () {
       message: 'firstName: Too long',
       cause: 'player'
     })
+    expect(heldGameText(held)).equals('Not sent: firstName: Too long')
 
     // The banner's Try Again on the team: the create lands, then the game's
     // plays, both of them, with the server's id for him.
@@ -1044,6 +1046,19 @@ describe('the phone outbox', function () {
     await p.client.drainOutbox()
     expect(p.rows()).deep.equals([])
     expect(p.posts().at(-1)!.path).equals('/games/g2/events')
+  })
+
+  it('says a stale lineup moved on, and a player given up on in its own words', function () {
+    expect(heldGameText({ state: 'parked', message: 'stale' })).equals(
+      PARKED_GAME_MESSAGE
+    )
+    expect(
+      heldGameText({
+        state: 'parked',
+        message: LOST_PLAYER_MESSAGE,
+        cause: 'player'
+      })
+    ).equals(`Not sent: ${LOST_PLAYER_MESSAGE}`)
   })
 
   it('marks a refused write dead with the server’s message, and sends the next', async function () {

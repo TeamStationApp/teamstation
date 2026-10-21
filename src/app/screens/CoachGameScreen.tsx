@@ -38,6 +38,7 @@ import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
+import { HeldGameNotice } from '../scoring/HeldGameNotice'
 import { rosterPlayerBody } from '../scoring/playerDraft'
 import type { RosterDictationOptions } from '../scoring/rosterDictation'
 import { sameValue } from '../scoring/rosterDirty'
@@ -59,6 +60,12 @@ import {
 import type { ScoringState } from '../scoring/scoringTypes'
 import { dictationUrl } from '../scoring/useDictation'
 import { useScoringExit } from '../scoring/useScoringExit'
+import {
+  OFFLINE_BANNER,
+  SERVER_COPY_PENDING,
+  useHeldGameControl,
+  usePhoneOffline
+} from '../sync/useOffline'
 import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
 import { BoxScore, type LineupBatter } from './BoxScore'
 import { PlayerSettingsTab } from './PlayerSettingsTab'
@@ -256,6 +263,15 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   // The stored game, so a side still unseen can light Save on his default.
   const sessionRef = useRef<ScoringSession | undefined>(undefined)
   const side = opened?.side
+  // A save offline is queued on the phone; a queue the server stopped says
+  // why.
+  const phoneOffline = usePhoneOffline(client)
+  const heldGame = useHeldGameControl(client, gameId)
+  const heldQueue = heldGame?.text
+  // Read the game again once the phone gave its held edits up.
+  const [reopened, setReopened] = useState(0)
+  /** The phone gave up its edits, and the server's copy has not come. */
+  const copyPending = useRef(false)
 
   /**
    * What the server's lineups say: the digest, and which are held. His own
@@ -383,6 +399,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       setState(next)
       setHeld({ draft: next.session, side: of, mode: 'boxScore' })
       setDetail(game)
+      copyPending.current = false
       setOpened({
         game,
         side: of,
@@ -391,13 +408,16 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       })
     }
     load().catch(() => {
-      if (current) setFailed(lstrings.coach_load_failed)
+      if (current)
+        setFailed(
+          copyPending.current ? SERVER_COPY_PENDING : lstrings.coach_load_failed
+        )
     })
     return () => {
       current = false
       stopLive()
     }
-  }, [client, gameId, teamId, source, startLive, stopLive, heard])
+  }, [client, gameId, teamId, source, startLive, stopLive, heard, reopened])
 
   // The box score, read as the screen opens and again as plays and the
   // score change, at most once every five seconds.
@@ -580,6 +600,29 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
         </Text>
       </View>
       {problem != null && <ScoringError message={problem} />}
+      {heldGame != null ? (
+        <HeldGameNotice
+          held={heldGame}
+          onSettled={arrived => {
+            copyPending.current = !arrived
+            setReopened(value => value + 1)
+          }}
+        >
+          <Text
+            accessibilityRole="alert"
+            testID="heldGameMessage"
+            style={{ ...text, color: theme.dangerColor }}
+          >
+            {heldQueue}
+          </Text>
+        </HeldGameNotice>
+      ) : (
+        phoneOffline && (
+          <Text accessibilityRole="text" testID="coachOffline" style={text}>
+            {OFFLINE_BANNER}
+          </Text>
+        )
+      )}
       {failed != null ? (
         <Text accessibilityRole="alert" style={{ ...text, padding: 16 }}>
           {failed}
