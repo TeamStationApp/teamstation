@@ -455,9 +455,7 @@ describe('actual App scoring player Settings return', function () {
         () =>
           document.querySelector('[aria-label="Loading team roster"]') == null
       )
-      expect(document.body.textContent).includes(
-        'Tap a player to edit settings.'
-      )
+      expect(document.body.textContent).includes('Tap player to edit.')
       await act(async () => {
         window.history.forward()
       })
@@ -616,9 +614,7 @@ describe('actual App scoring player Settings return', function () {
         () => document.querySelector('[aria-label="Discard and Exit"]') != null
       )
       await press('Cancel')
-      expect(document.body.textContent).includes(
-        'Tap a player to edit settings.'
-      )
+      expect(document.body.textContent).includes('Tap player to edit.')
       await act(async () => {
         window.history.back()
       })
@@ -861,9 +857,7 @@ describe('actual App scoring player Settings return', function () {
         name: 'scoreGame',
         gameId: fixture.gameId
       })
-      expect(document.body.textContent).includes(
-        'Tap a player to edit settings.'
-      )
+      expect(document.body.textContent).includes('Tap player to edit.')
       await waitFor(
         () =>
           document.querySelector(
