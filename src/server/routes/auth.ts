@@ -202,7 +202,12 @@ function setSessionCookie(
   )
 }
 
-function clearSessionCookie(res: Response, secure: boolean): void {
+/** The session cookie is `Secure` unless the site is served over plain http://. */
+export function secureCookieFor(publicUrl: string | undefined): boolean {
+  return publicUrl?.startsWith('http://') !== true
+}
+
+export function clearSessionCookie(res: Response, secure: boolean): void {
   res.append(
     'set-cookie',
     [
@@ -223,7 +228,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
       ? makeToken()
       : options.passwordParameterSecret
   const router = Router()
-  const secureCookie = options.publicUrl?.startsWith('http://') !== true
+  const secureCookie = secureCookieFor(options.publicUrl)
 
   /**
    * Who this sign-in is for — making the account first when it came from an

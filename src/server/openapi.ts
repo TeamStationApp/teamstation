@@ -242,6 +242,19 @@ const accountPaths = {
       security: [{ bearer: [] }],
       summary: 'Read your account settings (signed-in sessions only)',
       responses: { 200: accountResponse }
+    },
+    delete: {
+      security: [{ bearer: [] }],
+      summary: 'Delete your account (signed-in sessions only)',
+      description:
+        'Irrecoverable. For the account and every account merged into it: renames it "Deleted user", also as the sender of requests in other people’s inboxes; removes its email addresses, password, uploaded pictures, bats and throws, walk-up songs, family links, roles, follows, tags and notifications; spends pending sign-in codes; marks it deleted, which keeps it disabled for good; and revokes its sessions, tokens, grants and stream keys. Plays, stats, roster places, RSVPs and import ids stay, under that name. Refused for the last node administrator and for the last direct administrator of a team, season or league, naming every such group.',
+      responses: {
+        204: { description: 'Deleted' },
+        409: {
+          description:
+            'The last node administrator, or the last direct administrator of a group, cannot be deleted'
+        }
+      }
     }
   },
   '/me/account/name': {

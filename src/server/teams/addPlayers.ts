@@ -270,6 +270,8 @@ async function importHands(
     })
     .where('id', '=', userId)
     .where('bats_source', 'is distinct from', 'manual')
+    // A deleted account's hands went with it.
+    .where('deleted_at', 'is', null)
     .execute()
 }
 

@@ -24,6 +24,7 @@ import {
   storePlayerAvatar,
   storeTeamLogo
 } from '../teams/storeTeamPictures'
+import { refuseDeleted } from '../users/deleted'
 
 /**
  * A team's people, added by the ids another system knows them by, and the
@@ -156,6 +157,7 @@ export function teamMemberRoutes(
         .where('is_player', '=', true)
         .executeTakeFirst()
       if (plays == null) throw notFound('No such player on this team')
+      await refuseDeleted(db, userId)
       const picture = asPictureBody(req.body)
 
       const answer = await storePlayerAvatar(

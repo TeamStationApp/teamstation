@@ -308,7 +308,7 @@ export interface Merge {
 }
 
 /** The advisory lock every merge holds while it checks and writes. */
-const MERGE_LOCK = 'users.closeInto'
+export const MERGE_LOCK = 'users.closeInto'
 
 /**
  * Roster writers take this before reading identities or locking any rows.

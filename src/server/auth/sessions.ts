@@ -190,9 +190,9 @@ export interface SignedOut {
 }
 
 /**
- * Signs one account out of everything it is signed in to: every session on
- * every device, every machine token, and every OAuth grant with the tokens
- * issued under it.
+ * Signs one account, or each of several, out of everything it is signed in
+ * to: every session on every device, every machine token, and every OAuth
+ * grant with the tokens issued under it.
  *
  * A merge calls this for the account it closes, inside the merge's own
  * transaction, so a device signed in as the closed account can make no request
@@ -208,30 +208,33 @@ export interface SignedOut {
  */
 export async function signOutEverywhere(
   db: Kysely<Database>,
-  userId: string,
+  userId: string | readonly string[],
   at = new Date()
 ): Promise<SignedOut> {
+  const userIds = typeof userId === 'string' ? [userId] : [...userId]
+  if (userIds.length === 0) return { sessions: 0, apiTokens: 0, oauthGrants: 0 }
   const sessions = await db
     .updateTable('auth_sessions')
     .set({ revoked_at: at })
-    .where('user_id', '=', userId)
+    .where('user_id', 'in', userIds)
     .where('revoked_at', 'is', null)
     .executeTakeFirst()
   const apiTokens = await db
     .updateTable('api_tokens')
     .set({ revoked_at: at })
-    .where('user_id', '=', userId)
+    .where('user_id', 'in', userIds)
     .where('revoked_at', 'is', null)
     .executeTakeFirst()
   // A Grant is stored under its own id; every token issued under it carries
   // the grant's id in `grant_hash`.
+  const ids = sql.join(userIds)
   await sql`delete from oauth_records r using oauth_grant_sessions g
-    where g.user_id = ${userId}
+    where g.user_id in (${ids})
       and (r.grant_hash = g.grant_hash or (r.model = 'Grant' and r.id_hash = g.grant_hash))`.execute(
     db
   )
   const grants = await sql`delete from oauth_grant_sessions
-    where user_id = ${userId}`.execute(db)
+    where user_id in (${ids})`.execute(db)
   return {
     sessions: Number(sessions.numUpdatedRows),
     apiTokens: Number(apiTokens.numUpdatedRows),

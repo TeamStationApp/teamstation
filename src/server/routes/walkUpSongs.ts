@@ -11,6 +11,7 @@ import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { notifyGameChange } from '../socket/gameChanges'
+import { refuseDeleted } from '../users/deleted'
 
 /**
  * Each player's walk-up song on a team.
@@ -52,6 +53,8 @@ export function walkUpSongRoutes(db: Kysely<Database>): Router {
       .where('users.merged_into', 'is', null)
       .executeTakeFirst()
     if (player == null) throw notFound()
+    // A deleted player's song went with their account.
+    await refuseDeleted(db, userId)
     return { teamId, userId }
   }
 

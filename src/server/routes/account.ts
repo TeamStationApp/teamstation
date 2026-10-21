@@ -16,6 +16,7 @@ import {
   unauthorized,
   unavailable
 } from '../../common/errors'
+import { deleteAccount } from '../account/deleteAccount'
 import {
   confirmAccountEmail,
   requestAccountEmail,
@@ -36,6 +37,8 @@ import type { Database } from '../db/database'
 import { applyWaitingInvitations } from '../invites/personRequests'
 import { cleanBody } from '../jsonBody'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
+import { spaceConfigured } from '../media/spacesHls'
+import { deleteSpacePrefix } from '../media/spacesVideo'
 import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -45,9 +48,12 @@ import {
   storePlayerAvatar
 } from '../teams/storeTeamPictures'
 import { gumboIdOf } from '../users/insertUser'
+import { clearSessionCookie, secureCookieFor } from './auth'
 
 export interface AccountOptions extends PictureStore {
   sendCode: (email: string, code: string) => Promise<void>
+  /** The site's public address; over plain http:// a cleared cookie drops `Secure`. */
+  publicUrl: string
 }
 
 export async function readAccount(
@@ -162,6 +168,21 @@ export function accountRoutes(
     '/me/account',
     withAsync(async (req, res) => {
       res.json(await readAccount(db, accountId(req), options))
+    })
+  )
+  router.delete(
+    '/me/account',
+    withAsync(async (req, res) => {
+      const userId = accountId(req)
+      const emptied = await deleteAccount(db, userId)
+      setAudit(res.locals, { entityType: 'user', entityId: userId })
+      clearSessionCookie(res, secureCookieFor(options.publicUrl))
+      res.status(204).end()
+      // Their own uploads only: a shared catalog picture lives elsewhere.
+      // After the answer, which does not wait on storage: the account is gone
+      // whatever storage says, and a slow Space must not make it look kept.
+      if (spaceConfigured(options.space))
+        removePictures(options.space, emptied).catch(() => undefined)
     })
   )
   router.put(
@@ -388,4 +409,17 @@ export function accountRoutes(
     })
   )
   return router
+}
+
+/** Each account's own uploads, one at a time, saying which could not go. */
+async function removePictures(
+  space: AccountOptions['space'],
+  userIds: readonly string[]
+): Promise<void> {
+  for (const id of userIds)
+    await deleteSpacePrefix(space, `images/user/${id}/`).catch(
+      (error: unknown) => {
+        console.error(`deleting pictures of ${id}: ${String(error)}`)
+      }
+    )
 }

@@ -127,7 +127,26 @@ export async function accountHarness(
   const controls = { failMail: false, failPut: false }
   const objects = new Map<string, Buffer>()
   const objectServer = createServer((req, res) => {
-    const key = new URL(req.url ?? '/', 'http://localhost').pathname
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    const key = url.pathname
+    // A path-style bucket listing: `/<bucket>/?list-type=2&prefix=…`.
+    if (req.method === 'GET' && url.searchParams.get('list-type') === '2') {
+      const bucket = key.replace(/\/+$/, '')
+      const prefix = `${bucket}/${url.searchParams.get('prefix') ?? ''}`
+      const keys = [...objects.keys()]
+        .filter(held => held.startsWith(prefix))
+        .map(held => held.slice(bucket.length + 1))
+      res.writeHead(200, { 'content-type': 'application/xml' })
+      res.end(
+        `<ListBucketResult>${keys.map(listed => `<Contents><Key>${listed}</Key></Contents>`).join('')}<IsTruncated>false</IsTruncated></ListBucketResult>`
+      )
+      return
+    }
+    if (req.method === 'DELETE') {
+      res.writeHead(objects.delete(key) ? 204 : 404)
+      res.end()
+      return
+    }
     if (req.method === 'PUT') {
       const chunks: Buffer[] = []
       req.on('data', chunk => chunks.push(Buffer.from(chunk)))
@@ -189,7 +208,12 @@ export async function accountHarness(
   app.use(jsonBody)
   app.use(withAudit(db))
   configure?.(app, { tokens, db, space, media, sendCode })
-  app.use('/api/v1', accountRoutes(db, { ...media, sendCode }))
+  // The same public address as the sign-in routes below, so the cookie a
+  // delete clears is the cookie a sign-in set.
+  app.use(
+    '/api/v1',
+    accountRoutes(db, { ...media, sendCode, publicUrl: 'http://localhost' })
+  )
   app.use(
     '/api/v1',
     authRoutes(db, { space, sendCode, publicUrl: 'http://localhost' })

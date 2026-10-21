@@ -7,12 +7,13 @@ import type {
   NodeAccount,
   NodeAccountChange
 } from '../../common/nodeAdministration'
-import type { Actor } from '../auth/sessions'
+import { type Actor, signOutEverywhere } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { requireDirectAdmin } from '../groups/adminGuard'
 import { currentActor } from '../groups/rights'
+import { revokeStreams } from '../live/revokeStreams'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 
@@ -25,7 +26,8 @@ export async function requireNodeAdmin(
   if (!fresh.isAdmin) throw forbidden(message)
   return fresh
 }
-async function activeNodeIds(db: Kysely<Database>): Promise<string[]> {
+/** Node administrators who can still sign in and act. */
+export async function activeNodeIds(db: Kysely<Database>): Promise<string[]> {
   return (
     await db
       .selectFrom('users')
@@ -127,6 +129,8 @@ export async function changeNodeAccount(
       .forUpdate()
       .executeTakeFirst()
     if (target == null || target.merged_into != null) throw notFound()
+    if (target.deleted_at != null)
+      throw conflict('This account was deleted and cannot be changed')
     const disabledAt =
       body.suspended === undefined
         ? target.disabled_at
@@ -183,30 +187,12 @@ export async function changeNodeAccount(
       )
     if (disabledAt != null) {
       for (const ref of refs) await requireDirectAdmin(trx, ref)
-      await trx
-        .updateTable('auth_sessions')
-        .set({ revoked_at: new Date() })
-        .where('user_id', '=', userId)
-        .where('revoked_at', 'is', null)
-        .execute()
-      await trx
-        .updateTable('api_tokens')
-        .set({ revoked_at: new Date() })
-        .where('user_id', '=', userId)
-        .where('revoked_at', 'is', null)
-        .execute()
-      await trx
-        .updateTable('live_streams')
-        .set({
-          state: 'revoked',
-          closes_at: new Date(),
-          updated_at: new Date(),
-          last_error:
-            'The publishing account was suspended. Ask for a new stream URL.'
-        })
-        .where('user_id', '=', userId)
-        .where('state', 'in', ['idle', 'publishing'])
-        .execute()
+      await signOutEverywhere(trx, [userId])
+      await revokeStreams(
+        trx,
+        [userId],
+        'The publishing account was suspended. Ask for a new stream URL.'
+      )
     }
     await trx
       .insertInto('audit_log')
