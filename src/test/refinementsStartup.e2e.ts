@@ -116,7 +116,13 @@ async function startupSmoke(): Promise<void> {
     ])
     await db
       .insertInto('seasons')
-      .values({ id: 'sea_startup', name: 'Demo Startup Season', year: 2027 })
+      .values({
+        starts_on: `2027-03-01`,
+        ends_on: `2027-05-31`,
+        id: 'sea_startup',
+        name: 'Demo Startup Season',
+        year: 2027
+      })
       .execute()
     await db
       .insertInto('season_members')

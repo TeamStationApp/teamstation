@@ -1140,8 +1140,8 @@ export function groupRoutes(
             .execute()
         if (
           ref.kind === 'season' &&
-          (req.body?.startsOn != null ||
-            req.body?.endsOn != null ||
+          (Object.hasOwn(req.body ?? {}, 'startsOn') ||
+            Object.hasOwn(req.body ?? {}, 'endsOn') ||
             req.body?.timezone != null)
         ) {
           const row = await trx
@@ -1149,6 +1149,8 @@ export function groupRoutes(
             .select(['starts_on', 'ends_on', 'timezone', 'year'])
             .where('id', '=', ref.id)
             .executeTakeFirstOrThrow()
+          if (req.body.startsOn === null || req.body.endsOn === null)
+            throw badRequest('A season needs a start and an end')
           const start =
             req.body.startsOn == null
               ? calendarDateText(row.starts_on)
@@ -1157,8 +1159,9 @@ export function groupRoutes(
             req.body.endsOn == null
               ? calendarDateText(row.ends_on)
               : clean(asCalendarDate, req.body.endsOn)
-          if (start != null && end != null && end < start)
-            throw badRequest('End date precedes start date')
+          if (start == null || end == null)
+            throw badRequest('A season needs a start and an end')
+          if (end < start) throw badRequest('End date precedes start date')
           const timezone = req.body.timezone ?? row.timezone
           try {
             new Intl.DateTimeFormat('en', { timeZone: timezone }).format()
@@ -1171,7 +1174,7 @@ export function groupRoutes(
               starts_on: start,
               ends_on: end,
               timezone,
-              year: start == null ? row.year : Number(start.slice(0, 4))
+              year: Number(start.slice(0, 4))
             })
             .where('id', '=', ref.id)
             .execute()

@@ -114,8 +114,8 @@ export interface SeasonsTable {
   logo_updated_at: Timestamp | null
   year: number
   term: string | null
-  starts_on: string | null
-  ends_on: string | null
+  starts_on: string
+  ends_on: string
   /**
    * The innings a game here runs, which is what an ERA divides by. Set by hand
    * in the database; nothing writes it. Null takes the league's, and six where

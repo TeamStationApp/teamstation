@@ -76,6 +76,8 @@ export async function createScoringGame(
   await trx
     .insertInto('seasons')
     .values({
+      starts_on: `2026-03-01`,
+      ends_on: `2026-05-31`,
       id: seasonId,
       league_id: leagueId,
       name: `Scoring Season ${stamp}`,

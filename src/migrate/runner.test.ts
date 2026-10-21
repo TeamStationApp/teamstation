@@ -109,7 +109,7 @@ describe('migrations', function () {
     )
   })
 
-  it('refuses reverse identity migrations without changing the applied schema', async () => {
+  it('rolls back the reversible suffix and refuses reverse identity migrations', async () => {
     const before = (
       await pool.query('select name from schema_migrations order by name')
     ).rows
@@ -123,8 +123,10 @@ describe('migrations', function () {
     expect(
       (await pool.query('select name from schema_migrations order by name'))
         .rows
-    ).deep.equals(before)
-    expect((await migrateUp(pool, migrations)).applied).deep.equals([])
+    ).deep.equals(before.filter(row => row.name < '072'))
+    expect((await migrateUp(pool, migrations)).applied).deep.equals(
+      migrations.filter(m => m.name >= '072').map(m => m.name)
+    )
   })
 })
 

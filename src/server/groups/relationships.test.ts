@@ -65,6 +65,8 @@ describe('management parents independent of competition and games', function () 
     await f.h.db
       .insertInto('seasons')
       .values({
+        starts_on: `2027-03-01`,
+        ends_on: `2027-05-31`,
         id: 'anotherStandalone',
         name: 'Demo Other Standalone',
         year: 2027,

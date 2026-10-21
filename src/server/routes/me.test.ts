@@ -93,7 +93,14 @@ describe('what the signed-in person may do', function () {
     await db.insertInto('leagues').values({ id: 'lea_me', name: 'L' }).execute()
     await db
       .insertInto('seasons')
-      .values({ id: 'sea_me', name: 'S', year: 2026, league_id: 'lea_me' })
+      .values({
+        starts_on: `2026-03-01`,
+        ends_on: `2026-05-31`,
+        id: 'sea_me',
+        name: 'S',
+        year: 2026,
+        league_id: 'lea_me'
+      })
       .execute()
     await db
       .insertInto('teams')

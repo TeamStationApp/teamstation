@@ -186,6 +186,8 @@ describe('the manage page', function () {
     await db
       .insertInto('seasons')
       .values({
+        starts_on: `2026-03-01`,
+        ends_on: `2026-05-31`,
         id: 'sea_spring',
         name: 'Demo Spring 2026',
         year: 2026,

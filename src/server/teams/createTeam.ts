@@ -329,7 +329,9 @@ async function resolveSeason(
       // seasons into, not something a team implies.
       league_id: null,
       name: asked.name,
-      year: asked.year
+      year: asked.year,
+      starts_on: `${asked.year}-03-01`,
+      ends_on: `${asked.year}-05-31`
     })
     .execute()
   return { id, name: asked.name, year: asked.year, created: true }
