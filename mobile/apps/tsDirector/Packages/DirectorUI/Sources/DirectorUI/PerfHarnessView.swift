@@ -129,6 +129,9 @@ public struct PerfHarnessView: View {
               Text(tile.isArchiving ? "archiving \(tile.archiveHeight)p, camera's own stream" : "not archiving")
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.secondary)
+              Text(tile.trimSummary)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(.secondary)
             }
             .accessibilityIdentifier("perf-source-\(tile.index + 1)")
           }

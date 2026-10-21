@@ -4836,6 +4836,8 @@ public final class AppEnvironment {
         tile.playoutMilliseconds = receive.playoutMilliseconds
         tile.playoutLateFrames = receive.playoutLateFrames
         tile.playoutDepth = receive.playoutDepth
+        tile.codedPicturesTrimmed = receive.codedPicturesTrimmed
+        tile.decodedPicturesTrimmed = receive.decodedPicturesTrimmed
         tile.outOfOrderFrames = receive.outOfOrderFrames
         tile.senderClockRestarts = receive.senderClockRestarts
         tile.stalledForSeconds = (receive.stalledForSeconds * 10).rounded() / 10

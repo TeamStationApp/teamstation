@@ -25,13 +25,17 @@ public struct PlayoutQueue<Element>: Sendable where Element: Sendable {
   public var isEmpty: Bool { entries.isEmpty }
   public var earliestDue: Double? { entries.first?.due }
 
-  public mutating func enqueue(_ element: Element, due: Double, keepingAtMost maximum: Int? = nil) {
+  /// Adds `element`, and returns how many entries it trimmed from the front to stay within
+  /// `maximum`: pictures received and never shown, which the caller counts.
+  @discardableResult
+  public mutating func enqueue(_ element: Element, due: Double, keepingAtMost maximum: Int? = nil) -> Int {
     let entry = Entry(due: due, sequence: nextSequence, element: element)
     nextSequence &+= 1
     entries.insert(entry, at: insertionPoint(for: entry))
-    if let maximum, maximum > 0, entries.count > maximum {
-      entries.removeFirst(entries.count - maximum)
-    }
+    guard let maximum, maximum > 0, entries.count > maximum else { return 0 }
+    let trimmed = entries.count - maximum
+    entries.removeFirst(trimmed)
+    return trimmed
   }
 
   /// Everything due by now, oldest first.

@@ -565,11 +565,11 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
     // The picture waits here instead of being decoded on the spot. Releasing it against its own
     // timestamp is what turns the camera's burst-and-wait delivery back into even motion.
     playout.note(lateness: now - presentationTime.seconds, at: now)
-    pictures.enqueue(
+    stats.codedPicturesTrimmed &+= UInt64(pictures.enqueue(
       PendingPicture(unit: unit, presentationTime: presentationTime),
       due: playout.dueTime(presentationSeconds: presentationTime.seconds),
       keepingAtMost: pictureQueueCapacityLocked()
-    )
+    ))
 
     let id = frameID
     frameID &+= 1
@@ -705,7 +705,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
   }
 
   /// Called by the decoder, which runs ahead of time, so this queues rather than delivers.
-  private func publish(pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+  func publish(pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
     lock.lock()
     // Decode order is presentation order for these cameras, but a stream with reordering would
     // otherwise hand the archive writer a timestamp that moves backwards, which stalls the track.
@@ -733,7 +733,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       pixelFormat: CVPixelBufferGetPixelFormatType(pixelBuffer),
       codecName: resolvedFormat?.codecName ?? videoCodec?.displayName ?? ""
     )
-    decodedFrames.enqueue(
+    stats.decodedPicturesTrimmed &+= UInt64(decodedFrames.enqueue(
       PixelFrame(
         sourceID: sourceID,
         pixelBuffer: pixelBuffer,
@@ -747,7 +747,7 @@ public final class RTSPFrameSource: FrameSource, StreamIdentityReporting, @unche
       ),
       due: playout.dueTime(presentationSeconds: presentationTime.seconds),
       keepingAtMost: 8
-    )
+    ))
     lock.unlock()
   }
 

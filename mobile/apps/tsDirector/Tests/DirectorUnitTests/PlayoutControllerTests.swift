@@ -267,6 +267,17 @@ struct PlayoutQueueTests {
     #expect(queue.count == 3)
     #expect(queue.release(at: 10) == [2, 3, 4])
   }
+
+  @Test("Enqueue says how many it trimmed, so the caller can count pictures never shown")
+  func reportsTrimCount() {
+    var queue = PlayoutQueue<Int>()
+    #expect(queue.enqueue(1, due: 0.1, keepingAtMost: 2) == 0)
+    #expect(queue.enqueue(2, due: 0.2, keepingAtMost: 2) == 0)
+    #expect(queue.enqueue(3, due: 0.3, keepingAtMost: 2) == 1)
+    #expect(queue.enqueue(4, due: 0.4) == 0, "no cap, nothing trimmed")
+    #expect(queue.enqueue(5, due: 0.5, keepingAtMost: 1) == 3, "the earliest due go first")
+    #expect(queue.release(at: 10) == [5])
+  }
 }
 
 @Suite("Playout coordination")
