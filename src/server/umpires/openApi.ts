@@ -166,5 +166,65 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
       }
     }
   }
+
+  const slotSchema = {
+    type: 'object',
+    properties: {
+      slot: { type: 'string', pattern: '^(plate|field:[1-6])$' },
+      userId: { type: 'string' },
+      creditTeamId: { type: ['string', 'null'] }
+    }
+  }
+  paths['/games/{gameId}/umpire-slots'] = Object.fromEntries(
+    ['post', 'delete'].map(method => [
+      method,
+      {
+        summary:
+          method === 'post'
+            ? 'Fill an eligible umpire slot and optionally credit a team'
+            : 'Remove an assignment, enforcing the self-removal cutoff',
+        security: [{ bearer: [] }],
+        parameters: [
+          {
+            name: 'gameId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' }
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                ...slotSchema,
+                required: method === 'post' ? ['slot', 'userId'] : ['slot']
+              }
+            }
+          }
+        },
+        responses: {
+          ...responses,
+          200: { description: 'Assignment saved or removed' },
+          409: errorResponse
+        }
+      }
+    ])
+  )
+  paths['/leagues/{leagueId}/umpire-leaderboard'] = {
+    get: {
+      summary:
+        'Top ten completed and scheduled umpires and optional team credits',
+      security: [{ bearer: [] }],
+      parameters,
+      responses: {
+        ...responses,
+        200: {
+          description:
+            'Completed and scheduled people rankings and team credits'
+        }
+      }
+    }
+  }
   return paths
 }

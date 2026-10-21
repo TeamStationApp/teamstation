@@ -32,6 +32,7 @@ import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import type { ScheduleRow } from '../routes/seasons'
 import { mayScheduleIn, scheduleRights } from '../schedule/scheduleGames'
+import { recheckUmpireAssignments } from '../umpires/assignments'
 
 type ResolvedEvent = Omit<EventInfo, 'attendees' | 'replyUserIds'> & {
   teamIds: string[]
@@ -643,6 +644,7 @@ export async function updateEventInfo(
         .set(location)
         .where('id', '=', id)
         .execute()
+      await recheckUmpireAssignments(trx, id)
     } else {
       const askedType =
         raw.eventType === undefined
@@ -709,6 +711,7 @@ export async function teamEventDetail(
   const event = await resolveEvent(db, actor, id)
   return asGameDetail({
     ...event,
+    umpires: null,
     isGameLive: false,
     nonMemberView: false,
     homeTeamId: event.teamId,

@@ -279,6 +279,26 @@ export type LineScoreSide = ReturnType<typeof asLineScoreSide>
 
 export const asGameDetail = withEventMetadata(
   asObject({
+    umpires: asOptional(
+      asEither(
+        asObject({
+          plateNeeded: asBoolean,
+          plate: asEither(
+            asObject({ userId: asString, name: asString }),
+            asLiteral(null)
+          ),
+          fieldCount: asNumber,
+          field: asArray(
+            asEither(
+              asObject({ userId: asString, name: asString }),
+              asLiteral(null)
+            )
+          )
+        }),
+        asLiteral(null)
+      ),
+      null
+    ),
     guests: asGuests,
     unrostered: asUnrostered,
     guestPlayers: asOptional(

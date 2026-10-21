@@ -248,7 +248,16 @@ export async function previewParents(
     // `effects.length` leading lines as the changes being decided.
     explanation: [
       ...descriptions,
-      'Only management permissions change. Competition memberships, rosters, games and results are preserved.',
+      ...(effects.some(
+        effect =>
+          effect.child.kind === 'season' && effect.parent.kind === 'league'
+      )
+        ? [
+            'Changing a season’s league clears its umpire requirements, assignments and credits. Competition memberships, rosters, games and results are preserved.'
+          ]
+        : [
+            'Only management permissions change. Competition memberships, rosters, games and results are preserved.'
+          ]),
       ...periods
     ]
   }
@@ -313,6 +322,25 @@ export async function applyParents(
         effect =>
           effect.parent.kind === 'league' && effect.operation === operation
       )) {
+        if (effect.child.kind === 'season') {
+          // Levels and certifications belong to the old league. Drop those
+          // links before its administrators lose authority over this season.
+          await trx
+            .deleteFrom('umpire_assignments')
+            .where(
+              'game_id',
+              'in',
+              trx
+                .selectFrom('games')
+                .select('id')
+                .where('season_id', '=', effect.child.id)
+            )
+            .execute()
+          await trx
+            .deleteFrom('season_umpire_requirements')
+            .where('season_id', '=', effect.child.id)
+            .execute()
+        }
         const table = effect.child.kind === 'team' ? 'teams' : 'seasons'
         await trx
           .updateTable(table)

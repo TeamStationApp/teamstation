@@ -3862,7 +3862,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Private notes, arrival timing, ingest details, scoring ownership and ' +
             'scoreboard access are null in this public projection. Playback ' +
             'and detailed statistics still require team membership. ' +
-            'False for members.',
+            'False for members. `umpires` is null when league umpire management is off or no positions are required; otherwise it contains plateNeeded, plate (a { userId, name } person or null), fieldCount and field (one person or null per required field position). Names are abbreviated.',
           security: [{}, { bearer: [] }],
           parameters: [gameIdParam],
           responses: {

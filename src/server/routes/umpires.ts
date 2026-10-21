@@ -10,6 +10,7 @@ import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import * as admin from '../umpires/admin'
+import { deleteSlot, leaderboard, saveSlot } from '../umpires/assignments'
 import {
   parseUmpireFilters,
   schedule,
@@ -207,6 +208,37 @@ export function umpireRoutes(
           parseUmpireFilters(req.query)
         )
       )
+    })
+  )
+
+  for (const method of ['post', 'delete'] as const)
+    router[method](
+      '/games/:gameId/umpire-slots',
+      requireActor,
+      withAsync(async (req, res) => {
+        const actor = req.actor
+        if (actor == null) throw unauthorized()
+        await db.transaction().execute(async trx => {
+          await lockKeys(trx, ['creation:parent-graph', 'users.closeInto'])
+          if (method === 'post')
+            await saveSlot(trx, actor, String(req.params.gameId), req.body)
+          else
+            await deleteSlot(
+              trx,
+              actor,
+              String(req.params.gameId),
+              req.body?.slot
+            )
+        })
+        res.json({ ok: true })
+      })
+    )
+  router.get(
+    '/leagues/:leagueId/umpire-leaderboard',
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      res.json(await leaderboard(db, req.actor, String(req.params.leagueId)))
     })
   )
   return router
