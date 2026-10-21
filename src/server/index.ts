@@ -530,7 +530,7 @@ function runWorker(): void {
   )
   app.use('/api/v1', nodeAdministrationRoutes(db, mediaContext.space))
   app.use('/api/v1', gameApprovalRoutes(db))
-  app.use('/api/v1', umpireRoutes(db))
+  app.use('/api/v1', umpireRoutes(db, mediaContext))
   app.use('/api/v1', notificationRoutes(db))
   app.use('/api/v1', seasonRoutes(db, mediaContext))
   app.use(
