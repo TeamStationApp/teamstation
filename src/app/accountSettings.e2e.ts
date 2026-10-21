@@ -143,7 +143,12 @@ describe('account settings in the finished desktop application', function () {
     await page.waitForSelector('[aria-label="Account, Mookie Betts"]')
     await press('Account, Mookie Betts')
     await waitText('Email addresses')
-    const player = (await (await h.request('GET', '/players/101')).json()) as {
+    const playerResponse = await h.request(
+      'GET',
+      `/players/${userIdOfGumbo(101)}`
+    )
+    expect(playerResponse.status).equals(200)
+    const player = (await playerResponse.json()) as {
       name: string
       avatarUrl: string
     }
