@@ -8,15 +8,16 @@ import {
   View
 } from 'react-native'
 
-import type {
-  BoxScore as BoxScoreData,
-  GameDetail,
-  Highlight,
-  LineScoreSide,
-  Playback,
-  TeamStationClient,
-  TeamSummary,
-  VideoSummary
+import {
+  asGameDetail,
+  type BoxScore as BoxScoreData,
+  type GameDetail,
+  type Highlight,
+  type LineScoreSide,
+  type Playback,
+  type TeamStationClient,
+  type TeamSummary,
+  type VideoSummary
 } from '../../common/api'
 import { eventName } from '../../common/eventInfo'
 import { eventHeroLines, viewerTimezone } from '../../common/eventTime'
@@ -98,6 +99,7 @@ import {
 import type { GameRecording } from '../stream/gameRecording'
 import { StreamFooter } from '../stream/StreamFooter'
 import { useGameRecording } from '../stream/useGameRecording'
+import { gameKey } from '../sync/documentKeys'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { BoxScore } from './BoxScore'
@@ -398,12 +400,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const shown = useRef(false)
   const videoHints = useRef({ onTitle, initialVideoId })
   videoHints.current = { onTitle, initialVideoId }
-  const refreshGame = useCallback(async (): Promise<void> => {
-    if (live.current && currentGameId.current === gameId)
-      setLocalTimezone(viewerTimezone())
-    const request = ++gameRequest.current
-    try {
-      const found = await client.game(gameId)
+  /** Shows `found`, unless a newer read of this game has started since. */
+  const showGame = useCallback(
+    (found: GameDetail, request: number): void => {
       if (
         !live.current ||
         currentGameId.current !== gameId ||
@@ -423,6 +422,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
               item => item.id === videoHints.current.initialVideoId
             ) ?? openingVideo(found.videos))
       )
+    },
+    [gameId]
+  )
+  const refreshGame = useCallback(async (): Promise<void> => {
+    if (live.current && currentGameId.current === gameId)
+      setLocalTimezone(viewerTimezone())
+    const request = ++gameRequest.current
+    try {
+      showGame(await client.game(gameId), request)
     } catch (error) {
       if (
         live.current &&
@@ -431,7 +439,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       )
         throw error
     }
-  }, [client, gameId])
+  }, [client, gameId, showGame])
+  /** The game as the phone last stored it, until the read returns. */
+  const paintGame = useCallback(async (): Promise<void> => {
+    const request = ++gameRequest.current
+    const stored = await client.cached(gameKey(gameId), asGameDetail)
+    if (stored != null) showGame(stored, request)
+  }, [client, gameId, showGame])
   /**
    * `refreshGame` once the event's scope allows: after its acknowledgement
    * when there is a socket, at once for a visitor with none. Failing before
@@ -446,7 +460,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         setError(lstrings.common_not_found)
     }
   }, [refreshGame, gameId])
-  const readGame = useScreenScope(loadGame, client)
+  const readGame = useScreenScope(loadGame, client, paintGame)
   // A new game is read again from scratch; a socket arriving (a sign-in) is
   // not a new game.
   const readLatest = useRef(readGame)

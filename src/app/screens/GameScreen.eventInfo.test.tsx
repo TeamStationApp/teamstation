@@ -742,6 +742,25 @@ describe('the event page’s screen scope', () => {
     expect(reads()).equals(3)
   })
 
+  it('paints the stored game before subscribed (Cache first paint)', async () => {
+    timers = heldTimers(ACK_GIVE_UP_MS)
+    const socket = new FakeScopeSocket()
+    const { client, game, reads } = counted()
+    const keys: string[] = []
+    client.cached = (async (key: string) => {
+      keys.push(key)
+      return { ...game }
+    }) as TeamStationClient['cached']
+    await renderScoped({ client, gameId: 'g1' }, socket)
+    expect(reads(), 'client.game before subscribed').equals(0)
+    expect(keys).deep.equals(['game.g1'])
+    expect(selected()).equals('Info')
+    await act(async () => {
+      socket.ack('2')
+    })
+    expect(reads()).equals(1)
+  })
+
   it('says the game is not found when its first read fails, and keeps it shown when a later one does', async () => {
     const socket = new FakeScopeSocket()
     const { client, game } = fixture()

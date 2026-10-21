@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 
+import { asStoredUser, type StoredUser } from './storedUser'
+
 /**
  * Where a session token is kept between launches.
  *
@@ -15,6 +17,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
  * still private to the app on both platforms.
  */
 const KEY = 'ts.session.token'
+/** Who the last good `whoAmI` said that token is: `{ id, displayName, isAdmin }`. */
+const USER_KEY = 'ts.session.user'
 
 export async function loadToken(): Promise<string | undefined> {
   try {
@@ -32,5 +36,25 @@ export async function saveToken(token: string | undefined): Promise<void> {
     else await AsyncStorage.setItem(KEY, token)
   } catch {
     // As above: the session stays good for this launch either way.
+  }
+}
+
+/** Who was signed in at the last good answer, for a launch with no signal. */
+export async function loadUser(): Promise<StoredUser | undefined> {
+  try {
+    const kept = await AsyncStorage.getItem(USER_KEY)
+    return kept == null ? undefined : asStoredUser(JSON.parse(kept))
+  } catch {
+    // Unreadable is the same as unknown: the server is asked as before.
+    return undefined
+  }
+}
+
+export async function saveUser(user: StoredUser | undefined): Promise<void> {
+  try {
+    if (user == null) await AsyncStorage.removeItem(USER_KEY)
+    else await AsyncStorage.setItem(USER_KEY, JSON.stringify(user))
+  } catch {
+    // As with the token: this launch is unaffected.
   }
 }

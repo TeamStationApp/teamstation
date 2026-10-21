@@ -1460,7 +1460,12 @@ describe('api client', function () {
     expect(await client.seasonGames('s/1')).deep.equals([])
     expect(await client.seasonTeams('s/1')).deep.equals([])
     expect(await client.liveNow()).deep.equals([])
-    expect(await client.whoAmI()).equals(null)
+    // An answer that is not a person is not "nobody": it throws.
+    let unread: unknown
+    await client.whoAmI().catch((error: unknown) => {
+      unread = error
+    })
+    expect(unread).instanceOf(Error)
     expect(
       await new TeamStationClient({
         baseUrl: 'http://x/api/v1',
@@ -1750,5 +1755,45 @@ describe('a session the server refuses', function () {
     }
     expect(stub.calls.at(-1)?.url).equals('/api/v1/auth/email-code')
     expect(refused, 'a sign-in attempt').equals(2)
+  })
+})
+
+describe('who is signed in, with no signal', function () {
+  it('throws when the question cannot leave the device, and is null only for nobody', async function () {
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: async () => {
+        throw new TypeError('Load failed')
+      }
+    })
+    let failure: unknown
+    try {
+      await client.whoAmI()
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).property('code', 'offline')
+    expect(client.offline).equals(true)
+    const nobody = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: stubFetch(401, { error: 'unauthorized', message: 'Sign in' }).fetch
+    })
+    expect(await nobody.whoAmI()).equals(null)
+    // A server restarting or busy has not said who it is.
+    for (const [status, code] of [
+      [502, 'internal'],
+      [503, 'unavailable'],
+      [429, 'rateLimited']
+    ] as const) {
+      const busy = new TeamStationClient({
+        baseUrl: '/api/v1',
+        fetch: stubFetch(status, { code, message: 'Busy' }).fetch
+      })
+      let thrown: unknown
+      await busy.whoAmI().catch((error: unknown) => {
+        thrown = error
+      })
+      expect(thrown, String(status)).property('code', code)
+    }
   })
 })

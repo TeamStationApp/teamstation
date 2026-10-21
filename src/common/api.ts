@@ -1477,6 +1477,12 @@ export interface RevisionRead {
   revision: string
 }
 
+/** How one call to the API is made, beside its method, path and body. */
+export interface RequestOptions {
+  /** Whether a screen's load collects the answer's revision. */
+  collect?: boolean
+}
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
@@ -2665,8 +2671,14 @@ export class TeamStationClient {
   async whoAmI(): Promise<SessionUser | null> {
     try {
       return await this.request('GET', '/auth/me', asSessionUser)
-    } catch {
-      return null
+    } catch (error: unknown) {
+      // Not knowing is not the same answer as nobody: no signal, a server
+      // restarting (5xx), too many requests or an answer that cannot be read
+      // all throw, and a phone keeps the session it has. Only the server's
+      // 401 says the session is over.
+      if (error instanceof HttpError && error.code === 'unauthorized')
+        return null
+      throw error
     }
   }
 
@@ -3635,11 +3647,24 @@ export class TeamStationClient {
     return await this.request('GET', '/me/roles', asMyRoles)
   }
 
-  private async request<T>(
+  /**
+   * A document this client keeps on the device, read without the network:
+   * what the last answer for `key` stored, or nothing. The web keeps none.
+   */
+  async cached<T>(_key: string, _cleaner: Cleaner<T>): Promise<T | undefined> {
+    return undefined
+  }
+
+  /**
+   * Every call to the API. `collect: false` keeps the answer's revision out
+   * of the screen loads now collecting, as a prefetch's is.
+   */
+  protected async request<T>(
     method: string,
     path: string,
     cleaner: Cleaner<T>,
-    body?: unknown
+    body?: unknown,
+    options: RequestOptions = {}
   ): Promise<T> {
     const headers: Record<string, string> = { accept: 'application/json' }
     if (body !== undefined) headers['content-type'] = 'application/json'
@@ -3695,8 +3720,9 @@ export class TeamStationClient {
     const revision = revisionOf(response)
     if (revision != null) {
       this.revisions.set(path, revision)
-      for (const collector of this.collectors)
-        collector.push({ path, revision })
+      if (options.collect !== false)
+        for (const collector of this.collectors)
+          collector.push({ path, revision })
     }
     if (text === '') return cleaner(undefined)
 

@@ -434,6 +434,44 @@ describe('the games feed’s screen scope', function () {
     })
   }
 
+  it('paints the stored schedule before subscribed (Cache first paint)', async function () {
+    timers = heldTimers(ACK_GIVE_UP_MS)
+    const socket = new FakeScopeSocket()
+    const asked: Array<{ when?: string }> = []
+    const keys: string[] = []
+    const stamps = revisionStamps()
+    const client = Object.assign(stamps, {
+      games: async (query: { when?: string }) => {
+        asked.push(query)
+        return [game('gam_final', { startAt: START })]
+      },
+      cached: async (key: string, cleaner: (raw: unknown) => unknown) => {
+        keys.push(key)
+        return cleaner([game('gam_stored', { startAt: START })])
+      }
+    }) as unknown as TeamStationClient
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <ScreenScopeProvider socket={socket} scope={{ scope: 'schedule' }}>
+            <GamesFeedScreen
+              client={client}
+              mode="schedule"
+              onOpenGame={() => undefined}
+            />
+          </ScreenScopeProvider>
+        </ThemeProvider>
+      )
+      await delay(20)
+    })
+    expect(asked).deep.equals([])
+    expect(keys).deep.equals(['games.upcoming'])
+    expect(text()).not.includes('Loading…')
+  })
+
   it('does not let the foreground refresh’s first call read the schedule before subscribed', async function () {
     timers = heldTimers(ACK_GIVE_UP_MS)
     const socket = new FakeScopeSocket()

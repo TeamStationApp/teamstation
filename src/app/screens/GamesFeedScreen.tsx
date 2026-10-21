@@ -1,7 +1,12 @@
+import { asArray } from 'cleaners'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Text, useWindowDimensions, View } from 'react-native'
 
-import type { SeasonGame, TeamStationClient } from '../../common/api'
+import {
+  asSeasonGame,
+  type SeasonGame,
+  type TeamStationClient
+} from '../../common/api'
 import {
   Card,
   GameRow,
@@ -26,6 +31,7 @@ import { useLatestRequest } from '../hooks/useLatestRequest'
 import { useScreenScope } from '../hooks/useScreenScope'
 import { columnsForWidth } from '../layout/grid'
 import { gameCountLabel, videoCountLabel } from '../locales/strings'
+import { gamesKey } from '../sync/documentKeys'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
@@ -143,9 +149,21 @@ export function GamesFeedScreen(
       if (current()) setLoading(false)
     }
   }, [client, mode, when, beginGames])
+  /** The list as the phone last stored it, until the read returns. */
+  const paintGames = useCallback(async (): Promise<void> => {
+    const current = beginGames()
+    const stored = await client.cached(
+      gamesKey(mode === 'schedule' ? when : 'all'),
+      asArray(asSeasonGame)
+    )
+    if (current() && stored != null) {
+      setGames(stored)
+      setLoading(false)
+    }
+  }, [client, mode, when, beginGames])
   // Schedule waits for its scope's acknowledgement before it reads. Videos
   // takes no scope, so it reads at once.
-  useForegroundRefresh(useScreenScope(loadGames, client))
+  useForegroundRefresh(useScreenScope(loadGames, client, paintGames))
 
   // Videos offers no filter. Nothing that has not been played can have a
   // recording, so `Upcoming` was always empty and `Past` was always the whole

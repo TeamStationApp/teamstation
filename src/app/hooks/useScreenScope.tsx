@@ -181,12 +181,20 @@ function collectingOf(client: ScopeClient | undefined): RevisionCollecting {
  * `changed` newer than what the load read runs it again. With no socket, no
  * scope, or the client offline, a call runs the load at once.
  *
+ * `paint`, when given, runs first each time the screen enters its scope,
+ * before any wait: it shows what the phone has stored (`client.cached`), so
+ * the screen is not blank while the acknowledgement and the read are on
+ * their way. On the web nothing is stored, and the screen keeps its loading
+ * state until the read returns. The paint uses the same latest-request guard
+ * as the load, so a load that started after it wins.
+ *
  * A new `load` (its inputs changed) makes a new function, so a hook that
  * depends on it calls again.
  */
 export function useScreenScope(
   load: () => Promise<void>,
   client?: ScopeClient,
+  paint?: () => Promise<void>,
   options: {
     /** The load shows no games: a notice of one game alone reads nothing. */
     passGameNotices?: boolean
@@ -196,6 +204,8 @@ export function useScreenScope(
   const { socket, scope } = useContext(ScreenScopeContext)
   const latest = useRef(load)
   latest.current = load
+  const latestPaint = useRef(paint)
+  latestPaint.current = paint
   const gate = useMemo(
     () =>
       new ScreenScopeGate({
@@ -234,6 +244,7 @@ export function useScreenScope(
       return
     }
     entered.current = true
+    latestPaint.current?.().catch(() => undefined)
     gate.enter(scope)
     // `load` is read through `latest`. It is a dependency so that a new one
     // makes a new function, and the hooks that call it ask again.

@@ -215,6 +215,75 @@ describe('S3: Home waits for the home scope before it reads', function () {
     expect(document.body.textContent).include('1–0')
   })
 
+  it('paints what the phone stored before the ack, and the read replaces it (Cache first paint)', async function () {
+    timers = heldTimers(ACK_GIVE_UP_MS)
+    const log: string[] = []
+    const socket = new FakeScopeSocket(log)
+    const { client } = homeClient(log)
+    const stored: Record<string, unknown> = {
+      'home.teams': [{ ...hawks, name: 'Stored Hawks' }],
+      'home.seasons': [],
+      'home.recent': []
+    }
+    let loaded = 0
+    Object.assign(client, {
+      cached: async (key: string, cleaner: (raw: unknown) => unknown) => {
+        log.push(`cached ${key}`)
+        return stored[key] == null ? undefined : cleaner(stored[key])
+      }
+    })
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <ScreenScopeProvider socket={socket} scope={{ scope: 'home' }}>
+            <HomeScreen
+              client={client}
+              onOpenTeam={() => undefined}
+              onOpenSeason={() => undefined}
+              onOpenGame={() => undefined}
+              onLoaded={() => {
+                loaded++
+              }}
+            />
+          </ScreenScopeProvider>
+        </ThemeProvider>
+      )
+    })
+    await settle()
+    expect(teamsCalls(log), 'client.teams before subscribed').equals(0)
+    expect(log).includes('cached home.teams')
+    expect(document.body.textContent).includes('Stored Hawks')
+    expect(document.body.textContent).not.includes('Loading…')
+    expect(loaded).equals(0)
+
+    await act(async () => {
+      socket.ack('3')
+    })
+    await settle()
+    expect(teamsCalls(log)).equals(1)
+    expect(document.body.textContent).includes('Alta Hawks')
+    expect(document.body.textContent).not.includes('Stored Hawks')
+    expect(loaded, 'the phone reads ahead after the load').equals(1)
+  })
+
+  it('stays loading on the web, which stores nothing, until the read', async function () {
+    timers = heldTimers(ACK_GIVE_UP_MS)
+    const log: string[] = []
+    const socket = new FakeScopeSocket(log)
+    const { client } = homeClient(log)
+    Object.assign(client, { cached: async () => undefined })
+    await render(client, socket)
+    expect(document.body.textContent).includes('Loading…')
+    await act(async () => {
+      socket.ack('1')
+    })
+    await settle()
+    expect(document.body.textContent).includes('Alta Hawks')
+  })
+
   it('reads and paints at once while offline, without waiting for an ack', async function () {
     timers = heldTimers(ACK_GIVE_UP_MS)
     const log: string[] = []

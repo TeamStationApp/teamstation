@@ -1,17 +1,22 @@
+import { asArray } from 'cleaners'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
-import type {
-  LiveNow,
-  SeasonGame,
-  SeasonSummary,
-  TeamStationClient,
-  TeamSummary,
-  UserMatch
+import {
+  asSeasonGame,
+  asSeasonSummary,
+  asTeamSummary,
+  asUserMatch,
+  type LiveNow,
+  type SeasonGame,
+  type SeasonSummary,
+  type TeamStationClient,
+  type TeamSummary,
+  type UserMatch
 } from '../../common/api'
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
 import { localityLabel } from '../../common/locality'
-import type { PublicGroup } from '../../common/publicGroups'
+import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { creationIcons } from '../assets'
 import {
@@ -30,6 +35,14 @@ import { CreationCard } from '../components/CreationCard'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { useScreenScope } from '../hooks/useScreenScope'
+import {
+  HOME_FOLLOWS,
+  HOME_GROUPS,
+  HOME_GUARDED,
+  HOME_RECENT,
+  HOME_SEASONS,
+  HOME_TEAMS
+} from '../sync/documentKeys'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 import type { GameListOpenOptions } from './gameListOptions'
@@ -50,6 +63,8 @@ export interface HomeScreenProps {
    * career rather than one team's part of it.
    */
   onOpenPlayer?: (userId: string, title: string) => void
+  /** Home's lists loaded: the phone reads ahead what it needs offline. */
+  onLoaded?: () => void
 }
 
 /**
@@ -104,9 +119,15 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         setRecentError(caught instanceof Error ? caught.message : 'Cannot load')
     }
   }, [client, beginRecent])
+  /** The recent game as the phone last stored it, until the read returns. */
+  const paintRecent = useCallback(async (): Promise<void> => {
+    const current = beginRecent()
+    const stored = await client.cached(HOME_RECENT, asArray(asSeasonGame))
+    if (current() && stored != null) setRecent(stored[0])
+  }, [client, beginRecent])
   // Each of Home's three loads waits for the home scope's acknowledgement,
   // and reads again when that scope moves past what it read.
-  useForegroundRefresh(useScreenScope(refreshRecent, client))
+  useForegroundRefresh(useScreenScope(refreshRecent, client, paintRecent))
 
   /**
    * The recent game's own video, so the card moves rather than sitting there.
@@ -220,6 +241,8 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   // is no reason to read everything again.
   const opensPlayers = props.onOpenPlayer != null
   const opensGroups = props.onOpenGroup != null
+  const loaded = useRef(props.onLoaded)
+  loaded.current = props.onLoaded
   const beginLists = useLatestRequest()
   const loadLists = useCallback(async (): Promise<void> => {
     const current = beginLists()
@@ -243,6 +266,7 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       setGroups(ownGroups)
       setFollowed(follows)
       setError(undefined)
+      loaded.current?.()
     } catch (caught: unknown) {
       if (current())
         setError(caught instanceof Error ? caught.message : 'Cannot load')
@@ -250,11 +274,39 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       if (current()) setLoading(false)
     }
   }, [client, opensGroups, opensPlayers, beginLists])
+  /**
+   * Home's lists as the phone last stored them, painted before the scope is
+   * acknowledged. The web stores none, and stays on its loading state.
+   */
+  const paintLists = useCallback(async (): Promise<void> => {
+    const current = beginLists()
+    const [storedTeams, storedSeasons, ownGroups, follows, guarded] =
+      await Promise.all([
+        client.cached(HOME_TEAMS, asArray(asTeamSummary)),
+        client.cached(HOME_SEASONS, asArray(asSeasonSummary)),
+        opensGroups
+          ? client.cached(HOME_GROUPS, asArray(asPublicGroup))
+          : undefined,
+        opensGroups
+          ? client.cached(HOME_FOLLOWS, asArray(asPublicGroup))
+          : undefined,
+        opensPlayers
+          ? client.cached(HOME_GUARDED, asArray(asUserMatch))
+          : undefined
+      ])
+    if (!current() || storedTeams == null || storedSeasons == null) return
+    setTeams(storedTeams)
+    setSeasons(storedSeasons)
+    setGroups(ownGroups ?? [])
+    setFollowed(follows ?? [])
+    setPlayers(guarded ?? [])
+    setLoading(false)
+  }, [client, opensGroups, opensPlayers, beginLists])
   // A play names its game alone: the lists show no game, so they let it
   // pass, and the recent game and what is live take it. A write that moves
   // what the lists count (a game going final, a video, a new game) names
   // the game's teams and season too, and those the lists read.
-  const refreshLists = useScreenScope(loadLists, client, {
+  const refreshLists = useScreenScope(loadLists, client, paintLists, {
     passGameNotices: true
   })
   useEffect(() => {

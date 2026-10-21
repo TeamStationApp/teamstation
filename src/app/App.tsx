@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, Image, Text, View } from 'react-native'
+import { ActivityIndicator, AppState, Image, Text, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import {
@@ -69,6 +69,11 @@ import {
   useBrowserBack
 } from './navigation/useAddressBar'
 import { passwordKdf } from './platform/passwordKdf'
+import {
+  sessionUserOf,
+  type StoredUser,
+  storedUserOf
+} from './platform/storedUser'
 import { GameReplayScreen } from './replay/GameReplayScreen'
 import { ScoreboardOverrideScreen } from './scoreboard/ScoreboardOverrideScreen'
 import { ScoreGameScreen } from './scoreboard/ScoreGameScreen'
@@ -110,6 +115,7 @@ import { TeamPage } from './screens/TeamPage'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
 import { useResumePendingUploads } from './stream/useResumePendingUploads'
+import { CachingClient, type OpenDocumentCache } from './sync/cachingClient'
 import {
   cacheStyles,
   type Theme,
@@ -146,6 +152,20 @@ export interface AppProps {
    * out with nothing anywhere to say why.
    */
   onToken?: (token: string | undefined) => void
+  /**
+   * Who the token was kept for, as the last good `whoAmI` said: on a phone
+   * with no signal at launch, the session opens on this person and their
+   * cached documents.
+   */
+  initialUser?: StoredUser
+  /** Called with who is signed in, or none, so a phone keeps it. */
+  onUser?: (user: StoredUser | undefined) => void
+  /**
+   * Opens a person's document cache. Given (on the phone), the client keeps
+   * the documents it can show offline; the web keeps none and is not given
+   * one.
+   */
+  documentCache?: OpenDocumentCache
 }
 
 type ScoringSettingsRefresh = () => void
@@ -289,16 +309,34 @@ function Shell(props: AppProps): React.ReactElement {
     setBackOverride(() => handler)
   }, [])
 
-  const { initialToken, onToken } = props
+  const { initialToken, onToken, onUser, documentCache } = props
+  // One client for as long as the app runs, kept across sign-out and the next
+  // sign-in. On the phone it keeps documents, in a file opened only once a
+  // user id is known.
   const client = useMemo(
     () =>
-      new TeamStationClient({
-        baseUrl: apiBaseUrl,
-        token: initialToken,
-        passwordKdf
-      }),
-    [apiBaseUrl, initialToken]
+      documentCache == null
+        ? new TeamStationClient({
+            baseUrl: apiBaseUrl,
+            token: initialToken,
+            passwordKdf
+          })
+        : new CachingClient({
+            baseUrl: apiBaseUrl,
+            token: initialToken,
+            passwordKdf,
+            openCache: documentCache
+          }),
+    [apiBaseUrl, initialToken, documentCache]
   )
+  const caching = client instanceof CachingClient ? client : undefined
+  // Read by the session effect, which runs once per client: a new function
+  // from the platform's shell is not a reason to ask who is signed in again.
+  const initialUser = useRef(props.initialUser)
+  /** The phone opened on its stored user, and the server has not yet agreed. */
+  const sessionUnconfirmed = useRef(false)
+  const userSaved = useRef(onUser)
+  userSaved.current = onUser
   const scoringSource = useMemo(() => new ServerScoringSource(client), [client])
   const [roleRevision, setRoleRevision] = useState(0)
   const refreshRoles = useCallback((): void => {
@@ -319,8 +357,16 @@ function Shell(props: AppProps): React.ReactElement {
       refreshRoles()
       const token = next == null ? undefined : client.token
       onToken?.(token == null || token === '' ? undefined : token)
+      // Sign-out deletes that person's documents; a sign-in opens theirs.
+      if (next == null) {
+        userSaved.current?.(undefined)
+        caching?.signedOut().catch(() => undefined)
+      } else {
+        userSaved.current?.(storedUserOf(next.user))
+        caching?.openFor(next.user.id)
+      }
     },
-    [client, onToken, refreshRoles]
+    [client, caching, onToken, refreshRoles]
   )
   const [session, setSession] = useState<Session | undefined>(undefined)
   const [hasPending, setHasPending] = useState(false)
@@ -515,22 +561,125 @@ function Shell(props: AppProps): React.ReactElement {
     },
     [gameSocket]
   )
+  /**
+   * The session, refused by the server (a REST 401, the scoreboard socket's
+   * 4401, `whoAmI` saying nobody): no token and nobody signed in, keeping
+   * that person's file on the phone. What they queued sends once they sign
+   * in again (`openFor`); another account opens a file of its own. Only
+   * `rememberSession(undefined)` deletes a file: signing out, deleting the
+   * account, switching accounts.
+   */
+  const sessionRefused = useCallback((): void => {
+    sessionUnconfirmed.current = false
+    // Closed, not deleted: nothing in it is sent until its person is back.
+    caching?.sessionRefused().catch(() => undefined)
+    client.token = undefined
+    onToken?.(undefined)
+    userSaved.current?.(undefined)
+    setSession(undefined)
+    refreshRoles()
+  }, [client, caching, onToken, refreshRoles])
+  const sessionRefusedOnPhone = useCallback((): void => {
+    // Reads refused together end it once.
+    if (client.token == null) return
+    sessionRefused()
+    setStacks({ home: [], videos: [], schedule: [], search: [] })
+    setTab('home')
+  }, [client, sessionRefused])
   // A REST call refused for want of a session stops the screen's scope until
-  // the token changes, and a new token (a sign-in) starts it again.
+  // the token changes, and a new token (a sign-in) starts it again. On the
+  // phone it also ends the session.
   useEffect(() => {
     if (gameSocket == null) return
     const refused = (): void => {
       gameSocket.authFailed()
+      if (caching != null) sessionRefusedOnPhone()
     }
     client.onSessionRefused = refused
     return () => {
       if (client.onSessionRefused === refused)
         client.onSessionRefused = undefined
     }
-  }, [client, gameSocket])
+  }, [client, caching, gameSocket, sessionRefusedOnPhone])
+  /**
+   * A session the phone opened on its stored user, because the server could
+   * not say who it was (no signal, a restart), is asked about again once the
+   * server answers: the first request that leaves the device, the app coming
+   * to the front, and every half minute until it is settled.
+   */
+  useEffect(() => {
+    if (caching == null || signedInAs == null) return
+    let live = true
+    let asking = false
+    const confirm = (): void => {
+      if (!sessionUnconfirmed.current || asking || caching.offline) return
+      asking = true
+      client
+        .whoAmI()
+        .then(user => {
+          if (!live) return
+          sessionUnconfirmed.current = false
+          if (user == null) {
+            sessionRefusedOnPhone()
+            return
+          }
+          userSaved.current?.(storedUserOf(user))
+          setSession(current =>
+            current == null ? current : { ...current, user }
+          )
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          asking = false
+        })
+    }
+    const stop = client.subscribeOffline(offline => {
+      if (!offline) confirm()
+    })
+    const timer = setInterval(confirm, SESSION_CONFIRM_MS)
+    const foreground = AppState.addEventListener('change', state => {
+      if (state === 'active') confirm()
+    })
+    return () => {
+      live = false
+      stop()
+      clearInterval(timer)
+      foreground.remove()
+    }
+  }, [caching, client, signedInAs, sessionRefusedOnPhone])
   useEffect(() => {
     gameSocket?.setToken(client.token)
   }, [client, gameSocket, session])
+  /**
+   * What the phone needs offline, read after the first Home load of a
+   * sign-in, each time the app comes back to the front, and when the server
+   * answers again after no signal. Home reading again on a notice (every
+   * play of a game somebody is scoring) does not read it all ahead again. It
+   * never holds a screen up.
+   */
+  const prefetchDocuments = useCallback((): void => {
+    if (signedInAs != null) caching?.prefetch().catch(() => undefined)
+  }, [caching, signedInAs])
+  const prefetchedFor = useRef<string | undefined>(undefined)
+  const prefetchAfterHome = useCallback((): void => {
+    if (signedInAs == null || prefetchedFor.current === signedInAs) return
+    prefetchedFor.current = signedInAs
+    prefetchDocuments()
+  }, [signedInAs, prefetchDocuments])
+  useEffect(() => {
+    if (caching == null || signedInAs == null) return
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active' && !caching.offline) prefetchDocuments()
+    })
+    // A request that leaves the device again, after none could.
+    const reconnected = caching.subscribeOffline(offline => {
+      if (!offline) prefetchDocuments()
+    })
+    return () => {
+      subscription.remove()
+      reconnected()
+    }
+  }, [caching, signedInAs, prefetchDocuments])
   useEffect(() => {
     setRoleSnapshot(undefined)
     if (signedInAs == null) return
@@ -573,26 +722,44 @@ function Shell(props: AppProps): React.ReactElement {
       .then(user => {
         if (!live) return
         if (user != null) {
+          sessionUnconfirmed.current = false
+          caching?.openFor(user.id)
+          userSaved.current?.(storedUserOf(user))
           setSession({ token: '', expiresAt: '', user })
           return
         }
         // A token that was kept and is no longer good. Sessions last thirty
         // days and nothing refreshes them, so this is the ordinary end of one
         // rather than a fault: throw it away, or every launch from here on
-        // sends a dead token and is answered 401 by every screen.
+        // sends a dead token and is answered 401 by every screen. Who it was
+        // for goes with it, but not their file: what they queued offline
+        // sends once they sign in again (`openFor`). Only signing out
+        // deletes it.
         if (client.token != null) {
           client.token = undefined
           onToken?.(undefined)
+          userSaved.current?.(undefined)
         }
       })
-      .catch(() => undefined)
+      .catch(() => {
+        // The server did not say: no signal, a restart, too many requests. A
+        // kept token is as good as it was, so the phone opens on who it was
+        // kept for, and their documents and queue, and asks again once the
+        // server answers. With no token, as on the web, nobody is signed in.
+        if (!live) return
+        const kept = initialUser.current
+        if (client.token == null || kept == null) return
+        caching?.openFor(kept.id)
+        sessionUnconfirmed.current = caching != null
+        setSession({ token: '', expiresAt: '', user: sessionUserOf(kept) })
+      })
       .finally(() => {
         if (live) setAskedAboutSession(true)
       })
     return () => {
       live = false
     }
-  }, [client, needsSession, onToken])
+  }, [client, caching, needsSession, onToken])
 
   /**
    * A link to a team or a season is still being turned into a screen.
@@ -1431,6 +1598,7 @@ function Shell(props: AppProps): React.ReactElement {
           }}
           onOpenGroup={openGroup}
           onOpenPlayer={openPlayer}
+          onLoaded={prefetchAfterHome}
         />
       ) : tab === 'search' ? (
         <DiscoverScreen
@@ -1613,10 +1781,13 @@ function Shell(props: AppProps): React.ReactElement {
             client
               .whoAmI()
               .then(user => {
-                const updated =
-                  user == null || session == null
-                    ? undefined
-                    : { ...session, user }
+                if (user == null || session == null) {
+                  // The server no longer takes the session: not a sign-out.
+                  sessionRefused()
+                  pop()
+                  return
+                }
+                const updated = { ...session, user }
                 setSession(updated)
                 rememberSession(updated)
                 pop()
@@ -2010,7 +2181,8 @@ function Shell(props: AppProps): React.ReactElement {
         gameId={top.gameId}
         token={client.token}
         onSignIn={next => {
-          rememberSession(undefined)
+          // The board's socket refused the session (4401): not a sign-out.
+          sessionRefused()
           const signIn: Route = { name: 'signIn', next }
           goToRoute(signIn)
           showRoute(signIn)
@@ -2272,6 +2444,9 @@ function Shell(props: AppProps): React.ReactElement {
     </GestureHandlerRootView>
   )
 }
+
+/** How often a session opened on the stored user is asked about again. */
+export const SESSION_CONFIRM_MS = 30_000
 
 /**
  * The scope the visible route holds on the socket: Home and Schedule as tabs,
