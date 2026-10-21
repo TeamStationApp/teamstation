@@ -51,6 +51,7 @@ import { homeRunKind, isFair } from './park'
 import { pitchZone } from './pitchLocation'
 import {
   choiceOpen,
+  closesFirst,
   completesHitOffer,
   currentSetupError,
   forcedFrom,
@@ -2105,16 +2106,6 @@ const HANDLERS: {
   gameFlow
 }
 
-/** Actions a decided play closes itself for, rather than refusing. */
-const CLOSES_FIRST = new Set<ScoringAction['type']>([
-  'pitch',
-  'ballInPlay',
-  'result',
-  'baseRunning',
-  'batteryEvent',
-  'lineup'
-])
-
 /**
  * Applies one action to the game. `state` is copied first and left as it
  * was, unless `inPlace` is set: then it is changed where it is, which saves
@@ -2165,11 +2156,7 @@ export function applyAction(
   const mound = copy.liveData.linescore.defense.P
   errorlessOuts(copy)
   try {
-    if (
-      (CLOSES_FIRST.has(action.type) ||
-        (action.type === 'gameFlow' && action.kind !== 'closePlay')) &&
-      nextDecision(ctx.state) === 'close'
-    )
+    if (closesFirst(action) && nextDecision(ctx.state) === 'close')
       closePlay(ctx)
     if (
       ctx.state.awaitingBatter != null &&

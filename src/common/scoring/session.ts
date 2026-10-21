@@ -20,7 +20,7 @@ import {
   segmentAfter
 } from './gumbo'
 import { reconcileShownLineup } from './lineupHistory'
-import { awaitingResult } from './rules'
+import { awaitingResult, nextDecision } from './rules'
 import {
   copyGame,
   type GamePlay,
@@ -49,6 +49,26 @@ import {
  * brings its session into line with `sync`.
  */
 export { type Applied, applyAction }
+
+/**
+ * The game as the next action will find it. A decided play stays open for
+ * correction until the next pitch or play is reported, which closes it, so
+ * what comes next is about the next at-bat: its batter, its count, its
+ * runners. `closed` describes the play that closed.
+ */
+export function upcoming(session: GameState): {
+  state: GameState
+  closed?: string
+} {
+  if (nextDecision(session) !== 'close') return { state: session }
+  const applied = applyAction(session, { type: 'gameFlow', kind: 'closePlay' })
+  if (applied.problems.length > 0) return { state: session }
+  const play = session.liveData.plays.currentPlay
+  return {
+    state: applied.state,
+    closed: play == null ? 'the last play' : play.result.description
+  }
+}
 
 export interface StoredGame {
   plays: GumboPlay[]

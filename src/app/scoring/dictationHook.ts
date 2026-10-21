@@ -3,8 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { asDictationReply } from '../../common/api'
 import { keyterms, promptContext } from '../../common/scoring/actions'
 import { rosterPrompt } from '../../common/scoring/rosterCommands'
-import { nextDecision } from '../../common/scoring/rules'
-import { applyAction } from '../../common/scoring/session'
+import { upcoming } from '../../common/scoring/session'
 import { lstrings, sprintf } from '../locales/strings'
 import { openDictationSocket } from './dictationSocket'
 import type {
@@ -16,6 +15,9 @@ import type {
 } from './dictationTypes'
 import { openMicrophone as browserMicrophone } from './microphone'
 import type { ScoringSessionState, Side } from './scoringTypes'
+
+/** The game as the next sentence will find it. */
+export { upcoming }
 
 /**
  * Dictation on the scoring and roster screens: the socket, the microphone,
@@ -36,26 +38,6 @@ function coachSide(
 ): Side | undefined {
   const side = target?.side
   return side === 'away' || side === 'home' ? side : undefined
-}
-
-/**
- * The game as the next sentence will find it. A decided play stays open for
- * correction until the next pitch or play is reported, which closes it, so a
- * sentence spoken now is about the next at-bat: its batter, its count, its
- * runners.
- */
-export function upcoming(session: ScoringSessionState): {
-  state: ScoringSessionState
-  closed?: string
-} {
-  if (nextDecision(session) !== 'close') return { state: session }
-  const applied = applyAction(session, { type: 'gameFlow', kind: 'closePlay' })
-  if (applied.problems.length > 0) return { state: session }
-  const play = session.liveData.plays.currentPlay
-  return {
-    state: applied.state,
-    closed: play == null ? 'the last play' : play.result.description
-  }
 }
 
 /**

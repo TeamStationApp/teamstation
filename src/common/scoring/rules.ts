@@ -1,4 +1,4 @@
-import type { Trajectory } from './actions'
+import type { ScoringAction, Trajectory } from './actions'
 import {
   addPlayer,
   applyOverride,
@@ -466,6 +466,26 @@ export type Decision =
   | 'homeDecision'
   | 'close'
   | 'final'
+
+/** Actions a decided play closes itself for, rather than refusing. */
+const CLOSES_FIRST = new Set<ScoringAction['type']>([
+  'pitch',
+  'ballInPlay',
+  'result',
+  'baseRunning',
+  'batteryEvent',
+  'lineup'
+])
+
+/**
+ * Whether applying `action` closes a decided play first: every game-flow
+ * step but closing it, and the actions of the next at-bat.
+ */
+export function closesFirst(action: ScoringAction): boolean {
+  return action.type === 'gameFlow'
+    ? action.kind !== 'closePlay'
+    : CLOSES_FIRST.has(action.type)
+}
 
 /**
  * What the game is waiting to be told next. `batterOut`: who put the batter
