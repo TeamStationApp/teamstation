@@ -1721,3 +1721,34 @@ describe('api client', function () {
     expect(plain.staffNames).equals(undefined)
   })
 })
+
+describe('a session the server refuses', function () {
+  it('is told on a 401, and not for a sign-in attempt refused', async function () {
+    const stub = stubFetch(401, { error: 'unauthorized', message: 'Sign in' })
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: stub.fetch
+    })
+    let refused = 0
+    client.onSessionRefused = () => {
+      refused++
+    }
+    expect(await client.whoAmI()).equals(null)
+    expect(refused, 'whoAmI').equals(1)
+    let failure: unknown
+    try {
+      await client.teams()
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).property('code', 'unauthorized')
+    expect(refused, 'an authenticated read').equals(2)
+    try {
+      await client.requestEmailCode('fan@example.test')
+    } catch {
+      // The code is refused; the session is not the question.
+    }
+    expect(stub.calls.at(-1)?.url).equals('/api/v1/auth/email-code')
+    expect(refused, 'a sign-in attempt').equals(2)
+  })
+})

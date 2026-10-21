@@ -52,6 +52,7 @@ import {
 import { useScreenBottom } from '../components/Screen'
 import { usePinnedTabs } from '../components/usePinnedTabs'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
+import { useScreenScope } from '../hooks/useScreenScope'
 import { highlightColumnsFor } from '../layout/grid'
 import { watchLayout, type WatchMode } from '../layout/watch'
 import { lstrings } from '../locales/strings'
@@ -393,6 +394,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     }
   }, [])
   const gameRequest = useRef(0)
+  /** Whether this game has been shown since it was opened. */
+  const shown = useRef(false)
   const videoHints = useRef({ onTitle, initialVideoId })
   videoHints.current = { onTitle, initialVideoId }
   const refreshGame = useCallback(async (): Promise<void> => {
@@ -408,6 +411,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       )
         return
       setGame(found)
+      shown.current = true
       setError(undefined)
       videoHints.current.onTitle?.(
         eventName(found) ?? `${found.awayTeamName} @ ${found.homeTeamName}`
@@ -428,7 +432,26 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         throw error
     }
   }, [client, gameId])
-  useForegroundRefresh(refreshGame)
+  /**
+   * `refreshGame` once the event's scope allows: after its acknowledgement
+   * when there is a socket, at once for a visitor with none. Failing before
+   * the game was ever shown, the game is not found; failing after, the screen
+   * keeps what it shows.
+   */
+  const loadGame = useCallback(async (): Promise<void> => {
+    try {
+      await refreshGame()
+    } catch {
+      if (live.current && currentGameId.current === gameId && !shown.current)
+        setError(lstrings.common_not_found)
+    }
+  }, [refreshGame, gameId])
+  const readGame = useScreenScope(loadGame, client)
+  // A new game is read again from scratch; a socket arriving (a sign-in) is
+  // not a new game.
+  const readLatest = useRef(readGame)
+  readLatest.current = readGame
+  useForegroundRefresh(readGame)
   useEffect(() => {
     if (game == null) return
     if (game.eventKind === 'event') setTab('info')
@@ -467,7 +490,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           (event.type === 'change' &&
             (event.kind === 'plays' || event.kind === 'game'))
         ) {
-          refreshGame().catch(() => undefined)
+          // A play body is news of its own: read now, as before, without
+          // waiting on the event's scope. The answer counts for the scope,
+          // so its notice of the same commit reads the game no second time.
+          readLatest.current.alongside(refreshGame).catch(() => undefined)
           setBox(undefined)
         }
       })
@@ -730,17 +756,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const startedFromLink = useRef(false)
 
   useEffect(() => {
-    let active = true
     setGame(undefined)
     setVideo(undefined)
     setBox(undefined)
     setError(undefined)
     startedFromLink.current = false
-    refreshGame().catch(() => {
-      if (active) setError(lstrings.common_not_found)
-    })
+    shown.current = false
+    readLatest.current().catch(() => undefined)
     return () => {
-      active = false
       gameRequest.current++
     }
   }, [refreshGame])

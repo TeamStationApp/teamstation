@@ -8,6 +8,13 @@ import {
   type SeasonGame,
   type TeamStationClient
 } from '../../common/api'
+import { ACK_GIVE_UP_MS } from '../../common/screenScope'
+import {
+  FakeScopeSocket,
+  heldTimers,
+  revisionStamps
+} from '../../test/fakeScreenScope'
+import { ScreenScopeProvider } from '../hooks/useScreenScope'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { shortDate, shortDateNoWeekday } from './format'
 import { GamesFeedScreen } from './GamesFeedScreen'
@@ -372,6 +379,98 @@ describe('the games feed', function () {
   it('does not offer a when filter on the videos list', async function () {
     await mount('videos', [game('gam_final')])
     expect(host?.querySelector('[aria-label="Upcoming"]')).equals(null)
+    expect(text()).includes('GAME VIDEOS')
+  })
+})
+
+describe('the games feed’s screen scope', function () {
+  let timers: ReturnType<typeof heldTimers> | undefined
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    host?.remove()
+    host = undefined
+    timers?.restore()
+    timers = undefined
+  })
+
+  /** As the shell draws it: Schedule holds its scope, Videos holds none. */
+  async function mountScoped(
+    mode: 'videos' | 'schedule',
+    socket: FakeScopeSocket,
+    asked: Array<{ when?: string }>,
+    offline = false
+  ): Promise<void> {
+    const stamps = revisionStamps()
+    stamps.offline = offline
+    const client = Object.assign(stamps, {
+      games: async (query: { when?: string }) => {
+        asked.push(query)
+        socket.log.push('client.games')
+        return [game('gam_final', { startAt: START })]
+      }
+    }) as unknown as TeamStationClient
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root?.render(
+        <ThemeProvider>
+          <ScreenScopeProvider
+            socket={socket}
+            scope={mode === 'schedule' ? { scope: 'schedule' } : undefined}
+          >
+            <GamesFeedScreen
+              client={client}
+              mode={mode}
+              onOpenGame={() => undefined}
+            />
+          </ScreenScopeProvider>
+        </ThemeProvider>
+      )
+      await delay(20)
+    })
+  }
+
+  it('does not let the foreground refresh’s first call read the schedule before subscribed', async function () {
+    timers = heldTimers(ACK_GIVE_UP_MS)
+    const socket = new FakeScopeSocket()
+    const asked: Array<{ when?: string }> = []
+    await mountScoped('schedule', socket, asked)
+    expect(asked, 'client.games before subscribed').deep.equals([])
+    expect(text()).includes('Loading…')
+    await act(async () => {
+      socket.ack('2')
+      await delay(20)
+    })
+    expect(socket.log).deep.equals([
+      'subscribe schedule',
+      'subscribed 2',
+      'client.games'
+    ])
+    expect(asked).deep.equals([{ when: 'upcoming' }])
+    expect(text()).not.includes('Loading…')
+  })
+
+  it('reads the schedule at once while offline', async function () {
+    timers = heldTimers(ACK_GIVE_UP_MS)
+    const socket = new FakeScopeSocket()
+    const asked: Array<{ when?: string }> = []
+    await mountScoped('schedule', socket, asked, true)
+    expect(asked).deep.equals([{ when: 'upcoming' }])
+    expect(timers.pending()).equals(0)
+  })
+
+  it('reads the videos at once from the foreground refresh’s first call, holding no scope', async function () {
+    timers = heldTimers(ACK_GIVE_UP_MS)
+    const socket = new FakeScopeSocket()
+    const asked: Array<{ when?: string }> = []
+    await mountScoped('videos', socket, asked)
+    expect(asked, 'client.games with no ack').deep.equals([{}])
+    expect(socket.asked()).deep.equals([])
+    expect(timers.pending()).equals(0)
     expect(text()).includes('GAME VIDEOS')
   })
 })

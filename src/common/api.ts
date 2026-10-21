@@ -1802,6 +1802,11 @@ export class TeamStationClient {
 
   private unreachable = false
   private readonly offlineListeners = new Set<(offline: boolean) => void>()
+  /**
+   * Told when a call answers 401: the session is no good. A sign-in attempt
+   * refused (`POST /auth/...`) is not that.
+   */
+  onSessionRefused?: () => void
   /** The revision each path last answered with. */
   private readonly revisions = new Map<string, string>()
   /**
@@ -3666,6 +3671,11 @@ export class TeamStationClient {
       )
     }
     this.offline = false
+    if (
+      response.status === 401 &&
+      !(method === 'POST' && path.startsWith('/auth/'))
+    )
+      this.onSessionRefused?.()
 
     // The connection can drop after the answer starts, while its body is
     // read. The status has arrived by then: a refusal is still the server's

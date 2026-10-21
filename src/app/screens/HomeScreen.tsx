@@ -29,6 +29,7 @@ import {
 import { CreationCard } from '../components/CreationCard'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { useScreenScope } from '../hooks/useScreenScope'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
 import type { GameListOpenOptions } from './gameListOptions'
@@ -103,7 +104,9 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
         setRecentError(caught instanceof Error ? caught.message : 'Cannot load')
     }
   }, [client, beginRecent])
-  useForegroundRefresh(refreshRecent)
+  // Each of Home's three loads waits for the home scope's acknowledgement,
+  // and reads again when that scope moves past what it read.
+  useForegroundRefresh(useScreenScope(refreshRecent, client))
 
   /**
    * The recent game's own video, so the card moves rather than sitting there.
@@ -172,11 +175,12 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
    * is happening is the only thing on this screen that will not still be true
    * in an hour.
    */
-  useEffect(() => {
-    let cancelled = false
-    const look = async (): Promise<void> => {
+  const beginLook = useLatestRequest()
+  const look = useCallback(async (): Promise<void> => {
+    const current = beginLook()
+    try {
       const now = await client.liveNow()
-      if (cancelled) return
+      if (!current()) return
       setLive(now)
       const first = now[0]
       if (first == null) {
@@ -190,64 +194,72 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
       // again, every half minute, in front of somebody watching.
       if (playing.current === first.videoId) return
       const playback = await client.playback(first.videoId)
-      if (cancelled || playback.url == null) return
+      if (!current() || playback.url == null) return
       playing.current = first.videoId
       setLiveUrl(playback.url)
+    } catch {
+      // Nothing is live, as far as this screen can tell.
     }
-    look().catch(() => undefined)
+  }, [client, beginLook])
+  const lookLive = useScreenScope(look, client)
+  useEffect(() => {
+    lookLive().catch(() => undefined)
     // A game starts while somebody has the page open — which is the whole
     // point of a live block — so it is looked at again on a slow timer rather
     // than only when the screen is opened.
     const timer = setInterval(() => {
-      look().catch(() => undefined)
+      lookLive().catch(() => undefined)
     }, 30_000)
     return () => {
-      cancelled = true
       clearInterval(timer)
     }
-  }, [client])
+  }, [lookLive])
 
-  // Whether Home can open a player at all, not which function opens one: the
-  // shell hands over a new one whenever it renders, and that is no reason to
-  // read everything again.
+  // Whether Home can open a player or a group at all, not which function
+  // opens one: the shell hands over a new one whenever it renders, and that
+  // is no reason to read everything again.
   const opensPlayers = props.onOpenPlayer != null
-  useEffect(() => {
-    let cancelled = false
-    const load = async (): Promise<void> => {
+  const opensGroups = props.onOpenGroup != null
+  const beginLists = useLatestRequest()
+  const loadLists = useCallback(async (): Promise<void> => {
+    const current = beginLists()
+    try {
       const [loadedTeams, loadedSeasons, ownGroups, follows, guarded] =
         await Promise.all([
           client.teams(),
           client.seasons(),
-          props.onOpenGroup == null ? Promise.resolve([]) : client.ownGroups(),
+          opensGroups ? client.ownGroups() : Promise.resolve([]),
           // Following is a nicety: Home still opens when it cannot be read.
-          props.onOpenGroup == null
-            ? Promise.resolve([])
-            : client.follows().catch(() => []),
+          opensGroups ? client.follows().catch(() => []) : Promise.resolve([]),
           // So is the list of the players one guards: Home opens without it.
           opensPlayers
             ? client.guardedPlayers().catch(() => [])
             : Promise.resolve([])
         ])
-      if (cancelled) return
+      if (!current()) return
       setPlayers(guarded)
       setTeams(loadedTeams)
       setSeasons(loadedSeasons)
       setGroups(ownGroups)
       setFollowed(follows)
+      setError(undefined)
+    } catch (caught: unknown) {
+      if (current())
+        setError(caught instanceof Error ? caught.message : 'Cannot load')
+    } finally {
+      if (current()) setLoading(false)
     }
-    load()
-      .catch((caught: unknown) => {
-        if (!cancelled) {
-          setError(caught instanceof Error ? caught.message : 'Cannot load')
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [client, props.onOpenGroup, opensPlayers])
+  }, [client, opensGroups, opensPlayers, beginLists])
+  // A play names its game alone: the lists show no game, so they let it
+  // pass, and the recent game and what is live take it. A write that moves
+  // what the lists count (a game going final, a video, a new game) names
+  // the game's teams and season too, and those the lists read.
+  const refreshLists = useScreenScope(loadLists, client, {
+    passGameNotices: true
+  })
+  useEffect(() => {
+    refreshLists().catch(() => undefined)
+  }, [refreshLists])
 
   if (loading) {
     return (

@@ -11,7 +11,7 @@ import {
   type TeamSummary
 } from '../common/api'
 import { asTeamSummary } from '../common/api'
-import { GameSocket } from '../common/gameSocket'
+import { GameSocket, type ScreenScope } from '../common/gameSocket'
 import type { GroupRef } from '../common/groupCreation'
 import { managesRoster } from '../common/roles'
 import type { WalkUpSong } from '../common/walkUpSong'
@@ -28,6 +28,7 @@ import { errorScreen } from './components/ErrorFallback'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
 import { StandaloneField } from './field/StandaloneField'
 import { useForegroundRefresh } from './hooks/useForegroundRefresh'
+import { ScreenScopeProvider } from './hooks/useScreenScope'
 import { lstrings, sprintf } from './locales/strings'
 import {
   anglesOpenPage,
@@ -514,6 +515,22 @@ function Shell(props: AppProps): React.ReactElement {
     },
     [gameSocket]
   )
+  // A REST call refused for want of a session stops the screen's scope until
+  // the token changes, and a new token (a sign-in) starts it again.
+  useEffect(() => {
+    if (gameSocket == null) return
+    const refused = (): void => {
+      gameSocket.authFailed()
+    }
+    client.onSessionRefused = refused
+    return () => {
+      if (client.onSessionRefused === refused)
+        client.onSessionRefused = undefined
+    }
+  }, [client, gameSocket])
+  useEffect(() => {
+    gameSocket?.setToken(client.token)
+  }, [client, gameSocket, session])
   useEffect(() => {
     setRoleSnapshot(undefined)
     if (signedInAs == null) return
@@ -2197,6 +2214,13 @@ function Shell(props: AppProps): React.ReactElement {
     />
   )
 
+  // The visible route's scope on the socket, which its screen's reads wait
+  // for.
+  const visibleScope =
+    props.fieldPreview === true
+      ? undefined
+      : screenScopeOf(tab, top, walkUpMusic.djSupported)
+
   // The header is glass and sits **over** the content, so the page moves under
   // it; the body therefore starts at the top of the window and is padded down
   // by the header's measured height.
@@ -2223,12 +2247,14 @@ function Shell(props: AppProps): React.ReactElement {
             onBackOverride={setBack}
           >
             <View style={styles.body}>
-              <ScoringPlayerSettingsFlow
-                scoring={scoringBody}
-                active={scoringActive}
-              >
-                {body}
-              </ScoringPlayerSettingsFlow>
+              <ScreenScopeProvider socket={gameSocket} scope={visibleScope}>
+                <ScoringPlayerSettingsFlow
+                  scoring={scoringBody}
+                  active={scoringActive}
+                >
+                  {body}
+                </ScoringPlayerSettingsFlow>
+              </ScreenScopeProvider>
             </View>
           </HeaderSlotProvider>
           {!immersiveField && <View style={styles.headerLayer}>{header}</View>}
@@ -2245,6 +2271,34 @@ function Shell(props: AppProps): React.ReactElement {
       </View>
     </GestureHandlerRootView>
   )
+}
+
+/**
+ * The scope the visible route holds on the socket: Home and Schedule as tabs,
+ * and an event for a pushed game, its scoring, or Coach Game. The Videos tab
+ * and every other screen take none.
+ */
+export function screenScopeOf(
+  tab: NavTabId,
+  top: Pushed | undefined,
+  djSupported: boolean
+): ScreenScope | undefined {
+  if (top == null) {
+    if (tab === 'home') return { scope: 'home' }
+    if (tab === 'schedule') return { scope: 'schedule' }
+    return undefined
+  }
+  switch (top.name) {
+    case 'game':
+    case 'scoreGame':
+    case 'coachGame':
+      return { scope: 'event', gameId: top.gameId }
+    case 'djGame':
+      // Where there is no DJ Game, its address is the game's page.
+      return djSupported ? undefined : { scope: 'event', gameId: top.gameId }
+    default:
+      return undefined
+  }
 }
 
 /**

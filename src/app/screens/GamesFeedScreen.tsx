@@ -23,6 +23,7 @@ import {
 import { usePinnedTabs } from '../components/usePinnedTabs'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { useScreenScope } from '../hooks/useScreenScope'
 import { columnsForWidth } from '../layout/grid'
 import { gameCountLabel, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -142,7 +143,9 @@ export function GamesFeedScreen(
       if (current()) setLoading(false)
     }
   }, [client, mode, when, beginGames])
-  useForegroundRefresh(loadGames)
+  // Schedule waits for its scope's acknowledgement before it reads. Videos
+  // takes no scope, so it reads at once.
+  useForegroundRefresh(useScreenScope(loadGames, client))
 
   // Videos offers no filter. Nothing that has not been played can have a
   // recording, so `Upcoming` was always empty and `Past` was always the whole
