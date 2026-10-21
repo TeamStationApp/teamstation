@@ -10,7 +10,7 @@ import { opponentFixed, scoredInTeamStation } from '../games/opponentFixed'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
-import { withAsync } from '../middleware/withErrors'
+import { withRevision } from '../socket/syncRevision'
 import { scheduleOf, type ScheduleRow } from './seasons'
 
 /**
@@ -117,7 +117,7 @@ export function eventListRoutes(
   router.get(
     '/events',
     requireActor,
-    withAsync(async (req, res) => {
+    withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const parsed = parseEventListQuery(req.query)

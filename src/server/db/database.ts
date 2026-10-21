@@ -601,6 +601,16 @@ export interface AuditLogTable {
   after: Json | null
 }
 
+/**
+ * The one row whose `value` is the revision screen scopes are told about.
+ * `value` is a bigint: read it as `value::text`, since the int8 parser
+ * refuses one past a safe integer.
+ */
+export interface SyncClockTable {
+  id: number
+  value: ColumnType<number | string, number | string, number | string>
+}
+
 export interface SystemSettingsTable {
   key: string
   value: Json
@@ -906,6 +916,7 @@ export interface Database {
   scoreboard_log: ScoreboardLogTable
   season_teams: SeasonTeamsTable
   seasons: SeasonsTable
+  sync_clock: SyncClockTable
   system_settings: SystemSettingsTable
   teams: TeamsTable
   user_links: UserLinksTable

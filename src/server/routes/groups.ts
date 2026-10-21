@@ -81,6 +81,7 @@ import type { MediaContext } from '../media/mediaContext'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { completionNotice } from '../notifications/completionNotice'
+import { withRevision } from '../socket/syncRevision'
 import { followMerges } from '../teams/followMerges'
 import { inviteUrl } from './invites'
 
@@ -563,7 +564,7 @@ export function groupRoutes(
   router.get(
     '/me/groups',
     requireActor,
-    withAsync(async (req, res) => {
+    withRevision(db, async (db, req, res) => {
       const actor = await currentActor(db, actorOf(req))
       if (req.query.role != null) {
         if (req.query.role !== 'admin')
@@ -644,7 +645,7 @@ export function groupRoutes(
   router.get(
     '/me/follows',
     requireActor,
-    withAsync(async (req, res) => {
+    withRevision(db, async (db, req, res) => {
       const actor = await currentActor(db, actorOf(req))
       const rows = await db
         .selectFrom('follows')

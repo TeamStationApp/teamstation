@@ -35,6 +35,7 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { resolveScoringGame } from '../scoring/openRow'
 import { notifyGameChange } from '../socket/gameChanges'
+import { readSyncClock, REVISION_HEADER } from '../socket/syncRevision'
 
 export interface EventRouteOptions {
   onGameWritten?: (gameId: string) => void
@@ -244,6 +245,9 @@ export function eventRoutes(
           .forUpdate()
           .executeTakeFirst()
         if (locked == null) throw notFound()
+        // Read committed, after the lock: a live post that commits while
+        // this holds the game waits, and takes a revision newer than this.
+        res.setHeader(REVISION_HEADER, await readSyncClock(trx))
         await reconcileEventTags(trx, gameId)
         const stored = await readPlays(trx, gameId)
         const game = await trx

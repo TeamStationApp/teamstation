@@ -28,6 +28,7 @@ import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { annotatePending, pendingSchedule } from '../schedule/pendingProjection'
 import { scheduleRights } from '../schedule/scheduleGames'
+import { withRevision } from '../socket/syncRevision'
 import { teamRecords } from '../stats/records'
 import {
   seasonParticipantCounts,
@@ -58,7 +59,7 @@ export function seasonRoutes(
   router.get(
     '/seasons',
     requireActor,
-    withAsync(async (req, res) => {
+    withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)

@@ -1,14 +1,15 @@
 import type { IncomingMessage, Server } from 'node:http'
 import type { Duplex } from 'node:stream'
 
-import { asEither, asObject, asString } from 'cleaners'
+import { asEither, asObject, asOptional, asString } from 'cleaners'
 import type { Kysely } from 'kysely'
 import { type RawData, type WebSocket, WebSocketServer } from 'ws'
 
 import { asLiteral } from '../../common/asLiteral'
 import type {
   GameSocketErrorCode,
-  GameSocketReply
+  GameSocketReply,
+  ScreenScopeName
 } from '../../common/gameSocket'
 import {
   canSeeGame,
@@ -24,6 +25,11 @@ import {
   GameFanout,
   type GameFanoutOptions
 } from './fanout'
+import {
+  ScreenScopeListener,
+  type ScreenScopeListenerOptions
+} from './screenScope'
+import { readSyncClock, type ScreenScopePayload } from './syncRevision'
 
 /** The one path the socket answers on. */
 export const SOCKET_PATH = '/socket'
@@ -47,6 +53,10 @@ export interface GameSocketOptions {
    */
   stopSignals?: NodeJS.EventEmitter | null
   fanout?: Omit<GameFanoutOptions, 'db' | 'databaseUrl' | 'onLost'>
+  screenScopes?: Omit<
+    ScreenScopeListenerOptions,
+    'databaseUrl' | 'deliver' | 'onResync'
+  >
   /** Where a request that failed is reported. `console.error` unless given. */
   log?: (message: string) => void
   /**
@@ -67,6 +77,7 @@ export interface GameSocketOptions {
 
 export interface GameSocketHandle {
   fanout: GameFanout
+  screenScopes: ScreenScopeListener
   /** How many sockets are open. */
   size: () => number
   /**
@@ -85,6 +96,39 @@ const asRequest = asEither(
   }),
   asObject({ type: asLiteral('ping'), id: asString })
 )
+
+/**
+ * A screen scope's frame. It is read only from an object with a `scope`,
+ * and the game frame only from one without, so a scope never takes a place
+ * under `MAX_SUBSCRIPTIONS`.
+ */
+const asScopeRequest = asEither(
+  asObject({
+    type: asLiteral('subscribe'),
+    scope: asLiteral('home', 'schedule'),
+    id: asString
+  }),
+  asObject({
+    type: asLiteral('subscribe'),
+    scope: asLiteral('event'),
+    gameId: asString,
+    id: asString
+  }),
+  asObject({
+    type: asLiteral('unsubscribe'),
+    scope: asLiteral('home', 'schedule', 'event'),
+    gameId: asOptional(asString),
+    id: asString
+  })
+)
+type ScopeRequest = ReturnType<typeof asScopeRequest>
+
+/** The screen scope a socket holds. */
+interface HeldScreen {
+  scope: ScreenScopeName
+  /** For an event. */
+  gameId?: string
+}
 
 /** One open socket: who it is, what it has subscribed to, and its health. */
 interface Connection {
@@ -114,6 +158,10 @@ interface Connection {
   scopesAt: number
   reading: Promise<VisibleScopes> | undefined
   subscriber: FanoutSubscriber
+  /** The visible screen's scope, once registered. */
+  screen: HeldScreen | undefined
+  /** The last scope request still being handled; the next waits on it. */
+  screenTurn: Promise<void>
 }
 
 /**
@@ -155,6 +203,18 @@ export function attachGameSocket(
     onLost: () => {
       for (const connection of connections)
         connection.ws.close(1012, 'Changes may have been missed')
+    }
+  })
+  const screenScopes = new ScreenScopeListener({
+    ...options.screenScopes,
+    databaseUrl,
+    deliver: async payload => {
+      await announce(payload)
+    },
+    // Notices went unheard: every screen subscribes again and reads.
+    onResync: () => {
+      for (const connection of connections)
+        if (connection.screen != null) reply(connection, { type: 'resync' })
     }
   })
 
@@ -325,6 +385,164 @@ export function attachGameSocket(
   }
 
   /**
+   * Registers the visible screen's scope, in place of any other, and answers
+   * with the revision it was registered at. Every notice committed after
+   * this reaches the socket, so a read the screen starts on the answer
+   * misses nothing. An event the person cannot see is refused and not held.
+   */
+  const subscribeScreen = async (
+    connection: Connection,
+    request: ScopeRequest & { type: 'subscribe' }
+  ): Promise<void> => {
+    connection.screen = undefined
+    let screen: HeldScreen = { scope: request.scope }
+    if (request.scope === 'event') {
+      const { gameId } = request
+      const game = await checkGame(
+        gameId,
+        async () => await visibleGame(connection, gameId)
+      )
+      if (game == null) {
+        refuse(connection, 'notFound', 'No such game', request.id)
+        return
+      }
+      screen = { scope: 'event', gameId }
+    }
+    if (!connections.has(connection)) return
+    connection.screen = screen
+    const revision = await readSyncClock(db)
+    if (connection.screen !== screen) return
+    reply(connection, {
+      type: 'subscribed',
+      scope: screen.scope,
+      id: request.id,
+      revision
+    })
+  }
+
+  /** Lets the named scope go, if it is still the one held. */
+  const unsubscribeScreen = (
+    connection: Connection,
+    request: ScopeRequest & { type: 'unsubscribe' }
+  ): void => {
+    const held = connection.screen
+    if (
+      held?.scope === request.scope &&
+      (request.gameId == null || held.gameId === request.gameId)
+    )
+      connection.screen = undefined
+    reply(connection, {
+      type: 'unsubscribed',
+      scope: request.scope,
+      id: request.id
+    })
+  }
+
+  /** Scope requests take effect, and are answered, in the order sent. */
+  const screenRequest = async (
+    connection: Connection,
+    request: ScopeRequest
+  ): Promise<void> => {
+    const run = connection.screenTurn.then(async () => {
+      try {
+        if (request.type === 'subscribe')
+          await subscribeScreen(connection, request)
+        else unsubscribeScreen(connection, request)
+      } catch (error: unknown) {
+        connection.screen = undefined
+        log(`game socket: ${request.type} ${request.scope}: ${String(error)}`)
+        refuse(
+          connection,
+          'internal',
+          `The server could not ${request.type}; try again`,
+          request.id
+        )
+      }
+    })
+    connection.screenTurn = run
+    await run
+  }
+
+  /**
+   * Tells each socket whose screen a committed write concerns. A game goes
+   * to its event's sockets, and to home and schedule, wherever the person
+   * can see the game. A team or season goes to home and schedule where the
+   * person sees it, and a person's own change to their home and schedule.
+   * Nothing else is told: a notice nobody matches is dropped.
+   */
+  const announce = async (payload: ScreenScopePayload): Promise<void> => {
+    const holding = [...connections].filter(
+      connection => connection.screen != null
+    )
+    if (holding.length === 0) return
+    const { gameId, teamId, seasonId, userId, revision } = payload
+    // A notice of one game alone (a play, its score) names it to home and
+    // schedule too, so a list that shows no games can let it pass.
+    const gameOnly =
+      gameId != null && teamId == null && seasonId == null && userId == null
+    const tell = (connection: Connection, screen: HeldScreen): void => {
+      if (connection.screen !== screen) return
+      reply(connection, {
+        type: 'changed',
+        scope: screen.scope,
+        revision,
+        ...(screen.scope === 'event' || gameOnly ? { gameId } : {})
+      })
+    }
+    const row =
+      gameId == null
+        ? undefined
+        : await db
+            .selectFrom('games')
+            .select(['home_team_id', 'away_team_id', 'season_id'])
+            .where('id', '=', gameId)
+            .executeTakeFirst()
+    const game: GameScope | undefined =
+      row == null
+        ? undefined
+        : {
+            homeTeamId: row.home_team_id,
+            awayTeamId: row.away_team_id,
+            seasonId: row.season_id
+          }
+    await Promise.all(
+      holding.map(async connection => {
+        const screen = connection.screen!
+        try {
+          if (gameId != null) {
+            if (screen.scope === 'event' && screen.gameId !== gameId) return
+            // A game gone since: only the sockets that had it open are told.
+            if (game == null) {
+              if (screen.scope === 'event') tell(connection, screen)
+              return
+            }
+            if (canSeeGame(await scopesOf(connection), game))
+              tell(connection, screen)
+            return
+          }
+          if (screen.scope === 'event') return
+          if (userId != null && connection.actor.userId === userId) {
+            // What they belong to moved: read it afresh next time.
+            connection.scopes = undefined
+            tell(connection, screen)
+            return
+          }
+          if (teamId == null && seasonId == null) return
+          const scopes = await scopesOf(connection)
+          if (
+            scopes.isAdmin ||
+            (teamId != null && scopes.teamIds.has(teamId)) ||
+            (seasonId != null && scopes.seasonIds.has(seasonId))
+          )
+            tell(connection, screen)
+        } catch (error: unknown) {
+          log(`game socket: telling ${screen.scope}: ${String(error)}`)
+        }
+      })
+    )
+  }
+
+  /**
    * Runs `step` once the game's earlier requests on this socket are done.
    * One with nothing ahead of it runs at once, so a burst to different
    * games is handled side by side.
@@ -355,14 +573,17 @@ export function attachGameSocket(
     data: RawData,
     isBinary: boolean
   ): Promise<void> => {
-    let request: ReturnType<typeof asRequest>
+    let request: ReturnType<typeof asRequest> | ScopeRequest
     let id: string | undefined
     try {
       if (isBinary) throw new Error('binary')
       const raw: unknown = JSON.parse(rawText(data))
       const named = (raw as { id?: unknown } | null)?.id
       id = typeof named === 'string' ? named : undefined
-      request = asRequest(raw)
+      request =
+        typeof raw === 'object' && raw != null && 'scope' in raw
+          ? asScopeRequest(raw)
+          : asRequest(raw)
     } catch {
       refuse(
         connection,
@@ -374,6 +595,10 @@ export function attachGameSocket(
     }
     if (request.type === 'ping') {
       reply(connection, { type: 'pong', id: request.id })
+      return
+    }
+    if ('scope' in request) {
+      await screenRequest(connection, request)
       return
     }
     const { gameId, type } = request
@@ -420,6 +645,8 @@ export function attachGameSocket(
       scopes: undefined,
       scopesAt: 0,
       reading: undefined,
+      screen: undefined,
+      screenTurn: Promise.resolve(),
       subscriber: {
         send: message => {
           reply(connection, message)
@@ -459,6 +686,7 @@ export function attachGameSocket(
     ws.on('error', () => undefined)
     ws.on('close', () => {
       connections.delete(connection)
+      connection.screen = undefined
       for (const gameId of connection.games)
         fanout.unwatch(gameId, connection.subscriber)
       connection.games.clear()
@@ -540,6 +768,7 @@ export function attachGameSocket(
       for (const connection of connections)
         connection.ws.close(1001, 'The server is restarting')
       await fanout.close()
+      await screenScopes.close()
       await new Promise<void>(resolve => {
         wss.close(() => {
           resolve()
@@ -553,6 +782,7 @@ export function attachGameSocket(
 
   return {
     fanout,
+    screenScopes,
     size: () => connections.size,
     acceptUpgrade,
     close

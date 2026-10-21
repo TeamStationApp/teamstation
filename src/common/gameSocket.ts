@@ -75,17 +75,80 @@ export type GameSocketEvent =
 
 export type GameSocketListener = (event: GameSocketEvent) => void
 
+/**
+ * The screens that hold a scope on the socket. A socket holds at most one,
+ * the visible screen's, and a subscribe to another replaces it.
+ */
+export type ScreenScopeName = 'home' | 'schedule' | 'event'
+
+/** One screen's scope: Home, Schedule, or one event. */
+export type ScreenScope =
+  { scope: 'home' } | { scope: 'schedule' } | { scope: 'event'; gameId: string }
+
+/**
+ * What the screen holding a scope hears. No frame carries a record: a
+ * `changed` says the scope moved to `revision`, and the screen reads it over
+ * REST. Revisions are decimal strings; compare them with `BigInt`.
+ */
+export type ScreenScopeEvent =
+  /** The server registered this socket at `revision`: the screen may read. */
+  | { type: 'subscribed'; revision: string }
+  /**
+   * On home or schedule, `gameId` says the notice was of that one game
+   * alone (a play, its score): a list that shows no games can let it pass.
+   */
+  | { type: 'changed'; revision: string; gameId?: string }
+  /** The scope was refused (`notFound` for an event it cannot see). */
+  | { type: 'error'; code: GameSocketErrorCode; message: string }
+  /** The acknowledgement no longer holds. It is asked for again. */
+  | { type: 'resync' }
+  /** Nothing will be acknowledged until the session token changes. */
+  | { type: 'stopped' }
+  /**
+   * The socket is down after a connection was lost or refused, and is
+   * waiting to try again: no acknowledgement is coming soon, so the screen
+   * reads at once, and the next `subscribed` reads again only if it is
+   * newer than that read.
+   */
+  | { type: 'unreachable' }
+
+export type ScreenScopeListener = (event: ScreenScopeEvent) => void
+
 /** A frame the client sends. */
 export type GameSocketRequest =
-  | { type: 'subscribe'; gameId: string; id: string }
-  | { type: 'unsubscribe'; gameId: string; id: string }
+  | { type: 'subscribe' | 'unsubscribe'; gameId: string; id: string }
+  | {
+      type: 'subscribe' | 'unsubscribe'
+      scope: 'home' | 'schedule'
+      id: string
+    }
+  | {
+      type: 'subscribe' | 'unsubscribe'
+      scope: 'event'
+      gameId: string
+      id: string
+    }
   | { type: 'ping'; id: string }
+
+/** A screen scope's frames from the server. */
+export type ScreenScopeReply =
+  | { type: 'subscribed'; scope: ScreenScopeName; id: string; revision: string }
+  | { type: 'unsubscribed'; scope: ScreenScopeName; id: string }
+  | {
+      type: 'changed'
+      scope: ScreenScopeName
+      revision: string
+      gameId?: string
+    }
+  /** The worker lost its `LISTEN`: subscribe the scope again and read. */
+  | { type: 'resync' }
 
 /** A frame the server sends. */
 export type GameSocketReply =
   | GameChange
   | { type: 'subscribed'; gameId: string; id: string }
   | { type: 'unsubscribed'; gameId: string; id: string }
+  | ScreenScopeReply
   | { type: 'pong'; id: string }
   | {
       type: 'error'
@@ -183,10 +246,36 @@ const asChangeHead = asObject({
   at: asString
 })
 
+const asScreenScopeName = asLiteral(
+  'home',
+  'schedule',
+  'event'
+) as Cleaner<ScreenScopeName>
+
+const asScopeSubscribed = asObject({
+  type: asLiteral('subscribed'),
+  revision: asString
+})
+
+const asScopeChanged = asObject({
+  type: asLiteral('changed'),
+  scope: asScreenScopeName,
+  revision: asString,
+  gameId: asOptional(asString)
+})
+
 /** A game being asked for again: how many times, and the wait now set. */
 interface Retry {
   attempt: number
   timer: unknown
+}
+
+/** The visible screen's scope, and the subscribe that stands for it. */
+interface HeldScreen {
+  scope: ScreenScope
+  listener: ScreenScopeListener
+  /** The last subscribe sent for it on this connection, until it is dropped. */
+  id: string | undefined
 }
 
 export interface GameSocketOptions {
@@ -211,11 +300,20 @@ export interface GameSocketOptions {
  * again on the same timings, for as long as the game is still wanted and the
  * socket stays up, until the server answers `subscribed`. Listeners hear the
  * `error`, and later the `subscribed`.
+ *
+ * The visible screen holds one screen scope on the same socket
+ * (`subscribeScope`), which connects it too. The scope's frames never reach
+ * game listeners: its answers are told apart by their ids. A reconnect, or a
+ * server `resync`, subscribes the scope again and the screen waits for that
+ * new `subscribed`. The scope stops asking when a socket that had opened is
+ * closed with 1008, or when a REST call answers 401 (`authFailed`), until
+ * the token changes (`setToken`); game subscriptions retry as they always
+ * have.
  */
 export class GameSocket {
   private readonly baseUrl: string
   private readonly pageHref: string | undefined
-  private readonly token: string | undefined
+  private token: string | undefined
   private readonly WebSocketImpl: WebSocketConstructor | undefined
   private readonly setTimer: (run: () => void, ms: number) => unknown
   private readonly clearTimer: (timer: unknown) => void
@@ -225,6 +323,11 @@ export class GameSocket {
   private readonly requests = new Map<string, string>()
   /** Games waiting to be asked again after `internal`, by game. */
   private readonly retries = new Map<string, Retry>()
+  private screen: HeldScreen | undefined
+  /** The ids of screen-scope requests still unanswered on this connection. */
+  private readonly scopeRequests = new Set<string>()
+  /** Screen scopes wait for a new token: see the class comment. */
+  private scopeStopped = false
   private socket: WebSocketLike | undefined
   private open = false
   private closed = false
@@ -305,6 +408,58 @@ export class GameSocket {
     }
   }
 
+  /**
+   * Holds the visible screen's scope, replacing any other. The listener hears
+   * `subscribed` once the server has registered this socket, and `changed`
+   * after that. Returns the way to let the scope go; once another scope has
+   * replaced it, that does nothing.
+   */
+  subscribeScope(
+    scope: ScreenScope,
+    listener: ScreenScopeListener
+  ): () => void {
+    if (this.closed) throw new Error('This game socket is closed')
+    if (this.socket == null && this.timer == null) this.endpoint()
+    const held: HeldScreen = { scope: { ...scope }, listener, id: undefined }
+    this.screen = held
+    if (this.scopeStopped) listener({ type: 'stopped' })
+    else if (this.open) this.requestScope(held)
+    else if (this.socket == null && this.timer == null) this.connect()
+    // Not a first connect on its way: one that failed, or a wait to retry.
+    if (!this.scopeStopped && !this.open && this.interrupted)
+      listener({ type: 'unreachable' })
+    return () => {
+      if (this.screen !== held) return
+      this.screen = undefined
+      if (this.open && held.id != null) this.sendScope('unsubscribe', held)
+    }
+  }
+
+  /**
+   * A REST call answered 401. The screen scope stops until the token
+   * changes; a socket that only held it is closed.
+   */
+  authFailed(): void {
+    if (this.closed || this.scopeStopped) return
+    const held = this.screen
+    if (held?.id != null && this.open) this.sendScope('unsubscribe', held)
+    this.stopScope()
+    if (this.listeners.size === 0) this.hangUp()
+  }
+
+  /**
+   * The session token changed. A scope that stopped for want of one asks
+   * again, and anything connected reconnects with the new one.
+   */
+  setToken(token: string | undefined): void {
+    if (this.closed || token === this.token) return
+    this.token = token
+    this.scopeStopped = false
+    this.hangUp()
+    this.attempt = 0
+    if (this.screen != null || this.listeners.size > 0) this.connect()
+  }
+
   /** Closes the socket for good. */
   close(): void {
     if (this.closed) return
@@ -315,6 +470,7 @@ export class GameSocket {
     const socket = this.socket
     this.socket = undefined
     this.listeners.clear()
+    this.screen = undefined
     if (socket != null) {
       socket.onopen = null
       socket.onmessage = null
@@ -348,9 +504,12 @@ export class GameSocket {
     socket.onopen = () => {
       this.attempt = 0
       this.requests.clear()
+      this.scopeRequests.clear()
       this.setOpen(true)
       for (const gameId of this.listeners.keys())
         this.request('subscribe', gameId)
+      if (this.screen != null && !this.scopeStopped)
+        this.requestScope(this.screen)
       if (this.interrupted) {
         for (const gameId of [...this.listeners.keys()])
           this.emit(gameId, { type: 'resync', gameId })
@@ -365,23 +524,21 @@ export class GameSocket {
       socket.close()
       this.dropped(socket)
     }
-    socket.onclose = () => {
-      this.dropped(socket)
+    socket.onclose = event => {
+      this.dropped(socket, event)
     }
   }
 
-  private dropped(socket: WebSocketLike): void {
+  private dropped(socket: WebSocketLike, event?: unknown): void {
     if (this.socket !== socket) return
-    socket.onopen = null
-    socket.onmessage = null
-    socket.onclose = null
-    socket.onerror = null
-    this.socket = undefined
-    this.interrupted = true
-    // The reconnect subscribes every game again.
-    this.stopRetries()
-    this.setOpen(false)
+    // A socket that had opened and is closed for its token: the scope waits
+    // for a new one. One closed before it opened cannot be told from a
+    // server that is not there, and retries.
+    if (this.open && (event as { code?: unknown } | null)?.code === 1008)
+      this.stopScope()
+    this.detach(socket)
     if (this.closed) return
+    if (this.scopeStopped && this.listeners.size === 0) return
     const delay =
       RECONNECT_DELAYS_MS[
         Math.min(this.attempt, RECONNECT_DELAYS_MS.length - 1)
@@ -390,6 +547,45 @@ export class GameSocket {
     this.timer = this.setTimer(() => {
       this.connect()
     }, delay)
+    // The screen does not wait out the retry for its acknowledgement.
+    if (!this.scopeStopped) this.screen?.listener({ type: 'unreachable' })
+  }
+
+  /** Lets go of the socket; the scope's acknowledgement goes with it. */
+  private detach(socket: WebSocketLike): void {
+    socket.onopen = null
+    socket.onmessage = null
+    socket.onclose = null
+    socket.onerror = null
+    this.socket = undefined
+    this.interrupted = true
+    // The reconnect subscribes every game again.
+    this.stopRetries()
+    this.scopeRequests.clear()
+    this.setOpen(false)
+    const held = this.screen
+    if (held?.id != null) {
+      held.id = undefined
+      held.listener({ type: 'resync' })
+    }
+  }
+
+  /** Closes the socket, or the wait to reconnect it, without reconnecting. */
+  private hangUp(): void {
+    if (this.timer != null) this.clearTimer(this.timer)
+    this.timer = undefined
+    const socket = this.socket
+    if (socket == null) return
+    this.detach(socket)
+    socket.close(1000, 'closed')
+  }
+
+  private stopScope(): void {
+    this.scopeStopped = true
+    const held = this.screen
+    if (held == null) return
+    held.id = undefined
+    held.listener({ type: 'stopped' })
   }
 
   private setOpen(open: boolean): void {
@@ -401,7 +597,29 @@ export class GameSocket {
   private request(type: 'subscribe' | 'unsubscribe', gameId: string): void {
     const id = `c${this.nextId++}`
     if (type === 'subscribe') this.requests.set(id, gameId)
-    const frame: GameSocketRequest = { type, gameId, id }
+    this.send({ type, gameId, id })
+  }
+
+  private requestScope(held: HeldScreen): void {
+    held.id = this.sendScope('subscribe', held)
+  }
+
+  private sendScope(
+    type: 'subscribe' | 'unsubscribe',
+    held: HeldScreen
+  ): string {
+    const id = `c${this.nextId++}`
+    this.scopeRequests.add(id)
+    const { scope } = held
+    this.send(
+      scope.scope === 'event'
+        ? { type, scope: 'event', gameId: scope.gameId, id }
+        : { type, scope: scope.scope, id }
+    )
+    return id
+  }
+
+  private send(frame: GameSocketRequest): void {
     this.socket?.send(JSON.stringify(frame))
   }
 
@@ -417,6 +635,23 @@ export class GameSocket {
     try {
       head = asReplyHead(raw)
     } catch {
+      return
+    }
+    // A screen scope's own frames, before anything a game listener hears.
+    if (head.id != null && this.scopeRequests.has(head.id)) {
+      this.scopeAnswered(head.id, raw)
+      return
+    }
+    if (head.type === 'changed') {
+      this.scopeChanged(raw)
+      return
+    }
+    if (head.type === 'resync') {
+      const held = this.screen
+      if (held == null) return
+      held.id = undefined
+      held.listener({ type: 'resync' })
+      if (this.open && !this.scopeStopped) this.requestScope(held)
       return
     }
     if (head.type === 'change') {
@@ -459,6 +694,48 @@ export class GameSocket {
         code: error.code,
         message: error.message
       })
+  }
+
+  /** The answer to a scope request: only the held scope's subscribe counts. */
+  private scopeAnswered(id: string, raw: unknown): void {
+    this.scopeRequests.delete(id)
+    const held = this.screen
+    if (held?.id !== id) return
+    let event: ScreenScopeEvent
+    try {
+      if ((raw as { type?: unknown }).type === 'error') {
+        const error = asErrorReply(raw)
+        event = { type: 'error', code: error.code, message: error.message }
+      } else {
+        event = {
+          type: 'subscribed',
+          revision: asScopeSubscribed(raw).revision
+        }
+      }
+    } catch {
+      return
+    }
+    if (event.type === 'error') held.id = undefined
+    held.listener(event)
+  }
+
+  private scopeChanged(raw: unknown): void {
+    let changed: ReturnType<typeof asScopeChanged>
+    try {
+      changed = asScopeChanged(raw)
+    } catch {
+      return
+    }
+    const scope = this.screen?.scope
+    if (scope?.scope !== changed.scope) return
+    if (scope.scope === 'event' && scope.gameId !== changed.gameId) return
+    this.screen?.listener({
+      type: 'changed',
+      revision: changed.revision,
+      ...(scope.scope !== 'event' && changed.gameId != null
+        ? { gameId: changed.gameId }
+        : {})
+    })
   }
 
   /**

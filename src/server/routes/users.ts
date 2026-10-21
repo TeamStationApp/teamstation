@@ -15,7 +15,7 @@ import type { Database } from '../db/database'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
-import { withAsync } from '../middleware/withErrors'
+import { withRevision } from '../socket/syncRevision'
 import { teamsOf } from './players'
 import { externalIdsAsked } from './seasons'
 
@@ -54,7 +54,7 @@ export function userRoutes(
   router.get(
     '/users',
     requireActor,
-    withAsync(async (req, res) => {
+    withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const guardedBy = req.query.guardedBy

@@ -82,6 +82,7 @@ import { withAsync } from '../middleware/withErrors'
 import { scoringUsers } from '../scoring/gumboIds'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
+import { withRevision } from '../socket/syncRevision'
 import { teamWalkUpSongs } from './walkUpSongs'
 
 type Trx = Kysely<Database>
@@ -190,7 +191,7 @@ export function lineupRoutes(
   router.get(
     '/teams/:teamId/default-lineup',
     requireActor,
-    withAsync(async (req, res) => {
+    withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const teamId = pathParam(req.params.teamId)
@@ -211,7 +212,7 @@ export function lineupRoutes(
   router.get(
     '/games/:gameId/lineups',
     requireActor,
-    withAsync(async (req, res) => {
+    withRevision(db, async (db, req, res) => {
       const actor = req.actor
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)

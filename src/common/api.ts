@@ -1467,6 +1467,16 @@ export type Health = Omit<ReturnType<typeof asHealth>, 'narration'> & {
   narration?: boolean
 }
 
+/** The response header a screen's read carries its revision in. */
+export const REVISION_HEADER = 'x-teamstation-revision'
+
+/** One response's revision, as a screen's load collects them. */
+export interface RevisionRead {
+  path: string
+  /** `x-teamstation-revision`, a decimal string: compare with `BigInt`. */
+  revision: string
+}
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
@@ -1767,6 +1777,40 @@ export class TeamStationClient {
    */
   private askedSignIn?: string
   token: string | undefined
+  /**
+   * Set when the last request failed to leave the device, and cleared when
+   * one reaches the server. Each change is told to `subscribeOffline`'s
+   * listeners, so the phone's banner comes and goes without a reload.
+   */
+  get offline(): boolean {
+    return this.unreachable
+  }
+
+  set offline(value: boolean) {
+    if (value === this.unreachable) return
+    this.unreachable = value
+    for (const listener of [...this.offlineListeners]) listener(value)
+  }
+
+  /** Tells `listener` each time `offline` changes, until unsubscribed. */
+  subscribeOffline(listener: (offline: boolean) => void): () => void {
+    this.offlineListeners.add(listener)
+    return () => {
+      this.offlineListeners.delete(listener)
+    }
+  }
+
+  private unreachable = false
+  private readonly offlineListeners = new Set<(offline: boolean) => void>()
+  /** The revision each path last answered with. */
+  private readonly revisions = new Map<string, string>()
+  /**
+   * Where the screen loads now running collect the revisions they read. Home
+   * runs three at once, and an answer cannot say which load asked for it, so
+   * each running load collects every answer: the least of them is never
+   * newer than the least of its own.
+   */
+  private readonly collectors = new Set<RevisionRead[]>()
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
@@ -1775,6 +1819,25 @@ export class TeamStationClient {
     this.passwordTargetMs = options.passwordTargetMs
     this.token = options.token
     this.doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
+  }
+
+  /** The revision the last answer from `path` carried, if any did. */
+  revisionFor(path: string): string | undefined {
+    return this.revisions.get(path)
+  }
+
+  /**
+   * Collects `{ path, revision }` from every answer that carries one, until
+   * `stopCollecting`. A screen's load sets this around the calls it makes,
+   * and holds the least of them as the revision of what it shows.
+   */
+  collectRevisions(collector: RevisionRead[]): void {
+    this.collectors.add(collector)
+  }
+
+  /** Stops collecting into `collector`. */
+  stopCollecting(collector: RevisionRead[]): void {
+    this.collectors.delete(collector)
   }
 
   async accountSettings(): Promise<AccountSettings> {
@@ -3596,11 +3659,13 @@ export class TeamStationClient {
         body: body === undefined ? undefined : JSON.stringify(body)
       })
     } catch (caught: unknown) {
+      this.offline = true
       throw new HttpError(
         'offline',
         'Cannot reach TeamStation. Check your connection and try again.'
       )
     }
+    this.offline = false
 
     // The connection can drop after the answer starts, while its body is
     // read. The status has arrived by then: a refusal is still the server's
@@ -3617,6 +3682,12 @@ export class TeamStationClient {
       )
     }
     if (!response.ok) throw errorFrom(response.status, text)
+    const revision = revisionOf(response)
+    if (revision != null) {
+      this.revisions.set(path, revision)
+      for (const collector of this.collectors)
+        collector.push({ path, revision })
+    }
     if (text === '') return cleaner(undefined)
 
     let parsed: unknown
@@ -3631,6 +3702,12 @@ export class TeamStationClient {
 
 function walkUpSongPath(teamId: string, userId: string): string {
   return `/teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(userId)}/walk-up-song`
+}
+
+/** The answer's revision. A stand-in response may carry no headers. */
+function revisionOf(response: Response): string | null {
+  const headers = (response as Partial<Response>).headers
+  return headers == null ? null : headers.get(REVISION_HEADER)
 }
 
 /** For the endpoints whose body carries nothing a caller needs. */
